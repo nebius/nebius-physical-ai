@@ -17,8 +17,9 @@ from pydantic import ValidationError
 from npa.clients.storage import StorageClient
 from npa.workbench.storage_scope import authorize_uri
 
+from .conditioning import configuration_identity
+from .hardware import validate_gpu
 from .runtime import (
-    MIN_H100_MEMORY_MIB,
     SOURCE_ROOT,
     SOURCE_REVISION_PATH,
     SeedVR2Error,
@@ -132,6 +133,17 @@ def _validate_result_context(
     storage: Any,
     directory: Path,
 ) -> None:
+    restore_request = _result_request(result, request)
+    _validate_result_runtime(result, restore_request)
+    _validate_result_configuration(result, restore_request)
+    _validate_result_artifacts(result, request, restore_request)
+    _validate_result_argv(result, restore_request)
+    _validate_result_media(result, restore_request)
+    _validate_result_probe(result, request, restore_request, storage, directory)
+    _validate_result_log(result, storage, directory)
+
+
+def _result_request(result, request):
     try:
         restore_request = RestoreRequest.model_validate(result["request"])
     except (KeyError, TypeError, ValidationError) as exc:
@@ -145,6 +157,10 @@ def _validate_result_context(
     ):
         raise SeedVR2Error("SeedVR2 result does not bind the workflow run")
 
+    return restore_request
+
+
+def _validate_result_runtime(result, restore_request):
     runtime = result.get("runtime")
     gpu = runtime.get("gpu") if isinstance(runtime, dict) else None
     if not isinstance(runtime, dict) or not isinstance(gpu, dict):
@@ -152,7 +168,7 @@ def _validate_result_context(
     current_image = os.environ.get("NPA_TASK_IMAGE", "")
     try:
         baked_source = SOURCE_REVISION_PATH.read_text(encoding="utf-8").strip()
-        memory_mib = int(gpu.get("memory_mib", ""))
+        validate_gpu(gpu, restore_request.expected_gpu)
     except (OSError, TypeError, ValueError) as exc:
         raise SeedVR2Error("SeedVR2 result runtime identity is invalid") from exc
     image = runtime.get("image", "")
@@ -162,33 +178,33 @@ def _validate_result_context(
         and runtime.get("image_digest") == image.rsplit("@", 1)[-1]
         and re.fullmatch(r"[0-9a-f]{40}", baked_source) is not None
         and runtime.get("npa_source_revision") == baked_source
-        and gpu.get("status") == "available"
-        and gpu.get("count") == "1"
-        and gpu.get("compute_capability") == "9.0"
-        and gpu.get("mig_mode") == "Disabled"
-        and "H100" in gpu.get("name", "")
-        and memory_mib >= MIN_H100_MEMORY_MIB
         and runtime.get("sequence_parallel_size") == 1
         and runtime.get("color_fix") is False
     )
     if not valid_runtime:
         raise SeedVR2Error("SeedVR2 result runtime identity is invalid")
 
-    model = result["model"]
-    expected_files = {
-        name: {"bytes": size, "sha256": digest}
-        for name, (size, digest) in MODEL_FILES.items()
-    }
+
+def _validate_result_configuration(result, restore_request):
+    try:
+        expected_configuration = configuration_identity(
+            SOURCE_ROOT, restore_request.conditioning_mode
+        )
+    except (OSError, ValueError) as exc:
+        raise SeedVR2Error("SeedVR2 configuration identity is invalid") from exc
+    if result.get("configuration") != expected_configuration:
+        raise SeedVR2Error("SeedVR2 configuration identity is invalid")
+
+
+def _validate_result_artifacts(result, request, restore_request):
+    _validate_result_model(result)
     input_section = result["input"]
     output_section = result["output"]
     artifacts = result["artifacts"]
     artifact_hashes = result.get("artifact_hashes")
     expected_prefix = restore_request.output_path.rstrip("/") + "/"
     valid_artifacts = (
-        result["source"]
-        == {"repository": SOURCE_REPOSITORY, "revision": SOURCE_REVISION}
-        and model.get("repository") == MODEL_REPOSITORY
-        and input_section.get("uri") == restore_request.input_path
+        input_section.get("uri") == restore_request.input_path
         and re.fullmatch(r"[0-9a-f]{64}", str(input_section.get("sha256", "")))
         is not None
         and isinstance(input_section.get("media"), dict)
@@ -205,12 +221,28 @@ def _validate_result_context(
         and artifact_hashes.get("restored_video") == output_section.get("sha256")
         and re.fullmatch(r"[0-9a-f]{64}", str(artifact_hashes.get("upstream_log", "")))
         is not None
-        and model.get("files") == expected_files
-        and model.get("weights_baked") is False
     )
     if not valid_artifacts:
         raise SeedVR2Error("SeedVR2 result artifact identity is invalid")
 
+
+def _validate_result_model(result):
+    model = result["model"]
+    expected_files = {
+        name: {"bytes": size, "sha256": digest}
+        for name, (size, digest) in MODEL_FILES.items()
+    }
+    if (
+        result["source"]
+        != {"repository": SOURCE_REPOSITORY, "revision": SOURCE_REVISION}
+        or model.get("repository") != MODEL_REPOSITORY
+        or model.get("files") != expected_files
+        or model.get("weights_baked") is not False
+    ):
+        raise SeedVR2Error("SeedVR2 result artifact identity is invalid")
+
+
+def _validate_result_argv(result, restore_request):
     argv = result.get("argv")
     valid_argv = (
         isinstance(argv, list)
@@ -238,6 +270,10 @@ def _validate_result_context(
     if not valid_argv:
         raise SeedVR2Error("SeedVR2 result command identity is invalid")
 
+
+def _validate_result_media(result, restore_request):
+    input_section = result["input"]
+    output_section = result["output"]
     source_location = authorize_uri(
         restore_request.input_path, operation="verify SeedVR2 source video"
     )
@@ -266,6 +302,9 @@ def _validate_result_context(
     if not valid_media:
         raise SeedVR2Error("SeedVR2 result media contract is invalid")
 
+
+def _validate_result_probe(result, request, restore_request, storage, directory):
+    input_section = result["input"]
     probe = input_section.get("probe")
     if not isinstance(probe, dict) or probe.get("uri") != restore_request.probe_path:
         raise SeedVR2Error("SeedVR2 result probe identity is invalid")
@@ -297,6 +336,9 @@ def _validate_result_context(
     ):
         raise SeedVR2Error("SeedVR2 input probe does not bind result.json")
 
+
+def _validate_result_log(result, storage, directory):
+    artifact_hashes = result["artifact_hashes"]
     log_uri = _authorized_result_uri(
         result,
         "artifacts",
@@ -376,7 +418,8 @@ def verify(
     result_path = directory / "result.json"
     storage.download_file(request.input_path, str(result_path))
     result = _load_result(result_path)
-    verifier_runtime = _runtime_identity()
+    restore_request = _result_request(result, request)
+    verifier_runtime = _runtime_identity(restore_request.expected_gpu)
     video_uri = _authorized_result_uri(
         result,
         "artifacts",
@@ -387,8 +430,23 @@ def verify(
     _validate_result_context(result, request, storage, directory)
     if verifier_runtime != result.get("runtime"):
         raise SeedVR2Error(
-            "verification H100/image identity differs from the restore result"
+            "verification GPU/image identity differs from the restore result"
         )
+    media, digest = _read_verified_video(result, video_uri, storage, directory)
+    document = _verification_document(
+        request, result, result_path, video_uri, digest, media, verifier_runtime
+    )
+    target = directory / "verification.json"
+    target.write_bytes(_canonical_json(document))
+    _ensure_artifacts_absent(storage, [request.output_path])
+    readback = directory / "readback"
+    readback.mkdir()
+    _publish_verified(storage, target, request.output_path, readback)
+    shutil.rmtree(directory)
+    return document
+
+
+def _read_verified_video(result, video_uri, storage, directory):
     video = directory / "restored.mp4"
     storage.download_file(video_uri, str(video))
     media = _probe_video(video)
@@ -398,7 +456,13 @@ def verify(
     if media != result.get("output", {}).get("media"):
         raise SeedVR2Error("restored video media metadata disagrees with result.json")
     _validate_candidate_decode(result, video)
-    document = {
+    return media, digest
+
+
+def _verification_document(
+    request, result, result_path, video_uri, digest, media, verifier_runtime
+):
+    return {
         "schema": VERIFICATION_SCHEMA,
         "status": "ok",
         "attestation_scope": "artifact_and_runtime_consistency_only",
@@ -420,14 +484,6 @@ def verify(
         },
         "verifier_runtime": verifier_runtime,
     }
-    target = directory / "verification.json"
-    target.write_bytes(_canonical_json(document))
-    _ensure_artifacts_absent(storage, [request.output_path])
-    readback = directory / "readback"
-    readback.mkdir()
-    _publish_verified(storage, target, request.output_path, readback)
-    shutil.rmtree(directory)
-    return document
 
 
 def _comparison_command(

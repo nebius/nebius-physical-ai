@@ -11,7 +11,7 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from npa.workbench.seedvr2 import artifacts, runtime
+from npa.workbench.seedvr2 import artifacts, conditioning, runtime
 from npa.workbench.seedvr2.service import create_app
 from npa.workbench.seedvr2.schemas import (
     MODEL_REVISION,
@@ -122,7 +122,7 @@ def _source_tree(tmp_path: Path) -> Path:
     (root / "models" / "video_vae_v3").mkdir(parents=True)
     (root / "projects" / "inference_seedvr2_3b.py").write_text("# pinned upstream\n")
     (root / "configs_3b" / "main.yaml").write_text(
-        "__inherit__: models/video_vae_v3/s8_c16_t4_inflation_sd3.yaml\n"
+        "vae: {dtype: bfloat16, scaling_factor: 0.9152, grouping: false}\n"
     )
     (root / "models" / "video_vae_v3" / "s8_c16_t4_inflation_sd3.yaml").write_text(
         "model: {}\n"
@@ -146,20 +146,14 @@ def _restore(
     tmp_path: Path,
     source_video: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    controls=None,
+    gpu=None,
+    runner=_fake_inference,
 ) -> tuple[dict, FakeStorage]:
     storage = FakeStorage({INPUT_URI: source_video.read_bytes()})
-    monkeypatch.setenv("NPA_SEEDVR2_WORK_DIR", str(tmp_path / "runs"))
-    source_root = _source_tree(tmp_path)
-    monkeypatch.setattr(runtime, "SOURCE_ROOT", source_root)
-    monkeypatch.setattr(artifacts, "SOURCE_ROOT", source_root)
-    monkeypatch.setenv("SEEDVR2_PYTHON", "/opt/seedvr2-venv/bin/python")
-    monkeypatch.setenv("NPA_TASK_IMAGE", RUNTIME_IDENTITY["image"])
-    monkeypatch.setenv("HF_TOKEN", "must-not-reach-inference")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-reach-inference")
-    source_revision_path = tmp_path / "npa-source-revision"
-    source_revision_path.write_text(RUNTIME_IDENTITY["npa_source_revision"] + "\n")
-    monkeypatch.setattr(artifacts, "SOURCE_REVISION_PATH", source_revision_path)
-    monkeypatch.setattr(artifacts, "_runtime_identity", lambda: RUNTIME_IDENTITY)
+    identity = {**RUNTIME_IDENTITY, "gpu": gpu or RUNTIME_IDENTITY["gpu"]}
+    _restore_environment(tmp_path, monkeypatch, identity)
     artifacts.probe(
         VideoArtifactRequest(
             input_path=INPUT_URI,
@@ -176,13 +170,36 @@ def _restore(
             probe_path=PROBE_URI,
             output_height=16,
             output_width=32,
+            **(controls or {}),
         ),
         storage_factory=lambda: storage,
-        inference_runner=_fake_inference,
+        inference_runner=runner,
         model_resolver=lambda: _model_files(tmp_path),
-        runtime_identity_resolver=lambda: RUNTIME_IDENTITY,
+        runtime_identity_resolver=lambda expected="H100": identity,
     )
     return result, storage
+
+
+def _restore_environment(tmp_path, monkeypatch, identity):
+    monkeypatch.setenv("NPA_SEEDVR2_WORK_DIR", str(tmp_path / "runs"))
+    source_root = _source_tree(tmp_path)
+    monkeypatch.setattr(
+        conditioning,
+        "SOURCE_MAIN_SHA256",
+        runtime._sha256(source_root / "configs_3b/main.yaml"),
+    )
+    monkeypatch.setattr(runtime, "SOURCE_ROOT", source_root)
+    monkeypatch.setattr(artifacts, "SOURCE_ROOT", source_root)
+    monkeypatch.setenv("SEEDVR2_PYTHON", "/opt/seedvr2-venv/bin/python")
+    monkeypatch.setenv("NPA_TASK_IMAGE", RUNTIME_IDENTITY["image"])
+    monkeypatch.setenv("HF_TOKEN", "must-not-reach-inference")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-reach-inference")
+    source_revision_path = tmp_path / "npa-source-revision"
+    source_revision_path.write_text(RUNTIME_IDENTITY["npa_source_revision"] + "\n")
+    monkeypatch.setattr(artifacts, "SOURCE_REVISION_PATH", source_revision_path)
+    monkeypatch.setattr(
+        artifacts, "_runtime_identity", lambda expected="H100": identity
+    )
 
 
 def test_dry_run_is_deterministic_and_uses_official_torchrun() -> None:
@@ -547,16 +564,23 @@ def test_media_probe_refuses_playlist_disguised_as_mp4(tmp_path: Path) -> None:
         runtime._probe_video(playlist)
 
 
-def test_runtime_identity_requires_digest_bound_h100(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def _identity_environment(monkeypatch, tmp_path):
     source_revision_path = tmp_path / "npa-source-revision"
     source_revision_path.write_text("b" * 40 + "\n")
     monkeypatch.setattr(runtime, "SOURCE_REVISION_PATH", source_revision_path)
     monkeypatch.setenv("NPA_TASK_IMAGE", RUNTIME_IDENTITY["image"])
-    monkeypatch.setattr(runtime, "_gpu_inventory", lambda: RUNTIME_IDENTITY["gpu"])
+    monkeypatch.setattr(
+        runtime, "_gpu_inventory", lambda expected="H100": RUNTIME_IDENTITY["gpu"]
+    )
     assert runtime._runtime_identity()["image_digest"] == "sha256:" + "a" * 64
+    return source_revision_path
+
+
+def test_runtime_identity_requires_digest_bound_h100(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_revision_path = _identity_environment(monkeypatch, tmp_path)
     monkeypatch.setenv("NPA_TASK_IMAGE", "ghcr.io/nebius/npa-seedvr2:mutable")
     with pytest.raises(runtime.SeedVR2Error, match="immutable image digest"):
         runtime._runtime_identity()

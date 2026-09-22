@@ -177,6 +177,8 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("output_height", "output_height", "--output-height"),
             _p("output_width", "output_width", "--output-width"),
             _p("seed", "seed", "--seed"),
+            _p("conditioning_mode", "conditioning_mode", "--conditioning-mode"),
+            _p("expected_gpu", "expected_gpu", "--expected-gpu"),
             _p("dry_run", "dry_run", "--dry-run"),
         ),
     ),

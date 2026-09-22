@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -44,13 +46,45 @@ class VideoArtifactRequest(BaseModel):
     run_id: str = Field(min_length=1)
 
 
+class ConditioningMode(str, Enum):
+    """Select the upstream VAE conditioning path without changing its encoder.
+
+    Args:
+        value: Sample or posterior-mode.
+    Returns:
+        A validated conditioning enum member.
+    Raises:
+        ValueError: The selection is unsupported.
+    """
+
+    sample = "sample"
+    posterior_mode = "posterior-mode"
+
+
+class ExpectedGPU(str, Enum):
+    """Validate assigned hardware; this value never allocates a GPU.
+
+    Args:
+        value: H100 or B200.
+    Returns:
+        A validated expected-hardware enum member.
+    Raises:
+        ValueError: The selection is unsupported.
+    """
+
+    h100 = "H100"
+    b200 = "B200"
+
+
 class RestoreRequest(VideoArtifactRequest):
-    """Describe one deterministic official SeedVR2-3B inference."""
+    """Describe one seeded official SeedVR2-3B inference configuration."""
 
     probe_path: str = ""
     output_height: int = Field(default=480, ge=16, le=4096)
     output_width: int = Field(default=640, ge=16, le=4096)
     seed: int = 666
+    conditioning_mode: ConditioningMode = ConditioningMode.sample
+    expected_gpu: ExpectedGPU = ExpectedGPU.h100
     dry_run: bool = False
 
     @field_validator("output_height", "output_width")
@@ -64,7 +98,7 @@ class RestoreRequest(VideoArtifactRequest):
 
     @model_validator(mode="after")
     def require_supported_pixel_budget(self) -> RestoreRequest:
-        """Reject requests above the reviewed single-H100 target area."""
+        """Preserve the existing single-GPU target area for both hardware paths."""
 
         if self.output_height * self.output_width > 1920 * 1080:
             raise ValueError("SeedVR2 output area must not exceed 1920x1080")
@@ -72,6 +106,8 @@ class RestoreRequest(VideoArtifactRequest):
 
 
 __all__ = [
+    "ConditioningMode",
+    "ExpectedGPU",
     "MODEL_FILES",
     "MODEL_REPOSITORY",
     "MODEL_REVISION",

@@ -613,7 +613,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.seedvr2.restore": ToolEntry(
         name="workbench.seedvr2.restore",
-        description="Run pinned official SeedVR2-3B video restoration.",
+        description="Run pinned SeedVR2-3B with explicit conditioning and assigned-GPU validation.",
         argv_template=[
             "npa",
             "workbench",
@@ -633,6 +633,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.seedvr2_output_width}}",
             "--seed",
             "{{config.seedvr2_seed}}",
+            "--conditioning-mode",
+            "{{config.seedvr2_conditioning_mode}}",
+            "--expected-gpu",
+            "{{config.seedvr2_gpu}}",
         ],
     ),
     "workbench.seedvr2.verify": ToolEntry(

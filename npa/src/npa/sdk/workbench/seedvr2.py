@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from npa.workbench.seedvr2 import artifacts, runtime
-from npa.workbench.seedvr2.schemas import RestoreRequest, VideoArtifactRequest
+from npa.workbench.seedvr2.schemas import (
+    ConditioningMode,
+    ExpectedGPU,
+    RestoreRequest,
+    VideoArtifactRequest,
+)
 
 
 def probe(*, input_path: str, output_path: str, run_id: str) -> dict[str, Any]:
@@ -27,6 +32,8 @@ def restore(
     output_height: int = 480,
     output_width: int = 640,
     seed: int = 666,
+    conditioning_mode: ConditioningMode = ConditioningMode.sample,
+    expected_gpu: ExpectedGPU = ExpectedGPU.h100,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run official SeedVR2-3B through the shared implementation."""
@@ -40,6 +47,8 @@ def restore(
             output_height=output_height,
             output_width=output_width,
             seed=seed,
+            conditioning_mode=conditioning_mode,
+            expected_gpu=expected_gpu,
             dry_run=dry_run,
         )
     )

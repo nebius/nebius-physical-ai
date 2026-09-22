@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+import pytest
 
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
@@ -14,6 +15,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
 )
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -81,3 +83,33 @@ def test_seedvr2_workflow_binds_every_stage_to_the_exact_image_digest() -> None:
     assert len(tasks) == 4
     assert {task["resources"]["image_id"] for task in tasks} == {"docker:" + image}
     assert {task["envs"]["NPA_TASK_IMAGE"] for task in tasks} == {image}
+
+
+@pytest.mark.parametrize("gpu,mode", [("H100", "sample"), ("B200", "posterior-mode")])
+def test_resource_and_validation_contract_are_bound_to_same_override(gpu, mode):
+    spec = merge_config_overrides(
+        load_spec(WORKFLOW), {"seedvr2_gpu": gpu, "seedvr2_conditioning_mode": mode}
+    )
+    plan = build_plan(spec, run_id="seedvr2-contract")
+    argv = plan.steps[1].argv
+    assert argv[argv.index("--expected-gpu") + 1] == gpu
+    assert argv[argv.index("--conditioning-mode") + 1] == mode
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="seedvr2-contract",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": "registry.example/seedvr2@sha256:" + "a" * 64},
+            materialize_registry_secrets=False,
+        ),
+    )
+    tasks = [task for task in yaml.safe_load_all(rendered) if task and "envs" in task]
+    assert [tasks[index]["resources"]["accelerators"] for index in (1, 2)] == [
+        gpu + ":1"
+    ] * 2
+
+
+def test_workflow_defaults_remain_h100_sample():
+    spec = load_spec(WORKFLOW)
+    assert spec.config["seedvr2_gpu"] == "H100"
+    assert spec.config["seedvr2_conditioning_mode"] == "sample"

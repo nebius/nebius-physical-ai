@@ -120,3 +120,40 @@ def test_system_info_declares_runtime_only_exact_model() -> None:
     assert payload["model"]["runtime_fetch"] is True
     assert payload["model"]["revision"] == "37255ff8cccfb01071b87f635a5948ca8d53117c"
     assert payload["source"]["license"] == "Apache-2.0"
+
+
+@pytest.mark.parametrize(
+    "mode,gpu,exit_code",
+    [
+        ("sample", "H100", 0),
+        ("posterior-mode", "B200", 0),
+        ("mean", "B200", 2),
+        ("sample", "H200", 2),
+    ],
+)
+def test_explicit_conditioning_and_gpu_contract(mode, gpu, exit_code):
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "seedvr2",
+            "restore",
+            "--input-path",
+            "s3://example-bucket/input.mp4",
+            "--output-path",
+            "s3://example-bucket/output/",
+            "--run-id",
+            "contract",
+            "--conditioning-mode",
+            mode,
+            "--expected-gpu",
+            gpu,
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == exit_code, result.output
+    if exit_code == 0:
+        request = json.loads(result.stdout)["request"]
+        assert request["conditioning_mode"] == mode
+        assert request["expected_gpu"] == gpu
+        assert request["seed"] == 666

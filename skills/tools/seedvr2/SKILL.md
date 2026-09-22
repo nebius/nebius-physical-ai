@@ -28,7 +28,8 @@ Also load `npa-cli-conventions`, `toolref-argv-contract`,
   values in `npa.workbench.seedvr2.schemas.MODEL_FILES`.
 - The real entrypoint is upstream `projects/inference_seedvr2_3b.py` under
   one-process `torchrun`, seed 666 and sequence-parallel size 1.
-- The candidate hardware contract is exactly one full-memory H100 (`sm_90`), a
+- The candidate hardware contract is exactly one full-memory non-MIG H100 (`sm_90`, default)
+  or explicitly selected B200 (`sm_100` with qualified native extensions), a
   digest-bound `NPA_TASK_IMAGE`, and the full NPA source revision baked into
   that image. A caller-supplied revision, tag, compatible image, MIG slice, or
   successful import is not capability evidence.
@@ -99,7 +100,7 @@ source recording and state these limits in user-facing evidence.
 
 The image version remains `0.1.0-cu130-unbuilt` and
 `UNVALIDATED_PUBLICATION_TOOLS` must contain `seedvr2` until exact built-image
-scans, anonymous registry verification, real H100 workflow evidence, objective
+scans, anonymous registry verification, real workflow evidence on the declared GPU, objective
 metrics, real VLM review, and independent review all pass for the same commit
 and digest.
 
@@ -119,3 +120,20 @@ npa/.venv/bin/python -m pytest \
 
 Never report unit tests, a local image build, or the golden-eval declaration as
 real GPU, objective-quality, VLM, workflow, or publication evidence.
+
+## Explicit conditioning and B200 contract
+
+H100 and `sample` remain the defaults. `restore --conditioning-mode
+posterior-mode` selects only upstream `vae.use_sample=false` in an owned copy
+of the pinned 3B config. Preserve the exact 3B weight pins, seed, entrypoint
+one-step/CFG 1.0 overrides, input and quality gates. Configuration hashes do
+not establish GPU execution or a quality improvement. Both upstream branches
+still consume the encoder wrapper's posterior sample draw; verify real
+post-encode RNG and downstream noise equality before a paired experiment.
+
+`--expected-gpu B200` validates the assigned device and baked native inventories;
+resource allocation stays in workflow `seedvr2_gpu` (default H100). Build with
+matching `90;100` FlashAttention and `9.0;10.0` Torch/Apex targets, qualify the
+actual immutable image and kernels, then freeze an encoder-only control before
+any candidate quality run. Private 7B evidence does not qualify this 3B path.
+Historical 3B quality failures and the held-out partition remain unchanged.

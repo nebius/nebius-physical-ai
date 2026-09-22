@@ -7,18 +7,18 @@ The original sensor clip remains authoritative: SeedVR2 is generative, so its
 output is derived review media and can contain unsupported detail.
 
 The candidate image is `npa-seedvr2:0.1.0-cu130-unbuilt`. It remains
-publication-quarantined until built-image scans, a real H100 workflow run,
+publication-quarantined until built-image scans, a real workflow on the declared GPU,
 objective preservation measurements, calibrated VLM review, and independent
 review pass for the same commit and image digest.
 
 | Evidence gate | Current result |
 | --- | --- |
-| Exact image construction | A local H100 candidate built successfully; final-head rebuild and publication remain quarantined |
-| Saved-image payload closure | Complete compressed-blob, uncompressed-layer, config, manifest, nested-archive, and exact Python path-file checks pass with no baked weights or media |
-| CUDA applicability | Torch carries `sm_90`, while built FlashAttention and Apex carry native `sm_90` SASS only and no PTX; this candidate is H100-only |
-| Other GPU families | H200 is outside the enforced runtime policy; L40S, RTX PRO 6000, B200, and B300 are not supported by the built extensions |
-| Real restoration and objective evidence | Pending on one digest-bound H100; no capability claim is made from imports or architecture inventory |
-| VLM evidence | Four hosted judges failed frozen calibration; candidate calls will be retained as non-gating unless a judge qualifies before candidate bytes exist |
+| Source and packaging | Source supports explicit H100/sample defaults and an opt-in B200/posterior-mode path; each new source requires its own qualified immutable image |
+| CUDA applicability | B200 requires the existing additive `90;100` FlashAttention and `9.0;10.0` Torch/Apex build options, actual native extension measurement, and kernel execution; Hopper-only images are rejected |
+| Actual 3B quality | The retained H100 sample run failed the fixed LPIPS-improvement and temporal-preservation gates; this change does not erase those failures |
+| Posterior-mode quality | Unproven hypothesis; CPU conditioning/RNG controls are not encoder, GPU, or quality acceptance |
+| Other models and GPUs | Private 7B diagnostics do not qualify this 3B tool. H200, L40S, RTX PRO 6000, and B300 remain outside this runtime contract |
+| VLM evidence | Descriptive review cannot override failed objective preservation gates |
 
 ## Run the workflow
 
@@ -34,8 +34,8 @@ npa workbench workflow submit workflows/testing/seedvr2-video-restoration.yaml \
 The stages are:
 
 1. `probe`: fully decode and hash the exact input.
-2. `restore`: run the official pinned SeedVR2-3B one-step entrypoint on one H100.
-3. `verify`: on the same digest-bound H100 image, recompute runtime identity,
+2. `restore`: run the official pinned SeedVR2-3B one-step entrypoint on one declared H100 or B200.
+3. `verify`: on the same digest-bound GPU image, recompute runtime identity,
    read the uploaded result back, hash it, and decode it independently.
 4. `review`: render a non-blended bicubic-left/SeedVR2-right MP4, fixed-frame
    contact sheet, JSON manifest, and browser-readable HTML page.
@@ -70,12 +70,38 @@ prefix. `--probe-path` is mandatory for every non-dry restoration, and the run
 fails if the probe run ID, URI, byte hash, or decoded media no longer matches
 the input. Source and output frames may contain at most 1920x1080 pixels;
 output dimensions must also be divisible by 16 and preserve the source aspect
-ratio. Non-dry execution requires exactly one full-memory H100, a digest-bound
+ratio. Non-dry execution requires exactly one full-memory, non-MIG device matching `--expected-gpu`
+(`H100` by default, or explicitly `B200`), a digest-bound
 `NPA_TASK_IMAGE`, and the full NPA source revision baked into that image; a tag
 or caller-supplied revision is rejected. `--dry-run`
 prints the exact official `torchrun` invocation without fetching the model or
 touching storage. The Python SDK exposes `probe`, `restore`, `verify`, and
 `review`.
+
+## Explicit conditioning and hardware
+
+`restore --conditioning-mode sample` keeps the upstream default and copies the
+original pinned `configs_3b/main.yaml` bytes unchanged. The experimental
+`--conditioning-mode posterior-mode` changes only `vae.use_sample` to false in
+an owned working-directory copy; the upstream entrypoint and encoder remain
+unmodified. The selected mode and source/effective configuration hashes are
+recorded in `result.json` and checked during verification and review. These
+hashes establish config consistency, not an independent producer attestation.
+
+The pinned encoder wrapper still makes its posterior sample draw in both
+branches. CPU controls exercise that exact control flow and reject changed RNG
+consumption; real encoder/CUDA equality must be checked before a paired quality
+experiment. The entrypoint still overrides the YAML to one diffusion step,
+CFG scale 1.0 and rescale 0.0, with seed 666 by default. Posterior mode has no
+established quality benefit, and the default remains `sample`.
+
+`--expected-gpu B200` validates assigned hardware; it never allocates a GPU.
+The workflow keeps hardware allocation in its resource profile and binds that
+profile to the same declaration using `--var seedvr2_gpu=B200`. It keeps
+sample conditioning unless `--var seedvr2_conditioning_mode=posterior-mode`
+is also explicit. The SDK exposes the same `expected_gpu` and
+`conditioning_mode` arguments. B200 needs a separately qualified SM90+SM100
+image; selecting a name does not qualify compiled kernels or restoration.
 
 ## Identity and packaging
 
@@ -99,7 +125,9 @@ touching storage. The Python SDK exposes `probe`, `restore`, `verify`, and
   Apex jobs; `build.sh` exposes positive-integer overrides for a differently
   sized trusted builder. Python dependency installation, FlashAttention
   compilation, and Apex compilation are separate cacheable layers.
-  FlashAttention's own `FLASH_ATTN_CUDA_ARCHS` input is pinned to `90`; its
+  FlashAttention's own `FLASH_ATTN_CUDA_ARCHS` input defaults to `90`; use
+  `--flash-attn-cuda-archs '90;100' --torch-cuda-arch-list '9.0;10.0'`
+  for the B200-capable private build. The two target lists must agree. Its
   upstream default is a multi-architecture `80;90;100;120` build and does not
   honor `TORCH_CUDA_ARCH_LIST`.
 

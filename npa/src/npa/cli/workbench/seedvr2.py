@@ -22,10 +22,15 @@ from npa.workbench.seedvr2.schemas import (
     MODEL_REVISION,
     SOURCE_REPOSITORY,
     SOURCE_REVISION,
+    ConditioningMode,
+    ExpectedGPU,
     RestoreRequest,
     VideoArtifactRequest,
 )
 
+
+_PROBE_HELP = "Required for non-dry restoration."
+_GPU_HELP = "Validate assigned hardware; does not allocate a GPU."
 
 app = typer.Typer(
     name="seedvr2",
@@ -109,29 +114,36 @@ def restore_cmd(
     input_path: str = typer.Option(..., "--input-path"),
     output_path: str = typer.Option(..., "--output-path"),
     run_id: str = typer.Option(..., "--run-id"),
-    probe_path: str = typer.Option(
-        "", "--probe-path", help="Required for non-dry restoration."
-    ),
+    probe_path: str = typer.Option("", "--probe-path", help=_PROBE_HELP),
     output_height: int = typer.Option(480, "--output-height", min=16),
     output_width: int = typer.Option(640, "--output-width", min=16),
     seed: int = typer.Option(666, "--seed"),
+    conditioning_mode: ConditioningMode = typer.Option(
+        ConditioningMode.sample, "--conditioning-mode"
+    ),
+    expected_gpu: ExpectedGPU = typer.Option(
+        ExpectedGPU.h100,
+        "--expected-gpu",
+        help=_GPU_HELP,
+    ),
     dry_run: bool = typer.Option(False, "--dry-run"),
     output_format: OutputFormat = typer.Option(OutputFormat.json, "--output-format"),
 ) -> None:
     """Run pinned one-step SeedVR2-3B and publish immutable artifacts."""
 
     input_path, output_path = _paths(input_path, output_path)
-    probe_path = _optional_read_path(probe_path)
     _run(
         runtime.restore,
         RestoreRequest(
             input_path=input_path,
             output_path=output_path,
             run_id=run_id,
-            probe_path=probe_path,
+            probe_path=_optional_read_path(probe_path),
             output_height=output_height,
             output_width=output_width,
             seed=seed,
+            conditioning_mode=conditioning_mode,
+            expected_gpu=expected_gpu,
             dry_run=dry_run,
         ),
         output_format,

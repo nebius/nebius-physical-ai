@@ -52,8 +52,7 @@ This record is engineering classification, not legal advice.
 
 `npa.deploy.images.UNVALIDATED_PUBLICATION_TOOLS` contains `seedvr2`. Do not
 publish an official development or release tag until all secure-image gates,
-complete layer/config/SBOM scans, anonymous digest verification, real H100
-restoration, S3 workflow execution, objective preservation gates, real VLM
+complete layer/config/SBOM scans, anonymous digest verification, real restoration on the declared, qualified H100 or B200 target, S3 workflow execution, objective preservation gates, real VLM
 review, and independent review pass for the exact candidate commit and digest.
 
 An operator-controlled private validation image proves only the operator's run.

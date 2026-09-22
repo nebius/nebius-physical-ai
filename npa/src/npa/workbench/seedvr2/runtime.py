@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from fractions import Fraction
 import hashlib
@@ -17,6 +18,12 @@ from uuid import uuid4
 from npa.clients.storage import StorageClient
 from npa.workbench.storage_scope import authorize_uri
 
+from .conditioning import (
+    configuration_identity,
+    prepare_configuration,
+    verify_configuration,
+)
+from .hardware import require_b200_build_inventory, validate_gpu
 from .schemas import (
     MODEL_FILES,
     MODEL_REPOSITORY,
@@ -30,7 +37,6 @@ from .schemas import (
 
 SOURCE_REVISION_PATH = Path("/opt/npa-source-revision")
 MAX_SOURCE_PIXELS = 1920 * 1080
-MIN_H100_MEMORY_MIB = 75_000
 SOURCE_ROOT = Path("/opt/seedvr2")
 RUNTIME_TEMP_ROOT = Path("/workspace/tmp")
 UPSTREAM_FAILURE_TAIL_BYTES = 16 * 1024
@@ -383,7 +389,9 @@ def _verify_model_files(snapshot: Path) -> dict[str, Path]:
     return resolved
 
 
-def _prepare_upstream_workspace(directory: Path, model_files: dict[str, Path]) -> Path:
+def _prepare_upstream_workspace(
+    directory: Path, model_files: dict[str, Path], conditioning_mode: str = "sample"
+) -> Path:
     required_files = (
         SOURCE_ROOT / "projects" / "inference_seedvr2_3b.py",
         SOURCE_ROOT / "configs_3b" / "main.yaml",
@@ -393,7 +401,8 @@ def _prepare_upstream_workspace(directory: Path, model_files: dict[str, Path]) -
         raise SeedVR2Error("the pinned SeedVR2 source tree is unavailable")
     workspace = directory / "upstream"
     workspace.mkdir()
-    for name in ("configs_3b", "models", "projects"):
+    prepare_configuration(SOURCE_ROOT, workspace, conditioning_mode)
+    for name in ("models", "projects"):
         (workspace / name).symlink_to(SOURCE_ROOT / name, target_is_directory=True)
     checkpoints = workspace / "ckpts"
     checkpoints.mkdir()
@@ -564,7 +573,7 @@ def _gpu_inventory() -> dict[str, str]:
     }
 
 
-def _runtime_identity() -> dict[str, Any]:
+def _runtime_identity(expected_gpu: str = "H100") -> dict[str, Any]:
     image = os.environ.get("NPA_TASK_IMAGE", "")
     if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
         raise SeedVR2Error("NPA_TASK_IMAGE must bind an immutable image digest")
@@ -575,17 +584,12 @@ def _runtime_identity() -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
         raise SeedVR2Error("image has an invalid baked NPA source revision")
     gpu = _gpu_inventory()
-    if (
-        gpu.get("status") != "available"
-        or gpu.get("compute_capability") != "9.0"
-        or "H100" not in gpu.get("name", "")
-        or gpu.get("mig_mode") != "Disabled"
-        or not str(gpu.get("memory_mib", "")).isdigit()
-        or int(gpu["memory_mib"]) < MIN_H100_MEMORY_MIB
-    ):
-        raise SeedVR2Error(
-            "official SeedVR2 execution requires one full-memory verified H100 GPU"
-        )
+    try:
+        validate_gpu(gpu, expected_gpu)
+        if expected_gpu == "B200":
+            require_b200_build_inventory()
+    except ValueError as exc:
+        raise SeedVR2Error(str(exc)) from exc
     return {
         "image": image,
         "image_digest": image.rsplit("@", 1)[1],
@@ -635,16 +639,12 @@ def _planned_result(request: RestoreRequest) -> dict[str, Any]:
 def _result_document(
     request: RestoreRequest,
     argv: list[str],
-    source_probe: dict[str, Any],
-    output_probe: dict[str, Any],
     *,
     started_at: str,
-    input_hash: str,
+    media_identity: dict[str, Any],
     output_hash: str,
     upstream_log_hash: str,
-    unique_frames: int,
     artifacts: dict[str, str],
-    probe_identity: dict[str, str] | None,
     runtime_identity: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -654,6 +654,34 @@ def _result_document(
         "started_at": started_at,
         "finished_at": _utc_now(),
         "source": {"repository": SOURCE_REPOSITORY, "revision": SOURCE_REVISION},
+        **media_identity,
+        "request": request.model_dump(exclude={"dry_run"}),
+        "runtime": runtime_identity,
+        "configuration": configuration_identity(SOURCE_ROOT, request.conditioning_mode),
+        "argv": argv,
+        "artifacts": artifacts,
+        "artifact_hashes": {
+            "restored_video": output_hash,
+            "upstream_log": upstream_log_hash,
+        },
+        "limitations": [
+            "Generated detail is a review aid, not observed sensor truth.",
+            "Heavy degradation and large motion can fail or create unpleasant detail.",
+            "Light degradation and small inputs can be oversharpened.",
+        ],
+    }
+
+
+def _model_and_media(
+    request,
+    source_probe,
+    output_probe,
+    input_hash,
+    output_hash,
+    unique_frames,
+    probe_identity,
+):
+    return {
         "model": {
             "repository": MODEL_REPOSITORY,
             "revision": MODEL_REVISION,
@@ -675,19 +703,6 @@ def _result_document(
             "unique_decoded_frames": unique_frames,
             "derived_sensor_truth": False,
         },
-        "request": request.model_dump(exclude={"dry_run"}),
-        "runtime": runtime_identity,
-        "argv": argv,
-        "artifacts": artifacts,
-        "artifact_hashes": {
-            "restored_video": output_hash,
-            "upstream_log": upstream_log_hash,
-        },
-        "limitations": [
-            "Generated detail is a review aid, not observed sensor truth.",
-            "Heavy degradation and large motion can fail or create unpleasant detail.",
-            "Light degradation and small inputs can be oversharpened.",
-        ],
     }
 
 
@@ -697,7 +712,7 @@ def restore(
     storage_factory: Callable[[], Any] = StorageClient.from_environment,
     inference_runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
     model_resolver: Callable[[], dict[str, Path]] = _resolve_model_files,
-    runtime_identity_resolver: Callable[[], dict[str, Any]] = _runtime_identity,
+    runtime_identity_resolver: Callable[[str], dict[str, Any]] = _runtime_identity,
 ) -> dict[str, Any]:
     """Run official SeedVR2-3B and publish readback-verified artifacts.
 
@@ -706,7 +721,7 @@ def restore(
         storage_factory: Build the request-scoped object-storage client.
         inference_runner: Execute the upstream ``torchrun`` command.
         model_resolver: Fetch and verify the exact public model payloads.
-        runtime_identity_resolver: Verify the immutable image and H100 identity.
+        runtime_identity_resolver: Verify the immutable image and requested GPU identity.
     Returns:
         Complete run provenance and artifact URIs.
     Raises:
@@ -719,7 +734,7 @@ def restore(
         return _planned_result(request)
     started_at = _utc_now()
     directory = _create_work_directory(request.run_id)
-    try:
+    with _retain_failure(directory):
         return _restore_in_directory(
             request,
             directory,
@@ -729,6 +744,12 @@ def restore(
             model_resolver,
             runtime_identity_resolver,
         )
+
+
+@contextmanager
+def _retain_failure(directory):
+    try:
+        yield
     except Exception as exc:
         failure = {"status": "failed", "at": _utc_now(), "error": type(exc).__name__}
         (directory / "failure.json").write_bytes(_canonical_json(failure))
@@ -746,31 +767,22 @@ def _restore_in_directory(
     storage: Any,
     runner: Callable[..., subprocess.CompletedProcess[Any]],
     model_resolver: Callable[[], dict[str, Path]],
-    runtime_identity_resolver: Callable[[], dict[str, Any]],
+    runtime_identity_resolver: Callable[[str], dict[str, Any]],
 ) -> dict[str, Any]:
-    input_dir = directory / "input"
-    generated_dir = directory / "generated"
-    readback_dir = directory / "readback"
-    for path in (input_dir, generated_dir, readback_dir):
-        path.mkdir()
-    source = input_dir / "input.mp4"
-    storage.download_file(request.input_path, str(source))
-    source_probe = _probe_video(source)
-    input_hash = _sha256(source)
-    _validate_source_geometry(request, source_probe)
-    probe_identity = _verify_probe_contract(
-        request,
-        storage,
-        directory,
-        input_hash=input_hash,
-        source_probe=source_probe,
+    source, source_probe, input_hash, probe_identity = _prepare_restore_input(
+        request, directory, storage
     )
-    runtime_identity = runtime_identity_resolver()
-    workspace = _prepare_upstream_workspace(directory, model_resolver())
+    runtime_identity = runtime_identity_resolver(request.expected_gpu)
+    validate_gpu(runtime_identity.get("gpu", {}), request.expected_gpu)
+    workspace = _prepare_upstream_workspace(
+        directory, model_resolver(), request.conditioning_mode
+    )
     argv = build_restore_argv(request, workspace)
     log_path = directory / "upstream.log"
+    verify_configuration(SOURCE_ROOT, workspace, request.conditioning_mode)
     _execute_upstream(argv, workspace, log_path, runner)
-    output = generated_dir / source.name
+    verify_configuration(SOURCE_ROOT, workspace, request.conditioning_mode)
+    output = directory / "generated" / source.name
     output_probe, unique_frames = _validate_output(output, source_probe, request)
     return _publish_result(
         request,
@@ -789,6 +801,27 @@ def _restore_in_directory(
     )
 
 
+def _prepare_restore_input(request, directory, storage):
+    input_dir = directory / "input"
+    generated_dir = directory / "generated"
+    readback_dir = directory / "readback"
+    for path in (input_dir, generated_dir, readback_dir):
+        path.mkdir()
+    source = input_dir / "input.mp4"
+    storage.download_file(request.input_path, str(source))
+    source_probe = _probe_video(source)
+    input_hash = _sha256(source)
+    _validate_source_geometry(request, source_probe)
+    probe_identity = _verify_probe_contract(
+        request,
+        storage,
+        directory,
+        input_hash=input_hash,
+        source_probe=source_probe,
+    )
+    return source, source_probe, input_hash, probe_identity
+
+
 def _publish_result(
     request: RestoreRequest,
     directory: Path,
@@ -804,6 +837,31 @@ def _publish_result(
     probe_identity: dict[str, str] | None,
     runtime_identity: dict[str, Any],
 ) -> dict[str, Any]:
+    uris, output_hash, upstream_log_hash = _upload_result_media(
+        request, directory, storage, output, log_path
+    )
+    result = _result_document(
+        request,
+        argv,
+        started_at=started_at,
+        media_identity=_model_and_media(
+            request,
+            source_probe,
+            output_probe,
+            input_hash,
+            output_hash,
+            unique_frames,
+            probe_identity,
+        ),
+        output_hash=output_hash,
+        upstream_log_hash=upstream_log_hash,
+        artifacts=uris,
+        runtime_identity=runtime_identity,
+    )
+    return _publish_result_document(result, directory, storage, uris["result"])
+
+
+def _upload_result_media(request, directory, storage, output, log_path):
     uris = {
         "restored_video": _artifact_uri(request.output_path, "restored.mp4"),
         "upstream_log": _artifact_uri(request.output_path, "upstream.log"),
@@ -815,23 +873,14 @@ def _publish_result(
     upstream_log_hash = _publish_verified(
         storage, log_path, uris["upstream_log"], readback
     )
-    result = _result_document(
-        request,
-        argv,
-        source_probe,
-        output_probe,
-        started_at=started_at,
-        input_hash=input_hash,
-        output_hash=output_hash,
-        upstream_log_hash=upstream_log_hash,
-        unique_frames=unique_frames,
-        artifacts=uris,
-        probe_identity=probe_identity,
-        runtime_identity=runtime_identity,
-    )
+    return uris, output_hash, upstream_log_hash
+
+
+def _publish_result_document(result, directory, storage, result_uri):
+    readback = directory / "readback"
     result_path = directory / "result.json"
     result_path.write_bytes(_canonical_json(result))
-    _publish_verified(storage, result_path, uris["result"], readback)
+    _publish_verified(storage, result_path, result_uri, readback)
     shutil.rmtree(directory)
     return result
 

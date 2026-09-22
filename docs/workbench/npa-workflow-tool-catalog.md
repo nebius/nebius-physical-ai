@@ -26,7 +26,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
 | `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
 | `workbench.seedvr2.probe` | `npa workbench seedvr2 probe` | exact low-resolution S3 MP4 | fully decoded media metadata and source hash | no |
-| `workbench.seedvr2.restore` | `npa workbench seedvr2 restore` | exact low-resolution S3 MP4, output dimensions, seed | official SeedVR2-3B restored MP4, upstream log, model/source/runtime provenance | no (real pinned upstream one-step GPU inference) |
+| `workbench.seedvr2.restore` | `npa workbench seedvr2 restore` | exact low-resolution S3 MP4, dimensions, seed, conditioning mode, assigned-GPU validation | official SeedVR2-3B restored MP4, upstream log, model/source/runtime/config provenance | no (real pinned upstream one-step GPU inference) |
 | `workbench.seedvr2.verify` | `npa workbench seedvr2 verify` | SeedVR2 `result.json` and restored MP4 | independent S3 readback hash and complete decode verification | no |
 | `workbench.seedvr2.review` | `npa workbench seedvr2 review` | verified source/result pair | non-blended bicubic-left/candidate-right MP4, contact sheet, JSON, HTML | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |

@@ -4,7 +4,7 @@ metadata:
   name: seedvr2-video-restoration
   description: >-
     Decode a low-resolution sensor clip, restore it with pinned official
-    SeedVR2-3B on H100, independently read back the result, and render a
+    SeedVR2-3B on explicitly selected H100 or B200, independently read back the result, and render a
     non-blended bicubic-baseline versus candidate review package.
 config:
   bucket: example-bucket
@@ -19,6 +19,8 @@ config:
   seedvr2_output_height: "480"
   seedvr2_output_width: "640"
   seedvr2_seed: "666"
+  seedvr2_gpu: H100
+  seedvr2_conditioning_mode: sample
 resources:
   cpu:
     cloud: kubernetes
@@ -27,7 +29,7 @@ resources:
     disk_size: 80
   gpu:
     cloud: kubernetes
-    accelerators: H100:1
+    accelerators: "{{config.seedvr2_gpu}}:1"
     cpus: 8
     memory: 64Gi
     disk_size: 100
