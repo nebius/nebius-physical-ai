@@ -27,12 +27,13 @@ def driver():
     return module
 
 
-@pytest.mark.parametrize("mutation", ["setup", "token", "credential", "sidecar", "privileged", "mount", "mode"])
+@pytest.mark.parametrize("mutation", ["setup", "token", "credential", "sidecar", "privileged", "mount", "mode", "root_uid", "missing_uid"])
 def test_customer_profile_rejects_workload_expansion(mutation):
     docs = list(yaml.safe_load_all(customer.PROFILE.read_text()))
     customer.validate_profile(docs)
     task = docs[1]
     pod = task["resources"]["kubernetes"]["pod_config"]["spec"]
+    assert pod["securityContext"]["runAsUser"] == 1000
     if mutation == "setup":
         task["setup"] += "\necho altered\n"
     elif mutation == "token":
@@ -45,6 +46,10 @@ def test_customer_profile_rejects_workload_expansion(mutation):
         pod["containers"][0]["securityContext"]["capabilities"]["add"].append("SYS_ADMIN")
     elif mutation == "mount":
         pod["volumes"].append({"name": "host", "hostPath": {"path": "/"}})
+    elif mutation == "root_uid":
+        pod["securityContext"]["runAsUser"] = 0
+    elif mutation == "missing_uid":
+        pod["securityContext"].pop("runAsUser")
     else:
         task["envs"][customer.MODE_ENV] = "unreviewed"
     with pytest.raises(ValueError):

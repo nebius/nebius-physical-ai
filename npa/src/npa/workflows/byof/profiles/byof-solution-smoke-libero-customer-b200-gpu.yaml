@@ -20,6 +20,7 @@ resources:
         hostIPC: false
         securityContext:
           runAsNonRoot: true
+          runAsUser: 1000
           fsGroup: 1001
           seccompProfile:
             type: Localhost
