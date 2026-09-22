@@ -314,8 +314,11 @@ def _fake_robomimic_kubectl(
         calls.append(command)
         if "auth" in command:
             verb = command[command.index("can-i") + 1]
-            resource = command[command.index("can-i") + 2]
-            allowed = (verb, resource) == ("get", "pods")
+            # kubectl parses positional TYPE/NAME separately from --subresource.
+            resource = command[command.index("can-i") + 2].split("/", 1)[0]
+            allowed = (verb, resource) == ("get", "pods") and (
+                "--subresource" not in command
+            )
             return subprocess.CompletedProcess(
                 command, 0 if allowed else 1, "yes\n" if allowed else "no\n", ""
             )

@@ -864,13 +864,16 @@ def _robomimic_can_i(
     resource: str,
     env: dict[str, str],
 ) -> bool:
+    resource_type, separator, subresource = resource.partition("/")
+    subresource_args = ["--subresource", subresource] if separator else []
     result = subprocess.run(
         [
             *kube,
             "auth",
             "can-i",
             verb,
-            resource,
+            resource_type,
+            *subresource_args,
             "--namespace",
             namespace,
             "--as",
