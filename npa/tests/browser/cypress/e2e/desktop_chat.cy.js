@@ -55,7 +55,8 @@ function mockChat() {
 
 function mockThreadRoutes(chat) {
   cy.intercept("GET", "/chat/api/threads*", (req) =>
-    req.reply({ data: [chat.thread], nextCursor: null }),
+    req.reply({ data: (new URL(req.url).searchParams.get("archived") === "true") === !!chat.thread.archived
+      ? [chat.thread] : [], nextCursor: null }),
   );
   cy.intercept("POST", "/chat/api/resume", (req) =>
     req.reply({ thread: chat.thread }),
@@ -76,6 +77,20 @@ function mockThreadRoutes(chat) {
     };
     req.reply({ model: req.body.model, effort: req.body.effort });
   }).as("settings");
+  mockManagement(chat);
+}
+
+function mockManagement(chat) {
+  cy.intercept("POST", "/chat/api/rename", req => {
+    chat.thread.name = req.body.name;
+    publish(chat, "thread/name/updated", {threadName: chat.thread.name});
+    req.reply({ok: true});
+  }).as("rename");
+  for (const action of ["archive", "unarchive"]) cy.intercept("POST", "/chat/api/" + action, req => {
+    chat.thread.archived = action === "archive";
+    publish(chat, "thread/" + action + "d", {});
+    req.reply({ok: true});
+  }).as(action);
 }
 
 function mockEventStream(chat) {
@@ -106,6 +121,60 @@ describe("Mobile Codex conversations", () => {
     cy.viewport(390, 844);
     cy.visit("/chat/#same-thread");
     cy.get("#model").should("be.enabled").and("have.value", "model-a");
+  });
+
+  it("renames the same chat from its phone list without interpreting markup", () => {
+    cy.get("#menu").click();
+    cy.get(".session-actions").click();
+    cy.get("#session-name").should("be.enabled").clear().type("New <img src=x> name");
+    cy.get("#rename-chat").click();
+    cy.wait("@rename").its("request.body").should("deep.equal", {id: "same-thread", name: "New <img src=x> name"});
+    cy.get("#title").should("have.text", "New <img src=x> name");
+    cy.get(".session-title").should("have.text", "New <img src=x> name");
+    cy.get(".session-title img").should("not.exist");
+    cy.reload();
+    cy.get("#title").should("have.text", "New <img src=x> name");
+    cy.location("hash").should("equal", "#same-thread");
+  });
+
+  it("archives and restores without losing messages or a draft", () => {
+    cy.then(() => { chat.turns = [{id: "saved-turn", status: "completed", items: [
+      {id: "saved-message", type: "agentMessage", text: "Preserved history"},
+    ]}]; });
+    cy.get("#refresh").click();
+    cy.get("#prompt").type("Unsent draft");
+    cy.get("#manage-chat").click();
+    cy.get("#archive-chat").should("be.enabled").click();
+    cy.wait("@archive").its("request.body.id").should("equal", "same-thread");
+    cy.get("#prompt").should("be.disabled").and("have.value", "Unsent draft");
+    cy.get("#messages").should("contain", "Preserved history");
+    cy.reload();
+    cy.get("#run-state").should("contain", "Archived");
+    cy.get("#menu").click();
+    cy.get(".session").should("not.exist");
+    cy.get("#archive").select("true");
+    cy.get(".session-actions").click();
+    cy.get("#archive-chat").should("have.text", "Restore").and("be.enabled").click();
+    cy.wait("@unarchive").its("request.body.id").should("equal", "same-thread");
+    cy.get("#prompt").should("be.enabled").and("have.value", "Unsent draft");
+    cy.get("#messages").should("contain", "Preserved history");
+    cy.location("hash").should("equal", "#same-thread");
+  });
+
+  it("keeps rename available while protecting running chats from archive", () => {
+    cy.then(() => { chat.thread.status = {type: "active"}; });
+    cy.get("#manage-chat").click();
+    cy.get("#session-name").should("be.enabled");
+    cy.get("#archive-chat").should("be.disabled");
+    cy.get("#session-hint").should("contain", "Codex is working");
+    cy.get("#cancel-session").click();
+    cy.intercept("POST", "/chat/api/rename", {statusCode: 400, body: {error: "Owner unavailable"}});
+    cy.get("#manage-chat").click();
+    cy.get("#session-name").should("be.enabled").clear().type("Keep on failure");
+    cy.get("#rename-chat").click();
+    cy.get("#session-error").should("be.visible").and("contain", "Owner unavailable");
+    cy.get("#session-name").should("have.value", "Keep on failure");
+    cy.get("#title").should("have.text", "Shared conversation");
   });
 
   it("updates the same thread with supported model and reasoning settings", () => {

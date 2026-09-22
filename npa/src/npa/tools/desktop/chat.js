@@ -19,6 +19,7 @@ const state = {
   images: [],
   modes: [],
   hostLabel: "VDI",
+  sessionGeneration: 0,
 };
 const node = (tag, className, text) => {
   const el = document.createElement(tag);
@@ -63,43 +64,48 @@ function relativeTime(timestamp) {
     day: "numeric",
   });
 }
+function sessionButton(thread) {
+  const button = node("button", "session" + (thread.id === state.id ? " selected" : ""));
+  button.setAttribute("aria-current", String(thread.id === state.id));
+  button.append(node("span", "session-title", title(thread)));
+  const meta = node("span", "session-meta");
+  if (state.statuses.get(thread.id)?.type === "active") {
+    const spinner = node("span", "spinner session-spinner");
+    spinner.setAttribute("aria-label", "Codex is working");
+    meta.append(spinner);
+  }
+  meta.append(node("span", "workspace", workspace(thread.cwd)),
+    node("time", "", relativeTime(thread.updatedAt)));
+  button.append(meta);
+  button.addEventListener("click", () =>
+    selectThread(thread.id).catch((error) => notice(error.message)));
+  return button;
+}
 function renderSessions() {
   const root = $("#sessions");
   root.replaceChildren();
   if (!state.sessions.length)
     root.append(node("p", "loading muted", "No sessions found."));
   for (const thread of state.sessions) {
-    const button = node(
-      "button",
-      "session" + (thread.id === state.id ? " selected" : ""),
-    );
-    button.setAttribute("aria-current", String(thread.id === state.id));
-    button.append(node("span", "session-title", title(thread)));
-    const meta = node("span", "session-meta");
-    if (state.statuses.get(thread.id)?.type === "active") {
-      const spinner = node("span", "spinner session-spinner");
-      spinner.setAttribute("aria-label", "Codex is working");
-      meta.append(spinner);
-    }
-    meta.append(
-      node("span", "workspace", workspace(thread.cwd)),
-      node("time", "", relativeTime(thread.updatedAt)),
-    );
-    button.append(meta);
-    button.addEventListener("click", () =>
-      selectThread(thread.id).catch((error) => notice(error.message)),
-    );
-    root.append(button);
+    const row = node("div", "session-row");
+    const actions = node("button", "session-actions", "⋯");
+    actions.setAttribute("aria-label", "Manage chat: " + title(thread));
+    actions.setAttribute("aria-haspopup", "dialog");
+    actions.addEventListener("click", () => manageChat(thread));
+    row.append(sessionButton(thread), actions);
+    root.append(row);
   }
   $("#more-sessions").hidden = !state.sessionCursor;
 }
 async function loadSessions(append = false) {
+  const generation = ++state.sessionGeneration;
   const query = new URLSearchParams({
     search: $("#search").value,
     archived: $("#archive").value,
   });
   if (append && state.sessionCursor) query.set("cursor", state.sessionCursor);
   const result = await api("threads?" + query);
+  if (generation !== state.sessionGeneration) return;
   state.sessionCursor = result.nextCursor;
   state.sessions = append ? [...state.sessions, ...result.data] : result.data;
   for (const thread of result.data)
@@ -112,17 +118,19 @@ function activeTurn() {
 }
 function updateControls() {
   const active = activeTurn();
-  $("#prompt").disabled = !state.id || state.loading || state.externalOwner;
+  const readOnly = state.externalOwner || state.thread?.archived;
+  $("#manage-chat").disabled = !state.thread || state.loading;
+  $("#prompt").disabled = !state.id || state.loading || readOnly;
   $("#send").disabled =
     !state.id ||
     state.loading ||
     state.sending ||
     state.changingModel ||
-    state.externalOwner ||
+    readOnly ||
     (!$("#prompt").value.trim() && !state.images.length) ||
     !state.connected;
   $("#stop").hidden = !active;
-  $("#run-state").textContent = active
+  $("#run-state").textContent = state.thread?.archived ? "Archived · restore to continue" : active
     ? "Working · send to steer"
     : state.id
       ? "Ready"
@@ -131,17 +139,15 @@ function updateControls() {
     "aria-label",
     active ? "Steer current turn" : "Send message",
   );
+  updateSettingControls(readOnly);
+  updateActivity();
+}
+function updateSettingControls(readOnly) {
   for (const id of ["#model", "#effort"])
-    $(id).disabled =
-      !state.id ||
-      state.loading ||
-      state.externalOwner ||
-      state.changingModel ||
-      !state.connected ||
-      !state.models.length;
+    $(id).disabled = !state.id || state.loading || readOnly || state.changingModel ||
+      !state.connected || !state.models.length;
   $("#speed").disabled = $("#model").disabled;
   $("#mode").disabled = $("#model").disabled || !state.modes.length;
-  updateActivity();
 }
 async function selectThread(id) {
   saveDraft();
@@ -501,6 +507,16 @@ function eventTurn(params) {
   }
   return turn;
 }
+function sessionMetadataEvent(method, p) {
+  if (["thread/started", "thread/name/updated", "thread/archived", "thread/unarchived"].includes(method))
+    loadSessions().catch(() => {});
+  if (p.threadId !== state.id) return;
+  if (method === "thread/name/updated") refreshThread().catch(() => {});
+  if (method === "thread/archived" || method === "thread/unarchived") {
+    if (state.thread) state.thread.archived = method === "thread/archived";
+    updateControls();
+  }
+}
 function handleEvent(event) {
   if (event.method === "native/changed") {
     refreshNative();
@@ -509,8 +525,7 @@ function handleEvent(event) {
   sessionEvent(event);
   const p = event.params || {},
     method = event.method;
-  if (method === "thread/started" || method === "thread/name/updated")
-    loadSessions().catch(() => {});
+  sessionMetadataEvent(method, p);
   if (p.threadId !== state.id) return;
   if (method === "turn/started" || method === "turn/completed") {
     const old = state.turns.find((t) => t.id === p.turn.id),
@@ -970,3 +985,82 @@ async function refreshNative() {
   catch (error) { notice(error.message); }
   finally { nativeRefreshing = false; }
 }
+
+let managedChat;
+let managementGeneration = 0;
+let managingChat = false;
+function managementError(message = "") {
+  $("#session-error").textContent = message;
+  $("#session-error").hidden = !message;
+}
+function managementControls(busy) {
+  const archived = managedChat?.archived;
+  $("#session-name").disabled = busy || archived;
+  $("#rename-chat").disabled = busy || archived;
+  $("#archive-chat").disabled = busy || managedChat?.status?.type === "active";
+  $("#archive-chat").textContent = archived ? "Restore" : "Archive";
+  $("#cancel-session").disabled = busy;
+  $("#session-hint").textContent = archived
+    ? "Restore this chat to continue or rename it. Messages are preserved."
+    : managedChat?.status?.type === "active"
+      ? "Codex is working. You can rename now; archive after the turn finishes."
+      : "Renaming and archiving preserve this conversation and its messages.";
+}
+async function manageChat(thread) {
+  const generation = ++managementGeneration;
+  managedChat = thread;
+  managementError();
+  $("#session-name").value = title(thread);
+  managementControls(true);
+  $("#session-dialog").showModal();
+  try {
+    const result = await api("thread?id=" + encodeURIComponent(thread.id));
+    if (!$("#session-dialog").open || generation !== managementGeneration) return;
+    managedChat = result.thread;
+    $("#session-name").value = title(managedChat);
+    managementControls(false);
+    if (!managedChat.archived) $("#session-name").select();
+    else $("#archive-chat").focus();
+  } catch (error) {
+    managementError(error.message);
+    $("#cancel-session").disabled = false;
+  }
+}
+async function manageAction(action) {
+  if (!managedChat || managingChat) return;
+  const id = managedChat.id;
+  const generation = state.generation;
+  managingChat = true;
+  managementControls(true);
+  managementError();
+  try {
+    await api(action, {id, ...(action === "rename" ? {name: $("#session-name").value} : {})});
+    $("#session-dialog").close();
+    if (id === state.id && generation === state.generation) {
+      if (action === "unarchive") await selectThread(id);
+      else {
+        if (action === "archive") state.thread.archived = true;
+        else await refreshThread();
+        updateControls();
+      }
+    }
+    await loadSessions();
+  } catch (error) {
+    if ($("#session-dialog").open) managementError(error.message);
+    else notice(error.message);
+  } finally {
+    managingChat = false;
+    managementControls(false);
+  }
+}
+$("#manage-chat").addEventListener("click", () => manageChat(state.thread));
+$("#cancel-session").addEventListener("click", () => $("#session-dialog").close());
+$("#session-dialog").addEventListener("cancel", event => {
+  if (managingChat) event.preventDefault();
+});
+$("#session-form").addEventListener("submit", event => {
+  event.preventDefault();
+  manageAction("rename");
+});
+$("#archive-chat").addEventListener("click", () =>
+  manageAction(managedChat.archived ? "unarchive" : "archive"));

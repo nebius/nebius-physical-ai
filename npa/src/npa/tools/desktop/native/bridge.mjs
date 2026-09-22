@@ -14,6 +14,7 @@ import {SessionStore, liveTurns, liveMessages, itemMessage} from './store.mjs';
 import {threadSettings, validateSettings, messageVisible} from './settings.mjs';
 import {removeStaleSocket} from './listener.mjs';
 import {requireUnowned} from './ownership.mjs';
+import {manageThread} from './management.mjs';
 
 const configPath = process.argv[2];
 const config = JSON.parse(readFileSync(configPath));
@@ -97,7 +98,7 @@ async function read(params) {
     if (message.role !== 'tool' || message.text?.length <= 48000) return message;
     return {...message, text: message.text?.slice(0, 48000) + '\n\n[Output preview truncated. The full output is saved on your Mac.]'};
   });
-  return {id: row.id, title: row.name || row.title || 'New chat', cwd: row.cwd,
+  return {id: row.id, title: row.name || row.title || 'New chat', cwd: row.cwd, archived: Boolean(row.archived),
     ...threadSettings(live, own, row), messages, totalMessages, hasMore: totalMessages > visibleCount,
     active: Boolean(own?.active || live?.threadRuntimeStatus?.type === 'active'),
     turnId: own?.turnId || activeTurn?.turnId, owner: live ? 'VS Code' : own ? 'Mobile' : 'Saved chat',
@@ -113,6 +114,7 @@ async function ensureOwn(id) {
   }
 }
 async function prompt(params) {
+  if (getRow(params.id).archived) throw new Error('Restore this chat before sending a message');
   if (!params.text?.trim() && !params.images?.length) throw new Error('Enter a message');
   const input = [{type: 'text', text: params.text || '', text_elements: []},
     ...(params.images ?? []).map(url => ({type: 'image', url}))];
@@ -197,7 +199,7 @@ async function models() {
 }
 async function configure(params) {
   const row = getRow(params.id);
-  if (row.archived) throw new Error('Unarchive this chat in VS Code before changing its settings');
+  if (row.archived) throw new Error('Restore this chat before changing its settings');
   const catalog = await models();
   const settings = validateSettings(params, catalog.data, catalog.modes);
   const owner = await ipc.owner(params.id);
@@ -219,7 +221,10 @@ async function configure(params) {
   }
   notify(); return {ok: true, settings: threadSettings({latestThreadSettings: settings}, null, row)};
 }
-const handlers = {list, read, prompt, stop, create, respond, openInVSCode, models, configure,
+async function manage(params) {
+  return manageThread({getRow, ownThreads, ipc, app, config, notify}, params);
+}
+const handlers = {list, read, prompt, stop, create, respond, openInVSCode, models, configure, manage,
   status: async () => ({hostname: hostname(), vscodeConnected: ipc.connected}),
 };
 
@@ -231,7 +236,8 @@ async function dispatch(line, output, client) {
   try {
     message = JSON.parse(line);
     if (message.method === 'initialized') return;
-    const mutating = ['thread/start', 'thread/settings/update', 'turn/start', 'turn/steer', 'thread/open'].includes(message.method);
+    const mutating = ['thread/start', 'thread/settings/update', 'turn/start', 'turn/steer', 'thread/open',
+      'thread/name/set', 'thread/archive', 'thread/unarchive'].includes(message.method);
     if (mutating && context.upgrading) throw new Error('The local adapter is updating. Reconnect before sending.');
     mutation = mutating;
     if (mutation) context.mutations++;

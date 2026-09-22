@@ -68,6 +68,7 @@
           </div>
           <p id="project">Continue from any screen</p>
         </div>
+        <button id="manage-chat" class="icon" aria-label="Manage current chat" aria-haspopup="dialog" disabled>⋯</button>
         <button id="refresh" class="icon" aria-label="Refresh chat">↻</button>
       </header>
       <div id="notice" role="alert" hidden></div>
@@ -138,6 +139,19 @@
         <button type="button" id="clear-send" class="subtle" hidden>Discard pending send after checking the conversation</button>
       </form>
     </main>
+    <dialog id="session-dialog" aria-labelledby="session-dialog-title">
+      <form id="session-form">
+        <h2 id="session-dialog-title">Manage chat</h2>
+        <label>Chat name<input id="session-name" maxlength="200" autocomplete="off" required /></label>
+        <p id="session-hint">Renaming keeps the conversation and its messages.</p>
+        <p id="session-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" id="archive-chat">Archive</button>
+          <button type="button" id="cancel-session">Cancel</button>
+          <button class="primary" type="submit" id="rename-chat">Save name</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="new-dialog">
       <form id="new-form">
         <h2>New chat</h2>

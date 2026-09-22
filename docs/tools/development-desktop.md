@@ -144,6 +144,12 @@ opening a conversation retains its full messages. It sends prompts, streams
 replies and tool activity, steers or stops a running turn, and presents command/file
 approvals and questions. Specialized MCP and dynamic-tool requests remain in VS Code.
 
+Tap **…** beside a chat, or in the open chat's header, to **Save name** or
+**Archive**. Archiving preserves messages and browser drafts. Choose **Archived**
+in the session list and use **… → Restore** to continue the same conversation.
+Archived chats remain read-only until restored. A running turn must finish or
+be stopped before archiving; renaming does not start or interrupt a turn.
+
 Choose **Model** and **Reasoning** above the composer. Choices come from the
 signed-in Codex runtime and include only reasoning levels supported by that
 model. Changes apply to the next turn of the same conversation and update the
@@ -203,6 +209,11 @@ replace the VS Code executable or require reloading an active window. Local
 mode uses a private adapter for the installed extension's IPC protocol; verify
 compatibility after extension upgrades. New or unowned chats use a separate
 Codex app-server that belongs to the local service.
+
+Archive controls preserve the native writer lock: close a chat in its other
+Codex client before archiving it from mobile when that client still owns it.
+Saved chats use Codex's own rename/archive APIs; the adapter never edits the
+session database or moves history files itself.
 
 For access outside the Mac, select an existing managed HTTPS gateway:
 

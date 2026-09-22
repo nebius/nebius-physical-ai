@@ -18,7 +18,7 @@ export function pendingRequests(ipc, approvals) {
 function thread(chat) {
   return {id: chat.id, name: chat.title, preview: chat.title, cwd: chat.cwd,
     model: chat.model, reasoningEffort: chat.effort, serviceTier: chat.serviceTier,
-    mode: chat.mode, updatedAt: chat.updatedAt, owner: chat.owner,
+    mode: chat.mode, updatedAt: chat.updatedAt, owner: chat.owner, archived: Boolean(chat.archived),
     status: {type: chat.active || chat.status === 'active' ? 'active' : 'idle'}};
 }
 
@@ -135,6 +135,9 @@ export async function protocolCall(context, message) {
       id: params.threadId, visibleCount: Number.MAX_SAFE_INTEGER}), params);
     case 'thread/settings/update': return configure(context, params);
     case 'thread/open': return handlers.openInVSCode({id: params.threadId});
+    case 'thread/name/set': return handlers.manage({id: params.threadId, action: 'rename', name: params.name});
+    case 'thread/archive': return handlers.manage({id: params.threadId, action: 'archive'});
+    case 'thread/unarchive': return handlers.manage({id: params.threadId, action: 'unarchive'});
     case 'turn/start': return prompt(context, params, false);
     case 'turn/steer': return prompt(context, params, true);
     case 'turn/interrupt': return handlers.stop({id: params.threadId, turnId: params.turnId});

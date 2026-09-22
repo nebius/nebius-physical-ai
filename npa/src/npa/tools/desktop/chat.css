@@ -233,7 +233,12 @@ a:hover {
   padding: 12px 11px;
   border-radius: 9px;
   margin-bottom: 3px;
+  min-width: 0;
 }
+.session-row { display: flex; align-items: center; }
+.session-actions { flex: 0 0 44px; min-height: 44px; background: none; border: 0; font-size: 22px; }
+#session-error { color: #ffabab; }
+#session-dialog .dialog-actions { flex-wrap: wrap; }
 .session:hover {
   background: #222;
 }

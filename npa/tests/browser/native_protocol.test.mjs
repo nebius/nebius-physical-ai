@@ -73,3 +73,61 @@ test('engine startup preserves live sockets and refuses regular files', async ()
     assert.equal(existsSync(path), true);
   } finally { server.close(); rmSync(directory, {recursive: true, force: true}); }
 });
+
+test('management targets the original native chat without resuming or sending', async () => {
+  const calls = [];
+  const context = {handlers: {manage: async params => { calls.push(params); return {ok: true}; }}};
+  for (const method of ['thread/name/set', 'thread/archive', 'thread/unarchive'])
+    await protocolCall(context, {method, params: {threadId: 'original-thread', name: 'Renamed'}});
+  assert.deepEqual(calls, [
+    {id: 'original-thread', action: 'rename', name: 'Renamed'},
+    {id: 'original-thread', action: 'archive'}, {id: 'original-thread', action: 'unarchive'},
+  ]);
+});
+
+test('archived native threads retain their identity and read-only state', async () => {
+  const context = {handlers: {read: async () => ({id: 'saved-thread', title: 'Saved', archived: true})}};
+  const result = await protocolCall(context, {method: 'thread/read', params: {threadId: 'saved-thread'}});
+  assert.equal(result.thread.id, 'saved-thread');
+  assert.equal(result.thread.archived, true);
+});
+
+test('native archive refuses active work and another VS Code owner', async () => {
+  const {manageThread} = await import('../../src/npa/tools/desktop/native/management.mjs');
+  const ownThreads = new Map([['same', {active: true}]]);
+  const context = {getRow: () => ({archived: false}), ownThreads,
+    ipc: {states: new Map(), owner: async () => 'vscode-owner'},
+    app: {start: () => assert.fail('must not touch engine')}, config: {}};
+  await assert.rejects(manageThread(context, {id: 'same', action: 'archive'}), /finish/);
+  ownThreads.clear();
+  await assert.rejects(manageThread(context, {id: 'same', action: 'archive'}), /Close this chat in VS Code/);
+});
+
+test('native archive publishes only confirmed changes and drops released ownership', async () => {
+  const {manageThread} = await import('../../src/npa/tools/desktop/native/management.mjs');
+  const calls = [];
+  const context = {getRow: () => ({archived: false, cwd: '/workspace/project'}),
+    ownThreads: new Map([['same', {active: false}]]),
+    ipc: {states: new Map([['same', {}]]), archivalChanged: (...args) => calls.push(args)},
+    app: {start: async () => {}, request: async () => {throw Error('Archive failed');}},
+    notify: () => calls.push('notify'), config: {}};
+  await assert.rejects(manageThread(context, {id: 'same', action: 'archive'}), /Archive failed/);
+  assert.equal(context.ownThreads.has('same'), true);
+  assert.deepEqual(calls, []);
+  context.app.request = async (method, params) => calls.push([method, params]);
+  await manageThread(context, {id: 'same', action: 'archive'});
+  assert.equal(context.ownThreads.has('same'), false);
+  assert.equal(context.ipc.states.has('same'), false);
+  assert.deepEqual(calls, [['thread/archive', {threadId: 'same'}], ['same', true, '/workspace/project'], 'notify']);
+});
+
+test('native rename uses metadata API without resuming or taking ownership', async () => {
+  const {manageThread} = await import('../../src/npa/tools/desktop/native/management.mjs');
+  const ownThreads = new Map([['same', {active: true}]]), calls = [];
+  const context = {getRow: () => ({archived: false}), ownThreads,
+    ipc: {owner: () => assert.fail('rename must not take ownership')}, config: {},
+    app: {start: async () => {}, request: async (...args) => calls.push(args)}, notify: () => {}};
+  await manageThread(context, {id: 'same', action: 'rename', name: 'New name'});
+  assert.deepEqual(calls, [['thread/name/set', {threadId: 'same', name: 'New name'}]]);
+  assert.equal(ownThreads.get('same').active, true);
+});

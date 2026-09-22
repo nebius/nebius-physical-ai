@@ -142,6 +142,17 @@ export class CodexIPC extends EventEmitter {
     this.write({type: 'broadcast', method: 'thread-stream-following-changed', version: 1,
       sourceClientId: this.clientId, params: {hostId: 'local', conversationId, following: true}});
   }
+  /** Notify VS Code after Codex confirms a saved chat's archive state changed.
+   * Args: conversationId identifies the chat; archived is its new state; cwd is its project.
+   * Returns: None.
+   * Raises: A transport error if the connected socket cannot be written.
+   */
+  archivalChanged(conversationId, archived, cwd) {
+    if (!this.connected) return;
+    this.write({type: 'broadcast', method: archived ? 'thread-archived' : 'thread-unarchived',
+      version: archived ? 2 : 1, sourceClientId: this.clientId,
+      params: {hostId: 'local', conversationId, cwd}});
+  }
   /** Discover the VS Code owner of an existing conversation.
    * Args: conversationId is the original thread ID.
    * Returns: A promise containing the owner ID or null when none is discoverable.

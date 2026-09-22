@@ -230,9 +230,17 @@ class ChatHandler(BaseHTTPRequestHandler):
         created = self.server.created.get(identifier)
         if created is not None:
             return created
-        return self.server.rpc.call(
+        thread = self.server.rpc.call(
             "thread/read", {"threadId": identifier, "includeTurns": False}
         )["thread"]
+        return {**thread, "archived": self._archived(thread)}
+
+    @staticmethod
+    def _archived(thread):
+        return (
+            bool(thread.get("archived"))
+            or "archived_sessions" in Path(thread.get("path") or "").parts
+        )
 
     def _turns(self, query):
         if query["id"] in self.server.created:
@@ -274,7 +282,16 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "archived": query.get("archived") == "true",
             },
         )
-        return {**page, "data": [_thread_list_entry(thread) for thread in page["data"]]}
+        return {
+            **page,
+            "data": [
+                {
+                    **_thread_list_entry(thread),
+                    "archived": query.get("archived") == "true",
+                }
+                for thread in page["data"]
+            ],
+        }
 
     def do_POST(self):
         """Apply explicit, same-origin chat actions.
@@ -313,6 +330,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             return self._send(body)
         if path == "/chat/api/settings":
             return self._settings(body)
+        if path in {"/chat/api/rename", "/chat/api/archive", "/chat/api/unarchive"}:
+            return self._manage_thread(path.rsplit("/", 1)[1], body)
         if path == "/chat/api/stop":
             return rpc.call(
                 "turn/interrupt", {"threadId": body["id"], "turnId": body["turnId"]}
@@ -330,6 +349,34 @@ class ChatHandler(BaseHTTPRequestHandler):
             return {"answered": True}
         raise ValueError("Unknown chat action.")
 
+    def _manage_thread(self, action, body):
+        identifier = body["id"]
+        params = {"threadId": identifier}
+        if action == "rename":
+            name = body.get("name")
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
+                raise ValueError("Enter a chat name between 1 and 200 characters.")
+            if any(ord(char) < 32 or ord(char) == 127 for char in name):
+                raise ValueError("Use a single line for the chat name.")
+            params["name"] = name.strip()
+        thread = self._thread(identifier)
+        if action == "rename" and self._archived(thread):
+            raise ValueError("Restore this chat before renaming it.")
+        if self._owned_elsewhere(thread):
+            raise ValueError("Close this chat in the older Codex client first.")
+        if action != "rename" and thread.get("status", {}).get("type") == "active":
+            raise ValueError(
+                "Wait for Codex to finish or stop the turn before archiving."
+            )
+        method = "thread/name/set" if action == "rename" else "thread/" + action
+        self.server.rpc.call(method, params)
+        if action != "rename":
+            self.server.attached.discard(identifier)
+            self.server.created.pop(identifier, None)
+        elif identifier in self.server.created:
+            self.server.created[identifier]["name"] = params["name"]
+        return {"ok": True}
+
     def _new_thread(self, body):
         cwd = Path(body.get("cwd") or self.server.config["cwd"]).expanduser()
         if not cwd.is_dir():
@@ -344,6 +391,8 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def _settings(self, body):
         resumed = self._resume(body["id"])
+        if self._archived(resumed["thread"]):
+            raise ValueError("Restore this chat before changing its settings.")
         if resumed.get("externalOwner"):
             raise ValueError("Close this session in the older Codex client first.")
         params = model_selection(self.server.rpc, body, resumed["thread"])
@@ -363,9 +412,9 @@ class ChatHandler(BaseHTTPRequestHandler):
         if created is not None:
             return {"thread": created}
         rpc = self.server.rpc
-        thread = rpc.call(
-            "thread/read", {"threadId": identifier, "includeTurns": False}
-        )["thread"]
+        thread = self._thread(identifier)
+        if self._archived(thread):
+            return {"thread": thread}
         if self._owned_elsewhere(thread):
             return {"thread": thread, "externalOwner": True}
         if identifier in self.server.attached:
@@ -378,6 +427,8 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def _send(self, body):
         thread = self._thread(body["id"])
+        if self._archived(thread):
+            raise ValueError("Restore this chat before sending a message.")
         if self._owned_elsewhere(thread):
             raise ValueError(
                 "This session is open in an older Codex client. Close it there, then refresh to continue here."

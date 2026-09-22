@@ -197,9 +197,10 @@ def test_session_list_bounds_labels_without_changing_conversation_history(chat):
     for field in ("id", "cwd", "status", "updatedAt"):
         assert entry[field] == original[field]
     assert len(response.content) < 2000
-    assert (
-        client.get("/chat/api/thread?id=existing-thread").json()["thread"] == original
-    )
+    assert client.get("/chat/api/thread?id=existing-thread").json()["thread"] == {
+        **original,
+        "archived": False,
+    }
     assert len(original["name"]) > 240
 
 
@@ -208,7 +209,9 @@ def test_session_list_preserves_short_and_missing_labels(chat):
     threads = [{"id": "one", "name": None, "preview": "Short preview"}, {"id": "two"}]
     rpc.call.side_effect = None
     rpc.call.return_value = {"data": threads, "nextCursor": None}
-    assert client.get("/chat/api/threads").json()["data"] == threads
+    assert client.get("/chat/api/threads").json()["data"] == [
+        {**thread, "archived": False} for thread in threads
+    ]
 
 
 def test_resume_preserves_existing_thread_and_permissions(chat):
@@ -446,3 +449,85 @@ def test_native_first_turn_invalidates_unmaterialized_mobile_history():
     assert "new-thread" not in created
     assert rpc.sequence == 2
     assert rpc.events[-1][1]["method"] == "turn/started"
+
+
+@pytest.mark.parametrize(
+    "name", ["", "  ", "x" * 201, "two\nlines", "bad\x00name", None, []]
+)
+def test_rename_rejects_invalid_names_without_mutating(chat, name):
+    client, rpc = chat
+    response = client.post(
+        "/chat/api/rename", json={"id": "existing-thread", "name": name}
+    )
+    assert response.status_code == 400
+    rpc.call.assert_not_called()
+
+
+def test_rename_preserves_identity_and_does_not_resume(chat):
+    client, rpc = chat
+    response = client.post(
+        "/chat/api/rename", json={"id": "existing-thread", "name": "  New name  "}
+    )
+    assert response.status_code == 200
+    assert [call.args for call in rpc.call.call_args_list] == [
+        ("thread/read", {"threadId": "existing-thread", "includeTurns": False}),
+        ("thread/name/set", {"threadId": "existing-thread", "name": "New name"}),
+    ]
+
+
+@pytest.mark.parametrize("action", ["rename", "archive", "unarchive"])
+def test_management_requires_authentication_and_same_origin(chat, action):
+    client, rpc = chat
+    body = {"id": "existing-thread", "name": "New name"}
+    assert client.post("/chat/api/" + action, json=body, auth=None).status_code == 401
+    assert (
+        client.post(
+            "/chat/api/" + action,
+            json=body,
+            headers={"Origin": "https://foreign.example.test"},
+        ).status_code
+        == 403
+    )
+    rpc.call.assert_not_called()
+
+
+def test_archive_refuses_a_running_turn(chat):
+    client, rpc = chat
+    rpc.call.side_effect = lambda method, params: {
+        "thread": {"id": "existing-thread", "status": {"type": "active"}}
+    }
+    response = client.post("/chat/api/archive", json={"id": "existing-thread"})
+    assert response.status_code == 400
+    assert "finish" in response.json()["error"]
+    assert rpc.call.call_count == 1
+
+
+@pytest.mark.parametrize("action", ["archive", "unarchive"])
+def test_archival_routes_only_the_requested_thread(chat, action):
+    client, rpc = chat
+    assert (
+        client.post("/chat/api/" + action, json={"id": "existing-thread"}).status_code
+        == 200
+    )
+    rpc.call.assert_called_with("thread/" + action, {"threadId": "existing-thread"})
+    assert all(call.args[0] != "thread/resume" for call in rpc.call.call_args_list)
+
+
+@pytest.mark.parametrize("action", ["send", "settings", "rename", "resume"])
+def test_archived_chats_remain_read_only_until_restored(chat, action):
+    client, rpc = chat
+    rpc.call.side_effect = lambda method, params: {
+        "thread": {
+            "id": "existing-thread",
+            "path": "/workspace/.codex/archived_sessions/saved.jsonl",
+            "status": {"type": "notLoaded"},
+        }
+    }
+    response = client.post(
+        "/chat/api/" + action,
+        json={"id": "existing-thread", "name": "Name", "text": "Hello"},
+    )
+    assert response.status_code == (200 if action == "resume" else 400)
+    assert rpc.call.call_count == 1
+    if action == "resume":
+        assert response.json()["thread"]["archived"] is True
