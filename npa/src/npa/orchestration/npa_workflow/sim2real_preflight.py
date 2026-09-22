@@ -262,6 +262,42 @@ def _ready_schedulable_cpu_nodes(nodes_json: str) -> list[str]:
     )
 
 
+def _is_rtx_pro_6000(labels: Mapping[str, Any]) -> bool:
+    """Return whether a node advertises an RTX PRO 6000 Blackwell accelerator."""
+    product = str(labels.get("nvidia.com/gpu.product") or "").lower()
+    name = str(labels.get("nebius.com/gpu-name") or "").lower()
+    return "rtx-pro-6000" in product or name == "rtx6000"
+
+
+def _managed_driver_isaac_nodes(nodes_json: str) -> list[str]:
+    """Return RTX PRO 6000 nodes serving managed drivers rather than operator drivers.
+
+    Isaac Sim's camera-bearing rollouts are validated on Kubernetes only against the
+    GPU-Operator mounted RTX driver stack that `--gpu-workload-profile rtx-rendering`
+    provisions. The Nebius managed-driver image still satisfies pure-compute CUDA, so
+    Cosmos Transfer and EnvGen succeed on it and the mismatch stays invisible until
+    Stage 7 renders, where it surfaces as an opaque Warp illegal-memory-access after
+    the earlier GPU stages have already been paid for.
+    """
+    try:
+        payload = json.loads(nodes_json or "") or {}
+    except json.JSONDecodeError:
+        return []
+    flagged: list[str] = []
+    for node in payload.get("items") or []:
+        metadata = (node or {}).get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        if not isinstance(labels, Mapping) or not _is_rtx_pro_6000(labels):
+            continue
+        managed = str(labels.get("nebius.com/driverful") or "").lower() == "true"
+        operator = (
+            str(labels.get("nvidia.com/gpu.deploy.operands") or "").lower() == "true"
+        )
+        if managed and not operator:
+            flagged.append(str(metadata.get("name") or ""))
+    return sorted(name for name in flagged if name)
+
+
 def kubernetes_prerequisites(
     config: Mapping[str, Any],
     *,
@@ -292,6 +328,24 @@ def kubernetes_prerequisites(
                 "Ready, then rerun `kubectl get nodes -o json` on the selected context",
             )
         )
+
+    if getattr(nodes, "returncode", 1) == 0:
+        managed_driver_nodes = _managed_driver_isaac_nodes(
+            str(getattr(nodes, "stdout", ""))
+        )
+        if managed_driver_nodes:
+            issues.append(
+                (
+                    "Isaac render stages would run on RTX PRO 6000 node(s) serving the "
+                    "Nebius managed-driver image instead of the validated GPU-Operator "
+                    "mounted RTX drivers: " + ", ".join(managed_driver_nodes),
+                    "reprovision the Isaac GPU pool with `npa cluster up "
+                    "--gpu-workload-profile rtx-rendering`, which selects the "
+                    "operator-mounted RTX driver path and its GLX/EGL/Vulkan readiness "
+                    "gate, then rerun `kubectl get nodes -o json` on the selected "
+                    "context",
+                )
+            )
 
     pvc_name = str(config.get("isaac_cache_pvc") or "").strip()
     if pvc_name:

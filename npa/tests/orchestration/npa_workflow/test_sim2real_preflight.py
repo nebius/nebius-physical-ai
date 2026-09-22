@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from npa.orchestration.npa_workflow.sim2real_preflight import (
+    _managed_driver_isaac_nodes,
     _ready_schedulable_cpu_nodes,
     kubernetes_prerequisites,
     static_prerequisites,
@@ -318,3 +319,79 @@ def test_kubernetes_preflight_reports_every_missing_cluster_object_together():
     rendered = "\n".join(item for item, _ in issues)
     assert "no Ready" in rendered
     assert "Isaac cache PVC" in rendered
+
+
+def _rtx_nodes(**labels):
+    payload = json.loads(_nodes())
+    payload["items"].append(
+        {
+            "metadata": {"name": "gpu-0", "labels": labels},
+            "spec": {"taints": []},
+            "status": {
+                "allocatable": {"cpu": "24", "memory": "218Gi", "nvidia.com/gpu": "1"},
+                "conditions": [{"type": "Ready", "status": "True"}],
+            },
+        }
+    )
+    return json.dumps(payload)
+
+
+_MANAGED_RTX_LABELS = {
+    "nvidia.com/gpu.product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "nebius.com/gpu-name": "RTX6000",
+    "nebius.com/driverful": "true",
+    "nebius.com/drivers-preset": "cuda13.0",
+    "nvidia.com/gpu.deploy.operands": "false",
+}
+
+
+def test_managed_driver_rtx_nodes_are_rejected_before_isaac_spends_gpu_time():
+    # Managed drivers satisfy pure-compute CUDA, so Transfer/EnvGen pass and the
+    # mismatch would otherwise only surface as a Warp illegal-memory-access in Stage 7.
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**_MANAGED_RTX_LABELS)) == ["gpu-0"]
+
+
+def test_operator_mounted_rtx_drivers_are_accepted():
+    operator = {**_MANAGED_RTX_LABELS, "nvidia.com/gpu.deploy.operands": "true"}
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**operator)) == []
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {},
+        {"nvidia.com/gpu.product": "NVIDIA-L40S", "nebius.com/driverful": "true"},
+        {"nvidia.com/gpu.product": "NVIDIA-H100", "nebius.com/driverful": "true"},
+    ],
+)
+def test_non_rtx_and_unlabelled_nodes_are_not_flagged(labels):
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
+
+
+def test_unparseable_node_payload_does_not_fabricate_a_driver_issue():
+    assert _managed_driver_isaac_nodes("not-json") == []
+
+
+def test_kubernetes_preflight_surfaces_managed_driver_isaac_nodes():
+    def run(args):
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(
+                returncode=0, stdout=_rtx_nodes(**_MANAGED_RTX_LABELS), stderr=""
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "spec": {"accessModes": ["ReadWriteMany"]},
+                    "status": {"phase": "Bound"},
+                }
+            ),
+            stderr="",
+        )
+
+    issues = kubernetes_prerequisites(_config(), runner=run)
+    rendered = "\n".join(item for item, _ in issues)
+    remediation = "\n".join(fix for _, fix in issues)
+    assert "gpu-0" in rendered
+    assert "managed-driver" in rendered
+    assert "--gpu-workload-profile rtx-rendering" in remediation
