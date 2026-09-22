@@ -43,6 +43,16 @@
 #   carried in the re-seed as before.
 #
 # --- CI ground-truth grandfathered entries (2026-09-22, run 35687713524) ---
+# Re-seeded 2026-09-22 (5): main advanced 4383093c30b -> 23c7a01ba65a (#724 CI
+#   scheduling handoffs, #608 module-level GPU import guards in tests) and
+#   merged. Local re-seed with the same pins (mypy 2.3.1, numpy 2.5.3,
+#   python 3.12, torch 2.13.0+cpu), .mypy_cache cleared first: 986 errors,
+#   0 new vs the previous baseline (all 49 CI-only dependency-drift entries
+#   carried forward below as CI ground truth). The branch's own mypy fixes
+#   (model_router.py annotation, token_factory.py Literal, train_teacher.py
+#   assert-narrowing) remain intact; main did not touch those lines.
+#
+# --- CI ground-truth grandfathered entries (carried forward from run 35687713524) ---
 src/npa/_sdk.py:47: error: "def wrapper(**kwargs: Any) -> Any" has no attribute "__npa_cli_module__"  [attr-defined]
 src/npa/_sdk.py:48: error: "def wrapper(**kwargs: Any) -> Any" has no attribute "__npa_cli_callback__"  [attr-defined]
 src/npa/adapter/groot.py:908: error: Incompatible return value type (got "dict[str, dict[str, int]]", expected "dict[str, dict[str, int | str]]")  [return-value]
