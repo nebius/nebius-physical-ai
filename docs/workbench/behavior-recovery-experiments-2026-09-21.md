@@ -330,7 +330,10 @@ A third qualification explicitly runs data transforms on CPU, retains the
 exact reference-batch gate, and places the accepted batch on the B200 before
 the unchanged native optimizer step. It also compares CPU and GPU transforms
 of the same decoded sample. Its 35 local checks and independent package review
-passed; GPU qualification is underway. The future eight-worker loader still
+passed, but the live diagnostic then attempted to slice an optional scalar
+observation field as a batch array and stopped before optimizer creation.
+All four failure originals were downloaded and hash-verified. The diagnostic
+needs to preserve native optional fields. The future eight-worker loader still
 requires separate throughput and parity evidence.
 
 ### Specialist recovery and Workbench task status
