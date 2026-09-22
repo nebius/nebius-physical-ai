@@ -44,6 +44,10 @@ the checkout. The model can read only `TASK.md` and `plan.json`, edit only
 tool grants, not an operating-system sandbox. Commands and state remain under
 the operator's account. Do not publish raw checkpoints, model output or logs.
 
+The declared `robot-sdg` extra keeps MuJoCo 3.3.7 with Gymnasium Robotics
+1.4.2. MuJoCo 3.13.0 failed Fetch initialization with that Robotics release;
+the report retains the diagnosis and the real simulation checks.
+
 ## Run the fixed matrix
 
 Choose a new private output directory, set `BENCHMARK_ROOT`, and preserve every
@@ -73,6 +77,12 @@ for seed in 11 23 37 53 71 89; do
 done
 npa/.venv/bin/python npa/examples/specialists/simulation/score.py --root "$BENCHMARK_ROOT"
 ```
+
+The final confirmation used the first three pairs after the rebase and
+dependency correction. Its source hashes and exact environment are in the
+linked measurements, alongside the complete earlier six-pair matrix and its
+disk-interrupted trial. A fresh installation should run the negative controls
+below before spending tokens.
 
 `prices.json` is a dated rate snapshot. Verify the linked provider rates and
 update your private copy before a new measurement. The output is an estimated
