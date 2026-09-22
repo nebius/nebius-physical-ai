@@ -292,7 +292,10 @@ def test_controller_config_separates_verified_contexts_without_worker_profile_ch
     assert configured["kubernetes"]["allowed_contexts"] == ["unit-worker", "unit-controller"]
     assert configured["jobs"]["controller"]["resources"]["region"] == "unit-controller"
     assert configured["kubernetes"]["context_configs"] == {
-        "unit-worker": {"remote_identity": "NO_UPLOAD"},
+        "unit-worker": {
+            "remote_identity": "NO_UPLOAD",
+            "post_provision_runcmd": docs[1]["resources"]["kubernetes"]["post_provision_runcmd"],
+        },
         "unit-controller": {"remote_identity": "LOCAL_CREDENTIALS"},
     }
     assert profile == driver().libero_executable_profile_bytes(docs)
@@ -303,6 +306,35 @@ def test_controller_config_separates_verified_contexts_without_worker_profile_ch
     )
     assert ordinary["kubernetes"]["allowed_contexts"] == ["unit-worker"]
     assert ordinary["jobs"]["controller"]["resources"]["region"] == "unit-worker"
+    assert "context_configs" not in ordinary["kubernetes"]
+
+
+@pytest.mark.parametrize("lifted", [False, True])
+@pytest.mark.parametrize("conflict", [False, True])
+def test_customer_worker_startup_hook_retains_signed_bytes_and_refuses_conflicts(tmp_path, lifted, conflict):
+    from npa.orchestration.skypilot import workflow
+
+    _, _, env = _context_fixture(tmp_path)
+    docs = list(yaml.safe_load_all(customer.PROFILE.read_text()))
+    signed = driver().libero_executable_profile_bytes(docs)
+    expected = docs[1]["resources"]["kubernetes"]["post_provision_runcmd"]
+    if lifted:
+        docs[1]["config"] = {"kubernetes": docs[1]["resources"].pop("kubernetes")}
+    base = tmp_path / "sky.yaml"
+    base.write_text(yaml.safe_dump({"kubernetes": {"context_configs": {
+        "unit-worker": {"post_provision_runcmd": ["unexpected-command"] if conflict else expected},
+    }}}))
+    if conflict:
+        with pytest.raises(ValueError, match="startup hook differs"):
+            workflow._submission_global_config(SimpleNamespace(global_config_path=base), "kubernetes",
+                "k8s/unit-worker", documents=docs, extra_env=env)
+    else:
+        result = workflow._submission_global_config(SimpleNamespace(global_config_path=base), "kubernetes",
+            "k8s/unit-worker", documents=docs, extra_env=env)
+        contexts = result["kubernetes"]["context_configs"]
+        assert contexts["unit-worker"]["post_provision_runcmd"] == expected
+        assert "post_provision_runcmd" not in contexts["unit-controller"]
+    assert driver().libero_executable_profile_bytes(docs) == signed
 
 
 @pytest.mark.parametrize("controller_drift", [None, "workload-context", "other-context", "gpu-controller", "worker-credentials", "missing-controller-credentials"])

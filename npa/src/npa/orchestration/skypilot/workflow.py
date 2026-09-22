@@ -824,11 +824,12 @@ class _PreparedWorkflowSubmission:
 
 
 def _submission_global_config(runtime, controller_backend, infra, *, documents=(), extra_env=None):
-    from npa.workflows.byof.libero_customer import controller_context, selected
+    from npa.workflows.byof.libero_customer import controller_context, selected, validate_profile
 
     context = _controller_region_from_infra(infra, controller_backend)
     controller = None
     if selected(documents):
+        validate_profile(documents)
         controller = controller_context({**os.environ, **(extra_env or {})}, context or "")
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
@@ -849,6 +850,16 @@ def _submission_global_config(runtime, controller_backend, infra, *, documents=(
             # Only the controller receives the private two-context kubeconfig.
             contexts.setdefault(controller, {})["remote_identity"] = "LOCAL_CREDENTIALS"
             contexts.setdefault(context, {})["remote_identity"] = "NO_UPLOAD"
+            # SkyPilot 0.12.2 reads this hook from the effective region config,
+            # without task overrides. Project the validated signed worker hook
+            # into its exact context; never apply it to the CPU controller.
+            task = next(item for item in documents if item.get("resources"))
+            worker_config = (task.get("config") or {}).get("kubernetes") or task["resources"]["kubernetes"]
+            commands = worker_config["post_provision_runcmd"]
+            worker = contexts[context]
+            if worker.get("post_provision_runcmd", commands) != commands:
+                raise ValueError("LIBERO worker startup hook differs from the signed profile")
+            worker["post_provision_runcmd"] = list(commands)
     return config
 
 
