@@ -8,7 +8,10 @@ description: Use when running, validating or reviewing NVIDIA cuRobo V2 Franka p
 The image candidate remains `0.8.0-cuda13-b300-unbuilt` and publication-quarantined
 until built-image checks and real GPU validation pass. Build from committed inputs;
 `build.sh` checks scoped source cleanliness and archives the exact commit for Docker.
-The tag family does not establish B300 validation.
+The Dockerfile pins the full Ubuntu package closure to an exact snapshot and
+rejects a build-arg override; a snapshot change requires a rebuilt-image scan
+and fresh independent native-byte policy review. The tag family does not
+establish B300 validation.
 
 For image changes, inspect actual dependency wheels and base layers. The cuDNN
 development base carries headers; deleting inherited files in a later layer
@@ -48,6 +51,14 @@ real pose; it does not prove full-benchmark completion.
   separately. Failed solves remain failed; inverse-dynamics errors fail the job
   instead of becoming zero energy. FK path lengths are computed from actual
   tool positions, not upstream's placeholder end-effector metrics.
+- Every solved benchmark row retains the exact optimized joint trajectory,
+  torque samples, payload mass and torque limits used for Pinocchio dynamics.
+  Validation is deliberately separate from producer validation: a digest-pinned
+  GPU replays FK position/orientation from retained joints, while Pinocchio
+  replays inverse dynamics CPU-side in the same image. The audit recomputes
+  energy, torque limits, path measures, timeline duration, jerk, exact
+  identities and per-dataset/mode rates from durable bytes. Treat this replay
+  as a downstream dynamics consumer, not robot safety.
 - A matching total count is insufficient evidence. Validate exact problem
   identities and invalid indices against `benchmark_inventory.py`, independently
   derived from the pinned YAML with file hashes. The runner checks those bytes,
@@ -62,13 +73,49 @@ real pose; it does not prove full-benchmark completion.
 The workflow writes its recipe, `results/problems.jsonl`, `results/result.json`,
 `validation.json`, `reports/planning.rrd` and `reports/rrd-manifest.json` under the
 same run prefix. S3 publication reads back and hashes every object. The mandatory
-RRD contains actual joint traces, tool paths from FK, timing/pose/dynamics
-metrics and every problem status. It contains no invented robot meshes.
+RRD contains actual joint traces, tool paths from FK, goal markers,
+timing/pose/dynamics metrics and every problem status. Its manifest binds the
+run, journal, result and RRD hashes plus logged sample/status/goal counts and a
+streamed full-decode receipt. The receipt checks decoded row counts for every
+status, goal, FK position, FK quaternion and joint position/velocity/
+acceleration/jerk entity; a producer-authored coverage label is not evidence.
+The validator also regenerates a journal-derived reference RRD, drops only
+nondeterministic `log_tick`/`log_time`, and requires unordered semantic equality
+of every remaining value and factual timeline. It contains no invented robot
+meshes.
 
-On a GPU or upload failure the runtime retains a mode-0700 working directory
-and the already flushed problem journal. Inspect that evidence before any
-retry. Do not repeat a successful GPU run to repair telemetry. CUDA/Warp caches
-are node-local ephemeral state unless explicitly mounted by the workflow.
+The golden command writes a non-overwriting run directory beneath the required
+absolute `NPA_SMOKE_OUTPUT_DIR`; direct invocation has no shared `/tmp` fallback.
+The serverless runner supplies `/workspace/npa-golden` in the image-owned
+workspace. Retain its input, journal, result, independent validation, RRD, full
+`rerun rrd print -vv` output, control record and artifact manifest. Acceptance
+requires the feasible pose to succeed and the separately declared goal-blocked
+pose to fail; malformed manifest rejection is additional failure evidence.
+After private build and byte review, freeze the candidate digest in the
+post-build plan amendment. For serverless golden acceptance pass the selected
+digest through `--tag sha256:<hex>` and the separately reviewed value through
+`--expected-image-digest sha256:<hex>`. Missing, mutable or
+different identities are rejected before credential/provider access. The job
+receives both identities and checks equality again. The command requires
+`NPA_OUTPUT_PATH`, uploads every declared file, reads each object back and emits
+a separate upload receipt. Workload failures upload partial artifacts and a
+redacted failure receipt; partial upload failures are retained locally and the
+receipt is published when S3 remains reachable.
+
+On a nonzero planner exit the standard runtime publishes a read-back-verified
+failure receipt and `runtime.log` under
+`<output>/_failures/<run-id>/`. If the runner flushed
+`output/problems.jsonl`, it is published there as
+`partial-problems.jsonl` with its exact raw hash, physical-line count, and
+complete nonblank JSON-object record count. Blank, scalar, malformed, and
+truncated lines remain in the raw evidence but never count as complete records.
+That reserved namespace never receives `result.json`, and
+validation/visualization reject it.
+Failure-evidence publication errors remain secondary to the original subprocess
+failure. The mode-0700 local working directory is also retained. Inspect this
+evidence before any retry. Do not repeat a successful GPU run to repair
+telemetry. CUDA/Warp caches are node-local ephemeral state unless explicitly
+mounted by the workflow.
 After both result artifacts pass S3 readback verification, the runtime removes
 only that call's working directory. A cleanup failure emits a fixed warning and
 preserves the successful result; it must not trigger another GPU run.
@@ -104,7 +151,7 @@ Read `health-preflight`, `gpu-selection`, `secure-image-build` and
 ## Verify source changes
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/workbench/test_curobo.py npa/tests/cli/test_curobo_cli.py npa/tests/workflows/test_curobo_workflow.py -q
+npa/.venv/bin/python -m pytest npa/tests/workbench/test_curobo.py npa/tests/workbench/test_curobo_audit.py npa/tests/workbench/test_curobo_report_contract.py npa/tests/cli/test_curobo_cli.py npa/tests/workflows/test_curobo_workflow.py -q
 ```
 
 Then run applicable `pre-pr-validation`, container, catalog, skill and live-submit

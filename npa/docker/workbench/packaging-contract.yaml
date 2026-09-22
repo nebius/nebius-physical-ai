@@ -461,9 +461,15 @@ images:
       Apache-2.0 cuRobo V2 source and robot assets, MIT/BSD pinned benchmark data,
       non-cuDNN CUDA 13 base with a hash-locked Python closure. The cuDNN wheel
       headers/static SDK files are excluded during the install RUN before its
-      layer commits; only runtime shared libraries and notices remain. No weights or populated
-      runtime cache. Publication quarantined pending exact-byte security/license
-      scans and independent real B200 and RTX PRO 6000 capability validation.
+      layer commits; only runtime shared libraries and notices remain. Pinocchio's
+      OpenMP boundary is supplied by exact Noble-snapshot libgomp1 bytes under
+      GPL-3.0-or-later WITH GCC-exception-3.1, with the matching notice, complete
+      license text, SONAME link and immutable gcc-14 corresponding-source
+      identities recorded in the baked redistribution record and runtime payload
+      contract. The build imports the real upstream benchmark and verifies both
+      pinned dataset populations. No weights or populated runtime cache.
+      Publication quarantined pending exact-byte security/license scans and
+      independent real B200 and RTX PRO 6000 capability validation.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service

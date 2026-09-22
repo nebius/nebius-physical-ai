@@ -6,10 +6,13 @@ FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707e
 ARG NPA_SOURCE_SHA
 # Build-only commit epoch makes pip emit reproducible PEP 552 checked-hash pyc.
 ARG SOURCE_DATE_EPOCH
+# Keep the complete Ubuntu package closure immutable. Changing this date changes
+# public image bytes and requires a new complete-byte policy review.
+ARG UBUNTU_SNAPSHOT=20260920T000000Z
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-b300-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause"
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND (GPL-3.0-or-later WITH GCC-exception-3.1)"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -24,25 +27,40 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
+COPY docker/workbench/curobo/pip-bootstrap.lock /opt/pip-bootstrap.lock
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]]
-RUN rm -f /etc/apt/sources.list.d/*.list \
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
+    && [[ "$UBUNTU_SNAPSHOT" == "20260920T000000Z" ]]
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+       'Types: deb' \
+       "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
+       'Suites: noble noble-updates noble-security' \
+       'Components: main universe restricted multiverse' \
+       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+       'Check-Valid-Until: no' \
+       > /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
-       ca-certificates curl python3.12 python3.12-venv \
-       openssh-server rsync sudo \
+       ca-certificates curl fuse gcc netcat-openbsd python3.12 python3.12-venv \
+       libgomp1=14.2.0-4ubuntu2~24.04.1 \
+       openssh-server patch pciutils rsync sudo wget \
+    && dpkg-query -W \
+       curl fuse gcc netcat-openbsd openssh-server patch pciutils rsync wget \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
     && python3.12 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/python -m pip install --no-cache-dir --upgrade 'pip==26.2.1'
+    && /opt/npa-venv/bin/python -m pip install --no-cache-dir --upgrade \
+       --require-hashes -r /opt/pip-bootstrap.lock
 
 COPY docker/workbench/curobo/requirements.lock /opt/curobo-requirements.lock
 COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py
 COPY docker/workbench/curobo/remove_scikit_image_recipe.py /opt/remove_scikit_image_recipe.py
+COPY docker/workbench/curobo/verify_runtime_imports.py /opt/verify_runtime_imports.py
 # The current cuDNN supplement permits runtime-only redistribution. Use that
 # narrower boundary even though this wheel embeds older, broader header terms.
 # The non-cuDNN base contains none; filter the wheel in this SAME RUN before a
@@ -84,7 +102,11 @@ COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src \
     && python -c 'import torch; assert {"sm_100", "sm_120"} <= set(torch._C._cuda_getArchFlags().split())' \
-    && rm -rf /root/.cache /tmp/pip-*
+    && PYTHONDONTWRITEBYTECODE=1 \
+       MPLCONFIGDIR=/tmp/npa-curobo-import-cache/matplotlib \
+       XDG_CACHE_HOME=/tmp/npa-curobo-import-cache \
+       python /opt/verify_runtime_imports.py \
+    && rm -rf /root/.cache /tmp/pip-* /tmp/npa-curobo-import-cache
 
 COPY --chmod=0444 docker/workbench/curobo/REDISTRIBUTION.md /usr/share/doc/npa-curobo/REDISTRIBUTION.md
 COPY --chmod=0755 docker/workbench/curobo/entrypoint.sh /usr/local/bin/curobo-entrypoint

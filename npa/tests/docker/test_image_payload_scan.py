@@ -482,6 +482,343 @@ def _saved_image_members(format_name):
     return members
 
 
+def _bound_saved_image(tmp_path, format_name="oci"):
+    layer = _tar_bytes({"opt/example/readme.txt": b"example"})
+    diff_id = "sha256:" + hashlib.sha256(layer).hexdigest()
+    config = json.dumps(
+        {
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": {
+                "type": "layers",
+                "diff_ids": [diff_id],
+            },
+        }
+    ).encode()
+
+    def descriptor(payload, media_type):
+        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        return {"mediaType": media_type, "digest": digest, "size": len(payload)}
+
+    config_descriptor = descriptor(config, "application/vnd.oci.image.config.v1+json")
+    layer_descriptor = descriptor(layer, "application/vnd.oci.image.layer.v1.tar")
+    registry_manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": config_descriptor,
+            "layers": [layer_descriptor],
+        }
+    ).encode()
+    manifest_descriptor = descriptor(
+        registry_manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    if format_name == "oci":
+        config_name = "blobs/sha256/" + config_descriptor["digest"].removeprefix(
+            "sha256:"
+        )
+        layer_name = "blobs/sha256/" + layer_descriptor["digest"].removeprefix(
+            "sha256:"
+        )
+        members = {
+            "manifest.json": json.dumps(
+                [{"Config": config_name, "Layers": [layer_name]}]
+            ).encode(),
+            "index.json": json.dumps(
+                {"schemaVersion": 2, "manifests": [manifest_descriptor]}
+            ).encode(),
+            "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+            config_name: config,
+            layer_name: layer,
+            "blobs/sha256/"
+            + manifest_descriptor["digest"].removeprefix("sha256:"): registry_manifest,
+        }
+        manifest_digest = manifest_descriptor["digest"]
+        expected_image_id = manifest_digest
+    else:
+        assert format_name == "classic"
+        config_name = config_descriptor["digest"].removeprefix("sha256:") + ".json"
+        layer_name = "exact-layer/layer.tar"
+        members = {
+            "manifest.json": json.dumps(
+                [{"Config": config_name, "Layers": [layer_name]}]
+            ).encode(),
+            config_name: config,
+            layer_name: layer,
+        }
+        manifest_digest = None
+        expected_image_id = config_descriptor["digest"]
+    archive = tmp_path / f"bound-{format_name}-image.tar"
+    archive.write_bytes(_tar_bytes(members))
+    report = {
+        "schema_version": "npa.curobo.image-verification.v1",
+        "valid": True,
+        "docker_save_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "image_config_digest": config_descriptor["digest"],
+        "expected_image_id": expected_image_id,
+        "image_manifest_digest": manifest_digest,
+        "verified_layer_diff_ids": [diff_id],
+        "layer_count": 1,
+        "findings": [],
+    }
+    report_path = tmp_path / f"{format_name}-graph.json"
+    report_path.write_text(json.dumps(report))
+    return archive, report_path, report, registry_manifest
+
+
+@pytest.mark.parametrize(
+    "format_name,identity_kind",
+    [("oci", "oci-manifest-digest"), ("classic", "image-config-digest")],
+)
+def test_bound_tarball_report_cites_truthful_immutable_identity(
+    tmp_path, format_name, identity_kind
+) -> None:
+    archive, report_path, graph, _ = _bound_saved_image(tmp_path, format_name)
+
+    report = scanner.scan(
+        None,
+        archive,
+        verification_report=report_path,
+    )
+
+    assert report.clean
+    expected_identity = (
+        graph["image_manifest_digest"]
+        if format_name == "oci"
+        else graph["image_config_digest"]
+    )
+    assert report.digest == expected_identity
+    assert report.archive_binding == {
+        "schema_version": "npa.restricted-payload.archive-binding.v2",
+        "docker_save_sha256": graph["docker_save_sha256"],
+        "archive_format": (
+            "oci-with-saved-manifest" if format_name == "oci" else "docker-save-classic"
+        ),
+        "image_config_digest": graph["image_config_digest"],
+        "layer_count": 1,
+        "archive_layer_binding_kind": (
+            "verified-oci-layer-descriptors"
+            if format_name == "oci"
+            else "verified-config-diff-ids"
+        ),
+        "verification_report_sha256": hashlib.sha256(
+            report_path.read_bytes()
+        ).hexdigest(),
+        "content_identity_kind": identity_kind,
+        "content_identity": expected_identity,
+        **(
+            {"image_manifest_digest": graph["image_manifest_digest"]}
+            if format_name == "oci"
+            else {}
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["archive", "report", "manifest-binding"],
+)
+def test_bound_tarball_mutations_fail_before_payload_scan(
+    tmp_path, monkeypatch, mutation
+) -> None:
+    archive, report_path, graph, _ = _bound_saved_image(tmp_path)
+    if mutation == "archive":
+        archive.write_bytes(archive.read_bytes() + b"changed")
+    elif mutation == "report":
+        graph["image_config_digest"] = "sha256:" + "0" * 64
+        report_path.write_text(json.dumps(graph))
+    else:
+        graph["image_manifest_digest"] = None
+        report_path.write_text(json.dumps(graph))
+    monkeypatch.setattr(
+        scanner,
+        "_iter_tarball",
+        lambda _path: pytest.fail("binding must fail before the payload scan"),
+    )
+
+    with pytest.raises(RuntimeError):
+        scanner.scan(
+            None,
+            archive,
+            verification_report=report_path,
+        )
+
+
+def _registry_inspect(graph, manifest_digest, image_id=None):
+    return [
+        {
+            "Id": image_id or graph["image_config_digest"],
+            "RepoDigests": ["example.invalid/repository@" + manifest_digest],
+            "RootFS": {
+                "Type": "layers",
+                "Layers": graph["verified_layer_diff_ids"],
+            },
+        }
+    ]
+
+
+def test_registry_evidence_fetches_and_rehashes_exact_digest(
+    monkeypatch,
+) -> None:
+    manifest = b'{"schemaVersion":2,"mediaType":"fixture"}'
+    expected = "sha256:" + hashlib.sha256(manifest).hexdigest()
+    image = "example.invalid/repository@" + expected
+    inspected = [{"Id": "sha256:" + "a" * 64}]
+    calls = []
+
+    def run(command, **kwargs):
+        assert kwargs == {"capture_output": True, "check": False}
+        calls.append(command)
+        if command[1] == "digest":
+            return SimpleNamespace(returncode=0, stdout=(expected + "\n").encode())
+        if command[1] == "manifest":
+            return SimpleNamespace(returncode=0, stdout=manifest + b"\n")
+        return SimpleNamespace(returncode=0, stdout=json.dumps(inspected).encode())
+
+    monkeypatch.setattr(scanner, "_require", lambda name: name)
+    monkeypatch.setattr(scanner.subprocess, "run", run)
+
+    payload, result = scanner._fetch_registry_evidence(image, expected)
+
+    assert payload == manifest
+    assert result == inspected
+    assert calls == [
+        ["crane", "digest", image],
+        ["crane", "manifest", image],
+        ["docker", "image", "inspect", image],
+    ]
+
+
+def test_registry_evidence_rejects_nonexact_reference_before_fetch(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_require",
+        lambda _name: pytest.fail("an inexact reference must fail before a fetch"),
+    )
+
+    with pytest.raises(RuntimeError, match="exact-digest"):
+        scanner._fetch_registry_evidence(
+            "example.invalid/repository:tag", "sha256:" + "a" * 64
+        )
+
+
+@pytest.mark.parametrize(
+    "format_name,layer_binding_kind",
+    [
+        ("classic", "exact-pull-config-diff-ids"),
+        ("oci", "exact-oci-layer-descriptors"),
+    ],
+)
+def test_archive_binds_exact_fetched_registry_manifest(
+    tmp_path, monkeypatch, format_name, layer_binding_kind
+) -> None:
+    archive, report_path, graph, registry_manifest = _bound_saved_image(
+        tmp_path, format_name
+    )
+    manifest_digest = "sha256:" + hashlib.sha256(registry_manifest).hexdigest()
+    monkeypatch.setattr(
+        scanner,
+        "_fetch_registry_evidence",
+        lambda _image, _digest: (
+            registry_manifest,
+            _registry_inspect(
+                graph,
+                manifest_digest,
+                image_id=(
+                    manifest_digest
+                    if format_name == "oci"
+                    else graph["image_config_digest"]
+                ),
+            ),
+        ),
+    )
+
+    report = scanner.scan(
+        None,
+        archive,
+        verification_report=report_path,
+        registry_image="example.invalid/repository@" + manifest_digest,
+        expected_manifest_digest=manifest_digest,
+    )
+
+    assert report.clean
+    assert report.digest == manifest_digest
+    assert report.archive_binding["content_identity_kind"] == (
+        "registry-manifest-digest"
+    )
+    assert report.archive_binding["registry_layer_binding_kind"] == layer_binding_kind
+
+
+@pytest.mark.parametrize("mutation", ["config", "layer", "registry-manifest"])
+def test_classic_registry_graph_mutations_fail_before_payload_scan(
+    tmp_path, monkeypatch, mutation
+) -> None:
+    archive, report_path, graph, registry_manifest = _bound_saved_image(
+        tmp_path, "classic"
+    )
+    manifest = json.loads(registry_manifest)
+    if mutation == "config":
+        manifest["config"]["digest"] = "sha256:" + "0" * 64
+        evidence = json.dumps(manifest).encode()
+        expected = "sha256:" + hashlib.sha256(evidence).hexdigest()
+    elif mutation == "layer":
+        manifest["layers"].append(manifest["layers"][0])
+        evidence = json.dumps(manifest).encode()
+        expected = "sha256:" + hashlib.sha256(evidence).hexdigest()
+    else:
+        evidence = registry_manifest + b" "
+        expected = "sha256:" + hashlib.sha256(registry_manifest).hexdigest()
+    monkeypatch.setattr(
+        scanner,
+        "_fetch_registry_evidence",
+        lambda _image, _digest: (
+            evidence,
+            _registry_inspect(graph, expected),
+        ),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "_iter_tarball",
+        lambda _path: pytest.fail("binding must fail before the payload scan"),
+    )
+
+    with pytest.raises(RuntimeError):
+        scanner.scan(
+            None,
+            archive,
+            verification_report=report_path,
+            registry_image="example.invalid/repository@" + expected,
+            expected_manifest_digest=expected,
+        )
+
+
+def test_registry_binding_arguments_are_inseparable(tmp_path) -> None:
+    archive, report_path, graph, _ = _bound_saved_image(tmp_path)
+    expected = graph["image_manifest_digest"]
+    registry_image = "example.invalid/repository@" + expected
+    with pytest.raises(RuntimeError, match="inseparable"):
+        scanner.scan(
+            None,
+            archive,
+            verification_report=report_path,
+            registry_image=registry_image,
+        )
+    with pytest.raises(RuntimeError, match="inseparable"):
+        scanner.scan(
+            None,
+            archive,
+            verification_report=report_path,
+            expected_manifest_digest=expected,
+        )
+    with pytest.raises(RuntimeError, match="verification report"):
+        scanner.scan(
+            None,
+            archive,
+            registry_image=registry_image,
+            expected_manifest_digest=expected,
+        )
+
+
 @pytest.mark.parametrize("format_name", ["docker", "oci"])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_saved_image_scans_all_layers_without_seeking(format_name, reverse) -> None:

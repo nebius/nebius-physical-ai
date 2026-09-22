@@ -872,11 +872,21 @@ def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:
             refreshing=False,
         )
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(runtime._agent_access_report) for _ in range(8)]
-        assert entered.wait(timeout=2)
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(runtime._agent_access_report) for _ in range(8)]
+            assert entered.wait(timeout=2)
+            release.set()
+            results = [future.result(timeout=2) for future in futures]
+    finally:
         release.set()
-        results = [future.result(timeout=2) for future in futures]
+        # Cached readers can finish before the background refresh publishes.
+        # Keep its mocks alive until invalidation and cache publication finish.
+        with runtime._AGENT_ACCESS_CONDITION:
+            assert runtime._AGENT_ACCESS_CONDITION.wait_for(
+                lambda: not bool(runtime._AGENT_ACCESS_CACHE["refreshing"]),
+                timeout=2,
+            )
 
     assert calls == 1
     assert all(result is report for result in results)

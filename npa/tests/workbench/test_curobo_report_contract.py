@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from npa.workbench.curobo import runner
-from npa.workbench.curobo.artifacts import CuroboError, summarize, validate_report
+from npa.workbench.curobo import audit, runner
+from npa.workbench.curobo.artifacts import (
+    CuroboError,
+    canonical,
+    summarize,
+    validate_report,
+)
 from npa.workbench.curobo.benchmark_inventory import benchmark_identities, DATASET_FILES
 from npa.workbench.curobo.schemas import DATASET_REVISION, SOURCE_REVISION
 
@@ -24,7 +30,16 @@ def benchmark_rows(modes=("kinematic",)):
             **(
                 {"reason": "upstream collision_buffer_ik is negative"}
                 if invalid
-                else {"metrics": {"wall_plan_seconds": 0.01}}
+                else {
+                    "query": {
+                        "start": [0.0] * 7,
+                        "goal_pose": {
+                            "position_xyz": [0.1, 0.0, 0.0],
+                            "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                        },
+                    },
+                    "metrics": {"wall_plan_seconds": 0.01},
+                }
             ),
         }
         for (mode, dataset, identity), invalid in benchmark_identities(
@@ -96,6 +111,8 @@ def test_same_population_and_recomputed_summary_cannot_hide_wrong_inputs(change)
 def solved_row(monkeypatch):
     """Drive the actual runner formatter through mocked CUDA/planner boundaries."""
 
+    active_names = [f"joint{i}" for i in range(7)]
+
     class Tensor:
         def __init__(self, data):
             self.data = np.asarray(data)
@@ -130,7 +147,7 @@ def solved_row(monkeypatch):
         SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda: None)),
     )
     path = SimpleNamespace(
-        joint_names=[f"joint{i}" for i in range(7)],
+        joint_names=active_names.copy(),
         position=Tensor([[0.0] * 7, [0.1] * 7]),
         velocity=Tensor([[0.0] * 7, [0.1] * 7]),
         acceleration=Tensor([[0.0] * 7, [0.0] * 7]),
@@ -142,18 +159,30 @@ def solved_row(monkeypatch):
         indices = [path.joint_names.index(name) for name in names]
         return SimpleNamespace(
             joint_names=list(names),
-            position=Tensor(path.position.data[:, indices]),
+            dt=path.dt,
+            **{
+                field: Tensor(getattr(path, field).data[:, indices])
+                for field in ("position", "velocity", "acceleration", "jerk")
+            },
         )
 
     path.reorder = reorder
 
     def forward_kinematics(state):
-        assert state.joint_names == [f"joint{i}" for i in range(7)]
-        np.testing.assert_allclose(state.position.data, [[0.0] * 7, [0.1] * 7])
+        assert state.joint_names == active_names
+        active = np.asarray(state.position.data)
         return SimpleNamespace(
             tool_poses=SimpleNamespace(
                 get_link_pose=lambda _name: SimpleNamespace(
-                    position=Tensor([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]])
+                    position=Tensor(
+                        np.column_stack(
+                            (
+                                active[:, 0],
+                                np.zeros((len(active), 2), dtype=active.dtype),
+                            )
+                        )
+                    ),
+                    quaternion=Tensor(np.tile([1.0, 0.0, 0.0, 0.0], (len(active), 1))),
                 )
             )
         )
@@ -169,11 +198,19 @@ def solved_row(monkeypatch):
     )
     planner = SimpleNamespace(
         device_cfg=SimpleNamespace(to_device=Tensor),
-        joint_names=[f"joint{i}" for i in range(7)],
+        joint_names=active_names,
         tool_frames=["tool"],
         reset_seed=lambda: None,
         plan_pose=lambda *_args, **_kwargs: result,
-        kinematics=SimpleNamespace(compute_kinematics=forward_kinematics),
+        kinematics=SimpleNamespace(
+            compute_kinematics=forward_kinematics,
+            joint_names=active_names,
+            all_articulated_joint_names=[
+                *active_names,
+                "left_finger",
+                "right_finger",
+            ],
+        ),
     )
     problem = {
         "start": [0.0] * 7,
@@ -183,7 +220,15 @@ def solved_row(monkeypatch):
         },
     }
 
-    def solve(benchmark=False, success=True, include_fingers=False):
+    def solve(benchmark=False, success=True, include_fingers=False, positions=None):
+        if positions is not None:
+            assert not include_fingers
+            values = np.asarray(positions)
+            assert values.ndim == 2 and values.shape[1] == 7
+            path.joint_names = active_names.copy()
+            path.position = Tensor(values)
+            for field in ("velocity", "acceleration", "jerk"):
+                setattr(path, field, Tensor(np.zeros_like(values)))
         if include_fingers:
             # Locked/mimic fingers are returned in the full interpolation. Put
             # them between active joints so slicing the first seven is invalid.
@@ -209,18 +254,42 @@ def solved_row(monkeypatch):
                 setattr(path, field, Tensor(np.stack(columns, axis=-1)))
             path.joint_names = names
         result.success = Tensor(success)
+
+        def compute_energy(trajectory, _model):
+            assert trajectory.joint_names == active_names
+            assert trajectory.position.shape == (2, 7)
+            return {
+                "energy": 0.07,
+                "max_torque": 1.0,
+                "torque_violation": False,
+                "torques": np.ones((2, 7)),
+            }
+
         upstream = (
-            SimpleNamespace(
-                compute_trajectory_energy=lambda *_args: {
-                    "energy": 1.0,
-                    "max_torque": 2.0,
-                    "torque_violation": False,
-                }
+            SimpleNamespace(compute_trajectory_energy=compute_energy)
+            if benchmark
+            else None
+        )
+        dynamics_model = (
+            (
+                SimpleNamespace(
+                    nq=7,
+                    nv=7,
+                    names=["universe", *active_names],
+                ),
+                object(),
+                np.asarray([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]),
             )
             if benchmark
             else None
         )
-        return runner._solve(planner, problem, benchmark_module=upstream)
+        return runner._solve(
+            planner,
+            problem,
+            benchmark_module=upstream,
+            dynamics_model=dynamics_model,
+            attached_mass_kg=0.0 if benchmark else None,
+        )
 
     return solve
 
@@ -262,6 +331,48 @@ def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solv
         assert np.asarray(trajectory[field]).shape == (2, 9)
     np.testing.assert_array_equal(np.asarray(trajectory["position"])[:, [0, 4]], 0.04)
     assert trajectory["tool_position"] == [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]
+
+
+def test_benchmark_retains_named_active_order_used_for_dynamics(solved_row):
+    row = solved_row(benchmark=True, include_fingers=True)
+
+    assert len(row["trajectory"]["joint_names"]) == 9
+    assert row["dynamics_evidence"]["trajectory"]["joint_names"] == [
+        f"joint{index}" for index in range(7)
+    ]
+    for field in ("position", "velocity", "acceleration", "jerk"):
+        assert np.asarray(row["dynamics_evidence"]["trajectory"][field]).shape == (
+            2,
+            7,
+        )
+
+
+def test_actual_runner_metrics_bind_serialized_float32_trajectory(solved_row):
+    steps = np.linspace(-1.3, 0.2, 4097, dtype=np.float32)
+    factors = np.asarray([1.0, -0.7, 0.3, -0.2, 0.11, -0.05, 0.02], dtype=np.float32)
+    positions = steps[:, None] * factors[None, :]
+    row = {
+        "mode": "kinematic",
+        "dataset": "operator",
+        "problem_id": "float32-serialization",
+        **solved_row(positions=positions),
+    }
+
+    raw_float32_metric = float(np.linalg.norm(np.diff(positions, axis=0), axis=1).sum())
+    durable_metric = float(
+        np.linalg.norm(
+            np.diff(np.asarray(row["trajectory"]["position"], dtype=float), axis=0),
+            axis=1,
+        ).sum()
+    )
+    assert abs(raw_float32_metric - durable_metric) > 1e-9
+    assert row["metrics"]["joint_path_length_rad"] == durable_metric
+
+    journal = canonical(row) + b"\n"
+    report = report_for([row], "plan")
+    report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+    validation = audit.audit_bytes(canonical(report), journal, run_id="report-test")
+    assert validation["problem_count"] == 1
 
 
 @pytest.mark.parametrize(
@@ -325,6 +436,10 @@ def test_plan_report_rejects_bad_status_metrics_timeline_or_scope(solved_row, ch
         "torque_indicator",
         "failed_missing_wall",
         "invalid_metrics",
+        "torque_evidence",
+        "torque_limits",
+        "payload_mass",
+        "missing_evidence",
     ],
 )
 def test_benchmark_report_requires_the_actual_metrics_for_each_status(
@@ -340,11 +455,21 @@ def test_benchmark_report_requires_the_actual_metrics_for_each_status(
         rows[0]["metrics"]["torque_violation"] = 2
     elif change == "failed_missing_wall":
         rows[1].pop("metrics")
-    else:
+    elif change == "invalid_metrics":
         next(r for r in rows if r["status"] == "invalid")["metrics"] = {
             "wall_plan_seconds": 0.1
         }
-    with pytest.raises(CuroboError, match="(metrics|torque violation)"):
+    elif change == "torque_evidence":
+        rows[0]["dynamics_evidence"]["torques_nm"][1][0] = 2.0
+    elif change == "torque_limits":
+        rows[0]["dynamics_evidence"]["torque_limits_nm"][0] = 88.0
+    elif change == "payload_mass":
+        rows[0]["dynamics_evidence"]["attached_mass_kg"] = 3.0
+    else:
+        rows[0].pop("dynamics_evidence")
+    with pytest.raises(
+        CuroboError, match="(metrics|torque violation|dynamics|inverse)"
+    ):
         validate_report(report_for(rows), rows, run_id="report-test")
 
 

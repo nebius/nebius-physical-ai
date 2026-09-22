@@ -3280,7 +3280,21 @@ def _preflight_image_bootstrap_contracts(
             if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
-                # complete preflight for registered images outside that subset.
+                # complete preflight for registered images outside that subset,
+                # but submission still needs one result per selected image.
+                pull_digest = str(
+                    getattr(check_by_image.get(image), "digest", "") or ""
+                )
+                if not pull_digest and reference.reference.startswith("sha256:"):
+                    pull_digest = reference.reference
+                results.append(
+                    {
+                        "image": immutable_image_reference(image, pull_digest),
+                        "digest": pull_digest,
+                        "state": "pullable",
+                        "source": "registry_pull",
+                    }
+                )
                 continue
             host = reference.registry
             username, password = resolve_registry_credentials(

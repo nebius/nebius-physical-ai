@@ -38,6 +38,7 @@ registry.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -46,7 +47,7 @@ import sys
 import tarfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Path signatures that only a real Omniverse Kit / Isaac Sim install produces.
 PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
@@ -217,6 +218,7 @@ class ScanReport:
     image: str
     source: str
     digest: str | None = None
+    archive_binding: dict[str, object] | None = None
     entries_scanned: int = 0
     allowlisted_hits: list[str] = field(default_factory=list)
     payload_hits: list[dict[str, str]] = field(default_factory=list)
@@ -236,6 +238,10 @@ class ScanReport:
             "image": self.image,
             "source": self.source,
             "digest": self.digest,
+            # A local archive can be cited as evidence only when a successful
+            # complete-graph verifier bound these exact archive, manifest and config
+            # bytes. Registry scans retain their existing digest behavior.
+            "archive_binding": self.archive_binding,
             # Recorded so a consumer can never mistake a fast pre-publish gate result for
             # a full-filesystem proof: a history-only "clean" says the build ran no Isaac
             # install, not that the image ships no Isaac bytes.
@@ -449,6 +455,477 @@ def _iter_tarball(tarball: Path):
         yield from _iter_saved_image(handle, mode="r")
 
 
+_SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_MANIFEST_MEDIA_TYPES = {
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+}
+_CONFIG_MEDIA_TYPES = {
+    "application/vnd.oci.image.config.v1+json",
+    "application/vnd.docker.container.image.v1+json",
+}
+_LAYER_MEDIA_TYPES = {
+    "application/vnd.oci.image.layer.v1.tar",
+    "application/vnd.oci.image.layer.v1.tar+gzip",
+    "application/vnd.docker.image.rootfs.diff.tar",
+    "application/vnd.docker.image.rootfs.diff.tar.gzip",
+}
+
+
+@dataclass(frozen=True)
+class _SavedImageGraph:
+    archive_format: str
+    config_digest: str
+    config_size: int
+    diff_ids: tuple[str, ...]
+    layer_names: tuple[str, ...]
+    manifest_digest: str | None
+    manifest_layers: tuple[dict[str, object], ...] | None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _bound_name(value: object) -> str:
+    if not isinstance(value, str):
+        raise RuntimeError("Invalid bound image archive member reference")
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise RuntimeError("Unsafe bound image archive member reference")
+    return str(path)
+
+
+def _descriptor_fields(
+    descriptor: object, media_types: set[str]
+) -> tuple[str, int, str]:
+    if (
+        not isinstance(descriptor, dict)
+        or descriptor.get("mediaType") not in media_types
+        or not isinstance(descriptor.get("digest"), str)
+        or _SHA256_DIGEST.fullmatch(descriptor["digest"]) is None
+        or type(descriptor.get("size")) is not int
+        or descriptor["size"] < 0
+    ):
+        raise RuntimeError("Invalid bound image descriptor")
+    return descriptor["digest"], descriptor["size"], descriptor["mediaType"]
+
+
+def _bound_descriptor(
+    archive: tarfile.TarFile,
+    members: dict[str, tarfile.TarInfo],
+    descriptor: object,
+    media_types: set[str],
+) -> tuple[str, bytes]:
+    digest, size, _ = _descriptor_fields(descriptor, media_types)
+    name = "blobs/sha256/" + digest.removeprefix("sha256:")
+    member = members.get(name)
+    if member is None or not member.isfile() or member.size != size:
+        raise RuntimeError("Incomplete bound image descriptor")
+    handle = archive.extractfile(member)
+    assert handle is not None
+    data = handle.read()
+    if "sha256:" + hashlib.sha256(data).hexdigest() != digest:
+        raise RuntimeError("Bound image descriptor digest mismatch")
+    return name, data
+
+
+def _saved_image_graph(tarball: Path) -> _SavedImageGraph:
+    """Read the identity graph shared by classic and containerd Docker saves."""
+    with tarfile.open(tarball, "r:*") as archive:
+        members: dict[str, tarfile.TarInfo] = {}
+        for member in archive.getmembers():
+            name = _bound_name(member.name)
+            if name in members:
+                raise RuntimeError("Duplicate bound image archive member")
+            members[name] = member
+        saved_member = members.get("manifest.json")
+        if saved_member is None or not saved_member.isfile():
+            raise RuntimeError("Bound image archive requires a saved-image manifest")
+        saved_handle = archive.extractfile(saved_member)
+        assert saved_handle is not None
+        saved = json.load(saved_handle)
+        if (
+            not isinstance(saved, list)
+            or len(saved) != 1
+            or not isinstance(saved[0], dict)
+            or not isinstance(saved[0].get("Config"), str)
+            or not isinstance(saved[0].get("Layers"), list)
+            or not saved[0]["Layers"]
+            or not all(isinstance(item, str) for item in saved[0]["Layers"])
+        ):
+            raise RuntimeError("Invalid bound saved-image manifest")
+        config_name = _bound_name(saved[0]["Config"])
+        layer_names = tuple(_bound_name(item) for item in saved[0]["Layers"])
+        config_member = members.get(config_name)
+        if config_member is None or not config_member.isfile():
+            raise RuntimeError("Incomplete bound saved-image config")
+        config_handle = archive.extractfile(config_member)
+        assert config_handle is not None
+        config_bytes = config_handle.read()
+        config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
+        config_hash = config_digest.removeprefix("sha256:")
+        if (
+            PurePosixPath(config_name).stem != config_hash
+            and config_name != "blobs/sha256/" + config_hash
+        ):
+            raise RuntimeError("Saved-image config name does not bind its bytes")
+        config = json.loads(config_bytes)
+        rootfs = config.get("rootfs") if isinstance(config, dict) else None
+        diff_ids = rootfs.get("diff_ids") if isinstance(rootfs, dict) else None
+        if (
+            not isinstance(rootfs, dict)
+            or rootfs.get("type") != "layers"
+            or not isinstance(diff_ids, list)
+            or len(diff_ids) != len(layer_names)
+            or not all(
+                isinstance(item, str) and _SHA256_DIGEST.fullmatch(item)
+                for item in diff_ids
+            )
+        ):
+            raise RuntimeError("Saved-image config has no complete rootfs identity")
+        for name in layer_names:
+            member = members.get(name)
+            if member is None or not member.isfile():
+                raise RuntimeError("Incomplete bound saved-image layer population")
+
+        layout = members.get("oci-layout")
+        index_member = members.get("index.json")
+        if layout is None and index_member is None:
+            return _SavedImageGraph(
+                archive_format="docker-save-classic",
+                config_digest=config_digest,
+                config_size=len(config_bytes),
+                diff_ids=tuple(diff_ids),
+                layer_names=layer_names,
+                manifest_digest=None,
+                manifest_layers=None,
+            )
+        if (
+            layout is None
+            or index_member is None
+            or not layout.isfile()
+            or not index_member.isfile()
+        ):
+            raise RuntimeError("Incomplete bound OCI image layout")
+        layout_handle = archive.extractfile(layout)
+        index_handle = archive.extractfile(index_member)
+        assert layout_handle is not None and index_handle is not None
+        if json.load(layout_handle) != {"imageLayoutVersion": "1.0.0"}:
+            raise RuntimeError("Invalid bound OCI layout")
+        index = json.load(index_handle)
+        descriptors = index.get("manifests") if isinstance(index, dict) else None
+        descriptor = (
+            descriptors[0]
+            if isinstance(descriptors, list) and len(descriptors) == 1
+            else None
+        )
+        if (
+            not isinstance(index, dict)
+            or index.get("schemaVersion") != 2
+            or index.get("mediaType", "application/vnd.oci.image.index.v1+json")
+            != "application/vnd.oci.image.index.v1+json"
+            or not isinstance(descriptor, dict)
+        ):
+            raise RuntimeError("OCI index does not bind one image manifest")
+        _, manifest_bytes = _bound_descriptor(
+            archive, members, descriptor, _MANIFEST_MEDIA_TYPES
+        )
+        manifest_digest, _, manifest_media_type = _descriptor_fields(
+            descriptor, _MANIFEST_MEDIA_TYPES
+        )
+        manifest = json.loads(manifest_bytes)
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("schemaVersion") != 2
+            or manifest.get("mediaType") != manifest_media_type
+        ):
+            raise RuntimeError("Invalid bound image manifest")
+        described_config_name, described_config = _bound_descriptor(
+            archive, members, manifest.get("config"), _CONFIG_MEDIA_TYPES
+        )
+        if described_config_name != config_name or described_config != config_bytes:
+            raise RuntimeError("OCI and saved-image configs disagree")
+        manifest_layers = manifest.get("layers")
+        if not isinstance(manifest_layers, list) or len(manifest_layers) != len(
+            layer_names
+        ):
+            raise RuntimeError("OCI and saved-image layer populations disagree")
+        for layer_name, layer_descriptor in zip(
+            layer_names, manifest_layers, strict=True
+        ):
+            layer_digest, layer_size, _ = _descriptor_fields(
+                layer_descriptor, _LAYER_MEDIA_TYPES
+            )
+            expected_name = "blobs/sha256/" + layer_digest.removeprefix("sha256:")
+            if layer_name != expected_name or members[layer_name].size != layer_size:
+                raise RuntimeError("OCI and saved-image layer order disagrees")
+        return _SavedImageGraph(
+            archive_format="oci-with-saved-manifest",
+            config_digest=config_digest,
+            config_size=len(config_bytes),
+            diff_ids=tuple(diff_ids),
+            layer_names=layer_names,
+            manifest_digest=manifest_digest,
+            manifest_layers=tuple(manifest_layers),
+        )
+
+
+def _exact_manifest_bytes(payload: bytes, expected_digest: str) -> bytes:
+    candidates = [payload]
+    if payload.endswith(b"\n"):
+        candidates.append(payload[:-1])
+    matches = [
+        candidate
+        for candidate in candidates
+        if "sha256:" + hashlib.sha256(candidate).hexdigest() == expected_digest
+    ]
+    if len(matches) != 1:
+        raise RuntimeError("Fetched registry manifest digest mismatch")
+    return matches[0]
+
+
+def _fetch_registry_evidence(
+    registry_image: str, expected_manifest_digest: str
+) -> tuple[bytes, object]:
+    repository, separator, reference_digest = registry_image.rpartition("@")
+    if (
+        not repository
+        or separator != "@"
+        or reference_digest != expected_manifest_digest
+    ):
+        raise RuntimeError("Registry evidence requires an exact-digest image reference")
+    crane = _require("crane")
+    digest = subprocess.run(
+        [crane, "digest", registry_image],
+        capture_output=True,
+        check=False,
+    )  # noqa: S603
+    if (
+        digest.returncode != 0
+        or digest.stdout.decode(errors="replace").strip() != expected_manifest_digest
+    ):
+        raise RuntimeError("Could not independently verify registry manifest digest")
+    manifest = subprocess.run(
+        [crane, "manifest", registry_image],
+        capture_output=True,
+        check=False,
+    )  # noqa: S603
+    if manifest.returncode != 0:
+        raise RuntimeError("Could not fetch exact registry manifest evidence")
+    manifest_bytes = _exact_manifest_bytes(manifest.stdout, expected_manifest_digest)
+    docker = _require("docker")
+    inspected = subprocess.run(
+        [docker, "image", "inspect", registry_image],
+        capture_output=True,
+        check=False,
+    )  # noqa: S603
+    if inspected.returncode != 0:
+        raise RuntimeError("Could not inspect the exact pulled registry image")
+    return manifest_bytes, json.loads(inspected.stdout)
+
+
+def _bind_registry_graph(
+    graph: _SavedImageGraph,
+    manifest_bytes: bytes,
+    inspected: object,
+    expected_manifest_digest: str,
+) -> tuple[int, str]:
+    manifest_bytes = _exact_manifest_bytes(manifest_bytes, expected_manifest_digest)
+    manifest = json.loads(manifest_bytes)
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schemaVersion") != 2
+        or manifest.get("mediaType") not in _MANIFEST_MEDIA_TYPES
+    ):
+        raise RuntimeError("Invalid exact registry image manifest")
+    config_digest, config_size, _ = _descriptor_fields(
+        manifest.get("config"), _CONFIG_MEDIA_TYPES
+    )
+    if config_digest != graph.config_digest or config_size != graph.config_size:
+        raise RuntimeError("Registry manifest and saved-image configs disagree")
+    registry_layers = manifest.get("layers")
+    if not isinstance(registry_layers, list) or len(registry_layers) != len(
+        graph.layer_names
+    ):
+        raise RuntimeError("Registry and saved-image layer populations disagree")
+    for descriptor in registry_layers:
+        _descriptor_fields(descriptor, _LAYER_MEDIA_TYPES)
+
+    image = (
+        inspected[0]
+        if isinstance(inspected, list)
+        and len(inspected) == 1
+        and isinstance(inspected[0], dict)
+        else None
+    )
+    repo_digests = image.get("RepoDigests") if isinstance(image, dict) else None
+    rootfs = image.get("RootFS") if isinstance(image, dict) else None
+    if (
+        not isinstance(image, dict)
+        or image.get("Id")
+        not in (
+            {graph.config_digest, expected_manifest_digest}
+            if graph.manifest_digest is not None
+            else {graph.config_digest}
+        )
+        or not isinstance(repo_digests, list)
+        or not any(
+            isinstance(item, str) and item.endswith("@" + expected_manifest_digest)
+            for item in repo_digests
+        )
+        or not isinstance(rootfs, dict)
+        or rootfs.get("Type") != "layers"
+        or rootfs.get("Layers") != list(graph.diff_ids)
+    ):
+        raise RuntimeError("Pulled registry image does not bind the saved-image graph")
+
+    if graph.manifest_digest is not None:
+        if (
+            graph.manifest_digest != expected_manifest_digest
+            or graph.manifest_layers is None
+            or [
+                _descriptor_fields(item, _LAYER_MEDIA_TYPES)
+                for item in graph.manifest_layers
+            ]
+            != [
+                _descriptor_fields(item, _LAYER_MEDIA_TYPES) for item in registry_layers
+            ]
+        ):
+            raise RuntimeError("Registry and OCI archive descriptor graphs disagree")
+        layer_binding_kind = "exact-oci-layer-descriptors"
+    else:
+        # A classic save retains uncompressed layer tar streams and config diff IDs,
+        # not registry-compressed descriptors. Docker's successful exact-digest pull
+        # binds those descriptor positions to the inspected rootfs diff-ID sequence.
+        layer_binding_kind = "exact-pull-config-diff-ids"
+    return len(registry_layers), layer_binding_kind
+
+
+def _verify_archive_binding(
+    tarball: Path,
+    verification_report: Path,
+    *,
+    registry_image: str | None = None,
+    expected_manifest_digest: str | None = None,
+) -> dict[str, object]:
+    """Bind a clean local payload result to successful complete-graph evidence."""
+    if (registry_image is None) != (expected_manifest_digest is None):
+        raise RuntimeError(
+            "Registry image and expected manifest digest are inseparable"
+        )
+    if expected_manifest_digest is not None and (
+        _SHA256_DIGEST.fullmatch(expected_manifest_digest) is None
+    ):
+        raise RuntimeError("Require an exact expected registry manifest digest")
+    report_bytes = verification_report.read_bytes()
+    report = json.loads(report_bytes)
+    if (
+        not isinstance(report, dict)
+        or report.get("schema_version") != "npa.curobo.image-verification.v1"
+        or report.get("valid") is not True
+        or report.get("findings") != []
+    ):
+        raise RuntimeError("Require a successful complete image verification report")
+    archive_sha256 = report.get("docker_save_sha256")
+    manifest_digest = report.get("image_manifest_digest")
+    config_digest = report.get("image_config_digest")
+    inspected_identity = report.get("expected_image_id")
+    verified_diff_ids = report.get("verified_layer_diff_ids")
+    layer_count = report.get("layer_count")
+    if (
+        not isinstance(archive_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", archive_sha256) is None
+        or not isinstance(config_digest, str)
+        or _SHA256_DIGEST.fullmatch(config_digest) is None
+        or not isinstance(inspected_identity, str)
+        or _SHA256_DIGEST.fullmatch(inspected_identity) is None
+        or (
+            manifest_digest is not None
+            and (
+                not isinstance(manifest_digest, str)
+                or _SHA256_DIGEST.fullmatch(manifest_digest) is None
+            )
+        )
+        or not isinstance(verified_diff_ids, list)
+        or not all(
+            isinstance(item, str) and _SHA256_DIGEST.fullmatch(item)
+            for item in verified_diff_ids
+        )
+        or type(layer_count) is not int
+    ):
+        raise RuntimeError("Complete image report has no exact archive graph binding")
+    if _sha256_file(tarball) != archive_sha256:
+        raise RuntimeError("Image archive does not match complete verification report")
+    graph = _saved_image_graph(tarball)
+    if (
+        graph.config_digest != config_digest
+        or graph.manifest_digest != manifest_digest
+        or list(graph.diff_ids) != verified_diff_ids
+        or len(graph.layer_names) != layer_count
+        or inspected_identity not in {graph.config_digest, graph.manifest_digest}
+        or (graph.manifest_digest is None and inspected_identity != graph.config_digest)
+    ):
+        raise RuntimeError("Image archive does not match complete graph evidence")
+
+    binding: dict[str, object] = {
+        "schema_version": "npa.restricted-payload.archive-binding.v2",
+        "docker_save_sha256": archive_sha256,
+        "archive_format": graph.archive_format,
+        "image_config_digest": graph.config_digest,
+        "layer_count": len(graph.layer_names),
+        "archive_layer_binding_kind": (
+            "verified-oci-layer-descriptors"
+            if graph.manifest_digest is not None
+            else "verified-config-diff-ids"
+        ),
+        "verification_report_sha256": hashlib.sha256(report_bytes).hexdigest(),
+    }
+    if registry_image is not None:
+        assert expected_manifest_digest is not None
+        manifest_bytes, registry_inspect = _fetch_registry_evidence(
+            registry_image, expected_manifest_digest
+        )
+        registry_layer_count, layer_binding_kind = _bind_registry_graph(
+            graph,
+            manifest_bytes,
+            registry_inspect,
+            expected_manifest_digest,
+        )
+        binding.update(
+            {
+                "content_identity_kind": "registry-manifest-digest",
+                "content_identity": expected_manifest_digest,
+                "registry_manifest_digest": expected_manifest_digest,
+                "registry_manifest_evidence_sha256": hashlib.sha256(
+                    manifest_bytes
+                ).hexdigest(),
+                "registry_layer_count": registry_layer_count,
+                "registry_layer_binding_kind": layer_binding_kind,
+            }
+        )
+    elif graph.manifest_digest is not None:
+        binding.update(
+            {
+                "content_identity_kind": "oci-manifest-digest",
+                "content_identity": graph.manifest_digest,
+                "image_manifest_digest": graph.manifest_digest,
+            }
+        )
+    else:
+        binding.update(
+            {
+                "content_identity_kind": "image-config-digest",
+                "content_identity": graph.config_digest,
+            }
+        )
+    return binding
+
+
 def _iter_docker_save(image: str):
     """Stream all local image layers without materialising a second image-sized file."""
     docker = _require("docker")
@@ -514,6 +991,9 @@ def scan(
     tarball: Path | None,
     *,
     docker_image: str | None = None,
+    verification_report: Path | None = None,
+    registry_image: str | None = None,
+    expected_manifest_digest: str | None = None,
     max_report: int = 40,
     history_only: bool = False,
 ) -> ScanReport:
@@ -534,6 +1014,22 @@ def scan(
         history = _local_image_history(docker_image)
     elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")
+        if (registry_image is None) != (expected_manifest_digest is None):
+            raise RuntimeError(
+                "Registry image and expected manifest digest are inseparable"
+            )
+        if registry_image is not None and verification_report is None:
+            raise RuntimeError("Registry binding requires a graph verification report")
+        if verification_report is not None:
+            report.archive_binding = _verify_archive_binding(
+                tarball,
+                verification_report,
+                registry_image=registry_image,
+                expected_manifest_digest=expected_manifest_digest,
+            )
+            identity = report.archive_binding["content_identity"]
+            assert isinstance(identity, str)
+            report.digest = identity
         entries = _iter_tarball(tarball)
         history: list[str] = []
     else:
@@ -584,6 +1080,26 @@ def main(argv: list[str] | None = None) -> int:
             "no image-sized temporary archive is created."
         ),
     )
+    parser.add_argument(
+        "--verification-report",
+        type=Path,
+        help=("Successful complete-graph report for this exact local tarball."),
+    )
+    parser.add_argument(
+        "--registry-image",
+        help=(
+            "Exact digest-qualified registry image whose fetched manifest and pulled "
+            "Docker graph must match this tarball. Requires "
+            "--expected-manifest-digest and --verification-report."
+        ),
+    )
+    parser.add_argument(
+        "--expected-manifest-digest",
+        help=(
+            "Exact sha256 registry manifest identity to fetch and bind. Requires "
+            "--registry-image and --verification-report."
+        ),
+    )
     parser.add_argument("--json", type=Path, help="Write the JSON report here.")
     parser.add_argument(
         "--history-only",
@@ -601,11 +1117,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     if selected != 1:
         parser.error("pass exactly one image reference, --tarball, or --docker-image")
+    if (args.registry_image is None) != (args.expected_manifest_digest is None):
+        parser.error(
+            "--registry-image and --expected-manifest-digest must be provided together"
+        )
+    if args.registry_image is not None and args.verification_report is None:
+        parser.error("--registry-image requires --verification-report")
+    if (
+        args.verification_report is not None or args.registry_image is not None
+    ) and args.tarball is None:
+        parser.error("archive graph binding is supported only with --tarball")
 
     report = scan(
         args.image,
         args.tarball,
         docker_image=args.docker_image,
+        verification_report=args.verification_report,
+        registry_image=args.registry_image,
+        expected_manifest_digest=args.expected_manifest_digest,
         history_only=args.history_only,
     )
     payload = report.to_dict()

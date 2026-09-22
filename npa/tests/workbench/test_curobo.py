@@ -16,8 +16,11 @@ from pydantic import ValidationError
 from npa.workbench.curobo import runtime
 from npa.workbench.curobo.artifacts import (
     CuroboError,
+    _expected_rrd_chunks,
+    _scan_decoded_chunks,
     build_rrd,
     canonical,
+    decode_rrd,
     summarize,
     validate_report,
 )
@@ -38,6 +41,13 @@ def row():
         "dataset": "synthetic",
         "problem_id": "case",
         "status": "success",
+        "query": {
+            "start": [0.0],
+            "goal_pose": {
+                "position_xyz": [0.1, 0.0, 0.0],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+        },
         "metrics": {"wall_plan_seconds": 0.01},
         "trajectory": {
             "joint_names": ["joint"],
@@ -47,8 +57,204 @@ def row():
             "acceleration": [[0.0], [0.0]],
             "jerk": [[0.0], [0.0]],
             "tool_position": [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]],
+            "tool_quaternion": [
+                [1.0, 0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ],
         },
     }
+
+
+def rrd_scale_rows(count: int) -> list[dict]:
+    rows = []
+    for index in range(count):
+        problem = copy.deepcopy(row())
+        problem["problem_id"] = f"scale-{index:06d}"
+        rows.append(problem)
+    return rows
+
+
+def _decoded_rrd_events(path: Path) -> list[dict]:
+    import rerun_bindings
+
+    events = []
+    recording = rerun_bindings.load_recording(str(path))
+    for chunk in recording.chunks():
+        batch = chunk.to_record_batch()
+        columns = batch.to_pydict()
+        if "problem_index" not in columns:
+            continue
+        component_names = [
+            name
+            for name in columns
+            if name
+            not in {
+                "rerun.controls.RowId",
+                "log_tick",
+                "log_time",
+                "problem_index",
+                "trajectory_time",
+                "Clear:is_recursive",
+            }
+        ]
+        clear_values = columns.get("Clear:is_recursive", [None] * batch.num_rows)
+        for offset in range(batch.num_rows):
+            fact = any(columns[name][offset] is not None for name in component_names)
+            events.append(
+                {
+                    "entity_path": chunk.entity_path.lstrip("/"),
+                    "problem_index": columns["problem_index"][offset],
+                    "row_id": int.from_bytes(
+                        columns["rerun.controls.RowId"][offset], "big"
+                    ),
+                    "recursive_clear": clear_values[offset] == [True],
+                    "fact": fact,
+                }
+            )
+    return events
+
+
+def _latest_decoded_fact(
+    events: list[dict], entity_path: str, problem_index: int
+) -> dict | None:
+    facts = [
+        event
+        for event in events
+        if event["entity_path"] == entity_path
+        and event["fact"]
+        and event["problem_index"] <= problem_index
+    ]
+    if not facts:
+        return None
+    clears = [
+        event
+        for event in events
+        if event["recursive_clear"]
+        and event["problem_index"] <= problem_index
+        and (
+            entity_path == event["entity_path"]
+            or entity_path.startswith(event["entity_path"] + "/")
+        )
+    ]
+
+    def event_key(event: dict) -> tuple[int, int]:
+        return event["problem_index"], event["row_id"]
+
+    fact = max(facts, key=event_key)
+    return (
+        None
+        if clears and event_key(max(clears, key=event_key)) >= event_key(fact)
+        else fact
+    )
+
+
+def _mixed_sparse_rows() -> list[dict]:
+    success = copy.deepcopy(row())
+    success["problem_id"] = "success"
+    success["metrics"] = {"success_only": 1.0, "shared": 10.0}
+    failed = {
+        "mode": "kinematic",
+        "dataset": "synthetic",
+        "problem_id": "failed",
+        "status": "failed",
+        "query": copy.deepcopy(success["query"]),
+        "metrics": {"failure_only": 2.0},
+    }
+    failed["query"]["goal_pose"]["position_xyz"] = [0.2, 0.0, 0.0]
+    invalid = {
+        "mode": "kinematic",
+        "dataset": "synthetic",
+        "problem_id": "invalid",
+        "status": "invalid",
+        "query": copy.deepcopy(success["query"]),
+        "metrics": {"invalid_only": 3.0},
+    }
+    return [success, failed, invalid]
+
+
+def _assert_decoded_goal_state(events: list[dict]) -> None:
+    for clear_root in ("problems/goal", "metrics", "trajectory"):
+        clear_indices = [
+            event["problem_index"]
+            for event in events
+            if event["entity_path"] == clear_root and event["recursive_clear"]
+        ]
+        assert sorted(clear_indices) == [0, 1, 2]
+    goal_at_failure = _latest_decoded_fact(events, "problems/goal", 1)
+    assert _latest_decoded_fact(events, "problems/goal", 0) is not None
+    assert goal_at_failure is not None and goal_at_failure["problem_index"] == 1
+    assert _latest_decoded_fact(events, "problems/goal", 2) is None
+
+
+def _assert_decoded_metric_state(events: list[dict]) -> None:
+    metric_paths = ("success_only", "shared", "failure_only", "invalid_only")
+    expected_metrics = [
+        {"success_only", "shared"},
+        {"failure_only"},
+        {"invalid_only"},
+    ]
+    for problem_index, expected_names in enumerate(expected_metrics):
+        observed_names = {
+            name
+            for name in metric_paths
+            if _latest_decoded_fact(events, f"metrics/{name}", problem_index)
+        }
+        assert observed_names == expected_names
+
+
+def _assert_decoded_trajectory_state(events: list[dict]) -> None:
+    trajectory_paths = (
+        "trajectory/joint_names",
+        "trajectory/tool_path",
+        "trajectory/tool",
+        "trajectory/tool_quaternion/w",
+        "trajectory/joints/0/position",
+    )
+    assert all(_latest_decoded_fact(events, path, 0) for path in trajectory_paths)
+    for problem_index in (1, 2):
+        assert not any(
+            _latest_decoded_fact(events, path, problem_index)
+            for path in trajectory_paths
+        )
+
+
+def _assert_decoded_sparse_state(events: list[dict]) -> None:
+    _assert_decoded_goal_state(events)
+    _assert_decoded_metric_state(events)
+    _assert_decoded_trajectory_state(events)
+
+
+def _assert_decoded_clear_order(events: list[dict]) -> None:
+    clear_roots = {
+        "problems/goal": "problems/goal",
+        "metrics/success_only": "metrics",
+        "metrics/failure_only": "metrics",
+        "metrics/invalid_only": "metrics",
+        "trajectory/tool": "trajectory",
+    }
+    current_facts = {
+        0: ("problems/goal", "metrics/success_only", "trajectory/tool"),
+        1: ("problems/goal", "metrics/failure_only"),
+        2: ("metrics/invalid_only",),
+    }
+    for problem_index, entity_paths in current_facts.items():
+        for entity_path in entity_paths:
+            clear_row_ids = [
+                event["row_id"]
+                for event in events
+                if event["entity_path"] == clear_roots[entity_path]
+                and event["problem_index"] == problem_index
+                and event["recursive_clear"]
+            ]
+            fact_row_ids = [
+                event["row_id"]
+                for event in events
+                if event["entity_path"] == entity_path
+                and event["problem_index"] == problem_index
+                and event["fact"]
+            ]
+            assert len(clear_row_ids) == 1
+            assert fact_row_ids and clear_row_ids[0] < min(fact_row_ids)
 
 
 def plan_row():
@@ -101,7 +307,8 @@ def test_denominators_preserve_failures_and_invalid_inputs():
 
 
 @pytest.mark.parametrize(
-    "mutation", ["nan", "shape", "dt", "tool", "duplicate", "false_solution"]
+    "mutation",
+    ["nan", "shape", "dt", "tool", "quaternion", "duplicate", "false_solution"],
 )
 def test_malformed_journal_never_passes(mutation):
     rows = [row()]
@@ -113,6 +320,8 @@ def test_malformed_journal_never_passes(mutation):
         rows[0]["trajectory"]["dt"] = -1
     if mutation == "tool":
         rows[0]["trajectory"]["tool_position"] = [[0, 0, 0]]
+    if mutation == "quaternion":
+        rows[0]["trajectory"]["tool_quaternion"][0] = [2, 0, 0, 0]
     if mutation == "duplicate":
         rows.append(copy.deepcopy(rows[0]))
     if mutation == "false_solution":
@@ -164,32 +373,163 @@ def test_prepare_full_recipe_readback_and_hash_mismatch(monkeypatch):
         runtime.prepare(PrepareRequest(output_path="s3://example-bucket/recipe.json"))
 
 
-def test_gpu_subprocess_failure_retains_evidence_and_never_uploads(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    ("partial_journal", "physical_line_count", "complete_record_count"),
+    [
+        (canonical(row()) + b"\n\n42\n" + b'{"status":"truncated"', 4, 1),
+        (b"", 0, 0),
+    ],
+)
+def test_gpu_subprocess_failure_preserves_empty_or_truncated_journal_and_receipt(
+    monkeypatch,
+    tmp_path,
+    partial_journal,
+    physical_line_count,
+    complete_record_count,
 ):
     monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        runtime,
-        "read_bytes_uri",
-        lambda uri: canonical(BenchmarkManifest().model_dump()),
-    )
-    monkeypatch.setattr(
-        runtime, "write_bytes_uri", lambda *a: pytest.fail("uploaded failed operation")
-    )
+    objects = {
+        request().input_path: canonical(BenchmarkManifest().model_dump(mode="json"))
+    }
+    events = []
     calls = []
+
+    def read(uri):
+        events.append(("read", uri))
+        return objects[uri]
+
+    def write(uri, payload):
+        events.append(("write", uri))
+        objects[uri] = payload
 
     def run(argv, **kwargs):
         calls.append(argv)
-        kwargs["stdout"].write(b"upstream failure")
+        kwargs["stdout"].write(b"upstream traceback\n")
+        output = Path(argv[argv.index("--output") + 1])
+        output.mkdir()
+        (output / "problems.jsonl").write_bytes(partial_journal)
+        (output / "result.json").write_bytes(b'{"status":"untrusted-partial"}')
         return SimpleNamespace(returncode=7)
 
+    monkeypatch.setattr(runtime, "read_bytes_uri", read)
+    monkeypatch.setattr(runtime, "write_bytes_uri", write)
     monkeypatch.setattr(runtime.subprocess, "run", run)
-    with pytest.raises(CuroboError, match="exit code 7"):
+    with pytest.raises(
+        CuroboError,
+        match=r"exit code 7; durable failure receipt: _failures/unit-run/failure.json",
+    ):
         runtime.benchmark(request())
+
+    namespace = request().output_path + "/_failures/unit-run"
+    log_uri = namespace + "/runtime.log"
+    partial_uri = namespace + "/partial-problems.jsonl"
+    receipt_uri = namespace + "/failure.json"
+    expected_log = b"upstream traceback\n"
+    receipt = json.loads(objects[receipt_uri])
+    assert receipt == {
+        "schema_version": "npa.curobo.failure.v1",
+        "status": "failed",
+        "failure_type": "subprocess_exit",
+        "kind": "benchmark",
+        "run_id": "unit-run",
+        "subprocess_exit_code": 7,
+        "artifacts": [
+            {
+                "role": "runtime_log",
+                "path": "runtime.log",
+                "bytes": len(expected_log),
+                "sha256": hashlib.sha256(expected_log).hexdigest(),
+            },
+            {
+                "role": "partial_journal",
+                "path": "partial-problems.jsonl",
+                "bytes": len(partial_journal),
+                "sha256": hashlib.sha256(partial_journal).hexdigest(),
+                "partial": True,
+                "physical_line_count": physical_line_count,
+                "complete_record_count": complete_record_count,
+            },
+        ],
+    }
+    assert objects[log_uri] == expected_log
+    assert objects[partial_uri] == partial_journal
+    assert events == [
+        ("read", request().input_path),
+        ("write", log_uri),
+        ("read", log_uri),
+        ("write", partial_uri),
+        ("read", partial_uri),
+        ("write", receipt_uri),
+        ("read", receipt_uri),
+    ]
+    assert not any(uri.endswith("/result.json") for uri in objects)
     assert len(calls) == 1
     logs = list(tmp_path.glob("*/runtime.log"))
-    assert len(logs) == 1 and logs[0].read_bytes() == b"upstream failure"
+    assert len(logs) == 1 and logs[0].read_bytes() == expected_log
+    assert (logs[0].parent / "output/result.json").is_file()
     assert logs[0].parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    ("failure", "secondary_type"),
+    [("write", "OSError"), ("readback", "CuroboError")],
+)
+def test_failure_publication_error_preserves_subprocess_failure(
+    monkeypatch, tmp_path, failure, secondary_type
+):
+    monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
+    objects = {
+        request().input_path: canonical(BenchmarkManifest().model_dump(mode="json"))
+    }
+
+    def read(uri):
+        payload = objects[uri]
+        if failure == "readback" and uri.endswith("/failure.json"):
+            return b"changed remote receipt"
+        return payload
+
+    def write(uri, payload):
+        if failure == "write" and uri.endswith("/failure.json"):
+            raise OSError("credential-shaped private storage diagnostic")
+        objects[uri] = payload
+
+    def run(argv, **kwargs):
+        kwargs["stdout"].write(b"primary runner failure\n")
+        output = Path(argv[argv.index("--output") + 1])
+        output.mkdir()
+        (output / "problems.jsonl").write_bytes(canonical(row()) + b"\n")
+        return SimpleNamespace(returncode=9)
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", read)
+    monkeypatch.setattr(runtime, "write_bytes_uri", write)
+    monkeypatch.setattr(runtime.subprocess, "run", run)
+    with pytest.raises(CuroboError) as raised:
+        runtime.benchmark(request())
+    message = str(raised.value)
+    assert message == (
+        "upstream cuRobo benchmark failed with exit code 9; "
+        f"failure evidence publication failed ({secondary_type})"
+    )
+    assert "credential-shaped" not in message
+    assert request().output_path + "/_failures/unit-run/runtime.log" in objects
+    assert (
+        request().output_path + "/_failures/unit-run/partial-problems.jsonl" in objects
+    )
+    assert not any(uri.endswith("/result.json") for uri in objects)
+
+
+@pytest.mark.parametrize("operation", [runtime.validate, runtime.visualize])
+def test_failure_namespace_is_never_an_accepted_result(operation, monkeypatch):
+    monkeypatch.setattr(
+        runtime, "read_bytes_uri", lambda *_: pytest.fail("read failure namespace")
+    )
+    failed = RunRequest(
+        input_path="s3://example-bucket/output/_failures/unit-run",
+        output_path="s3://example-bucket/review",
+        run_id="unit-run",
+    )
+    with pytest.raises(CuroboError, match="not an accepted cuRobo result"):
+        operation(failed)
 
 
 @pytest.fixture
@@ -363,10 +703,43 @@ def test_validation_recomputes_facts_and_detects_hash_tampering(monkeypatch):
         "write_bytes_uri",
         lambda uri, payload: objects.__setitem__(uri, payload),
     )
+    monkeypatch.setattr(
+        runtime,
+        "replay_rows",
+        lambda _rows, _report: {
+            "valid": True,
+            "terminal_goal_distance_m": {"max": 0.0, "mean": 0.0},
+            "terminal_goal_orientation_rad": {"max": 0.0, "mean": 0.0},
+        },
+    )
     assert runtime.validate(request())["valid"] is True
     objects["s3://example-bucket/input/problems.jsonl"] += b" "
     with pytest.raises(CuroboError, match="hash mismatch"):
         runtime.validate(request())
+
+
+@pytest.mark.parametrize(
+    "distance,orientation,accepted",
+    [
+        (0.005, 0.05, True),
+        (0.005001, 0.0, False),
+        (0.0, 0.050001, False),
+        (float("nan"), 0.0, False),
+        (0.0, float("nan"), False),
+    ],
+)
+def test_validation_requires_independent_terminal_pose_replay(
+    distance, orientation, accepted
+):
+    replay = {
+        "terminal_goal_distance_m": {"max": distance},
+        "terminal_goal_orientation_rad": {"max": orientation},
+    }
+    if accepted:
+        runtime._require_replay_tolerance(replay)
+    else:
+        with pytest.raises(CuroboError, match="terminal goal"):
+            runtime._require_replay_tolerance(replay)
 
 
 @pytest.mark.parametrize(
@@ -419,6 +792,27 @@ def test_factual_rrd_round_trip(tmp_path):
     target = tmp_path / "planning.rrd"
     result = build_rrd(journal, target, run_id="unit-rrd")
     assert result["successful_trajectories"] == 1
+    assert result["run_id"] == "unit-rrd"
+    assert result["journal_sha256"] == hashlib.sha256(journal.read_bytes()).hexdigest()
+    assert result["goal_markers"] == 1
+    assert result["metric_samples"] == 1
+    assert result["trajectory_samples"] == 2
+    assert result["rrd_layout"] == "npa.curobo.problem-index.v2"
+    assert result["entity_path_count"] == 17
+    assert result["state_clear_records"] == {
+        "problems/goal": 1,
+        "metrics": 1,
+        "trajectory": 1,
+    }
+    decoded_path = tmp_path / "rrd-print.txt"
+    decoded = decode_rrd(
+        target, rows=[row()], run_id="unit-rrd", decoded_output=decoded_path
+    )
+    assert decoded["verify"] == "passed"
+    assert decoded["print"] == "passed"
+    assert decoded["print_bytes"] == decoded_path.stat().st_size
+    assert decoded["chunk_mismatches"] == []
+    assert decoded["decoded_chunk_rows"] == 27
     import sys
 
     executable = Path(sys.executable).with_name("rerun")
@@ -438,9 +832,474 @@ def test_factual_rrd_round_trip(tmp_path):
         "problem_index",
         "trajectory_time",
         "tool_path",
+        "tool_quaternion/w",
+        "problems/goal",
         "joints/0/position",
     ):
         assert entity in printed
+    assert "problems/000000" not in printed
+
+
+def test_decoded_latest_at_state_clears_sparse_shared_paths(tmp_path):
+    import sys
+
+    from npa.workbench.curobo.artifacts import _normalize_rrd_for_compare
+
+    rows = _mixed_sparse_rows()
+    journal = tmp_path / "mixed.jsonl"
+    journal.write_bytes(b"".join(canonical(problem) + b"\n" for problem in rows))
+    target = tmp_path / "mixed.rrd"
+    build_rrd(journal, target, run_id="mixed-state")
+    decoded = decode_rrd(target, rows=rows, run_id="mixed-state")
+    assert decoded["semantic_compare"] == "passed"
+
+    normalized = tmp_path / "mixed-normalized.rrd"
+    rerun = str(Path(sys.executable).with_name("rerun"))
+    _normalize_rrd_for_compare(target, normalized, rerun=rerun)
+    for recording in (target, normalized):
+        events = _decoded_rrd_events(recording)
+        _assert_decoded_sparse_state(events)
+        _assert_decoded_clear_order(events)
+
+
+def test_decoded_rrd_rejects_truncated_recording(tmp_path):
+    journal = tmp_path / "problems.jsonl"
+    journal.write_bytes(canonical(row()) + b"\n")
+    target = tmp_path / "planning.rrd"
+    build_rrd(journal, target, run_id="truncated-run")
+    target.write_bytes(target.read_bytes()[:-128])
+
+    with pytest.raises(CuroboError, match="Rerun rejected"):
+        decode_rrd(target, rows=[row()], run_id="truncated-run")
+
+
+def test_rrd_layout_decodes_full_matrix_scale_with_bounded_paths(tmp_path):
+    rows = rrd_scale_rows(5200)
+    journal = tmp_path / "scale.jsonl"
+    journal.write_bytes(b"".join(canonical(problem) + b"\n" for problem in rows))
+    target = tmp_path / "scale.rrd"
+
+    result = build_rrd(journal, target, run_id="scale-run")
+    decoded = decode_rrd(
+        target,
+        rows=rows,
+        run_id="scale-run",
+        decoded_output=tmp_path / "scale-print.txt",
+    )
+
+    assert result["problem_count"] == 5200
+    assert result["entity_path_count"] == 17
+    assert decoded["required_chunk_count"] == 17
+    assert decoded["status_entities"] == 5200
+    assert decoded["goal_entities"] == 5200
+    assert decoded["metric_samples"] == 5200
+    assert decoded["state_clear_records"] == {
+        "problems/goal": 5200,
+        "metrics": 5200,
+        "trajectory": 5200,
+    }
+    assert decoded["trajectory_entities"] == 5200
+    assert decoded["trajectory_samples"] == 10400
+    assert decoded["decoded_chunk_rows"] == 135201
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "joint",
+        "tool",
+        "quaternion",
+        "trajectory_time",
+        "problem_index",
+        "goal",
+        "status",
+        "metric",
+    ],
+)
+def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation):
+    import rerun as rr
+    from npa.workbench.curobo.artifacts import _RRD_LAYOUT, log_trajectory_columns
+
+    original = row()
+    journal_bytes = canonical(original) + b"\n"
+    target = tmp_path / "adversarial.rrd"
+    recording = rr.RecordingStream("npa.curobo", recording_id="semantic-run")
+    recording.save(str(target))
+    recording.log(
+        "provenance",
+        rr.TextDocument(
+            json.dumps(
+                {
+                    "producer": "npa.workbench.curobo",
+                    "source_revision": SOURCE_REVISION,
+                    "dataset_revision": None,
+                    "run_id": "semantic-run",
+                    "journal_sha256": hashlib.sha256(journal_bytes).hexdigest(),
+                    "rrd_layout": _RRD_LAYOUT,
+                    "limitations": "FK tool paths and joint traces; no rendered robot meshes or independent collision certification.",
+                }
+            )
+        ),
+        static=True,
+    )
+    problem_index = 1 if mutation == "problem_index" else 0
+    recording.set_time("problem_index", sequence=problem_index)
+    recording.log("problems/goal", rr.Clear(recursive=True))
+    recording.log("metrics", rr.Clear(recursive=True))
+    recording.log("trajectory", rr.Clear(recursive=True))
+    status = {key: original[key] for key in ("problem_id", "mode", "dataset", "status")}
+    if mutation == "status":
+        status["problem_id"] = "tampered"
+    recording.log(
+        "problems/status",
+        rr.TextDocument(json.dumps(status)),
+    )
+    goal_position = copy.deepcopy(original["query"]["goal_pose"]["position_xyz"])
+    if mutation == "goal":
+        goal_position[0] += 0.25
+    recording.log(
+        "problems/goal",
+        rr.Points3D(
+            [goal_position],
+            radii=0.015,
+            colors=[0, 255, 0],
+        ),
+    )
+    changed = copy.deepcopy(original["trajectory"])
+    metrics = copy.deepcopy(original["metrics"])
+    if mutation == "joint":
+        changed["position"][1][0] += 0.25
+    elif mutation == "tool":
+        changed["tool_position"][1][0] += 0.25
+    elif mutation == "quaternion":
+        changed["tool_quaternion"][1] = [0.0, 1.0, 0.0, 0.0]
+    elif mutation == "trajectory_time":
+        changed["dt"] = 0.2
+    elif mutation == "metric":
+        metrics["wall_plan_seconds"] += 0.25
+    for name, value in metrics.items():
+        recording.log(f"metrics/{name}", rr.Scalars(value))
+    recording.log(
+        "trajectory/joint_names",
+        rr.TextDocument(json.dumps(original["trajectory"]["joint_names"])),
+    )
+    recording.log(
+        "trajectory/tool_path",
+        rr.LineStrips3D([changed["tool_position"]]),
+    )
+    log_trajectory_columns(
+        recording, "trajectory", changed, problem_index=problem_index
+    )
+    recording.flush()
+    del recording
+
+    with pytest.raises(CuroboError, match="values or factual timelines"):
+        decode_rrd(target, rows=[original], run_id="semantic-run")
+
+
+def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_chunk(tmp_path):
+    solved = plan_row()
+    failed = {
+        "mode": "kinematic",
+        "dataset": "operator",
+        "problem_id": "failed",
+        "status": "failed",
+        "query": copy.deepcopy(solved["query"]),
+        "metrics": {"wall_plan_seconds": 0.1},
+    }
+    expected = _expected_rrd_chunks([solved, failed])
+    decoded = tmp_path / "truncated-print.txt"
+    lines = [b'npa.curobo "coverage-run"']
+    for entity, count in expected.items():
+        if entity == "trajectory/joints/0/position":
+            continue
+        lines.append(f"Chunk(x) with {count} rows (1 B) - /{entity} -".encode())
+    decoded.write_bytes(b"\n".join(lines) + b"\n")
+    _digest, _size, mismatches = _scan_decoded_chunks(
+        decoded, expected, run_id="coverage-run"
+    )
+    assert mismatches == ["trajectory/joints/0/position: expected 2, decoded 0"]
+
+
+def test_functional_smoke_retains_complete_positive_and_failure_evidence(
+    tmp_path, monkeypatch, capsys
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    def execute(_kind, manifest, output, *, run_id):
+        assert [problem["id"] for problem in manifest["problems"]] == [
+            "franka-pose",
+            "blocked-goal-control",
+        ]
+        solved = plan_row()
+        solved["problem_id"] = "franka-pose"
+        failed = {
+            "mode": "kinematic",
+            "dataset": "operator",
+            "problem_id": "blocked-goal-control",
+            "status": "failed",
+            "query": copy.deepcopy(solved["query"]),
+            "metrics": {"wall_plan_seconds": 0.02},
+        }
+        rows = [solved, failed]
+        output.mkdir(parents=True)
+        (output / "problems.jsonl").write_bytes(
+            b"".join(canonical(item) + b"\n" for item in rows)
+        )
+        report = {
+            "schema_version": "npa.curobo.result.v1",
+            "engine": "nvidia-curobo-v2",
+            "source_revision": SOURCE_REVISION,
+            "dataset_revision": None,
+            "kind": "plan",
+            "requested_modes": ["kinematic"],
+            "run_id": run_id,
+            "gpu": {
+                "name": "synthetic-gpu",
+                "compute_capability": [10, 0],
+                "torch_version": "test",
+                "cuda_version": "test",
+            },
+            "summary": summarize(rows),
+            "limitations": ["unit fixture"],
+        }
+        (output / "result.json").write_bytes(canonical(report))
+        return report
+
+    monkeypatch.setattr(smoke, "execute", execute)
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("NPA_SMOKE_RUN_ID", "retained-smoke")
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    uploaded = {}
+    monkeypatch.setattr(
+        smoke,
+        "write_bytes_uri",
+        lambda uri, payload: uploaded.__setitem__(uri, payload),
+    )
+    monkeypatch.setattr(smoke, "read_bytes_uri", lambda uri: uploaded[uri])
+    monkeypatch.setattr(
+        smoke,
+        "replay_rows",
+        lambda _rows, _report: {
+            "valid": True,
+            "terminal_goal_distance_m": {"max": 0.0, "mean": 0.0},
+            "terminal_goal_orientation_rad": {"max": 0.0, "mean": 0.0},
+        },
+    )
+    smoke.main()
+    root = tmp_path / "retained-smoke"
+    assert root.stat().st_mode & 0o777 == 0o700
+    expected = {
+        "artifact-manifest.json",
+        "controls.json",
+        "independent-validation.json",
+        "input.json",
+        "output/problems.jsonl",
+        "output/result.json",
+        "planning.rrd",
+        "rrd-manifest.json",
+        "rrd-print.txt",
+        "upload-receipt.json",
+    }
+    assert {
+        str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()
+    } == expected
+    manifest = json.loads((root / "artifact-manifest.json").read_text())
+    assert manifest["source_commit"] == "a" * 40
+    assert manifest["image_digest"] == "sha256:" + "b" * 64
+    assert manifest["objective"] == {
+        "success": 1,
+        "failed_control": 1,
+        "invalid": 0,
+        "independent_validation": True,
+        "independent_replay": True,
+        "rrd_decode": "passed",
+    }
+    assert (
+        json.loads((root / "controls.json").read_text())["valid_but_infeasible"][
+            "observed_status"
+        ]
+        == "failed"
+    )
+    receipt = json.loads((root / "upload-receipt.json").read_text())
+    assert receipt["readback_verified"] is True
+    assert receipt["workload_status"] == "passed"
+    assert receipt["errors"] == []
+    assert {item["path"] for item in receipt["objects"]} == expected - {
+        "upload-receipt.json"
+    }
+    assert set(uploaded) == {"s3://example-bucket/golden/" + path for path in expected}
+    assert json.loads(capsys.readouterr().out)["status"] == "passed"
+
+
+def test_functional_smoke_uploads_partial_artifacts_and_failure_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    def fail_after_partial_output(_kind, _manifest, output, *, run_id):
+        output.mkdir(parents=True)
+        (output / "partial.log").write_text(f"{run_id}: planner failed")
+        raise RuntimeError("synthetic planner failure")
+
+    monkeypatch.setattr(smoke, "execute", fail_after_partial_output)
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("NPA_SMOKE_RUN_ID", "failed-smoke")
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    uploaded = {}
+    monkeypatch.setattr(
+        smoke,
+        "write_bytes_uri",
+        lambda uri, payload: uploaded.__setitem__(uri, payload),
+    )
+    monkeypatch.setattr(smoke, "read_bytes_uri", lambda uri: uploaded[uri])
+
+    with pytest.raises(RuntimeError, match="synthetic planner"):
+        smoke.main()
+
+    root = tmp_path / "failed-smoke"
+    receipt = json.loads((root / "upload-receipt.json").read_text())
+    assert receipt["workload_status"] == "failed"
+    assert receipt["readback_verified"] is True
+    assert {item["path"] for item in receipt["objects"]} == {
+        "failure.json",
+        "input.json",
+        "output/partial.log",
+    }
+    assert "s3://example-bucket/golden/failure.json" in uploaded
+    assert "s3://example-bucket/golden/upload-receipt.json" in uploaded
+    failure_output = json.loads(capsys.readouterr().out)
+    assert failure_output["status"] == "failed"
+    assert failure_output["evidence_upload_failure_type"] is None
+
+
+def test_functional_smoke_retains_partial_upload_failure_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    (tmp_path / "kept.txt").write_text("kept")
+    (tmp_path / "rejected.txt").write_text("rejected")
+    uploaded = {}
+
+    def publish(uri, payload):
+        if uri.endswith("/rejected.txt"):
+            raise RuntimeError("synthetic upload failure")
+        uploaded[uri] = payload
+
+    monkeypatch.setattr(smoke, "_publish", publish)
+    with pytest.raises(RuntimeError, match="upload or read-back"):
+        smoke._upload_tree(
+            tmp_path,
+            output_uri="s3://example-bucket/golden/",
+            run_id="partial-upload",
+            image_digest="sha256:" + "b" * 64,
+            workload_status="failed",
+        )
+    receipt = json.loads((tmp_path / "upload-receipt.json").read_text())
+    assert receipt["readback_verified"] is False
+    assert receipt["errors"] == [{"path": "rejected.txt", "error": "RuntimeError"}]
+    assert "s3://example-bucket/golden/upload-receipt.json" in uploaded
+    assert json.loads(capsys.readouterr().out)["status"] == "evidence-upload-failed"
+
+
+@pytest.mark.parametrize(
+    "missing,error",
+    [
+        ("NPA_IMAGE_SOURCE_SHA", "NPA_IMAGE_SOURCE_SHA"),
+        ("NPA_IMAGE_DIGEST", "NPA_IMAGE_DIGEST"),
+        ("NPA_EXPECTED_IMAGE_DIGEST", "NPA_EXPECTED_IMAGE_DIGEST"),
+        ("NPA_OUTPUT_PATH", "NPA_OUTPUT_PATH"),
+        ("NPA_SMOKE_OUTPUT_DIR", "NPA_SMOKE_OUTPUT_DIR"),
+    ],
+)
+def test_functional_smoke_requires_immutable_durable_identity(
+    tmp_path, monkeypatch, missing, error
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    values = {
+        "NPA_IMAGE_SOURCE_SHA": "a" * 40,
+        "NPA_IMAGE_DIGEST": "sha256:" + "b" * 64,
+        "NPA_EXPECTED_IMAGE_DIGEST": "sha256:" + "b" * 64,
+        "NPA_OUTPUT_PATH": "s3://example-bucket/golden/",
+        "NPA_SMOKE_OUTPUT_DIR": str(tmp_path),
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv(missing)
+    monkeypatch.setattr(
+        smoke, "execute", lambda *_a, **_k: pytest.fail("planner called")
+    )
+    with pytest.raises(RuntimeError, match=error):
+        smoke.main()
+    assert not list(tmp_path.iterdir())
+
+
+def test_functional_smoke_requires_absolute_output_directory(tmp_path, monkeypatch):
+    from npa.smoke import test_curobo_functional as smoke
+
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", "relative-output")
+    monkeypatch.setattr(
+        smoke, "execute", lambda *_a, **_k: pytest.fail("planner called")
+    )
+    with pytest.raises(RuntimeError, match="must be absolute"):
+        smoke.main()
+    assert not list(tmp_path.iterdir())
+
+
+def test_functional_smoke_rejects_different_frozen_digest_before_planner(
+    tmp_path, monkeypatch
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "c" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        smoke, "execute", lambda *_a, **_k: pytest.fail("planner called")
+    )
+    with pytest.raises(RuntimeError, match="frozen candidate"):
+        smoke.main()
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "distance,orientation,accepted",
+    [
+        (0.005, 0.05, True),
+        (0.0050001, 0.0, False),
+        (0.0, 0.050001, False),
+        (float("nan"), 0.0, False),
+        (0.0, float("nan"), False),
+    ],
+)
+def test_functional_smoke_enforces_terminal_pose_threshold(
+    distance, orientation, accepted
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    report = {
+        "terminal_goal_distance_m": {"max": distance},
+        "terminal_goal_orientation_rad": {"max": orientation},
+    }
+    if accepted:
+        smoke._require_feasible_distance(report)
+    else:
+        with pytest.raises(RuntimeError, match="tolerance"):
+            smoke._require_feasible_distance(report)
 
 
 def test_partial_benchmark_cannot_pass_with_self_consistent_summary():
@@ -547,6 +1406,11 @@ def test_rrd_column_batches_preserve_all_joint_and_fk_samples(tmp_path):
         reference.log(
             "trajectory/tool", rr.Points3D([trajectory["tool_position"][frame]])
         )
+        for component, name in enumerate(("w", "x", "y", "z")):
+            reference.log(
+                f"trajectory/tool_quaternion/{name}",
+                rr.Scalars(trajectory["tool_quaternion"][frame][component]),
+            )
         for field in ("position", "velocity", "acceleration", "jerk"):
             reference.log(
                 f"trajectory/joints/0/{field}", rr.Scalars(trajectory[field][frame][0])
