@@ -10,8 +10,11 @@ from __future__ import annotations
 import ast
 from collections import namedtuple
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
+import stat
+import tempfile
 from types import SimpleNamespace
 
 import pytest
@@ -22,15 +25,28 @@ PINS = {
     "models/video_vae_v3/modules/attn_video_vae.py": "981faf238b040a9f62b29f4f10e3886ba7152ff24ece03713129f6f19ea44568",
 }
 
+METHOD_PINS = {
+    "generation_loop": "9189e64c43aec5800355911b6b4281afa1a6bb23c7e01dbb38415d781e146692",
+    "vae_encode": "36086d32007820cba6446c840e31383e88642a819f6a9677f573b7a2b0206be5",
+    "Wrapper": "d3cb1105d07ef3d617b1b3098e39d72825222ab26f749dd478ec0b13445607b8",
+}
+
 
 @pytest.fixture
 def upstream():
     directory = os.environ.get("NPA_SEEDVR2_UPSTREAM_SOURCE")
     if not directory:
         pytest.skip("requires retained exact upstream source; CPU-only opt-in")
+    return _verified_trees(Path(directory))
+
+
+def _verified_trees(directory):
     result = {}
     for name, digest in PINS.items():
-        payload = (Path(directory) / name).read_bytes()
+        source = directory / name
+        assert not source.is_symlink() and source.is_file(), "regular upstream file"
+        assert directory.resolve() in source.resolve().parents, "upstream containment"
+        payload = source.read_bytes()
         assert hashlib.sha256(payload).hexdigest() == digest
         result[name] = ast.parse(payload)
     return result
@@ -47,12 +63,34 @@ def _function(tree, name):
 
 
 def _execute(node, namespace):
-    module = ast.Module(body=[node], type_ignores=[])
-    exec(
-        compile(ast.fix_missing_locations(module), "<pinned-upstream-method>", "exec"),
-        namespace,
-    )
-    return namespace[node.name]
+    digest = hashlib.sha256(
+        ast.dump(node, include_attributes=False).encode()
+    ).hexdigest()
+    assert METHOD_PINS.get(node.name) == digest, "unapproved upstream method"
+    assert not any(name.startswith("__") for name in namespace), "reserved namespace"
+    payload = (ast.unparse(node) + "\n").encode()
+    with tempfile.TemporaryDirectory(prefix="seedvr-pinned-method-") as directory:
+        root = Path(directory)
+        path = root / "method.py"
+        with path.open("xb") as output:
+            output.write(payload)
+        path.chmod(0o600)
+        module = _import_pinned_module(root, path, payload, namespace)
+        return getattr(module, node.name)
+
+
+def _import_pinned_module(root, path, payload, namespace):
+    assert not root.is_symlink() and root.stat().st_mode & 0o077 == 0, "private root"
+    assert path.parent == root and path.name == "method.py", "module containment"
+    mode = path.lstat().st_mode
+    assert stat.S_ISREG(mode) and mode & 0o077 == 0, "private regular module"
+    assert path.read_bytes() == payload, "module bytes changed"
+    spec = importlib.util.spec_from_file_location("seedvr_pinned_method", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    module.__dict__.update(namespace)
+    spec.loader.exec_module(module)
+    return module
 
 
 class _Config(dict):
@@ -207,3 +245,55 @@ def test_actual_noise_calls_remain_shape_only(upstream):
             == "[torch.randn_like(latent) for latent in cond_latents]"
         )
     assert ast.literal_eval(assignments["cond_noise_scale"]) == 0.0
+
+
+@pytest.mark.parametrize("name", ["generation_loop", "vae_encode", "Wrapper", "other"])
+def test_unapproved_method_is_rejected_before_import(name, monkeypatch):
+    def forbidden(*args):
+        pytest.fail("unapproved method reached module import")
+
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", forbidden)
+    node = ast.parse(f"def {name}():\n    return 7\n").body[0]
+    with pytest.raises(AssertionError, match="unapproved upstream method"):
+        _execute(node, {})
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "symlink", "outside", "public"])
+def test_module_boundary_refuses_mutation(tmp_path, monkeypatch, mutation):
+    def forbidden(*args):
+        pytest.fail("hostile module reached import")
+
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", forbidden)
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    path = root / "method.py"
+    payload = b"value = 1\n"
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    if mutation == "bytes":
+        path.write_bytes(b"value = 2\n")
+    elif mutation == "symlink":
+        path.rename(root / "retained.py")
+        path.symlink_to(root / "retained.py")
+    elif mutation == "outside":
+        path.rename(tmp_path / "method.py")
+        path = tmp_path / "method.py"
+    else:
+        path.chmod(0o644)
+    with pytest.raises(AssertionError):
+        _import_pinned_module(root, path, payload, {})
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "symlink"])
+def test_upstream_source_rejects_mutation(tmp_path, mutation):
+    name = next(iter(PINS))
+    path = tmp_path / name
+    path.parent.mkdir(parents=True)
+    if mutation == "bytes":
+        path.write_bytes(b"# altered upstream source\n")
+    else:
+        retained = tmp_path / "retained.py"
+        retained.write_bytes(b"# altered upstream source\n")
+        path.symlink_to(retained)
+    with pytest.raises(AssertionError):
+        _verified_trees(tmp_path)
