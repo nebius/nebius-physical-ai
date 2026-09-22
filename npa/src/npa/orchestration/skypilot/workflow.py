@@ -937,6 +937,17 @@ def _prepare_workflow_submission(
     _, docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
+    from npa.workflows.byof.libero_customer import selected as customer_selected
+
+    if customer_selected(docs):
+        for document in docs:
+            resources = document.get("resources") or {}
+            if "kubernetes" in resources:
+                kubernetes = resources.pop("kubernetes")
+                config = document.setdefault("config", {})
+                if "kubernetes" in config and config["kubernetes"] != kubernetes:
+                    raise ValueError("LIBERO customer pod declarations differ")
+                config["kubernetes"] = kubernetes
     executable = str(ensure_skypilot_version(runtime.sky_bin))
     global_config = _submission_global_config(
         runtime, controller_backend, infra, documents=docs, extra_env=extra_env

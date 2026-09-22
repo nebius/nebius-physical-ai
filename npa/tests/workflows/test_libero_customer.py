@@ -53,10 +53,12 @@ def test_customer_profile_rejects_workload_expansion(mutation):
 
 def test_customer_profile_survives_standard_kubernetes_config_lift():
     docs = list(yaml.safe_load_all(customer.PROFILE.read_text()))
+    signed_profile = driver().libero_executable_profile_bytes(docs)
     task = docs[1]
     task["config"] = {"kubernetes": task["resources"].pop("kubernetes")}
     task["resources"]["region"] = "unit-context"
     customer.validate_profile(docs)
+    assert driver().libero_executable_profile_bytes(docs) == signed_profile
 
 
 @pytest.mark.parametrize("status", ["SUCCEEDED", "FAIL", "FAILED_PRECHECKS", "FAILED_CONTROLLER", "FAILED_NEW_KIND", "CANCELED", "STOPPED"])

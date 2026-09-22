@@ -83,6 +83,17 @@ def libero_executable_profile_bytes(
         if isinstance(resources, dict):
             resources.pop("region", None)
         envs = document.get("envs")
+        if (envs or {}).get("NPA_LIBERO_RUNTIME_DELIVERY") == "customer-run-v1":
+            # SkyPilot transports pod configuration at task.config; retain
+            # the original signed customer profile's canonical resource form.
+            config = document.get("config")
+            if isinstance(config, dict) and "kubernetes" in config:
+                kubernetes = config.pop("kubernetes")
+                if "kubernetes" in resources and resources["kubernetes"] != kubernetes:
+                    raise ValueError("LIBERO customer pod declarations differ")
+                resources["kubernetes"] = kubernetes
+                if not config:
+                    document.pop("config")
         if isinstance(envs, dict):
             for name in tuple(envs):
                 if str(name).startswith("NPA_LIBERO_EXPECTED_") or name == (
