@@ -123,6 +123,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "pi05_droid_jointpos_polaris_served_infer",
         ],
     },
+    "apriltag": {
+        "capability_name": "apriltag_real_image_fiducial_detection",
+        "smoke_artifact_name": "apriltag_fiducial_evaluation.json",
+        "spec": "byof-apriltag.yaml",
+        "must_exercise": [
+            "native_apriltag_ctest",
+            "real_image_fiducial_detection",
+            "labeled_corner_accuracy",
+            "blank_and_noise_false_positive_controls",
+            "camera_consumer_observation_export",
+            "source_linked_annotation_capture",
+        ],
+    },
     "droid-policy-learning": {
         "capability_name": "rlds_config_generator_contract",
         "smoke_artifact_name": "droid_rlds_config_generator.json",
@@ -339,6 +352,98 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
         assert expected["capability_name"] in text, solution
         assert expected["smoke_artifact_name"] in text, solution
+
+
+def test_apriltag_smoke_has_real_labeled_images_and_failure_controls() -> None:
+    from npa.orchestration.npa_workflow import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+
+    path = WORKFLOW_DIR / "byof-apriltag.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = payload["config"]
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "94be783968e5091bcc9972c72c84fd63efce2935"
+    assert config["base_profile"] == "ubuntu"
+    assert config["base_image"] == "ubuntu:22.04"
+    assert config["resource_profile_yaml"] == "byof-container-smoke-rtxpro"
+    assert config["capability_name"] == "apriltag_real_image_fiducial_detection"
+    assert config["output_root"] == "s3://{{config.bucket}}/oss-solutions/apriltag"
+    assert config["summary_uri"] == (
+        "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+    )
+    assert config["artifact_uri"] == (
+        "{{config.output_root}}/{{run.id}}/apriltag_fiducial_evaluation.json"
+    )
+    assert config["observations_uri"] == (
+        "{{config.output_root}}/{{run.id}}/fiducial_observations.json"
+    )
+    assert config["capture_uri"] == (
+        "{{config.output_root}}/{{run.id}}/capture-manifest.json"
+    )
+    assert "BUILD_TESTING=ON" in build
+    assert "ctest --test-dir build --output-on-failure" in build
+    assert "pjpeg_to_u8_baseline" in build
+    assert "-o /usr/local/bin/apriltag-pjpeg-gray" in build
+    assert 'runtime_ctest_dir = Path("/tmp/npa-apriltag-ctest-build")' in smoke
+    assert 'shutil.copytree(Path("build"), runtime_ctest_dir)' in smoke
+    assert "numpy==1.26.4" in build
+    assert "pillow==11.3.0" in build
+    for stem in (
+        "33369213973_9d9bb4cc96_c",
+        "34085369442_304b6bafd9_c",
+        "34139872896_defdb2f8d9_c",
+    ):
+        assert stem in smoke
+    assert 'family = "tag36h11"' in smoke
+    assert "maxhamming=2" in smoke
+    assert '"apriltag-pjpeg-gray"' in smoke
+    assert '"decoded_gray_sha256"' in smoke
+    assert "corner_absolute_error_px_max" in smoke
+    assert "corner_rmse_px" in smoke
+    assert "precision" in smoke and "recall" in smoke
+    assert "np.random.default_rng(20260920)" in smoke
+    assert '"blank"' in smoke and '"fixed_noise"' in smoke
+    assert "fiducial_observations.json" in smoke
+    assert "capture-manifest.json" in smoke
+    assert "source_sha256" in smoke
+    assert '"schema": "npa.workbench.apriltag.fiducial-evaluation.v1"' in smoke
+    assert '"run_id": os.environ["NPA_BYOF_RUN_ID"]' in smoke
+    assert '"image_reference": image_reference' in smoke
+    assert '"path": stable_path(destination)' in smoke
+    assert "cyan = expected corners | magenta = detected corners" in smoke
+    assert "542dae723ce69d9d61201a3e7e2753220eb8e1aeee600e5906772997fc92ccfd" in smoke
+    assert "accelerators" not in payload["resources"]["cpu"]
+
+    plan = build_plan(load_spec(path), run_id="apriltag-contract")
+    assert plan.steps[0].outputs == [
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "apriltag_fiducial_evaluation.json"
+            ),
+            "schema": "npa.workbench.apriltag.fiducial-evaluation.v1",
+        },
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "fiducial_observations.json"
+            ),
+            "schema": "npa.apriltag.fiducial-observations.v1",
+        },
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "capture-manifest.json"
+            ),
+            "schema": "npa.apriltag.capture-manifest.v1",
+        },
+    ]
+    output_root_index = plan.steps[0].argv.index("--output-root")
+    assert plan.steps[0].argv[output_root_index + 1] == (
+        "s3://example-bucket/oss-solutions/apriltag"
+    )
 
 
 def test_ltx2_spec_fetches_nothing_before_the_refusal_is_proved() -> None:

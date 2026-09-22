@@ -24,6 +24,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
+| AprilTag 3 | `AprilRobotics/apriltag` `94be7839…` (`v3.4.5`) | `apriltag_real_image_fiducial_detection` | labeled corner metrics + camera-consumer records + annotated PNGs + `apriltag_fiducial_evaluation.json` | `byof-apriltag.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
@@ -54,6 +55,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
+| AprilTag 3 | `apriltag_real_image_fiducial_detection` | qualification pending | Acceptance requires the digest-pinned direct BYOF path to match every labeled tag/corner in all three pinned real photographs, reject blank/noise controls, and retain calibrated visual evidence |
 | Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
 | Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
 | Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
@@ -151,6 +153,33 @@ offline evaluation.
 | `rlds_config_generator_contract` | accepted hard gate (live) | `droid_runs_language_conditioned_rlds` module contract |
 | `droid_100_download` | accepted (live) | HTTPS metadata pull of `droid_100/1.0.0/dataset_info.json` |
 | `droid_100_config_gen` | accepted (live) | Documented `EXP_NAMES` debug subset wiring |
+
+### AprilTag 3 fiducial detection
+
+NPA pins `AprilRobotics/apriltag` release `v3.4.5`
+(`94be783968e5091bcc9972c72c84fd63efce2935`) under BSD-2-Clause. The
+representative upstream test photographs depict NASA Swarmathon and are
+separately identified upstream as CC-BY-SA-2.0. This is an operator-built BYOF
+candidate; no container-image publication is claimed. The derived
+[CPU workload proof](evidence/apriltag-fiducial/README.md) retains the required
+photo attribution and share-alike license.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `native_apriltag_ctest` | accepted (live CPU) | Pinned native detector regression suite passed 3/3 in the digest-pinned Kubernetes workload |
+| `apriltag_real_image_fiducial_detection` | accepted upstream-parity gate (live CPU) | Reproduced all 47 recorded `tag36h11` IDs/corners across three photographs; precision/recall 1.0 and the 0.000050 px maximum residual describe parity with four-decimal upstream records, not localization accuracy (upstream tolerance: 0.1 px) |
+| `blank_and_noise_false_positive_controls` | accepted objective gate (live CPU) | Blank and fixed-seed random-noise images both produced zero detections |
+| `camera_consumer_observation_export` | accepted (live CPU) | 47 source-hashed records with IDs, centers, ordered corners, margins, and hamming distances |
+| `source_linked_annotation_capture` | accepted objective bytes; visual review unaccepted | Three source-bound annotated PNGs reproduced local hashes exactly; hosted VLM calibration failed and the final call was gated off |
+
+The detector produces image-space fiducial observations, not a camera-pose or
+navigation-success claim. Pose accuracy additionally requires calibrated
+intrinsics and known tag size/layout. The three real photographs do not prove
+generalization to arbitrary cameras, lighting, motion blur, occlusion, or tag
+families. The digest-pinned CPU workload and complete filesystem/layer-history
+restricted-payload scan passed. Registry admission remains pending because
+hosted visual-judge calibration did not discriminate its controls and
+independent/current-head review is not yet complete.
 
 ### Open Dreamer (world model, 2-GPU minimum)
 

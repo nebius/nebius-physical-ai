@@ -1,0 +1,97 @@
+{
+  "schema": "npa.public-vlm-calibration-summary.v1",
+  "claim_scope": "Visual review of annotation readability and overlay placement only; native corner/ID measurements are the task outcome.",
+  "provider": "Nebius Token Factory",
+  "controls": [
+    "known-correct overlay",
+    "magenta detections shifted away from tags",
+    "uniform white image",
+    "valid overlay from the wrong source/count"
+  ],
+  "attempts": [
+    {
+      "id": "v1-native-minimax",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "plan_sha256": "9ce56b3d94bb3a947d3085540a21a13a3df328825378db7b6b636c5f631610b3",
+      "scores": {
+        "correct": 0.92,
+        "shifted": 0.92,
+        "blank": 0.0,
+        "mismatched": 0.0
+      },
+      "outcome": "failed: shifted negative control false-passed"
+    },
+    {
+      "id": "v2-tightened-minimax",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "plan_sha256": "54898f29af9403d77625a5ed58a460e39474898753809de1f15dfd3ff2992e97",
+      "scores": {
+        "correct": 0.15,
+        "shifted": 0.15,
+        "blank": 0.0,
+        "mismatched": 0.0
+      },
+      "outcome": "failed: correct positive control false-failed"
+    },
+    {
+      "id": "v3-review-sheet-minicpm",
+      "model": "openbmb/MiniCPM-V-4_5",
+      "plan_sha256": "588ee3804de3e13c7531ac25fc077908f48458258860ec8bcd4302284d1a8bb7",
+      "scores": {
+        "correct": 0.98,
+        "shifted": 0.95,
+        "blank": 0.98,
+        "mismatched": 0.95
+      },
+      "outcome": "failed: all three negative controls false-passed, including hallucinated content on white"
+    },
+    {
+      "id": "v4-review-sheet-gemma",
+      "model": "google/gemma-3-27b-it",
+      "plan_sha256": "14a426f418325789d5f6f21c7b63b5de27c0443067ce5711ed349b174804b328",
+      "scores": {
+        "correct": 0.98,
+        "shifted": 0.97,
+        "blank": 0.0,
+        "mismatched": 0.95
+      },
+      "outcome": "failed: shifted and mismatched negative controls false-passed"
+    },
+    {
+      "id": "v5-review-sheet-minimax",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "plan_sha256": "1ad47a1657721e3ec4d35f6200918a5abe882fbc52eec5930ea8ee486d2917cb",
+      "scores": {
+        "correct": 0.0,
+        "shifted": 0.0,
+        "blank": 0.0,
+        "mismatched": 0.0
+      },
+      "outcome": "failed: correct control false-failed; its rationale described a passing score while its structured verdict emitted zero"
+    },
+    {
+      "id": "v6-qwen35",
+      "model": "Qwen/Qwen3.5-397B-A17B",
+      "plan_sha256": "47b9b0e81fb63fc38ae097e19be5943d57a44985c52f6f8ee9cf4fcac30a8c39",
+      "scores": null,
+      "outcome": "not image-capable: provider rejected image input"
+    }
+  ],
+  "review_sheet_method": {
+    "transformation": "Exact annotation enlarged 2x plus four 4x crops, all nearest-neighbor; no overlay geometry synthesized.",
+    "manifest_sha256": "38c8883ed9573c225fb38d0efdaa947697b650fee9da1c591d66ac64b456302d",
+    "outputs_sha256": {
+      "33369213973_9d9bb4cc96_c_review.png": "97144c7d25a4efe4bd5150a63155f1bce897b8c2c3f3308738b21c90d8f114cb",
+      "34085369442_304b6bafd9_c_review.png": "7197707947693e2b167b5d8ef59c5d52da91df0eec0fc41fd58148ac0c630fc6",
+      "34139872896_defdb2f8d9_c_review.png": "4ba0905341dd6392eff43a81536f11cfecd62b638ffbe77109e744921de949d6",
+      "shifted-detections_review.png": "6cbf9518dd33253bbff180705076099434787765b8ca3e6f64af2ab51a710583"
+    }
+  },
+  "acceptance": {
+    "disclosed_control_calibration_passed": false,
+    "unseen_held_out_controls_run": false,
+    "final_vlm_judgment_run": false,
+    "vlm_acceptance_claimed": false,
+    "reason": "No image-capable hosted judge discriminated the disclosed controls, so held-out and final calls remained gated."
+  }
+}
