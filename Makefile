@@ -32,7 +32,7 @@ NPA_BIN_FOR_PYTHON = NPA_BIN="$${NPA_BIN:-$$(bin=$$(command -v $(PYTHON) 2>/dev/
 	&& [ -x "$$(dirname "$$bin")/npa" ] && printf '%s' "$$(dirname "$$bin")/npa" || true)}"
 
 .PHONY: help install-dev check-env test-prereqs test test-smoke test-all test-e2e \
-	test-guardrails lint format docs docs-check check
+	test-guardrails lint format format-check precheck merge-precheck docs docs-check check
 
 help:
 	@echo "Targets:"
@@ -46,9 +46,12 @@ help:
 	@echo "  test-e2e         Opt-in live suite (requires real Nebius infra + NPA_INTEGRATION_E2E=1)"
 	@echo "  lint             Ruff lint"
 	@echo "  format           Ruff autofix + format"
+	@echo "  format-check     Ruff formatting check without changing files"
+	@echo "  precheck         Fast local pins, lint, format, and CI contract checks"
+	@echo "  merge-precheck   Check committed HEAD merged with fetched origin/main"
 	@echo "  docs             Regenerate the CLI reference under docs/cli/"
 	@echo "  docs-check       Fail if docs/cli/ has drifted from 'npa --help'"
-	@echo "  check            The reproducible PR gates: lint, docs-check, test"
+	@echo "  check            The reproducible PR gates: precheck, docs-check, test"
 	@echo "                   (no coverage floor; see CONTRIBUTING.md)"
 	@echo "Interpreter: $(PYTHON)"
 	@echo "Override it with: make test PYTHON=/path/to/venv/bin/python"
@@ -97,6 +100,19 @@ lint:
 format:
 	cd npa && $(PYTHON) -m ruff check --fix . && $(PYTHON) -m ruff format .
 
+format-check:
+	cd npa && $(PYTHON) -m ruff format --check .
+
+# Keep cheap failures ahead of docs generation and the full suite, even with -j.
+precheck: check-env
+	$(PYTHON) npa/scripts/ci_requirements.py --check
+	$(MAKE) lint format-check
+	$(PYTEST) tests/test_ci_requirements.py tests/test_ci_merge_precheck.py tests/test_ci_test_scope.py tests/test_merge_queue_report.py tests/guardrails/test_ci_workflows.py tests/guardrails/test_ci_concurrency.py -q
+
+# Fetch first; this deliberately reports exact commits and never edits the index.
+merge-precheck:
+	$(PYTHON) npa/scripts/ci_merge_precheck.py --base origin/main --head HEAD
+
 # docs/cli/ is generated and drift-gated in CI. Regenerate and commit it whenever
 # a command, flag or help string changes.
 docs:
@@ -105,5 +121,6 @@ docs:
 docs-check:
 	$(NPA_BIN_FOR_PYTHON) bash scripts/build_docs.sh --check
 
-# Mirrors the blocking PR gates so a contributor can reproduce them in one command.
-check: lint docs-check test
+# Run the reproducible local subset in cost order; Linux CI also enforces coverage.
+check: precheck
+	$(MAKE) docs-check test

@@ -250,7 +250,8 @@ jobs:
   base-image-cve-scan:
     name: Base image CVE inventory
     needs: [base-image-plan, base-image-entry]
-    if: always()
+    # Report scan failures, but release superseded runs without waiting for a runner.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require complete scoped inventory

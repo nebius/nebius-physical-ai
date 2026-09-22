@@ -488,8 +488,12 @@ cancels the complete superseded gate instead of six independent fragments:
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
 | `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
 
-`make check` runs the reproducible subset in one command: `lint`, `docs-check`,
-`test`. It is not a full stand-in for `test.yml`, which additionally enforces
+Start with `make precheck`: it checks the working tree's CI dependency fingerprint,
+lint, formatting, and focused CI contract regressions. It does not change files or
+run the full suite. `make format-check` is the formatting check alone.
+`make check` runs this fast precheck before `docs-check` and `test`, including when
+invoked with `make -j`, so a cheap failure stops expensive local validation.
+It is not a full stand-in for `test.yml`, which additionally enforces
 `--cov-fail-under=60` and runs `tests/integration/test_cli_install.sh` and
 `scripts/check-source-drift.sh`. `make test` runs no coverage, so `make check` can
 pass while `test.yml` fails the 60% floor. Add coverage locally when a change moves
@@ -651,6 +655,22 @@ remain enforced. Queue timeout changes follow the staged rollout described above
 
 ### Merge readiness and queue rejections
 
+Before pushing committed work, check its combined dependency inputs against the
+current target without switching branches or modifying your index:
+
+```bash
+git fetch origin main
+make merge-precheck
+```
+
+This checks committed `HEAD` merged with fetched `origin/main`, reports the exact
+base/head/tree hashes, and rejects merge conflicts or an inconsistent merged CI
+fingerprint. Staged and uncommitted changes are excluded; use `make precheck` for
+the working tree. It runs no candidate code and does not replace Linux CI, scanner
+checks, or validation of interactions with preceding queued PRs. An alternate
+target can be inspected with
+`npa/.venv/bin/python npa/scripts/ci_merge_precheck.py --base <ref> --head <ref>`.
+
 PR admission includes every test category required by the queue. The queue
 compares its combined tree with the completed PR validation and reruns fresh
 security scans. A preceding merge can change that tree; the queue then reruns
@@ -660,6 +680,42 @@ PR validation can enable the faster reuse path. Open the
 failed **Security regression** run whose event is **merge_group**, then inspect
 the first failed component job. Cancelled sibling shards usually follow a failed
 shard through matrix fail-fast; their cancellation is not the original failure.
+
+**Merge queue feedback** checks open PRs every five minutes and automatically
+comments on their latest queue rejection or a failed active merge candidate.
+The comment names the removal reason, exact synthetic candidate,
+validation attempt, unfinished or failed jobs, failed steps, runner waits, and
+direct Actions links. Timeout comments preserve the state at removal even if
+the jobs later pass. A failed active merge candidate can also report before a
+dequeue event is available, without claiming the PR was removed. Later polling
+updates the same bot comment for that candidate;
+a rerun cannot overwrite the diagnosis with a different attempt. Successful
+merges do not receive rejection comments. Missing run metadata is reported
+explicitly rather than guessing from another candidate.
+
+The reporter uses a scheduled workflow and trusted default-branch code, with
+read access to Actions and PR write permission used only to manage comments.
+It never checks out
+candidate code, installs its dependencies, or reads its logs/artifacts. Its own
+concurrency group does not lock validation jobs; it is outside the required checks. The five-minute
+schedule is not a delivery deadline: GitHub scheduling and runner availability can
+delay a refresh. Polling stops for closed PRs; read-only manual diagnosis can
+still inspect their history. See
+[GitHub's scheduled workflow behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+The automation takes effect once the reporting workflow lands on main.
+
+To inspect a removal without posting a comment:
+
+```bash
+npa/.venv/bin/python -I npa/scripts/merge_queue_report.py \
+  --repository nebius/nebius-physical-ai --pr <number>
+```
+
+The command requires authenticated `gh`; it defaults to read-only output. Pass
+`--candidate <full-sha>` to inspect an older rejected candidate, and `--publish`
+only to post/update the report. `--scan-open` reconciles open PRs instead of one
+`--pr`. The **Merge queue feedback** manual workflow has
+the same read-only default, with an explicit `publish` input.
 
 If **Check CI dependency pins** fails, bring the current base into your isolated
 branch and run the dependency refresh and check commands above. Commit the
