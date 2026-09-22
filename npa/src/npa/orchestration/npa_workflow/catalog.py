@@ -64,6 +64,8 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.train": "public OpenVLA fine-tuning primitive (upstream argv planning; eval plan-only)",
     "workbench.openvla.serve": "public OpenVLA serving primitive (upstream argv planning; eval plan-only)",
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
+    "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
 }
 
 
@@ -133,6 +135,7 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "npa.workflows.byof.openpi_full_droid",
 ]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
+_NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -1563,6 +1566,44 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             *_OPENVLA_PIPELINE,
             "eval",
             "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.newton.train_teacher": ToolEntry(
+        name="workbench.newton.train_teacher",
+        description="Train a teacher policy in Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "train-teacher",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+        ],
+    ),
+    "workbench.newton.generate_demos": ToolEntry(
+        name="workbench.newton.generate_demos",
+        description="Generate demonstrations using Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "generate-demos",
+            "--output-uri",
+            "{{config.demos_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+        ],
+    ),
+    "workbench.newton.eval": ToolEntry(
+        name="workbench.newton.eval",
+        description="Evaluate a policy in Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "eval",
+            "--checkpoint-uri",
             "{{config.trained_checkpoint_uri}}",
             "--dataset-uri",
             "{{config.dataset_uri}}",
