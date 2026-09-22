@@ -1,18 +1,22 @@
-# Propose dependency updates before stale pins accumulate new advisories.
+# Review coupled dependency changes together and validate one combined candidate.
 version: 2
+multi-ecosystem-groups:
+  dependencies:
+    schedule:
+      interval: daily
 updates:
   - package-ecosystem: pip
     directories:
       - /npa
       - /npa/ci
       - /scripts
-    schedule:
-      interval: daily
+    patterns: ["*"]
+    multi-ecosystem-group: dependencies
   - package-ecosystem: npm
     directory: /npa/tests/browser
-    schedule:
-      interval: daily
+    patterns: ["*"]
+    multi-ecosystem-group: dependencies
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: daily
+    patterns: ["*"]
+    multi-ecosystem-group: dependencies

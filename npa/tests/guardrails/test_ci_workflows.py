@@ -200,7 +200,9 @@ def test_required_gate_rejects_unsuccessful_children(result: str) -> None:
         AssertionError: A required dependency can fail without rejecting the merge.
     """
     gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
-    assert gate["if"] == "${{ always() }}"
+    # A status function still reports failed dependencies without keeping a
+    # cancelled, obsolete workflow queued ahead of its replacement.
+    assert gate["if"] == "${{ !cancelled() }}"
     step = gate["steps"][0]
     for event in ("pull_request", "merge_group"):
         environment = {name: "success" for name in step["env"]}
