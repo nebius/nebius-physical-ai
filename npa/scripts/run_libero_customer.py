@@ -127,14 +127,19 @@ def authorize(args: argparse.Namespace) -> None:
     ):
         raise ValueError("customer request differs from reviewed image, terms or profile")
     # Never accept --yes, an environment variable or piped standard input.
-    with open("/dev/tty", "r+", encoding="utf-8", buffering=1) as terminal:
+    # A terminal is not seekable, so text r+ (BufferedRandom) is unsupported.
+    with open("/dev/tty", "r", encoding="utf-8") as terminal_input, open(
+        "/dev/tty", "w", encoding="utf-8", buffering=1
+    ) as terminal:
         terminal.write(json.dumps(request, indent=2) + "\n")
         terminal.write("Customer identity (only its SHA256 is recorded; empty declines): ")
-        identity = terminal.readline().strip()
+        terminal.flush()
+        identity = terminal_input.readline().strip()
         terminal.write("Confirm you have authority to accept every named agreement for this customer.\n")
         expected = "AUTHORIZE " + request["run_id"]
         terminal.write(f"Type {expected} to authorize this exact run, or anything else to decline: ")
-        decision = terminal.readline().strip()
+        terminal.flush()
+        decision = terminal_input.readline().strip()
     if not identity or decision != expected:
         print(json.dumps({"status": "declined", "authorization_created": False}))
         return

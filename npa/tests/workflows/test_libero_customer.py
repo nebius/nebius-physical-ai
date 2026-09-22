@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import builtins
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -150,3 +152,42 @@ def test_missing_customer_evidence_has_no_kubernetes_effect(monkeypatch, tmp_pat
     with pytest.raises(FileNotFoundError):
         module.submit(argparse.Namespace(packet=packet, target=tmp_path / "absent", output=tmp_path / "result"))
     assert not (tmp_path / "result").exists()
+
+
+def test_authorize_uses_nonseekable_terminal_and_declines_without_writing(monkeypatch, tmp_path, capsys):
+    import pty
+
+    module = driver()
+    request = {
+        "status": "needs_customer_acceptance", "runtime_delivery": customer.MODE,
+        "candidate_image": "synthetic-image", "runtime_manifest_sha256": "a" * 64,
+        "workflow_profile_sha256": module._sha(b"profile"), "terms": [],
+        "upstream_source_revision": "b" * 40, "run_id": "libero-synthetic-customer-test",
+    }
+    manifest = {"runtime_manifest_sha256": "a" * 64, "customer_acceptance": {"terms": []}}
+    qualification = {"candidate_image": "synthetic-image", "upstream_source_revision": "b" * 40}
+    monkeypatch.setattr(module, "_json", lambda _path: request)
+    monkeypatch.setattr(module, "private_bytes", lambda _path: b"profile")
+    monkeypatch.setattr(module, "image_manifest", lambda _env: (manifest, qualification))
+    monkeypatch.setattr(module, "_profile", lambda *_args: [])
+    monkeypatch.setattr(module, "libero_executable_profile_bytes", lambda _docs: b"profile")
+    master, slave = pty.openpty()
+    try:
+        terminal_path = os.ttyname(slave)
+        def open_terminal(path, *args, **kwargs):
+            assert path == "/dev/tty"
+            return builtins.open(
+                terminal_path, *args, **kwargs,
+                opener=lambda path, flags: os.open(path, flags | os.O_NOCTTY),
+            )
+        monkeypatch.setattr(module, "open", open_terminal, raising=False)
+        os.write(master, b"\nDECLINE\n")
+        module.authorize(argparse.Namespace(packet=tmp_path, signing_key=None))
+        assert json.loads(capsys.readouterr().out) == {
+            "status": "declined", "authorization_created": False,
+        }
+        assert not list(tmp_path.iterdir())
+        assert b"Customer identity" in os.read(master, 8192)
+    finally:
+        os.close(master)
+        os.close(slave)
