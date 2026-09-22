@@ -1511,6 +1511,7 @@ def test_live_robomimic_b200_train_reload_gate(e2e_project: str | None) -> None:
     _assert_robomimic_action(artifact)
     _assert_robomimic_runtime(artifact, summary_image, run_id)
     assert set(artifact["deferred"]) == {
+        "application_strict_capacity_qualification",
         "public_image_acceptance",
         "image_policy_sweeps",
         "simulator_rollouts",

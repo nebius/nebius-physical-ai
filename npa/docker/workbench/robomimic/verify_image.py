@@ -1374,12 +1374,12 @@ def _installed_member_path(value: str) -> str:
 
 
 def _record_member_path(stage: Path, record_path: Path, value: str) -> tuple[str, Path]:
-    """Resolve a RECORD member while allowing only pip's script relocation."""
+    """Resolve pip's script/share relocation inside the verified target tree."""
     parts = PurePosixPath(value).parts
-    if len(parts) >= 4 and parts[:3] == ("..", "..", "bin"):
+    if len(parts) >= 4 and parts[:2] == ("..", "..") and parts[2] in {"bin", "share"}:
         if any(part in {"", ".", ".."} for part in parts[3:]):
             raise VerificationError("unsafe installed RECORD member")
-        canonical = PurePosixPath("bin", *parts[3:]).as_posix()
+        canonical = PurePosixPath(*parts[2:]).as_posix()
     else:
         canonical = _installed_member_path(value)
     target = stage / canonical
@@ -1497,8 +1497,12 @@ def verify_installed_source_tree(
     return _inventory_proof(source_root, expected)
 
 
-def _wheel_members(raw: bytes) -> dict[str, tuple[bytes, bool]]:
+def _wheel_members(
+    raw: bytes, *, runtime: bool = False
+) -> dict[str, tuple[bytes, bool]]:
     result, names, total = {}, set(), 0
+    member_limit = RUNTIME_OBJECT_MAX_BYTES if runtime else BAKED_MEMBER_MAX_BYTES
+    expanded_limit = RUNTIME_PAYLOAD_MAX_BYTES if runtime else BAKED_EXPANDED_MAX_BYTES
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         if len(archive.infolist()) > BAKED_ENTRY_MAX_COUNT:
             raise VerificationError("wheel member count exceeds bound")
@@ -1514,10 +1518,7 @@ def _wheel_members(raw: bytes) -> dict[str, tuple[bytes, bool]]:
             if member.is_dir():
                 continue
             total += member.file_size
-            if (
-                member.file_size > BAKED_MEMBER_MAX_BYTES
-                or total > BAKED_EXPANDED_MAX_BYTES
-            ):
+            if member.file_size > member_limit or total > expanded_limit:
                 raise VerificationError("wheel expanded bytes exceed bound")
             result[name] = (archive.read(member), bool(mode & 0o111))
     return result
@@ -2568,12 +2569,18 @@ def _runtime_expected_inventory(
             or hashlib.sha256(raw).hexdigest() != artifact["sha256"]
         ):
             raise VerificationError("runtime wheel bytes changed before installation")
-        members = _wheel_members(raw)
+        members = _wheel_members(raw, runtime=True)
         directory = _wheel_distribution(members, name, str(artifact["version"]))
         wheel_expected = _wheel_expected_inventory(
             members, directory, None, str(interpreter), record_sink
         )
         for relative, entry in wheel_expected.items():
+            if relative in expected:
+                # Namespace packages can share a file. Every independently
+                # authenticated wheel must agree on its complete identity.
+                if expected[relative] != entry:
+                    raise VerificationError("conflicting runtime wheel member")
+                continue
             _add_inventory_member(expected, relative, entry)
     if len(expected) > RUNTIME_PAYLOAD_MAX_ENTRY_COUNT:
         raise VerificationError("runtime expected member count exceeds limit")
@@ -3147,9 +3154,7 @@ def _prepare_verified_runtime(
     )
     verified_runtime = stage / "verified-runtime"
     verified_runtime.mkdir(mode=0o700)
-    _copy_runtime_metadata(
-        runtime_root, verified_runtime, expected_inventory_sha256
-    )
+    _copy_runtime_metadata(runtime_root, verified_runtime, expected_inventory_sha256)
     _copy_declared_runtime_objects(runtime_root, verified_runtime, files, links)
     _verify_runtime_install_base(
         verified_runtime, runtime_lock_path, expected_inventory_sha256
@@ -3206,9 +3211,19 @@ def _stage_runtime_install(
         before_request,
         runtime_root,
     )
-    requirement_file, expected, records, final_interpreter = inputs
     before_request()
-    return _install_runtime_artifacts(
+    return _install_prepared_runtime(interpreter, wheelhouse, stage, installer, inputs)
+
+
+def _install_prepared_runtime(
+    interpreter: Path,
+    wheelhouse: Path,
+    stage: Path,
+    installer: dict[str, str | int],
+    inputs: tuple,
+) -> tuple[Path, dict[str, dict[str, Any]]]:
+    requirement_file, expected, records, final_interpreter = inputs
+    staged_site = _install_runtime_artifacts(
         interpreter,
         wheelhouse,
         stage,
@@ -3218,6 +3233,7 @@ def _stage_runtime_install(
         final_interpreter,
         records,
     )
+    return staged_site, expected
 
 
 def _prepare_runtime_install_inputs(
@@ -3282,8 +3298,12 @@ def _run_runtime_fetch_transaction(
     expected_inventory_sha256: str,
     before_request: Any,
 ) -> dict[str, Any]:
-    wheelhouse = Path(tempfile.mkdtemp(prefix=".npa-runtime-wheels-", dir=runtime_root))
-    stage = Path(tempfile.mkdtemp(prefix=".npa-runtime-site-", dir=runtime_root))
+    # The verified runtime permits only inventoried objects. Keep temporary
+    # inputs beside it, on the same volume as the ownership lock and publish.
+    wheelhouse = Path(
+        tempfile.mkdtemp(prefix=".npa-runtime-wheels-", dir=runtime_root.parent)
+    )
+    stage = Path(tempfile.mkdtemp(prefix=".npa-runtime-site-", dir=runtime_root.parent))
     try:
         result = _runtime_fetch_operation(
             plan=plan,

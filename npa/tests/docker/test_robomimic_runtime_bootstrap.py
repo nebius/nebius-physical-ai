@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import base64
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import sys
 import time
 import traceback
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -107,7 +109,9 @@ def test_train_smoke_dispatches_through_verified_runtime(tmp_path: Path) -> None
     )
     assert result.returncode == 37
     assert result.stdout.splitlines() == [
-        "exec", "/opt/npa/robomimic/smoke.py", "--train-smoke"
+        "exec",
+        "/opt/npa/robomimic/smoke.py",
+        "--train-smoke",
     ]
 
 
@@ -1571,7 +1575,7 @@ def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
         ),
     )
 
-    verifier._stage_runtime_install(
+    result = verifier._stage_runtime_install(
         runtime_root=runtime_root,
         runtime_lock_path=lock_path,
         expected_inventory_sha256=inventory_sha256,
@@ -1584,6 +1588,7 @@ def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
         before_request=lambda: None,
     )
 
+    assert result == (stage / "site-packages", {})
     assert installed == [stage / "verified-runtime" / "payload" / "bin" / "python"]
     with pytest.raises(verifier.VerificationError, match="site-packages is absent"):
         verifier.verify_external_runtime(
@@ -1814,6 +1819,118 @@ def test_runtime_fetch_lock_is_adjacent_and_owner_only(tmp_path: Path) -> None:
         verifier._release_runtime_fetch_lock(lock_path, handle)
 
 
+def test_runtime_wheels_use_runtime_bounds_without_relaxing_baked_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr("large-runtime-library.so", b"x" * 64)
+    monkeypatch.setattr(verifier, "BAKED_MEMBER_MAX_BYTES", 32)
+    monkeypatch.setattr(verifier, "BAKED_EXPANDED_MAX_BYTES", 32)
+    monkeypatch.setattr(verifier, "RUNTIME_OBJECT_MAX_BYTES", 128)
+    monkeypatch.setattr(verifier, "RUNTIME_PAYLOAD_MAX_BYTES", 128)
+    with pytest.raises(verifier.VerificationError, match="expanded bytes exceed"):
+        verifier._wheel_members(data.getvalue())
+    assert verifier._wheel_members(data.getvalue(), runtime=True) == {
+        "large-runtime-library.so": (b"x" * 64, False)
+    }
+    monkeypatch.setattr(verifier, "RUNTIME_OBJECT_MAX_BYTES", 32)
+    with pytest.raises(verifier.VerificationError, match="expanded bytes exceed"):
+        verifier._wheel_members(data.getvalue(), runtime=True)
+
+
+@pytest.mark.parametrize("conflict", [None, "bytes", "mode"])
+def test_runtime_wheel_union_requires_identical_shared_members(
+    tmp_path: Path, conflict: str | None
+) -> None:
+    artifacts = {}
+    for name in ("first", "second"):
+        directory = f"{name}-1.0.dist-info"
+        changed = name == "second"
+        members = {
+            "shared/__init__.py": b"changed"
+            if changed and conflict == "bytes"
+            else b"",
+            f"{directory}/METADATA": f"Name: {name}\nVersion: 1.0\n".encode(),
+            f"{directory}/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\n",
+        }
+        rows = []
+        for relative, raw in members.items():
+            digest = base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
+            rows.append(f"{relative},sha256={digest.decode().rstrip('=')},{len(raw)}")
+        rows.append(f"{directory}/RECORD,,")
+        members[f"{directory}/RECORD"] = ("\n".join(rows) + "\n").encode()
+        wheel = tmp_path / f"{name}-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            for relative, raw in members.items():
+                entry = zipfile.ZipInfo(relative)
+                executable = (
+                    changed and conflict == "mode" and relative == "shared/__init__.py"
+                )
+                entry.external_attr = (0o100755 if executable else 0o100644) << 16
+                archive.writestr(entry, raw)
+        artifacts[name] = {
+            "filename": wheel.name,
+            "sha256": _sha(wheel),
+            "size": wheel.stat().st_size,
+            "version": "1.0",
+        }
+    if conflict:
+        with pytest.raises(
+            verifier.VerificationError, match="conflicting runtime wheel member"
+        ):
+            verifier._runtime_expected_inventory(
+                tmp_path, artifacts, Path("/runtime/python")
+            )
+    else:
+        result = verifier._runtime_expected_inventory(
+            tmp_path, artifacts, Path("/runtime/python")
+        )
+        assert result["shared/__init__.py"] == verifier._file_identity(b"")
+        assert "first-1.0.dist-info/RECORD" in result
+        assert "second-1.0.dist-info/RECORD" in result
+
+
+@pytest.mark.parametrize("install_fails", [False, True])
+def test_runtime_transaction_scratch_preserves_verified_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, install_fails: bool
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _fetch_runtime(tmp_path)
+    scratch: list[Path] = []
+
+    def install(**kwargs: object) -> dict:
+        wheelhouse, stage = kwargs["wheelhouse"], kwargs["stage"]
+        assert isinstance(wheelhouse, Path) and isinstance(stage, Path)
+        scratch.extend((wheelhouse, stage))
+        interpreter = verifier._prepare_verified_runtime(
+            runtime_root, lock_path, inventory_sha256, stage
+        )
+        assert interpreter.is_file()
+        assert all(path.parent == runtime_root.parent for path in scratch)
+        assert all(path.stat().st_mode & 0o077 == 0 for path in scratch)
+        if install_fails:
+            raise verifier.VerificationError("install failed")
+        return {"status": "verified-base"}
+
+    monkeypatch.setattr(verifier, "_runtime_fetch_operation", install)
+    args = {
+        "plan": (),
+        "runtime_root": runtime_root,
+        "runtime_lock_path": lock_path,
+        "expected_inventory_sha256": inventory_sha256,
+        "before_request": lambda: None,
+    }
+    if install_fails:
+        with pytest.raises(verifier.VerificationError, match="install failed"):
+            verifier._run_runtime_fetch_transaction(**args)
+    else:
+        assert verifier._run_runtime_fetch_transaction(**args) == {
+            "status": "verified-base"
+        }
+    assert len(scratch) == 2 and all(not path.exists() for path in scratch)
+    verifier._verify_runtime_install_base(runtime_root, lock_path, inventory_sha256)
+
+
 def test_runtime_fetch_proof_cleanup_uses_body_digest_domain(tmp_path: Path) -> None:
     proof = tmp_path / verifier.RUNTIME_FETCH_PROOF_NAME
     expected = {"demo.py": {"type": "file", "size": 1, "sha256": "a" * 64}}
@@ -1881,20 +1998,22 @@ def test_fetched_record_tree_rejects_duplicate_members(tmp_path: Path) -> None:
         verifier._verify_fetched_record_tree(stage, {"demo": {"version": "1.0"}})
 
 
-def test_fetched_record_tree_accepts_pip_console_script_relocation(
+@pytest.mark.parametrize("relative", ["bin/demo", "share/man/man1/demo.1"])
+def test_fetched_record_tree_accepts_pip_script_and_share_relocation(
     tmp_path: Path,
+    relative: str,
 ) -> None:
     stage = tmp_path / "site-packages"
     dist = stage / "demo-1.0.dist-info"
     dist.mkdir(parents=True)
-    script = stage / "bin/demo"
-    script.parent.mkdir()
+    script = stage / relative
+    script.parent.mkdir(parents=True)
     script.write_text("#!/usr/bin/python\n", encoding="utf-8")
     metadata_path = dist / "METADATA"
     metadata_path.write_text("Name: demo\nVersion: 1.0\n", encoding="utf-8")
     rows = []
     for relative, path in (
-        ("../../bin/demo", script),
+        ("../../" + relative, script),
         ("demo-1.0.dist-info/METADATA", metadata_path),
     ):
         digest = base64.urlsafe_b64encode(hashlib.sha256(path.read_bytes()).digest())
@@ -1909,7 +2028,13 @@ def test_fetched_record_tree_accepts_pip_console_script_relocation(
 
 
 @pytest.mark.parametrize(
-    "relative", ["../../../bin/demo", "../../other/demo", "../../bin/../demo"]
+    "relative",
+    [
+        "../../../bin/demo",
+        "../../other/demo",
+        "../../bin/../demo",
+        "../../share/../demo",
+    ],
 )
 def test_fetched_record_tree_rejects_unmodeled_script_relocation(
     tmp_path: Path, relative: str

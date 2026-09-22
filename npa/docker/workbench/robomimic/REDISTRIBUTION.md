@@ -53,6 +53,12 @@ before publishing the site-packages tree. `NPA_ROBOMIMIC_CUSTOMER_DENYLIST`
 is an explicit customer runtime input; unset means the built-in safe path
 denylist is used. The fetch phase is separate from the final read-only snapshot
 and never places the credential or fetched bytes in the image.
+During fetch, mount a writable customer volume at `/opt/npa-runtime`, with the
+prepared inventory under `robomimic/`. The ownership lock and private transaction
+scratch are siblings of that directory, so complete-tree verification sees only
+inventoried runtime objects and publication remains on the same filesystem.
+After fetch, mount only the completed `robomimic/` directory read-only at
+`/opt/npa-runtime/robomimic` for execution.
 Execution copies only declared
 objects into a private staging tree, verifies the copy again, removes write
 bits, and atomically publishes that run-local snapshot before invoking its

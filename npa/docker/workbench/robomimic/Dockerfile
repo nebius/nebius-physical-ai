@@ -58,5 +58,5 @@ RUN chmod 0555 /opt/npa/robomimic/runtime_bootstrap.sh \
 
 USER ubuntu
 WORKDIR /workspace
-VOLUME ["/opt/npa-runtime/robomimic"]
+VOLUME ["/opt/npa-runtime"]
 ENTRYPOINT ["/opt/npa/robomimic/entrypoint.sh"]

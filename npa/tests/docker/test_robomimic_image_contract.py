@@ -63,6 +63,8 @@ def test_neutral_image_is_pinned_non_root_and_contains_no_cuda_install() -> None
     assert "dpkg --unpack /mnt/robomimic-build-inputs/debian/*.deb" in normalized
     assert "verify_image.py build-inputs" in normalized
     assert "verify_image.py debian-install" in normalized
+    assert 'VOLUME ["/opt/npa-runtime"]' in text
+    assert 'VOLUME ["/opt/npa-runtime/robomimic"]' not in text
 
 
 def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
