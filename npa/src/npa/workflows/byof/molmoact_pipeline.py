@@ -1,6 +1,6 @@
 """MolmoAct VLA fine-tune / serve / eval workflow.
 
-Companion to ``npa.cli.molmoact``: programmatic entry points for the BYOF
+Companion to ``npa.cli.workbench.molmoact``: programmatic entry points for the BYOF
 orchestrator, mirroring the ``openpi_pipeline`` module layout.  These helpers
 validate a run configuration and return a run manifest dict; they do not
 launch trainers or servers on their own.

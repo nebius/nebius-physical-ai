@@ -10,7 +10,7 @@ import pytest
 import typer
 
 import npa.workbench
-from npa.cli.molmoact import (
+from npa.cli.workbench.molmoact import (
     DEFAULT_MODEL_ID,
     app,
     eval_cmd,
@@ -102,7 +102,7 @@ def test_workbench_wrappers_resolve():
     module = importlib.import_module("npa.workbench.molmoact")
     for name in ("finetune", "serve", "eval"):
         wrapper = getattr(module, name)
-        assert wrapper.__npa_cli_module__ == "npa.cli.molmoact"
+        assert wrapper.__npa_cli_module__ == "npa.cli.workbench.molmoact"
         assert wrapper.__npa_cli_callback__ == f"{name}_cmd"
 
 

@@ -168,6 +168,13 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "seed": "knob",
         "dry_run": "boolean",
     },
+    "molmoact/finetune": {
+        "max_steps": "knob",
+        "batch_size": "knob",
+        "learning_rate": "knob",
+        "num_gpus": "knob",
+        "run_name": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
@@ -223,6 +230,32 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("image_aug", "image_aug", "--image-aug"),
             _p("seed", "seed", "--seed"),
             _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="molmoact/finetune",
+        cli_module="npa.cli.workbench.molmoact",
+        cli_callback="finetune_cmd",
+        sdk_module="npa.sdk.workbench.molmoact",
+        sdk_attr="finetune",
+        spec_path=SPECS / "molmoact-finetune.yaml",
+        tool_ref="workbench.molmoact.finetune",
+        spec_gap=(
+            "max_steps",
+            "batch_size",
+            "learning_rate",
+            "num_gpus",
+            "run_name",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_s3_uri", "output_s3_uri", "--output-s3-uri"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("num_gpus", "num_gpus", "--num-gpus"),
+            _p("run_name", "run_name", "--run-name"),
         ),
     ),
     CapabilityContract(
@@ -843,24 +876,6 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # npa/tests/workbench/test_nurec_access.py::
         # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
         # argv flag against the real Typer options.
-<<<<<<< HEAD
-        # MolmoAct toolRefs validate configs and return plan-only manifests
-        # (finetune/serve/eval not implemented), so there is no service tier
-        # to keep coherent with a YAML env block. CLI <-> catalog argv
-        # coherence is enforced by test_module_toolref_argv.py instead.
-        "molmoact",
-=======
-        # OpenVLA toolRefs emit upstream argv plans and raise (train/serve/eval
-        # not yet wired), so there is no service tier to keep coherent with a
-        # YAML env block. CLI <-> catalog argv coherence is enforced by
-        # test_module_toolref_argv.py instead.
-        "openvla",
-        # Newton toolRefs are config-validation / plan-only stubs: train and eval
-        # raise NewtonPipelineError (not implemented), so there is no service
-        # tier to keep coherent with a YAML env block. CLI <-> catalog argv
-        # coherence is enforced by test_module_toolref_argv.py instead.
-        "newton",
->>>>>>> ebc6cddefe3c984a65fa2c62b4c608dd0a04254d
         "nurec",
         "scenario-gen",
         "sim2real",

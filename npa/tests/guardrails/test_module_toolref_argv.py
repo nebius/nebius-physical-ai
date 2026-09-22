@@ -42,12 +42,9 @@ PARSER_FACTORIES = {
     "npa.workflows.groot_learning": "build_parser",
     "npa.workflows.groot_task_performance": "build_parser",
     "npa.workflows.byof.openpi_pipeline": "build_parser",
-<<<<<<< HEAD
     "npa.workflows.byof.molmoact_pipeline": "build_parser",
-=======
     "npa.workflows.byof.openvla_pipeline": "build_parser",
     "npa.workflows.byof.newton_pipeline": "build_parser",
->>>>>>> ebc6cddefe3c984a65fa2c62b4c608dd0a04254d
     "npa.workflows.byof.openpi_full_droid": "build_parser",
     "npa.workflows.byof.openpi_service": "build_parser",
     "npa.workflows.content_agents": "build_parser",
