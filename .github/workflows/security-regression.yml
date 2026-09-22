@@ -115,6 +115,11 @@ jobs:
     if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
     uses: ./.github/workflows/lint.yml
 
+  typecheck-gate:
+    needs: [validation-plan, pr-precheck]
+    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
+    uses: ./.github/workflows/typecheck.yml
+
   queue-guardrails:
     needs: validation-plan
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) }}
@@ -326,6 +331,7 @@ jobs:
       - queue-guardrails
       - test-gate
       - lint-gate
+      - typecheck-gate
       - gitleaks
       - scan
       - security-scanners
@@ -343,6 +349,7 @@ jobs:
           PRECHECK_RESULT: ${{ needs.pr-precheck.result }}
           TEST_RESULT: ${{ needs.test-gate.result }}
           LINT_RESULT: ${{ needs.lint-gate.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck-gate.result }}
           GUARDRAIL_RESULT: ${{ github.event_name == 'merge_group' && needs.queue-guardrails.result || needs.pr-precheck.result }}
           GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
           CONFIDENTIALITY_RESULT: ${{ needs.scan.result }}
@@ -360,7 +367,7 @@ jobs:
             test "$EVENT_NAME" = merge_group
             test "$GITLEAKS_RESULT" = success
             test "$CONFIDENTIALITY_RESULT" = success
-            for result in "$TEST_RESULT" "$LINT_RESULT" "$GUARDRAIL_RESULT" "$IMAGE_RESULT" "$RUNTIME_RESULT"; do
+            for result in "$TEST_RESULT" "$LINT_RESULT" "$TYPECHECK_RESULT" "$GUARDRAIL_RESULT" "$IMAGE_RESULT" "$RUNTIME_RESULT"; do
               test "$result" = skipped
             done
             echo 'Exact-tree PR evidence and fresh security scans passed.' >> "$GITHUB_STEP_SUMMARY"
@@ -377,6 +384,7 @@ jobs:
           if [ "$EVENT_NAME" != push ]; then
             test "$TEST_RESULT" = success
             test "$LINT_RESULT" = success
+            test "$TYPECHECK_RESULT" = success
             test "$GUARDRAIL_RESULT" = success
             test "$GITLEAKS_RESULT" = success
             test "$CONFIDENTIALITY_RESULT" = success

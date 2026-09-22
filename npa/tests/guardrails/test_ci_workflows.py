@@ -53,6 +53,7 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     jobs = workflow["jobs"]
     assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
     assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
+    assert jobs["typecheck-gate"]["uses"] == "./.github/workflows/typecheck.yml"
     assert "guardrails-gate" not in jobs
     precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
     assert "npa/tests/guardrails -n auto --dist worksteal" in precheck
@@ -69,6 +70,7 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
         "gitleaks.yml",
         "harness-guardrails.yml",
         "lint.yml",
+        "typecheck.yml",
     ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
@@ -570,14 +572,72 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     )
 
 
-def test_advisory_mypy_is_manual_only() -> None:
+def test_blocking_mypy_runs_as_merge_gate() -> None:
+    # NOTE (2026-09-22): #711 reverted this to advisory on main while #574 was
+    # still unmerged. This PR re-establishes the blocking gate now that
+    # npa/mypy-baseline.txt is seeded from real runs.
+    # CI POLICY CHANGE (PR #574, closes #489): mypy used to be advisory-only
+    # and manual-dispatch-only -- the previous version of this test
+    # (test_advisory_mypy_is_manual_only) pinned exactly that: "Type check
+    # (manual)", workflow_dispatch only, continue-on-error: true. It is now a
+    # BLOCKING merge gate: the security-regression orchestrator calls
+    # typecheck.yml on PRs and merge-queue runs, and new mypy errors beyond
+    # the committed baseline fail the merge. If you are flipping this back to
+    # advisory, that is a deliberate policy reversal: say so in the PR body
+    # and update this test, don't just weaken the workflow.
     lint = _load_workflow("lint.yml")
     typecheck = _load_workflow("typecheck.yml")
+    orchestrator = _load_workflow("security-regression.yml")
 
     assert "mypy" not in lint["jobs"]
-    assert typecheck["on"] == {"workflow_dispatch": ""}
+    # No direct pull_request trigger: the orchestrator owns PR triggering so
+    # PR updates stay atomic (see test_one_pr_workflow_owns_every_merge_gate).
+    assert "pull_request" not in typecheck["on"]
+    assert "workflow_call" in typecheck["on"]
+    assert "workflow_dispatch" in typecheck["on"]
     assert set(typecheck["jobs"]) == {"mypy"}
     assert typecheck["permissions"] == {"contents": "read"}
+
+    # The check must actually be blocking: no continue-on-error anywhere on
+    # the mypy job's steps.
+    steps = typecheck["jobs"]["mypy"]["steps"]
+    for step in steps:
+        assert step.get("continue-on-error", "") != "true", step.get("name")
+
+    # The orchestrator must wire it as a required merge gate.
+    assert (
+        orchestrator["jobs"]["typecheck-gate"]["uses"]
+        == "./.github/workflows/typecheck.yml"
+    )
+    assert "typecheck-gate" in orchestrator["jobs"]["security-regression"]["needs"]
+
+    # The original PR shipped an empty baseline that was never seeded from a
+    # real mypy run. The baseline must contain the grandfathered errors, or
+    # the first gated PR fails on pre-existing errors that are not new.
+    baseline = REPO_ROOT / "npa" / "mypy-baseline.txt"
+    assert baseline.is_file(), "mypy baseline file is missing"
+    entries = [
+        line
+        for line in baseline.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert entries, (
+        "mypy baseline is empty; seed it from a real mypy run "
+        "(or, if mypy is genuinely clean, update this test to say so)"
+    )
+
+    # The baseline comparison must be line-number-insensitive: grandfathered
+    # errors shift lines whenever their file is edited, and a line-sensitive
+    # diff would false-fail every future PR that touches such a file. The
+    # workflow strips `:line:` before diffing (multiset compare, so genuinely
+    # new errors of an already-seen shape are still caught).
+    baseline_step = next(
+        step for step in steps if step.get("name") == "Check against baseline"
+    )
+    script = baseline_step["run"]
+    assert "sed -E 's|^([^:]+\\.py):[0-9]+:|\\1:|'" in script, (
+        "typecheck.yml must strip :line: before the baseline diff"
+    )
 
 
 @pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])

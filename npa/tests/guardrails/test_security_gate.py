@@ -804,6 +804,7 @@ def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, s
     [
         "TEST_RESULT",
         "LINT_RESULT",
+        "TYPECHECK_RESULT",
         "GUARDRAIL_RESULT",
         "GITLEAKS_RESULT",
         "CONFIDENTIALITY_RESULT",
@@ -836,6 +837,7 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
         "queue-guardrails",
         "test-gate",
         "lint-gate",
+        "typecheck-gate",
         "gitleaks",
         "scan",
         "security-scanners",
@@ -852,6 +854,7 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
         "PRECHECK_RESULT": "${{ needs.pr-precheck.result }}",
         "TEST_RESULT": "${{ needs.test-gate.result }}",
         "LINT_RESULT": "${{ needs.lint-gate.result }}",
+        "TYPECHECK_RESULT": "${{ needs.typecheck-gate.result }}",
         "GUARDRAIL_RESULT": "${{ github.event_name == 'merge_group' && needs.queue-guardrails.result || needs.pr-precheck.result }}",
         "GITLEAKS_RESULT": "${{ needs.gitleaks.result }}",
         "CONFIDENTIALITY_RESULT": "${{ needs.scan.result }}",
