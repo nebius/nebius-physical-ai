@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
+import inspect
 import json
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -10,6 +13,7 @@ from npa.workbench.vlm_eval import (
     VlmEvalError,
     _resolve_api_key,
     _resolve_endpoint_url,
+    benchmark_vlm_eval,
     evaluate_vlm,
 )
 
@@ -54,21 +58,47 @@ def test_api_backend_accepts_token_factory_key(monkeypatch) -> None:
 
 
 def test_api_backend_requires_a_key(monkeypatch) -> None:
+    from npa.clients import token_factory
+
     for key in ("VLM_EVAL_API_KEY", "NEBIUS_TOKEN_FACTORY_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(
+        token_factory,
+        "resolve_config",
+        lambda **kwargs: SimpleNamespace(api_key=""),
+    )
     with pytest.raises(VlmEvalError):
         _resolve_api_key(backend="api", api_key_env="VLM_EVAL_API_KEY")
 
 
 @pytest.mark.parametrize(
-    ("model", "constrained"),
+    ("model", "constrained", "temperature", "expected_extra"),
     [
-        ("MiniMaxAI/MiniMax-M3", False),
-        ("vendor/explicit-vision", True),
+        (
+            "nvidia/Nemotron-3_5-Lightning",
+            True,
+            True,
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        ),
+        (
+            "MiniMaxAI/MiniMax-M3",
+            False,
+            True,
+            {"chat_template_kwargs": {"thinking_mode": "disabled"}},
+        ),
+        (
+            "moonshotai/Kimi-K3",
+            True,
+            False,
+            {"reasoning_effort": "low"},
+        ),
+        ("vendor/explicit-vision", True, True, {}),
+        ("google/gemma-3-27b-it", True, True, {}),
+        ("openbmb/MiniCPM-V-4_5", True, True, {}),
     ],
 )
-def test_api_judge_uses_model_specific_json_mode(
-    monkeypatch, model, constrained
+def test_api_judge_uses_shared_model_profile(
+    monkeypatch, model, constrained, temperature, expected_extra
 ) -> None:
     from npa.workbench import vlm_eval
 
@@ -91,8 +121,52 @@ def test_api_judge_uses_model_specific_json_mode(
     )
     assert result.score == 0.9
     assert ("response_format" in requests[0]) is constrained
-    if not constrained:
-        assert requests[0]["chat_template_kwargs"] == {"thinking_mode": "disabled"}
+    assert ("temperature" in requests[0]) is temperature
+    assert "max_tokens" not in requests[0]
+    assert "max_completion_tokens" not in requests[0]
+    for key, value in expected_extra.items():
+        assert requests[0][key] == value
+    assert result.evidence is not None
+    assert result.evidence.request.request_manifest["generation_parameters"] == {
+        key: value
+        for key, value in requests[0].items()
+        if key not in {"model", "messages"}
+    }
+    assert "test-key" not in json.dumps(asdict(result.evidence))
+
+
+def test_hosted_model_switch_exists_only_in_shared_client_profile() -> None:
+    from npa.workbench import vlm_eval
+
+    source = inspect.getsource(vlm_eval)
+    assert "moonshotai/Kimi-K3" not in source
+    assert "MiniMaxAI/MiniMax-M3" not in source
+    assert "nvidia/Nemotron-3_5-Lightning" not in source
+
+
+def test_self_hosted_kimi_keeps_generic_request_shape(monkeypatch) -> None:
+    from npa.workbench import vlm_eval
+
+    requests = []
+
+    def post(**kwargs):
+        requests.append(kwargs["request"])
+        return _completion(model="moonshotai/Kimi-K3")
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    vlm_eval._call_openai_compatible(
+        backend="self-hosted",
+        model="moonshotai/Kimi-K3",
+        endpoint_url="https://example.test/v1",
+        api_key_env="TEST_KEY",
+        prompt="Return JSON",
+        frames=[],
+        timeout_s=120,
+    )
+    assert requests[0]["temperature"] == 0
+    assert requests[0]["response_format"] == {"type": "json_object"}
+    assert "reasoning_effort" not in requests[0]
 
 
 def test_malformed_minimax_json_remains_an_error(monkeypatch) -> None:
@@ -163,7 +237,6 @@ def test_api_judge_rejects_invalid_scores_before_result(monkeypatch, score) -> N
         '{"success":"yes","score":0.9,"rationale":"target reached"}',
         '{"score":0.9,"rationale":"target reached"}',
         '{"success":true,"score":0.1,"score":0.9,"rationale":"target reached"}',
-        "```json\n" + _VALID_CONTENT + "\n```",
         "Evaluation: " + _VALID_CONTENT,
         _VALID_CONTENT + " trailing explanation",
         '{"success":true,"score":0.9}',
@@ -187,6 +260,46 @@ def test_api_judge_rejects_incomplete_output_even_when_json_valid(
         _call_completion(monkeypatch, _completion(finish=finish))
 
 
+@pytest.mark.parametrize("language", ["json", "JSON", ""])
+def test_api_judge_deframes_one_complete_markdown_json_block(
+    monkeypatch, language
+) -> None:
+    content = f"```{language}\n{_VALID_CONTENT}\n```"
+
+    result = _call_completion(monkeypatch, _completion(content=content))
+
+    assert result.score == 0.9
+    assert result.evidence is not None
+    assert (
+        result.evidence.provider.parser_version
+        == "npa_vlm_eval_hosted_json_v1+markdown-fence-v1"
+    )
+
+
+def test_api_judge_still_rejects_duplicate_keys_inside_fence(monkeypatch) -> None:
+    content = (
+        "```json\n"
+        '{"success":true,"score":0.1,"score":0.9,"rationale":"target reached"}'
+        "\n```"
+    )
+
+    with pytest.raises(VlmEvalError, match="duplicate keys"):
+        _call_completion(monkeypatch, _completion(content=content))
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "prefix\n```json\n" + _VALID_CONTENT + "\n```",
+        "```json\n" + _VALID_CONTENT + "\n```\nsuffix",
+        "```json\n" + _VALID_CONTENT,
+    ],
+)
+def test_api_judge_rejects_partial_or_embedded_fences(monkeypatch, content) -> None:
+    with pytest.raises(VlmEvalError, match="could not be parsed in full"):
+        _call_completion(monkeypatch, _completion(content=content))
+
+
 def test_api_judge_requires_completion_metadata(monkeypatch) -> None:
     completion = _completion()
     del completion["choices"][0]["finish_reason"]
@@ -197,11 +310,22 @@ def test_api_judge_requires_completion_metadata(monkeypatch) -> None:
 @pytest.mark.parametrize("model", [None, "", "  ", 7])
 def test_api_judge_requires_actual_model_identity(monkeypatch, model) -> None:
     with pytest.raises(VlmEvalError, match="identify the served model"):
-        _call_completion(monkeypatch, _completion(model=model))
+        _call_completion(
+            monkeypatch,
+            _completion(model=model),
+            model="moonshotai/Kimi-K3",
+        )
 
 
 @pytest.mark.parametrize(
-    "model", ["nvidia/Nemotron-3_5-Lightning", "MiniMaxAI/MiniMax-M3"]
+    "model",
+    [
+        "moonshotai/Kimi-K3",
+        "MiniMaxAI/MiniMax-M3",
+        "google/gemma-3-27b-it",
+        "nvidia/Nemotron-3_5-Lightning",
+        "openbmb/MiniCPM-V-4_5",
+    ],
 )
 def test_api_judge_rejects_canonical_model_mismatch(monkeypatch, model) -> None:
     with pytest.raises(VlmEvalError, match="does not match"):
@@ -237,6 +361,11 @@ def test_self_hosted_judge_keeps_legacy_parsing_without_completion_metadata(
     assert result.success is True
     assert result.score == 1.0
     assert result.served_model is None
+    assert result.evidence is not None
+    assert (
+        result.evidence.provider.parser_version
+        == "npa_vlm_eval_compatible_json_v1+markdown-fence-v1"
+    )
 
 
 def test_api_custom_alias_preserves_request_and_reports_actual_judged_model(
@@ -271,3 +400,214 @@ def test_api_custom_alias_preserves_request_and_reports_actual_judged_model(
     assert saved["score"] == 0.9
     assert saved["passed"] is True
     assert saved["frame_count"] == 1
+
+
+def test_api_result_retains_recomputable_secret_free_evidence(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "nested" / "frame.png"
+    frame.parent.mkdir()
+    Image.new("RGB", (12, 9), "green").save(frame)
+    completion = _completion(model="vendor/served-vision")
+    completion["id"] = "request-123"
+    completion["usage"] = {"prompt_tokens": 31, "completion_tokens": 17}
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **kwargs: completion
+    )
+
+    result = evaluate_vlm(
+        input_path=str(frame.parent),
+        output_path=str(tmp_path / "evaluation.json"),
+        backend="api",
+        model="vendor/explicit-alias",
+        endpoint_url="https://example.test/v1",
+        task="Judge the green diagram",
+        rubric="Require visible green pixels.",
+    )
+
+    evidence = result.evidence
+    assert evidence is not None
+    assert evidence.schema_version == "npa_vlm_eval_evidence_v1"
+    assert evidence.request.endpoint_role == "hosted-api"
+    assert len(evidence.request.frames) == 1
+    submitted = vlm_eval.select_rollout_frames(frame.parent)[0]
+    frame_evidence = evidence.request.frames[0]
+    assert frame_evidence.label == "frame.png"
+    assert frame_evidence.sha256 == hashlib.sha256(submitted.data).hexdigest()
+    assert (frame_evidence.width, frame_evidence.height) == (12, 9)
+
+    manifest_json = vlm_eval._canonical_json(evidence.request.request_manifest)
+    assert (
+        evidence.request.request_manifest_sha256
+        == hashlib.sha256(manifest_json.encode()).hexdigest()
+    )
+    assert str(frame.parent) not in manifest_json
+    assert "example.test" not in manifest_json
+    assert "Authorization" not in manifest_json
+    assert "data:image" not in manifest_json
+
+    raw_response = vlm_eval._canonical_json(completion)
+    assert evidence.provider.provider_request_id == "request-123"
+    assert evidence.provider.returned_model == "vendor/served-vision"
+    assert evidence.provider.finish_reason == "stop"
+    assert evidence.provider.usage == completion["usage"]
+    assert evidence.provider.raw_response == raw_response
+    assert (
+        evidence.provider.raw_response_sha256
+        == hashlib.sha256(raw_response.encode()).hexdigest()
+    )
+    json.dumps(asdict(result))
+
+
+def test_api_result_marks_unavailable_optional_provider_metadata(monkeypatch) -> None:
+    result = _call_completion(monkeypatch, _completion())
+
+    assert result.evidence is not None
+    assert result.evidence.provider.provider_request_id is None
+    assert result.evidence.provider.returned_model == "MiniMaxAI/MiniMax-M3"
+    assert result.evidence.provider.usage is None
+    assert result.evidence.provider.status_code is None
+
+
+def test_api_judge_rejects_explicit_provider_refusal(monkeypatch) -> None:
+    completion = _completion()
+    completion["choices"][0]["message"]["refusal"] = "I cannot inspect this image."
+
+    with pytest.raises(VlmEvalError, match="refused"):
+        _call_completion(monkeypatch, completion)
+
+
+@pytest.mark.parametrize("model", ["MiniMaxAI/MiniMax-M3", "moonshotai/Kimi-K3"])
+def test_api_result_retains_exact_http_body_and_header_request_id(
+    monkeypatch, model
+) -> None:
+    from npa.workbench import vlm_eval
+
+    completion = _completion(model=model)
+    raw_body = json.dumps(completion, separators=(",", ":")) + "\n"
+
+    class ExactResponse:
+        status_code = 200
+        headers = {"x-request-id": "header-request-456"}
+        text = raw_body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return completion
+
+    class ExactClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return ExactResponse()
+
+    monkeypatch.setattr(vlm_eval.httpx, "Client", ExactClient)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    result = vlm_eval._call_openai_compatible(
+        backend="api",
+        model=model,
+        endpoint_url="https://example.test/v1",
+        api_key_env="TEST_KEY",
+        prompt="Return JSON",
+        frames=[],
+        timeout_s=120,
+    )
+
+    assert result.evidence is not None
+    assert result.evidence.provider.provider_request_id == "header-request-456"
+    assert result.evidence.provider.status_code == 200
+    assert result.evidence.provider.raw_response == raw_body
+
+
+def test_api_key_falls_back_to_configured_token_factory_credentials(
+    monkeypatch,
+) -> None:
+    from npa.clients import token_factory
+
+    for key in ("VLM_EVAL_API_KEY", "NEBIUS_TOKEN_FACTORY_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(
+        token_factory,
+        "resolve_config",
+        lambda **kwargs: SimpleNamespace(api_key="configured-key"),
+    )
+
+    assert (
+        _resolve_api_key(backend="api", api_key_env="VLM_EVAL_API_KEY")
+        == "configured-key"
+    )
+
+
+def test_selected_frame_labels_preserve_relative_identity(tmp_path) -> None:
+    from npa.workbench.vlm_eval import select_rollout_frames
+
+    root = tmp_path / "rollout"
+    for subdirectory, color in (("camera-a", "green"), ("camera-b", "red")):
+        path = root / subdirectory / "frame.png"
+        path.parent.mkdir(parents=True)
+        Image.new("RGB", (8, 8), color).save(path)
+
+    selected = select_rollout_frames(root, frame_selection="sequence", max_frames=2)
+
+    assert [frame.label for frame in selected] == [
+        "camera-a/frame.png",
+        "camera-b/frame.png",
+    ]
+
+
+def test_real_benchmark_case_retains_per_request_evidence(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    rollout = tmp_path / "rollout"
+    rollout.mkdir()
+    Image.new("RGB", (8, 8), "green").save(rollout / "frame.png")
+    dataset = tmp_path / "benchmark.json"
+    dataset.write_text(
+        json.dumps(
+            {
+                "format": "npa_vlm_eval_benchmark_v1",
+                "items": [
+                    {
+                        "id": "visible-green",
+                        "rollout": str(rollout),
+                        "expected_label": True,
+                        "task": "Confirm that the frame is green.",
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **kwargs: _completion(model="vendor/served-vision"),
+    )
+
+    report = benchmark_vlm_eval(
+        dataset=str(dataset),
+        thresholds=[0.8],
+        rubrics=["default"],
+        models=["vendor/explicit-alias"],
+        backend="api",
+    )
+
+    case = report.best_config.results[0]
+    assert case.score_source == "api"
+    assert case.evidence is not None
+    assert case.evidence.request.frames[0].label == "frame.png"
+    assert case.evidence.provider.finish_reason == "stop"
