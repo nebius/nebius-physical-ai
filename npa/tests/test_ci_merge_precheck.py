@@ -38,7 +38,7 @@ def repository(tmp_path: Path) -> Path:
     (tmp_path / "npa/ci").mkdir(parents=True)
     (tmp_path / "npa/pyproject.toml").write_text(
         '[project]\nrequires-python = ">=3.10"\ndependencies = ["anyio>=4.14.2"]\n'
-        "[project.optional-dependencies]\ndev = []\nadapter = []\nsonic = []\n"
+        "[project.optional-dependencies]\ndev = []\nadapter = []\nsonic = []\ngenesis-test = []\n"
     )
     (tmp_path / "npa/ci/constraints.in").write_text("# constraints\n")
     (tmp_path / "npa/ci/requirements.txt").write_text(

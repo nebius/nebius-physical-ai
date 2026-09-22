@@ -481,9 +481,9 @@ cancels the complete superseded gate instead of six independent fragments:
 
 | Workflow | What it runs | Reproduce locally |
 | --- | --- | --- |
-| `.github/workflows/test.yml` | Identical PR/queue coverage; prose smoke; scheduled compatibility audit | `make test` |
+| `.github/workflows/test.yml` | Full PR coverage; exact-tree queue reuse; scheduled compatibility audit | `make test` |
 | `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
-| `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
+| `pr-precheck`; `.github/workflows/harness-guardrails.yml` on main | `pytest npa/tests/guardrails` | `make test-guardrails` |
 | `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
 | `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
@@ -509,17 +509,53 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-Pull requests and merge candidates run the same checks before they can pass:
-five duration-balanced Python 3.12 coverage shards, the dedicated Cypress job,
-and focused Python 3.10/3.14 compatibility tests, alongside security, lint,
-documentation drift, and repository guardrails. Source and test changes always
-receive the full suite, including tests outside the changed subsystem. Coverage
-is combined before enforcing the 60% floor on both events.
+Pull requests publish `pr-precheck` first: dependency-input consistency,
+lint and formatting, all guardrails, smoke tests, and full test collection. Its five-minute
+execution budget provides an early signal; a pass is not permission to merge.
+Fresh source/dependency, secret and confidentiality scans also start immediately.
+A failed precheck prevents the expensive test and image jobs from starting.
+
+PR admission still requires eight duration-balanced Python 3.12 coverage shards,
+Cypress, focused Python 3.10/3.14 compatibility tests, security, documentation
+drift, and repository guardrails. Source and test changes receive the full suite,
+including other subsystems; merged coverage must meet the unchanged 60% floor.
+
+The queue reuses successful PR validation only for an **identical Git tree**,
+including file modes, tests, workflows, and dependencies. A verifier copied from
+the trusted base reads GitHub run/job/artifact metadata with read-only access.
+It requires the current PR head, latest run attempt, every required job, either
+full coverage/browser results or the established prose smoke, a unique receipt
+for the tested PR merge commit, and evidence started within the last 24 hours.
+It checks that commit's parent and tree through GitHub's Git API. It never
+downloads or executes PR artifacts. Different commit messages or squash SHAs do
+not invalidate identical bytes.
+
+The queue reruns gitleaks, confidentiality, and the source/dependency scanners
+against its actual base/candidate. It does not rebuild CUDA images or repeat
+unit/browser tests whose identical tree already passed. When preceding merges
+change the combined tree, it reruns all tests, lint, guardrails and hostile-input
+checks. Complete Git-tree comparisons include additions, deletions and file
+modes. The trusted base image-scope policy decides whether image inputs changed:
+unchanged image inputs reuse the successful image checks; changed inputs rerun
+the full image gate too. Missing, stale, failed, partial-rerun or unreadable
+evidence also restores the full queue gate: every current combined-tree test
+and security check must then pass. Older PRs can therefore adopt the policy
+without being rejected just for lacking a receipt. The installing PR receives
+the full gate because its base has no verifier yet. Refreshing an older branch
+and completing PR validation enables the faster evidence-reuse path.
+
+The operating targets are an early signal within five minutes and queue
+validation within ten. Hosted-runner waiting is outside these execution budgets;
+GitHub does not reserve capacity for this repository. Set the queue's check
+response timeout to ten minutes only after this workflow is on main and a live
+queue candidate has verified the new path. A timeout rejects, never merges, an
+unvalidated candidate. Optional timing reports run on PR/main validation only;
+their completion is not a prerequisite for reusing already-passed required jobs.
 
 Full suites collect smoke tests and run the CLI install check in the shards,
 avoiding duplicate smoke and subsystem jobs. Cypress runs once in its own job,
-never inside a pytest shard. Cached constrained installs, xdist workers, and the
-existing merge-priority runner pools retain fast feedback without deferring
+never inside a pytest shard. Cached constrained installs, xdist workers, and
+independent job scheduling retain fast feedback without deferring
 coverage until queue admission. Scheduled and manual audits retain four shards
 on each of Python 3.10, 3.12, and 3.14.
 
@@ -588,43 +624,34 @@ of the parent workflow can interrupt reporting.
 
 ### Validation concurrency
 
-Runner jobs share repository-wide concurrency slots across the validation
-workflows. Adding PRs therefore adds waiting work without multiplying active
-jobs. The pools are independent:
+Independent validation jobs use GitHub's available runner capacity. Validation
+workflows have no job-level concurrency locks or matrix `max-parallel` caps:
+after the fast precheck all eight pytest shards and browser checks can run together, and unrelated PRs,
+merge candidates, and audits do not serialize through repository-wide slots.
+Scope selection, coverage aggregation, and the final required check wait only
+for their declared dependencies and an available runner.
 
-| Pool | Maximum active runner jobs | Shared slots |
-|---|---:|---|
-| PR checks | 7 | metadata, docs/guardrails, policy, runtime, two test slots, scope/completion |
-| Merge candidates | 9 | metadata/docs/guardrails, policy, runtime, five test slots, scope/completion |
-| Main, scheduled, and manual audits | 3 | metadata, security, tests |
+The parent workflow retains a concurrency group per PR so a newer commit
+cancels that PR's superseded validation, including its reusable child workflows.
+Merge candidates have distinct groups keyed by candidate SHA. Main pushes
+supersede older main runs. Reusable workflows use distinct group prefixes so
+they cannot hold or cancel their parent's group. Publication and live-workload
+concurrency controls have separate purposes and remain independent of this policy.
 
-These are shared totals for each pool, not per-PR or per-candidate allowances.
-PR shards 1/3/5 share one test slot; shards 2/4 and browser checks share the
-other. Merge shards keep five slots, with browser checks sharing shard 5's slot.
-Each candidate pool has a completion slot for the short test-scope selector,
-coverage, and the final required check. Test selection can start the shards
-without waiting behind long docs or guardrail jobs, and completed suites can
-report their result promptly.
-This also lets a superseded PR report its unsuccessful final check promptly
-and release its workflow lock for the replacement commit.
-Optional timing reports use the audit metadata slot even for candidate runs.
+The former shared pools limited every PR's tests to two active jobs across the
+repository. A dependency-update batch filled their 100-job pending queues and
+caused jobs to be rejected before tests ran. Removing those shared locks avoids
+that concurrency-group queue limit; GitHub plan limits and organization-wide
+runner availability can still cause waiting. Separate concurrency groups do
+not reserve runners or guarantee merge priority. Use the CI timing report to
+distinguish runner waiting from execution, and inspect organization runner
+capacity if waiting persists. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 
-Each job uses `queue: max` and `cancel-in-progress: false`. GitHub retains up to
-100 waiting jobs per slot; additional jobs are cancelled when that platform
-queue is full. Do not omit `queue: max`: the default replaces an already waiting
-job when another arrives. The parent workflow still cancels superseded commits
-of the same PR. Reusable workflow callers must not hold runner slots while their
-children wait for those slots. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
-
-The 19-job ceiling applies to these validation workflows once they use this
-configuration. Older branches/runs and publication workflows are outside it;
-refresh an old branch when its PR checks need the new scheduling policy.
-Merge candidates receive the policy from the combined commit after it lands on
-`main`. Separate groups limit this repository's demand; they do not reserve
-physical runners against other repositories in the organization. Busy PRs can
-wait longer to leave capacity for merges. Use the timing report to check the
-tradeoff against actual runner capacity before increasing the pools. Required
-checks and the merge queue timeout remain unchanged.
+Already queued runs keep the workflow configuration from their original commit.
+After this policy lands on `main`, refresh older PR branches to create runs with
+the new configuration; rerunning an old commit does not adopt it. Merge
+candidates receive it through their combined commit. Required checks and coverage
+remain enforced. Queue timeout changes follow the staged rollout described above.
 
 ### Merge readiness and queue rejections
 
@@ -644,10 +671,12 @@ checks, or validation of interactions with preceding queued PRs. An alternate
 target can be inspected with
 `npa/.venv/bin/python npa/scripts/ci_merge_precheck.py --base <ref> --head <ref>`.
 
-PR admission includes every test category required by the queue. The queue still
-tests a new commit combining the PR with the current base and preceding queued
-changes. A green PR check applies to its tested commit; a queue rejection
-can expose a newer dependency policy, an interaction, or a flaky test. Open the
+PR admission includes every test category required by the queue. The queue
+compares its combined tree with the completed PR validation and reruns fresh
+security scans. A preceding merge can change that tree; the queue then reruns
+combined-tree tests and any affected image checks. Missing, failed or stale PR
+evidence restores full queue validation. Refreshing the branch and completing
+PR validation can enable the faster reuse path. Open the
 failed **Security regression** run whose event is **merge_group**, then inspect
 the first failed component job. Cancelled sibling shards usually follow a failed
 shard through matrix fail-fast; their cancellation is not the original failure.
@@ -667,8 +696,8 @@ explicitly rather than guessing from another candidate.
 The reporter uses a scheduled workflow and trusted default-branch code, with
 read access to Actions and PR write permission used only to manage comments.
 It never checks out
-candidate code, installs its dependencies, or reads its logs/artifacts. It shares
-the existing audit metadata slot and is outside the required checks. The five-minute
+candidate code, installs its dependencies, or reads its logs/artifacts. Its own
+concurrency group does not lock validation jobs; it is outside the required checks. The five-minute
 schedule is not a delivery deadline: GitHub scheduling and runner availability can
 delay a refresh. Polling stops for closed PRs; read-only manual diagnosis can
 still inspect their history. See
@@ -717,7 +746,7 @@ Use an interpreter with `os.memfd_create`; some Conda builds omit it.
 Install `ffmpeg`/`ffprobe` and the same CPU checkpoint/export runtime as CI:
 
 ```bash
-npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
 npa/.venv/bin/python -m pip install -e "npa[sonic]"
 export PATH="$PWD/npa/.venv/bin:$PATH"
 export NPA_REQUIRE_FFMPEG=1
@@ -733,9 +762,24 @@ CI jobs, and helper scripts such as `npa/scripts/start_golden_evals_tmux.sh` and
 you must then point the tooling at it — `make test PYTHON=...`,
 `NPA_BIN=.../bin/npa`, `GOLDEN_EVAL_PYTHON=.../bin/python`.
 
+If you keep multiple checkouts of this repo (for example `git worktree add`, or
+several agent sandboxes on one machine) and share one `npa/.venv` across them —
+by symlinking it, rather than running its own `pip install -e` in each — the
+venv's editable install still resolves `npa` from whichever checkout last ran
+that install. `pytest` then collects test files from the checkout you are
+standing in but imports production code from a *different* checkout, silently,
+with no error or non-zero exit. `make test`/`test-smoke`/`test-guardrails`/
+`test-e2e` all run `make check-env` first specifically to catch this: it fails
+fast with the exact `export PYTHONPATH=...` fix (or the option to give the
+checkout its own venv) instead of letting you spend minutes on a run whose
+result is meaningless. Run it standalone any time you are unsure which
+checkout your interpreter is really resolving `npa` from: `make check-env`.
+
 Then use the `make` targets from the repo root:
 
 ```bash
+make check-env        # fails fast if $PYTHON would import npa from another checkout
+make test-prereqs     # non-blocking: reports missing optional tools and temp-disk observations
 make check            # local subset: lint, docs-check, unit tests
 make test             # full unit suite, live/GPU markers deselected
 make test-smoke       # quickest: onboarding CLI smoke tests only
@@ -745,6 +789,27 @@ make docs             # regenerate docs/cli/ after any CLI change
 make docs-check       # the docs/cli/ drift gate
 make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
 ```
+
+Run `make test-prereqs` once per environment before trusting `make test`'s
+result: it distinguishes two different consequences of a missing optional
+tool, verified against the specific test files that check for each, not
+assumed. The `adapter` extra's `pyarrow` is not optional in the usual sense —
+without it, files that import it unconditionally (for example
+`npa/tests/test_lerobot_shared_video_offsets.py`) fail to collect at all, so
+`make test` exits non-zero outright rather than passing with less coverage.
+Missing ffmpeg/ffprobe, a CPU checkpoint runtime, tmux, or Node
+instead let the specific tests that check for them self-skip, so `make test`
+can still exit 0 while covering less than CI. The same command also reports
+free space and any retained `pytest-of-<user>/pytest-N` directories under the
+temp root pytest will use, purely for awareness — it recommends no deletion.
+That root (`$TMPDIR/pytest-of-<user>` by default) is shared by every process
+you run, not scoped to one checkout, so concurrent work across worktrees on
+one machine competes for the same disk. Point a large or parallel run at a
+directory you own instead — `pytest --basetemp=<owned-dir> ...` — and clean
+up only that directory yourself. A directory not currently the
+`pytest-current` target is not thereby proven idle: another process may hold
+a different `--basetemp` entirely, or a live lock file under this same root.
+Do not delete another process's temp directory based on age alone.
 
 `docs/cli/` is generated from live `npa --help` and drift-gated in CI, so
 `make docs` and a commit of its output are part of any change to a command, flag,

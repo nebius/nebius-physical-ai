@@ -14,3 +14,8 @@ Historical evidence tests check the archived file against the original digest;
 other unchanged recipe files are checked in place. Fresh producer tests execute
 the current implementation. The separate native FiftyOne integration test
 exercises current import, export, episode identity, and re-import behavior.
+
+The `0e489dd…` recipe preserves the original recording producer from commit
+`b1d1ee592e7b0e47bb328de77e7aa8be12f48608`. The current producer uses the
+Rerun 0.38 streaming decoder; the archived producer and its original artifacts
+remain evidence for the recorded 0.31.4 run.
