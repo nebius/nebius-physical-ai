@@ -84,7 +84,7 @@ setup: |
   test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/.ready.json"
   test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/inventory.json"
   robomimic-entrypoint verify-runtime
-  python3 - <<'PY'
+  robomimic-runtime exec - <<'PY'
   import boto3
   PY
 run: |
@@ -113,7 +113,7 @@ run: |
     test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
   fi
   export SMOKE_EXIT_CODE
-  python3 <<'PY'
+  robomimic-runtime exec - <<'PY'
   import json
   import os
   import re

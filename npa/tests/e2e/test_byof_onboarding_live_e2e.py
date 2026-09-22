@@ -1269,9 +1269,14 @@ def _invoke_robomimic_gate(
         raise _RobomimicEntitlementRefusal(refusal_category)
     _activate_nebius_profile()
     config = load_spec(ROBOMIMIC_SPEC).config
-    registry = resolve_container_registry(e2e_project)
-    assert registry == selectors["registry"].rstrip("/")
-    assert not is_public_registry(registry)
+    if selectors["registry_visibility"].lower() == "public":
+        # Selectors restrict this route to the official namespace and full
+        # development SHA; the runner checks the exact published digest.
+        registry = selectors["registry"].rstrip("/")
+    else:
+        registry = resolve_container_registry(e2e_project)
+        assert registry == selectors["registry"].rstrip("/")
+        assert not is_public_registry(registry)
     bucket = live_bucket(e2e_project)
     assert bucket == selectors["bucket"].removeprefix("s3://").split("/", 1)[0]
     with tempfile.TemporaryDirectory(prefix="npa-robomimic-profile-") as temp_dir:

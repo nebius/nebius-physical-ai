@@ -16,6 +16,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -158,7 +159,7 @@ def _profile_upload_module(tmp_path: Path) -> ModuleType:
 
     documents = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
     run = documents[1]["run"]
-    script = run.split("python3 <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    script = run.split("robomimic-runtime exec - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
     parsed = ast.parse(script)
     declarations = []
     for node in parsed.body:
@@ -486,6 +487,98 @@ def test_robomimic_gate_refuses_missing_manager_context_in_default_suite(
 
     with pytest.raises(RuntimeError, match="context-invalid"):
         _live_e2e_module()._robomimic_live_selectors("manager-project")
+
+
+@pytest.mark.parametrize("route", ("public", "private", "private-mismatch"))
+def test_robomimic_live_harness_uses_selected_registry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, route: str
+) -> None:
+    module = _live_e2e_module()
+    run_id = "registry-route"
+    registry = (
+        "ghcr.io/nebius/nebius-physical-ai"
+        if route == "public"
+        else "private.invalid/robomimic"
+    )
+    image = f"{registry}/npa-robomimic@sha256:{'d' * 64}"
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    entitlement = _customer_entitlement(
+        tmp_path, project="manager-project", run_id=run_id
+    )
+    environment = {
+        "NPA_E2E_PROJECT": "manager-project",
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": registry,
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": (
+            "public" if route == "public" else "private"
+        ),
+        "NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA": "b" * 40,
+        "NPA_BYOF_ROBOMIMIC_IMAGE": image,
+        "NPA_BYOF_KUBECONFIG": str(kubeconfig),
+        "NPA_BYOF_K8S_CONTEXT": "manager-context",
+        "NPA_BYOF_K8S_NAMESPACE": "robomimic-validation",
+        "NPA_E2E_S3_BUCKET": "manager-bucket",
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": "1",
+        "NPA_BYOF_LIVE_GPU": "1",
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": "1",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": "robomimic-runtime-exact",
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": "a" * 64,
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE": str(entitlement),
+        "NPA_BYOF_ROBOMIMIC_RUN_ID": run_id,
+        "AWS_ENDPOINT_URL": "https://storage.test-region.nebius.cloud",
+    }
+    for variable, value in environment.items():
+        monkeypatch.setenv(variable, value)
+    monkeypatch.delenv("NEBIUS_S3_ENDPOINT", raising=False)
+    monkeypatch.setattr(module, "_activate_nebius_profile", lambda: None)
+
+    def configured_registry(_project: str) -> str:
+        if route == "public":
+            pytest.fail("official public images must not require a private registry")
+        return registry if route == "private" else "private.invalid/other"
+
+    monkeypatch.setattr(module, "resolve_container_registry", configured_registry)
+    monkeypatch.setattr(module, "live_bucket", lambda _project: "manager-bucket")
+    monkeypatch.setattr(module, "_robomimic_target_env", lambda *_args: {})
+    monkeypatch.setattr(
+        module,
+        "_robomimic_observer_rbac",
+        lambda **kwargs: nullcontext(module._robomimic_observer_name(kwargs["run_id"])),
+    )
+    calls = []
+
+    def launch(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert command[command.index("--registry") + 1] == registry
+        assert command[command.index("--image") + 1] == image
+        assert "--skip-build" in command
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps({"status": "ok", "image": image}), ""
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", launch)
+    if route == "private-mismatch":
+        with pytest.raises(AssertionError):
+            module._invoke_robomimic_gate("manager-project")
+        assert not calls
+    else:
+        summary, bucket, observed_run = module._invoke_robomimic_gate("manager-project")
+        assert summary["image"] == image
+        assert (bucket, observed_run) == ("manager-bucket", run_id)
+        assert len(calls) == 1
+
+
+def test_robomimic_profile_uses_verified_runtime_for_boto3() -> None:
+    task = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))[1]
+    setup = task["setup"]
+    assert setup.index("robomimic-entrypoint verify-runtime") < setup.index(
+        "robomimic-runtime exec - <<'PY'"
+    )
+    assert "robomimic-runtime exec - <<'PY'" in task["run"]
+    assert "python3" not in setup
+    assert "python3" not in task["run"]
 
 
 def test_robomimic_live_harness_refuses_entitlement_before_any_side_effect(
