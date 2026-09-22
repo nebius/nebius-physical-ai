@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from npa.deploy.images import (
     DEFAULT_CONTAINER_REGISTRY,
     SUPPORTED_TOOL_VERSIONS,
-    development_image_for_tool,
+    UNVALIDATED_PUBLICATION_TOOLS,
+    VALIDATION_CANDIDATE_TOOLS,
     container_image_for_tool,
     default_vlm_image,
     default_workbench_image,
+    development_image_for_tool,
     development_tag,
     execution_container_registry,
     registry_from_env,
@@ -94,6 +98,31 @@ def test_explicit_custom_registry_remains_available() -> None:
         container_image_for_tool("retargeting", registry="registry.example/custom")
         == "registry.example/custom/npa-retargeting:0.1.1"
     )
+
+
+def test_validation_candidates_require_an_explicit_development_tag() -> None:
+    tag = development_tag("a" * 40)
+    for tool in sorted(VALIDATION_CANDIDATE_TOOLS):
+        with pytest.raises(ValueError, match="no accepted default image"):
+            container_image_for_tool(tool)
+        with pytest.raises(ValueError, match="no accepted default image"):
+            container_image_for_tool(tool, registry="registry.example/team")
+        with pytest.raises(ValueError, match="exact dev-<full-source-sha> tag"):
+            container_image_for_tool(
+                tool, registry="registry.example/team", tag="latest"
+            )
+        assert container_image_for_tool(
+            tool, registry="registry.example/team", tag=tag
+        ).endswith(f":{tag}")
+
+
+def test_unbuilt_lanes_keep_their_fail_closed_sentinel_resolution() -> None:
+    for tool in sorted(UNVALIDATED_PUBLICATION_TOOLS - {"ncore"}):
+        version = SUPPORTED_TOOL_VERSIONS[tool]
+        assert version.endswith("-unbuilt")
+        assert container_image_for_tool(
+            tool, registry="registry.example/team"
+        ).endswith(f":{version}")
 
 
 def test_packaged_supported_tool_versions_match_pyproject() -> None:

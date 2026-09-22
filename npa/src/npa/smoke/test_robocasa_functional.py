@@ -1,10 +1,9 @@
 """RoboCasa container functional golden eval.
 
-Starts the RoboCasa FastAPI service and proves the read-only service contract:
-health and system-info. It deliberately does not launch a capability run so the
-golden eval stays fast and GPU-optional; the heavier task-registration, EGL
-reset, and rollout paths are covered by the capability run path and the
-robocasa-smoke workflow.
+Starts the RoboCasa FastAPI service, proves the read-only service contract, and
+checks real upstream task registration in a fresh process. It deliberately does
+not launch an asset-heavy simulation run so the golden eval stays fast and
+GPU-optional; EGL reset and rollout remain live workflow gates.
 
 Run inside the npa-robocasa image with:
     python -m npa.smoke.test_robocasa_functional
@@ -43,6 +42,32 @@ class SmokeState:
     server_log: Path
     port: int
     process: subprocess.Popen[str] | None = None
+
+
+def _registration_worker(sender: Any, _request_payload: dict[str, Any]) -> None:
+    """Exercise production spawn and process-group cleanup without S3."""
+    try:
+        from npa.workbench.robocasa.capabilities import kitchen_task_registration
+        from npa.workbench.robocasa.service import _send_worker_message
+
+        result = kitchen_task_registration(download_assets=False)
+        _send_worker_message(sender, {"kind": "result", "result": result})
+        sender.recv_bytes(1)
+    except (EOFError, OSError):
+        pass
+    except Exception as exc:
+        try:
+            from npa.workbench.robocasa.service import _send_worker_message
+
+            _send_worker_message(
+                sender,
+                {"kind": "error", "error": f"{type(exc).__name__}: {exc}"},
+            )
+            sender.recv_bytes(1)
+        except (EOFError, OSError):
+            pass
+    finally:
+        sender.close()
 
 
 def _format_exception(exc: BaseException) -> str:
@@ -122,6 +147,78 @@ def check_system_info(state: SmokeState) -> CheckResult:
     return CheckResult("system-info", True, json.dumps(info, sort_keys=True)[:300])
 
 
+def check_non_root_asset_writability(_state: SmokeState) -> CheckResult:
+    script = """
+import json
+import os
+import tempfile
+from npa.workbench.robocasa.capabilities import _assets_root
+
+root = _assets_root()
+if os.geteuid() == 0:
+    raise RuntimeError("RoboCasa golden eval must run as a non-root user")
+root.mkdir(parents=True, exist_ok=True)
+with tempfile.NamedTemporaryFile(prefix=".npa-write-", dir=root, delete=True) as handle:
+    handle.write(b"ok")
+    handle.flush()
+print(json.dumps({"euid": os.geteuid(), "assets_root": str(root)}))
+"""
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return CheckResult("non-root asset writability", False, _format_exception(exc))
+    if completed.returncode != 0:
+        return CheckResult(
+            "non-root asset writability",
+            False,
+            (completed.stderr or completed.stdout).strip(),
+        )
+    return CheckResult(
+        "non-root asset writability", True, completed.stdout.strip()[:300]
+    )
+
+
+def check_task_registration(_state: SmokeState) -> CheckResult:
+    try:
+        from npa.workbench.robocasa.schemas import RoboCasaRunRequest
+        from npa.workbench.robocasa.service import _execute_capability_in_worker
+
+        request = RoboCasaRunRequest(
+            capability="kitchen_task_registration",
+            output_uri="s3://robocasa-golden.invalid/registration",
+            download_assets=False,
+            timeout_seconds=90,
+        )
+        outcome = _execute_capability_in_worker(
+            request, worker_target=_registration_worker
+        )
+    except Exception as exc:
+        return CheckResult("fresh task registration", False, _format_exception(exc))
+    if outcome.error is not None or outcome.result is None or not outcome.stopped:
+        return CheckResult(
+            "fresh task registration",
+            False,
+            str(outcome.error or "worker did not return a stopped result"),
+        )
+    if int(outcome.result.get("registered_env_count") or 0) < 1:
+        return CheckResult(
+            "fresh task registration",
+            False,
+            f"no RoboCasa environments registered: {outcome.result}",
+        )
+    return CheckResult(
+        "fresh task registration",
+        True,
+        json.dumps(outcome.result, sort_keys=True)[:300],
+    )
+
+
 def _stop_server(state: SmokeState) -> None:
     process = state.process
     if process is None or process.poll() is not None:
@@ -152,6 +249,8 @@ def main() -> int:
     checks: list[Callable[[SmokeState], CheckResult]] = [
         check_start_server,
         check_system_info,
+        check_non_root_asset_writability,
+        check_task_registration,
     ]
     results: list[CheckResult] = []
     try:

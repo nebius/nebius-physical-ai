@@ -333,6 +333,42 @@ def test_external_literals_compose_without_a_matcher_import_or_validation_claim(
     assert policy.receipt()["exact_literals"]["verification"] == "caller_supplied"
 
 
+def test_record_finding_limit_precedes_unbounded_span_population():
+    with pytest.raises(Error, match="^record_finding_limit$"):
+        compile_policy(".").scan_record(b"abcd", finding_limit=1)
+
+
+def test_line_coordinate_memory_depends_on_findings_not_line_count(monkeypatch):
+    observed = []
+    original = policy_module._line_positions
+
+    def inspect(text, positions):
+        observed.append(set(positions))
+        return original(text, positions)
+
+    monkeypatch.setattr(policy_module, "_line_positions", inspect)
+    result = compile_policy("absent-private-marker").scan_record(b"\n" * 10_000)
+
+    assert result.line_count == 10_000
+    assert result.findings == ()
+    assert observed == [set()]
+
+
+def test_external_literal_composition_shares_record_finding_limit():
+    raw = b"abcd"
+    matches = (
+        LiteralMatch(0, 0, 1),
+        LiteralMatch(1, 1, 2),
+    )
+
+    with pytest.raises(Error, match="^record_finding_limit$"):
+        compile_policy("absent", literal_policy=binding()).scan_record(
+            raw,
+            literal_scan=literal_result(raw, matches=matches),
+            finding_limit=1,
+        )
+
+
 def test_external_literal_bytes_may_be_inside_utf8_encoding():
     raw = "é".encode()
     result = compile_policy("absent", literal_policy=binding()).scan_record(

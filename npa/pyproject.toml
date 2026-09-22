@@ -215,7 +215,7 @@ sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T0341
 sonic-mujoco = "0.2.0-runtime"
 retargeting = "0.1.1"
 envgen = "0.1.2-sim2real-coherent-20260904"
-robocasa = "0.1.0"
+robocasa = "0.1.1"
 reference-policy = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-vlm-rl = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 loop-eval = "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
@@ -272,6 +272,7 @@ path = "src/npa/workflow_build.py"
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "src/npa/deploy/terraform/.terraform.lock.hcl"
 
 [tool.hatch.build.targets.wheel.force-include]
+"src/npa/workbench/robocasa/fixture-controls.json" = "npa/workbench/robocasa/fixture-controls.json"
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/wan2_2_image_manifest.json" = "npa/deploy/wan2_2_image_manifest.json"

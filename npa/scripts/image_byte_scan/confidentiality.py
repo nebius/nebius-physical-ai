@@ -8,7 +8,6 @@ loaders and the separately verified exact-literal matcher belong to the caller.
 
 from __future__ import annotations
 
-from bisect import bisect_right
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -149,6 +148,43 @@ def _byte_positions(text: str, positions: set[int]) -> dict[int, int]:
     return result
 
 
+def _line_positions(text: str, positions: set[int]) -> dict[int, int]:
+    """Map bounded character offsets without retaining every input line start."""
+    result = {}
+    line = 1
+    separators = iter(_LINE_BREAK.finditer(text))
+    separator = next(separators, None)
+    for position in sorted(positions):
+        while separator is not None and separator.end() <= position:
+            line += 1
+            separator = next(separators, None)
+        result[position] = line
+    return result
+
+
+def _byte_line_positions(raw: bytes, text: str, positions: set[int]) -> dict[int, int]:
+    """Map bounded byte offsets while encoding each decoded span at most once."""
+    targets = iter(sorted(positions))
+    target = next(targets, None)
+    result = {}
+    line = 1
+    char_cursor = byte_cursor = 0
+    for separator in _LINE_BREAK.finditer(text):
+        separator_end = byte_cursor + len(
+            text[char_cursor : separator.end()].encode("utf-8", "surrogateescape")
+        )
+        while target is not None and target < separator_end:
+            result[target] = line
+            target = next(targets, None)
+        line += 1
+        char_cursor = separator.end()
+        byte_cursor = separator_end
+    while target is not None:
+        result[target] = line
+        target = next(targets, None)
+    return result
+
+
 @dataclass(frozen=True)
 class ConfidentialityPolicy:
     """An immutable compiled policy; create it with :func:`compile_policy`.
@@ -183,7 +219,11 @@ class ConfidentialityPolicy:
         }
 
     def scan_record(
-        self, raw: bytes, *, literal_scan: LiteralScan | None = None
+        self,
+        raw: bytes,
+        *,
+        literal_scan: LiteralScan | None = None,
+        finding_limit: int | None = None,
     ) -> RecordScan:
         """Scan a complete regular-file/metadata record with no size or finding cap.
 
@@ -193,8 +233,12 @@ class ConfidentialityPolicy:
         """
         if type(raw) is not bytes:
             raise ConfidentialityError("record_type_invalid")
+        if finding_limit is not None and (
+            type(finding_limit) is not int or finding_limit < 0
+        ):
+            raise ConfidentialityError("finding_limit_invalid")
         try:
-            result = self._scan(raw, literal_scan)
+            result = self._scan(raw, literal_scan, finding_limit)
         except (re.error, RecursionError, OverflowError, MemoryError):
             result = None
         # Raise outside the handler so even __context__ has no private diagnostic.
@@ -202,51 +246,97 @@ class ConfidentialityPolicy:
             raise ConfidentialityError("record_scan_failed")
         return result
 
-    def _scan(self, raw: bytes, literal_scan: LiteralScan | None) -> RecordScan:
+    def _scan(
+        self,
+        raw: bytes,
+        literal_scan: LiteralScan | None,
+        finding_limit: int | None,
+    ) -> RecordScan:
         record_sha = hashlib.sha256(raw).hexdigest()
         external = self._literal_matches(literal_scan, record_sha, len(raw))
         text = raw.decode("utf-8", "surrogateescape")
         spans: dict[tuple[str, int, int], set[str]] = {}
-        line_starts = [0]
+
+        def add_span(key: tuple[str, int, int], view: str) -> None:
+            views = spans.get(key)
+            if views is None:
+                if finding_limit is not None and len(spans) >= finding_limit:
+                    raise ConfidentialityError("record_finding_limit")
+                views = set()
+                spans[key] = views
+            views.add(view)
+
         line_count = 0
-        for start, end, next_start in _lines(text):
+        for start, end, _next_start in _lines(text):
             line_count += 1
-            if next_start > end:
-                line_starts.append(next_start)
             line = text[start:end]
             for rule in self._rules:
                 match = rule.expression.search(line)
                 if match is not None:
-                    key = (rule.rule_id, start + match.start(), start + match.end())
-                    spans.setdefault(key, set()).add("line")
+                    add_span(
+                        (rule.rule_id, start + match.start(), start + match.end()),
+                        "line",
+                    )
         for rule in self._rules:
             for match in rule.expression.finditer(text):
-                key = (rule.rule_id, match.start(), match.end())
-                spans.setdefault(key, set()).add("record")
-        needed = set(line_starts)
+                add_span(
+                    (rule.rule_id, match.start(), match.end()),
+                    "record",
+                )
+        needed = set()
+        line_needed = set()
         for _, start, end in spans:
             needed.update((start, end))
+            line_needed.update((start, end - 1 if end > start else end))
         offsets = _byte_positions(text, needed)
-        byte_line_starts = [offsets[position] for position in line_starts]
+        lines = _line_positions(text, line_needed)
         byte_spans = {
-            (rule, offsets[start], offsets[end]): views
+            (
+                rule,
+                offsets[start],
+                offsets[end],
+                lines[start],
+                lines[end - 1 if end > start else end],
+            ): views
             for (rule, start, end), views in spans.items()
         }
+        external_positions = {
+            position
+            for match in external
+            for position in (match.start_byte, match.end_byte - 1)
+        }
+        external_lines = _byte_line_positions(raw, text, external_positions)
         for match in external:
-            key = (f"literal-{match.pattern_index}", match.start_byte, match.end_byte)
-            byte_spans.setdefault(key, set()).add("external_literal")
+            key = (
+                f"literal-{match.pattern_index}",
+                match.start_byte,
+                match.end_byte,
+                external_lines[match.start_byte],
+                external_lines[match.end_byte - 1],
+            )
+            views = byte_spans.get(key)
+            if views is None:
+                if finding_limit is not None and len(byte_spans) >= finding_limit:
+                    raise ConfidentialityError("record_finding_limit")
+                views = set()
+                byte_spans[key] = views
+            views.add("external_literal")
         findings = tuple(
             Finding(
                 rule_id=rule,
                 start_byte=start,
                 end_byte=end,
-                start_line=bisect_right(byte_line_starts, start),
-                end_line=bisect_right(
-                    byte_line_starts, end - 1 if end > start else end
-                ),
+                start_line=start_line,
+                end_line=end_line,
                 views=tuple(sorted(views)),
             )
-            for (rule, start, end), views in sorted(byte_spans.items())
+            for (
+                rule,
+                start,
+                end,
+                start_line,
+                end_line,
+            ), views in sorted(byte_spans.items())
         )
         return RecordScan(
             self.policy_sha256, record_sha, len(raw), line_count, findings

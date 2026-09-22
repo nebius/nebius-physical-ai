@@ -21,6 +21,17 @@ def _entries() -> list[dict[str, object]]:
     return scanner.load_inventory(INVENTORY)
 
 
+def test_robocasa_cuda_base_scan_matches_runtime_header_purge() -> None:
+    entry = next(
+        item
+        for item in _entries()
+        if item["name"] == "nvidia-cuda-12-4-1-cudnn-devel-ubuntu22-04"
+    )
+
+    assert entry["purge_linux_libc_dev"] is True
+    assert entry["upgrade_os"] is False
+
+
 @pytest.mark.parametrize("entry", _entries(), ids=lambda entry: entry["name"])
 def test_scan_target_applies_only_declared_preparation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entry: dict[str, object]

@@ -785,6 +785,8 @@ def test_robocasa_data_policy_submit_case_forwards_its_service_token() -> None:
     assert {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"} <= set(
         case.secret_envs
     )
+    assert case.plan_only is True
+    assert "exact source SHA and manifest digest" in case.plan_only_justification
 
 
 # --------------------------------------------------------------- runtime cases
