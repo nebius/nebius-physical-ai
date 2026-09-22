@@ -134,8 +134,8 @@ jobs:
     uses: ./.github/workflows/lint.yml
 
   typecheck-gate:
-    needs: [validation-plan, pr-precheck]
-    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
+    needs: [gitleaks, pr-precheck]
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
     uses: ./.github/workflows/typecheck.yml
 
   queue-guardrails:
