@@ -629,6 +629,74 @@ also requires changing the mount path in the spec. These worker paths do not
 refer to files on the submitting laptop. The all-zero runtime image digest and
 `.invalid` policy hostname are planning placeholders that must be replaced.
 
+### Preflight exact workflow inputs
+
+Credential health proves that object storage is reachable; it does not prove
+that every input URI exists or contains the intended bytes. Before submitting a
+GPU workflow, an operator-side materializer can verify its frozen input
+inventory with the same selected storage client:
+
+```python
+from npa.clients.storage import StorageClient
+from npa.workflows.s3_input_preflight import preflight_s3_inputs
+
+storage = StorageClient.from_environment()
+verified_inputs = preflight_s3_inputs(
+    [
+        {
+            "uri": input_uri,
+            "bytes": input_bytes,
+            "sha256": input_sha256,
+        }
+    ],
+    storage=storage,
+)
+```
+
+The call streams each complete object with bounded memory and reports every
+missing or mismatched declaration together. A successful HEAD size is never
+treated as SHA-256 evidence. Call this API before
+`npa workbench workflow submit` when a workflow's
+materializer has exact URI, size, and digest declarations.
+Submission does not invoke it automatically. A real object-storage check verified
+complete inputs and aggregated missing-object, byte-count, and checksum failures.
+
+### Publish large checkpoint evidence
+
+Training workers can use `publish_immutable_checkpoint_files` to preserve a
+completed checkpoint without loading a large member into memory. Give it
+canonical relative member names, a scoped S3 prefix, and a trusted local
+directory for temporary provider readbacks:
+
+```python
+from pathlib import Path
+
+from npa.workflows.behavior_challenge.checkpoint_publication import (
+    publish_immutable_checkpoint_files,
+)
+
+evidence = publish_immutable_checkpoint_files(
+    {"state/params": Path("checkpoint/state/params")},
+    output_prefix,
+    Path("/tmp"),
+    expected=frozen_checkpoint_inventory,
+)
+```
+
+The helper conditionally creates each object, uses conditional multipart
+completion for large files, downloads every complete object, and verifies its
+full SHA-256 identity. An identical retry succeeds; an existing object with
+different bytes fails. The returned mapping is publication evidence for the
+members only. The caller must separately publish its final success manifest and
+must not infer checkpoint validity, local cleanup, or training admission from a
+successful transfer.
+
+A real object-storage check exercised a 12 MiB member split into two multipart
+parts alongside a small metadata object. Creation, identical retries, conflicting
+content rejection, complete readback, and removal of upload scratch all passed.
+This verifies the transfer helper; native optimizer-state recovery is a separate
+qualification.
+
 ## Evidence, failure handling, and handoff
 
 The runner creates `claim.json` using an atomic S3 create before simulation.
