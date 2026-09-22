@@ -49,13 +49,21 @@ assigns complete task panels across workers, and preserves per-instance progress
 in S3. Recovery verifies the original metrics and videos before reusing results.
 
 Comet training qualification reproduced every byte of the original 256-example
-batch using explicit CPU sharding before native image normalization. The first
-attempt with that batch reached the full-parameter B200 optimizer and ran out of
-GPU memory. A successor allocated a larger JAX memory pool and passed the batch
-gate, but explicit compilation failed when native type checking rejected JAX's
-abstract argument metadata. Both runs' five failure artifacts were verified.
-No optimizer update or checkpoint is qualified; the compilation adapter is
-being corrected before the next attempt.
+batch using explicit CPU sharding before native image normalization. The real
+eight-worker loader also delivered twelve shuffled batches, with every sample's
+episode and frame identity verified and the identity metadata excluded from model
+inputs. These measurements cover loader correctness and consumer wait time;
+they do not establish training throughput.
+
+No full-model optimizer update or checkpoint is qualified yet. The first B200
+attempt exhausted its JAX memory pool. Later attempts with a larger pool passed
+the batch gate but failed in optional explicit compilation diagnostics. The
+successor restores native direct JIT execution. Its CPU prerequisite passed in
+the locked 217-distribution runtime, then the source-integrity check stopped the
+run before GPU training because extra files appeared in the source extraction.
+All four original failure artifacts were verified and the failed job was
+cleaned up. The handoff between the preflight and training process is being
+corrected before another attempt.
 
 **Latest completed training experiment, September 19:** both
 [matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
