@@ -87,6 +87,87 @@ def test_one_unnamed_row_can_be_attributed_to_a_single_stage_job():
     }
 
 
+def _named_singleton_status(task_name: str, rows=None):
+    job_name = "test-run-02-campaign-a"
+    manifest = RunManifest(
+        "evaluation",
+        "test-run",
+        "npa.workflow/v0.0.1",
+        status="SUCCEEDED",
+        steps=[{"state": "campaign-aggregate", "status": "SUCCEEDED"}],
+    )
+    wave = {
+        "key": "002|serial|:campaign-aggregate:-",
+        "states": ["campaign-aggregate"],
+        "kind": "serial",
+        "job_id": "2",
+        "job_name": job_name,
+        "attempt": 1,
+        "status": "succeeded",
+    }
+    task_rows = (
+        rows
+        if rows is not None
+        else [{"task_id": 0, "task_name": task_name, "status": "SUCCEEDED"}]
+    )
+    return build_actionable_run_status(
+        manifest,
+        runtime_waves=[wave],
+        job_observations={"2": {"status": "SUCCEEDED", "task_rows": task_rows}},
+    )
+
+
+def test_exact_job_name_attributes_named_singleton_serial_task():
+    result = _named_singleton_status("test-run-02-campaign-a")
+
+    assert result["scheduler_task_activity"] == {
+        "active_stage_keys": [],
+        "unresolved_stage_keys": [],
+        "all_stage_tasks_terminal": True,
+    }
+
+
+def test_unrelated_name_does_not_attribute_singleton_serial_task():
+    result = _named_singleton_status("unrelated-job")
+
+    assert result["scheduler_task_activity"] == {
+        "active_stage_keys": [],
+        "unresolved_stage_keys": ["campaign-aggregate"],
+        "all_stage_tasks_terminal": False,
+    }
+
+
+def test_duplicate_exact_job_name_rows_remain_ambiguous():
+    row = {
+        "task_id": 0,
+        "task_name": "test-run-02-campaign-a",
+        "status": "SUCCEEDED",
+    }
+    result = _named_singleton_status("", rows=[row, {**row, "task_id": 1}])
+
+    assert result["scheduler_task_activity"]["unresolved_stage_keys"] == [
+        "campaign-aggregate"
+    ]
+    assert result["scheduler_task_activity"]["all_stage_tasks_terminal"] is False
+
+
+def test_exact_singleton_job_name_does_not_hide_extra_row():
+    rows = [
+        {
+            "task_id": 0,
+            "task_name": "test-run-02-campaign-a",
+            "status": "SUCCEEDED",
+        },
+        {"task_id": 1, "task_name": "unexpected-task", "status": "SUCCEEDED"},
+    ]
+    result = _named_singleton_status("", rows=rows)
+
+    assert result["scheduler_task_activity"]["unresolved_stage_keys"] == [
+        "campaign-aggregate"
+    ]
+    assert result["scheduler_task_activity"]["all_stage_tasks_terminal"] is False
+
+
 def test_terminal_job_without_task_observations_is_unresolved():
     result = _failed_parallel_status([])
     assert result["scheduler_task_activity"]["unresolved_stage_keys"] == [

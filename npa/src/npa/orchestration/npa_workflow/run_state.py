@@ -984,7 +984,20 @@ def _task_row_matches(row, stage, member_count, legacy):
         return str(row.get("task_id")) == str(stage["index"] - 1) and (
             not name or name == stage["workflow_state"]
         )
-    return name == stage["workflow_state"] if name else member_count == 1
+    if name == stage["workflow_state"]:
+        return True
+    if not name:
+        return member_count == 1
+    attempts = stage.get("managed_job_attempts") or []
+    managed_job_id = str(stage.get("managed_job_id") or "")
+    recorded_names = {
+        str(attempt.get("job_name") or "")
+        for attempt in attempts
+        if isinstance(attempt, Mapping)
+        and str(attempt.get("job_id") or "") == managed_job_id
+        and str(attempt.get("job_name") or "")
+    }
+    return member_count == 1 and recorded_names == {name}
 
 
 def _task_observation_matches(members, rows, *, legacy=False):
