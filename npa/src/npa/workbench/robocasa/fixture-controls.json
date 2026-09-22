@@ -1,0 +1,30 @@
+{
+  "files": {
+    "fixtures/cabinets/cabinet_hinge.xml": "4ce16373d3ee24485acb4286c44d111247b0ea074ca1aee5ba40a0cf2f50ced6",
+    "fixtures/cabinets/cabinet_housing.xml": "30e869be625731970adbbc9b236a07f9cbb7c9c6abcc608bc1b1b3aca69ecb7c",
+    "fixtures/cabinets/cabinet_open.xml": "84e90a86f103396e71a3a508236237aab04141b2d615a55b11d45c3efe40f6e2",
+    "fixtures/cabinets/cabinet_panels/divided_window.xml": "7c07ccf52bce3c664fd159f54afdfc0cb1e7305d6de2e5c3446cc403357e1ab5",
+    "fixtures/cabinets/cabinet_panels/divided_window_orig.xml": "7c07ccf52bce3c664fd159f54afdfc0cb1e7305d6de2e5c3446cc403357e1ab5",
+    "fixtures/cabinets/cabinet_panels/full_window.xml": "342c3edb3d15b8230e1c4f2b350c7f031b7adc6f187f1b0f28031df67eb1d99c",
+    "fixtures/cabinets/cabinet_panels/full_window_orig.xml": "342c3edb3d15b8230e1c4f2b350c7f031b7adc6f187f1b0f28031df67eb1d99c",
+    "fixtures/cabinets/cabinet_panels/raised.xml": "21c1e906016c4911ece20a52fe1698080457307dc7f62d46ab4b824dfaec8a4d",
+    "fixtures/cabinets/cabinet_panels/raised_orig.xml": "21c1e906016c4911ece20a52fe1698080457307dc7f62d46ab4b824dfaec8a4d",
+    "fixtures/cabinets/cabinet_panels/shaker.xml": "a209d1898b118cba38f1539b445212baefc83afaec76e06ece498115a0374415",
+    "fixtures/cabinets/cabinet_panels/shaker_orig.xml": "a209d1898b118cba38f1539b445212baefc83afaec76e06ece498115a0374415",
+    "fixtures/cabinets/cabinet_panels/shelf.xml": "465290d72d1cd67643e5e2020d8bb73d50748a9ae42569b6eed2d52b5ee23fb8",
+    "fixtures/cabinets/cabinet_panels/shelf_orig.xml": "465290d72d1cd67643e5e2020d8bb73d50748a9ae42569b6eed2d52b5ee23fb8",
+    "fixtures/cabinets/cabinet_panels/slab.xml": "439456f72256fae96e4e5eea161a2d84aaa6ec83de86a0365a991c163be20a97",
+    "fixtures/cabinets/cabinet_panels/slab_orig.xml": "439456f72256fae96e4e5eea161a2d84aaa6ec83de86a0365a991c163be20a97",
+    "fixtures/cabinets/cabinet_single.xml": "0beeb6b6faae808af4767f3ac27a5febb20ded0f9ef0bed09506055f825521bd",
+    "fixtures/cabinets/drawer.xml": "4472a0e025bde3ad6650129608140a22add1f28c2e5c4d5f0cb8cb6f58565eb6",
+    "fixtures/cabinets/panel.xml": "c598fe4e5dd82b6779d9448a469401695f3e4312ad452c5c54073274da3247c9",
+    "fixtures/handles/bar_handle.xml": "aa9d55781d56dec86e47412467ac6e0b50254e553afa28e32ac4303ab32b7331",
+    "fixtures/handles/bar_handle_orig.xml": "aa9d55781d56dec86e47412467ac6e0b50254e553afa28e32ac4303ab32b7331",
+    "fixtures/handles/boxed_handle.xml": "33a6523d616c2164cce89d1b043c4a1e2a055a11d0db6cb7f4361d390d74f110",
+    "fixtures/handles/boxed_handle_orig.xml": "33a6523d616c2164cce89d1b043c4a1e2a055a11d0db6cb7f4361d390d74f110",
+    "fixtures/handles/knob_handle.xml": "d620064bd9effeba5d478fc8e12990b9884d327f64c5a7248ce02e06c87b81be",
+    "fixtures/handles/knob_handle_orig.xml": "d620064bd9effeba5d478fc8e12990b9884d327f64c5a7248ce02e06c87b81be"
+  },
+  "schema": "npa.robocasa.pinned-fixture-controls/v1",
+  "upstream_commit": "8f3c96ec8d1bfcd8126cad2bca887da98d30e997"
+}

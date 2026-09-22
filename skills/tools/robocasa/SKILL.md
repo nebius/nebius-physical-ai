@@ -196,8 +196,10 @@ service calls.
   `nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF@420a04af939c34873e6839a586b70844baf28aab`.
   Population is locked, bounded before ZIP metadata allocation, extracted
   without following links into validated staging trees, and published with
-  per-archive content-hash/file-count receipts. Installed bytes are rehashed
-  before a receipt can suppress a fetch. A failed or mutated archive remains
+  per-archive content-hash/file-count receipts. Downloaded fixture trees retain
+  the exact pinned upstream control XML files in the same atomic publication.
+  Installed bytes are rehashed before a receipt can suppress a fetch. A failed
+  or mutated archive remains
   retryable and fails the capability instead of being logged and ignored.
 - **`--service` needs both a reachable `--endpoint` and the token variable set.**
   A missing token presents as an auth failure from the endpoint, not as a CLI

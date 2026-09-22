@@ -267,6 +267,7 @@ path = "src/npa/workflow_build.py"
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "src/npa/deploy/terraform/.terraform.lock.hcl"
 
 [tool.hatch.build.targets.wheel.force-include]
+"src/npa/workbench/robocasa/fixture-controls.json" = "npa/workbench/robocasa/fixture-controls.json"
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/wan2_2_image_manifest.json" = "npa/deploy/wan2_2_image_manifest.json"

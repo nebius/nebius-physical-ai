@@ -74,6 +74,8 @@ NVIDIA_KITCHEN_ASSET_REPOSITORY = (
     "nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF"
 )
 NVIDIA_KITCHEN_ASSET_REVISION = "420a04af939c34873e6839a586b70844baf28aab"
+ROBOCASA_SOURCE_REVISION = "8f3c96ec8d1bfcd8126cad2bca887da98d30e997"
+_FIXTURE_CONTROL_MANIFEST = Path(__file__).with_name("fixture-controls.json")
 DEPLOYED_SOURCE_SHA_ENV = "ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA"
 DEPLOYED_MANIFEST_DIGEST_ENV = "ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST"
 TRAINING_PROVENANCE_FILENAME = "training_dataset_provenance.json"
@@ -563,8 +565,9 @@ def _stage_publish_and_receipt(
                 raise RoboCasaError(
                     f"RoboCasa asset archive changed while reading: {zip_path}"
                 )
-        _validate_asset_tree(staging_root / archive.required_path, archive)
         staged_publish = staging_root / archive.publish_path
+        _overlay_pinned_fixture_controls(archive, assets_root, staged_publish)
+        _validate_asset_tree(staging_root / archive.required_path, archive)
         staged_digest, file_count = _published_asset_identity(staged_publish, archive)
         _replace_asset_tree(staged_publish, assets_root / archive.publish_path)
     receipt = _asset_receipt(archive, archive_sha256, staged_digest, file_count)
@@ -822,6 +825,70 @@ def _validate_zip_member(name: str, external_attr: int) -> PurePosixPath:
             f"RoboCasa asset archive has unsupported member type: {name}"
         )
     return path
+
+
+def _pinned_fixture_controls() -> dict[PurePosixPath, str]:
+    try:
+        manifest = json.loads(_FIXTURE_CONTROL_MANIFEST.read_text(encoding="utf-8"))
+        files = manifest["files"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RoboCasaError("RoboCasa fixture-control manifest is invalid") from exc
+    if (
+        manifest.get("schema") != "npa.robocasa.pinned-fixture-controls/v1"
+        or manifest.get("upstream_commit") != ROBOCASA_SOURCE_REVISION
+        or not isinstance(files, dict)
+        or not files
+    ):
+        raise RoboCasaError("RoboCasa fixture-control manifest is invalid")
+    controls: dict[PurePosixPath, str] = {}
+    for raw_path, digest in files.items():
+        if not isinstance(raw_path, str):
+            raise RoboCasaError("RoboCasa fixture-control manifest is invalid")
+        path = PurePosixPath(raw_path)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or path.parts[:1] != ("fixtures",)
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise RoboCasaError("RoboCasa fixture-control manifest is invalid")
+        controls[path] = digest
+    return controls
+
+
+def _overlay_pinned_fixture_controls(
+    archive: _AssetArchive, assets_root: Path, staged_publish: Path
+) -> None:
+    publish_path = PurePosixPath(archive.publish_path)
+    for control_path, expected_digest in _pinned_fixture_controls().items():
+        try:
+            relative = control_path.relative_to(publish_path)
+        except ValueError:
+            continue
+        source = assets_root.joinpath(*control_path.parts)
+        try:
+            source_mode = source.lstat().st_mode
+        except OSError as exc:
+            raise RoboCasaError(
+                f"RoboCasa fixture control is unavailable: {control_path}"
+            ) from exc
+        if not stat.S_ISREG(source_mode) or _sha256_file(source) != expected_digest:
+            raise RoboCasaError(f"RoboCasa fixture control is invalid: {control_path}")
+        destination = staged_publish.joinpath(*relative.parts)
+        try:
+            destination_mode = destination.lstat().st_mode
+        except FileNotFoundError:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+            continue
+        if (
+            not stat.S_ISREG(destination_mode)
+            or _sha256_file(destination) != expected_digest
+        ):
+            raise RoboCasaError(
+                f"RoboCasa asset conflicts with fixture control: {control_path}"
+            )
 
 
 def _validate_asset_tree(path: Path, archive: _AssetArchive) -> None:

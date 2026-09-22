@@ -1703,6 +1703,197 @@ def test_fixture_asset_publish_preserves_source_registry(tmp_path: Path) -> None
     assert capabilities._asset_receipt_is_valid(receipt, fixture_archive, assets_root)
 
 
+def test_fixture_archive_preserves_pinned_source_controls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = next(
+        item
+        for item in capabilities._asset_archives()
+        if item.filename == "fixtures_lightwheel/cabinets.zip"
+    )
+    assets_root = tmp_path / "assets"
+    control = assets_root / "fixtures" / "cabinets" / "cabinet_hinge.xml"
+    control.parent.mkdir(parents=True)
+    control.write_text("<mujoco><worldbody/></mujoco>", encoding="utf-8")
+    digest = hashlib.sha256(control.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        capabilities,
+        "_pinned_fixture_controls",
+        lambda: {Path("fixtures/cabinets/cabinet_hinge.xml"): digest},
+        raising=False,
+    )
+    stale = control.parent / "stale.txt"
+    stale.write_text("stale", encoding="utf-8")
+    source_zip = tmp_path / "cabinets.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("cabinets/mesh/model.xml", "<mujoco/>")
+    receipt = capabilities._asset_receipt_path(
+        assets_root / ".npa_asset_fetch", archive
+    )
+
+    capabilities._stage_publish_and_receipt(archive, source_zip, assets_root, receipt)
+
+    assert control.read_text(encoding="utf-8") == "<mujoco><worldbody/></mujoco>"
+    assert not stale.exists()
+    assert (control.parent / "mesh" / "model.xml").is_file()
+    assert capabilities._asset_receipt_is_valid(receipt, archive, assets_root)
+
+
+def test_fixture_archives_preserve_complete_control_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_root = tmp_path / "assets"
+    controls = {}
+    for index in range(24):
+        category = "cabinets" if index < 18 else "handles"
+        relative = Path(f"fixtures/{category}/control-{index}.xml")
+        source = assets_root / relative
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(f"<mujoco><!--{index}--></mujoco>", encoding="utf-8")
+        controls[relative] = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        capabilities, "_pinned_fixture_controls", lambda: controls, raising=False
+    )
+
+    for category in ("cabinets", "handles"):
+        archive = next(
+            item
+            for item in capabilities._asset_archives()
+            if item.filename == f"fixtures_lightwheel/{category}.zip"
+        )
+        source_zip = tmp_path / f"{category}.zip"
+        with ZipFile(source_zip, "w") as archive_zip:
+            archive_zip.writestr(f"{category}/downloaded/model.xml", "<mujoco/>")
+        receipt = capabilities._asset_receipt_path(
+            assets_root / ".npa_asset_fetch", archive
+        )
+        capabilities._stage_publish_and_receipt(
+            archive, source_zip, assets_root, receipt
+        )
+
+    assert all((assets_root / relative).is_file() for relative in controls)
+
+
+def test_fixture_archive_rejects_conflicting_control_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = next(
+        item
+        for item in capabilities._asset_archives()
+        if item.filename == "fixtures_lightwheel/cabinets.zip"
+    )
+    assets_root = tmp_path / "assets"
+    control = assets_root / "fixtures" / "cabinets" / "cabinet_hinge.xml"
+    control.parent.mkdir(parents=True)
+    control.write_text("<mujoco/>", encoding="utf-8")
+    digest = hashlib.sha256(control.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        capabilities,
+        "_pinned_fixture_controls",
+        lambda: {Path("fixtures/cabinets/cabinet_hinge.xml"): digest},
+    )
+    stale = control.parent / "stale.txt"
+    stale.write_text("keep", encoding="utf-8")
+    source_zip = tmp_path / "cabinets.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("cabinets/cabinet_hinge.xml", "conflict")
+    receipt = capabilities._asset_receipt_path(
+        assets_root / ".npa_asset_fetch", archive
+    )
+
+    with pytest.raises(RoboCasaError, match="conflicts with fixture control"):
+        capabilities._stage_publish_and_receipt(
+            archive, source_zip, assets_root, receipt
+        )
+
+    assert control.read_text(encoding="utf-8") == "<mujoco/>"
+    assert stale.read_text(encoding="utf-8") == "keep"
+    assert not receipt.exists()
+
+
+@pytest.mark.parametrize("source_kind", ["symlink", "directory"])
+def test_fixture_archive_rejects_nonregular_control_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+) -> None:
+    archive = next(
+        item
+        for item in capabilities._asset_archives()
+        if item.filename == "fixtures_lightwheel/cabinets.zip"
+    )
+    assets_root = tmp_path / "assets"
+    control = assets_root / "fixtures" / "cabinets" / "cabinet_hinge.xml"
+    control.parent.mkdir(parents=True)
+    if source_kind == "symlink":
+        target = tmp_path / "target.xml"
+        target.write_text("<mujoco/>", encoding="utf-8")
+        control.symlink_to(target)
+    else:
+        control.mkdir()
+    monkeypatch.setattr(
+        capabilities,
+        "_pinned_fixture_controls",
+        lambda: {Path("fixtures/cabinets/cabinet_hinge.xml"): "0" * 64},
+    )
+    stale = control.parent / "stale.txt"
+    stale.write_text("keep", encoding="utf-8")
+    source_zip = tmp_path / "cabinets.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("cabinets/downloaded/model.xml", "<mujoco/>")
+    receipt = capabilities._asset_receipt_path(
+        assets_root / ".npa_asset_fetch", archive
+    )
+
+    with pytest.raises(RoboCasaError, match="fixture control is invalid"):
+        capabilities._stage_publish_and_receipt(
+            archive, source_zip, assets_root, receipt
+        )
+
+    if source_kind == "symlink":
+        assert control.is_symlink()
+    else:
+        assert control.is_dir()
+    assert stale.read_text(encoding="utf-8") == "keep"
+    assert not receipt.exists()
+
+
+def test_fixture_archive_rejects_changed_pinned_control_before_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = next(
+        item
+        for item in capabilities._asset_archives()
+        if item.filename == "fixtures_lightwheel/cabinets.zip"
+    )
+    assets_root = tmp_path / "assets"
+    control = assets_root / "fixtures" / "cabinets" / "cabinet_hinge.xml"
+    control.parent.mkdir(parents=True)
+    control.write_text("changed", encoding="utf-8")
+    monkeypatch.setattr(
+        capabilities,
+        "_pinned_fixture_controls",
+        lambda: {
+            Path("fixtures/cabinets/cabinet_hinge.xml"): hashlib.sha256(
+                b"expected"
+            ).hexdigest()
+        },
+        raising=False,
+    )
+    source_zip = tmp_path / "cabinets.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("cabinets/mesh/model.xml", "<mujoco/>")
+    receipt = capabilities._asset_receipt_path(
+        assets_root / ".npa_asset_fetch", archive
+    )
+
+    with pytest.raises(RoboCasaError, match="fixture control is invalid"):
+        capabilities._stage_publish_and_receipt(
+            archive, source_zip, assets_root, receipt
+        )
+
+    assert control.read_text(encoding="utf-8") == "changed"
+    assert not receipt.exists()
+
+
 def test_asset_partial_fetch_retries_without_completion_receipt(tmp_path: Path) -> None:
     assets_root = tmp_path / "assets"
     state_root = assets_root / ".npa_asset_fetch"
@@ -1854,6 +2045,7 @@ def test_parent_asset_receipt_ignores_separately_receipted_nested_mounts(
         "fixtures/vendor",
     )
     monkeypatch.setattr(capabilities, "_asset_archives", lambda: (parent, child))
+    monkeypatch.setattr(capabilities, "_pinned_fixture_controls", lambda: {})
     source_zip = tmp_path / "fixtures.zip"
     with ZipFile(source_zip, "w") as archive_zip:
         archive_zip.writestr("fixtures/accessories/core.txt", "core")

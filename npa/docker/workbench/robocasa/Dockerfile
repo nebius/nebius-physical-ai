@@ -111,6 +111,8 @@ COPY --chmod=0644 \
     docker/workbench/robocasa/THIRD-PARTY-COPYLEFT-NOTICE \
     docker/workbench/robocasa/verify_lerobot_act_derivative.py \
     docker/workbench/robocasa/verify_robocasa_act_adapter.py \
+    docker/workbench/robocasa/verify_fixture_controls.py \
+    src/npa/workbench/robocasa/fixture-controls.json \
     /opt/robocasa/derivative/
 
 RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
@@ -235,6 +237,10 @@ RUN git init /opt/robocasa/source \
       && find . -maxdepth 1 -type f -name '*.yaml' -print0 \
       | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)" = \
       "f8bfac93dc0dffbadb943e84c078848e4ba5d67320e63a47d3cfc23ce9e93c0a" \
+    && python /opt/robocasa/derivative/verify_fixture_controls.py \
+      --manifest /opt/robocasa/derivative/fixture-controls.json \
+      --assets-root /opt/robocasa/source/robocasa/models/assets \
+      --upstream-commit "${ROBOCASA_SOURCE_COMMIT}" \
     && base64 --decode /opt/robocasa/derivative/robocasa-npa-act.patch.b64 \
       > /tmp/robocasa-npa-act.patch \
     && echo \

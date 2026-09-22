@@ -29,6 +29,10 @@ LEROBOT_VERIFY = IMAGE_DIR / "verify_lerobot_act_derivative.py"
 ROBOCASA_ADAPTER_VERIFY = IMAGE_DIR / "verify_robocasa_act_adapter.py"
 ROBOCASA_PATCH = IMAGE_DIR / "robocasa-npa-act.patch.b64"
 ROBOCASA_NOTICE = IMAGE_DIR / "robocasa-npa-act.NOTICE"
+FIXTURE_CONTROL_MANIFEST = (
+    ROOT / "npa" / "src" / "npa" / "workbench" / "robocasa" / "fixture-controls.json"
+)
+FIXTURE_CONTROL_VERIFY = IMAGE_DIR / "verify_fixture_controls.py"
 COPYLEFT_NOTICE = IMAGE_DIR / "THIRD-PARTY-COPYLEFT-NOTICE"
 DEADSNAKES_KEY = IMAGE_DIR / "deadsnakes-ppa.gpg.b64"
 BASE_INVENTORY = IMAGE_DIR.parent / "base-image-security.json"
@@ -443,6 +447,30 @@ def test_robocasa_image_verifies_pinned_fixture_registry_inventory() -> None:
     assert "fixtures/fixture_registry" in text
     assert "find . -maxdepth 1 -type f -name '*.yaml' -print0" in text
     assert "f8bfac93dc0dffbadb943e84c078848e4ba5d67320e63a47d3cfc23ce9e93c0a" in text
+
+
+def test_robocasa_image_verifies_all_pinned_fixture_controls() -> None:
+    manifest = json.loads(FIXTURE_CONTROL_MANIFEST.read_text(encoding="utf-8"))
+    files = manifest["files"]
+
+    assert manifest["schema"] == "npa.robocasa.pinned-fixture-controls/v1"
+    assert manifest["upstream_commit"] == ROBOCASA_COMMIT
+    assert len(files) == 24
+    assert all(
+        path.startswith(("fixtures/cabinets/", "fixtures/handles/")) for path in files
+    )
+    assert all(path.endswith(".xml") for path in files)
+    assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in files.values())
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert "verify_fixture_controls.py" in text
+    assert "src/npa/workbench/robocasa/fixture-controls.json" in text
+    pyproject = (ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
+    assert (
+        '"src/npa/workbench/robocasa/fixture-controls.json" = '
+        '"npa/workbench/robocasa/fixture-controls.json"'
+    ) in pyproject
+    assert '--upstream-commit "${ROBOCASA_SOURCE_COMMIT}"' in text
+    assert FIXTURE_CONTROL_VERIFY.is_file()
 
 
 def test_robocasa_runtime_purges_vulnerable_builder_headers_before_smoke() -> None:
