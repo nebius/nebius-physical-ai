@@ -247,6 +247,11 @@ Keep credentials and private infrastructure identifiers out of issue text.
 
 ## Contributing
 
+For dedicated CI capacity, operators can set the repository Actions variables
+`NPA_CI_PRIORITY_RUNNER` and `NPA_CI_TEST_RUNNER` to approved Ubuntu runner labels.
+Both default to `ubuntu-latest`; neither reserves capacity by itself. See
+[validation concurrency](CONTRIBUTING.md#validation-concurrency) for routing and setup.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment, required
 checks, and PR process. [The package README](npa/README.md#developing-and-testing-npa)
 has the shortest test commands. Update the relevant documentation and

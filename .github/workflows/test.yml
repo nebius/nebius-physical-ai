@@ -18,7 +18,7 @@ concurrency:
 jobs:
   scope:
     name: test-scope
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     outputs:
       prose_only: ${{ steps.scope.outputs.prose_only }}
       full_suite: ${{ steps.scope.outputs.full_suite }}
@@ -69,7 +69,7 @@ jobs:
     name: browser-and-compatibility
     needs: scope
     if: needs.scope.outputs.browser != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -147,7 +147,7 @@ jobs:
     needs: scope
     # Full shards already collect these tests and run the CLI install check.
     if: needs.scope.outputs.prose_only == 'true' && needs.scope.outputs.full_suite == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
@@ -203,7 +203,7 @@ jobs:
     name: pytest-${{ matrix.python-version }}-shard-${{ matrix.shard }}
     needs: scope
     if: needs.scope.outputs.full_suite != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     strategy:
       # A merge candidate releases the remaining runners after a hard failure.
       # Scheduled/manual audits keep every compatibility result for diagnosis.
@@ -374,7 +374,7 @@ jobs:
     # Failed shards already fail test-gate. Do not reserve another runner after
     # failure or keep a superseded reusable workflow alive during cancellation.
     if: ${{ !cancelled() && needs.scope.outputs.full_suite != 'false' && needs.test.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Require successful pytest shards
         env:
