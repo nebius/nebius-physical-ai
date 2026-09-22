@@ -96,6 +96,7 @@ def _workflow_status(tmp_path: Path) -> Path:
             }
         )
     )
+    path.chmod(0o600)
     return path
 
 
