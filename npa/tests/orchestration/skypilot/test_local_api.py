@@ -340,6 +340,37 @@ def test_live_new_server_waits_for_process_discovery(
     assert api.ensure_isolated_api(**local_runtime) == result
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux procfs ownership probe")
+def test_listener_exit_after_namespace_read_returns_not_ready(monkeypatch):
+    """An actual owned child exits between the two procfs observations."""
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+        stdin=subprocess.PIPE,
+    )
+    original = Path.readlink
+    observed = []
+    namespace = Path(f"/proc/{child.pid}/ns/net")
+
+    def exit_after_namespace(path):
+        value = original(path)
+        if path == namespace:
+            observed.append(value)
+            assert child.stdin is not None
+            child.stdin.close()
+            assert child.wait() == 0
+        return value
+
+    try:
+        monkeypatch.setattr(Path, "readlink", exit_after_namespace)
+        assert api._listener_owned({"port": 49152}, {"pid": child.pid}) is False
+        assert len(observed) == 1
+        assert not Path(f"/proc/{child.pid}").exists()
+    finally:
+        if child.stdin is not None and not child.stdin.closed:
+            child.stdin.close()
+        child.wait()
+
+
 def test_new_server_exit_still_fails_readiness(local_runtime):
     modules = Path(local_runtime["environment"]["PYTHONPATH"])
     (modules / "sky" / "server" / "server.py").write_text("raise SystemExit(7)\n")
