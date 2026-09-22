@@ -227,9 +227,9 @@ support a causal claim about stage-transition refresh.
 
 Every original metrics file and video was downloaded and hashed, and all ten
 videos were fully decoded. The managed workers and aggregate stage completed
-without rerunning an episode. The operator transport disconnected afterward,
-so the final workflow status was still being checked when this result was
-recorded; the whole workflow is not claimed as successful. The verified
+without rerunning an episode despite an operator transport disconnect.
+The durable workflow ledger subsequently confirmed `SUCCEEDED`; the exact
+owned controller was then cleaned up and its API stopped. The verified
 aggregate artifact is 12,313 bytes with SHA-256
 `14cee110b276a87e16e7e500bd050ab5c6286b4df0f708410efff3a17c22dc68`;
 its canonical aggregate digest is

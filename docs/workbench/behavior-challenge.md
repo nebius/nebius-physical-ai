@@ -209,9 +209,10 @@ using the same observation. The returned action advances the simulator step
 counter once. A second stage change during that resample fails explicitly.
 This separates queue refresh from the shorter late-stage chunks used by
 `adaptive-short-chunk-transition-refresh`; neither option is the default.
-The native-timing variant has no measured task score yet. It uses only native
-policy state and the permitted observations, without evaluator case identities
-or goal predicates.
+The native-timing variant matched native RLC on the ten-case development panel:
+mean Q=0.466667 and 2/10 full successes. Separate reporting remains pending.
+It uses only native policy state and the permitted observations, without
+evaluator case identities or goal predicates.
 
 For a holdout-selected matched-training export, use
 `--policy-kind rlc-selected` with the same four paths and three additional
