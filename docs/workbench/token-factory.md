@@ -140,6 +140,12 @@ returned model must match the requested Kimi-K3 ID exactly. Model availability
 remains key-scoped; verify it with `npa workbench token-factory models` before
 inference.
 
+VLM evaluation records the effective generation settings, including Kimi's
+`reasoning_effort`, together with frame hashes and the exact provider response.
+Request evidence excludes authentication headers. The same provenance path
+preserves the existing request format and model-identity checks for other hosted
+models and self-hosted endpoints.
+
 ## Batch generation
 
 `batch-generate` submits text prompts asynchronously and writes the same JSONL

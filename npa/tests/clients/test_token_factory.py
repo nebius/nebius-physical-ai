@@ -621,7 +621,7 @@ def _profile_assignment_sha256() -> str:
 
 
 _EXPECTED_POLICY_AST_HASHES = {
-    "profile-assignment": "b4e21e6ce330eb920b83fffa47feedc1be87eb2709a7ab35fd220af81dc755c9",
+    "profile-assignment": "9fdbc318b41b4b49731e24d7a7ee516cd110cc5f8fec32fccc4e2aaa9a9c3efa",
     "profile-lookup": "acb9f15d262d592dc8e42223b18b5d9c1056ae914a26538a196858655d43cf5e",
     "profile-default-extra": "747196a0990c411b8c81c50ee7a0fcede5bb00cf0b837404d0fc946939709512",
     "default-chat-extra": "b80360e5856bc5d03c05b9008efe78ee72c1c040d999b066fc0530da154d85e8",
@@ -629,7 +629,9 @@ _EXPECTED_POLICY_AST_HASHES = {
     "client-entrypoint": "e71d1c6e9c6ec18770a044ead9a7f668a3682ec14fbb435a3c504d7d85b60459",
     "hosted-request": "9183ee81e359c6abd170bc9ea51fcdd1aa380552d6e7651c9ba6232aab32ae8a",
     "hosted-response": "79ec961221a6cd29d6d156785c0d0e4ea3a9643127cea8c144809b37e8f87507",
-    "hosted-call": "2849ba4a92a7ca8a6859947e0eb4ac19bdbb15a6126e21d3eaac583275f8e5d8",
+    "hosted-call": "68dc806c6fa6ab3ea35e3984137761411a7a1a88f4751a782dce7ba18bb8cbb0",
+    "backend-verdict": "1c24916a004f460e53009dd11a0840f79606d22ada0a08e68fb933ef01547545",
+    "evidence-verdict": "4bb91f68e0fa7ecf98ec40e3c907ef9ce820e9c1745f80016106ce7e95e01680"
 }
 
 
@@ -646,6 +648,8 @@ def _policy_ast_hashes() -> dict[str, str]:
         "hosted-request": vlm_eval._openai_request,
         "hosted-response": vlm_eval._hosted_structured_response,
         "hosted-call": vlm_eval._call_openai_compatible,
+        "backend-verdict": vlm_eval._parse_backend_verdict,
+        "evidence-verdict": vlm_eval._verdict_with_evidence,
     }
     hashes = {
         name: _ast_sha256(inspect.getsource(function))
