@@ -265,9 +265,15 @@ python3 -m venv npa/.venv
 npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 
 make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
-make lint PYTHON="$(pwd)/npa/.venv/bin/python"        # ruff
+make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
+
+After committing, run `git fetch origin main` and `make merge-precheck` before
+pushing. This checks committed HEAD's merge with current main for conflicts and
+inconsistent dependency fingerprints without modifying your index. It does not
+run the full suite. Queue rejections receive a PR comment with failed jobs/steps
+or timeout details; see the [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
 
 For the **full unit suite**, use CPython 3.12 on Linux with `ffmpeg` and `ffprobe` available.
 Some runtime tests exercise Linux `/proc` and filesystem semantics, so macOS
@@ -354,7 +360,9 @@ For queue rejections, follow the
 The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
 lets independent jobs use available GitHub runner capacity without shared
 repository-wide job queues. Newer commits still cancel older checks of the same
-PR. Organization runner limits can cause waiting; already queued runs retain
+PR. The final image-inventory check reports failed scans but stops when a run
+is cancelled, so it cannot hold the replacement run behind an obsolete job.
+Organization runner limits can cause waiting; already queued runs retain
 their original workflow configuration until their branches are refreshed.
 Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.

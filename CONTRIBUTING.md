@@ -488,8 +488,12 @@ cancels the complete superseded gate instead of six independent fragments:
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
 | `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
 
-`make check` runs the reproducible subset in one command: `lint`, `docs-check`,
-`test`. It is not a full stand-in for `test.yml`, which additionally enforces
+Start with `make precheck`: it checks the working tree's CI dependency fingerprint,
+lint, formatting, and focused CI contract regressions. It does not change files or
+run the full suite. `make format-check` is the formatting check alone.
+`make check` runs this fast precheck before `docs-check` and `test`, including when
+invoked with `make -j`, so a cheap failure stops expensive local validation.
+It is not a full stand-in for `test.yml`, which additionally enforces
 `--cov-fail-under=60` and runs `tests/integration/test_cli_install.sh` and
 `scripts/check-source-drift.sh`. `make test` runs no coverage, so `make check` can
 pass while `test.yml` fails the 60% floor. Add coverage locally when a change moves
@@ -510,6 +514,10 @@ lint and formatting, all guardrails, smoke tests, and full test collection. Its 
 execution budget provides an early signal; a pass is not permission to merge.
 Fresh source/dependency, secret and confidentiality scans also start immediately.
 A failed precheck prevents the expensive test and image jobs from starting.
+The hosted precheck runs full collection alongside guardrails and smoke tests
+on the same runner with `bash npa/scripts/ci_precheck.sh`. Both must pass;
+collection errors remain blocking, and failed guardrails stop the collector.
+This saves a sequential collection pass without starting another runner.
 
 PR admission still requires eight duration-balanced Python 3.12 coverage shards,
 Cypress, focused Python 3.10/3.14 compatibility tests, security, documentation
@@ -587,8 +595,12 @@ balances measured module durations from `npa/tests/ci_test_durations.json`, then
 uses a deterministic default for new tests. Every full Python 3.12 run uploads
 per-shard module timings, including available measurements from failed shards.
 Successful full runs publish `ci-test-durations-<sha>` with a merged profile.
-Use a successful scheduled `main` audit to refresh the reviewed manifest; PR
-profiles are diagnostic evidence and are never loaded automatically as policy.
+Refresh the reviewed manifest from a successful `main` audit or a successful
+validation of an exact tree that has since merged. Review the source run and
+numeric data before committing them; PR profiles are never loaded automatically
+as policy. The current profile comes from the
+[successful #689 validation](https://github.com/nebius/nebius-physical-ai/actions/runs/35738254239)
+whose tested tree was verified at merge, and covers 938 modules.
 
 ### CI dependency setup and timing reports
 
@@ -619,6 +631,29 @@ from its own measurements. It is outside the required merge checks; cancellation
 of the parent workflow can interrupt reporting.
 
 ### Validation concurrency
+
+Queue evidence verification and secret scanning share the `gitleaks` job and
+checkout. A failed verification restores full validation; a failed secret scan
+still blocks the required context. The other required context names are unchanged.
+
+Operators can configure two repository Actions variables after the organization
+has made approved Ubuntu x64 runner labels available to this repository:
+
+| Variable | Candidate jobs routed to that label | Default |
+| --- | --- | --- |
+| `NPA_CI_PRIORITY_RUNNER` | Precheck, queue evidence/secrets, confidentiality, source/dependency scans, scope and final aggregation | `ubuntu-latest` |
+| `NPA_CI_TEST_RUNNER` | Full Python/browser tests, docs, runtime and image validation | `ubuntu-latest` |
+
+Use separate capacity for these labels. Main, scheduled and manual audits keep
+using standard runners, as do background image builds unless their existing
+`build_runner_label` input selects another pool. The priority pool must support
+the precheck's Python dependencies and ordinary GitHub Ubuntu tools; use approved
+ephemeral runners with the repository's public-PR access policy. Merely setting
+a variable does not create runners or reserve capacity, and an unavailable label
+leaves jobs queued. Verify access with a real candidate before relying on it.
+Without configured pools there is no runner reservation or per-PR fairness
+guarantee. Runner allocation, rather than longer timeouts or skipped checks,
+remains necessary to meet latency targets under sustained load.
 
 Independent validation jobs use GitHub's available runner capacity. Validation
 workflows have no job-level concurrency locks or matrix `max-parallel` caps:
@@ -651,6 +686,22 @@ remain enforced. Queue timeout changes follow the staged rollout described above
 
 ### Merge readiness and queue rejections
 
+Before pushing committed work, check its combined dependency inputs against the
+current target without switching branches or modifying your index:
+
+```bash
+git fetch origin main
+make merge-precheck
+```
+
+This checks committed `HEAD` merged with fetched `origin/main`, reports the exact
+base/head/tree hashes, and rejects merge conflicts or an inconsistent merged CI
+fingerprint. Staged and uncommitted changes are excluded; use `make precheck` for
+the working tree. It runs no candidate code and does not replace Linux CI, scanner
+checks, or validation of interactions with preceding queued PRs. An alternate
+target can be inspected with
+`npa/.venv/bin/python npa/scripts/ci_merge_precheck.py --base <ref> --head <ref>`.
+
 PR admission includes every test category required by the queue. The queue
 compares its combined tree with the completed PR validation and reruns fresh
 security scans. A preceding merge can change that tree; the queue then reruns
@@ -660,6 +711,42 @@ PR validation can enable the faster reuse path. Open the
 failed **Security regression** run whose event is **merge_group**, then inspect
 the first failed component job. Cancelled sibling shards usually follow a failed
 shard through matrix fail-fast; their cancellation is not the original failure.
+
+**Merge queue feedback** checks open PRs every five minutes and automatically
+comments on their latest queue rejection or a failed active merge candidate.
+The comment names the removal reason, exact synthetic candidate,
+validation attempt, unfinished or failed jobs, failed steps, runner waits, and
+direct Actions links. Timeout comments preserve the state at removal even if
+the jobs later pass. A failed active merge candidate can also report before a
+dequeue event is available, without claiming the PR was removed. Later polling
+updates the same bot comment for that candidate;
+a rerun cannot overwrite the diagnosis with a different attempt. Successful
+merges do not receive rejection comments. Missing run metadata is reported
+explicitly rather than guessing from another candidate.
+
+The reporter uses a scheduled workflow and trusted default-branch code, with
+read access to Actions and PR write permission used only to manage comments.
+It never checks out
+candidate code, installs its dependencies, or reads its logs/artifacts. Its own
+concurrency group does not lock validation jobs; it is outside the required checks. The five-minute
+schedule is not a delivery deadline: GitHub scheduling and runner availability can
+delay a refresh. Polling stops for closed PRs; read-only manual diagnosis can
+still inspect their history. See
+[GitHub's scheduled workflow behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+The automation takes effect once the reporting workflow lands on main.
+
+To inspect a removal without posting a comment:
+
+```bash
+npa/.venv/bin/python -I npa/scripts/merge_queue_report.py \
+  --repository nebius/nebius-physical-ai --pr <number>
+```
+
+The command requires authenticated `gh`; it defaults to read-only output. Pass
+`--candidate <full-sha>` to inspect an older rejected candidate, and `--publish`
+only to post/update the report. `--scan-open` reconciles open PRs instead of one
+`--pr`. The **Merge queue feedback** manual workflow has
+the same read-only default, with an explicit `publish` input.
 
 If **Check CI dependency pins** fails, bring the current base into your isolated
 branch and run the dependency refresh and check commands above. Commit the
