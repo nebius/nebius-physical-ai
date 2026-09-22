@@ -385,8 +385,8 @@ def test_unreachable_statement_guard_catches_fixture(tmp_path: Path) -> None:
     assert _unreachable_statement_violations(broken)
 
 
-# Absent from the CPU unit-test environment, so importing one at module level
-# fails collection for the whole file rather than skipping a single test.
+# Optional in the lightweight precheck environment: an unconditional import
+# can abort collection before a test or fixture can skip a missing dependency.
 HEAVY_TEST_IMPORTS = frozenset(
     {
         "torch",
@@ -431,6 +431,15 @@ def _heavy_module_import_violations(path: Path) -> list[str]:
 
 
 def test_tests_do_not_import_heavy_packages_at_module_level() -> None:
+    """Keep optional GPU imports out of unconditional test-module imports.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A test imports an optional package unconditionally.
+    """
     violations = [
         violation
         for path in _test_paths()
@@ -440,18 +449,37 @@ def test_tests_do_not_import_heavy_packages_at_module_level() -> None:
 
 
 def test_heavy_import_guard_catches_broken_fixture(tmp_path: Path) -> None:
+    """Reject both direct imports and from-imports before CPU collection breaks.
+
+    Args:
+        tmp_path: Isolated source fixture directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Either unconditional import escapes the guard.
+    """
     bad = tmp_path / "test_bad_heavy_import.py"
     bad.write_text(
-        "import torch\n\n\ndef test_x():\n    assert torch\n", encoding="utf-8"
+        "import torch\nfrom genesis import Scene\n\ndef test_x():\n    assert torch\n",
+        encoding="utf-8",
     )
 
     violations = _heavy_module_import_violations(bad)
 
-    assert violations
+    assert len(violations) == 2
     assert "module level" in violations[0]
 
 
 def test_heavy_import_guard_allows_the_supported_escapes(tmp_path: Path) -> None:
+    """Allow test-local and explicitly optional dependency imports.
+
+    Args:
+        tmp_path: Isolated source fixture directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A supported optional import is rejected.
+    """
     ok = tmp_path / "test_supported_escapes.py"
     ok.write_text(
         "from typing import TYPE_CHECKING\n\n"
@@ -470,5 +498,4 @@ def test_heavy_import_guard_allows_the_supported_escapes(tmp_path: Path) -> None
         "    assert genesis\n",
         encoding="utf-8",
     )
-
     assert not _heavy_module_import_violations(ok)
