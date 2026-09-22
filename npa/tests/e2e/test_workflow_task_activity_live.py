@@ -1,4 +1,4 @@
-"""Read an owned failed workflow whose independent sibling tasks still run."""
+"""Verify task activity against an operator-selected live failed workflow."""
 
 import json
 import os
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.e2e
 def test_failed_workflow_retains_live_task_activity():
     config_path = os.environ.get("NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG")
     if not config_path:
-        pytest.skip("requires an operator-selected failed run with active sibling tasks")
+        pytest.skip("requires an operator-selected failed run and expected task states")
     settings = json.loads(Path(config_path).read_text())
     payload = _durable_workflow_status(
         settings["run_id"],
@@ -26,8 +26,11 @@ def test_failed_workflow_retains_live_task_activity():
     assert payload["status"] == "FAILED"
     activity = payload["scheduler_task_activity"]
     assert activity["active_stage_keys"] == settings["expected_active_stage_keys"]
-    assert activity["active_stage_keys"]
     assert activity["unresolved_stage_keys"] == []
-    assert activity["all_stage_tasks_terminal"] is False
+    assert (
+        activity["all_stage_tasks_terminal"] is settings["expected_all_tasks_terminal"]
+    )
+    for key, state in settings["expected_task_states"].items():
+        assert payload["stages"][key]["raw_task_scheduler_state"] == state
     for key in activity["active_stage_keys"]:
         assert payload["stages"][key]["raw_task_scheduler_state"] == "RUNNING"

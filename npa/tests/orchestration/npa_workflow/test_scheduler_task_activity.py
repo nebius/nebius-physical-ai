@@ -118,3 +118,85 @@ def test_unrecognized_task_state_remains_unresolved():
         "unresolved_stage_keys": ["worker-1"],
         "all_stage_tasks_terminal": False,
     }
+
+
+def test_extra_scheduler_task_prevents_terminal_proof():
+    rows = _rows(["FAILED", "FAILED"])
+    rows.append({"task_id": 2, "task_name": "worker-extra", "status": "RUNNING"})
+    activity = _failed_parallel_status(rows, members=2)["scheduler_task_activity"]
+    assert activity["all_stage_tasks_terminal"] is False
+    assert activity["unresolved_stage_keys"] == ["worker-0", "worker-1"]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_named_rows_preserve_activity_and_ambiguity(reverse):
+    rows = _rows(["FAILED", "FAILED"])
+    rows.append({"task_id": 2, "task_name": "worker-0", "status": "RUNNING"})
+    if reverse:
+        rows.reverse()
+    activity = _failed_parallel_status(rows, members=2)["scheduler_task_activity"]
+    assert activity == {
+        "active_stage_keys": ["worker-0"],
+        "unresolved_stage_keys": ["worker-0"],
+        "all_stage_tasks_terminal": False,
+    }
+
+
+def test_duplicate_task_ids_prevent_terminal_proof():
+    rows = _rows(["FAILED", "FAILED"])
+    rows[1]["task_id"] = 0
+    activity = _failed_parallel_status(rows, members=2)["scheduler_task_activity"]
+    assert activity["unresolved_stage_keys"] == ["worker-0", "worker-1"]
+    assert activity["all_stage_tasks_terminal"] is False
+
+
+def test_malformed_extra_row_prevents_terminal_proof():
+    activity = _failed_parallel_status([*_rows(["FAILED", "FAILED"]), None], members=2)[
+        "scheduler_task_activity"
+    ]
+    assert activity["unresolved_stage_keys"] == ["worker-0", "worker-1"]
+    assert activity["all_stage_tasks_terminal"] is False
+
+
+def test_legacy_task_ids_prove_terminal_only_with_unique_complete_coverage():
+    manifest = RunManifest(
+        "evaluation",
+        "test-run",
+        "npa.workflow/v0.0.1",
+        status="FAILED",
+        steps=[{"state": "worker-0", "status": "FAILED"}],
+    )
+    result = build_actionable_run_status(manifest, task_rows=_rows(["FAILED"]))
+    assert result["scheduler_task_activity"]["all_stage_tasks_terminal"] is True
+    result = build_actionable_run_status(
+        manifest, task_rows=[*_rows(["FAILED"]), *_rows(["RUNNING"])]
+    )
+    assert result["scheduler_task_activity"]["all_stage_tasks_terminal"] is False
+    assert result["scheduler_task_activity"]["active_stage_keys"] == ["worker-0"]
+
+
+def test_one_named_row_cannot_prove_two_same_name_stages_terminal():
+    manifest = RunManifest(
+        "evaluation",
+        "test-run",
+        "npa.workflow/v0.0.1",
+        status="FAILED",
+        sky_job_id="11",
+        steps=[{"state": "worker", "status": "FAILED"}] * 2,
+    )
+    result = build_actionable_run_status(
+        manifest,
+        job_observations={
+            "11": {
+                "status": "FAILED",
+                "task_rows": [
+                    {"task_id": 0, "task_name": "worker", "status": "FAILED"},
+                ],
+            }
+        },
+    )
+    assert result["scheduler_task_activity"] == {
+        "active_stage_keys": [],
+        "unresolved_stage_keys": ["worker", "worker@1"],
+        "all_stage_tasks_terminal": False,
+    }

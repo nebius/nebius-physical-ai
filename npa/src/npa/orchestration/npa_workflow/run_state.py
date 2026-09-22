@@ -976,21 +976,62 @@ def _job_task_outcomes_conflict(
     )
 
 
-def _task_row_attributed(row, name, managed_job_id, attributions, observations):
-    if not row:
+def _task_row_matches(row, stage, member_count, legacy):
+    if not isinstance(row, Mapping):
         return False
-    task_name = str(row.get("task_name") or "")
-    if task_name:
-        return task_name == name
+    name = str(row.get("task_name") or "")
+    if legacy:
+        return str(row.get("task_id")) == str(stage["index"] - 1) and (
+            not name or name == stage["workflow_state"]
+        )
+    return name == stage["workflow_state"] if name else member_count == 1
+
+
+def _task_observation_matches(members, rows, *, legacy=False):
+    matches = {key: [] for key in members}
+    unresolved = set()
+    task_ids = [
+        str(row["task_id"])
+        for row in rows
+        if isinstance(row, Mapping) and row.get("task_id") is not None
+    ]
+    if len(task_ids) != len(set(task_ids)):
+        unresolved.update(members)
+    for row in rows:
+        keys = [
+            key
+            for key, stage in members.items()
+            if _task_row_matches(row, stage, len(members), legacy)
+        ]
+        if len(keys) != 1:
+            unresolved.update(keys or members)
+        for key in keys:
+            matches[key].append(row)
+    unresolved.update(key for key, matched in matches.items() if len(matched) != 1)
+    return matches, unresolved
+
+
+def _scheduler_task_observations(stages, task_rows, observations):
     if not observations:
-        return True
-    members = sum(
-        item.get("managed_job_id") == managed_job_id for item in attributions.values()
-    )
-    return bool(managed_job_id) and members == 1
+        return _task_observation_matches(stages, task_rows, legacy=True)
+    matches, unresolved = {}, set()
+    job_ids = {stage["managed_job_id"] for stage in stages.values()}
+    for job_id in job_ids:
+        members = {
+            key: stage
+            for key, stage in stages.items()
+            if stage["managed_job_id"] == job_id
+        }
+        rows = observations.get(job_id, {}).get("task_rows") or []
+        job_matches, job_unresolved = _task_observation_matches(members, rows)
+        matches.update(job_matches)
+        unresolved.update(job_unresolved)
+    if set(observations) - job_ids:
+        unresolved.update(stages)
+    return matches, unresolved
 
 
-def _scheduler_task_activity(stages, observed_task_keys):
+def _scheduler_task_activity(stages, task_rows, observations):
     active_states = {
         "SUBMITTED",
         "PENDING",
@@ -999,18 +1040,19 @@ def _scheduler_task_activity(stages, observed_task_keys):
         "RECOVERING",
         "CANCELLING",
     }
+    matches, ambiguous = _scheduler_task_observations(stages, task_rows, observations)
     active, unresolved = [], []
     terminal_count = 0
-    for key, stage in stages.items():
-        state = _normalized_stage_state(stage["raw_task_scheduler_state"])
-        if key not in observed_task_keys:
-            unresolved.append(key)
-        elif state in active_states:
+    for key in stages:
+        states = [_normalized_stage_state(row.get("status")) for row in matches[key]]
+        if any(state in active_states for state in states):
             active.append(key)
-        elif state in TERMINAL_STEP_STATES:
-            terminal_count += 1
-        else:
+        if key in ambiguous or any(
+            state not in active_states | TERMINAL_STEP_STATES for state in states
+        ):
             unresolved.append(key)
+        elif states and all(state in TERMINAL_STEP_STATES for state in states):
+            terminal_count += 1
     return {
         "active_stage_keys": active,
         "unresolved_stage_keys": unresolved,
@@ -1054,7 +1096,6 @@ def build_actionable_run_status(
     observations = dict(job_observations or {})
     normalized_failure, failure_evidence = normalize_startup_failure(controller_output)
     stages: dict[str, dict[str, Any]] = {}
-    observed_task_keys: set[str] = set()
     active_key = ""
     active_index: int | None = None
     newest_progress: datetime | None = None
@@ -1085,8 +1126,6 @@ def build_actionable_run_status(
             if not observations
             else {}
         )
-        if _task_row_attributed(row, name, managed_job_id, attributions, observations):
-            observed_task_keys.add(key)
         scheduler_job_state = str(observation.get("status") or "").upper()
         raw_scheduler = str(
             row.get("status") or scheduler_job_state or step.get("sky_status") or ""
@@ -1335,7 +1374,9 @@ def build_actionable_run_status(
             or max(0, int((current - newest_progress).total_seconds())) > 300
         ),
         "stages": stages,
-        "scheduler_task_activity": _scheduler_task_activity(stages, observed_task_keys),
+        "scheduler_task_activity": _scheduler_task_activity(
+            stages, task_rows, observations
+        ),
     }
 
 

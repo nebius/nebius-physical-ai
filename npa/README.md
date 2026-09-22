@@ -19,6 +19,12 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For resumable contest evaluations, see the [BEHAVIOR campaign guide](../docs/workbench/behavior-campaign.md).
+It documents case ownership, verified results, and workflow task activity. The
+optional `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` environment variable points to
+private JSON settings for the read-only live status regression; it is unset by
+default and submits no work.
+
 ## Install
 
 From the repository root, with your virtual environment active:
