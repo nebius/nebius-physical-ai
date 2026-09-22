@@ -37,6 +37,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "finite interpolated joint trajectories and actual FK tool path",
         "factual RRD artifact passes decoder verification",
     ],
+    "seedvr2": [
+        "pinned official SeedVR2-3B one-step inference executes on one H100",
+        "four runtime-fetched public model payloads match fixed SHA-256 identities",
+        "real Aloha-Agilex observation excerpt is restored from 320x240 to 640x480",
+        "decoded frame count, timing, dimensions, hashes, and provenance are retained",
+    ],
     "openpi": [
         "pinned upstream full-DROID config remains batch 256 and 100,000 steps",
         "eight JAX processes form one global (1, 8) FSDP mesh",

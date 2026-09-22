@@ -133,6 +133,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
 | [`nvidia-paidf-vda-cosmos-transfer25.yaml`](testing/nvidia-paidf-vda-cosmos-transfer25.yaml) | Separately named NVIDIA-derived VDA semantic translation → pinned upstream contract → real Cosmos Transfer 2.5/Evaluator/Curator/FiftyOne → Rerun ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
 | [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
+| [`seedvr2-video-restoration.yaml`](testing/seedvr2-video-restoration.yaml) | Pinned SeedVR2-3B restoration with H100/sample defaults and explicit B200/posterior-mode controls → independent S3 readback verification → non-blended bicubic/candidate review package; image remains publication-quarantined pending live objective and VLM evidence ([guide](../docs/workbench/seedvr2.md)) |
 
 #### Robot learning and simulation
 

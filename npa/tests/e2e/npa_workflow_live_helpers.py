@@ -324,6 +324,20 @@ def seed_live_workflow_inputs(
         _seed_nurec_colmap_source(client, bucket=bucket, prefix=marker)
         return
 
+    if spec_name == "seedvr2-video-restoration.yaml":
+        source = os.environ.get("NPA_E2E_SEEDVR2_INPUT_SRC", "").strip()
+        if not source:
+            pytest.skip(
+                "NPA_E2E_SEEDVR2_INPUT_SRC must name a licensed real MP4 fixture"
+            )
+        _seed_object_from_source(
+            source,
+            bucket,
+            f"{marker}/input/low-resolution.mp4",
+            client,
+        )
+        return
+
     if spec_name == "paidf-event-video-generation.yaml":
         # Fetch public source bytes without model/registry credentials. A real
         # photograph exercises the detector and per-person label stages.
@@ -1813,6 +1827,16 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    if name == "seedvr2-video-restoration.yaml":
+        text = re.sub(
+            r'(seedvr2_input_uri:\s*")[^"]*(")',
+            lambda match: (
+                f"{match.group(1)}s3://{{{{config.bucket}}}}/"
+                f"{{{{config.prefix}}}}/input/low-resolution.mp4{match.group(2)}"
+            ),
+            text,
+            count=1,
+        )
     paidf_stem = name.replace(".yaml", "")
     if name in {
         "paidf-image-attribute-augmentation.yaml",

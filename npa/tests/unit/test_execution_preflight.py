@@ -1459,7 +1459,7 @@ states:
     )
     monkeypatch.setattr(workflow, "resolve_config", lambda **kwargs: runtime)
     monkeypatch.setattr(workflow, "ensure_skypilot_version", lambda path: path)
-    monkeypatch.setattr(workflow, "sky_environment", lambda path: {})
+    monkeypatch.setattr(workflow, "sky_environment", lambda path, **kwargs: {})
     # Stop only at the external controller boundary, after the actual shared
     # SDK preflight has verified the selected configuration and exact writes.
     controller = Mock(side_effect=RuntimeError("verified-controller-boundary"))
@@ -1588,7 +1588,8 @@ def test_actual_sdk_prefix_denial_prevents_controller_and_job_create(
     )
     monkeypatch.setattr(workflow, "resolve_config", lambda **kwargs: runtime)
     monkeypatch.setattr(workflow, "ensure_skypilot_version", lambda path: path)
-    monkeypatch.setattr(workflow, "sky_environment", lambda path: {})
+    environment = Mock(return_value={})
+    monkeypatch.setattr(workflow, "sky_environment", environment)
     controller = Mock()
     launch = Mock()
     monkeypatch.setattr(workflow, "_ensure_local_api_daemon_cwd_locked", controller)
@@ -1600,6 +1601,11 @@ def test_actual_sdk_prefix_denial_prevents_controller_and_job_create(
         )
     controller.assert_not_called()
     launch.assert_not_called()
+    assert environment.call_args_list
+    assert all(
+        call.kwargs == {"recover_isolated_api": False}
+        for call in environment.call_args_list
+    )
 
 
 @pytest.mark.parametrize("matching", [False, True])
@@ -1655,7 +1661,7 @@ def test_actual_sdk_nebius_mount_profile_verified_before_storage_and_create(
         key: value for key, value in os.environ.items() if not key.startswith("AWS_")
     }
     env.update(HOME=str(tmp_path), AWS_EC2_METADATA_DISABLED="true")
-    monkeypatch.setattr(workflow, "sky_environment", lambda path: env)
+    monkeypatch.setattr(workflow, "sky_environment", lambda path, **kwargs: env)
     controller = Mock(side_effect=RuntimeError("reached verified controller boundary"))
     launch = Mock()
     monkeypatch.setattr(workflow, "_ensure_local_api_daemon_cwd_locked", controller)
@@ -1711,7 +1717,7 @@ def test_actual_native_sdk_persists_verified_project_and_resource_shape_before_c
     )
     monkeypatch.setattr(workflow, "resolve_config", lambda **kwargs: runtime)
     monkeypatch.setattr(workflow, "ensure_skypilot_version", lambda path: path)
-    monkeypatch.setattr(workflow, "sky_environment", lambda path: {})
+    monkeypatch.setattr(workflow, "sky_environment", lambda path, **kwargs: {})
     requests = []
 
     def managed(args, **kwargs):

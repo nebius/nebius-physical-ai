@@ -35,8 +35,9 @@ pass raises on sm_120 because the epilogue needs TMA. Only a real capability run
 on the part decides a cell.
 
 USAGE
-  measure_extension_arches.py <wheel|.so|directory> [...] [--require sm_100]
-                             [--min-size-mb N] [--json]
+  measure_extension_arches.py [<wheel|.so|directory> ...]
+                             [--distribution NAME ...] [--require sm_100]
+                             [--exact sm_100] [--min-size-mb N] [--json]
 
 EXAMPLES
   # The pinned Cosmos Predict2 dependency wheels, straight from the release:
@@ -46,11 +47,16 @@ EXAMPLES
   # Gate a build: fail unless every extension can reach B200.
   measure_extension_arches.py /opt/cosmos/venv/lib/python3.10/site-packages \\
     --require sm_100
+
+  # Resolve top-level extension modules from a wheel's installed RECORD.
+  /opt/tool-venv/bin/python measure_extension_arches.py \\
+    --distribution flash-attn --exact sm_90
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import struct
 import sys
@@ -139,6 +145,35 @@ def _binaries(target: Path, min_size: int):
     yield str(target), target.read_bytes()
 
 
+def _distribution_binaries(distribution_name: str, min_size: int):
+    """Yield native binaries owned by one installed Python distribution."""
+
+    distribution = importlib.metadata.distribution(distribution_name)
+    if distribution.files is None:
+        raise ValueError(f"{distribution_name} has no installed-file inventory")
+    for relative in sorted(distribution.files, key=str):
+        if ".so" not in relative.name:
+            continue
+        path = Path(distribution.locate_file(relative))
+        if not path.is_file():
+            raise ValueError(
+                f"{distribution_name} records a missing native binary: {relative}"
+            )
+        if path.stat().st_size >= min_size:
+            yield f"{distribution_name}:{relative.as_posix()}", path.read_bytes()
+
+
+def _input_binaries(targets: list[Path], distributions: list[str], min_size: int):
+    """Yield explicitly targeted and distribution-owned native binaries."""
+
+    for target in targets:
+        if not target.exists():
+            raise ValueError(f"no such path: {target}")
+        yield from _binaries(target, min_size)
+    for distribution_name in distributions:
+        yield from _distribution_binaries(distribution_name, min_size)
+
+
 def _fmt(counter: Counter) -> list[str]:
     return [f"sm_{arch}" for arch in sorted(counter)]
 
@@ -148,7 +183,16 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("targets", nargs="+", type=Path)
+    parser.add_argument("targets", nargs="*", type=Path)
+    parser.add_argument(
+        "--distribution",
+        action="append",
+        default=[],
+        help=(
+            "scan every native binary recorded by an installed Python "
+            "distribution; may be repeated"
+        ),
+    )
     parser.add_argument(
         "--require",
         action="append",
@@ -157,10 +201,25 @@ def main(argv: list[str] | None = None) -> int:
         help="fail unless every measured binary carries this SASS architecture",
     )
     parser.add_argument(
+        "--exact",
+        action="append",
+        default=[],
+        metavar="sm_NNN",
+        help=(
+            "fail unless every measured binary carries exactly this SASS set and "
+            "no PTX architecture outside the set"
+        ),
+    )
+    parser.add_argument(
         "--min-size-mb",
         type=float,
         default=1.0,
         help="skip binaries smaller than this (default: 1 MB)",
+    )
+    parser.add_argument(
+        "--skip-no-fatbin",
+        action="store_true",
+        help="ignore native binaries with no measurable CUDA fat-binary container",
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -169,15 +228,16 @@ def main(argv: list[str] | None = None) -> int:
     required = {
         name if name.startswith("sm_") else f"sm_{name}" for name in args.require
     }
+    exact = {name if name.startswith("sm_") else f"sm_{name}" for name in args.exact}
     report: dict[str, dict] = {}
     failures: list[str] = []
 
-    for target in args.targets:
-        if not target.exists():
-            print(f"ERROR: no such path: {target}", file=sys.stderr)
-            return 2
-        for label, blob in _binaries(target, min_size):
+    try:
+        binaries = _input_binaries(args.targets, args.distribution, min_size)
+        for label, blob in binaries:
             sass, ptx = scan(blob)
+            if args.skip_no_fatbin and not sass and not ptx:
+                continue
             entry = {
                 "bytes": len(blob),
                 "sass": _fmt(sass),
@@ -188,10 +248,30 @@ def main(argv: list[str] | None = None) -> int:
             if missing:
                 entry["missing"] = missing
                 failures.append(f"{label} lacks {', '.join(missing)}")
+            if exact:
+                unexpected_sass = sorted(set(entry["sass"]) - exact)
+                missing_exact = sorted(exact - set(entry["sass"]))
+                exact_ptx = {name.replace("sm_", "compute_", 1) for name in exact}
+                unexpected_ptx = sorted(set(entry["ptx"]) - exact_ptx)
+                if missing_exact:
+                    entry["missing_exact_sass"] = missing_exact
+                if unexpected_sass:
+                    entry["unexpected_sass"] = unexpected_sass
+                if unexpected_ptx:
+                    entry["unexpected_ptx"] = unexpected_ptx
+                if missing_exact or unexpected_sass or unexpected_ptx:
+                    failures.append(
+                        f"{label} is not exact: missing={missing_exact}, "
+                        f"unexpected_sass={unexpected_sass}, "
+                        f"unexpected_ptx={unexpected_ptx}"
+                    )
             if not args.json:
                 print(f"{label} ({len(blob) / 1e6:.0f} MB)")
                 print(f"  SASS: {' '.join(entry['sass']) or 'none'}")
                 print(f"  PTX:  {' '.join(entry['ptx']) or 'none'}")
+    except (OSError, ValueError, importlib.metadata.PackageNotFoundError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
 
     if not report:
         print("ERROR: no native binaries found to measure", file=sys.stderr)
@@ -201,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
 
     if failures:
-        print("\nMISSING REQUIRED ARCHITECTURES", file=sys.stderr)
+        print("\nARCHITECTURE GATE FAILURES", file=sys.stderr)
         for failure in failures:
             print(f"  {failure}", file=sys.stderr)
         return 1

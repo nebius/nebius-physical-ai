@@ -19,6 +19,12 @@ import yaml
 from npa.clients.credentials import load_credentials
 from npa.clients.serverless import ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool, execution_container_registry
+from npa.orchestration.skypilot.image_bootstrap_contract import (
+    immutable_image_reference,
+)
+from npa.orchestration.skypilot.registry_preflight import (
+    check_image_pulls_with_credentials,
+)
 from npa.serverless_common.env import ISAAC_EULA_VARS, isaac_eula_env  # noqa: F401 (re-exported)
 from npa.serverless_common import (
     build_serverless_job_env,
@@ -92,6 +98,14 @@ def _project_id(explicit: str | None) -> str:
     )
 
 
+def _digest_bound_seedvr2_image(image: str) -> str:
+    checks = check_image_pulls_with_credentials([image], mint=True)
+    if len(checks) != 1 or not checks[0].ok or not checks[0].digest:
+        detail = checks[0].render() if checks else "registry returned no result"
+        raise RuntimeError(f"SeedVR2 golden image is not pullable by digest: {detail}")
+    return immutable_image_reference(image, checks[0].digest)
+
+
 def submit_golden_eval(
     tool: str,
     *,
@@ -118,6 +132,8 @@ def submit_golden_eval(
     resolved_project = _project_id(project_id)
     image = resolve_golden_image(tool, registry=registry, tag=tag)
     cfg = load_credentials(export_to_environment=True)
+    if tool == "seedvr2":
+        image = _digest_bound_seedvr2_image(image)
     bucket = (cfg.s3_bucket or "").rstrip("/")
     if not bucket:
         raise RuntimeError("No S3 bucket configured (credentials.storage.bucket)")
@@ -139,6 +155,8 @@ def submit_golden_eval(
         # pyarrow/lancedb/fiftyone deps missing from slim tool images.
         "NPA_SKIP_EAGER_IMPORTS": "1",
     }
+    if tool == "seedvr2":
+        extra_env["NPA_TASK_IMAGE"] = image
     # cosmos3-ray-serve requires a bearer token for its authenticated API.
     # Generate an ephemeral token; the smoke_functional.sh start/stop cycle
     # is self-contained so the token never leaves the job.

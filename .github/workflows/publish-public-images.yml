@@ -451,10 +451,10 @@ jobs:
             }
             build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")
           fi
-          if [[ "$TOOL" == curobo ]]; then
-            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
-            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
-            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          if [[ "$TOOL" == curobo || "$TOOL" == seedvr2 ]]; then
+            source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
           fi
           docker buildx build \
             --load \
@@ -548,6 +548,12 @@ jobs:
           if [ "$TOOL" = alpamayo2-super ]; then
             npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar"
+          fi
+          if [ "$TOOL" = seedvr2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_seedvr2_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+              > "$RUNNER_TEMP/${TOOL}-seedvr2-payload.json"
           fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
@@ -795,6 +801,12 @@ jobs:
           if [ "$TOOL" = alpamayo2-super ]; then
             npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"
+          fi
+          if [ "$TOOL" = seedvr2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_seedvr2_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$exact")" \
+              > "$RUNNER_TEMP/${TOOL}-pushed-seedvr2-payload.json"
           fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \

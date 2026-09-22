@@ -1387,6 +1387,310 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
     ]
 
 
+def test_submit_workflow_allows_nebius_storage_for_kubernetes_tasks(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\n"
+        "resources:\n"
+        "  cloud: kubernetes\n"
+        "file_mounts:\n"
+        "  /mnt/state:\n"
+        "    source: nebius://example-bucket\n"
+        "    store: NEBIUS\n"
+        "    mode: MOUNT\n",
+        encoding="utf-8",
+    )
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 12\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-nebius-storage",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/run-owned-context",
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+
+
+def test_submit_workflow_allows_scalar_nebius_mount_without_infra(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\n"
+        "resources:\n"
+        "  cloud: kubernetes\n"
+        "  region: selected-context\n"
+        "file_mounts:\n"
+        "  /mnt/state: nebius://example-bucket\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 12\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-nebius-storage-region",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=_fake_sky(tmp_path),
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+
+
+def test_submit_workflow_preserves_compute_allowlist_without_target_or_mount(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: native-task\nresources:\n  cloud: nebius\n",
+        encoding="utf-8",
+    )
+    global_config = tmp_path / "global.yaml"
+    global_config.write_text(
+        "allowed_clouds: [kubernetes, nebius]\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 12\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-native-task",
+        config_path=global_config,
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=_fake_sky(tmp_path),
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+
+
+@pytest.mark.parametrize(
+    "resources",
+    [
+        {
+            "cloud": "kubernetes",
+            "any_of": [{"cloud": "kubernetes"}, {"cloud": "nebius"}],
+        },
+        {
+            "ordered": [{"cloud": "kubernetes"}, {"cloud": "nebius"}],
+        },
+        {
+            "cloud": "kubernetes",
+            "any_of": [{"infra": "nebius/eu-north1"}],
+        },
+    ],
+)
+def test_submit_workflow_refuses_nebius_storage_compute_alternatives(
+    monkeypatch, tmp_path, resources
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "demo",
+                "resources": resources,
+                "file_mounts": {"/mnt/state": "nebius://example-bucket"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: calls.append(cmd),
+    )
+
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="must pin every task resources.cloud to kubernetes",
+    ) as caught:
+        submit_workflow(
+            yaml_path,
+            "run-nebius-storage-alternative",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/run-owned-context",
+        )
+
+    assert caught.value.launch_attempted is False
+    assert calls == []
+
+
+def test_submit_workflow_refuses_nebius_storage_with_unpinned_compute(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\n"
+        "resources:\n"
+        "  cpus: 2\n"
+        "file_mounts:\n"
+        "  /mnt/state:\n"
+        "    source: nebius://example-bucket\n"
+        "    store: NEBIUS\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="must pin every task resources.cloud to kubernetes",
+    ) as caught:
+        submit_workflow(
+            yaml_path,
+            "run-unpinned-nebius-storage",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/run-owned-context",
+        )
+
+    assert caught.value.launch_attempted is False
+    assert calls == []
+
+
+def test_submit_workflow_refuses_unpinned_sibling_task_with_nebius_storage(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\n"
+        "execution: serial\n"
+        "---\n"
+        "name: mounted\n"
+        "resources:\n"
+        "  cloud: kubernetes\n"
+        "file_mounts:\n"
+        "  /mnt/state: nebius://example-bucket\n"
+        "---\n"
+        "name: unpinned\n"
+        "num_nodes: 1\n"
+        "run: echo unsafe\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="must pin every task resources.cloud to kubernetes",
+    ):
+        submit_workflow(
+            yaml_path,
+            "run-unpinned-sibling",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/run-owned-context",
+        )
+
+
+def test_submit_workflow_refuses_unpinned_controller_with_nebius_storage(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\n"
+        "resources:\n"
+        "  cloud: kubernetes\n"
+        "file_mounts:\n"
+        "  /mnt/state: nebius://example-bucket\n",
+        encoding="utf-8",
+    )
+    global_config = tmp_path / "global.yaml"
+    global_config.write_text(
+        "jobs:\n"
+        "  controller:\n"
+        "    resources:\n"
+        "      cloud: kubernetes\n"
+        "      cpus: 2\n"
+        "      memory: 8\n"
+        "      autostop: false\n"
+        "      any_of:\n"
+        "        - cloud: nebius\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="must pin controller resources.cloud to kubernetes",
+    ):
+        submit_workflow(
+            yaml_path,
+            "run-unpinned-controller",
+            config_path=global_config,
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/run-owned-context",
+        )
+
+
+def test_submit_workflow_marks_error_after_launch_boundary_as_attempted(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 12\n", stderr=""
+        )
+
+    def fail_after_launch(**kwargs):
+        kwargs["launch"]()
+        raise ValueError("post-launch recorder failed")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(workflow_module, "run_launch_transaction", fail_after_launch)
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="post-launch recorder failed",
+    ) as caught:
+        submit_workflow(
+            yaml_path,
+            "run-post-launch-error",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert caught.value.launch_attempted is True
+
+
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\n", encoding="utf-8")

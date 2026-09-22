@@ -3247,6 +3247,7 @@ def _preflight_image_bootstrap_contracts(
 
     from npa.orchestration.skypilot.image_bootstrap_contract import (
         CONTRACT_VERSION,
+        ImageContractEvidence,
         ImageBootstrapContractError,
         immutable_image_reference,
         is_trusted_npa_image,
@@ -3277,10 +3278,27 @@ def _preflight_image_bootstrap_contracts(
         try:
             reference = parse_image_reference(image)
             image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
-                # complete preflight for registered images outside that subset.
+                # complete preflight for registered images outside that subset,
+                # but execution must still use the exact digest that was pulled.
+                if not pull_digest:
+                    raise ImageBootstrapContractError(
+                        "pullability preflight did not return an immutable digest"
+                    )
+                results.append(
+                    ImageContractEvidence(
+                        image=immutable_image_reference(image, pull_digest),
+                        digest=pull_digest,
+                        contract_version=CONTRACT_VERSION,
+                        state="compatible",
+                        source="registry_pull",
+                        checks=("digest_bound", "pullable"),
+                        detail="bootstrap attestation not required for this image",
+                    ).to_dict()
+                )
                 continue
             host = reference.registry
             username, password = resolve_registry_credentials(
@@ -3289,7 +3307,6 @@ def _preflight_image_bootstrap_contracts(
             digest, labels = fetch_image_config_metadata(
                 image, username=username, password=password
             )
-            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if pull_digest and pull_digest != digest:
                 raise ImageBootstrapContractError(
                     "mutable tag resolved to a different digest between pull and contract checks"
@@ -4286,7 +4303,10 @@ def _raw_execution_preflight(
         controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(
+        runtime.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     env.update(kwargs.pop("extra_env", None) or {})
     return preflight_skypilot_submission(
         documents,

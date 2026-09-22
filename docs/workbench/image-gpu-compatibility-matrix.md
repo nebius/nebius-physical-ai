@@ -50,6 +50,7 @@ no B300 capability is claimed from the planned runtime or a B200 result.
 | Image | Tag measured | Torch / CUDA | Measured SASS set | Covers `sm_100`? |
 | --- | --- | --- | --- | --- |
 | `npa-base` | `cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
+| `npa-seedvr2` | exact local candidate; publication quarantined | 2.13.0+cu130 | Torch: `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120`; FlashAttention and Apex: native `sm_90` only, no PTX | no; both source extensions require an `sm_100` rebuild |
 | `npa-lerobot` | default `…-0.5.1-…-20260803T034152Z`; optional `0.6.0-d6-extras-20260912` | 2.9.0+cu130 (default); 2.11.0+cu130 (0.6.0) | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` (`compute_120` PTX also measured for the default) | yes |
 | `npa-lerobot-policy` | `0.1.1` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-lancedb` | `…-0.30.3-…-20260803T031514Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
@@ -102,6 +103,7 @@ likewise predates its current coherent release.
 | --- | --- | --- | --- | --- | --- |
 | `npa-base` | supported | **verified** [22] | **verified** [23] | **verified** [20] | **verified** [21] |
 | `npa-workbench-cuda-base` | supported | supported | supported | supported | supported |
+| `npa-seedvr2` | blocked by `sm_90`-only extensions | H100 candidate built with native `sm_90`, real restoration pending; H200 is not accepted by the current H100-only runtime policy | blocked by `sm_90`-only extensions | blocked pending an `sm_100` extension rebuild and real restoration | blocked pending an `sm_100` extension rebuild and real restoration |
 | `npa-lerobot` | supported | **verified** [41] | **verified** [42] | **verified** [39], optional 0.6.0 [68] | **verified** [40] |
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |

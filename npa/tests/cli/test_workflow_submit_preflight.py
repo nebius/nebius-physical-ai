@@ -183,6 +183,47 @@ def test_submit_preflight_does_not_reach_skypilot(mocker) -> None:
     submit_workflow.assert_not_called()
 
 
+def test_raw_execution_preflight_defers_stopped_api_recovery(mocker, tmp_path) -> None:
+    runtime = mocker.Mock(
+        global_config_path=None,
+        isolated_config_dir=tmp_path,
+        sky_bin=tmp_path / "sky",
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_config",
+        return_value=runtime,
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.ensure_skypilot_version",
+        return_value=runtime.sky_bin,
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow._load_base_config",
+        return_value={},
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow._controller_config_for_execution",
+        return_value={},
+    )
+    environment = mocker.patch(
+        "npa.orchestration.skypilot.workflow.sky_environment",
+        return_value={},
+    )
+    preflight = mocker.patch(
+        "npa.execution_preflight.preflight_skypilot_submission",
+        return_value=("ok", {}, {}),
+    )
+
+    result = workflow_cli._raw_execution_preflight([{"name": "demo"}])
+
+    assert result == ("ok", {}, {})
+    environment.assert_called_once_with(
+        tmp_path,
+        recover_isolated_api=False,
+    )
+    preflight.assert_called_once()
+
+
 def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:

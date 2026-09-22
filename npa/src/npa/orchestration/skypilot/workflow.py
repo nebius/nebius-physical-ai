@@ -726,7 +726,10 @@ def ensure_local_api_daemon_health(
     # It only needs the exact configured executable to identify an already-live
     # daemon; an absent daemon is left for the regular pinned-version path.
     sky_executable = str(runtime_config.sky_bin)
-    env = sky_environment(runtime_config.isolated_config_dir)
+    env = sky_environment(
+        runtime_config.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     if runtime_config.isolated_config_dir is not None:
         # Environment preparation validates any owned listener. Startup waits
         # until the exact workload/project configuration has passed preflight.
@@ -819,7 +822,92 @@ class _PreparedWorkflowSubmission:
     env: dict[str, str] = field(default_factory=dict)
 
 
-def _submission_global_config(runtime, controller_backend, infra):
+def _required_storage_clouds(
+    docs: Sequence[Mapping[str, Any]],
+    *,
+    controller_backend: ControllerBackend,
+) -> list[str]:
+    """Return storage providers that SkyPilot must allow for a pinned k8s DAG."""
+
+    if controller_backend != "kubernetes":
+        return []
+    storage_clouds: set[str] = set()
+    for doc in docs:
+        mounts = doc.get("file_mounts")
+        if not isinstance(mounts, Mapping):
+            continue
+        for mount in mounts.values():
+            store = (
+                str(mount.get("store") or "").strip().lower()
+                if isinstance(mount, Mapping)
+                else ""
+            )
+            source = (
+                str(mount.get("source") or "").strip().lower()
+                if isinstance(mount, Mapping)
+                else str(mount or "").strip().lower()
+            )
+            if store == "nebius" or source.startswith("nebius://"):
+                storage_clouds.add("nebius")
+    if storage_clouds:
+        task_docs = list(docs)
+        if task_docs:
+            header_keys = set(task_docs[0])
+            if "name" in header_keys and header_keys <= {
+                "name",
+                "execution",
+                "primary_tasks",
+                "termination_delay",
+            }:
+                task_docs = task_docs[1:]
+        for doc in task_docs:
+            resources = doc.get("resources")
+            if not _resources_pin_kubernetes(resources):
+                raise ValueError(
+                    "Kubernetes workflows using Nebius storage must pin every "
+                    "task resources.cloud to kubernetes"
+                )
+    return sorted(storage_clouds)
+
+
+def _resources_pin_kubernetes(resources: Any) -> bool:
+    """Return whether every effective SkyPilot resource pins Kubernetes."""
+
+    if not isinstance(resources, Mapping):
+        return False
+    common = {
+        key: value
+        for key, value in resources.items()
+        if key not in {"any_of", "ordered"}
+    }
+    alternatives: list[Mapping[str, Any]] = []
+    for key in ("any_of", "ordered"):
+        values = resources.get(key)
+        if values is None:
+            continue
+        if not isinstance(values, list) or not all(
+            isinstance(value, Mapping) for value in values
+        ):
+            return False
+        alternatives.extend(values)
+    effective = (
+        [{**common, **alternative} for alternative in alternatives]
+        if alternatives
+        else [common]
+    )
+    for candidate in effective:
+        cloud = str(candidate.get("cloud") or "").strip().lower()
+        infra = str(candidate.get("infra") or "").strip().lower()
+        if cloud and cloud not in {"kubernetes", "k8s"}:
+            return False
+        if infra and infra.split("/", 1)[0] not in {"kubernetes", "k8s"}:
+            return False
+        if not cloud and not infra:
+            return False
+    return True
+
+
+def _submission_global_config(runtime, controller_backend, infra, docs):
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
         controller_backend=controller_backend,
@@ -835,14 +923,32 @@ def _submission_global_config(runtime, controller_backend, infra):
         # The selected workload and controller share this exact context; other
         # operator settings, including pod configuration, retain their values.
         kubernetes["allowed_contexts"] = [context]
-        config["allowed_clouds"] = ["kubernetes"]
+    if controller_backend == "kubernetes":
+        # SkyPilot uses the compute-cloud allowlist for storage capability
+        # discovery too. Keep compute pinned by the task resources above while
+        # admitting only the storage provider explicitly used by this DAG.
+        storage_clouds = _required_storage_clouds(
+            docs, controller_backend=controller_backend
+        )
+        if storage_clouds and not _resources_pin_kubernetes(
+            ((config.get("jobs") or {}).get("controller") or {}).get("resources")
+        ):
+            raise ValueError(
+                "Kubernetes workflows using Nebius storage must pin controller "
+                "resources.cloud to kubernetes"
+            )
+        if context or storage_clouds:
+            config["allowed_clouds"] = ["kubernetes", *storage_clouds]
     return config
 
 
 def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
     from npa.execution_preflight import ExecutionPreflightError
 
-    env = sky_environment(prepared.runtime_config.isolated_config_dir)
+    env = sky_environment(
+        prepared.runtime_config.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
             env[key] = value
@@ -909,7 +1015,9 @@ def _prepare_workflow_submission(
         shutil.copy2(yaml_path, rendered)
         _chmod_owner_only(rendered)
         executable = str(ensure_skypilot_version(runtime.sky_bin))
-        global_config = _submission_global_config(runtime, controller_backend, infra)
+        global_config = _submission_global_config(
+            runtime, controller_backend, infra, docs
+        )
         generated = directory / "skypilot-config.yaml"
         generated.write_text(
             yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
@@ -983,6 +1091,7 @@ def submit_workflow(
     owned_submission_dir: Path | None = None
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
+    launch_boundary_entered = False
     try:
         prepared = _prepare_workflow_submission(
             yaml_path,
@@ -1167,6 +1276,7 @@ def submit_workflow(
             }
             transaction_recorder(enriched)
 
+        launch_boundary_entered = True
         try:
             transaction = run_launch_transaction(
                 logical_id=identity,
@@ -1238,7 +1348,8 @@ def submit_workflow(
     ) as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise SkyPilotSubmitError(
-            f"SkyPilot workflow submission failed: {exc}"
+            f"SkyPilot workflow submission failed: {exc}",
+            launch_attempted=launch_boundary_entered,
         ) from exc
 
 

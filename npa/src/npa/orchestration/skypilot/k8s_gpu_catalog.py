@@ -987,18 +987,32 @@ def _gang_requirements(
     )
 
 
+def _node_matches_accelerator_aliases(
+    node: KubernetesGpuNode,
+    aliases: frozenset[str],
+    *,
+    explicit_alias: bool,
+) -> bool:
+    authoritative = dict(node.labels).get("nvidia.com/gpu.product", "")
+    if explicit_alias and authoritative:
+        return _normalize(authoritative) in aliases
+    return any(_normalize(product) in aliases for product in node.products)
+
+
 def _compatible_gang_nodes(inventory: KubernetesGpuInventory, shape: _GangRequirements):
     wanted = _normalize(shape.accelerator.name)
-    aliases = next(
-        (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
-        frozenset({wanted}),
+    alias_group = next(
+        (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group), None
     )
+    aliases = alias_group or frozenset({wanted})
     return [
         node
         for node in inventory.nodes
         if (not shape.allowed or node.name in shape.allowed)
         and _node_matches_pod_spec(node, shape.pod_spec)
-        and any(_normalize(product) in aliases for product in node.products)
+        and _node_matches_accelerator_aliases(
+            node, aliases, explicit_alias=alias_group is not None
+        )
         and node.allocatable >= shape.accelerator.quantity
         and node.allocatable_cpu_millis >= shape.cpu
         and node.allocatable_memory_bytes >= shape.memory
@@ -1128,6 +1142,7 @@ def _normalize(name: str) -> str:
 _EXPLICIT_ACCELERATOR_ALIASES = (
     frozenset({"b200", "nvidiab200"}),
     frozenset({"b300", "nvidiab300"}),
+    frozenset({"h100", "h10080gb", "nvidiah10080gbhbm3"}),
     frozenset(
         {
             "rtx6000",

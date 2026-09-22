@@ -1,0 +1,48 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "7220375b6a94cd98a22d1116830fbb735408e1949c0caee2840a4d861fe3aae2",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema, four-stage plan, argv and exact resource/render overrides pass CPU checks.",
+      "evidence": [
+        "npa/tests/workflows/test_seedvr2_workflow.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "H100/sample defaults and explicit B200/posterior-mode overrides reach the same pinned 3B implementation.",
+      "evidence": [
+        "npa/tests/cli/test_seedvr2_cli.py",
+        "npa/tests/workbench/test_seedvr2_conditioning.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Example bucket is a placeholder; real create-only output authority must be frozen before submission.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Operator must bind actual input bytes and worker-readable S3 objects.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "No fresh execution credential or exact-model access preflight in this source review.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "Changed runtime source needs a new immutable qualified image; predecessor acceptance does not transfer.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "B200 native image/kernel, actual encoder/RNG and runtime gates remain; historical H100 quality failures are retained.",
+      "evidence": []
+    }
+  }
+}
