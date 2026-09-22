@@ -55,15 +55,20 @@ episode and frame identity verified and the identity metadata excluded from mode
 inputs. These measurements cover loader correctness and consumer wait time;
 they do not establish training throughput.
 
-No full-model optimizer update or checkpoint is qualified yet. The first B200
-attempt exhausted its JAX memory pool. Later attempts with a larger pool passed
-the batch gate but failed in optional explicit compilation diagnostics. The
-successor restores native direct JIT execution. Its CPU prerequisite passed in
-the locked 217-distribution runtime, then the source-integrity check stopped the
-run before GPU training because extra files appeared in the source extraction.
-All four original failure artifacts were verified and the failed job was
-cleaned up. The handoff between the preflight and training process is being
-corrected before another attempt.
+One full-model optimizer update is now qualified on B200 using native direct
+JIT execution, batch size 256, and all 3,353,433,872 parameters trainable. The
+locked 217-distribution runtime, exact reference batch, and immutable source
+check passed. The native gradient norm was finite; 49 of 51 parameter leaves
+changed. Fixed-batch loss moved from 0.0063964208 to 0.0063885362. These losses
+verify execution and do not establish held-out or rollout improvement.
+
+All four original artifacts were hash-verified remotely and locally before
+controller cleanup. Qualification receipt SHA-256:
+`ecab45dc00b106dd977334045fca8e4a9b0465784caac35ae358b606575372cc`.
+The updated Comet50 state was discarded. Comet12 remains the fixed parent for
+the planned 20,000-update task-specific run. Fresh-process full-state recovery,
+sustained training throughput, checkpoint selection, and trained-policy serving
+parity still require qualification.
 
 **Latest completed training experiment, September 19:** both
 [matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
