@@ -170,6 +170,13 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "flex-pi-b300-inference.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="flex-pi",
+        notes="Real compiled single-B300 inference with the current NPA source overlay and hash-pinned runtime CUDA 12.9 assembler.",
+    ),
+    SubmitLiveCase(
         "flex-pi-rtxpro-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

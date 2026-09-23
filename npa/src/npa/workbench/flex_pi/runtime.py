@@ -167,12 +167,16 @@ def _runtime_env(request: FlexPiRequest) -> dict[str, str]:
 
 
 def _execute(
-    argv: list[str], request: FlexPiRequest, runner: Callable[..., Any]
+    argv: list[str],
+    request: FlexPiRequest,
+    runner: Callable[..., Any],
+    *,
+    compiler_env: dict[str, str] | None = None,
 ) -> None:
     completed = runner(
         argv,
         cwd="/opt/flex-pi",
-        env=_runtime_env(request),
+        env={**_runtime_env(request), **(compiler_env or {})},
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -301,7 +305,19 @@ def run_inference(
         base = _provenance(request, manifest, argv)
         if request.dry_run:
             return {**base, "status": "dry_run", "artifacts": {}}
-        _execute(argv, request, runner)
+        compiler_env = {}
+        if request.torch_compile and request.expected_gpu.upper() == "B300":
+            from zipfile import BadZipFile
+
+            from npa.workbench.flex_pi.compiler import prepare_b300_compiler
+
+            try:
+                compiler_env, base["compiler"] = prepare_b300_compiler(
+                    root / "compiler"
+                )
+            except (OSError, ValueError, KeyError, BadZipFile) as exc:
+                raise FlexPiError("B300 compiler preparation failed") from exc
+        _execute(argv, request, runner, compiler_env=compiler_env)
         action_payload = _validate_action_artifact(root / "actions.json", request)
         result = {
             **base,

@@ -94,6 +94,21 @@ Blackwell workflows. Direct CLI and SDK callers must opt in explicitly. Compile
 warmup is accounted as model setup; it does not change the checkpoint, public
 observation, four Euler steps, seed, or 32×14 action contract.
 
+The experimental [B300 workflow](../../workflows/testing/flex-pi-b300-inference.yaml)
+requires the current NPA source overlay and `--expected-gpu B300`. The released
+image's Triton assembler cannot compile B300's `sm_103a` target. For compiled
+B300 requests, NPA runtime-fetches `nvidia-cuda-nvcc-cu12==12.9.86`, verifies
+both the wheel and assembler SHA-256, and selects that assembler for the vendor
+process. CUDA 12.9 adds this target according to the
+[NVIDIA release notes](https://docs.nvidia.com/cuda/archive/12.9.0/cuda-toolkit-release-notes/index.html).
+The compiler is governed by the NVIDIA CUDA Toolkit EULA; its included license
+stays beside the binary in a private temporary run directory. NPA publishes only
+compiler version/hash provenance in `result.json`; the compiler is not baked
+into the existing image or uploaded as an artifact. Eager requests and the B200
+and RTX reference paths retain their existing compiler selection. This runtime
+repair does not establish a B300 training speedup or qualify four single-GPU
+hosts as equivalent to four GPUs on one host.
+
 The SDK exposes the same implementation as
 `npa.sdk.workbench.flex_pi.infer(...)` and also supports local output directories.
 For serving, set an owner-controlled

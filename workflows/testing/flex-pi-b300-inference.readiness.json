@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "57abe9fe7d5fe598cf59235bf998f2e21ef18875a17e9819d0c9ba0368942b5a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec both completed successfully.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/flex-pi-b300-inference.yaml",
+        "npa workbench workflow submit workflows/testing/flex-pi-b300-inference.yaml --plan-only"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The stage invokes the pinned upstream checkpoint and policy adapter, then requires a finite 32x14 action chunk.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#artifacts-and-acceptance"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected project's object-storage credential preflight passed before allocation.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius,s3 --json (sanitized private record)"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The public input manifest pins every source object and SHA-256 digest.",
+      "evidence": [
+        "npa/docker/workbench/flex-pi/public_robotwin_sample.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Exact pinned checkpoint, observation, tokenizer, DINOv3, and converted Wan asset endpoints were reachable before allocation.",
+      "evidence": [
+        "sanitized private access-preflight record; no credential values retained"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Uses the released r2 image plus the current NPA source overlay and separately hash-pinned runtime CUDA 12.9.86 assembler.",
+      "evidence": [
+        "npa/src/npa/deploy/public_release_manifest.json",
+        "npa/src/npa/workbench/flex_pi/compiler.py"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Managed B300 deployment and CUDA/SkyPilot health passed. The original compiled inference exposed missing sm_103a assembler support; full policy qualification of the pinned compiler repair remains pending.",
+      "evidence": [
+        "docs/workbench/flex-pi.md",
+        "sanitized private B300 deployment and failed-inference evidence"
+      ]
+    }
+  }
+}
