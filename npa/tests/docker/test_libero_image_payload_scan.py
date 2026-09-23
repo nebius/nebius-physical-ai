@@ -637,6 +637,37 @@ def test_scanner_refuses_each_forbidden_boundary(tmp_path, path, content, kind) 
     assert any(item.kind == kind for item in findings)
 
 
+@pytest.mark.parametrize("name", ["libicudata.so", "libicudata.so.72", "libicudata.so.72.1"])
+def test_scanner_classifies_icu_data_without_skipping_payload_checks(tmp_path, name) -> None:
+    module = _load_module()
+    path = "usr/lib/x86_64-linux-gnu/" + name
+    for content, forbidden in (
+        (b"\x7fELFneutral Unicode data", None),
+        (b"\x7fELF\0libcudart.so.12\0", "cuda_elf_dependency"),
+        (b"import torch\n", "renamed_runtime_payload_content"),
+        (b"AKIA0000000000000000", "credential_content"),
+    ):
+        layer = _layer(tmp_path / "layer.tar", {path: content})
+        findings = _scan(module, [layer], _config(module), _metadata(module))
+        assert not any(item.kind == "cuda_or_nvidia_payload" for item in findings)
+        if forbidden:
+            assert any(item.kind == forbidden for item in findings)
+        else:
+            assert not findings
+
+
+@pytest.mark.parametrize("name", [
+    "libcuda.so.1", "libcudart.so.12", "libcublas.so.12", "libcudnn.so.9",
+    "libnccl.so.2", "libnvrtc.so.12", "libnvidia-ml.so.1",
+    "libcustom_cuda_runtime.so", "libicudata_cuda.so.72", "libicudata.so.72.cuda.so",
+])
+def test_scanner_retains_cuda_library_path_detection(tmp_path, name) -> None:
+    module = _load_module()
+    layer = _layer(tmp_path / "layer.tar", {"usr/lib/" + name: b"payload"})
+    findings = _scan(module, [layer], _config(module), _metadata(module))
+    assert any(item.kind == "cuda_or_nvidia_payload" for item in findings)
+
+
 def test_scanner_refuses_forbidden_bytes_hidden_in_nested_archive(tmp_path) -> None:
     module = _load_module()
     nested = _layer(tmp_path / "nested.tar", {"site-packages/torch/version.py": b"x"})

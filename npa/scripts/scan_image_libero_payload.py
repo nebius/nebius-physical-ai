@@ -91,6 +91,9 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"(?:^|/)(?:(?:usr/local|opt)/cuda(?:-[0-9.]+)?(?:/|$)|"
             r"usr/include/(?:cuda|cublas|cudnn|nccl|nvrtc|cupti)[^/]*\.h$|"
             r"(?:nvcc|ptxas|cuobjdump|compute-sanitizer|nvidia-smi)(?:$|\.)|"
+            # ICU's Unicode data library contains "cuda" across its name.
+            # Exclude only that library basename; content/ELF scans still apply.
+            r"(?!libicudata\.so(?:\.[0-9]+)*$)"
             r"[^/]*(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|cupti|cufile|"
             r"cusparse|cusolver|curand|cufft|nvidia)[^/]*\.so(?:\.[0-9]+)*)",
             re.I,
