@@ -30,6 +30,8 @@ dependencies = [
     "paramiko>=5.0,<6.0",
     "bcrypt>=5.0,<6.0",
     "pyyaml>=6.0,<7.0",
+    # Structure-aware edits of owned Terraform provider defaults.
+    "python-hcl2>=8.1.4,<9",
     "rich>=13.0,<16.0",
     "boto3>=1.34,<2.0",
     "jinja2>=3.1.6,<4.0",

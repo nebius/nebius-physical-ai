@@ -21,6 +21,8 @@ from npa.cluster.gpu_driver import (
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
+from npa.cluster_backends.provider_rpc import configure_provider_rpc_deadlines
+
 from npa.cluster_backends.kuberay import (
     KUBERAY_STATE_FILES,
     KubeRaySpec,
@@ -2431,6 +2433,7 @@ def _deploy_one_cluster(
             ssh_public_key=ssh_public_key,
             on_status=on_status,
         )
+        rpc_deadlines = configure_provider_rpc_deadlines(workdir, timeout_minutes)
         env = _cluster_tf_env(
             nebius_bin,
             tenant_id=tenant_id,
@@ -2459,6 +2462,7 @@ def _deploy_one_cluster(
                 driver.managed_driver_preset if driver.uses_managed_image else ""
             ),
             "status": "provisioning",
+            "provider_rpc_deadlines": rpc_deadlines,
         }
         if guarded.kuberay and guarded.kuberay.enabled:
             sidecar.update(
