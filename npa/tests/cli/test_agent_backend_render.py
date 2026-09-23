@@ -2198,7 +2198,11 @@ states:
     monkeypatch.setattr(
         module,
         "_agent_workflow_operation_env",
-        lambda _project, _context: {"PATH": "/usr/bin"},
+        lambda _project, _context: {
+            "PATH": "/usr/bin",
+            "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
+            "NEBIUS_IAM_TOKEN": "must-not-propagate",
+        },
     )
 
     class Completed:
@@ -2222,7 +2226,12 @@ states:
             }
         )
 
-    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: Completed())
+    def bounded(_args, *, env, timeout_s):
+        assert "NEBIUS_IAM_TOKEN" not in env
+        assert timeout_s == 30
+        return Completed()
+
+    monkeypatch.setattr(module, "run_bounded_agent_command", bounded)
     assert module._agent_context_has_schedulable_gpu(
         project="demo", kubernetes_context="context"
     )
@@ -3026,6 +3035,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     import sys
 
     module_name = "npa_rendered_artifact_history_backend"
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     recordings = tmp_path / "recordings"
     recordings.mkdir()
@@ -3436,6 +3446,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     import sys
 
     module_name = "npa_rendered_artifact_security_backend"
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     monkeypatch.setattr(
         module,
@@ -5658,6 +5669,179 @@ def test_rendered_backend_uses_dedicated_agent_skypilot_state(
         assert environment["NPA_AGENT_ISOLATED_RECOVERY_REBIND"] == "v1"
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) -> None:
+    import sys
+
+    module_name = "npa_rendered_bounded_credential_paths"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    config_path = "/agent-home/.nebius/config.yaml"
+    denied = {"/mnt/cloud-metadata/token", config_path}
+    real_stat = module.os.stat
+    calls: list[tuple[list[str], dict[str, str], float]] = []
+
+    def reject_credential_stat(path, *args, **kwargs):
+        if module.os.fspath(path) in denied:
+            raise AssertionError("credential paths must not be preflight statted")
+        return real_stat(path, *args, **kwargs)
+
+    class Result:
+        returncode = 0
+        stdout = '{"items": []}'
+        stderr = ""
+
+    def bounded(command, *, env, timeout_s, **_kwargs):
+        calls.append((list(command), dict(env), float(timeout_s)))
+        return Result()
+
+    def discover(command, *, command_env):
+        assert command_env["NPA_NEBIUS_CREDENTIAL_SOURCE"] == "instance_metadata"
+        assert "NEBIUS_IAM_TOKEN" not in command_env
+        return 0, '{"items": []}', ""
+
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa"))
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", config_path)
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "project-test")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "must-not-propagate")
+    monkeypatch.setattr(module.os, "stat", reject_credential_stat)
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/bin/true")
+    monkeypatch.setattr(module, "_agent_exact_kubeconfig", lambda: "")
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(module, "_load_agent_config_yaml", lambda: {})
+    monkeypatch.setattr(module, "_load_state", lambda: {})
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_operation_env",
+        lambda _project, _context: module._agent_command_env(),
+    )
+    monkeypatch.setattr(module, "run_bounded_agent_command", bounded)
+    monkeypatch.setattr(module, "run_resource_discovery_command", discover)
+    try:
+        environment = module._agent_command_env()
+        assert environment["NEBIUS_PROFILE"] == "cursor-sa"
+        inventory_env, profile, config, source = (
+            module._agent_inventory_credential_context()
+        )
+        assert (profile, config, source) == (
+            "cursor-sa",
+            "/root/.nebius/config.yaml",
+            "instance_metadata",
+        )
+        assert inventory_env["HOME"] == "/root"
+        assert module._agent_cloud_mk8s_clusters() == []
+        module._tenant_resource_inventory(force_refresh=True)
+        assert module._run_agent_npa_json(
+            ["--help"],
+            extra_env={"NPA_NEBIUS_CREDENTIAL_SOURCE": "configured_profile"},
+        ) == {"items": []}
+        assert (
+            module._agent_context_has_schedulable_gpu(
+                project="project-test", kubernetes_context="context-test"
+            )
+            is False
+        )
+        assert len(calls) == 3
+        assert calls[0][0][:3] == ["/bin/true", "--profile", "cursor-sa"]
+        assert calls[0][2] == 30
+        assert calls[1][0][-1] == "--help"
+        assert calls[1][2] == 300
+        assert calls[2][0][1:3] == ["get", "nodes"]
+        assert calls[2][2] == 30
+        assert all("NEBIUS_IAM_TOKEN" not in env for _command, env, _timeout in calls)
+        assert all(
+            env["NPA_NEBIUS_CONFIG"] == "/root/.nebius/config.yaml"
+            and env["NPA_NEBIUS_PROFILE"] == "cursor-sa"
+            and env["NPA_NEBIUS_CREDENTIAL_SOURCE"] == "instance_metadata"
+            for _command, env, _timeout in calls
+        )
+
+        def cleanup_pending(*_args, **_kwargs):
+            raise TimeoutError("a prior agent cloud command has not exited")
+
+        monkeypatch.setattr(module, "run_bounded_agent_command", cleanup_pending)
+        with pytest.raises(module.HTTPException) as exc_info:
+            module._run_agent_npa_json(["workflow", "run"], timeout_s=None)
+        assert exc_info.value.status_code == 503
+        assert "None" not in str(exc_info.value.detail)
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+class _ExistingAgentScript:
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+    def __str__(self) -> str:
+        return self.path
+
+    def is_file(self) -> bool:
+        return True
+
+
+def _submit_sim2real_timeout(module, monkeypatch):
+    state = {
+        "selection": {"robot_preset": "franka", "sim_backend": "isaac"},
+        "sim_viz": {"camera": "workspace"},
+    }
+    saved: list[dict[str, object]] = []
+    monkeypatch.setattr(module, "Path", _ExistingAgentScript)
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(
+        module, "_save_state", lambda value: saved.append(copy.deepcopy(value))
+    )
+    monkeypatch.setattr(
+        module,
+        "_wire_sim2real_run_preview",
+        lambda _state, *, run_id, camera: {
+            "run_id": run_id,
+            "camera": camera,
+            "rerun_ready": False,
+        },
+    )
+    response = module.submit_sim2real({"run_id": "timeout-run"})
+    return response, json.loads(response.body), saved
+
+
+def test_rendered_backend_surfaces_bounded_command_timeouts(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_command_timeouts"
+    )
+    timeout_calls: list[tuple[list[str], float | None]] = []
+
+    def timed_out(command, *, timeout_s, **_kwargs):
+        timeout_calls.append((list(command), timeout_s))
+        raise TimeoutError("agent command timed out")
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"},
+    )
+    monkeypatch.setattr(module, "run_bounded_agent_command", timed_out)
+    with pytest.raises(module.HTTPException) as error:
+        module._run_agent_npa_json(["workflow", "run"], timeout_s=17)
+    assert error.value.status_code == 502
+    assert error.value.detail == (
+        "NPA command timed out after 17s: ['workflow', 'run']"
+    )
+
+    response, payload, saved = _submit_sim2real_timeout(module, monkeypatch)
+    assert response.status_code == 502
+    assert payload["error"] == (
+        "live sim2real submit timed out after 30s: agent command timed out"
+    )
+    assert payload["submit_mode"] == "live-k8s-timeout"
+    assert payload["run_id"] == "timeout-run"
+    assert saved[-1]["latest_submit"]["live_submit"]["ok"] is False
+    assert timeout_calls == [
+        ([str(module.NPA_CLI), "workflow", "run"], 17),
+        (["/opt/npa-agent/run-live-sim2real.sh", "timeout-run"], 30),
+    ]
 
 
 def test_rendered_backend_preserves_metadata_profile_home(

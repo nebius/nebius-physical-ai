@@ -67,7 +67,26 @@ def audit(tmp_path):
         sys.path[:] = original_path
 
 
-def test_audit_script_renders_and_reports_a_healthy_surface(audit, tmp_path) -> None:
+def _stage_audit_credential_context(monkeypatch, tmp_path, backend_globals) -> None:
+    """Represent configured provenance without any real credential or provider call."""
+    config = tmp_path / "nebius" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("profiles: {}\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "configured_profile")
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "audit-fixture")
+
+    def reject_provider_command(*_args, **_kwargs):
+        pytest.fail("the offline capability audit must not call a provider")
+
+    monkeypatch.setitem(
+        backend_globals, "run_bounded_agent_command", reject_provider_command
+    )
+
+
+def test_audit_script_renders_and_reports_a_healthy_surface(
+    audit, tmp_path, monkeypatch
+) -> None:
     from fastapi.testclient import TestClient
 
     body = audit.render_backend_body()
@@ -77,6 +96,7 @@ def test_audit_script_renders_and_reports_a_healthy_surface(audit, tmp_path) -> 
     )
 
     app, _globals = audit.load_backend_app(body, tmp_path)
+    _stage_audit_credential_context(monkeypatch, tmp_path, _globals)
     routes = audit.iter_routes(app)
     # Guards against a vacuous pass: an empty routing table has no bad routes
     # and no duplicates, so every assertion below would hold for the wrong
@@ -113,6 +133,32 @@ def test_audit_script_renders_and_reports_a_healthy_surface(audit, tmp_path) -> 
     assert not not_working, "advertised capabilities did not work:\n" + "\n".join(
         not_working
     )
+
+
+@pytest.mark.parametrize("credential_source", ["", "unsupported-fixture"])
+def test_unconfigured_audit_keeps_credential_refusals_visible(
+    audit, tmp_path, monkeypatch, credential_source: str
+) -> None:
+    from fastapi.testclient import TestClient
+
+    app, backend_globals = audit.load_backend_app(audit.render_backend_body(), tmp_path)
+    _stage_audit_credential_context(monkeypatch, tmp_path, backend_globals)
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", credential_source)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        access = client.get("/access")
+        artifact = client.get("/artifacts/content")
+
+    assert access.status_code == 503
+    assert access.json() == {
+        "ok": False,
+        "error": "Agent access discovery is unavailable.",
+    }
+    assert artifact.status_code == 502
+    assert audit.classify_outcome({"status": access.status_code}) == "error"
+    assert audit.classify_outcome({"status": artifact.status_code}) == "error"
+    assert str(tmp_path) not in access.text + artifact.text
+    assert "unsupported-fixture" not in access.text + artifact.text
 
 
 def test_rendered_openapi_media_operation_ids_are_unique(audit, tmp_path) -> None:

@@ -13,7 +13,6 @@ import json
 import os
 import secrets
 import shutil
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -44,6 +43,10 @@ if __name__ == "npa.cli.agent_access_runtime":
         discover_agent_access,
         normalize_configured_artifact_sources,
         scoped_artifact_buckets,
+    )
+    from npa.cli.agent_resources import (
+        prepare_agent_cloud_environment,
+        run_bounded_agent_command,
     )
     from npa.cli.agent_s3_guard import (
         configured_agent_s3_buckets,
@@ -98,15 +101,6 @@ _AGENT_RUN_CURSOR_GENERATION = 0
 _AGENT_ACCESS_LOCK = threading.Lock()
 _AGENT_ACCESS_CONDITION = threading.Condition(_AGENT_ACCESS_LOCK)
 _AGENT_RUN_CURSOR_LOCK = threading.Lock()
-_AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
-    {
-        "NEBIUS_IAM_TOKEN",
-        "NPA_NEBIUS_IAM_TOKEN",
-        "TF_VAR_iam_token",
-        "NPA_REUSE_IAM_TOKEN",
-        "IAM_TOKEN",
-    }
-)
 
 
 def _artifact_run_cursor(snapshot_id: str, offset: int) -> str:
@@ -380,19 +374,22 @@ def _agent_inventory_credential_context() -> tuple[dict[str, str], str, str, str
     """Return a deterministic metadata-profile environment for read inventory."""
     base = _agent_command_env() if callable(_agent_command_env) else dict(os.environ)
     env = {str(key): str(value) for key, value in dict(base or {}).items()}
-    for key in _AMBIENT_NEBIUS_TOKEN_KEYS:
-        env.pop(key, None)
+    for key in ("NPA_NEBIUS_CONFIG", "NPA_NEBIUS_PROFILE"):
+        if key not in env:
+            env[key] = str(os.environ.get(key) or "").strip()
+    if "NPA_NEBIUS_CREDENTIAL_SOURCE" not in env:
+        env["NPA_NEBIUS_CREDENTIAL_SOURCE"] = str(
+            os.environ.get("NPA_NEBIUS_CREDENTIAL_SOURCE") or ""
+        ).strip()
+    env, source = prepare_agent_cloud_environment(env)
     config_path = str(
-        os.environ.get("NPA_NEBIUS_CONFIG") or "/root/.nebius/config.yaml"
+        env.get("NPA_NEBIUS_CONFIG") or "/root/.nebius/config.yaml"
     ).strip()
-    profile = str(os.environ.get("NPA_NEBIUS_PROFILE") or "cursor-sa").strip()
+    profile = str(
+        env.get("NPA_NEBIUS_PROFILE") or env.get("NEBIUS_PROFILE") or "cursor-sa"
+    ).strip()
     env["HOME"] = str(Path(config_path).parent.parent) if config_path else "/root"
     env["NEBIUS_PROFILE"] = profile
-    try:
-        metadata_available = Path("/mnt/cloud-metadata/token").is_file()
-    except OSError:
-        metadata_available = False
-    source = "instance_metadata" if metadata_available else "configured_profile"
     return env, profile, config_path, source
 
 
@@ -422,27 +419,18 @@ def _agent_nebius_json(args: list[str], *, operation: str) -> dict:
     # bootstrap token, metadata credentials rotate and reflect the running VM's
     # current tenant/project grants.
     env, profile, config_path, _source = _agent_inventory_credential_context()
-    try:
-        config_available = bool(config_path and Path(config_path).is_file())
-    except OSError:
-        config_available = False
-    if config_available:
+    if config_path:
         command.extend(["--config", config_path])
     if profile:
         command.extend(["--profile", profile])
     command.extend([*args, "--all", "--format", "json"])
     try:
-        proc = subprocess.run(
+        proc = run_bounded_agent_command(
             command,
             env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=_AGENT_NEBIUS_TIMEOUT_SECONDS,
+            timeout_s=_AGENT_NEBIUS_TIMEOUT_SECONDS,
         )
-    except subprocess.TimeoutExpired:
-        # TimeoutExpired may retain captured stdout/stderr or the command. Do not
-        # reflect any of it into the public access report.
+    except TimeoutError:
         raise AccessProbeError("unavailable", operation) from None
     if proc.returncode != 0:
         raise _access_probe_error(operation, proc.stderr)
