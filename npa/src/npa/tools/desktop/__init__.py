@@ -63,6 +63,16 @@ def _chat_assets():
     return {name: (Path(__file__).parent / name).read_text() for name in names}
 
 
+def _operation_assets(action):
+    assets = {}
+    if action in {"setup", "chat-setup"}:
+        source = Path(__file__).parent / "desktop_clipboard.js"
+        assets["viewer_assets"] = {source.name: source.read_text()}
+    if action == "chat-setup":
+        assets["chat_assets"] = _chat_assets()
+    return assets
+
+
 def operate(host: str, action: str, *, dry_run: bool = False, **options) -> dict:
     """Run a desktop action on an explicitly selected existing SSH host.
 
@@ -81,8 +91,7 @@ def operate(host: str, action: str, *, dry_run: bool = False, **options) -> dict
     config = _configuration(action, options)
     if dry_run:
         return {"planned": True, "ssh_host": host, **config}
-    if action == "chat-setup":
-        config["chat_assets"] = _chat_assets()
+    config.update(_operation_assets(action))
     source = (Path(__file__).parent / "remote.py").read_text()
     payload = source + "\n_run(" + repr(config) + ")\n"
     result = subprocess.run(

@@ -111,7 +111,7 @@ def _desktop_services(config):
     _command(["systemctl", "--user", "restart", "nebius-desktop-web.service"])
 
 
-def _viewer():
+def _viewer(assets):
     source = _STATE / "novnc-1.6.0"
     if not source.exists():
         _command(
@@ -136,6 +136,7 @@ def _viewer():
         ignore=shutil.ignore_patterns(".git", "node_modules"),
     )
     _patch_viewer(target)
+    _write_viewer(target, assets)
 
 
 def _patch_viewer(target):
@@ -153,6 +154,12 @@ def _patch_viewer(target):
             quality, "        // Leave Tight in lossless mode."
         )
     )
+
+
+def _write_viewer(target, assets):
+    if set(assets) != {"desktop_clipboard.js"}:
+        raise ValueError("Unexpected desktop viewer assets.")
+    _write(target / "desktop_clipboard.js", assets["desktop_clipboard.js"], 0o644)
     _write(target / "desktop.html", _VIEWER, 0o644)
     _write(
         target / "index.html",
@@ -314,7 +321,7 @@ def _setup(config):
         raise ValueError("The current desktop installer supports Ubuntu AMD64.")
     _packages(_DESKTOP_PACKAGES)
     _credentials()
-    _viewer()
+    _viewer(config["viewer_assets"])
     _vscode(repository)
     _initial_density(config["dpi"])
     _desktop_services(config)
@@ -618,6 +625,7 @@ def _chat_setup(config):
         ["/usr/bin/python3", str(root / "chat_setup.py")],
         data=json.dumps({"connect_vscode": config.get("connect_vscode", False)}),
     )
+    _write_viewer(_STATE / "novnc-tools-v1", config["viewer_assets"])
     url = urlsplit(json.loads(public.read_text())["url"])
     _configure_gateway(
         {"public_ip": url.hostname, "https_port": url.port or 443}, tls=True
@@ -811,14 +819,15 @@ _VIEWER = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NPA Desktop</title><style>
 *{box-sizing:border-box}body{margin:0;background:#151719;color:#eee;font:13px system-ui;height:100vh;display:flex;flex-direction:column}
-header{height:36px;flex:none;display:flex;align-items:center;gap:14px;padding:0 12px;background:#24282b}
+header{min-height:36px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 12px;background:#24282b}
 header strong{margin-right:auto}button,select,input{font:inherit;padding:4px 8px;border-radius:5px;border:1px solid #626970;background:#24282b;color:#eee}
-#screen{flex:1;min-height:0;overflow:hidden}dialog{color:#eee;background:#24282b;border:1px solid #626970;border-radius:12px;padding:24px}dialog input{display:block;margin:14px 0;width:260px}textarea{display:block;width:min(70vw,600px);height:200px;margin:14px 0;background:#151719;color:#eee}
-</style></head><body><header><strong>NPA Desktop</strong><span id="status">Connecting…</span><label>Workspace <select id="scale"><option value="1">Comfortable</option><option value="0.85">More space</option><option value="1.15">Larger text</option></select></label><button id="fullscreen">Full screen</button></header>
+#screen{flex:1;min-height:0;overflow:hidden}dialog{color:#eee;background:#24282b;border:1px solid #626970;border-radius:12px;padding:24px}dialog input{display:block;margin:14px 0;width:260px}textarea{display:block;width:min(70vw,600px);height:min(35vh,240px);margin:14px 0;background:#151719;color:#eee;font:16px system-ui}dialog{max-width:calc(100vw - 24px);max-height:90dvh;overflow:auto}.clipboard-actions{display:flex;flex-wrap:wrap;gap:8px}#clipboard-status{margin:0;padding:3px 12px;font-size:12px;min-height:22px}#clipboard-hint{max-width:600px;line-height:1.5}@media(max-width:760px){header button,header select{min-height:36px}header strong{display:none}header label{font-size:12px}header #status{flex:1}dialog{padding:16px}textarea{width:100%}.clipboard-actions button{min-height:44px;font-size:16px}}
+</style></head><body><header><strong>NPA Desktop</strong><span id="status">Connecting…</span><label>Workspace <select id="scale"><option value="1">Comfortable</option><option value="0.85">More space</option><option value="1.15">Larger text</option></select></label><button id="paste-device" disabled>Paste</button><button id="open-clipboard">Clipboard</button><button id="fullscreen">Full screen</button></header><p id="clipboard-status" role="status" aria-live="polite"></p>
 <main id="screen"></main><dialog id="login"><form method="dialog"><label>Desktop password<input id="password" type="password" autocomplete="current-password" required autofocus></label><button>Connect</button></form></dialog>
-<dialog id="clipboard"><label>Clipboard<textarea id="clipboard-text" spellcheck="false"></textarea></label><button id="send-clipboard">Send to desktop</button> <button id="close-clipboard">Close</button><p>Paste laptop text here to send it. Copy desktop text from this box.</p></dialog>
+<dialog id="clipboard" aria-labelledby="clipboard-title"><h2 id="clipboard-title">Clipboard</h2><p id="clipboard-hint"></p><label>Text to paste<textarea id="clipboard-text" spellcheck="false" autocapitalize="none" autocomplete="off"></textarea></label><div class="clipboard-actions"><button id="send-clipboard" disabled>Paste into desktop</button><button id="copy-clipboard">Copy text</button><button id="close-clipboard">Close</button></div></dialog>
 <script type="module">
 import RFB from './core/rfb.js?npa-desktop=1';
+import { installClipboard } from './desktop_clipboard.js';
 const status=document.querySelector('#status'),scale=document.querySelector('#scale'),login=document.querySelector('#login');
 window.npaDesktopScale=Number(localStorage.getItem('npaDesktopScale')||1);
 if(![0.85,1,1.15].includes(window.npaDesktopScale))window.npaDesktopScale=1;
@@ -826,13 +835,7 @@ scale.value=String(window.npaDesktopScale);
 const url=new URL('websockify',location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';
 const rfb=new RFB(document.querySelector('#screen'),url.href);window.desktopRfb=rfb;
 rfb.scaleViewport=true;rfb.resizeSession=true;rfb.compressionLevel=2;
-const clipboard=document.querySelector('#clipboard'),clipboardText=document.querySelector('#clipboard-text');
-const clipboardButton=document.createElement('button');clipboardButton.textContent='Clipboard';
-document.querySelector('header').insertBefore(clipboardButton,document.querySelector('#fullscreen'));
-clipboardButton.addEventListener('click',()=>{clipboard.showModal();clipboardText.focus();clipboardText.select();});
-rfb.addEventListener('clipboard',event=>{clipboardText.value=event.detail.text;});
-document.querySelector('#send-clipboard').addEventListener('click',()=>{rfb.clipboardPasteFrom(clipboardText.value);clipboard.close();rfb.focus();});
-document.querySelector('#close-clipboard').addEventListener('click',()=>{clipboard.close();rfb.focus();});
+installClipboard(rfb);
 rfb.addEventListener('connect',()=>{status.textContent='Connected';rfb.focus();});
 rfb.addEventListener('disconnect',()=>{status.textContent='Disconnected — refresh to reconnect';});
 rfb.addEventListener('credentialsrequired',async()=>{

@@ -39,7 +39,21 @@ ssh "$DESKTOP_SSH_HOST" 'cat ~/.local/share/nebius-desktop/password' | pbcopy
 
 Paste it into the desktop password dialog. Linux application shortcuts usually
 use Ctrl rather than Command. Closing the tab leaves the remote session running.
-Use **Clipboard** to exchange text between the laptop and desktop.
+Click the destination in the desktop, then use **Command-V** on a Mac or
+**Ctrl-V** on a PC to paste text from that device. On a phone, tap **Paste** in
+the viewer toolbar and allow the browser's clipboard prompt if one appears.
+The viewer copies the text and sends the Linux paste shortcut to the selected
+application; it does not press Enter. Multiline text and Unicode use the VNC
+server's extended clipboard support.
+
+If the browser denies clipboard access, the **Clipboard** dialog provides a
+normal text box: paste there (touch and hold on a phone), then tap **Paste into
+desktop**. To copy text back, copy within Linux, open **Clipboard**, and choose
+**Copy text**. Clipboard contents are transferred only through the authenticated
+desktop connection and are not saved in browser storage. The desktop bridge
+supports text; use chat attachments for images. Re-running desktop `setup` or
+`chat-setup` refreshes the viewer assets; reload an existing desktop tab to use
+the new controls.
 
 ## Sharp text at a comfortable size
 

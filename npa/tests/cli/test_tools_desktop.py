@@ -172,6 +172,28 @@ def test_new_viewer_uses_density_and_readable_scale_controls():
     assert "localStorage.setItem('password'" not in remote._VIEWER
 
 
+def test_viewer_refresh_installs_matching_assets_without_restarting_services(
+    tmp_path, monkeypatch
+):
+    commands = Mock(side_effect=AssertionError("unexpected process change"))
+    monkeypatch.setattr(remote, "_command", commands)
+    assets = desktop._operation_assets("chat-setup")["viewer_assets"]
+    remote._write_viewer(tmp_path, assets)
+    remote._write_viewer(tmp_path, assets)
+    assert (tmp_path / "desktop_clipboard.js").read_text() == assets[
+        "desktop_clipboard.js"
+    ]
+    assert (tmp_path / "desktop.html").read_text() == remote._VIEWER
+    assert (tmp_path / "desktop_clipboard.js").stat().st_mode & 0o777 == 0o644
+    commands.assert_not_called()
+
+
+def test_viewer_assets_cannot_write_arbitrary_paths(tmp_path):
+    with pytest.raises(ValueError, match="Unexpected desktop viewer assets"):
+        remote._write_viewer(tmp_path, {"../outside": "untrusted"})
+    assert not list(tmp_path.iterdir())
+
+
 def test_open_public_desktop_does_not_create_tunnel(monkeypatch):
     monkeypatch.setattr(
         desktop,
