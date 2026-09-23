@@ -80,6 +80,9 @@ def _assess(packet, assessment):
             raise ValueError("Every judgment needs visible content and reasoning")
     reviewed = [item for item in judgments if item["verdict"] != "not_reviewed"]
     reviewer = _reviewer(assessment, reviewed)
+    illustrative = [
+        item["id"] for item in judgments if item["verdict"] == "illustrative"
+    ]
     problems = [
         item["id"] for item in judgments if item["verdict"] in {"mismatch", "uncertain"}
     ]
@@ -91,6 +94,7 @@ def _assess(packet, assessment):
         "status": status,
         "reviewer": reviewer,
         "cue_count": len(judgments),
+        "illustrative_cues": illustrative,
         "problem_cues": problems,
         "pending_cues": pending,
         "cues": judgments,

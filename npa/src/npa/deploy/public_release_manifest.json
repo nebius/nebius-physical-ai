@@ -41,5 +41,7 @@
     "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"},
     "flex-pi": {"tag": "0.1.0-cu128-r2", "published_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6", "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46"}
   },
-  "publication_pending": {}
+  "publication_pending": {
+    "antioch": "The adapter image is redistribution-eligible but has not yet been published and verified for anonymous pull."
+  }
 }

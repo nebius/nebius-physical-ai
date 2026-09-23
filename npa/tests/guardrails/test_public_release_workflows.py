@@ -104,6 +104,8 @@ def test_automatic_triggers_build_dev_images_without_promoting() -> None:
     script = resolve["run"]
     assert resolve["env"]["EVENT_NAME"] == "${{ github.event_name }}"
     assert "_automatic_build_tools" in script
+    assert "select_public_image_builds" in script
+    assert 'os.environ.get("EVENT_BEFORE", "")' in script
     assert 'os.environ.get("EVENT_NAME", "")' in script
     assert '"schedule"' in script
     assert "packaging-contract.yaml" in script
@@ -126,6 +128,7 @@ def test_automatic_triggers_build_dev_images_without_promoting() -> None:
     # The promote job never runs after a build: automatic dev builds must not
     # fall through into a release preflight or write.
     assert "needs.resolve.outputs.build_count == '0'" in jobs["promote"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in jobs["promote"]["if"]
 
 
 def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
