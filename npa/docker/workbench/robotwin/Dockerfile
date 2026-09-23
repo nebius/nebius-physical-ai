@@ -105,14 +105,15 @@ LABEL org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       org.nebius.npa.payload="zero-vendor-payload" \
       org.nebius.npa.publication-state="neutral-bootstrap-customer-runtime-fetch"
 
-# TEST: exercise the declared non-root SkyPilot bootstrap contract, remove all
-# generated host keys, and prove the real runtime gate still refuses before work.
+# COPY --chmod applies file modes to newly created parent directories too.
+# Restore traversal, then test the packaged tree and exact setup as its runtime user.
+# Remove generated host keys and prove the runtime gate refuses before work.
 # trivy:ignore:AVD-DS-0010
-RUN su ubuntu -s /bin/bash -c 'sudo -n ssh-keygen -A && sudo -n /usr/sbin/sshd -t && sudo -n service ssh restart && sudo -n service ssh stop && rsync --version >/dev/null && test -w /tmp && test -w "$HOME"' \
+RUN chmod 0755 /opt/npa /opt/npa/robotwin \
+    && su ubuntu -s /bin/bash -c 'test -z "$(find /opt/npa ! -readable -print -quit)" && test -z "$(find /opt/npa -type d ! -executable -print -quit)" && test -x /opt/npa/robotwin/robotwin-runtime && /opt/npa/robotwin/robotwin-runtime health && sudo -n ssh-keygen -A && sudo -n /usr/sbin/sshd -t && sudo -n service ssh restart && sudo -n service ssh stop && rsync --version >/dev/null && test -w /tmp && test -w "$HOME"' \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -name 'ssh_host_*' -print -quit)" \
-    && env -u NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1 \
-      /opt/npa/robotwin/robotwin-runtime assert-refusal
+    && su ubuntu -s /bin/bash -c 'env -u NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1 /opt/npa/robotwin/robotwin-runtime assert-refusal'
 
 USER ubuntu
 WORKDIR /workspace
