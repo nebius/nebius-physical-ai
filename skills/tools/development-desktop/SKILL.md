@@ -44,6 +44,9 @@ Implementation belongs in `npa/src/npa/tools/desktop`, independently of Workbenc
    on the same origin and uses the same desktop login. Show VS Code-origin
    history in Recent, Archived, and search; exclude CLI, execution, subagent,
    and unknown-origin chats without deleting them. Filter before pagination.
+   New chat should offer existing recent project paths on that host, highlight
+   `nebius-physical-ai` checkouts, and allow a custom path. Verify that selection
+   controls the new chat's working directory and invalid paths remain editable.
    It shares a private Codex runtime with the VDI IDE; reload the IDE only when
    its work is idle.
    Keep sessions held by older independent Codex processes read-only until

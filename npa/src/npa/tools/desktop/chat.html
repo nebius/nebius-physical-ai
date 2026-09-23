@@ -160,16 +160,21 @@
         </div>
       </form>
     </dialog>
-    <dialog id="new-dialog">
+    <dialog id="new-dialog" aria-labelledby="new-dialog-title">
       <form id="new-form">
-        <h2>New chat</h2>
-        <p>Choose the project directory on your connected computer.</p>
+        <h2 id="new-dialog-title" tabindex="-1">New chat</h2>
+        <p id="workspace-host">Choose a project on your connected computer.</p>
+        <h3 class="workspace-heading" id="workspace-heading">Recent paths</h3>
+        <p id="workspace-status" role="status"></p>
+        <div id="workspace-options" role="group" aria-labelledby="workspace-heading"></div>
         <label
-          >Working directory<input id="cwd" autocomplete="off" required
+          >Project path<input id="cwd" autocomplete="off" autocapitalize="none" spellcheck="false" required
         /></label>
+        <p class="path-hint">Pick a recent path or enter another directory.</p>
+        <p id="new-error" role="alert" hidden></p>
         <div class="dialog-actions">
           <button type="button" id="cancel-new">Cancel</button
-          ><button class="primary" type="submit">Create chat</button>
+          ><button class="primary" type="submit" id="create-chat">Create chat</button>
         </div>
       </form>
     </dialog>

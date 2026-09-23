@@ -51,6 +51,10 @@ export function mockChat() {
       model("model-b", ["low", "medium"]),
     ],
   });
+  cy.intercept("GET", "/chat/api/workspaces", {data: [
+    {path: "/workspace/nebius-physical-ai", name: "nebius-physical-ai", preferred: true, lastUsed: 10},
+    {path: thread.cwd, name: "project", preferred: false, lastUsed: 20},
+  ]}).as("workspaces");
   cy.intercept("GET", "/chat/api/modes", {data: [
     {mode: "default", name: "Default"}, {mode: "plan", name: "Plan"},
   ]});

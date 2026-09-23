@@ -75,6 +75,7 @@ def chat(tmp_path):
         "/chat/api/threads",
         "/chat/api/events",
         "/chat/api/models",
+        "/chat/api/workspaces",
     ],
 )
 def test_every_chat_route_requires_login(chat, path):
@@ -90,6 +91,71 @@ def test_wrong_password_cannot_read_threads(chat):
     assert (
         client.get("/chat/api/threads", auth=("developer", "wrong")).status_code == 401
     )
+    rpc.call.assert_not_called()
+
+
+def test_recent_workspaces_include_later_pages_and_prefer_npa(chat, tmp_path):
+    client, rpc = chat
+    recent = tmp_path / "Recent project α"
+    preferred = tmp_path / "nebius-physical-ai"
+    recent.mkdir()
+    preferred.mkdir()
+    alias = tmp_path / "project-link"
+    alias.symlink_to(recent, target_is_directory=True)
+    pages = [
+        {"data": [{"cwd": str(recent), "updatedAt": 30}], "nextCursor": "older"},
+        {"data": [
+            {"cwd": str(preferred), "updatedAt": 10},
+            {"cwd": str(alias), "updatedAt": 20},
+            {"cwd": str(tmp_path / "removed"), "updatedAt": 40},
+            {"cwd": "relative-path", "updatedAt": 50},
+        ], "nextCursor": None},
+    ]
+    rpc.call.side_effect = pages
+    response = client.get("/chat/api/workspaces")
+    assert response.status_code == 200
+    choices = response.json()["data"]
+    assert [choice["path"] for choice in choices] == [
+        str(preferred), str(recent), str(tmp_path),
+    ]
+    assert choices[0]["preferred"] is True
+    assert choices[1]["lastUsed"] == 30
+    for call in rpc.call.call_args_list:
+        assert call.args[0] == "thread/list"
+        assert call.args[1]["sourceKinds"] == ["vscode"]
+        assert call.args[1]["archived"] is False
+    assert rpc.call.call_args_list[1].args[1]["cursor"] == "older"
+
+
+def test_recent_workspaces_reject_repeated_cursor(chat):
+    client, rpc = chat
+    rpc.call.side_effect = None
+    rpc.call.return_value = {"data": [], "nextCursor": "repeated"}
+    response = client.get("/chat/api/workspaces")
+    assert response.status_code == 400
+    assert "Enter a path below" in response.json()["error"]
+    assert rpc.call.call_count == 2
+
+
+def test_new_custom_workspace_is_available_before_history_is_saved(chat, tmp_path):
+    client, rpc = chat
+    project = tmp_path / "New project α"
+    project.mkdir()
+    rpc.call.side_effect = [
+        {"thread": {"id": "new-thread", "cwd": str(project), "createdAt": 20}},
+        {"data": [], "nextCursor": None},
+    ]
+    assert client.post("/chat/api/new", json={"cwd": str(project)}).status_code == 200
+    assert rpc.call.call_args.args == ("thread/start", {"cwd": str(project)})
+    choices = client.get("/chat/api/workspaces").json()["data"]
+    assert choices[0]["path"] == str(project)
+
+
+def test_new_chat_rejects_removed_workspace_without_starting_codex(chat, tmp_path):
+    client, rpc = chat
+    response = client.post("/chat/api/new", json={"cwd": str(tmp_path / "removed")})
+    assert response.status_code == 400
+    assert "existing project directory" in response.json()["error"]
     rpc.call.assert_not_called()
 
 

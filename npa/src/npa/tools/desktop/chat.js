@@ -826,21 +826,85 @@ $("#search").addEventListener("input", () => {
 $("#archive").addEventListener("change", () =>
   loadSessions().catch((error) => notice(error.message)),
 );
+function updateWorkspaceSelection() {
+  for (const button of document.querySelectorAll(".workspace-choice"))
+    button.setAttribute("aria-pressed", String(button.dataset.path === $("#cwd").value));
+}
+function renderWorkspaceChoices(choices) {
+  const root = $("#workspace-options");
+  root.replaceChildren();
+  for (const choice of choices) {
+    const button = node("button", "workspace-choice" + (choice.preferred ? " preferred" : ""));
+    button.type = "button";
+    button.disabled = !!state.creatingChat;
+    button.dataset.path = choice.path;
+    button.setAttribute("aria-label", "Use " + choice.path);
+    const heading = node("strong", "", choice.name);
+    if (choice.preferred) heading.append(node("span", "workspace-badge", "NPA project"));
+    button.append(heading, node("span", "path", choice.path));
+    button.addEventListener("click", () => {
+      state.workspaceTouched = true;
+      $("#cwd").value = choice.path;
+      updateWorkspaceSelection();
+    });
+    root.append(button);
+  }
+  updateWorkspaceSelection();
+}
+async function openNewChat() {
+  const generation = state.workspaceGeneration = (state.workspaceGeneration || 0) + 1;
+  state.workspaceTouched = false;
+  $("#cwd").value = state.lastNewCwd || state.thread?.cwd || state.defaultCwd || "";
+  $("#workspace-host").textContent = "Choose a project on " + state.hostLabel + ".";
+  $("#new-error").hidden = true;
+  $("#workspace-status").textContent = "Loading recent paths…";
+  renderWorkspaceChoices([]);
+  $("#new-dialog").showModal();
+  $("#new-dialog-title").focus();
+  try {
+    const result = await api("workspaces");
+    if (generation !== state.workspaceGeneration || !$("#new-dialog").open) return;
+    if (!state.workspaceTouched && !state.creatingChat)
+      $("#cwd").value = state.lastNewCwd || result.data.find(choice => choice.preferred)?.path ||
+        $("#cwd").value || result.data[0]?.path || "";
+    renderWorkspaceChoices(result.data);
+    $("#workspace-status").textContent = result.data.length ? "" : "No recent paths yet. Enter a project path below.";
+  } catch (error) {
+    if (generation === state.workspaceGeneration && $("#new-dialog").open)
+      $("#workspace-status").textContent = "Recent paths are unavailable. You can still enter a path below.";
+  }
+}
 for (const id of ["#new-chat", "#welcome-new"])
-  $(id).addEventListener("click", () => {
-    $("#new-dialog").showModal();
-  });
+  $(id).addEventListener("click", openNewChat);
+$("#cwd").addEventListener("input", () => {
+  state.workspaceTouched = true;
+  updateWorkspaceSelection();
+});
 $("#cancel-new").addEventListener("click", () => $("#new-dialog").close());
+$("#new-dialog").addEventListener("cancel", event => {
+  if (state.creatingChat) event.preventDefault();
+});
 $("#new-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.creatingChat) return;
+  state.creatingChat = true;
+  const cwd = $("#cwd").value;
+  for (const control of $("#new-form").querySelectorAll("input, button")) control.disabled = true;
+  $("#new-error").hidden = true;
   try {
-    const result = await api("new", { cwd: $("#cwd").value });
+    const result = await api("new", {cwd});
+    state.lastNewCwd = result.thread.cwd || cwd;
     $("#new-dialog").close();
     await loadSessions();
     await selectThread(result.thread.id);
   } catch (error) {
-    notice(error.message);
-    $("#new-dialog").close();
+    if ($("#new-dialog").open) {
+      $("#new-error").textContent = error.message;
+      $("#new-error").hidden = false;
+    } else notice(error.message);
+  } finally {
+    state.creatingChat = false;
+    for (const control of $("#new-form").querySelectorAll("input, button")) control.disabled = false;
   }
 });
 document.addEventListener("visibilitychange", () => {
@@ -874,7 +938,7 @@ async function start() {
     loadModels().catch((error) => notice("Model controls: " + error.message));
     api("modes").then(result => { state.modes = result.data; renderExtraControls(); })
       .catch(() => { state.modes = []; });
-    $("#cwd").value = info.cwd;
+    state.defaultCwd = info.cwd;
     $("#connection").textContent = "● Connected to " + state.hostLabel;
     events();
     await loadSessions();

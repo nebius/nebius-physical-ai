@@ -163,6 +163,13 @@ refreshes; opening a conversation retains its full messages. It sends prompts, s
 replies and tool activity, steers or stops a running turn, and presents command/file
 approvals and questions. Specialized MCP and dynamic-tool requests remain in VS Code.
 
+**New chat** offers recent project paths from the connected host's VS Code
+history, with `nebius-physical-ai` checkouts highlighted at the top. Choose a path
+or enter another existing directory on that Mac or cloud VM. The picker includes
+paths from older list pages, removes duplicates and missing directories, and
+retains your entry if the directory cannot be used. Picking a path does not start
+Codex until you select **Create chat**.
+
 Cloud chat setup replaces repeated browser password prompts with a sign-in page.
 The existing desktop username and password work for both chat and desktop; a
 Secure, HttpOnly session cookie keeps browsers signed in for thirty days.

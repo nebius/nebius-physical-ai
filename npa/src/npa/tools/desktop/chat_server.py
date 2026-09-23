@@ -53,6 +53,33 @@ def _thread_list_entry(thread):
     return entry
 
 
+def _workspace_choices(threads, default):
+    choices = {}
+    for thread in [*threads, {"cwd": default}]:
+        raw = thread.get("cwd")
+        if not isinstance(raw, str) or not raw:
+            continue
+        path = Path(raw).expanduser()
+        if not path.is_absolute() or not path.is_dir():
+            continue
+        path = path.resolve()
+        key = str(path)
+        updated = thread.get("updatedAt") or thread.get("createdAt") or 0
+        previous = choices.get(key)
+        if previous and previous["lastUsed"] >= updated:
+            continue
+        choices[key] = {
+            "path": key,
+            "name": path.name or key,
+            "preferred": path.name == "nebius-physical-ai",
+            "lastUsed": updated,
+        }
+    return sorted(
+        choices.values(),
+        key=lambda choice: (not choice["preferred"], -choice["lastUsed"], choice["path"]),
+    )
+
+
 def _answer_result(request, body):
     method = request["method"]
     if method in {
@@ -193,6 +220,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             }
         if path == "/chat/api/threads":
             return self._list_threads(query)
+        if path == "/chat/api/workspaces":
+            return self._workspaces()
         if path == "/chat/api/thread":
             return {"thread": self._thread(query["id"])}
         if path == "/chat/api/turns":
@@ -200,20 +229,39 @@ class ChatHandler(BaseHTTPRequestHandler):
         if path == "/chat/api/events":
             return self._events(query)
         if path == "/chat/api/state":
-            return {
-                "connected": rpc.alive,
-                "pending": rpc.pending(),
-                "cursor": rpc.sequence,
-                "cwd": self.server.config["cwd"],
-                "instance": rpc.instance,
-                "installationId": self.server.config.get("installation_id"),
-                "hostLabel": self.server.config.get("host_label", "VDI"),
-                "native": self.server.config.get("backend") == "native",
-                "runtime": rpc.call("runtime/status", {})
-                if self.server.config.get("backend") == "native"
-                else {},
-            }
+            return self._state()
         raise ValueError("Unknown chat route.")
+
+    def _state(self):
+        rpc = self.server.rpc
+        return {
+            "connected": rpc.alive,
+            "pending": rpc.pending(),
+            "cursor": rpc.sequence,
+            "cwd": self.server.config["cwd"],
+            "instance": rpc.instance,
+            "installationId": self.server.config.get("installation_id"),
+            "hostLabel": self.server.config.get("host_label", "VDI"),
+            "native": self.server.config.get("backend") == "native",
+            "runtime": rpc.call("runtime/status", {})
+            if self.server.config.get("backend") == "native"
+            else {},
+        }
+
+    def _workspaces(self):
+        threads = list(self.server.created.values())
+        cursor = None
+        seen = set()
+        while True:
+            page = self._list_threads({"cursor": cursor})
+            threads.extend(page["data"])
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+            if cursor in seen:
+                raise RuntimeError("Recent paths could not be loaded. Enter a path below.")
+            seen.add(cursor)
+        return {"data": _workspace_choices(threads, self.server.config["cwd"])}
 
     def _thread(self, identifier):
         created = self.server.created.get(identifier)
