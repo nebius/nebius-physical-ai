@@ -53,9 +53,10 @@ With state at the default location, use just `make ci-runners-down`.
 `make ci-runners-status` reports readiness and the remaining workers.
 
 New workflows use the previous routing immediately. The controller keeps serving
-workflows that were active when routing changed, including their later dependent
-jobs. It then removes the GitHub registrations, VMs, and managed boot disks and
-exits. `status` reports the remaining workers. The command requests this work
+PR and merge-queue admission workflows that were active when routing changed,
+including their later dependent jobs. Unrelated publishing and main-branch
+audits do not delay removal. It then removes the GitHub registrations, VMs, and
+managed boot disks and exits. `status` reports the remaining workers. The command requests this work
 asynchronously; keep the controller online until it reports zero workers.
 There is no forced cancellation or drain deadline. Repeating `down` is safe.
 

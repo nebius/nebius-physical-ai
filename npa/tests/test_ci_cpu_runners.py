@@ -293,6 +293,22 @@ def test_drain_captures_runs_before_and_after_routing_change(
     assert cloud._load(tmp_path / "drain.json")["runs"] == [1, 2, 3]
 
 
+def test_drain_only_tracks_workflows_that_can_use_cpu_routing(
+    modules, config, tmp_path, monkeypatch
+):
+    _, pool = modules
+    admission = ".github/workflows/security-regression.yml"
+    runs = [
+        {"id": 1, "event": "pull_request", "path": admission},
+        {"id": 2, "event": "merge_group", "path": admission + "@refs/heads/main"},
+        {"id": 3, "event": "push", "path": admission},
+        {"id": 4, "event": "push", "path": ".github/workflows/publish-images.yml"},
+        {"id": 5, "event": "pull_request", "path": ".github/workflows/gitleaks.yml"},
+    ]
+    monkeypatch.setattr(pool, "_pages", lambda *a: runs)
+    assert pool._active_runs(tmp_path, config) == {1, 2}
+
+
 def test_drain_waits_for_dependent_jobs_and_busy_workers(
     modules, config, tmp_path, monkeypatch
 ):

@@ -81,6 +81,9 @@ def _active_runs(root: Path, config: dict) -> set[int]:
             for run in _pages(
                 root, config, f"actions/runs?status={status}", "workflow_runs"
             )
+            if run["event"] in {"pull_request", "merge_group"}
+            and run["path"].split("@", 1)[0]
+            == ".github/workflows/security-regression.yml"
         )
     return runs
 
