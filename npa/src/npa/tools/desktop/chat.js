@@ -83,6 +83,7 @@ function sessionButton(thread) {
 }
 function renderSessions() {
   const root = $("#sessions");
+  const scrollTop = root.scrollTop;
   root.replaceChildren();
   if (!state.sessions.length)
     root.append(node("p", "loading muted", "No sessions found."));
@@ -95,19 +96,25 @@ function renderSessions() {
     row.append(sessionButton(thread), actions);
     root.append(row);
   }
+  root.scrollTop = scrollTop;
   $("#more-sessions").hidden = !state.sessionCursor;
 }
-async function loadSessions(append = false) {
+async function loadSessions(append = false, preserve = false) {
   const generation = ++state.sessionGeneration;
   const query = new URLSearchParams({
     search: $("#search").value,
     archived: $("#archive").value,
   });
+  const collection = query.toString();
+  const keepPages = preserve && state.sessionQuery === collection && state.sessionPages;
   if (append && state.sessionCursor) query.set("cursor", state.sessionCursor);
   const result = await api("threads?" + query);
   if (generation !== state.sessionGeneration) return;
-  state.sessionCursor = result.nextCursor;
-  state.sessions = append ? [...state.sessions, ...result.data] : result.data;
+  if (!keepPages) state.sessionCursor = result.nextCursor;
+  state.sessions = append ? mergeById(state.sessions, result.data)
+    : keepPages ? mergeById(result.data, state.sessions) : result.data;
+  state.sessionPages = append || keepPages;
+  state.sessionQuery = collection;
   for (const thread of result.data)
     state.statuses.set(thread.id, thread.status);
   renderSessions();
@@ -118,7 +125,7 @@ function activeTurn() {
 }
 function updateControls() {
   const active = activeTurn();
-  const readOnly = state.externalOwner || state.thread?.archived;
+  const readOnly = !state.thread || state.openFailed || state.externalOwner || state.thread?.archived;
   $("#manage-chat").disabled = !state.thread || state.loading;
   $("#prompt").disabled = !state.id || state.loading || readOnly;
   $("#send").disabled =
@@ -149,21 +156,26 @@ function updateSettingControls(readOnly) {
   $("#speed").disabled = $("#model").disabled;
   $("#mode").disabled = $("#model").disabled || !state.modes.length;
 }
-async function selectThread(id) {
+function prepareThread(id) {
   saveDraft();
   const generation = ++state.generation;
   notice();
   state.id = id;
+  state.openFailed = false;
+  state.externalOwner = false;
   $("#prompt").value = localStorage.getItem("codex-draft:" + id) || "";
-  state.images = [];
+  resizePrompt();
   const pendingSend = JSON.parse(localStorage.getItem("codex-send:" + id) || "null");
-  if (pendingSend) state.images = pendingSend.images || [];
+  state.images = pendingSend?.images || [];
   renderAttachments();
   $("#delivery-status").hidden = true;
-  $("#clear-send").hidden = !localStorage.getItem("codex-send:" + id);
+  $("#clear-send").hidden = !pendingSend;
   state.loading = true;
   state.turns = [];
   state.thread = null;
+  state.turnCursor = null;
+  state.historyExpanded = false;
+  state.olderLoading = false;
   $("#requests").replaceChildren();
   closeSidebar();
   renderSessions();
@@ -172,23 +184,36 @@ async function selectThread(id) {
   $("#welcome").hidden = true;
   $("#messages").replaceChildren(node("p", "muted", "Opening session…"));
   $("#title").textContent = "Opening session…";
-  const resumed = await api("resume", { id });
-  if (generation !== state.generation) return;
-  state.externalOwner = !!resumed.externalOwner;
-  if (state.externalOwner)
-    notice(
-      "This session is open in an older Codex client. You can read it here. Close it in that client, then reopen it here to continue safely.",
-    );
-  state.thread = resumed.thread;
-  if ("serviceTier" in resumed) state.thread.serviceTier = resumed.serviceTier;
-  renderModelControls();
-  $("#title").textContent = title(state.thread);
-  $("#project").textContent = state.thread.cwd || "VDI";
-  await loadTurns(false, generation);
-  if (generation !== state.generation) return;
-  state.loading = false;
-  renderRequests();
-  updateControls();
+  $("#project").textContent = "";
+  return generation;
+}
+async function selectThread(id) {
+  const generation = prepareThread(id);
+  try {
+    const resumed = await api("resume", {id});
+    if (generation !== state.generation) return;
+    state.externalOwner = !!resumed.externalOwner;
+    if (state.externalOwner)
+      notice("This session is open in an older Codex client. You can read it here. Close it in that client, then reopen it here to continue safely.");
+    state.thread = resumed.thread;
+    if ("serviceTier" in resumed) state.thread.serviceTier = resumed.serviceTier;
+    renderModelControls();
+    $("#title").textContent = title(state.thread);
+    $("#project").textContent = state.thread.cwd || "VDI";
+    await loadTurns(false, generation);
+  } catch (error) {
+    if (generation !== state.generation) return;
+    state.openFailed = true;
+    $("#title").textContent = "Could not open chat";
+    $("#messages").replaceChildren(node("p", "muted", "Your draft is saved. Tap Refresh to try opening this chat again."));
+    notice(error.message);
+  } finally {
+    if (generation === state.generation) {
+      state.loading = false;
+      renderRequests();
+      updateControls();
+    }
+  }
 }
 
 function renderModelControls() {
@@ -212,6 +237,7 @@ function renderModelControls() {
   const selected =
     model || state.models.find((model) => model.model === select.value);
   renderReasoning(selected);
+  renderSettingsSummary();
 }
 
 function renderReasoning(selected) {
@@ -356,36 +382,54 @@ function sessionEvent(event) {
     renderSessions();
   updateActivity();
 }
+function mergeById(recent, previous) {
+  const seen = new Set();
+  return [...recent, ...previous].filter(item => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
 async function loadTurns(older = false, generation = state.generation) {
-  if (!state.id) return;
+  if (!state.id || (older && (!state.turnCursor || state.olderLoading))) return;
   const firstLoad = !state.turns.length;
-  const query = new URLSearchParams({ id: state.id });
-  if (older && state.turnCursor) query.set("cursor", state.turnCursor);
-  const result = await api("turns?" + query);
-  if (generation !== state.generation) return;
-  const turns = result.data || result.turns || [];
-  state.turnCursor = result.nextCursor;
-  state.turns = older ? [...state.turns, ...turns] : turns;
-  const unique = new Map(state.turns.map((turn) => [turn.id, turn]));
-  state.turns = [...unique.values()];
-  renderMessages(!older && firstLoad);
-  $("#older").hidden = !state.turnCursor;
-  updateControls();
+  const query = new URLSearchParams({id: state.id});
+  if (older) query.set("cursor", state.turnCursor);
+  if (older) state.olderLoading = true;
+  $("#older").disabled = !!state.olderLoading;
+  try {
+    const result = await api("turns?" + query);
+    if (generation !== state.generation) return;
+    const turns = result.data || result.turns || [];
+    if (older || !state.historyExpanded) state.turnCursor = result.nextCursor;
+    state.historyExpanded ||= older;
+    state.turns = older ? mergeById(state.turns, turns)
+      : result.nextCursor ? mergeById(turns, state.turns) : turns;
+    if (!older && !result.nextCursor) {
+      state.historyExpanded = false;
+      state.turnCursor = null;
+    }
+    renderMessages(!older && firstLoad, older);
+    updateControls();
+  } finally {
+    if (generation === state.generation && older) {
+      state.olderLoading = false;
+      $("#older").disabled = false;
+    }
+  }
 }
 function appendText(root, text) {
-  const parts = (text || "").split(/```[^\n]*\n/);
-  if (parts.length === 1) {
-    root.append(node("p", "", text));
-    return;
+  // Match opening and closing fences together so adjacent blocks stay separate.
+  const fences = /^```[^\n]*\n([\s\S]*?)(?:^```[ \t]*(?:\n|$)|(?![\s\S]))/gm;
+  let cursor = 0;
+  for (const match of (text || "").matchAll(fences)) {
+    if (match.index > cursor) root.append(node("p", "", text.slice(cursor, match.index)));
+    root.append(node("pre", "", match[1]));
+    cursor = match.index + match[0].length;
   }
-  root.append(node("p", "", parts.shift()));
-  for (const part of parts) {
-    const end = part.indexOf("```");
-    root.append(node("pre", "", end < 0 ? part : part.slice(0, end)));
-    if (end >= 0 && part.slice(end + 3).trim())
-      root.append(node("p", "", part.slice(end + 3).trim()));
-  }
+  if (cursor < (text || "").length) root.append(node("p", "", text.slice(cursor)));
 }
+
 function textFor(item) {
   if (item.type === "userMessage")
     return (item.content || [])
@@ -467,7 +511,8 @@ function scheduleRender() {
     updateControls();
   });
 }
-function renderMessages(forceBottom = false) {
+function renderMessages(forceBottom = false, preserveReading = false) {
+  const anchor = readingAnchor();
   const viewport = $("#conversation"),
     nearBottom =
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 140;
@@ -476,6 +521,13 @@ function renderMessages(forceBottom = false) {
       (el) => el.dataset.itemId,
     ),
   );
+  const fragment = conversationFragment(open);
+  $("#older").hidden = !state.turnCursor;
+  $("#messages").replaceChildren(fragment);
+  if (forceBottom || (nearBottom && !preserveReading)) viewport.scrollTop = viewport.scrollHeight;
+  else restoreReadingAnchor(anchor);
+}
+function conversationFragment(open) {
   const fragment = document.createDocumentFragment();
   for (const turn of [...state.turns].reverse()) {
     for (const item of turn.items || []) {
@@ -496,8 +548,18 @@ function renderMessages(forceBottom = false) {
     fragment.append(
       node("p", "muted", "Send a message to start this conversation."),
     );
-  $("#messages").replaceChildren(fragment);
-  if (nearBottom || forceBottom) viewport.scrollTop = viewport.scrollHeight;
+  return fragment;
+}
+function readingAnchor() {
+  const top = $("#conversation").getBoundingClientRect().top;
+  const item = [...$("#messages").children].find(el =>
+    el.dataset.itemId && el.getBoundingClientRect().bottom > top);
+  return item ? {id: item.dataset.itemId, top: item.getBoundingClientRect().top} : null;
+}
+function restoreReadingAnchor(anchor) {
+  if (!anchor) return;
+  const item = [...$("#messages").children].find(el => el.dataset.itemId === anchor.id);
+  if (item) $("#conversation").scrollTop += item.getBoundingClientRect().top - anchor.top;
 }
 function eventTurn(params) {
   let turn = state.turns.find((t) => t.id === params.turnId);
@@ -508,8 +570,11 @@ function eventTurn(params) {
   return turn;
 }
 function sessionMetadataEvent(method, p) {
+  if (["thread/archived", "thread/unarchived"].includes(method) &&
+      ($("#archive").value === "true") !== (method === "thread/archived"))
+    state.sessions = state.sessions.filter(thread => thread.id !== p.threadId);
   if (["thread/started", "thread/name/updated", "thread/archived", "thread/unarchived"].includes(method))
-    loadSessions().catch(() => {});
+    loadSessions(false, true).catch(() => {});
   if (p.threadId !== state.id) return;
   if (method === "thread/name/updated") refreshThread().catch(() => {});
   if (method === "thread/archived" || method === "thread/unarchived") {
@@ -690,12 +755,11 @@ $("#menu").addEventListener("click", () =>
 $("#scrim").addEventListener("click", closeSidebar);
 $("#prompt").addEventListener("input", () => {
   saveDraft();
-  $("#prompt").style.height = "auto";
-  $("#prompt").style.height = Math.min($("#prompt").scrollHeight, 180) + "px";
+  resizePrompt();
   updateControls();
 });
 $("#prompt").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+  if (!event.isComposing && event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
     $("#composer").requestSubmit();
   }
@@ -737,11 +801,14 @@ $("#stop").addEventListener("click", async () => {
     notice(error.message);
   }
 });
+async function refreshWorkspace() {
+  if (!state.initialized) return start();
+  notice();
+  if (state.openFailed) return selectThread(state.id);
+  await Promise.all([loadSessions(false, true), loadTurns(), refreshThread()]);
+}
 $("#refresh").addEventListener("click", () =>
-  Promise.all([loadSessions(), loadTurns(), refreshThread()]).catch((error) =>
-    notice(error.message),
-  ),
-);
+  refreshWorkspace().catch(error => notice(error.message)));
 $("#older").addEventListener("click", () =>
   loadTurns(true).catch((error) => notice(error.message)),
 );
@@ -778,14 +845,17 @@ $("#new-form").addEventListener("submit", async (event) => {
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
-    loadSessions().catch(() => {});
+    loadSessions(false, true).catch(() => {});
     loadTurns().catch(() => {});
     refreshThread().catch(() => {});
   }
 });
 if (window.visualViewport) {
   const resize = () => {
+    const viewport = $("#conversation");
+    const atBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 140;
     document.body.style.height = window.visualViewport.height + "px";
+    if (atBottom) requestAnimationFrame(() => { viewport.scrollTop = viewport.scrollHeight; });
   };
   window.visualViewport.addEventListener("resize", resize);
   resize();
@@ -793,6 +863,7 @@ if (window.visualViewport) {
 async function start() {
   try {
     const info = await api("state");
+    state.initialized = true;
     state.cursor = info.cursor;
     state.instance = info.instance;
     state.pending = info.pending;
@@ -811,7 +882,7 @@ async function start() {
     if (id) await selectThread(id);
     else if (innerWidth <= 760) document.body.classList.add("sidebar-open");
     setInterval(() => {
-      if (!document.hidden) loadSessions().catch(() => {});
+      if (!document.hidden) loadSessions(false, true).catch(() => {});
     }, 15000);
   } catch (error) {
     notice(error.message);
@@ -839,6 +910,27 @@ setInterval(() => {
     activityFrame++;
   updateActivity();
 }, 750);
+
+function resizePrompt() {
+  $("#prompt").style.height = "auto";
+  $("#prompt").style.height = Math.min($("#prompt").scrollHeight, 180) + "px";
+}
+function setSettingsOpen(open) {
+  $("#composer").classList.toggle("settings-open", open);
+  $("#toggle-settings").setAttribute("aria-expanded", String(open));
+}
+function renderSettingsSummary() {
+  const model = $("#model").selectedOptions[0]?.textContent || "Model settings";
+  const effort = $("#effort").selectedOptions[0]?.textContent;
+  const mode = state.thread?.mode === "plan" ? "Plan" : null;
+  const speed = state.thread?.serviceTier === "priority" ? "Fast" : null;
+  const text = [model, effort, mode, speed].filter(Boolean).join(" · ");
+  $("#toggle-settings").textContent = text + " · Settings";
+  $("#toggle-settings").title = text;
+}
+$("#toggle-settings").addEventListener("click", () =>
+  setSettingsOpen(!$("#composer").classList.contains("settings-open")));
+$("#prompt").addEventListener("focus", () => setSettingsOpen(false));
 
 function configureHost() {
   $("#host-tag").textContent = state.native ? "Mac" : "VDI";
@@ -979,7 +1071,7 @@ async function refreshNative() {
   try {
     while (nativeRefreshQueued) {
       nativeRefreshQueued = false;
-      await Promise.all([loadSessions(), refreshThread(), loadTurns()]);
+      await Promise.all([loadSessions(false, true), refreshThread(), loadTurns()]);
     }
   }
   catch (error) { notice(error.message); }

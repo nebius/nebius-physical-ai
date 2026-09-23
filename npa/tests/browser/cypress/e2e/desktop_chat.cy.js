@@ -1,118 +1,5 @@
 // Exercise shared Codex controls, live activity, and message identity in a browser.
-const model = (name, efforts) => ({
-  model: name,
-  displayName: name,
-  defaultReasoningEffort: efforts[0],
-  supportedReasoningEfforts: efforts.map((reasoningEffort) => ({
-    reasoningEffort,
-    description: reasoningEffort,
-  })),
-});
-
-function serveAssets() {
-  for (const [name, path, type] of [
-    ["chat.html", "/chat/", "text/html"],
-    ["chat.js", "/chat/chat.js", "text/javascript"],
-    ["chat.css", "/chat/chat.css", "text/css"],
-  ]) {
-    cy.readFile("../../src/npa/tools/desktop/" + name).then((body) => {
-      cy.intercept("GET", path, { body, headers: { "content-type": type } });
-    });
-  }
-}
-
-function mockChat() {
-  const thread = {
-    id: "same-thread",
-    name: "Shared conversation",
-    cwd: "/workspace/project",
-    model: "model-a",
-    reasoningEffort: "high",
-    status: { type: "idle" },
-  };
-  const chat = { thread, turns: [], events: [], cursor: 0 };
-  serveAssets();
-  cy.intercept("GET", "/chat/api/state", {
-    connected: true,
-    instance: "runtime",
-    cursor: 0,
-    pending: [],
-    cwd: thread.cwd,
-  });
-  cy.intercept("GET", "/chat/api/models", {
-    data: [
-      model("model-a", ["medium", "high"]),
-      model("model-b", ["low", "medium"]),
-    ],
-  });
-  cy.intercept("GET", "/chat/api/modes", {data: [
-    {mode: "default", name: "Default"}, {mode: "plan", name: "Plan"},
-  ]});
-  mockThreadRoutes(chat);
-  mockEventStream(chat);
-  return chat;
-}
-
-function mockThreadRoutes(chat) {
-  cy.intercept("GET", "/chat/api/threads*", (req) =>
-    req.reply({ data: (new URL(req.url).searchParams.get("archived") === "true") === !!chat.thread.archived
-      ? [chat.thread] : [], nextCursor: null }),
-  );
-  cy.intercept("POST", "/chat/api/resume", (req) =>
-    req.reply({ thread: chat.thread }),
-  );
-  cy.intercept({ method: "GET", pathname: "/chat/api/thread" }, (req) =>
-    req.reply({ thread: chat.thread }),
-  );
-  cy.intercept("GET", "/chat/api/turns?*", (req) =>
-    req.reply({ data: chat.turns, nextCursor: null }),
-  );
-  cy.intercept("POST", "/chat/api/settings", (req) => {
-    chat.thread = {
-      ...chat.thread,
-      model: req.body.model,
-      reasoningEffort: req.body.effort,
-      ...(req.body.mode ? {mode: req.body.mode} : {}),
-      ...(req.body.serviceTier !== undefined ? {serviceTier: req.body.serviceTier} : {}),
-    };
-    req.reply({ model: req.body.model, effort: req.body.effort });
-  }).as("settings");
-  mockManagement(chat);
-}
-
-function mockManagement(chat) {
-  cy.intercept("POST", "/chat/api/rename", req => {
-    chat.thread.name = req.body.name;
-    publish(chat, "thread/name/updated", {threadName: chat.thread.name});
-    req.reply({ok: true});
-  }).as("rename");
-  for (const action of ["archive", "unarchive"]) cy.intercept("POST", "/chat/api/" + action, req => {
-    chat.thread.archived = action === "archive";
-    publish(chat, "thread/" + action + "d", {});
-    req.reply({ok: true});
-  }).as(action);
-}
-
-function mockEventStream(chat) {
-  cy.intercept("GET", "/chat/api/events?*", (req) => {
-    const events = chat.events.splice(0);
-    chat.cursor += events.length;
-    req.reply({
-      delay: 100,
-      body: {
-        connected: true,
-        instance: "runtime",
-        cursor: chat.cursor,
-        events,
-        pending: [],
-      },
-    });
-  });
-}
-
-function publish(chat, method, params) {
-  chat.events.push({ method, params: { threadId: chat.thread.id, ...params } });
-}
+import {mockChat, publish} from "../support/desktop_chat";
 
 describe("Mobile Codex conversations", () => {
   let chat;
@@ -121,6 +8,7 @@ describe("Mobile Codex conversations", () => {
     cy.viewport(390, 844);
     cy.visit("/chat/#same-thread");
     cy.get("#model").should("be.enabled").and("have.value", "model-a");
+    cy.get("#toggle-settings").click();
   });
 
   it("offers Home Screen guidance and an explicit desktop choice on phones", () => {
@@ -272,6 +160,7 @@ describe("Mobile Codex conversations", () => {
     cy.get("#prompt").type("Draft stays in this browser");
     cy.reload();
     cy.get("#prompt").should("have.value", "Draft stays in this browser");
+    cy.get("#toggle-settings").click();
     cy.get("#mode").should("be.enabled").select("plan");
     cy.wait("@settings").its("request.body.mode").should("equal", "plan");
     cy.get("#speed").should("be.enabled").select("default");

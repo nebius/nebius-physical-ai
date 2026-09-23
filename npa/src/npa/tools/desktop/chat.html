@@ -92,6 +92,8 @@
       <section id="requests" aria-label="Pending decisions"></section>
       <form id="composer">
         <div class="compose-box">
+          <button type="button" id="toggle-settings" aria-controls="model-settings" aria-expanded="false">Model settings</button>
+          <div id="model-settings">
           <div class="model-controls">
             <label
               >Model<select id="model" aria-label="Codex model" disabled>
@@ -111,6 +113,7 @@
             <label>Mode<select id="mode" aria-label="Chat mode" disabled></select></label>
           </div>
           <p id="model-description" class="model-description"></p>
+          </div>
           <textarea
             id="prompt"
             rows="1"

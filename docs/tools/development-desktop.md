@@ -184,12 +184,20 @@ in the session list and use **… → Restore** to continue the same conversatio
 Archived chats remain read-only until restored. A running turn must finish or
 be stopped before archiving; renaming does not start or interrupt a turn.
 
-Choose **Model** and **Reasoning** above the composer. Choices come from the
+On phones, tap the compact **Settings** control above the composer to choose
+**Model**, **Reasoning**, **Speed**, and **Mode**. It shows the current model and
+reasoning level, plus Plan or Fast when selected. Focusing the message field
+collapses these controls to leave room for the conversation and keyboard. On
+larger screens the controls remain visible. Choices come from the
 signed-in Codex runtime and include only reasoning levels supported by that
 model. Changes apply to the next turn of the same conversation and update the
 connected VS Code picker. Changes made in VS Code update the mobile controls too.
 The browser tab, favicon, chat header, and session list show when Codex is working;
 an outstanding approval or question changes the tab title to **Needs input**.
+
+Loading earlier messages preserves your reading position. Live refreshes keep
+that history and additional session-list pages available. If opening a chat
+fails temporarily, use **Refresh** to retry; the unsent text draft is retained.
 
 Open the same conversation in either client to see prompts and replies sent
 from the other. Mobile does not create a separate copy of the chat. The browser

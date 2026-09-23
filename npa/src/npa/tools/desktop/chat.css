@@ -308,6 +308,7 @@ main {
   flex-direction: column;
   min-width: 0;
   position: relative;
+  min-height: 0;
 }
 header {
   display: flex;
@@ -484,7 +485,7 @@ h2 {
 textarea {
   display: block;
   resize: none;
-  max-height: 180px;
+  max-height: min(180px, 25dvh);
   width: 100%;
   border: 0;
   background: none;
@@ -585,6 +586,8 @@ dialog {
   border: 1px solid #494949;
   border-radius: 18px;
   max-width: 500px;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
   width: calc(100% - 32px);
   padding: 24px;
 }
@@ -694,4 +697,26 @@ dialog input {
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Keep model controls available without crowding the phone keyboard. */
+#toggle-settings { display: none; }
+@media (max-width: 760px) {
+  #toggle-settings {
+    display: block;
+    width: 100%;
+    min-height: 36px;
+    margin-bottom: 8px;
+    padding: 4px 0;
+    border: 0;
+    background: none;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: #bbb;
+  }
+  #model-settings { display: none; max-height: 38dvh; overflow: auto; }
+  #composer.settings-open #model-settings { display: block; }
 }
