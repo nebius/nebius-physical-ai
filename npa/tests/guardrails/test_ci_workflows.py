@@ -134,7 +134,6 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
         "default": "false",
     }
     assert "scope" not in workflow["jobs"]
-
     smoke = workflow["jobs"]["pr-smoke"]
     assert smoke["if"] == "inputs.prose_only"
     commands = "\n".join(step.get("run", "") for step in smoke["steps"])
@@ -702,9 +701,7 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
         "`make check` now runs coverage; drop the caveat from CONTRIBUTING instead"
     )
 
-    # Anchor on what the caveat names: the floor plus the two steps test.yml runs
-    # that no make target does. Deleting the caveat, or bumping the floor in CI
-    # without updating it, fails here instead of quietly overstating `make check`.
+    # Keep the local-gate caveat aligned with the extra work required by CI.
     unreproduced_steps = (
         ("browser-mocked", "Run CLI install test"),
         ("test", "Warn on source drift"),
