@@ -33,6 +33,15 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For [Isaac Arena footage](../docs/workbench/isaac-arena.md#supported-policies),
+`npa workbench isaac-arena evaluate --record-video --video-profile film`
+requests native 4K capture with additional physics-frozen settling renders.
+`standard` remains the default; workflows opt in with `config.video_profile`.
+The updated capture runtime must be present in the selected image or a recorded
+source overlay. Retained live output can be checked with
+`NPA_INTEGRATION_E2E=1 NPA_ARENA_FILM_RESULT=/path/to/result.json npa/.venv/bin/python -m pytest npa/tests/e2e/test_isaac_arena_film_capture_live.py -q`.
+That check reads the complete downloaded output bundle and launches no new job.
+
 ## Install
 
 From the repository root, with your virtual environment active:
@@ -204,6 +213,13 @@ For artifact conversion and sharing, see the
 [Foxglove export](../docs/workbench/foxglove-export.md), and
 [Rerun sharing](../docs/workbench/rerun-sharing.md).
 
+NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
+Recording inspection uses the supported streaming reader and accepts existing
+0.31.4 RRD files without rewriting their contents or provenance. A recording
+validator rejects ambiguous multi-recording files unless it selects each store
+explicitly. For a custom viewer image, use a version that supports the producing
+SDK; previously published container pins retain their recorded build versions.
+
 ## Package map
 
 - `npa.cli`: Typer CLI entrypoints
@@ -212,6 +228,17 @@ For artifact conversion and sharing, see the
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+
+  Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
+  retains legacy ActorCritic checkpoint support and validates saved dimensions
+  before inference. ONNX export preserves RSL-RL 5 observation normalization.
+  The Genesis extra pins an upstream MoviePy compatibility fix by source revision
+  and archive hash so installation retains Pillow 12.3 or newer. The
+  `genesis-test` extra adds CPU checkpoint regression tests to the complete test
+  stage; the fast precheck does not install PyTorch. Genesis simulation remains
+  in the separate `genesis` extra.
+  The [Genesis skill](../skills/tools/genesis/SKILL.md#teacher-checkpoint-compatibility)
+  describes the live GPU migration check and its numerical report.
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands
@@ -255,9 +282,15 @@ python3 -m venv npa/.venv
 npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 
 make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
-make lint PYTHON="$(pwd)/npa/.venv/bin/python"        # ruff
+make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
+
+After committing, run `git fetch origin main` and `make merge-precheck` before
+pushing. This checks committed HEAD's merge with current main for conflicts and
+inconsistent dependency fingerprints without modifying your index. It does not
+run the full suite. Queue rejections receive a PR comment with failed jobs/steps
+or timeout details; see the [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
 
 For the **full unit suite**, use CPython 3.12 on Linux with `ffmpeg` and `ffprobe` available.
 Some runtime tests exercise Linux `/proc` and filesystem semantics, so macOS
@@ -344,7 +377,9 @@ For queue rejections, follow the
 The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
 lets independent jobs use available GitHub runner capacity without shared
 repository-wide job queues. Newer commits still cancel older checks of the same
-PR. Organization runner limits can cause waiting; already queued runs retain
+PR. The final image-inventory check reports failed scans but stops when a run
+is cancelled, so it cannot hold the replacement run behind an obsolete job.
+Organization runner limits can cause waiting; already queued runs retain
 their original workflow configuration until their branches are refreshed.
 Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.

@@ -56,8 +56,8 @@ This skill is the gate map.
 ## Use The Repo Virtualenv
 
 `npa/.venv/bin/python` (Python 3.12). Never bare `python`. The `make` targets
-default `PYTHON` to bare `python` and `cd` into `npa/` first, so pass an
-absolute path:
+select that virtualenv automatically and use its absolute path before changing
+into `npa/`. Override `PYTHON` only for a different environment:
 
 ```bash
 make test PYTHON=/workspace/npa/.venv/bin/python
@@ -69,6 +69,13 @@ fast via `make check-env` before running anything, rather than silently
 testing a different checkout's code — see `testing-conventions` for why.
 
 ## The Ladder
+
+Start with `make precheck` for dependency fingerprints, lint, formatting, and
+focused CI contracts. It reads the working tree and fails before expensive tests.
+Before pushing committed work, run `git fetch origin main` and
+`make merge-precheck` to catch combined-tree conflicts and stale CI fingerprints
+without altering your checkout or index. This second command checks committed
+HEAD only; neither command replaces the full Linux or security gates.
 
 ```bash
 # 1. Lint — seconds. This matches CI and `make lint` across all of npa/.

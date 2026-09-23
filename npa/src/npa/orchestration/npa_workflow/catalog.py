@@ -671,6 +671,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "viewport MP4. Inspect adapter, environment, input, metric, and rendering "
             "status with `npa workbench isaac-arena capabilities`."
         ),
+        # Omit the new option unless requested, preserving existing baked images.
+        config_defaults={"video_profile": ""},
+        omit_flags_when_empty=("--video-profile",),
         argv_template=[
             "npa",
             "workbench",
@@ -697,6 +700,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--object",
             "{{config.object}}",
             "--record-video",
+            "--video-profile",
+            "{{config.video_profile}}",
             "--run-id",
             "{{run.id}}",
         ],

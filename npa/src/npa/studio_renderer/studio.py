@@ -8,7 +8,16 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).parent
-_COMMANDS = {"brief", "scenes", "narrate", "preview", "final", "draft", "watch"}
+_COMMANDS = {
+    "brief",
+    "scenes",
+    "narrate",
+    "preview",
+    "final",
+    "draft",
+    "watch",
+    "review",
+}
 
 
 def _projects(path):
@@ -44,6 +53,14 @@ def _command(project, command, options):
         raise ValueError(
             "Studio selects --project from the registry; choose the film name instead"
         )
+    if command == "review":
+        return [
+            sys.executable,
+            str(_ROOT / "film_review.py"),
+            "--project",
+            str(project),
+            *options,
+        ]
     if command in {"draft", "watch"}:
         script = "film_draft.py" if command == "draft" else "film_watch.py"
         return [
@@ -71,7 +88,7 @@ def _main():
     parser.add_argument(
         "command",
         nargs="?",
-        help="brief, scenes, narrate, draft, watch, preview or final",
+        help="brief, scenes, narrate, draft, watch, preview, final or review",
     )
     parser.add_argument("--registry", type=Path, default=Path("studio.json"))
     parser.add_argument(

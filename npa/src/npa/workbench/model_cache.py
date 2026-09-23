@@ -184,6 +184,7 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     # pod retry or the 12+ GiB text encoder is downloaded again.
     ("DIFFSYNTH_MODEL_BASE_PATH", "flex-pi/diffsynth"),
     ("MODELSCOPE_CACHE", "flex-pi/modelscope"),
+    ("NPA_SAM3_CACHE", "sam3"),
     ("NPA_CONTENT_AGENTS_RUNTIME_CACHE", "runtimes/content-agents"),
 )
 
