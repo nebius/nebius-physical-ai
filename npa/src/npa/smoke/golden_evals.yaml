@@ -1010,6 +1010,27 @@ containers:
       timeout_seconds: unlimited
       status: gpu-gated
 
+  sam3:
+    image: npa-sam3
+    dockerfile: npa/docker/workbench/sam3/Dockerfile
+    physical_ai:
+      useful: true
+      role: SAM 3.1 text-prompted video segmentation with per-frame object masks.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm (digest pinned)
+      network: Operator-only pinned source, model and CUDA runtime fetch
+      external_fetch: [github, huggingface, pytorch-cu130]
+      notes: >-
+        Neutral bootstrap; no SAM source or weights are baked. HF_TOKEN and
+        operator-provided source video required. GPU acceptance is deferred.
+    golden_eval:
+      kind: container-smoke
+      command: python /opt/npa/sam3/runtime.py segment --input-path /inputs/video.mp4 --prompt person --output-path /tmp/npa-sam31-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
   sam2:
     image: npa-sam2
     dockerfile: npa/docker/workbench/sam2/Dockerfile

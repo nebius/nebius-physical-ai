@@ -26,6 +26,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "each rank records positive attention and all-to-all execution",
         "generated MP4 fully decodes with camera and checkpoint provenance",
     ],
+    "sam3": [
+        "exact SAM 3.1 checkpoint access and pinned source/runtime fetch",
+        "text-prompted masks propagate across the real source video on CUDA",
+        "nonempty masks and decoded overlay match the source frame count",
+        "source, checkpoint, compatibility-patch and output hashes are retained",
+    ],
     "sam2": [
         "pinned SAM 2.1 Small checkpoint loads on CUDA",
         "native video predictor propagates a first-frame box through the input",

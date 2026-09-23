@@ -76,6 +76,7 @@ CONTAINER_IMAGE_NAMES = {
     "diffusers": "npa-diffusers",
     "lingbot-world": "npa-lingbot-world",
     "sam2": "npa-sam2",
+    "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
     "curobo": "npa-curobo",
@@ -172,7 +173,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "ncore", "sam3"}
+)
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -310,6 +313,8 @@ SUPPORTED_TOOL_VERSIONS = {
     "diffusers": "0.38.0-rtfetch-20260916",
     "lingbot-world": "a43bec7-rtfetch-20260916",
     "sam2": "2.1-rtfetch-20260916",
+    # Candidate only; excluded from the supported public release plan.
+    "sam3": "3.1-unbuilt",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
