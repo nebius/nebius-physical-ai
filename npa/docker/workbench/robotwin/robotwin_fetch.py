@@ -175,15 +175,37 @@ def extract_tar(archive: Path, destination: Path) -> None:
 def extract_assets(archive: Path, destination: Path, expected_root: str) -> None:
     with zipfile.ZipFile(archive) as source:
         members = source.infolist()
+        paths = {_member_path(member.filename) for member in members}
+        sidecars = set()
         for member in members:
             path = _member_path(member.filename)
-            if not path.parts or path.parts[0] != expected_root:
-                fail("asset-archive-root-invalid")
             mode = member.external_attr >> 16
             if stat.S_ISLNK(mode) or (
                 stat.S_IFMT(mode) not in {0, stat.S_IFREG, stat.S_IFDIR}
             ):
                 fail("asset-archive-member-type-invalid")
+            if path.parts and path.parts[0] == "__MACOSX":
+                if (
+                    len(path.parts) < 2
+                    or not path.name.startswith("._")
+                    or path.name[2:] in {"", ".", ".."}
+                    or stat.S_IFMT(mode) != stat.S_IFREG
+                    or member.is_dir()
+                    or path in sidecars
+                ):
+                    fail("asset-metadata-invalid")
+                companion = path.relative_to("__MACOSX").with_name(path.name[2:])
+                if companion.parts[0] != expected_root or companion not in paths:
+                    fail("asset-metadata-companion-invalid")
+                # AppleDouble v2 magic/version (RFC 1740); read verifies ZIP CRC.
+                if not source.read(member).startswith(
+                    b"\x00\x05\x16\x07\x00\x02\x00\x00"
+                ):
+                    fail("asset-metadata-invalid")
+                sidecars.add(path)
+                continue
+            if not path.parts or path.parts[0] != expected_root:
+                fail("asset-archive-root-invalid")
             target = destination.joinpath(*path.parts)
             if member.is_dir():
                 target.mkdir(parents=True, exist_ok=True)

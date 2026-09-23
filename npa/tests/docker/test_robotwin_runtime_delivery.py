@@ -184,6 +184,85 @@ def test_asset_archive_rejects_link(tmp_path):
         fetch.extract_assets(archive, tmp_path / "assets", "embodiments")
 
 
+def write_asset_member(writer, name, content=b"asset", mode=0o100644):
+    info = zipfile.ZipInfo(name)
+    info.external_attr = mode << 16
+    writer.writestr(info, content)
+
+
+def test_asset_archive_ignores_only_paired_appledouble_metadata(tmp_path):
+    archive = tmp_path / "embodiments.zip"
+    header = b"\x00\x05\x16\x07\x00\x02\x00\x00"
+    with zipfile.ZipFile(archive, "w") as writer:
+        write_asset_member(writer, "embodiments/", b"", 0o40755)
+        write_asset_member(writer, "embodiments/robot.urdf")
+        write_asset_member(writer, "__MACOSX/._embodiments", header)
+        write_asset_member(writer, "__MACOSX/embodiments/._robot.urdf", header)
+    destination = tmp_path / "assets"
+    fetch.extract_assets(archive, destination, "embodiments")
+    assert (destination / "embodiments/robot.urdf").read_bytes() == b"asset"
+    assert sorted(
+        str(path.relative_to(destination)) for path in destination.rglob("*")
+    ) == ["embodiments", "embodiments/robot.urdf"]
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "mode"),
+    [
+        ("__MACOSX/embodiments/._robot.urdf", b"not-appledouble", 0o100644),
+        (
+            "__MACOSX/embodiments/._robot.urdf",
+            b"\x00\x05\x16\x07\x00\x01\x00\x00",
+            0o100644,
+        ),
+        ("__MACOSX/embodiments/._robot.urdf", None, 0o120777),
+        ("__MACOSX/embodiments/._robot.urdf", None, 0o40755),
+        ("__MACOSX/embodiments/robot.urdf", None, 0o100644),
+        ("__MACOSX/embodiments/._missing.urdf", None, 0o100644),
+        ("__MACOSX/other/._robot.urdf", None, 0o100644),
+        ("__MACOSX/embodiments/../._robot.urdf", None, 0o100644),
+        ("other/robot.urdf", None, 0o100644),
+    ],
+)
+def test_asset_metadata_never_weakens_archive_boundaries(tmp_path, name, content, mode):
+    archive = tmp_path / "embodiments.zip"
+    if content is None:
+        content = b"\x00\x05\x16\x07\x00\x02\x00\x00"
+    with zipfile.ZipFile(archive, "w") as writer:
+        write_asset_member(writer, "embodiments/robot.urdf")
+        write_asset_member(writer, name, content, mode)
+    with pytest.raises(fetch.RuntimeFailure):
+        fetch.extract_assets(archive, tmp_path / "assets", "embodiments")
+
+
+@pytest.mark.parametrize("metadata", [False, True])
+def test_asset_duplicate_file_still_refuses(tmp_path, metadata):
+    archive = tmp_path / "embodiments.zip"
+    name = "__MACOSX/embodiments/._robot.urdf" if metadata else "embodiments/robot.urdf"
+    content = b"\x00\x05\x16\x07\x00\x02\x00\x00" if metadata else b"asset"
+    with zipfile.ZipFile(archive, "w") as writer:
+        if metadata:
+            write_asset_member(writer, "embodiments/robot.urdf")
+        write_asset_member(writer, name, content)
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            write_asset_member(writer, name, content)
+    with pytest.raises((fetch.RuntimeFailure, FileExistsError)):
+        fetch.extract_assets(archive, tmp_path / "assets", "embodiments")
+
+
+@pytest.mark.parametrize("directory_first", [False, True])
+def test_asset_file_directory_collision_still_refuses(tmp_path, directory_first):
+    archive = tmp_path / "embodiments.zip"
+    members = [("embodiments/robot", 0o100644), ("embodiments/robot/", 0o40755)]
+    if directory_first:
+        members.reverse()
+    with zipfile.ZipFile(archive, "w") as writer:
+        for name, mode in members:
+            write_asset_member(writer, name, mode=mode)
+    with pytest.raises(FileExistsError):
+        fetch.extract_assets(archive, tmp_path / "assets", "embodiments")
+
+
 def test_runtime_child_environment_excludes_authorization_and_credentials(tmp_path):
     env = fetch.runtime_environment(
         tmp_path,
