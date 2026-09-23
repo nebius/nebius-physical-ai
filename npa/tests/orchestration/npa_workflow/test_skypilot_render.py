@@ -88,6 +88,28 @@ def test_flex_pi_b200_reference_renders_one_b200_and_the_tool_image() -> None:
 
 
 @pytest.mark.parametrize(
+    ("name", "nodes", "accelerators"),
+    [
+        ("flex-pi-b200-public-training.yaml", 1, "B200:4"),
+        ("flex-pi-b300-multinode-public-training.yaml", 4, "B300:1"),
+    ],
+)
+def test_flex_pi_training_renders_authoritative_node_count(name, nodes, accelerators):
+    spec = load_spec(NPA_SPECS / name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="four-rank-training"),
+        run_id="four-rank-training",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task.get("num_nodes", 1) == nodes
+    assert task["resources"]["accelerators"] == accelerators
+    assert task["envs"]["NPA_FLEX_PI_NODE_COUNT"] == str(nodes)
+    assert task["run"].count("workbench flex-pi train") == 1
+
+
+@pytest.mark.parametrize(
     "spec_name",
     ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
 )

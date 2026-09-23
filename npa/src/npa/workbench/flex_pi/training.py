@@ -125,6 +125,15 @@ def run_training(request: TrainingRequest) -> dict:
     plan = _plan(request)
     if request.dry_run:
         return plan
+    from npa.workbench.flex_pi.training_topology import training_topology
+    from npa.workbench.flex_pi.training_multinode import launch_training
+
+    if training_topology()["nodes"] == 4:
+        return launch_training(request)
+    return _execute_training(request, plan)
+
+
+def _execute_training(request, plan):
     cache = (
         Path(os.environ.get("NPA_MODEL_CACHE_DIR", "/workspace/.cache/npa"))
         / "flex-pi-training"
@@ -197,20 +206,35 @@ def _publish_qualification_failure(plan, work, *, checkpoint):
 
 
 def _run_phase(plan, root):
-    request_path = root / "request.json"
-    request_path.write_text(json.dumps(plan), encoding="utf-8")
-    request_path.chmod(0o600)
+    from npa.workbench.flex_pi.training_multinode import ACTIVE
+
+    if ACTIVE is not None:
+        result = ACTIVE.dispatch(plan, root)
+    else:
+        result = _run_local_phase(plan, root)
+    if result.get("reference_benchmark_beaten") is not False:
+        raise FlexPiError("public training must remain non-comparable")
+    return result
+
+
+def _phase_environment():
     env = os.environ.copy()
     env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)
     source = str(Path(__file__).resolve().parents[3])
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [source, env.get("PYTHONPATH")]))
-    process = subprocess.run(_vendor_command(request_path), env=env, stdout=sys.stderr)
+    return env
+
+
+def _run_local_phase(plan, root):
+    request_path = root / "request.json"
+    request_path.write_text(json.dumps(plan), encoding="utf-8")
+    request_path.chmod(0o600)
+    process = subprocess.run(
+        _vendor_command(request_path), env=_phase_environment(), stdout=sys.stderr
+    )
     if process.returncode:
         raise FlexPiError(f"training worker exited {process.returncode}")
-    result = json.loads((root / "result.json").read_text())
-    if result.get("reference_benchmark_beaten") is not False:
-        raise FlexPiError("public training must remain non-comparable")
-    return result
+    return json.loads((root / "result.json").read_text())
 
 
 def _publish_result(request, plan, result, root, work):
@@ -263,6 +287,14 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
     publish_json(
         manifest, root / "checkpoint-manifest.json", source + "/manifest.json", storage
     )
+    plan = {
+        **plan,
+        "distributed_checkpoint": {
+            "source": source,
+            "manifest": manifest,
+            "directory": str(restore),
+        },
+    }
     qualification = _qualify_memory_fill(plan, root, work, checkpoint=restore)
     if qualification:
         result["memory_fill_qualification"].append(qualification)

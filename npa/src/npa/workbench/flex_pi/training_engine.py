@@ -353,11 +353,14 @@ class VerifiedTrainer(Wan22Trainer):
         )
 
     def _checkpoint(self):
+        from npa.workbench.flex_pi.training_checkpoint import collect_rank_checkpoint
+
         start = time.perf_counter()
         checkpoint = self.save_checkpoint()
         if not checkpoint.get("state_path"):
             raise RuntimeError("upstream checkpoint save failed")
         root = Path(checkpoint["state_path"])
+        collect_rank_checkpoint(root)
         if not (root / "trainer_state.json").is_file():
             raise RuntimeError("checkpoint lacks the exact training cursor")
         if self.accelerator.is_main_process:
@@ -366,11 +369,7 @@ class VerifiedTrainer(Wan22Trainer):
                 root / "dataset_stats.json",
             )
         self.accelerator.wait_for_everyone()
-        digest = _state_digest(self.accelerator.unwrap_model(self.model))
-        gathered = [None] * 4
-        torch.distributed.all_gather_object(gathered, digest)
-        if len(set(gathered)) != 1:
-            raise RuntimeError("distributed model parameters diverged")
+        digest = self._synchronized_digest()
         return {
             "state_path": str(root),
             "model_sha256": digest,

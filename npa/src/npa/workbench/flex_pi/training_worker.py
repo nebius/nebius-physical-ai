@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 import random
 import subprocess
-import sys
 import time
 
 from npa.workbench.flex_pi.training_normalization import normalization_overrides
+from npa.workbench.flex_pi.training_topology import rank_command, training_topology
 
 
 def _configuration(plan, root, assets):
@@ -130,6 +130,8 @@ def _runtime_receipt():
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
         "compute_capability": torch.cuda.get_device_capability(),
         "world_size": torch.distributed.get_world_size(),
+        "nodes": training_topology()["nodes"],
+        "gpus_per_node": training_topology()["gpus_per_node"],
         "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
         "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled(),
         "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
@@ -189,33 +191,26 @@ def _worker_environment(assets, root):
 
 def _parent_main(request_path):
     from npa.workbench.flex_pi.training_assets import prepare_assets
+    from npa.workbench.flex_pi.training_multinode import phase_barrier
 
     plan = json.loads(request_path.read_text())
     root = Path(plan["work_directory"])
     assets = Path(plan["asset_directory"])
     root.mkdir(parents=True, exist_ok=True)
+    phase_barrier("inputs-ready")
     capability = _capability_preflight(root, assets)
     started = time.perf_counter()
     receipt = prepare_assets(assets)
     receipt["preparation_seconds"] = time.perf_counter() - started
     plan["configuration"] = _configuration(plan, root, assets)
+    phase_barrier("assets-ready")
     rank_request = root / "rank-request.json"
     rank_request.write_text(json.dumps(plan))
     rank_request.chmod(0o600)
-    command = [
-        sys.executable,
-        "-m",
-        "torch.distributed.run",
-        "--standalone",
-        "--nproc-per-node=4",
-        "--max-restarts=0",
-        "--module",
-        "npa.workbench.flex_pi.training_worker",
-        "--rank-request",
-        str(rank_request),
-    ]
+    command = rank_command("--rank-request", rank_request)
     subprocess.run(command, check=True, env=_worker_environment(assets, root))
-    _finalize_phase(plan, root, assets, receipt, capability, request_path)
+    if training_topology()["node_rank"] == 0:
+        _finalize_phase(plan, root, assets, receipt, capability, request_path)
 
 
 def _finalize_phase(plan, root, assets, receipt, capability, request_path):
@@ -253,18 +248,7 @@ def _finalize_phase(plan, root, assets, receipt, capability, request_path):
 
 def _capability_preflight(root, assets):
     output = root / "capability.json"
-    command = [
-        sys.executable,
-        "-m",
-        "torch.distributed.run",
-        "--standalone",
-        "--nproc-per-node=4",
-        "--max-restarts=0",
-        "--module",
-        "npa.workbench.flex_pi.training_worker",
-        "--capability-output",
-        str(output),
-    ]
+    command = rank_command("--capability-output", output)
     subprocess.run(command, check=True, env=_worker_environment(assets, root))
     return json.loads(output.read_text())
 
@@ -272,8 +256,10 @@ def _capability_preflight(root, assets):
 def _capability_rank_main(output):
     import torch
 
-    rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(rank)
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    topology = training_topology()
+    torch.cuda.set_device(local_rank)
     if rank == 0:
         print(
             json.dumps(
@@ -285,11 +271,15 @@ def _capability_rank_main(output):
             flush=True,
         )
     torch.distributed.init_process_group("nccl")
-    if torch.distributed.get_world_size() != 4 or torch.cuda.device_count() != 4:
+    if (
+        torch.distributed.get_world_size() != 4
+        or torch.cuda.device_count() != topology["gpus_per_node"]
+    ):
         raise RuntimeError(
-            "capability preflight requires one node with exactly four visible GPUs"
+            "visible GPU allocation differs from the frozen four-rank topology"
         )
-    tensor = torch.empty(4 * 1024 * 1024, device=f"cuda:{rank}")
+    peers = _verify_rank_placement()
+    tensor = torch.empty(4 * 1024 * 1024, device=f"cuda:{local_rank}")
     started = time.perf_counter()
     for _ in range(3):
         tensor.fill_(rank + 1)
@@ -297,26 +287,63 @@ def _capability_rank_main(output):
         if not torch.all(tensor == 10):
             raise RuntimeError("four-rank NCCL collective produced incorrect values")
     torch.cuda.synchronize()
-    if rank == 0:
-        result = _collective_receipt(tensor, started)
+    if local_rank == 0:
+        result = _collective_receipt(tensor, started, peers)
         output.write_text(json.dumps(result))
         print(json.dumps({"capability_preflight": result}), flush=True)
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()
 
 
-def _collective_receipt(tensor, started):
+def _verify_rank_placement():
+    import socket
+    import torch
+
+    topology = training_topology()
+    local = {
+        "rank": torch.distributed.get_rank(),
+        "node_rank": topology["node_rank"],
+        "local_rank": int(os.environ["LOCAL_RANK"]),
+        "host_sha256": hashlib.sha256(
+            os.environ.get("NPA_FLEX_PI_HOST_ID", socket.gethostname()).encode()
+        ).hexdigest(),
+        "gpu": torch.cuda.get_device_name(),
+        "visible_gpus": torch.cuda.device_count(),
+    }
+    peers = [None] * 4
+    torch.distributed.all_gather_object(peers, local)
+    actual = {(row["node_rank"], row["local_rank"]) for row in peers}
+    expected = {
+        (node, rank)
+        for node in range(topology["nodes"])
+        for rank in range(topology["gpus_per_node"])
+    }
+    if (
+        actual != expected
+        or len({row["host_sha256"] for row in peers}) != topology["nodes"]
+    ):
+        raise RuntimeError("the four ranks do not occupy the requested distinct hosts")
+    return peers
+
+
+def _collective_receipt(tensor, started, peers):
     import torch
 
     return {
         "world_size": 4,
+        "nodes": training_topology()["nodes"],
+        "gpus_per_node": training_topology()["gpus_per_node"],
+        "rank_placement": peers,
         "collectives_verified": 3,
         "bytes_per_rank_per_collective": tensor.numel() * tensor.element_size(),
         "seconds": time.perf_counter() - started,
         "nccl_version": torch.cuda.nccl.version(),
-        "peer_access": [
-            [i == j or torch.cuda.can_device_access_peer(i, j) for j in range(4)]
-            for i in range(4)
+        "local_peer_access": [
+            [
+                i == j or torch.cuda.can_device_access_peer(i, j)
+                for j in range(torch.cuda.device_count())
+            ]
+            for i in range(torch.cuda.device_count())
         ],
     }
 
@@ -379,8 +406,13 @@ def main():
     mode.add_argument("--request", type=Path)
     mode.add_argument("--rank-request", type=Path)
     mode.add_argument("--capability-output", type=Path)
+    mode.add_argument("--distributed-request", type=Path)
     args = parser.parse_args()
-    if args.capability_output:
+    if args.distributed_request:
+        from npa.workbench.flex_pi.training_multinode import distributed_main
+
+        distributed_main(args.distributed_request)
+    elif args.capability_output:
         _capability_rank_main(args.capability_output)
     elif args.rank_request:
         _rank_main(args.rank_request)

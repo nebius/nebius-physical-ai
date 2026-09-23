@@ -52,6 +52,17 @@ Training requires the full Wan VideoDiT and official derived ActionDiT
 initialization; the checkpoint-only inference instructions below apply only to
 the released RoboTwin inference checkpoint.
 
+For four separate B300 instances use `flex-pi-b300-multinode-public-training.yaml`:
+`training_nodes: "4"`, `num_nodes: 4`, and one requested GPU per host. Supply the
+original normalization object and hash. The current source overlay validates
+SkyPilot's peer allocation, uses one global four-rank DDP group, joins saved RNG
+files from all hosts, and restores complete checkpoint bytes independently before
+fresh continuation. Require distinct-host placement and collective receipts,
+then profile/resume before a full epoch. Report socket communication and topology
+separately from the single-host NVLink result; local CPU tests are not GPU
+acceptance. A preempted peer must fail the gang instead of leaving surviving
+phase workers waiting indefinitely.
+
 Freeze the bundled source/split manifests before profiling. Measure the
 six excluded startup/trace updates and three eight-update steady windows
 separately. Accept an execution-only optimization only after fixed-input

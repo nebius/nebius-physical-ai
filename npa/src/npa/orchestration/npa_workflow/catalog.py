@@ -738,6 +738,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.flex_pi.train": ToolEntry(
         name="workbench.flex_pi.train",
         description="Train the immutable public YAM utensil workload with four GPUs, full validation and verified fresh checkpoint resume.",
+        multi_node_mode="sharded",
+        shard_activation_config="training_nodes",
+        shard_output_config="output_uri",
         argv_template=[
             "npa",
             "workbench",

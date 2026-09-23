@@ -136,6 +136,13 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
     "NPA_BYOF_KUBECONFIG",
     "NPA_BYOF_CLUSTER_NAME",
     "NPA_SKYPILOT_BIN",
+    "NPA_FLEX_PI_NODE_COUNT",
+    "NPA_FLEX_PI_HOST_ID",
+    "NPA_FLEX_PI_SESSION",
+    "NPA_FLEX_PI_PHASE",
+    "SKYPILOT_NODE_RANK",
+    "SKYPILOT_NODE_IPS",
+    "SKYPILOT_NUM_NODES",
     # Nebius CLI profile selectors. Product code prepends `--profile <name>` to
     # the argv it builds whenever either is set, so an operator who has selected
     # a profile (the normal state on a machine that actually runs npa) shifts

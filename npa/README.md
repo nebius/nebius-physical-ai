@@ -26,6 +26,13 @@ checkpoint-resume check. `--dry-run` returns the fixed contract without GPUs.
 an unqualified candidate that requires verified normalization and exact parity
 checks before execution.
 
+The four-host B300 workflow sets `config.training_nodes: "4"` and requests one
+GPU on each host. `NPA_FLEX_PI_NODE_COUNT` comes from the resolved workflow
+resources; the adapter checks SkyPilot's allocation and publishes only from
+node zero. Provide the same original normalization and run `profile-resume`
+before a full epoch. The [training guide](../docs/workbench/flex-pi.md#public-yam-training)
+documents the per-host checkpoint join, runtime variables and topology caveats.
+
 The package also provides project provisioning, storage, artifact conversion,
 viewers, and an agent interface. Python access includes typed clients, shared
 implementation functions, and wrappers around CLI callbacks; available imports

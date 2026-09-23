@@ -2149,6 +2149,8 @@ def build_skypilot_task_doc(
     # and exports SKYPILOT_NODE_RANK / SKYPILOT_NODE_IPS into each. Emitted only when the
     # profile asks for more than one node, so every existing rendered doc is unchanged.
     num_nodes = int(scheduler_task.get("num_nodes") or 1)
+    if str(scheduler_task.get("tool_ref") or "") == "workbench.flex_pi.train":
+        envs["NPA_FLEX_PI_NODE_COUNT"] = str(num_nodes)
     if (
         str(scheduler_task.get("tool_ref") or "")
         == "workbench.cosmos2.transfer_execute"

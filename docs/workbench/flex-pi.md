@@ -315,6 +315,29 @@ Three verified collectives run before any asset downloads or training.
 Training hardware qualification is separate
 from the existing one-GPU inference qualification below.
 
+For four separate one-GPU B300 hosts, use
+`workflows/testing/flex-pi-b300-multinode-public-training.yaml` with the same
+verified original normalization object and SHA-256. Its `training_nodes: "4"`
+sets the resource profile's `num_nodes`; each node requests `B300:1`, 16 CPUs
+and 192 GiB of memory. This is one four-rank DDP training job. Inter-host NCCL
+uses sockets, so throughput must be reported with this topology and must not be
+presented as equivalent to four GPUs sharing one host's NVLink fabric.
+
+The renderer sets `NPA_FLEX_PI_NODE_COUNT` from the resolved resource profile
+(one by default). The adapter cross-checks it against SkyPilot's node rank and
+peer addresses, allowing only one node with four GPUs or four nodes with one
+GPU each. The Kubernetes downward API supplies `NPA_FLEX_PI_HOST_ID` for a
+hashed distinct-host placement receipt. Ports 29500 and 29501 must be reachable
+between the task's peers for fresh torchrun groups and CPU coordination.
+Node zero alone publishes results. Each node stages immutable inputs locally;
+the checkpoint join collects every rank's saved RNG file on node zero, then
+followers independently restore all hash-verified checkpoint bytes from S3.
+Fresh processes repeat the existing qualification and continuation checks.
+Peer heartbeats detect a disappeared instance without imposing a training
+duration limit. Any worker failure stops the other live phase workers. This
+path requires its own live four-node acceptance; CPU tests alone do not qualify
+B300 training or establish a speedup.
+
 The real public dataset is
 [`flex-pi/sort_utensils`](https://huggingface.co/datasets/flex-pi/sort_utensils/tree/0780dd0a0b281df91abcef9434c4b3ac2757448c),
 licensed CC-BY-4.0. Its 152 episodes contain 128,010 source frames. The pinned
