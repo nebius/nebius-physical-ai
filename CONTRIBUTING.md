@@ -10,6 +10,7 @@ Workbench tool; small fixes can go directly to the relevant section.
 | Add a tool and container | [End-to-end contribution skill](skills/workflows/add-workbench-tool/SKILL.md) |
 | Add or adapt a workflow | [Workflow authoring](skills/workflows/author-npa-workflow/SKILL.md) |
 | Prepare a pull request | [Validation gates](skills/atomic/pre-pr-validation/SKILL.md) and [PR conventions](#commit-and-pr-conventions) |
+| Estimate time to merge | [Readiness and queue timings](#readiness-and-queue-timings) |
 | Merge a pull request from mobile | [Auto-merge and the merge queue](#auto-merge-and-the-merge-queue) |
 
 ## Contribution quality
@@ -767,6 +768,73 @@ the workflow is cancelled. Failed or superseded builds therefore do not request
 a coverage runner just to reject missing data. The required aggregate check still
 rejects failed, skipped, cancelled, or missing component results, and successful
 full suites still enforce the 60% merged coverage floor.
+
+### Readiness and queue timings
+
+Measure validation, admission, and queue residence separately. The five-minute
+precheck target is an early signal; a PR becomes eligible only after all required
+checks pass and its other merge requirements are satisfied. Successful validation
+does not itself request a merge: use the [auto-merge controls](#auto-merge-and-the-merge-queue)
+for a PR you intend to merge.
+
+| Interval | Start and end | What can extend it |
+| --- | --- | --- |
+| PR validation | Creation of the current PR validation run to completion of its last required check | Runner waiting, setup, tests, scans, and retries within that run |
+| Admission delay | Required checks passing to the PR's added-to-queue timeline event | An unsaved merge request, drafts, conflicts, or other unmet requirements |
+| Queue residence | Added-to-queue event to merge or removal | Entries ahead, runner waiting, candidate validation, and rebuilds |
+
+Use the completion time of the last required check, not the workflow's last
+update: optional timing reports can finish after the PR is already eligible.
+Use the PR timeline for queue residence; an Actions run starts after admission
+and can finish before preceding entries allow the merge. A removal ends that
+queue visit. Report failed visits and retries separately instead of presenting
+only the final successful visit as the total wait. PR creation-to-merge time also
+includes authoring and review, so it is not a measure of CI or queue performance.
+
+#### Measured example: 23 September 2026
+
+The seven successful PR validation runs created between 06:00 and 14:30 UTC had
+a median time to the last required check of **22m 16s**, ranging from **14m 35s
+to 31m 07s**. These are per-run observations, including runner waiting, from
+[35827766214](https://github.com/nebius/nebius-physical-ai/actions/runs/35827766214),
+[35834290697](https://github.com/nebius/nebius-physical-ai/actions/runs/35834290697),
+[35835739252](https://github.com/nebius/nebius-physical-ai/actions/runs/35835739252),
+[35863847960](https://github.com/nebius/nebius-physical-ai/actions/runs/35863847960),
+[35863941533](https://github.com/nebius/nebius-physical-ai/actions/runs/35863941533),
+[35871052383](https://github.com/nebius/nebius-physical-ai/actions/runs/35871052383), and
+[35871053236](https://github.com/nebius/nebius-physical-ai/actions/runs/35871053236).
+The sample includes repeated validations of the same PR and excludes failed or
+cancelled runs; it does not estimate the time needed to fix a failing change.
+
+[PR #734](https://github.com/nebius/nebius-physical-ai/pull/734) illustrates the
+three intervals. Its validation started at 14:00:32 UTC and its last required
+check passed at 14:15:07: **14m 35s**. It entered the queue at 14:33:26, leaving
+**18m 19s** between passing checks and admission. It merged at 14:37:05 after
+**3m 39s in the queue**. Its
+[queue run](https://github.com/nebius/nebius-physical-ai/actions/runs/35875086612)
+reused identical-tree PR evidence and repeated the fresh security scans.
+
+The preceding four merges spent **18m 29s, 18m 29s, 29m 12s, and 43m 57s** in
+the queue, respectively:
+[#731](https://github.com/nebius/nebius-physical-ai/pull/731),
+[#682](https://github.com/nebius/nebius-physical-ai/pull/682),
+[#684](https://github.com/nebius/nebius-physical-ai/pull/684), and
+[#581](https://github.com/nebius/nebius-physical-ai/pull/581).
+Their candidate runs repeated full validation; residence also included waiting
+behind earlier entries. An identical-tree success therefore demonstrates the
+fast path, not a universal three-minute queue promise.
+
+At this snapshot, branch protection required gitleaks, scan, and
+security-regression. The active
+[main queue ruleset](https://github.com/nebius/nebius-physical-ai/rules/23577420)
+allowed two concurrent candidate builds, merged one PR at a time by squash,
+required every candidate to pass, and had a 360-minute check-response timeout.
+That timeout is a failure boundary, not an expected wait or the ten-minute
+execution target. Re-read branch protection, queue settings, current queue
+entries, and recent run/job timestamps when estimating a new PR; this dated
+sample is evidence of observed behavior, not a service guarantee. GitHub's
+[queue settings guide](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)
+explains the distinction between build concurrency, merge limits, and timeouts.
 
 ## Testing Requirements
 
