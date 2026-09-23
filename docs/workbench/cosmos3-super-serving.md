@@ -286,6 +286,11 @@ requests, and per-cell durable resume. Compare video-seconds per GPU-hour and
 per service-hour. Independent single-GPU runs do not reproduce the published
 eight-GPU node-throughput sweep.
 
+Submit these long-running measurements with `--runtime --max-wait-seconds 0`.
+The workflow runtime otherwise cancels a wave after its default one-hour
+deadline, which is too short for 24 sequential requests. Zero disables that
+deadline while preserving explicit cancellation and failure handling.
+
 The benchmark uses `--no-guardrails`; its exact access capability is
 `cosmos3-super-benchmark`, which probes the pinned Cosmos3-Super weights.
 The broader `cosmos3-serving` capability also checks the guardrail model used
