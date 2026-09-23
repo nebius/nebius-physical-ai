@@ -305,6 +305,27 @@ def checkout(
         fail("source-license-mismatch")
 
 
+def stage_apt_archives(
+    artifacts: list[dict[str, Any]], downloads: Path, cache: Path
+) -> list[str]:
+    """Expose verified debs under the names APT's offline archive cache expects."""
+    cache.mkdir(mode=0o700)
+    debs = []
+    for item in artifacts:
+        if item["kind"] != "deb":
+            continue
+        architecture = item["filename"].rsplit("_", 1)[-1]
+        version = str(item.get("version", "")).replace(":", "%3a")
+        filename = f"{item.get('name', '')}_{version}_{architecture}"
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+%~-]*\.deb", filename):
+            fail("apt-cache-filename-invalid")
+        source = downloads / item["filename"]
+        with source.open("rb") as reader, (cache / filename).open("xb") as output:
+            shutil.copyfileobj(reader, output)
+        debs.append(str(source))
+    return debs
+
+
 def execute(
     lock: Mapping[str, Any],
     environ: Mapping[str, str],
@@ -334,11 +355,8 @@ def execute(
     for item in artifacts:
         fetch(item, root / "downloads" / item["filename"])
     print("robotwin: installing runtime system dependencies", flush=True)
-    debs = [
-        str(root / "downloads" / item["filename"])
-        for item in artifacts
-        if item["kind"] == "deb"
-    ]
+    apt_cache = root / "apt-cache"
+    debs = stage_apt_archives(artifacts, root / "downloads", apt_cache)
     command(
         [
             "sudo",
@@ -349,6 +367,8 @@ def execute(
             "install",
             "-y",
             "--no-download",
+            "-o",
+            f"Dir::Cache::archives={apt_cache}",
             "--no-install-recommends",
             "--allow-downgrades",
             *debs,

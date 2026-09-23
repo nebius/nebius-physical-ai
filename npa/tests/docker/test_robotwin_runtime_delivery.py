@@ -106,6 +106,51 @@ def test_download_exact_bytes_are_published_after_verification(tmp_path, monkeyp
     assert list(tmp_path.iterdir()) == [path]
 
 
+@pytest.mark.parametrize("version", ["1.2.3-4", "7:1.2.3-4"])
+def test_offline_apt_cache_preserves_verified_bytes_and_encodes_epoch(
+    tmp_path, version
+):
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    source = downloads / "example_1.2.3-4_amd64.deb"
+    source.write_bytes(b"verified-deb-bytes")
+    cache = tmp_path / "apt-cache"
+    debs = fetch.stage_apt_archives(
+        [
+            {
+                "kind": "deb",
+                "name": "example",
+                "version": version,
+                "filename": source.name,
+            }
+        ],
+        downloads,
+        cache,
+    )
+    assert debs == [str(source)]
+    assert cache.stat().st_mode & 0o777 == 0o700
+    expected = cache / f"example_{version.replace(':', '%3a')}_amd64.deb"
+    assert list(cache.iterdir()) == [expected]
+    assert expected.read_bytes() == source.read_bytes() == b"verified-deb-bytes"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"), [("name", "../escape"), ("version", "../escape")]
+)
+def test_offline_apt_cache_refuses_escaping_metadata(tmp_path, field, value):
+    item = {
+        "kind": "deb",
+        "name": "example",
+        "version": "1",
+        "filename": "example_1_all.deb",
+    }
+    item[field] = value
+    cache = tmp_path / "apt-cache"
+    with pytest.raises(fetch.RuntimeFailure, match="apt-cache-filename-invalid"):
+        fetch.stage_apt_archives([item], tmp_path, cache)
+    assert list(cache.iterdir()) == []
+
+
 @pytest.mark.parametrize("member", ["/escape", "root/../../escape", "root/dir\\escape"])
 def test_cuda_archive_refuses_escaping_member(tmp_path, member):
     archive = tmp_path / "archive.tar"
