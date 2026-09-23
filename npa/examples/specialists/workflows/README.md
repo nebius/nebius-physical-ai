@@ -78,6 +78,9 @@ The example [NuRec verifier](VERIFICATION.md) decodes downloaded USDZ, images,
 video and Rerun data, and checks their agreement with retained workflow and
 render receipts. Its verdict does not replace the experiment's quality and
 cost comparison.
+For an older pinned viewer, optional `legacy_rrd_review_evidence` supplies its
+verified producer settings while retaining the same recording, frame and hash
+checks. See [the evidence contract](VERIFICATION.md) for the required binding.
 
 ## Ownership and retained evidence
 
@@ -86,7 +89,7 @@ assignment. While a delegated task is queued, running or awaiting attention,
 the coordinator cannot act on that workspace. A host-local profile lock also
 excludes delegation during a direct coordinator operation. An uncertain tool
 effect blocks further effects, including a new delegated task, until externally
-reconciled. The bridge exposes no automatic reconciliation or replay tool.
+reconciled. The bridge exposes no automatic replay tool.
 The hybrid coordinator initially delegates independent workspace tasks. After a
 specialist enters `needs_attention`, Astra may inspect its receipts and call
 `take_over`. This requires the profile lock and fully resolved tool effects,
@@ -94,6 +97,30 @@ preserves the prior error and receipts, and cancels only the local specialist
 task. Astra can then repair the workspace and continue the existing remote
 workflow through its configured operations. Takeover never cancels a remote
 job, replays a tool or resolves an uncertain effect.
+
+Operators may explicitly declare audited read-only commands with
+`"observation_only": true` in their operation configuration (default `false`).
+Only existing-state observations qualify; a command that starts verification,
+submits work, edits files or cancels jobs must remain unclassified. The runtime
+trusts this declaration, so keep the implementation outside model-editable paths.
+Both arms may invoke declared observations for fresh diagnostics while a
+specialist is awaiting attention, even when an effect remains uncertain. The
+profile lock still excludes active workers; reads do not release write ownership
+or resolve uncertain submissions.
+
+With this opt-in, the hybrid additionally receives
+`dismiss_interrupted_observation(task_id, call_id)`. It accepts only a lost
+observation classified under the original, unchanged task policy, with no active
+work or mixed unsafe uncertainty. It atomically records a **failed** observation
+receipt and preserves history; it does not replay, requeue or claim success.
+The task remains `needs_attention` until the coordinator explicitly takes over
+after all calls are resolved. Old/unclassified calls require separate operator
+reconciliation. Configure identical observation declarations in both trial arms
+and retain all failed receipts when comparing reliability and cost.
+
+SQLite failures surface safe phase/error-class diagnostics. If a receipt cannot
+be saved, the response marks `receipt_persisted: false`; it is not durable success
+and must not authorize repeating an effect. Storage recovery is an operator task.
 
 The output directory retains:
 

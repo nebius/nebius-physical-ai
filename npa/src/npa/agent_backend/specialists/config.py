@@ -10,7 +10,14 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 
 class Operation(BaseModel):
@@ -20,6 +27,7 @@ class Operation(BaseModel):
         argv: Fixed arguments; {python}, {workspace}, {task_id}, {run_id} expand locally.
         description: What this operation does and how to interpret its result.
         pass_env: Explicit environment names to forward to the command.
+        observation_only: Operator attestation that execution only observes existing state.
     Returns:
         Validated command policy.
     Raises:
@@ -30,6 +38,7 @@ class Operation(BaseModel):
     argv: list[str] = Field(min_length=1)
     description: str = Field(min_length=1)
     pass_env: list[str] = Field(default_factory=list)
+    observation_only: StrictBool = False
 
     @field_validator("argv")
     @classmethod
@@ -245,6 +254,9 @@ def fingerprint(profile: Profile) -> str:
     for name in ("fallback_models", "required_operations"):
         if not policy[name]:
             del policy[name]
+    for operation in policy["operations"].values():
+        if not operation["observation_only"]:
+            del operation["observation_only"]
     body = json.dumps(policy, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()
 

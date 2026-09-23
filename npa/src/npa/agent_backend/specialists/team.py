@@ -16,7 +16,9 @@ from npa.clients.credentials import load_credentials
 
 from .config import TeamConfig, fingerprint
 from .graph import build_graph, initial_state
+from .observations import _dismiss
 from .store import TaskStore, UncertainOperation, _private_file
+from .storage_errors import StorageFailure
 from .tools import WorkbenchTools
 
 
@@ -146,6 +148,18 @@ class SpecialistTeam:
         path = self.store.directory / "artifacts" / task_id / "changes.diff"
         return path.read_text() if path.exists() else ""
 
+    def dismiss_interrupted_observation(self, task_id: str, call_id: str):
+        """Record a lost, explicitly classified observation as failed without replay.
+
+        Args: task_id: Task awaiting attention. call_id: Its interrupted observation.
+        Returns: Failed observation receipt; the task remains needs_attention.
+        Raises: ValueError, KeyError: Policy, task or call is ineligible.
+            BlockingIOError, StorageFailure: Ownership or durable storage is unavailable.
+        """
+        profile = self.config.profile(self.store._get(task_id)["profile"])
+        with self._ownership(profile.name):
+            return _dismiss(self.store, profile, task_id, call_id)
+
     def cancel(self, task_id: str):
         """Stop a task after its current node without undoing external effects.
 
@@ -206,17 +220,21 @@ class SpecialistTeam:
             TypeError,
             IndexError,
         ) as error:
-            # Provider/OS diagnostics may contain credentials; only validation reasons are shown.
-            detail = (
-                redact(str(error))
-                if isinstance(error, (ValueError, UncertainOperation))
-                else type(error).__name__
-            )
-            self.store._update(task["id"], "needs_attention", error=detail)
-            self.store._event(
-                task["id"], {"type": "needs_attention", "error": type(error).__name__}
-            )
+            self._attention(task["id"], error)
         return self.store._get(task["id"])
+
+    def _attention(self, task_id, error):
+        # Never include raw provider, filesystem or SQLite messages.
+        detail = (
+            redact(str(error))
+            if isinstance(error, (ValueError, UncertainOperation, StorageFailure))
+            else type(error).__name__
+        )
+        event = {"type": "needs_attention", "error": type(error).__name__}
+        if isinstance(error, StorageFailure):
+            event["storage_failure"] = error.diagnostic
+        self.store._update(task_id, "needs_attention", error=detail)
+        self.store._event(task_id, event)
 
     def _complete(self, task_id, values):
         if self.store._originals(task_id):
@@ -232,8 +250,9 @@ class SpecialistTeam:
 
         path = self.store.directory / (task_id + ".checkpoints.sqlite")
         _private_file(path)
-        connection = sqlite3.connect(path, check_same_thread=False)
+        connection = None
         try:
+            connection = sqlite3.connect(path, check_same_thread=False)
             saver = SqliteSaver(
                 connection, serde=JsonPlusSerializer(pickle_fallback=False)
             )
@@ -241,8 +260,11 @@ class SpecialistTeam:
             yield build_graph(
                 profile, tools, saver, client=self.clients.get(profile.name)
             )
+        except sqlite3.Error as error:
+            raise StorageFailure("graph_checkpoint", error) from None
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     @contextmanager
     def _ownership(self, profile):

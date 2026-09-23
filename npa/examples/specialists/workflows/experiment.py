@@ -16,7 +16,7 @@ from npa.agent_backend.specialists.config import load_config, private_directory
 from npa.agent_backend.specialists.team import SpecialistTeam
 from npa.agent_backend.specialists.worker import supervise
 
-from evidence import DELEGATION_TOOLS, DIRECT_TOOLS, _receipts, _snapshot, _write_json
+from evidence import _granted_tools, _receipts, _snapshot, _write_json
 from workflow_bridge import _coordinator_store
 
 HERE = Path(__file__).resolve().parent
@@ -36,7 +36,7 @@ def _settings(config_path, directory, arm, effort):
         # This is a transport deadline, not a job runtime limit. Wait observations are <=60s.
         "mcp_servers.workbench.tool_timeout_sec": 120,
     }
-    names = DIRECT_TOOLS + (DELEGATION_TOOLS if arm == "astra-tofa" else ())
+    names = _granted_tools(arm, load_config(config_path))
     for name in names:
         settings[f"mcp_servers.workbench.tools.{name}.approval_mode"] = "approve"
     return settings
@@ -64,8 +64,8 @@ def _astra_argv(config_path, directory, arm, effort):
     return [*argv, "-"]
 
 
-def _prompt(common, team, arm):
-    profiles = [
+def _workspace_policies(team):
+    return [
         {
             "name": profile.name,
             "description": profile.description,
@@ -77,9 +77,17 @@ def _prompt(common, team, arm):
                 for name, operation in profile.operations.items()
             },
             "required_operations": profile.required_operations,
+            "observation_only_operations": [
+                name
+                for name, operation in profile.operations.items()
+                if operation.observation_only
+            ],
         }
         for profile in team.config.profiles
     ]
+
+
+def _prompt(common, team, arm):
     instructions = (
         "Use only the configured Workbench MCP tools. Native shell/file tools and "
         "additional Codex agents are outside this comparison. Use run_operations for "
@@ -95,14 +103,21 @@ def _prompt(common, team, arm):
             "Inspect full specialist_status receipts when a task finishes or needs attention, "
             "then remove ended tasks from subsequent waits. "
             "A delegated workspace remains owned until its task ends; do not edit or run "
-            "operations concurrently there. If a specialist needs attention, inspect its receipts "
+            "effectful operations concurrently there. If a specialist needs attention, inspect its receipts "
             "and use take_over only when its effects are resolved, then perform the recovery "
             "yourself. Finish after verifying every required result.\n"
         )
+        if "dismiss_interrupted_observation" in _granted_tools(arm, team.config):
+            instructions += (
+                "For needs_attention tasks, explicitly declared observation_only operations permit fresh "
+                "diagnostic reads while ownership remains blocked. Use dismiss_interrupted_observation only "
+                "for a lost, originally classified observation. It records failure without replay or requeue; "
+                "take_over still requires every uncertain effect to be resolved.\n"
+            )
     return (
         instructions
         + "\nWorkspace policies:\n"
-        + json.dumps(profiles)
+        + json.dumps(_workspace_policies(team))
         + "\n\n"
         + common
     )

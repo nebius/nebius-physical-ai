@@ -792,6 +792,8 @@ def test_legacy_fingerprint_and_new_recovery_policy_binding(configuration):
     legacy = profile.model_dump(
         mode="json", exclude={"fallback_models", "required_operations"}
     )
+    for operation in legacy["operations"].values():
+        operation.pop("observation_only")
     expected = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()
     assert fingerprint(profile) == expected
     team = _team(configuration, [])

@@ -11,7 +11,9 @@ import time
 import uuid
 
 from npa.agent_backend.specialists.config import fingerprint, load_config
+from npa.agent_backend.specialists.observations import _dismiss
 from npa.agent_backend.specialists.store import TaskStore, UncertainOperation
+from npa.agent_backend.specialists.storage_errors import StorageFailure
 from npa.agent_backend.specialists.team import SpecialistTeam
 from npa.agent_backend.specialists.tools import WorkbenchTools
 
@@ -38,6 +40,19 @@ class _Bridge:
         self.hybrid = hybrid
 
     async def _recorded(self, name, arguments, action):
+        try:
+            return await self._journaled(name, arguments, action)
+        except StorageFailure as error:
+            return {
+                "ok": False,
+                "error": str(error),
+                "error_type": "StorageFailure",
+                "storage_failure": error.diagnostic,
+                "receipt_persisted": False,
+                "effect_outcome": "unknown; inspect original receipts before recovery",
+            }
+
+    async def _journaled(self, name, arguments, action):
         identity = str(uuid.uuid4())
         invocation = {"name": name, "arguments": arguments}
         self.store._begin_call("supervisor", identity, invocation)
@@ -46,12 +61,22 @@ class _Bridge:
         )
         try:
             result = await action()
-        except (ValueError, KeyError, BlockingIOError, UncertainOperation) as error:
+        except (
+            ValueError,
+            KeyError,
+            BlockingIOError,
+            UncertainOperation,
+            StorageFailure,
+        ) as error:
             result = {
                 "ok": False,
                 "error": str(error),
                 "error_type": type(error).__name__,
             }
+            if isinstance(error, StorageFailure):
+                result.update(
+                    storage_failure=error.diagnostic, operation_receipt_persisted=False
+                )
         self.store._finish_call("supervisor", identity, result)
         self.store._event(
             "supervisor",
@@ -83,13 +108,47 @@ class _Bridge:
     def _invoke(self, specialist, name, arguments):
         profile = self.team.config.profile(specialist)
         with self.team._ownership(specialist):
-            self._require_idle(specialist)
+            self._require_access(profile, name, arguments)
             executor = WorkbenchTools(profile, self.store, "coordinator-" + specialist)
             call = {
                 "id": str(uuid.uuid4()),
                 "function": {"name": name, "arguments": json.dumps(arguments)},
             }
             return executor.execute(call)
+
+    def _require_access(self, profile, name, arguments):
+        operation = (
+            profile.operations.get(arguments.get("name"))
+            if name == "run_operation"
+            else None
+        )
+        if operation is None or not operation.observation_only:
+            return self._require_idle(profile.name)
+        tasks = [
+            task for task in self.team.store._list() if task["profile"] == profile.name
+        ]
+        if any(task["status"] in {"queued", "running"} for task in tasks):
+            raise ValueError("specialist owns this workspace; inspect its status first")
+        if any(task["policy"] != fingerprint(profile) for task in tasks):
+            raise ValueError("task policy changed; restore its original policy")
+        if self.store._get("coordinator-" + profile.name)["policy"] != fingerprint(
+            profile
+        ):
+            raise ValueError("coordinator policy changed; restore its original policy")
+
+    def _dismiss_observation(self, task_id, call_id):
+        if not self.hybrid:
+            raise ValueError("observation dismissal is unavailable in astra-only")
+        profile = self.team.config.profile(self.team.store._get(task_id)["profile"])
+        with self.team._ownership(profile.name):
+            if any(
+                call["status"] != "completed"
+                for call in self.store._calls("coordinator-" + profile.name)
+            ):
+                raise UncertainOperation(
+                    "coordinator has an uncertain effect; reconcile externally"
+                )
+            return _dismiss(self.team.store, profile, task_id, call_id)
 
     async def _direct(self, specialist, name, arguments):
         return await self._recorded(
@@ -407,6 +466,22 @@ def _register_team_wait(server, bridge):
         )
 
 
+def _register_observation_recovery(server, bridge):
+    @server.tool()
+    async def dismiss_interrupted_observation(task_id: str, call_id: str) -> dict:
+        """Discard a lost observation result under its original operator declaration.
+
+        Args: task_id: Task awaiting attention. call_id: Interrupted observation.
+        Returns: Failed observation receipt; no replay, requeue or external effect.
+        Raises: None; unsafe calls and mixed uncertainty return failure receipts.
+        """
+        return await bridge._recorded(
+            "dismiss_interrupted_observation",
+            {"task_id": task_id, "call_id": call_id},
+            lambda: asyncio.to_thread(bridge._dismiss_observation, task_id, call_id),
+        )
+
+
 def _server(config_path, directory, hybrid=False):
     from mcp.server.mcpserver import MCPServer
 
@@ -420,6 +495,12 @@ def _server(config_path, directory, hybrid=False):
         _register_wait(server, bridge)
         _register_team_wait(server, bridge)
         _register_takeover(server, bridge)
+        if any(
+            operation.observation_only
+            for profile in bridge.team.config.profiles
+            for operation in profile.operations.values()
+        ):
+            _register_observation_recovery(server, bridge)
     return server
 
 

@@ -83,12 +83,172 @@ def _write_usage(directory, usage):
     (directory / "codex.jsonl").write_text(json.dumps(event) + "\n")
 
 
+def _enable_observations(prepared):
+    config = json.loads(prepared[0].read_text())
+    for profile in config["profiles"]:
+        profile["operations"]["status"] = {
+            "argv": [
+                "{python}",
+                "-c",
+                "from pathlib import Path; print(Path('workflow.yaml').read_text())",
+            ],
+            "description": "Observe existing workflow settings",
+            "observation_only": True,
+        }
+    prepared[0].write_text(json.dumps(config))
+
+
+def _interrupted_observation(bridge):
+    from npa.agent_backend.specialists.call_policy import _classification
+
+    bridge._delegate("scene-a", "task", "Inspect workflow")
+    profile = bridge.team.config.profile("scene-a")
+    invocation = {"name": "run_operation", "arguments": json.dumps({"name": "status"})}
+    bridge.team.store._begin_call(
+        "task", "read", invocation, classification=_classification(profile, invocation)
+    )
+    bridge.team.store._update("task", "needs_attention", error="Original interruption")
+
+
+def test_opt_in_observation_dismissal_then_takeover_preserves_remote_work(
+    workflow_experiment, prepared, tmp_path, monkeypatch
+):
+    _enable_observations(prepared)
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    _interrupted_observation(bridge)
+    with pytest.raises(RuntimeError, match="uncertain"):
+        bridge._take_over("task")
+    before = bridge.team.status("task")
+    monkeypatch.setattr(
+        workflow_experiment["workflow_bridge"].WorkbenchTools,
+        "execute",
+        lambda *_: pytest.fail("recovery executed a command"),
+    )
+    result = bridge._dismiss_observation("task", "read")
+    assert result["ok"] is False and result["dismissed"] is True
+    assert bridge.team.status("task")["status"] == "needs_attention"
+    assert bridge._take_over("task")["remote_workloads_cancelled"] is False
+    after = bridge.team.status("task")
+    assert after["events"][: len(before["events"])] == before["events"]
+    assert after["calls"][0]["classification"] == before["calls"][0]["classification"]
+
+
+def test_fresh_declared_observation_does_not_resolve_uncertain_submission(
+    workflow_experiment, prepared, tmp_path
+):
+    _enable_observations(prepared)
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    bridge._delegate("scene-a", "task", "Inspect workflow")
+    bridge.team.store._begin_call("task", "uncertain-submit", {"name": "submit"})
+    bridge.team.store._update("task", "needs_attention")
+    result = asyncio.run(bridge._direct("scene-a", "run_operation", {"name": "status"}))
+    assert result["ok"] is True and result["stdout"] == "broken: true\n\n"
+    assert bridge.team.status("task")["calls"][0]["status"] == "started"
+    assert bridge.team.status("task")["status"] == "needs_attention"
+    denied = asyncio.run(bridge._direct("scene-a", "run_operation", {"name": "verify"}))
+    assert denied["ok"] is False
+    with pytest.raises(RuntimeError, match="uncertain"):
+        bridge._take_over("task")
+    with bridge.team._ownership("scene-a"):
+        locked = asyncio.run(
+            bridge._direct("scene-a", "run_operation", {"name": "status"})
+        )
+    assert locked["error_type"] == "BlockingIOError"
+
+
+@pytest.mark.parametrize("boundary", ["queued", "running", "changed-policy"])
+def test_observation_never_bypasses_active_owner_or_original_policy(
+    workflow_experiment, prepared, tmp_path, boundary
+):
+    _enable_observations(prepared)
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    _interrupted_observation(bridge)
+    if boundary == "changed-policy":
+        bridge.team.config.profiles[0].instructions += " changed"
+    else:
+        bridge.team.store._update("task", boundary)
+    result = asyncio.run(bridge._direct("scene-a", "run_operation", {"name": "status"}))
+    assert result["ok"] is False
+    assert not bridge.store._calls("coordinator-scene-a")
+
+
+def test_dismissal_refuses_coordinator_uncertainty_and_active_ownership(
+    workflow_experiment, prepared, tmp_path
+):
+    _enable_observations(prepared)
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    _interrupted_observation(bridge)
+    with bridge.team._ownership("scene-a"), pytest.raises(BlockingIOError):
+        bridge._dismiss_observation("task", "read")
+    bridge.store._begin_call("coordinator-scene-a", "submit", {"name": "submit"})
+    with pytest.raises(RuntimeError, match="uncertain"):
+        bridge._dismiss_observation("task", "read")
+    assert bridge.team.status("task")["calls"][0]["status"] == "started"
+
+
+def test_mcp_and_scope_grant_recovery_only_when_explicitly_configured(
+    workflow_experiment, prepared, tmp_path
+):
+    _enable_observations(prepared)
+    directory = tmp_path / "evidence"
+    directory.mkdir(mode=0o700)
+    directory.joinpath("team.json").write_bytes(prepared[0].read_bytes())
+    module = workflow_experiment["workflow_bridge"]
+    for hybrid in (False, True):
+        names = {
+            tool.name
+            for tool in asyncio.run(
+                module._server(prepared[0], directory, hybrid).list_tools()
+            )
+        }
+        assert ("dismiss_interrupted_observation" in names) is hybrid
+        arm = "astra-tofa" if hybrid else "astra-only"
+        settings = workflow_experiment["experiment"]._settings(
+            prepared[0], directory, arm, "medium"
+        )
+        assert (
+            "mcp_servers.workbench.tools.dismiss_interrupted_observation.approval_mode"
+            in settings
+        ) is hybrid
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "mcp_tool_call",
+            "server": "workbench",
+            "tool": "dismiss_interrupted_observation",
+        },
+    }
+    directory.joinpath("codex.jsonl").write_text(json.dumps(event))
+    evidence = workflow_experiment["evidence"]
+    assert evidence._astra_usage(directory, "astra-tofa")["matched_tool_scope"] is True
+    assert evidence._astra_usage(directory, "astra-only")["matched_tool_scope"] is False
+    directory.joinpath("team.json").unlink()
+    assert evidence._astra_usage(directory, "astra-tofa")["matched_tool_scope"] is False
+
+
+def test_mcp_storage_failure_does_not_claim_persisted_receipt(
+    workflow_experiment, prepared, tmp_path
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    with bridge.store._connection() as connection:
+        connection.execute(
+            "CREATE TRIGGER receipt_failure BEFORE UPDATE ON calls BEGIN SELECT RAISE(ABORT, 'private diagnostic'); END"
+        )
+    result = asyncio.run(bridge._direct("scene-a", "run_operation", {"name": "verify"}))
+    assert result["error_type"] == "StorageFailure"
+    assert result["receipt_persisted"] is False
+    assert result["storage_failure"]["phase"] == "tool_receipt"
+    assert "private diagnostic" not in json.dumps(result)
+    assert bridge.store._calls("coordinator-scene-a")[0]["status"] == "started"
+    assert bridge.store._calls("supervisor")[0]["status"] == "started"
+
+
 def test_both_arms_use_same_astra_effort_and_direct_tools(
-    workflow_experiment, tmp_path
+    workflow_experiment, tmp_path, prepared
 ):
     experiment = workflow_experiment["experiment"]
     argv = [
-        experiment._astra_argv(tmp_path / "team.json", tmp_path, arm, "medium")
+        experiment._astra_argv(prepared[0], tmp_path, arm, "medium")
         for arm in ("astra-only", "astra-tofa")
     ]
     for command in argv:
@@ -98,7 +258,7 @@ def test_both_arms_use_same_astra_effort_and_direct_tools(
             for feature in ("shell_tool", "unified_exec", "multi_agent")
         )
         assert 'model_reasoning_effort="medium"' in command
-        for tool in experiment.DIRECT_TOOLS:
+        for tool in workflow_experiment["evidence"].DIRECT_TOOLS:
             assert (
                 f'mcp_servers.workbench.tools.{tool}.approval_mode="approve"' in command
             )

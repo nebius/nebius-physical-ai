@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +10,8 @@ import sqlite3
 import time
 
 from .config import private_directory
+from .call_policy import _digest
+from .storage_errors import StorageFailure
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -27,6 +28,11 @@ CREATE TABLE IF NOT EXISTS events (
  sequence INTEGER PRIMARY KEY, task_id TEXT NOT NULL, at REAL NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS originals (
  task_id TEXT NOT NULL, path TEXT NOT NULL, content TEXT, PRIMARY KEY(task_id,path));
+CREATE TABLE IF NOT EXISTS call_policies (
+ task_id TEXT NOT NULL, call_id TEXT NOT NULL, classification TEXT NOT NULL,
+ PRIMARY KEY(task_id,call_id));
+CREATE TRIGGER IF NOT EXISTS immutable_call_policy
+ BEFORE UPDATE ON call_policies BEGIN SELECT RAISE(ABORT, 'immutable call policy'); END;
 """
 
 
@@ -44,7 +50,7 @@ class TaskStore:
 
     Args: directory: Private state directory outside source workspaces.
     Returns: Store with independent transactional connections per operation.
-    Raises: ValueError, OSError, sqlite3.Error: Storage is unsafe or unavailable.
+    Raises: ValueError, OSError, StorageFailure: Storage is unsafe or unavailable.
     """
 
     def __init__(self, directory: Path):
@@ -55,15 +61,19 @@ class TaskStore:
             connection.executescript(_SCHEMA)
 
     @contextmanager
-    def _connection(self):
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
+    def _connection(self, phase="task_journal"):
+        connection = None
         try:
+            connection = sqlite3.connect(self.path, timeout=30)
+            connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA journal_mode=WAL")
             with connection:
                 yield connection
+        except sqlite3.Error as error:
+            raise StorageFailure(phase, error) from None
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     def _get(self, task_id):
         with self._connection() as connection:
@@ -123,7 +133,7 @@ class TaskStore:
         return _task(row) if row else None
 
     def _heartbeat(self, profile):
-        with self._connection() as connection:
+        with self._connection("worker_heartbeat") as connection:
             connection.execute(
                 "INSERT INTO workers VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET pid=excluded.pid,seen=excluded.seen",
                 (profile, os.getpid(), time.time()),
@@ -182,12 +192,11 @@ class TaskStore:
             for row in rows
         ]
 
-    def _begin_call(self, task_id, call_id, invocation):
-        digest = hashlib.sha256(
-            json.dumps(invocation, sort_keys=True).encode()
-        ).hexdigest()
-        with self._connection() as connection:
+    def _begin_call(self, task_id, call_id, invocation, *, classification=None):
+        digest = _digest(invocation)
+        with self._connection("tool_start") as connection:
             connection.execute("BEGIN IMMEDIATE")
+            _check_classification(connection, task_id, call_id, classification, digest)
             row = connection.execute(
                 "SELECT * FROM calls WHERE task_id=? AND call_id=?", (task_id, call_id)
             ).fetchone()
@@ -203,21 +212,27 @@ class TaskStore:
                 "INSERT INTO calls VALUES(?,?,?,'started',NULL)",
                 (task_id, call_id, digest),
             )
+            if classification is not None:
+                _record_classification(connection, task_id, call_id, classification)
         return None
 
     def _finish_call(self, task_id, call_id, result):
-        with self._connection() as connection:
-            connection.execute(
-                "UPDATE calls SET status='completed',result=? WHERE task_id=? AND call_id=?",
+        with self._connection("tool_receipt") as connection:
+            changed = connection.execute(
+                "UPDATE calls SET status='completed',result=? WHERE task_id=? AND call_id=? AND status='started'",
                 (json.dumps(result), task_id, call_id),
             )
+            if changed.rowcount != 1:
+                raise UncertainOperation("tool receipt is already resolved or unknown")
 
     def _calls(self, task_id):
         with self._connection() as connection:
             rows = connection.execute(
-                "SELECT call_id,status,digest FROM calls WHERE task_id=?", (task_id,)
+                "SELECT c.call_id,c.status,c.digest,p.classification FROM calls c "
+                "LEFT JOIN call_policies p USING(task_id,call_id) WHERE c.task_id=?",
+                (task_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [_call(row) for row in rows]
 
     def _reconcile(self, task_id, call_id, result, retry):
         if self._get(task_id)["status"] != "needs_attention":
@@ -260,6 +275,46 @@ class TaskStore:
                 (task_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+
+def _check_classification(connection, task_id, call_id, classification, digest):
+    previous = connection.execute(
+        "SELECT classification FROM call_policies WHERE task_id=? AND call_id=?",
+        (task_id, call_id),
+    ).fetchone()
+    if classification is not None and classification.get("digest") != digest:
+        raise ValueError("call classification does not match invocation")
+    if previous and json.loads(previous[0]) != classification:
+        raise ValueError("original call classification changed")
+
+
+def _record_classification(connection, task_id, call_id, classification):
+    connection.execute(
+        "INSERT OR IGNORE INTO call_policies VALUES(?,?,?)",
+        (task_id, call_id, json.dumps(classification, sort_keys=True)),
+    )
+    connection.execute(
+        "INSERT INTO events(task_id,at,body) VALUES(?,?,?)",
+        (
+            task_id,
+            time.time(),
+            json.dumps(
+                {
+                    "type": "tool_started",
+                    "call_id": call_id,
+                    "classification": classification,
+                }
+            ),
+        ),
+    )
+
+
+def _call(row):
+    result = dict(row)
+    result["classification"] = (
+        json.loads(result["classification"]) if result["classification"] else None
+    )
+    return result
 
 
 def _task(row):

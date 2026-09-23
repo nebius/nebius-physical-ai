@@ -116,6 +116,15 @@ Commands run with `shell=False` in that specialist's workspace. They inherit
 only PATH, HOME, locale, temporary-directory settings and explicitly listed
 environment names. Command exit code, stdout and stderr become durable receipts.
 
+`observation_only` is an optional strict boolean, defaulting to `false`. Set it
+to `true` only after auditing a fixed command that observes existing state,
+such as status or logs. It must not submit, cancel, edit, start a verifier or
+otherwise change the workload. Keep its implementation outside model-editable
+paths. Local diagnostic output and audit logs are allowed; this declaration is
+operator trust, not automatic analysis or an OS sandbox. Models cannot supply
+or change this flag. Default configurations retain their existing policy hashes;
+opting in changes the policy and applies only to newly created calls/tasks.
+
 The example authorizes validation and planning. To authorize execution, add
 fixed Workbench `health preflight`, `workflow submit`, `workflow status` and
 artifact commands with your already verified project, workflow and storage
@@ -140,6 +149,29 @@ SQLite journal records a tool call before execution and its result afterwards.
 On restart, completed tool receipts are reused even if the graph checkpoint was
 interrupted. If a call started but has no result, the task enters
 `needs_attention`; the runtime does not automatically repeat the effect.
+
+For an operation explicitly marked `observation_only` before execution, the SDK
+method `team.dismiss_interrupted_observation(task_id, call_id)` can discard a
+lost result. It requires exclusive profile ownership, an unchanged policy and
+a task awaiting attention. A transaction records a failed `InterruptedObservation`
+receipt and its original classification, digest and error. The journal call is
+terminal (`completed`), but the result is failed; it cannot satisfy a successful
+operation gate. The task stays `needs_attention`. No command runs, no result is
+invented, and no task is requeued. A second identical dismissal is idempotent.
+
+Older calls without an original classification, writes, unclassified operations,
+active tasks and profiles with mixed unsafe uncertainty are rejected. The
+additive journal migration leaves old receipts intact and never upgrades old
+calls into observations. The [workflow experiment bridge](../../npa/examples/specialists/workflows/README.md)
+grants this narrow dismissal tool only when hybrid profiles opt in, allowing its
+existing takeover control after all uncertain calls are resolved. Broad operator
+reconciliation remains separate.
+
+Storage failures report the affected phase and SQLite error class/code without
+raw exception text. A failed receipt write remains uncertain. When storage is
+unavailable, diagnostics explicitly distinguish an unpersisted receipt from a
+durable result. Restore healthy storage before recovery; observation dismissal
+does not repair an underlying filesystem or SQLite I/O failure.
 
 Inspect the external result, then supply the interrupted call ID and its verified
 JSON result through the monitor or `reconcile --call-id ... --result ...`.

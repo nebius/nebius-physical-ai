@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import sqlite3
 
+from npa.agent_backend.specialists.config import TeamConfig
+
 DIRECT_TOOLS = (
     "read_file",
     "list_files",
@@ -20,6 +22,20 @@ DELEGATION_TOOLS = (
     "wait_specialists",
     "take_over",
 )
+OBSERVATION_TOOLS = ("dismiss_interrupted_observation",)
+
+
+def _granted_tools(arm, config=None):
+    names = DIRECT_TOOLS
+    if arm == "astra-tofa":
+        names += DELEGATION_TOOLS
+        if config and any(
+            operation.observation_only
+            for profile in config.profiles
+            for operation in profile.operations.values()
+        ):
+            names += OBSERVATION_TOOLS
+    return names
 
 
 def _write_json(path, value):
@@ -75,9 +91,9 @@ def _astra_usage(directory, arm="astra-only"):
         for event in events
         if event.get("type") == "turn.completed"
     ]
-    allowed = set(DIRECT_TOOLS)
-    if arm == "astra-tofa":
-        allowed.update(DELEGATION_TOOLS)
+    path = directory / "team.json"
+    config = TeamConfig.model_validate_json(path.read_text()) if path.exists() else None
+    allowed = set(_granted_tools(arm, config))
     forbidden = [event for event in events if _outside_tool_scope(event, allowed)]
     failed = any(event.get("type") in {"turn.failed", "error"} for event in events)
     required = {"input_tokens", "output_tokens"}

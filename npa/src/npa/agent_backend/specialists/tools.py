@@ -14,6 +14,8 @@ from pydantic import BaseModel, ConfigDict
 
 from npa.agent_backend.trajectory import redact
 
+from .call_policy import _classification
+
 
 class _Arguments(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -93,7 +95,12 @@ class WorkbenchTools:
         """
         name, arguments = call["function"]["name"], call["function"]["arguments"]
         invocation = {"name": name, "arguments": arguments}
-        previous = self.store._begin_call(self.task_id, call["id"], invocation)
+        previous = self.store._begin_call(
+            self.task_id,
+            call["id"],
+            invocation,
+            classification=_classification(self.profile, invocation),
+        )
         if previous is not None:
             return previous
         try:
