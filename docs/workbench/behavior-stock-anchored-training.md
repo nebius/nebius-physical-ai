@@ -4,9 +4,9 @@ This page records a supervised fine-tuning ablation for the public BEHAVIOR
 policy work. A private pinned-runtime trial completed the frozen 2,400-update
 recipe and offline checkpoint scoring. The repository publishes the reusable
 objective, paired NNX helper, filtered native trainer wiring, compiled preflight,
-and complete-panel checkpoint selector. Export parity and simulator evaluation
-remain pending, so the offline result does not establish a rollout-quality
-improvement.
+and complete-panel checkpoint selector. The trial's export failed qualification
+across independent loads and remains unqualified for rollout serving. The offline
+result does not establish a rollout-quality improvement.
 
 ## Objective
 
@@ -208,5 +208,7 @@ and
 `ab3cd77f2f83e7a7f279c74a8c271043c932abfdcdff17095c2d0203d9574540`.
 These are offline teacher-forced action losses from the frozen held-out split.
 They do not isolate the anchor from the changed schedule, and they are not
-simulator success or Q scores. Export parity and rollout evaluation remain
-pending.
+simulator success or Q scores. A later GPU diagnostic used byte-identical
+observations but produced different actions across independent loads. The
+anchored export remains unqualified, and no rollout-quality result was admitted.
+See the [failed export evidence](behavior-recovery-experiments-2026-09-21.md#completed-training-and-failed-export-check).
