@@ -392,9 +392,29 @@ execution timing, so that result qualifies only the instrumented diagnostic.
 The direct production-scorer check then failed before producing scores: its
 full-data path imported an omitted inventory module. All 12 original failure
 artifacts were preserved and independently verified. The repair supplies that
-dependency and exercises the full-data import path. Production-scorer admission
-remains closed until the complete check passes with the frozen selection rule
-and tolerance. No trained candidate has been scored or admitted to rollouts.
+dependency and exercises the full-data import path. The corrected direct check
+completed both fresh processes over all 3,840 examples. Independent readback
+verified its 18 original artifacts and reproduced the frozen selection gate:
+each task and the combined anchor had zero aggregate loss difference. The
+production worker, selection rule, and tolerance remained unchanged. The output
+manifest has SHA-256
+`2324978271323beb719aaf17b8cc6ade60af747f6766e94092bcd847c481bf22`.
+This qualifies the direct production scorer for the recorded parent, inputs,
+runtime, and hardware. Serving parity remains a separate gate. No trained
+candidate has been scored or admitted to rollouts.
+
+The pretraining serving-parity check reconstructed a real fixed observation,
+verified the recovered FP32 checkpoint, and prepared a separate BF16 export.
+It then failed before policy inference: the fresh worker passed the prepared
+runtime contract to a validator expecting the original preparation template.
+All 12 published failure artifacts were independently verified. The retained
+checkpoint and export remain available for recovery; this failure supplies no
+action-parity result and does not admit training or rollouts.
+
+After complete provider verification, a separate CPU workflow retired the two
+obsolete local resume-probe checkpoints and recovered 63,123,878,368 bytes of
+training-volume space. Independent readback verified its ten original artifacts.
+The checkpoint admitted through recovery remains preserved in object storage.
 
 ### Specialist recovery and Workbench task status
 
