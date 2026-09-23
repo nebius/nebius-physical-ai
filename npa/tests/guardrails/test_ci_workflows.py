@@ -68,9 +68,6 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
     for name in (
         "confidentiality-scan.yml",
         "gitleaks.yml",
-        "harness-guardrails.yml",
-        "lint.yml",
-        "typecheck.yml",
     ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
@@ -79,6 +76,26 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
     test = _load_workflow("test.yml")["on"]
     assert set(test) == {"workflow_call", "schedule", "workflow_dispatch"}
     assert test["schedule"] == [{"cron": "23 5 * * *"}]
+
+
+@pytest.mark.parametrize("name", ["harness-guardrails.yml", "lint.yml"])
+def test_candidate_checks_do_not_repeat_after_merge(name: str) -> None:
+    """Keep checked candidate work from competing with the next queue entry.
+
+    Args:
+        name: Reusable validation workflow whose candidate checks stay required.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A duplicate trigger returns or a candidate gate disappears.
+    """
+    assert set(_load_workflow(name)["on"]) == {"workflow_call", "workflow_dispatch"}
+    jobs = _load_workflow("security-regression.yml")["jobs"]
+    gate = "lint-gate" if name == "lint.yml" else "queue-guardrails"
+    assert jobs[gate]["uses"] == f"./.github/workflows/{name}"
+    assert gate in jobs["security-regression"]["needs"]
+    assert "'full'" in jobs[gate]["if"] or '"full"' in jobs[gate]["if"]
+    assert '"retest"' in jobs[gate]["if"]
 
 
 def test_main_validation_cancels_superseded_commits() -> None:
