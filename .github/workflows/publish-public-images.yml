@@ -114,6 +114,7 @@ jobs:
 
           import yaml
 
+          from npa.deploy.image_build_scope import select_public_image_builds
           from npa.deploy.images import (
               CONTAINER_IMAGE_NAMES,
               development_image_for_tool,
@@ -131,53 +132,17 @@ jobs:
                   raise SystemExit(f"duplicate tool in {name}")
               return values
 
-          def _tool_name_for_key(key: str) -> str:
-              # The contract key is the tool name: development_image_for_tool
-              # resolves image names from it (e.g. `sim2real-control`).
-              return key
-
           def _automatic_build_tools(event_name: str, entries: dict, sha: str) -> list[str]:
-              public_keys = [
-                  key
-                  for key, entry in entries.items()
-                  if isinstance(entry, dict)
-                  and entry.get("redistribution") == "public"
-                  and key in CONTAINER_IMAGE_NAMES
-              ]
               if event_name == "schedule":
-                  # Weekly refresh: rebuild every public development image.
-                  return sorted(_tool_name_for_key(key) for key in public_keys)
+                  return sorted(
+                      key for key, entry in entries.items()
+                      if entry.get("redistribution") == "public" and key in CONTAINER_IMAGE_NAMES
+                  )
               if event_name != "push":
                   return []
-              # Push: rebuild the public tools whose workbench inputs changed.
-              # Anything unmappable (shared files, new branch with no `before`
-              # SHA) falls back to the full public set.
-              before = os.environ.get("EVENT_BEFORE", "").strip()
-              if not before or set(before) == {"0"}:
-                  changed: list[str] = []
-              else:
-                  changed = subprocess.check_output(
-                      ["git", "diff", "--name-only", before, sha,
-                       "--", "npa/docker/workbench/"],
-                      text=True,
-                  ).splitlines()
-              dir_to_keys: dict[str, list[str]] = {}
-              for key in public_keys:
-                  top = str(entries[key].get("dockerfile", "")).split("/", 1)[0]
-                  dir_to_keys.setdefault(top, []).append(key)
-              keys: set[str] = set()
-              unmapped = not changed
-              for path in changed:
-                  parts = path.split("/")
-                  if len(parts) >= 4 and parts[2] == "workbench":
-                      mapped = dir_to_keys.get(parts[3], [])
-                      if mapped:
-                          keys.update(mapped)
-                          continue
-                  unmapped = True
-              if unmapped or not keys:
-                  keys = set(public_keys)
-              return sorted(_tool_name_for_key(key) for key in keys)
+              return select_public_image_builds(
+                  Path.cwd(), os.environ.get("EVENT_BEFORE", ""), sha
+              )
 
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
@@ -981,7 +946,7 @@ jobs:
     # acceptance. A build or cleanup dispatch must never fall through into an
     # unrelated all-image release preflight (or a release write when dry_run is
     # false).
-    if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.build_count == '0' && needs.resolve.outputs.cleanup_count == '0' && (needs.build-development.result == 'success' || needs.build-development.result == 'skipped') }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.resolve.result == 'success' && needs.resolve.outputs.build_count == '0' && needs.resolve.outputs.cleanup_count == '0' && (needs.build-development.result == 'success' || needs.build-development.result == 'skipped') }}
     runs-on: ubuntu-latest
     env:
       TARGET: ${{ needs.resolve.outputs.target }}
