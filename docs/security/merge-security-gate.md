@@ -198,9 +198,12 @@ can request automatic merging through clients that use that setting. It does
 not replace or bypass queue validation. See the contributor guide for
 [mobile recovery and pending-check diagnosis](../../CONTRIBUTING.md#auto-merge-and-the-merge-queue).
 Repository administrators and configured bypass actors may still bypass checks.
-Keep the component workflows enabled as reusable candidate gates and
-superseding main audits. Secret and confidentiality checks also run for merge
-queue candidates.
+Keep the component workflows enabled as reusable candidate gates. Lint,
+documentation drift, and guardrails do not repeat on every main push; they
+remain required before merging and available through manual dispatch. The daily
+full test audit also includes guardrails. Post-merge security audits remain
+automatic and supersede older main runs. Secret and confidentiality checks also
+run for merge queue candidates.
 
 These checks reduce known risks; they do not prove the absence of vulnerabilities.
 Bandit is Python pattern analysis, not application-wide dataflow or JavaScript

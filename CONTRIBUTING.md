@@ -662,6 +662,14 @@ merge candidates, and audits do not serialize through repository-wide slots.
 Scope selection, coverage aggregation, and the final required check wait only
 for their declared dependencies and an available runner.
 
+Lint, CLI documentation drift, and guardrails run before queue admission and
+again when the queue must validate a changed combined tree. Their reusable
+workflows do not also start on every push to `main`: those duplicate jobs
+competed with the next queue candidate immediately after each merge. Both
+workflows remain available through manual dispatch, and the daily full Python
+audit includes guardrails. Post-merge secret, confidentiality, source/dependency,
+hostile-input, and image-security audits remain automatic.
+
 The parent workflow retains a concurrency group per PR so a newer commit
 cancels that PR's superseded validation, including its reusable child workflows.
 Merge candidates have distinct groups keyed by candidate SHA. Main pushes

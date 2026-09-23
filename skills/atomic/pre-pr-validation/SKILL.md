@@ -24,7 +24,11 @@ PRs can adopt the policy without a forced branch refresh.
 `pr-precheck` gives a five-minute early signal without replacing full admission.
 The queue execution target is ten minutes; hosted-runner waits can add delay.
 A daily audit covers all supported Python versions instead of starting a full
-audit after every merge. Independent validation jobs use available GitHub runner
+audit after every merge. Lint, docs drift, and guardrails remain candidate gates
+and can be dispatched manually, without duplicate main-push runs competing with
+the next queue entry. The daily full suite includes guardrails; post-merge
+security audits remain automatic. Independent validation jobs use available
+GitHub runner
 capacity without job-level concurrency locks or matrix `max-parallel` caps.
 Preserve per-PR supersession on the parent and distinct workflow group prefixes
 for reusable children. Merge candidates use their own SHA-specific groups.
@@ -160,7 +164,7 @@ npa/.venv/bin/python -m pytest \
 Run this gate before pushing, in addition to the full suite and applicable live
 workload validation. Only the unified parent belongs in
 `AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py`; component
-workflows are reusable and main-only. The image workflow is covered by
+workflows are reusable, with separate main/scheduled security audits. The image workflow is covered by
 `test_image_security_gate`;
 preserve its distinct concurrency group, minimal caller permissions, and the
 existing PR concurrency controls. Image findings must not produce a passing
