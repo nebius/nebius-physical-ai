@@ -344,6 +344,37 @@ The private runtime retains the CUDA Toolkit, CUPTI Python and CUDA Python
 license files plus cuda-pathfinder's Apache-2.0 license; these packages and
 populated caches are never added to the public image.
 
+Two profiles on four separate preemptible one-GPU B300 instances reached
+live-verified terminal `SUCCEEDED` on 2026-09-23. Each measured 30 updates /
+2,880 public training anchors and completed the initial and checkpoint
+three-phase numerical qualifications, checkpoint readback, and exact fresh
+continuation. The second profile set `NCCL_SOCKET_NTHREADS=4` and
+`NCCL_NSOCKS_PERTHREAD=4` in each worker's pod environment:
+
+| Four-host B300 profile | Aggregate samples/s, all 30 updates | Median steady samples/s |
+| --- | ---: | ---: |
+| Original socket settings | 2.565879 | 2.645909 |
+| Four helper threads, four sockets each | 2.978842 | 3.109365 |
+
+The steady windows exclude the first six updates and cover three consecutive
+eight-update windows. The second profile measured 3.109365, 3.099759 and
+3.120109 samples/s, a **17.52% median improvement** over the original four-host
+profile. All 31 step/sample/loss records, including the separate continuation
+probe, matched exactly. Both attempts also matched initial/final model state,
+full checkpoint and resumed state, and all numerical fixture reports; all nine
+checkpoint files had identical byte hashes. The second profile used source
+`3b1b98f9936ebef122abe83ac047c0c04bcdc277` and retained the original training
+compute libraries. Its native GPU trace contained 562,365 kernels and 38,490
+memory events with zero dropped records; the published 147,038,296-byte trace
+matched the worker readback.
+
+This qualifies the profile and fresh-resume path. It does not establish a
+complete B300 epoch or full held-out validation. Throughput remains below the
+public B200 result, whose steady median was 6.363063 samples/s; the separate-host
+socket topology and the recorded B200 shared-host contention remain distinct.
+The unavailable historical dataset remains non-comparable, and
+`reference_benchmark_beaten` remains false.
+
 The renderer sets `NPA_FLEX_PI_NODE_COUNT` from the resolved resource profile
 (one by default). The adapter cross-checks it against SkyPilot's node rank and
 peer addresses, allowing only one node with four GPUs or four nodes with one
