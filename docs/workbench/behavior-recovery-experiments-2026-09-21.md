@@ -360,18 +360,41 @@ excluded nondeterministic compiler operations, completed two native updates, and
 saved its checkpoint. A separate eager gradient diagnostic then requested another
 59.35 GiB and ran out of memory before the uninterrupted third update or fresh
 restore comparison. All 17 original failure artifacts were independently verified;
-the checkpoint remains unqualified. The next probe removes that duplicate
-gradient computation while retaining exact comparison of the actual native
-continuation's complete optimizer state and metrics.
+that checkpoint remains unqualified.
+
+The next probe removed the duplicate eager gradient computation. After two native
+updates, it saved the complete FP32 training state, then compared uninterrupted
+update three with a fresh-process restore and update three. The next batch,
+folded random key, native loss and norm metrics, model parameters, and complete
+AdamW state matched exactly. The outer wrapper nevertheless failed because it
+looked for GPU visibility in the boundary receipt instead of the cursor receipt.
+The original run remains failed; its 23 original artifacts preserve both the
+successful numerical comparison and the wrapper failure.
+
+A separate CPU recovery workflow verified that evidence and published the retained
+checkpoint without rerunning training. Independent provider readback hashed all
+35 checkpoint files, totaling 31,561,938,241 bytes, and reverified all original
+evidence. This admits the recovered native-resume result under its recorded
+compiler configuration. It does not fabricate the missing wrapper receipt or
+qualify serving exports, later checkpoints, sustained throughput, or policy Q.
 
 Two full parent holdout passes exceeded the frozen repeatability tolerance.
 A later diagnostic checked 60 examples across the same three tasks in two fresh
 processes. All transformed inputs, folded random keys, and cross-process loss
 bytes matched; all 120 within-process repeated loss calls also matched, with
 unchanged BF16 model state. Its 14 original artifacts were independently verified.
-This smaller check does not qualify the full 3,840-example scorer. The full check
-must pass without changing the selection rule or tolerance before candidate
-checkpoint scoring begins.
+The subsequent instrumented full check reproduced all 3,840 transformed inputs,
+folded random keys, and loss bytes across two fresh processes, with unchanged
+BF16 state and zero task-level loss differences. All 14 original artifacts were
+independently verified. Its per-example hashing and host synchronization change
+execution timing, so that result qualifies only the instrumented diagnostic.
+
+The direct production-scorer check then failed before producing scores: its
+full-data path imported an omitted inventory module. All 12 original failure
+artifacts were preserved and independently verified. The repair supplies that
+dependency and exercises the full-data import path. Production-scorer admission
+remains closed until the complete check passes with the frozen selection rule
+and tolerance. No trained candidate has been scored or admitted to rollouts.
 
 ### Specialist recovery and Workbench task status
 
