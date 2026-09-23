@@ -52,17 +52,20 @@ def launch_training(request):
         return json.loads(path.with_name("result.json").read_text())
 
 
-def _connect_store(*, leader=False, coordinator=False):
+def _connect_store(*, leader=False, coordinator=False, port=29501):
     import torch.distributed as distributed
 
     topology = training_topology()
     store = distributed.TCPStore(
         topology["master_address"],
-        29501,
+        port,
         world_size=4 if coordinator else None,
         is_master=leader,
         timeout=timedelta(minutes=5),
         wait_for_workers=coordinator,
+        # The small control group also admits short-lived phase clients.
+        # Use the synchronous server here; tensor collectives use NCCL.
+        use_libuv=False,
     )
     return distributed.PrefixStore(os.environ["NPA_FLEX_PI_SESSION"], store)
 

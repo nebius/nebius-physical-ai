@@ -28,12 +28,12 @@ def _coordinate_peer(rank, port, directory, fail_rank):
     from npa.workbench.flex_pi.runtime import FlexPiError
 
     _peer_environment(rank)
-    store = torch.distributed.TCPStore(
-        "127.0.0.1", port, 4, rank == 0, timedelta(seconds=30)
-    )
+    store = coordinator._connect_store(leader=rank == 0, coordinator=True, port=port)
     parent = coordinator._Coordinator(store, rank)
     parent.watch.thread.start()
-    parent._execute = lambda command: _cpu_phase(parent, command, directory, fail_rank)
+    parent._execute = lambda command: _cpu_phase(
+        parent, command, directory, fail_rank, port
+    )
     try:
         if rank == 0:
             result = _lead_cpu_phases(parent, directory)
@@ -48,17 +48,35 @@ def _coordinate_peer(rank, port, directory, fail_rank):
         parent.watch.close()
 
 
-def _cpu_phase(parent, command, directory, fail_rank):
+def _cpu_phase(parent, command, directory, fail_rank, port):
     from npa.workbench.flex_pi import training_multinode as coordinator
     from npa.workbench.flex_pi.runtime import FlexPiError
 
     sequence = command["sequence"]
     if parent.rank == fail_rank:
         raise FlexPiError("injected local worker failure")
+    assert bytes.fromhex(command["normalization"]) == b"{}" + b" " * 207849
     marker = Path(directory, f"phase-{sequence}-rank-{parent.rank}")
-    script = "import pathlib,sys,time; time.sleep(0.1); pathlib.Path(sys.argv[1]).write_text('completed')"
+    script = """import pathlib,sys
+from npa.workbench.flex_pi import training_multinode as coordinator
+store = coordinator._connect_store(port=int(sys.argv[2]))
+prefix = sys.argv[3]
+store.set(prefix + '/' + sys.argv[4], 'ready')
+coordinator._wait_keys(store, [prefix + '/' + str(rank) for rank in range(4)])
+pathlib.Path(sys.argv[1]).write_text('completed')
+"""
     coordinator._run_worker(
-        [sys.executable, "-c", script, str(marker)], os.environ.copy(), parent.store
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(marker),
+            str(port),
+            f"phase-client/{sequence}",
+            str(parent.rank),
+        ],
+        os.environ.copy(),
+        parent.store,
     )
     parent.store.set(f"done/{sequence}/{parent.rank}", "complete")
     if parent.rank == 0:
@@ -69,7 +87,7 @@ def _cpu_phase(parent, command, directory, fail_rank):
 
 def _lead_cpu_phases(parent, directory):
     normalization = Path(directory, "stats.json")
-    normalization.write_bytes(b"{}")
+    normalization.write_bytes(b"{}" + b" " * 207849)
     plan = {"normalization_file": str(normalization)}
     for sequence in range(1, 3):
         root = Path(directory, f"phase-{sequence}")
