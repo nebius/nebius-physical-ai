@@ -427,6 +427,11 @@ conventions (branch → PR → squash, one approval, never self-approve).
 
 ## Workbench Studio
 
+Studio `preview` and `final` can also deliver the finished MP4 with
+`--output-path s3://<your-bucket>/<your-key>.mp4`. Optional `--storage-project`
+selects an external NPA project alias. Uploads are verified by SHA-256 readback;
+local renders and caches remain available.
+
 `npa studio init --directory ./my-studio` creates a portable local film editor
 using the installed renderer. Create a project from your own media with
 `npa studio create`, author its storyboard, then draft, narrate and render it.
