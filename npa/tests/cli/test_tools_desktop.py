@@ -177,6 +177,9 @@ def test_viewer_refresh_installs_matching_assets_without_restarting_services(
 ):
     commands = Mock(side_effect=AssertionError("unexpected process change"))
     monkeypatch.setattr(remote, "_command", commands)
+    core = tmp_path / "core/rfb.js"
+    core.parent.mkdir()
+    core.write_text("class RFB {\n    clipboardPasteFrom(text) {}\n}\n")
     assets = desktop._operation_assets("chat-setup")["viewer_assets"]
     remote._write_viewer(tmp_path, assets)
     remote._write_viewer(tmp_path, assets)
@@ -185,6 +188,7 @@ def test_viewer_refresh_installs_matching_assets_without_restarting_services(
     ]
     assert (tmp_path / "desktop.html").read_text() == remote._VIEWER
     assert (tmp_path / "desktop_clipboard.js").stat().st_mode & 0o777 == 0o644
+    assert core.read_text().count("    requestClipboard() {") == 1
     commands.assert_not_called()
 
 
@@ -192,6 +196,16 @@ def test_viewer_assets_cannot_write_arbitrary_paths(tmp_path):
     with pytest.raises(ValueError, match="Unexpected desktop viewer assets"):
         remote._write_viewer(tmp_path, {"../outside": "untrusted"})
     assert not list(tmp_path.iterdir())
+
+
+def test_viewer_rejects_unknown_vnc_clipboard_without_partial_asset_update(tmp_path):
+    core = tmp_path / "core/rfb.js"
+    core.parent.mkdir()
+    core.write_text("unsupported viewer")
+    with pytest.raises(RuntimeError, match="Unexpected noVNC clipboard"):
+        remote._write_viewer(tmp_path, {"desktop_clipboard.js": "new assets"})
+    assert core.read_text() == "unsupported viewer"
+    assert not (tmp_path / "desktop_clipboard.js").exists()
 
 
 def test_open_public_desktop_does_not_create_tunnel(monkeypatch):

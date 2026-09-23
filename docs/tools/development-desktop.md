@@ -46,10 +46,20 @@ The viewer copies the text and sends the Linux paste shortcut to the selected
 application; it does not press Enter. Multiline text and Unicode use the VNC
 server's extended clipboard support.
 
+To copy out, select text in the desktop app and use **Command-C** on a Mac
+or the app's Linux copy shortcut (**Ctrl-C** in editors, **Ctrl-Shift-C** in
+terminals). Mac Command-C sends Linux Ctrl-Insert so it also works in terminals.
+The viewer transfers the copied text to your device, ready to paste into another
+app. Copying from a Linux app's menu also transfers text while the viewer is
+focused, when the browser permits it. On a phone, or if automatic copying is
+blocked, tap **Copy to device** after copying within Linux. The status below
+the toolbar reports whether text was copied or needs an extra tap.
+
 If the browser denies clipboard access, the **Clipboard** dialog provides a
 normal text box: paste there (touch and hold on a phone), then tap **Paste into
-desktop**. To copy text back, copy within Linux, open **Clipboard**, and choose
-**Copy text**. Clipboard contents are transferred only through the authenticated
+desktop**. For outbound text, choose **Copy text** in that dialog or use your
+device's native Copy command on its selected text. Clipboard contents are
+transferred only through the authenticated
 desktop connection and are not saved in browser storage. The desktop bridge
 supports text; use chat attachments for images. Re-running desktop `setup` or
 `chat-setup` refreshes the viewer assets; reload an existing desktop tab to use

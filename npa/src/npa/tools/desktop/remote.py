@@ -159,6 +159,7 @@ def _patch_viewer(target):
 def _write_viewer(target, assets):
     if set(assets) != {"desktop_clipboard.js"}:
         raise ValueError("Unexpected desktop viewer assets.")
+    _patch_clipboard_request(target)
     _write(target / "desktop_clipboard.js", assets["desktop_clipboard.js"], 0o644)
     _write(target / "desktop.html", _VIEWER, 0o644)
     _write(
@@ -166,6 +167,25 @@ def _write_viewer(target, assets):
         '<meta http-equiv="refresh" content="0;url=desktop.html">',
         0o644,
     )
+
+
+def _patch_clipboard_request(target):
+    path = target / "core/rfb.js"
+    content = path.read_text()
+    method = """    requestClipboard() {
+        if (this._rfbConnectionState !== 'connected' || this._viewOnly ||
+            !this._clipboardServerCapabilitiesActions[extendedClipboardActionRequest]) return false;
+        RFB.messages.extendedClipboardRequest(this._sock, [extendedClipboardFormatText]);
+        return true;
+    }
+
+"""
+    if method in content:
+        return
+    anchor = "    clipboardPasteFrom(text) {"
+    if content.count(anchor) != 1:
+        raise RuntimeError("Unexpected noVNC clipboard implementation.")
+    _write(path, content.replace(anchor, method + anchor), 0o644)
 
 
 def _install_vscode():
@@ -822,12 +842,12 @@ _VIEWER = """<!doctype html>
 header{min-height:36px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 12px;background:#24282b}
 header strong{margin-right:auto}button,select,input{font:inherit;padding:4px 8px;border-radius:5px;border:1px solid #626970;background:#24282b;color:#eee}
 #screen{flex:1;min-height:0;overflow:hidden}dialog{color:#eee;background:#24282b;border:1px solid #626970;border-radius:12px;padding:24px}dialog input{display:block;margin:14px 0;width:260px}textarea{display:block;width:min(70vw,600px);height:min(35vh,240px);margin:14px 0;background:#151719;color:#eee;font:16px system-ui}dialog{max-width:calc(100vw - 24px);max-height:90dvh;overflow:auto}.clipboard-actions{display:flex;flex-wrap:wrap;gap:8px}#clipboard-status{margin:0;padding:3px 12px;font-size:12px;min-height:22px}#clipboard-hint{max-width:600px;line-height:1.5}@media(max-width:760px){header button,header select{min-height:36px}header strong{display:none}header label{font-size:12px}header #status{flex:1}dialog{padding:16px}textarea{width:100%}.clipboard-actions button{min-height:44px;font-size:16px}}
-</style></head><body><header><strong>NPA Desktop</strong><span id="status">Connecting…</span><label>Workspace <select id="scale"><option value="1">Comfortable</option><option value="0.85">More space</option><option value="1.15">Larger text</option></select></label><button id="paste-device" disabled>Paste</button><button id="open-clipboard">Clipboard</button><button id="fullscreen">Full screen</button></header><p id="clipboard-status" role="status" aria-live="polite"></p>
+</style></head><body><header><strong>NPA Desktop</strong><span id="status">Connecting…</span><label>Workspace <select id="scale"><option value="1">Comfortable</option><option value="0.85">More space</option><option value="1.15">Larger text</option></select></label><button id="paste-device" disabled>Paste</button><button id="copy-device" disabled>Copy to device</button><button id="open-clipboard">Clipboard</button><button id="fullscreen">Full screen</button></header><p id="clipboard-status" role="status" aria-live="polite"></p>
 <main id="screen"></main><dialog id="login"><form method="dialog"><label>Desktop password<input id="password" type="password" autocomplete="current-password" required autofocus></label><button>Connect</button></form></dialog>
 <dialog id="clipboard" aria-labelledby="clipboard-title"><h2 id="clipboard-title">Clipboard</h2><p id="clipboard-hint"></p><label>Text to paste<textarea id="clipboard-text" spellcheck="false" autocapitalize="none" autocomplete="off"></textarea></label><div class="clipboard-actions"><button id="send-clipboard" disabled>Paste into desktop</button><button id="copy-clipboard">Copy text</button><button id="close-clipboard">Close</button></div></dialog>
 <script type="module">
-import RFB from './core/rfb.js?npa-desktop=1';
-import { installClipboard } from './desktop_clipboard.js';
+import RFB from './core/rfb.js?npa-desktop=2';
+import { installClipboard } from './desktop_clipboard.js?v=2';
 const status=document.querySelector('#status'),scale=document.querySelector('#scale'),login=document.querySelector('#login');
 window.npaDesktopScale=Number(localStorage.getItem('npaDesktopScale')||1);
 if(![0.85,1,1.15].includes(window.npaDesktopScale))window.npaDesktopScale=1;
