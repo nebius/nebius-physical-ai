@@ -113,6 +113,24 @@ and RTX reference paths retain their existing compiler selection. This runtime
 repair does not establish a B300 training speedup or qualify four single-GPU
 hosts as equivalent to four GPUs on one host.
 
+On 2026-09-23, this path completed real compiled inference on one preemptible
+NVIDIA B300 (`sm_103`, compute capability 10.3). The native compiled-reduction
+preflight and full policy both passed. Four Euler steps produced finite 32×14
+actions in **0.151714 seconds**, with **25,270,528,512 bytes** peak allocated GPU
+memory. NPA reported live-verified `SUCCEEDED`; the complete log contained one
+success marker and no traceback, and all three JSON artifacts passed readback.
+Their SHA-256 digests were `fe1394d7…` (actions), `0b155418…` (result), and
+`e2ff5ada…` (input).
+
+This measurement used the r2 base image plus NPA source fingerprint
+`feec30a5483ae7ceb193eb65d37da2eae7a76cc8cf0b0747aa49d114b93b0978` and runtime
+lock SHA-256 `e6de5c8518344b0cdeaf4655ce283f5a24c91f9baf8b6678a015cd294e2c577f`.
+The separate PyTorch 2.8.0+cu129/Triton 3.4.0 environment retained the vendor's
+NumPy 1.26.4 and PyAV 16.0.1. This is one warmed inference observation, with
+installation, download and compilation excluded from its latency. It does not
+qualify the unmodified r2 image, a repeated performance comparison, training,
+multi-node scaling, or closed-loop robot success.
+
 The SDK exposes the same implementation as
 `npa.sdk.workbench.flex_pi.infer(...)` and also supports local output directories.
 For serving, set an owner-controlled

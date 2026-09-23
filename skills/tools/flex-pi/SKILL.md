@@ -108,6 +108,13 @@ unmodified released image. Four one-GPU hosts also require independent multi-nod
 training validation; they are not a performance substitute for four GPUs sharing
 one host's NVLink fabric.
 
+The one-preemptible-B300 path passed on 2026-09-23 with native compiled-kernel
+preflight, full compiled policy inference, live-verified terminal success, and
+three read-back-verified JSON objects. The single warmed observation took
+0.151714 seconds with 25,270,528,512 bytes peak allocated GPU memory. Keep this
+acceptance bound to the source/runtime hashes in `docs/workbench/flex-pi.md`;
+it establishes neither an unchanged-image qualification nor a training speedup.
+
 The maintained inference workflow specs resolve through a toolRef that passes the
 literal `--torch-compile` flag. This compiles only the upstream denoising step
 after complete checkpoint load and performs its warmup before timed inference.
