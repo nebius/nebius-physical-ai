@@ -63,7 +63,7 @@ def _recorded_series(recording):
     """Decode provenance and complete metric timelines instead of only final values."""
     observed = {}
     provenance = []
-    for chunk in recording.chunks():
+    for chunk in recording:
         if chunk.is_static and str(chunk.entity_path) == "/provenance/run":
             provenance.extend(
                 chunk.to_record_batch().column("TextDocument:text").to_pylist()
@@ -141,17 +141,19 @@ def inspect(directory: Path) -> dict:
         ValueError: Artifact hashes, provenance, or decoded timelines differ.
         OSError: Exported files cannot be read.
     """
-    from rerun.recording import load_recording
+    from rerun.chunk import RrdReader
 
     hashes = _artifact_hashes(directory)
     report, journal, steps = _bound_report(directory, hashes)
-    recording = load_recording(directory / "metrics.rrd")
+    reader = RrdReader(directory / "metrics.rrd")
+    entries = reader.recordings()
     if (
-        recording.application_id() != "npa-ray-train-synthetic"
-        or recording.recording_id() != report["run_name"]
+        len(entries) != 1
+        or entries[0].application_id != "npa-ray-train-synthetic"
+        or entries[0].recording_id != report["run_name"]
     ):
         raise ValueError("Recording identity mismatch")
-    observed, provenance = _recorded_series(recording)
+    observed, provenance = _recorded_series(reader.stream(store=entries[0]))
     _validate_provenance(provenance, report)
     _validate_metric_timelines(observed, steps, journal)
     checkpoint_events = _validate_checkpoint_timeline(observed, steps, report["recipe"])
