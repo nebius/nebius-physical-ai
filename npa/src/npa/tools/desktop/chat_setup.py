@@ -154,9 +154,21 @@ def _connect_vscode():
         str(_ROOT / "config.json"),
     ]
     _write(launcher, "#!/bin/sh\nexec " + shlex.join(command) + ' "$@"\n', 0o700)
-    settings = Path.home() / ".config/Code/User/settings.json"
+    targets = {
+        ".config/Code/User/settings.json": "vscode-settings-before-chat.json",
+        ".vscode-server/data/Machine/settings.json": "vscode-ssh-settings-before-chat.json",
+        ".vscode-server-insiders/data/Machine/settings.json": "vscode-ssh-insiders-settings-before-chat.json",
+    }
+    for relative, backup in targets.items():
+        if (
+            "insiders" not in relative
+            or (Path.home() / ".vscode-server-insiders").exists()
+        ):
+            _configure_vscode(Path.home() / relative, _ROOT / backup, launcher)
+
+
+def _configure_vscode(settings, backup, launcher):
     value = json.loads(settings.read_text()) if settings.exists() else {}
-    backup = _ROOT / "vscode-settings-before-chat.json"
     if not backup.exists():
         _write(backup, json.dumps(value, indent=2))
     value["chatgpt.cliExecutable"] = str(launcher)

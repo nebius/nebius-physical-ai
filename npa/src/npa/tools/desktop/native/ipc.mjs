@@ -48,8 +48,16 @@ export class CodexIPC extends EventEmitter {
         clearTimeout(timer); reject(new Error('VS Code disconnected'));
       }
       this.pending.clear(); this.emit('disconnected');
-      this.retry = setTimeout(() => this.connect(), 3000);
+      if (!this.disposed) this.retry = setTimeout(() => this.connect(), 3000);
     });
+  }
+  /** Disconnect this follower/owner identity without stopping any Codex process.
+   * Args: None.
+   * Returns: None.
+   * Raises: None.
+   */
+  dispose() {
+    this.disposed = true; clearTimeout(this.retry); this.socket.destroy();
   }
   /** Write one length-prefixed IPC frame.
    * Args: message is a native protocol envelope.
@@ -86,8 +94,9 @@ export class CodexIPC extends EventEmitter {
   dispatch(message) {
     if (message.type === 'client-discovery-request') {
       this.write({type: 'client-discovery-response', requestId: message.requestId,
-        response: {canHandle: false}}); return;
+        response: {canHandle: Boolean(this.ownerHandler?.accepts(message.request))}}); return;
     }
+    if (message.type === 'request') { void this.answerOwnerRequest(message); return; }
     if (message.type === 'response') {
       const pending = this.pending.get(message.requestId); if (!pending) return;
       clearTimeout(pending.timer); this.pending.delete(message.requestId);
@@ -96,7 +105,30 @@ export class CodexIPC extends EventEmitter {
     if (message.method === 'thread-stream-following-status-requested') {
       for (const id of this.following) this.follow(id); return;
     }
-    if (message.method === 'thread-stream-state-changed') this.updateState(message);
+    if (message.method === 'thread-stream-following-changed') this.ownerHandler?.following?.(message);
+    if (message.method === 'client-status-changed') {
+      this.ownerHandler?.clientStatus?.(message.params);
+      if (message.params.status === 'disconnected') for (const [id, owner] of this.owners) {
+        if (owner !== message.params.clientId) continue;
+        this.owners.delete(id); this.states.delete(id); this.emit('change', id);
+      }
+    }
+    if (message.method === 'thread-stream-state-changed' &&
+        !this.ownerHandler?.owns(message.params.conversationId)) this.updateState(message);
+  }
+  /** Answer controls for conversations owned by this adapter.
+   * Args: message is a versioned native request.
+   * Returns: A promise resolved after sending the response.
+   * Raises: A transport error if the requesting client disconnects.
+   */
+  async answerOwnerRequest(message) {
+    let response;
+    try {
+      if (!this.ownerHandler?.accepts(message)) throw new Error('This chat has another owner');
+      const result = await this.ownerHandler.handle(message);
+      response = {resultType: 'success', method: message.method, handledByClientId: this.clientId, result};
+    } catch (error) { response = {resultType: 'error', error: error.message}; }
+    if (this.connected) this.write({type: 'response', requestId: message.requestId, ...response});
   }
   /** Apply a local owner snapshot or incremental patch.
    * Args: message contains a native conversation change.

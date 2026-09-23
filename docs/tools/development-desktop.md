@@ -226,8 +226,11 @@ Existing sessions open in an older, independent Codex process are readable in
 the mobile UI. Close the session in that client before reopening it for mobile
 control. The service detects those writers rather than running two agents
 against the same session log. New sessions and sessions opened in the connected
-VDI VS Code window share live controls. Other SSH-based IDE windows are left
-unchanged.
+VDI VS Code window share live controls. Setup also configures the VM's VS Code
+Remote SSH settings (including Insiders when installed) to use that runtime.
+Existing SSH windows adopt the setting on their next reload; wait until their
+active work finishes before reloading. The original settings are backed up
+separately for the desktop and SSH clients.
 
 The `npa-codex-server.service` and `npa-codex-chat.service` user services survive
 browser disconnects. Chat binds only to loopback, requires authentication on
@@ -262,8 +265,20 @@ mode uses a private adapter for the installed extension's IPC protocol; verify
 compatibility after extension upgrades. New or unowned chats use a separate
 Codex app-server that belongs to the local service.
 
+The local service also publishes its owned conversations to VS Code's native
+follower interface. A chat started on mobile can stay open in VS Code during and
+after its turn; both views send prompts, steering, stop requests, model changes, and
+supported approval responses to that same writer. Opening the VS Code view does
+not interrupt the turn or release its writer lock. Unsupported IPC protocol
+versions are rejected, so recheck this path after extension upgrades.
+The adapter retains ownership after completion: Codex's `thread/unsubscribe`
+does not immediately release its persistence writer. Reopening the view follows
+that writer instead of attempting a second resume.
+
 Archive controls preserve the native writer lock: close a chat in its other
 Codex client before archiving it from mobile when that client still owns it.
+For mobile-owned Mac chats, use the mobile archive control; the extension's
+archive command does not forward through its follower interface.
 Saved chats use Codex's own rename/archive APIs; the adapter never edits the
 session database or moves history files itself.
 
