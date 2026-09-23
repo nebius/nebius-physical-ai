@@ -1238,7 +1238,8 @@ def submit_workflow(
     ) as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise SkyPilotSubmitError(
-            f"SkyPilot workflow submission failed: {exc}"
+            f"SkyPilot workflow submission failed: {exc}",
+            launch_attempted=False if prepared_yaml is None else None,
         ) from exc
 
 
@@ -2515,7 +2516,9 @@ def _load_base_config(config_path: Path | None) -> dict[str, Any]:
     if config_path is None:
         return {}
     if not config_path.exists():
-        return {}
+        raise SkyPilotConfigError(
+            f"SkyPilot global config does not exist: {config_path}"
+        )
     with config_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):

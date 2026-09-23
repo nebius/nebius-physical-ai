@@ -11,7 +11,9 @@ from typer.testing import CliRunner
 import yaml
 
 from npa.cli.main import app
+from npa.cli.workbench.workflow import _raw_execution_preflight
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
+from npa.orchestration.skypilot._bin import SkyPilotConfigError
 from npa.orchestration.skypilot.workflow import ManagedJobEvidence, WorkflowResult
 from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 from npa.workflows.distill import DistillationError
@@ -60,6 +62,25 @@ def test_workflow_command_help(command: str) -> None:
 
     assert result.exit_code == 0
     assert "Usage:" in result.output
+
+
+def test_raw_submit_preflight_rejects_explicit_missing_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    missing = tmp_path / "selected-but-missing.yaml"
+    monkeypatch.setattr(
+        "npa.execution_preflight.preflight_skypilot_submission",
+        lambda *args, **kwargs: pytest.fail("must fail before provider preflight"),
+    )
+
+    with pytest.raises(SkyPilotConfigError) as caught:
+        _raw_execution_preflight(
+            [{"name": "demo", "resources": {"cloud": "kubernetes"}}],
+            sky_bin="/bin/true",
+            config_path=missing,
+            isolated_config_dir=tmp_path / "sky-state",
+        )
+    assert str(missing) in str(caught.value)
 
 
 class FakeWorkflowS3:
