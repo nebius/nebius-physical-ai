@@ -65,6 +65,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
+| `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
@@ -197,7 +198,7 @@ Every Dockerfile must declare one of:
 
 | Tier | `kind` | ENTRYPOINT expectation | Examples |
 | --- | --- | --- | --- |
-| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | lerobot, lancedb, detection-training, lerobot-policy, leisaac |
+| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | antioch, lerobot, lancedb, detection-training, lerobot-policy, leisaac |
 | **Job** | `job` | Runs a workflow/CLI module with explicit CMD or an exec-only command-passthrough entrypoint | sonic, fiftyone, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
 | **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, cosmos, groot, retargeting |
 
@@ -301,6 +302,7 @@ Neither mechanism grants redistribution rights or enables privacy/telemetry.
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
 | OpenPI / Gemma | `pi05_droid_jointpos_polaris` | The exact operator-confirmed `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value is forwarded only to accepted runtime jobs; refusal is attempt-scoped, and acceptance, weights, and credentials are never baked or persisted. |
+| Antioch | proprietary `antioch-sim==0.4.289` CLI and Antioch Service | The exact operator-confirmed `NPA_ANTIOCH_ACCEPT_TERMS=YES` value is injected from a dedicated runtime Secret and checked before fetch or use. Durable state records only the public terms identity and scoped accepted boolean; the image and cache contain no acceptance. |
 | Other non-NVIDIA comparison surfaces | `Wan-AI/Wan2.2-TI2V-5B`, LeRobot, Qwen, self-hosted Llama | No local terms boolean or interactive confirmation duplicates upstream entitlement; external vendor terms still apply at the source. |
 | Separate controls retained | privacy/telemetry, image redistribution classification, third-party dataset delivery | Privacy and telemetry remain independently off by default. Packaging contracts and built-image scans still control redistribution. The public PAIDF starter asset remains `acceptance_required: false`; its generic third-party dataset-license mechanism is separate from NVIDIA image/model access. |
 
@@ -485,6 +487,22 @@ Dockerfile or `redistribution: public` alone does not put an image in that plan.
 The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
+
+Main-branch pushes touching `npa/docker/workbench/` select development builds by
+changed recipe directories, individual packaging/catalog entries, and Dockerfile
+`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+source and staged workflow changes in the same push rebuild their consumers.
+Unchanged images retain their previously validated versions; no new development
+tag is fabricated for them. The existing weekly refresh still builds every
+eligible public image, including shared-source-only updates that do not trigger
+the workbench push filter. Explicit manual build selections remain available.
+
+Missing history, unknown shared workbench files, ambiguous metadata, and
+unsupported build-input syntax conservatively restore the full public build set.
+An empty automatic selection performs no build or release preflight. Every
+selected image retains all pre-publication and exact-digest security checks;
+release promotion remains a separate manual operation. Selection lives in
+`npa.deploy.image_build_scope` and is tested using real Git histories.
 
 The public-plan inventory retains all 34 published release tags. The current
 Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate

@@ -2786,6 +2786,37 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.antioch.run": ToolEntry(
+        name="workbench.antioch.run",
+        description=(
+            "Idempotently run a queued Antioch suite through the deployed CPU adapter, "
+            "collect verified artifacts, and publish a strict offline LeRobotDataset."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "antioch",
+            "run",
+            "--input-path",
+            "{{config.antioch_project_uri}}",
+            "--output-path",
+            "{{config.antioch_run_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--state-id",
+            "{{config.antioch_state_id}}",
+            "--robot-type",
+            "{{config.antioch_robot_type}}",
+            "--task",
+            "{{config.antioch_task}}",
+            "--suite",
+            "{{config.antioch_suite}}",
+            "--endpoint",
+            "{{config.antioch_endpoint}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.lerobot.transfer_prepare": ToolEntry(
         name="workbench.lerobot.transfer_prepare",
         description="Seal pinned PushT data, training-only statistics, and paired evaluation settings.",

@@ -67,8 +67,6 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
     for name in (
         "confidentiality-scan.yml",
         "gitleaks.yml",
-        "harness-guardrails.yml",
-        "lint.yml",
     ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
@@ -77,6 +75,26 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
     test = _load_workflow("test.yml")["on"]
     assert set(test) == {"workflow_call", "schedule", "workflow_dispatch"}
     assert test["schedule"] == [{"cron": "23 5 * * *"}]
+
+
+@pytest.mark.parametrize("name", ["harness-guardrails.yml", "lint.yml"])
+def test_candidate_checks_do_not_repeat_after_merge(name: str) -> None:
+    """Keep checked candidate work from competing with the next queue entry.
+
+    Args:
+        name: Reusable validation workflow whose candidate checks stay required.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A duplicate trigger returns or a candidate gate disappears.
+    """
+    assert set(_load_workflow(name)["on"]) == {"workflow_call", "workflow_dispatch"}
+    jobs = _load_workflow("security-regression.yml")["jobs"]
+    gate = "lint-gate" if name == "lint.yml" else "queue-guardrails"
+    assert jobs[gate]["uses"] == f"./.github/workflows/{name}"
+    assert gate in jobs["security-regression"]["needs"]
+    assert "'full'" in jobs[gate]["if"] or '"full"' in jobs[gate]["if"]
+    assert '"retest"' in jobs[gate]["if"]
 
 
 def test_main_validation_cancels_superseded_commits() -> None:
@@ -131,6 +149,8 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
         install_step = f"Install Python {version} compatibility environment"
         assert install_step in browser_step_names
         assert f"Run Python {version} compatibility regressions" in browser_step_names
+        regression = _step("test.yml", "browser-mocked", f"Run Python {version}")
+        assert "npa/tests/test_anyio_security_regressions.py" in regression["run"]
 
 
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
@@ -146,6 +166,7 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     }
     assert "continue-on-error" not in regression
     for path in (
+        "npa/tests/test_anyio_security_regressions.py",
         "npa/tests/guardrails/test_ci_workflows.py",
         "npa/tests/docker/test_base_image_scan.py",
         "npa/tests/orchestration/skypilot/test_workflow_logs.py",
