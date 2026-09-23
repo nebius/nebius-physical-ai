@@ -276,6 +276,21 @@ to 8 concurrent requests are under 10% and nearly all collected at concurrency
 this server above concurrency 2 unless the marginal 9.8% of throughput is worth
 a 7.2x median-latency cost.
 
+## Single-GPU H200 and B200 comparison
+
+Use `workflows/testing/cosmos3-super-h200-single-gpu.yaml` or
+`workflows/testing/cosmos3-super-b200-single-gpu.yaml` for one TP-1 service.
+The B200 recipe selects `--suite b200-single-gpu --topologies 1x1`.
+Each run preserves the fixed workload, one validated warmup, 24 measured
+requests, and per-cell durable resume. Compare video-seconds per GPU-hour and
+per service-hour. Independent single-GPU runs do not reproduce the published
+eight-GPU node-throughput sweep.
+
+The benchmark uses `--no-guardrails`; its exact access capability is
+`cosmos3-super-benchmark`, which probes the pinned Cosmos3-Super weights.
+The broader `cosmos3-serving` capability also checks the guardrail model used
+by serving configurations that enable it.
+
 ## Reproduce the primary sweep or complete B200 record
 
 The Workbench recipe reproduces the methodology documented by the public
@@ -336,7 +351,7 @@ specific Cosmos3 serving entitlement:
 
 ```bash
 npa workbench health preflight --checks hf,s3 --json
-npa workbench health access --capability cosmos3-serving --json
+npa workbench health access --capability cosmos3-super-benchmark --json
 npa workbench workflow validate-spec \
   workflows/testing/cosmos3-super-b200-benchmark.yaml
 # Or validate the H200 recipe:
@@ -344,9 +359,12 @@ npa workbench workflow validate-spec \
   workflows/testing/cosmos3-super-h200-benchmark.yaml
 ```
 
-After reviewing the runtime terms, submit with the run-scoped exact value
-`NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES`, `HF_TOKEN`, and S3 credentials
-through `--secret-env`. Override the placeholder bucket and select the exact
+Submit with `HF_TOKEN` and S3 credentials through `--secret-env`.
+The benchmark uses the pinned upstream image and does not require the NPA
+acceptance flag used by the separate runtime-fetch serving bootstrap.
+[NVIDIA's runtime terms](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/)
+describe acceptance through registration or use; no additional benchmark
+confirmation is collected. Override the placeholder bucket and select the exact
 existing Kubernetes context; do not put either value in the committed spec.
 Add `--var suite=b200-full` to the B200 submission to select all ten cells.
 
