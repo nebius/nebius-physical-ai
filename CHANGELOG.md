@@ -7,6 +7,13 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Studio videos accept S3 output paths
+
+- `preview` and `final` accept `--output-path` for an exact S3 MP4 destination,
+  with optional `--storage-project` selecting external NPA credentials. Local
+  caches and renders are retained; a full readback verifies the uploaded bytes.
+  Generic Python video tools share `npa.video_output.write_video_output`.
+
 ### Studio film reviews expose illustrative cues
 
 - Film-review reports now list accepted `illustrative_cues` in assessment order,
