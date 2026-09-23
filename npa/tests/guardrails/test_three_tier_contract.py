@@ -185,6 +185,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
                 "num_workers",
                 "prefetch_factor",
                 "optimizer",
+                "activation_checkpointing",
                 "run_id",
                 "runtime_image",
                 "dry_run",

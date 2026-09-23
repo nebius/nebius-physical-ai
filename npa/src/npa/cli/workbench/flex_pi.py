@@ -37,6 +37,11 @@ def train_cmd(
     memory_fill: str = typer.Option(
         "on", "--memory-fill", help="on or off; off requires exact qualification"
     ),
+    activation_checkpointing: str = typer.Option(
+        "on",
+        "--activation-checkpointing",
+        help="on recomputes activations; off uses more GPU memory",
+    ),
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -53,6 +58,7 @@ def train_cmd(
         prefetch_factor: Batches prefetched per loader worker.
         optimizer: Default, foreach, or fused AdamW execution.
         memory_fill: Deterministic allocation fills; off runs exact parity gates.
+        activation_checkpointing: Recompute activations or retain them for backward.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve the immutable contract without downloads or execution.

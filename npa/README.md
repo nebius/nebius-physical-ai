@@ -25,6 +25,11 @@ checkpoint-resume check. `--dry-run` returns the fixed contract without GPUs.
 `--memory-fill` (`config.memory_fill` in workflows) defaults to `on`; `off` is
 an unqualified candidate that requires verified normalization and exact parity
 checks before execution.
+`--activation-checkpointing` (`config.activation_checkpointing`) defaults to
+`on`. Selecting `off` retains activations instead of recomputing them during
+backward, using more GPU memory. Qualify each memory policy with a profile,
+numerical parity and fresh resume before a full epoch; durable checkpoints
+remain enabled with either policy.
 
 The four-host B300 workflow sets `config.training_nodes: "4"` and requests one
 GPU on each host. `NPA_FLEX_PI_NODE_COUNT` comes from the resolved workflow

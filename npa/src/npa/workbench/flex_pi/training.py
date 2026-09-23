@@ -32,6 +32,7 @@ class TrainingRequest:
         prefetch_factor: Queued batches per worker.
         optimizer: Default, foreach, or fused AdamW implementation.
         memory_fill: Keep deterministic allocation fills on, or qualify them off.
+        activation_checkpointing: Recompute activations, or retain them in GPU memory.
         run_id: Caller-assigned provenance identifier.
         runtime_image: Exact runtime image reference for provenance.
         dry_run: Return the frozen plan without executing it.
@@ -49,15 +50,20 @@ class TrainingRequest:
     prefetch_factor: int = 4
     optimizer: str = "default"
     memory_fill: str = "on"
+    activation_checkpointing: str = "on"
     run_id: str = ""
     runtime_image: str = ""
     dry_run: bool = False
 
 
 def _validate(request):
+    from npa.workbench.flex_pi.training_activation import (
+        activation_checkpointing_overrides,
+    )
     from npa.workbench.flex_pi.training_normalization import validate_normalization
 
     validate_normalization(request)
+    activation_checkpointing_overrides(request.activation_checkpointing)
     if request.mode not in {"profile", "profile-resume", "train"}:
         raise FlexPiError("mode must be profile, profile-resume or train")
     if request.optimizer not in {"default", "foreach", "fused"}:

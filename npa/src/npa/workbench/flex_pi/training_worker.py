@@ -10,6 +10,10 @@ import subprocess
 import time
 
 from npa.workbench.flex_pi.training_normalization import normalization_overrides
+from npa.workbench.flex_pi.training_activation import (
+    activation_checkpointing_overrides,
+    activation_checkpointing_receipt,
+)
 from npa.workbench.flex_pi.training_topology import rank_command, training_topology
 
 
@@ -21,6 +25,9 @@ def _configuration(plan, root, assets):
     overrides = (
         _hydra_overrides(assets)
         + normalization_overrides(plan, root)
+        + activation_checkpointing_overrides(
+            plan["execution"].get("activation_checkpointing", "on")
+        )
         + [
             f"output_dir={root}",
             "batch_size=1",
@@ -31,7 +38,6 @@ def _configuration(plan, root, assets):
             "learning_rate=1e-4",
             "weight_decay=0.01",
             "seed=42",
-            "model.mot_checkpoint_mixed_attn=true",
             "wandb.enabled=false",
             f"model.action_dit_pretrained_path={assets / 'ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt'}",
             f"num_workers={plan['execution']['num_workers']}",
@@ -68,7 +74,6 @@ def _rank_main(request_path):
     from flexpi.runtime import build_datasets
     from flexpi.utils import misc
     from npa.workbench.flex_pi.training_engine import VerifiedTrainer
-    from npa.workbench.flex_pi.training_memory import memory_fill_receipt
 
     plan = json.loads(request_path.read_text())
     root = Path(plan["work_directory"])
@@ -81,6 +86,7 @@ def _rank_main(request_path):
         model_dtype=torch.bfloat16,
         device=f"cuda:{torch.cuda.current_device()}",
     )
+    activation = activation_checkpointing_receipt(cfg, model)
     train_ds, val_ds = build_datasets(cfg.data)
     trainer = VerifiedTrainer(
         cfg=cfg, model=model, train_dataset=train_ds, val_dataset=val_ds
@@ -91,8 +97,18 @@ def _rank_main(request_path):
         profile_resume=plan.get("resume_probe_kind") == "profile",
     )
     result["initialization_seconds"] = initialized
-    result["runtime"] = _runtime_receipt()
-    result["memory_fill"] = memory_fill_receipt(cfg)
+    result["activation_checkpointing"] = activation
+    result.update(_phase_receipts(trainer, cfg, plan))
+    if torch.distributed.get_rank() == 0:
+        (root / "phase-result.json").write_text(json.dumps(result, allow_nan=False))
+    torch.distributed.barrier()
+    torch.distributed.destroy_process_group()
+
+
+def _phase_receipts(trainer, cfg, plan):
+    from npa.workbench.flex_pi.training_memory import memory_fill_receipt
+
+    result = {"runtime": _runtime_receipt(), "memory_fill": memory_fill_receipt(cfg)}
     if getattr(trainer, "_profile_receipt", None) is not None:
         result["profiling"] = {
             **trainer._profile_receipt,
@@ -100,10 +116,7 @@ def _rank_main(request_path):
         }
     if plan["execution"]["mode"] == "qualify":
         result["qualification_seconds"] = trainer._qualification_seconds
-    if torch.distributed.get_rank() == 0:
-        (root / "phase-result.json").write_text(json.dumps(result, allow_nan=False))
-    torch.distributed.barrier()
-    torch.distributed.destroy_process_group()
+    return result
 
 
 def _initialize_rank():

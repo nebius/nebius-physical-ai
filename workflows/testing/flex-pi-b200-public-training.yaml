@@ -17,6 +17,7 @@ config:
   prefetch_factor: "4"
   optimizer: default
   memory_fill: "on"
+  activation_checkpointing: "on"
   source_overlay: true
   runtime_image: ghcr.io/nebius/nebius-physical-ai/npa-flex-pi@sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6
 resources:

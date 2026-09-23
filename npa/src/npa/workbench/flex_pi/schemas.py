@@ -34,6 +34,7 @@ class TrainingBody(BaseModel):
     prefetch_factor: int = Field(default=4, ge=1)
     optimizer: Literal["default", "foreach", "fused"] = "default"
     memory_fill: Literal["on", "off"] = "on"
+    activation_checkpointing: Literal["on", "off"] = "on"
     dry_run: bool = False
 
 

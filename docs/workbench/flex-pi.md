@@ -405,7 +405,7 @@ Training uses the upstream `yam_unified_flex_3cam_32d_rel_1e-4` model and loss,
 Wan VideoDiT initialization plus the official derived ActionDiT backbone,
 BF16 native DDP, AdamW with a peak learning rate of `1e-4`, and effective batch
 96 (microbatch one × 24 accumulation steps × four GPUs). Mixed-attention
-gradient checkpointing is enabled. Model, tokenizer, VAE, DINOv3, and dataset
+gradient checkpointing is enabled by default. Model, tokenizer, VAE, DINOv3, and dataset
 bytes are fetched only at runtime under their separate upstream terms. The
 bundled manifests pin source revisions and every downloaded content hash.
 Training uses strict deterministic PyTorch algorithms, deterministic cuDNN and
@@ -418,6 +418,16 @@ The adapter also fixes DDP bucket partitioning with unused-parameter discovery
 enabled and static graphs disabled. Its guarded Accelerate 1.12.0 integration
 runs before model preparation, preventing a fresh reducer from using different
 first-iteration buckets than the uninterrupted run.
+
+`--activation-checkpointing on|off` (`config.activation_checkpointing` in a
+workflow) selects recomputation for both experts and mixed attention together.
+The default `on` preserves the existing workload. `off` retains activations for
+backward and needs more GPU memory; it is an experimental execution policy
+until memory fit, exact numerical parity, checkpoint and fresh-resume checks
+pass on the selected topology. Each phase records the actual model flags and
+rejects a mismatch before training. This option does not disable durable model,
+optimizer, scheduler or RNG checkpoints. Keep batch size, precision, optimizer,
+data and eager execution fixed when comparing the two policies.
 
 This public task is **non-comparable** to the private 5.66 samples/s reference:
 dataset identity, split, source dimensions, task mix, initialization, action

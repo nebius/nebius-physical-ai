@@ -765,6 +765,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.optimizer}}",
             "--memory-fill",
             "{{config.memory_fill}}",
+            "--activation-checkpointing",
+            "{{config.activation_checkpointing}}",
             "--runtime-image",
             "{{config.runtime_image}}",
             "--run-id",

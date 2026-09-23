@@ -47,6 +47,13 @@ comparison run. Checkpoints include these bytes and fresh resume must reload
 them; never recompute normalization or relax its content-hash check on resume.
 Keep the default optimizer unless separate default-versus-selected optimizer
 parity is proven.
+Activation checkpointing defaults to `on` for both experts and mixed attention.
+Use `--activation-checkpointing off` only as an explicit memory/performance
+candidate: retain the fixed batch, precision, optimizer and eager execution,
+prove memory fit and exact cross-policy state/update parity, then require the
+same checkpoint, fresh-resume and full-epoch quality gates. Verify the actual
+model flags in each phase's `activation_checkpointing` receipt. Durable
+checkpoints remain mandatory with either activation policy.
 
 Training requires the full Wan VideoDiT and official derived ActionDiT
 initialization; the checkpoint-only inference instructions below apply only to

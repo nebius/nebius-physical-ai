@@ -69,6 +69,7 @@ def train(
     prefetch_factor: int = 4,
     optimizer: str = "default",
     memory_fill: str = "on",
+    activation_checkpointing: str = "on",
     run_id: str = "",
     runtime_image: str = "",
     dry_run: bool = False,
@@ -84,6 +85,7 @@ def train(
         prefetch_factor: Prefetched batches per worker.
         optimizer: Default, foreach or fused AdamW execution.
         memory_fill: Deterministic allocation fills; off requires exact parity.
+        activation_checkpointing: Recompute activations or retain them for backward.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve without fetching data or executing a model.
