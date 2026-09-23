@@ -31,6 +31,23 @@ def _sha(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _cache_snapshot(root: Path) -> dict[str, tuple[int, int, int, int, str | None]]:
+    """Capture cache metadata and regular-file bytes without following links."""
+    result = {}
+    for path in [root, *sorted(root.rglob("*"))]:
+        metadata = path.lstat()
+        relative = "." if path == root else path.relative_to(root).as_posix()
+        digest = _sha(path.read_bytes()) if path.is_file() else None
+        result[relative] = (
+            metadata.st_mode,
+            metadata.st_ino,
+            metadata.st_mtime_ns,
+            metadata.st_size,
+            digest,
+        )
+    return result
+
+
 def _tar(entries: list[tuple[str, str, bytes | str]]) -> bytes:
     stream = io.BytesIO()
     with tarfile.open(
@@ -185,6 +202,38 @@ def test_prepare_runtime_reuses_identical_python_without_replacing_it(
     assert len(archive_storage.calls) == 2
 
 
+def test_ready_cache_is_read_only_while_restoring_external_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    objects, manifest = _runtime_objects()
+    receipt, manifests, archives, home, workspace = _run(tmp_path, objects, manifest)
+    cache = workspace / ".npa-runtime-cache"
+    cache_mode = cache.stat().st_mode & 0o777
+    archive_calls = list(archives.calls)
+    shutil.rmtree(home / ".local/python")
+    before = _cache_snapshot(cache)
+    writes: list[Path] = []
+
+    def reject_cache_write(path: Path, _value: bytes) -> None:
+        writes.append(path)
+        raise AssertionError("ready cache must not be rewritten")
+
+    monkeypatch.setattr(runtime_cache, "_atomic_bytes", reject_cache_write)
+    cache.chmod(0o555)
+    try:
+        reused = prepare_runtime(
+            manifests, archives, MANIFEST_URI, _sha(manifest), home, workspace
+        )
+    finally:
+        cache.chmod(cache_mode)
+
+    assert reused == receipt
+    assert writes == []
+    assert archives.calls == archive_calls
+    assert _cache_snapshot(cache) == before
+    assert (home / ".local/python/bin/python").read_bytes() == b"immutable-python"
+
+
 @pytest.mark.parametrize("change", ["bytes", "mode", "symlink"])
 def test_prepare_runtime_rejects_changed_existing_python(
     tmp_path: Path, change: str
@@ -300,6 +349,8 @@ def test_prepare_runtime_retries_interrupted_first_archive(
     monkeypatch.setattr(runtime_cache, "_extract_archive", original)
     home = tmp_path / "home"
     workspace = home / "work"
+    cached_manifest = workspace / ".npa-runtime-cache/runtime-manifest.json"
+    cached_manifest_stat = cached_manifest.stat()
     manifest_storage = FakeStorage({MANIFEST_URI: objects[MANIFEST_URI]})
     archive_storage = FakeStorage(
         {key: value for key, value in objects.items() if key != MANIFEST_URI}
@@ -314,6 +365,8 @@ def test_prepare_runtime_retries_interrupted_first_archive(
     )
     assert receipt["schema"] == "npa.behavior.runtime-ready.v2"
     assert (home / ".local/python/bin/python").read_bytes() == b"immutable-python"
+    assert cached_manifest.stat().st_ino == cached_manifest_stat.st_ino
+    assert cached_manifest.stat().st_mtime_ns == cached_manifest_stat.st_mtime_ns
 
 
 def test_prepare_runtime_rejects_changed_python_cache(tmp_path: Path) -> None:
@@ -369,7 +422,9 @@ def test_prepare_runtime_uses_separate_storage_clients(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("legacy_manifest_replaced", [False, True])
 def test_changed_manifest_preserves_ready_cache_before_restore(
-    tmp_path: Path, legacy_manifest_replaced: bool
+    tmp_path: Path,
+    legacy_manifest_replaced: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     objects, manifest = _runtime_objects()
     _, manifests, archives, home, workspace = _run(tmp_path, objects, manifest)
@@ -383,6 +438,11 @@ def test_changed_manifest_preserves_ready_cache_before_restore(
     before = {p.name: p.read_bytes() for p in cache.glob("*.json")}
     archive_calls = list(archives.calls)
     shutil.rmtree(home / ".local/python")
+
+    def reject_cache_write(_path: Path, _value: bytes) -> None:
+        raise AssertionError("different manifest must fail before cache mutation")
+
+    monkeypatch.setattr(runtime_cache, "_atomic_bytes", reject_cache_write)
 
     with pytest.raises(ValueError, match="different manifest.*isolated workspace"):
         prepare_runtime(

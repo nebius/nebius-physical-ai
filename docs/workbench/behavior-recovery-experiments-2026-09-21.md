@@ -494,6 +494,22 @@ The worker, controller, and isolated API were cleaned up while retaining the
 cache contents. This is an operational failure observation, with no new policy
 quality result.
 
+A later RTX attempt verified the status fix live: its available workflow
+manifest still had an empty step list, while status recovered the requested
+accelerator, CPU, and memory from the runtime wave. Kubernetes independently
+confirmed the pinned image, resource requests, read-only retained cache, and
+separate disk-backed output volume. The private live-proof receipt has SHA-256
+`c7cc2668bb30a1ec3b021330523084268dbdef441010663e069a4d9e1dbd4ae3`.
+
+That attempt passed the storage and capacity checks, then stopped before model
+initialization because its parent-checkpoint verifier expected a metadata field
+absent from the released checkpoint receipt. All three original failure artifacts
+were independently read back and preserved before worker, controller, and API
+cleanup; retained data was preserved. Readback receipt SHA-256:
+`87bb4d2d7552817bd56cce1ef7221637e4554158ca6bdcb53a7adb1321b83d9d`.
+This verifies the control-plane behavior and failure preservation; it provides
+no optimizer, checkpoint-recovery, or policy-quality qualification.
+
 ### Specialist recovery and Workbench task status
 
 The released SFT specialist ultimately completed all ten original development
