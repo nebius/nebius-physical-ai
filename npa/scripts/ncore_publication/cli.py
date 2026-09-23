@@ -52,6 +52,11 @@ def _parser():
         help="Private Docker/containers registry auth file; publish only",
     )
     parser.add_argument(
+        "--acceptance",
+        type=Path,
+        help="External immutable accepted-manifest JSON; required for publish.",
+    )
+    parser.add_argument(
         "--policy-mode", choices=("ci-regex", "exact-literals"), default="ci-regex"
     )
     parser.add_argument(
@@ -68,7 +73,6 @@ def _inputs(args):
     committed_source(args.source_sha)
     from . import gates
 
-    committed_source(args.source_sha)
     gates.eligibility(args.source_sha)
     if args.action in {"check", "publish"}:
         for name in (
@@ -99,6 +103,21 @@ def _inputs(args):
         W.require(args.authfile is not None, "private_registry_authfile_required")
         args.authfile = args.authfile.absolute()
         P.binding(args.authfile)
+        W.require(
+            getattr(args, "acceptance", None) is not None,
+            "external_acceptance_required",
+        )
+        args.acceptance = args.acceptance.absolute()
+        W.require(
+            args.acceptance.is_relative_to(args.analysis_root),
+            "acceptance_outside_private_root",
+        )
+        P.binding(args.acceptance)
+    else:
+        W.require(
+            getattr(args, "acceptance", None) is None,
+            "acceptance_is_publish_only",
+        )
     _keyring_input(args)
 
 
@@ -388,17 +407,37 @@ def _check_or_publish(args):
     graph, verification = run_phase(
         "prepublication", gates.verify, args, args.output_dir, build
     )
+    evidence_manifest = run_phase(
+        "evidence-manifest",
+        _gate_evidence_manifest,
+        args.output_dir,
+        args.source_sha,
+        build,
+        graph,
+    )
     write_json(
         args.output_dir / "prepublication.json",
         {
             "status": "pass",
             "source_sha": args.source_sha,
             "image_digest": build["image_digest"],
+            "platform_digest": graph["image_manifest_digest"],
+            "config_digest": graph["image_config_digest"],
             "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": file_sha(evidence_manifest),
             "release_acceptance": False,
         },
     )
     if args.action == "publish":
+        run_phase(
+            "accepted-workload-binding",
+            _require_accepted_publication,
+            args.source_sha,
+            build,
+            graph,
+            file_sha(evidence_manifest),
+            getattr(args, "acceptance", None),
+        )
         transfer = args.output_dir / "transfer"
         transfer.mkdir(mode=0o700)
         run_phase(
@@ -410,6 +449,73 @@ def _check_or_publish(args):
             graph,
             verification,
         )
+
+
+def _gate_evidence_manifest(directory, source_sha, build, graph):
+    """Hash every private gate artifact before a publication decision."""
+    files = []
+    for path in sorted(directory.rglob("*")):
+        W.require(not path.is_symlink(), "gate_evidence_symlink")
+        if not path.is_file():
+            continue
+        relative = path.relative_to(directory).as_posix()
+        files.append(
+            {
+                "path": relative,
+                "bytes": path.stat().st_size,
+                "sha256": file_sha(path),
+            }
+        )
+    W.require(files, "gate_evidence_empty")
+    output = directory / "evidence-manifest.json"
+    write_json(
+        output,
+        {
+            "schema": "npa.ncore.prepublication-evidence.v1",
+            "source_sha": source_sha,
+            "image_digest": build["image_digest"],
+            "platform_digest": graph["image_manifest_digest"],
+            "config_digest": graph["image_config_digest"],
+            "archive_sha256": build["archive_sha256"],
+            "files": files,
+        },
+    )
+    return output
+
+
+def _require_accepted_publication(
+    source_sha,
+    build,
+    graph,
+    evidence_manifest_sha256,
+    acceptance_path=None,
+):
+    """Refuse every registry write until exact workload acceptance is committed."""
+    from npa.deploy import images
+    from . import acceptance
+
+    accepted = (
+        acceptance.verify_final_acceptance(
+            Path(acceptance_path).absolute().parents[1],
+            Path(acceptance_path).absolute(),
+        )
+        if acceptance_path is not None
+        else images.ncore_accepted_image_manifest()
+    )
+    expected = {
+        "development_sha": source_sha,
+        "oci_digest": build["image_digest"],
+        "amd64_manifest": graph["image_manifest_digest"],
+        "config_digest": graph["image_config_digest"],
+    }
+    W.require(
+        all(accepted.get(name) == value for name, value in expected.items())
+        and accepted["prepublication"]["archive_sha256"] == build["archive_sha256"]
+        and accepted["prepublication"]["evidence_manifest_sha256"]
+        == evidence_manifest_sha256,
+        "accepted_ncore_evidence_does_not_match_candidate",
+    )
+    return accepted
 
 
 def main(argv=None):

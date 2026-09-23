@@ -425,13 +425,70 @@ def test_guard_snapshot_uses_only_committed_files_including_config_and_conftests
         output.write_bytes(fixture.read_bytes())
 
     monkeypatch.setattr(process, "run", archive)
-    snapshot, digest = process.guard_snapshot(tmp_path, SHA)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    snapshot, digest = process.guard_snapshot(tmp_path, SHA, scratch)
     assert digest == process.file_sha(fixture)
     assert (snapshot / "npa/tests/conftest.py").read_bytes() == b"committed conftest"
     assert not (snapshot / "npa/tests/docker/conftest.py").exists()
     assert (
         snapshot / "npa/src/npa/transitive.py"
     ).read_bytes() == b"committed transitive import"
+
+
+def test_guard_symlinks_stay_outside_manifest_and_evidence_links_are_refused(
+    tmp_path, monkeypatch
+):
+    evidence = tmp_path / "gates"
+    evidence.mkdir(mode=0o700)
+    observed = {}
+
+    def snapshot(directory, sha, scratch):
+        assert directory == evidence and sha == SHA
+        assert scratch.parent == evidence.parent and scratch != evidence
+        assert scratch.stat().st_mode & 0o777 == 0o700
+        source = scratch / "source-guards-tree"
+        source.mkdir()
+        (source / "skills").mkdir()
+        (source / ".agents").mkdir()
+        (source / ".agents/skills").symlink_to("../skills")
+        (directory / "source-guards.tar").write_bytes(b"retained source archive")
+        observed["source"] = source
+        return source, process.file_sha(directory / "source-guards.tar")
+
+    def run(argv, output, *, env, cwd):
+        assert cwd == observed["source"]
+        assert env["TMPDIR"] == str(cwd.parent)
+        temporary = cwd.parent / "guard-tmp"
+        temporary.mkdir()
+        (temporary / "case0").mkdir()
+        (temporary / "casecurrent").symlink_to(temporary / "case0")
+        output.write_text("all guard phases passed\n")
+        process.write_json(evidence / "source-guards.json", {"checked": True})
+
+    monkeypatch.setattr(gates, "guard_snapshot", snapshot)
+    monkeypatch.setattr(gates, "run", run)
+    monkeypatch.setattr(gates, "verify_guard_execution", lambda report: None)
+    gates.source_guards(evidence, SHA)
+    assert not any(path.is_symlink() for path in evidence.rglob("*"))
+    build = {"image_digest": "sha256:" + "a" * 64, "archive_sha256": "b" * 64}
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    manifest = cli._gate_evidence_manifest(evidence, SHA, build, graph)
+    files = json.loads(manifest.read_bytes())["files"]
+    assert {row["path"] for row in files} == {
+        "source-guards.tar",
+        "source-guards.log",
+        "source-guards.json",
+        "source-guards-snapshot.json",
+    }
+    for row in files:
+        assert row["sha256"] == process.file_sha(evidence / row["path"])
+    (evidence / "unexpected-link").symlink_to(observed["source"])
+    with pytest.raises(ValueError, match="gate_evidence_symlink"):
+        cli._gate_evidence_manifest(evidence, SHA, build, graph)
 
 
 @pytest.mark.parametrize(

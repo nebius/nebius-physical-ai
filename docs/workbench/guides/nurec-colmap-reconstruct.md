@@ -63,7 +63,8 @@ owns the complete stage graph:
 
 ```mermaid
 flowchart LR
-    C[COLMAP to NCore / CPU] --> N[NRE reconstruct / RTX PRO 6000]
+    C[COLMAP to NCore / CPU] --> A[Independent S3/V4 audit / CPU]
+    A --> N[NRE reconstruct / RTX PRO 6000]
     N --> R[NRE novel views / RTX PRO 6000]
     R --> V[Rerun / CPU]
     V --> F[Finalize / CPU]
@@ -71,10 +72,14 @@ flowchart LR
 
 Each state runs in a separate pod. `workbench.nurec.convert_colmap` publishes
 `sequence.json`, every referenced `.zarr.itar` shard, `npa-rig.json` and
-`conversion.json` directly under `config.ncore_sequence_uri`. That exact prefix,
-including its trailing slash, is passed to the existing reconstruction command
-as `--ncore-uri`. No extra source-directory or `sequence/` suffix is appended
-by conversion.
+`conversion.json` directly under `config.ncore_sequence_uri`.
+`workbench.nurec.audit_colmap` then independently lists that prefix, downloads
+the original ZIP and every published object, rejects changed/extra objects,
+recomputes hashes, and reopens every V4 image, calibration, pose and sparse
+point. It writes a separate non-overwriting audit JSON. Only after that gate
+does the exact sequence prefix, including its trailing slash, pass to
+reconstruction as `--ncore-uri`. No extra source-directory or `sequence/`
+suffix is appended.
 
 Use a fresh output prefix for each conversion. A provider-conditional permanent
 claim prevents overlapping writers or replacement of an earlier generation.
@@ -127,6 +132,14 @@ The reconstruction JSON and published `initialization/ncore-sfm.json` retain the
 recipe, configured image, selected cameras, source metadata/conversion hashes,
 decoded component counts, and exported PLY hash. An image digest in the runtime
 configuration binds this evidence to that image; a version tag alone does not.
+The stage also publishes `reconstruction/reconstruction.json`, which hashes the
+exact NCore member inventory, parsed config, native metrics and USDZ and records
+the `nvidia-smi` GPU observation and requested exact NRE digest. The acceptance
+tuple separately requires a control-plane runtime image-ID attestation; a digest
+parsed from the request is not mislabeled as observed execution identity. Rendering publishes
+`novel_views/nre-render.json`, which binds the same USDZ, the nonzero offset and
+every independently decoded frame hash. These are workload receipts, not a
+substitute for reopening the USDZ, render tree and RRD after S3 read-back.
 
 The native parsed configuration records effective recipe settings. The USDZ's
 `data_info.json` copies the input sequence metadata; it proves available data,
@@ -158,6 +171,136 @@ source, revision, CC-BY-4.0 attribution and any transformation description
 beside the run. Alternatively, the live matrix below performs pinned source
 staging and writes `source/attribution.json` automatically.
 
+Before staging an image or source, prove that the fresh run prefix supports the
+operations the workflow needs. The probe conditionally creates one random
+object, reads and hashes it, verifies a second create cannot overwrite it,
+enumerates the exact object, deletes it, and proves absence. Its private receipt
+contains only hashes, counts, and dispositions:
+
+```bash
+npa workbench nurec acquire-source \
+  --output-path '<private-analysis>/qualification/struktur28_colmap.zip' \
+  --receipt-path '<private-analysis>/qualification/source-acquisition.json' \
+  --output-format json
+
+npa workbench nurec probe-storage \
+  --prefix 's3://<bucket>/<fresh-run-prefix>/' \
+  --receipt-path '<private-analysis>/qualification/s3-handoff-probe.json' \
+  --output-format json
+
+npa workbench nurec stage-source \
+  --source-path '<private-analysis>/qualification/struktur28_colmap.zip' \
+  --output-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --receipt-path '<private-analysis>/qualification/source-staging.json' \
+  --scratch-dir '<private-analysis>/qualification/staging-readback' \
+  --output-format json
+```
+
+`acquire-source` is anonymous, refuses replacement, verifies the immutable
+archive hash, and writes an owner-only receipt. Pre-publication qualification
+does not push the candidate converter merely to make it reachable from
+Kubernetes. After the committed OCI build and check phases have loaded and
+verified the local export, use the committed runner. It recomputes the
+OCI-to-local-image relation, creates three separately inspected containers with
+`--pull=never`, runs the wrong-source control before conversion, then runs the
+positive conversion and independent conversion audit:
+
+```bash
+npa/.venv/bin/python npa/scripts/run_ncore_qualification.py \
+  --source-sha '<reviewed-40-character-commit>' \
+  --analysis-root '<private-analysis>' \
+  --gate-dir '<private-analysis>/gates' \
+  --evidence-dir '<private-analysis>/qualification' \
+  --cache-dir '<private-analysis>/qualification/cache' \
+  --s3-env-file '<owner-only-S3-env-file>' \
+  --run-id '<run-id>' \
+  --input-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
+  --control-output-path 's3://<bucket>/<run>/controls/wrong-source/' \
+  --conversion-path 's3://<bucket>/<run>/ncore/sequence/' \
+  --audit-output-path 's3://<bucket>/<run>/evidence/ncore-conversion-audit.json' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d
+```
+
+After the independent conversion audit, submit
+`workflows/testing/nurec-reconstruct-render.yaml`. This downstream-only spec
+pulls the separately licensed, digest-pinned NRE image and never needs the
+candidate image in a registry. While each GPU-stage pod remains observable,
+run the committed observer concurrently with submit. It reads only live,
+non-cached workflow status, captures each stage while `RUNNING`, binds the exact
+managed-job name and ID to the pod, and retains terminal status:
+
+```bash
+npa/.venv/bin/python npa/scripts/observe_ncore_workflow.py \
+  --source-sha '<reviewed-40-character-commit>' \
+  --run-id '<run-id>' --workflow-s3-uri 's3://<bucket>/<workflow-state-prefix>' \
+  --project '<project-alias>' --sky-bin '<pinned-sky-executable>' \
+  --context '<exact-context>' --namespace '<namespace>' \
+  --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
+  --evidence-dir '<private-analysis>/qualification' --poll-seconds 5
+```
+
+The observer discovers only pods whose SkyPilot job annotations match the exact
+stage job name and ID in the fresh workflow-status JSON. The bundle binds one
+parent workflow run and rejects reused job, pod, or task identities.
+
+Visual review uses the committed one-shot harness only after objective workload
+checks pass. `freeze` deterministically selects two source-camera positives,
+builds one fixed 32-pixel block-rotation control and one local seam/floater
+control from real rendered frames, and selects four novel-view frames by index
+from one explicitly selected camera trajectory. An independent reviewer must
+open all controls and final frames, review the prompts, and emit the exact
+owner-only freeze-review receipt before `accept-freeze`. Every hosted call then
+conditionally creates and reads back a separate marker under an external S3
+attempt prefix. Run `final` once only when calibration has TP=2, TN=2, FP=0,
+and FN=0:
+
+```bash
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py freeze \
+  --source-zip '<private>/struktur28_colmap.zip' \
+  --source-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --render-dir '<read-back>/novel_views' \
+  --render-camera '<one-camera-directory>' \
+  --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
+  --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt \
+  --final-task npa/scripts/ncore_publication/vlm-final-task-v2.txt \
+  --output-root '<private-analysis>/qualification/vlm'
+
+# The independent reviewer creates freeze-review.json with the committed
+# npa_ncore_vlm_freeze_review_v1 schema. Retain the exact external prefix in
+# owner-only external-attempt-prefix.txt for acceptance re-verification.
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py accept-freeze \
+  --evidence-root '<private-analysis>/qualification/vlm' \
+  --freeze-sha256 '<freeze-sha256>' \
+  --review-path '<private-analysis>/qualification/vlm/freeze-review.json' \
+  --external-attempt-prefix 's3://<bucket>/<run>/vlm-attempts/'
+
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py calibrate \
+  --evidence-root '<private-analysis>/qualification/vlm' \
+  --freeze-sha256 '<freeze-sha256>' \
+  --freeze-acceptance-sha256 '<freeze-acceptance-sha256>' \
+  --external-attempt-prefix 's3://<bucket>/<run>/vlm-attempts/' \
+  --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
+  --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py final \
+  --evidence-root '<private-analysis>/qualification/vlm' \
+  --freeze-sha256 '<freeze-sha256>' \
+  --freeze-acceptance-sha256 '<freeze-acceptance-sha256>' \
+  --external-attempt-prefix 's3://<bucket>/<run>/vlm-attempts/' \
+  --calibration-sha256 '<calibration-sha256>' \
+  --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
+  --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt \
+  --final-task npa/scripts/ncore_publication/vlm-final-task-v2.txt
+```
+
+The harness makes no retries, requires exact served-model identity, writes an
+immutable external attempt marker before every call, and retains request/response
+bytes, prompt/frame hashes, HTTP status/body on failures, provider request ID,
+timing, finish/usage metadata, and a transport manifest. Final execution
+rebuilds each request and re-derives each score/rationale from raw response
+bytes, requires the complete attempt set, and rejects a calibration from any
+other freeze.
+
 The converter image fetches its immutable, hash-locked Python dependencies on
 first use. Downloads require no artificial credential gate. A writable cache
 uses a lock and an atomic ready state; it is ephemeral unless operator storage
@@ -168,9 +311,90 @@ published layers. The standalone command is:
 npa workbench nurec convert-colmap \
   --input-path 's3://<bucket>/<source-prefix>/struktur28_colmap.zip' \
   --output-path 's3://<bucket>/<run-prefix>/ncore/sequence/' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
   --dataset-root struktur28 --colmap-dir sparse/0 --images-dir images \
   --rig-mode derive --output-format json
+
+npa workbench nurec audit-colmap \
+  --input-path 's3://<bucket>/<source-prefix>/struktur28_colmap.zip' \
+  --conversion-path 's3://<bucket>/<run-prefix>/ncore/sequence/' \
+  --output-path 's3://<bucket>/<run-prefix>/evidence/ncore-conversion-audit.json' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --dataset-root struktur28 --rig-mode derive --output-format json
+
+# After terminal success, conditionally add the host-observed control-plane
+# evidence to this run's retained prefix before taking one complete read-back.
+npa workbench nurec publish-evidence \
+  --source-path '<private-analysis>/qualification/nre-runtime.json' \
+  --output-path 's3://<bucket>/<run>/evidence/nre-runtime.json' \
+  --kind runtime-attestation --run-id '<run-id>' \
+  --receipt-path '<private-analysis>/qualification/runtime-handoff.json' \
+  --output-format json
+npa workbench nurec publish-evidence \
+  --source-path '<private-analysis>/qualification/workflow-status.json' \
+  --output-path 's3://<bucket>/<run>/evidence/workflow-status.json' \
+  --kind workflow-status --run-id '<run-id>' \
+  --receipt-path '<private-analysis>/qualification/status-handoff.json' \
+  --output-format json
+npa workbench nurec readback-qualification \
+  --prefix 's3://<bucket>/<run>/' \
+  --destination '<private-analysis>/qualification/readback' \
+  --receipt-path '<private-analysis>/qualification/qualification-readback.json' \
+  --output-format json
+
+# Install the pinned Apache-2.0 Pixar USD audit extra in this worktree's
+# private venv; audit-qualification reopens the post-readback USDZ with it.
+uv pip install --python npa/.venv/bin/python 'usd-core==25.11'
+npa workbench nurec audit-qualification \
+  --root '<private-analysis>/qualification/readback' --recording-id '<run-id>' \
+  --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
+  --expected-source-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --readback-receipt '<private-analysis>/qualification/qualification-readback.json' \
+  --receipt-path '<private-analysis>/qualification/qualification-audit.json' \
+  --output-format json
+
+npa workbench nurec cleanup-qualification \
+  --run-id '<run-id>' \
+  --workflow-status '<private-analysis>/qualification/workflow-status.json' \
+  --context '<exact-context>' --namespace '<namespace>' \
+  --storage-prefix 's3://<bucket>/<run>/' \
+  --local-image '<exact-local-candidate-ref>' --builder '<run-owned-builder>' \
+  --build-receipt '<private-analysis>/build/build.json' \
+  --source-sha '<reviewed-40-character-commit>' \
+  --isolated-config-dir '<private-sky-state>' \
+  --receipt-path '<private-analysis>/qualification/cleanup.json' \
+  --output-format json
 ```
+
+Cleanup enumerates every exact managed-job attempt in the complete four-state
+workflow status, asks for each cancellation, waits for terminal or absent state,
+and only then downs run compute. It retains the shared controller and declared
+evidence prefix, removes the loaded candidate and run-owned builder, and fails
+if any exact-job pod remains active.
+
+Finally, fill the proposed manifest only from the retained receipts, then use
+the committed acceptance assembler. `statement` validates the gate and
+workload receipts, re-verifies every raw VLM response, and inventories every
+bound evidence file. A different reviewer must create
+`acceptance/review.json` for that exact statement before `finalize` emits the
+only manifest the publication command will consume:
+
+```bash
+npa/.venv/bin/python npa/scripts/assemble_ncore_acceptance.py statement \
+  --analysis-root '<private-analysis>' --gate-dir '<private-analysis>/gates' \
+  --evidence-root '<private-analysis>/qualification' \
+  --proposed-manifest '<private-analysis>/qualification/proposed-manifest.json' \
+  --output '<private-analysis>/acceptance/statement.json'
+npa/.venv/bin/python npa/scripts/assemble_ncore_acceptance.py finalize \
+  --analysis-root '<private-analysis>' \
+  --statement '<private-analysis>/acceptance/statement.json' \
+  --review '<private-analysis>/acceptance/review.json' \
+  --output '<private-analysis>/acceptance/accepted-manifest.json'
+```
+
+The publisher rehashes the statement, independent review, and complete bound
+evidence inventory immediately before any registry write; it rejects an
+arbitrary standalone accepted-manifest JSON.
 
 `--input-path` also accepts an S3 dataset prefix. `--cache-dir` and
 `--scratch-dir` select private local staging parents, defaulting to
@@ -207,13 +431,14 @@ npa workbench workflow submit workflows/testing/nurec-colmap-reconstruct.yaml \
   --var 'bucket=<bucket>' --var 'prefix=<run-prefix>' \
   --var 'colmap_input_uri=s3://<bucket>/<source-prefix>/struktur28_colmap.zip' \
   --image-override 'workbench.nurec.convert_colmap=<registry>/npa-ncore@sha256:<digest>' \
+  --image-override 'workbench.nurec.audit_colmap=<registry>/npa-ncore@sha256:<same-digest>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env NGC_API_KEY
 ```
 
 The digest above is an explicit placeholder, not a published or accepted image.
-Keep the NCore image override scoped to conversion; the NRE resource profiles
-and Rerun image serve different stages.
+Keep the same exact NCore image override scoped to conversion and its audit; the
+NRE resource profiles and Rerun image serve different stages.
 
 ## Live-matrix coverage and acceptance
 
@@ -235,10 +460,11 @@ configuration. The public source does not require `HF_TOKEN`. Clear generic
 accelerator remaps/forced GPU settings: the matrix rejects them for this case
 to preserve CPU conversion and the explicit RTX resource request.
 
-After terminal success the matrix checks all conversion-member hashes and
-sizes against S3, the full source counts, attribution, and downstream final
-accounting, metrics and RRD presence. These checks complement the converter's
-full V4 decode; they do not establish rendering quality. The RRD retains the
+After terminal success the matrix requires the separate post-S3 audit, checks
+all conversion-member hashes and sizes, rejects extra or changed objects,
+matches the full source counts and attribution, and verifies downstream final
+accounting, metrics and RRD presence. These checks do not establish rendering
+quality. The RRD retains the
 producer's effective frame selection, resize and JPEG quality settings in
 `provenance/rrd_review`. Readback derives the selected camera/frame identities
 from the ordered source render paths, requires each selected identity exactly

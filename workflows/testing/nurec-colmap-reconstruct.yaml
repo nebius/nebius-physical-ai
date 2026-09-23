@@ -7,6 +7,7 @@ kind: Workflow
 # licensed NGC stages on RTX PRO 6000. Data and weights are never baked.
 # Select an immutable development image with:
 # --image-override workbench.nurec.convert_colmap=<registry>/npa-ncore@sha256:<digest>
+# --image-override workbench.nurec.audit_colmap=<same exact digest>
 # Each state has a separate pod. The exact conversion output prefix is the NRE
 # input; no fetch of an already converted NCore dataset occurs here.
 
@@ -26,6 +27,7 @@ config:
   # 518-image / 3-camera capture explicitly; do not auto-discover or truncate it.
   dataset_id: "nvidia/PhysicalAI-NuRec-PPISP"
   dataset_revision: "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
+  colmap_source_sha256: "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
   dataset_root: "struktur28"
   colmap_dir: "sparse/0"
   images_dir: "images"
@@ -56,6 +58,7 @@ config:
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   colmap_input_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/struktur28_colmap.zip"
   ncore_sequence_uri: "s3://{{config.bucket}}/{{config.prefix}}/ncore/sequence/"
+  ncore_audit_uri: "s3://{{config.bucket}}/{{config.prefix}}/evidence/ncore-conversion-audit.json"
   input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   reconstruction_uri: "s3://{{config.bucket}}/{{config.prefix}}/reconstruction/"
   novel_views_uri: "s3://{{config.bucket}}/{{config.prefix}}/novel_views/"
@@ -135,13 +138,29 @@ states:
     outputs:
       - uri: "{{config.ncore_sequence_uri}}sequence.json"
       - uri: "{{config.ncore_sequence_uri}}conversion.json"
+    next: audit
+
+  audit:
+    description: >
+      Re-list the immutable prefix, re-download the original ZIP and every
+      conversion member, reject extra or changed objects, and independently
+      reopen every V4 image, calibration, pose and sparse point.
+    needs: [convert]
+    toolRef: workbench.nurec.audit_colmap
+    resources: ncore
+    inputs:
+      - uri: "{{config.colmap_input_uri}}"
+      - uri: "{{config.ncore_sequence_uri}}"
+    outputs:
+      - uri: "{{config.ncore_audit_uri}}"
+        schema: npa.ncore.colmap-audit.v1
     next: reconstruct
 
   reconstruct:
     description: >
       Use the existing separately licensed NRE engine and full native 3DGUT
       recipe to publish USDZ, metrics, resolved config and ground-truth frames.
-    needs: [convert]
+    needs: [audit]
     toolRef: workbench.nurec.reconstruct
     resources: gpu
     inputs:
@@ -149,6 +168,8 @@ states:
     outputs:
       - uri: "{{config.reconstruction_uri}}metrics.yaml"
         schema: npa.nurec.reconstruction.v1
+      - uri: "{{config.reconstruction_uri}}reconstruction.json"
+        schema: npa.nurec.reconstruction-receipt.v1
     next: render
 
   render:

@@ -15,6 +15,7 @@ import pytest
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
+from npa.cli import nurec as cli_nurec
 from npa.cli.main import app
 from npa.workbench.nurec import nurec as mod
 from npa.workbench.nurec.nurec import (
@@ -805,7 +806,11 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
 
     config = NurecConfig.from_env(environ={}, out_dir=out)
     result = reconstruct_scene(
-        config, ncore_json="/d/s.json", environ={}, runner=fake_runner
+        config,
+        ncore_json="/d/s.json",
+        environ={},
+        runner=fake_runner,
+        gt_frame_step=7,
     )
 
     assert result.ok is True
@@ -814,6 +819,7 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
     assert result.metrics["test/psnr"] == pytest.approx(27.75)
     assert result.gt_dir.endswith("gt")
     assert len(calls) == 2
+    assert calls[1][-1] == "7"
 
 
 def test_reconstruct_fails_loudly_without_an_artifact(tmp_path: Path) -> None:
@@ -1075,6 +1081,45 @@ def test_cli_reconstruct_dry_run_prints_the_resolved_nre_command(
     command = " ".join(payload["command"])
     assert "dataset.poses_component_group=npa_rig" in command
     assert "checkpoint.artifact.enabled=true" in command
+
+
+def test_cli_reconstruct_forwards_ground_truth_frame_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ncore = tmp_path / "scene.json"
+    ncore.write_text("{}")
+    seen: dict[str, object] = {}
+
+    class Result:
+        ok = True
+        gt_dir = None
+
+        @staticmethod
+        def as_dict() -> dict[str, object]:
+            return {"status": "ok"}
+
+    def fake_reconstruct(*_args, **kwargs):
+        seen.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr(cli_nurec, "reconstruct_scene", fake_reconstruct)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--gt-frame-step",
+            "7",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["gt_frame_step"] == 7
 
 
 def test_cli_reconstruct_without_a_sequence_fails_with_guidance(tmp_path: Path) -> None:

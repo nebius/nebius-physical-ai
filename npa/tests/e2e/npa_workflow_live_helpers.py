@@ -1405,11 +1405,15 @@ def _download_nurec_proof(client: Any, bucket: str, root: str, local: Path) -> N
             "reconstruction/last.usdz",
             "reconstruction/metrics.yaml",
             "reconstruction/parsed.yaml",
+            "reconstruction/reconstruction.json",
+            "novel_views/nre-render.json",
             "reports/sim2real.rrd",
             "reports/final.json",
             "source/attribution.json",
             "ncore/sequence/conversion.json",
             "ncore/sequence/npa-rig.json",
+            "evidence/ncore-conversion-audit.json",
+            "evidence/nre-runtime.json",
         )
     ]
     for page in client.get_paginator("list_objects_v2").paginate(
@@ -1473,6 +1477,88 @@ def _assert_nurec_quality_metrics(path: Path) -> dict[str, float]:
     assert 0 < required["test/ssim"] <= 1, "NRE SSIM is outside its meaningful range"
     assert required["test/lpips"] >= 0, "NRE LPIPS is negative"
     return required
+
+
+def _assert_nurec_native_receipts(local: Path) -> None:
+    """Bind native NRE completion to exact inputs, GPU, recipe, USDZ and renders."""
+    import hashlib
+
+    expected_image = (
+        "nvcr.io/nvidia/nre/nre-ga@"
+        "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+    )
+
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    from npa.workbench.nurec.evidence import validate_runtime_attestation
+
+    runtime = json.loads((local / "evidence/nre-runtime.json").read_text())
+    validate_runtime_attestation(
+        runtime,
+        expected_image=expected_image,
+        required_stages=("reconstruct", "render"),
+    )
+
+    reconstruction = json.loads(
+        (local / "reconstruction/reconstruction.json").read_text()
+    )
+    assert reconstruction["format"] == "npa_nurec_reconstruction_receipt_v1"
+    assert reconstruction["status"] == "pass"
+    assert reconstruction["nre_image"] == expected_image
+    assert reconstruction["requested_nre_digest"] == expected_image.split("@", 1)[1]
+    assert reconstruction["gpu"] == {
+        "count": 1,
+        "names": ["NVIDIA RTX PRO 6000 Blackwell Server Edition"],
+        "all_rt_core_models": True,
+    }
+    assert reconstruction["invocation"]["train_exit_code"] == 0
+    assert reconstruction["input"]["conversion_report_sha256"] == digest(
+        local / "ncore/sequence/conversion.json"
+    )
+    recipe = reconstruction["recipe"]
+    assert recipe == {
+        "name": "configs/experimental/3dgut/3dgut_colmap.yaml",
+        "mode": "trainval",
+        "max_epochs_argument": 0,
+        "resolved_epochs": 1,
+        "resolved_samples_per_epoch": 30000,
+    }
+    for field, relative in (
+        ("parsed_config", "reconstruction/parsed.yaml"),
+        ("metrics", "reconstruction/metrics.yaml"),
+        ("usdz", "reconstruction/last.usdz"),
+    ):
+        record = reconstruction["outputs"][field]
+        path = local / relative
+        assert record["bytes"] == path.stat().st_size
+        assert record["sha256"] == digest(path)
+
+    render = json.loads((local / "novel_views/nre-render.json").read_text())
+    assert render["format"] == "npa_nurec_render_receipt_v1"
+    assert render["status"] == "pass"
+    assert render["nre_image"] == expected_image
+    assert render["gpu"] == reconstruction["gpu"]
+    assert render["invocation"]["render_exit_code"] == 0
+    assert render["invocation"]["novel_view"] is True
+    assert render["invocation"]["rig_translation_offset"] == "0.0,0.25,0.0"
+    assert render["input_usdz"]["sha256"] == digest(local / "reconstruction/last.usdz")
+    inventory = render["output"]["inventory"]
+    actual = {
+        path.relative_to(local / "novel_views").as_posix(): path
+        for path in (local / "novel_views").rglob("*")
+        if path.is_file() and path.name != "nre-render.json"
+    }
+    assert {item["path"] for item in inventory} == set(actual)
+    for item in inventory:
+        path = actual[item["path"]]
+        assert item["bytes"] == path.stat().st_size
+        assert item["sha256"] == digest(path)
+    assert render["output"]["frame_count"] > 0
+    assert render["output"]["bytes"] == sum(item["bytes"] for item in inventory)
+    assert render["output"]["all_frames_decoded"] is True
+    assert render["output"]["finite_pixels"] is True
+    assert render["output"]["nonuniform_frames"] is True
 
 
 def _assert_nurec_novel_media(local: Path) -> dict[str, set[int]]:
@@ -1695,6 +1781,7 @@ def _assert_nurec_downstream_proof(local: Path, *, recording_id: str) -> None:
     assert attribution["license"] == "CC-BY-4.0"
     final = json.loads((local / "reports/final.json").read_text())
     assert final["has_usdz"] and final["has_novel_views"] and final["has_rrd"]
+    _assert_nurec_native_receipts(local)
     _assert_nurec_usdz(local / "reconstruction/last.usdz")
     _assert_nurec_quality_metrics(local / "reconstruction/metrics.yaml")
     recipe = yaml.safe_load((local / "reconstruction/parsed.yaml").read_text())
@@ -1719,6 +1806,45 @@ def _assert_nurec_conversion_report(report: dict) -> None:
     assert counts["cameras"] == 3
     assert counts["points"] > 0
     assert counts["points"] + report["source"]["origin_points_filtered"] == 163453
+
+
+def _assert_nurec_conversion_audit(local: Path, report: dict) -> None:
+    import hashlib
+
+    audit = json.loads((local / "evidence/ncore-conversion-audit.json").read_text())
+    assert audit["format"] == "npa_ncore_colmap_conversion_audit_v1"
+    assert audit["status"] == "pass"
+    assert audit["converter_revision"] == report["converter"]["revision"]
+    assert audit["source"]["archive_sha256"] == NUREC_COLMAP_SHA256
+    assert audit["source"]["counts"] == {
+        "images": 518,
+        "cameras": 3,
+        "poses": 518,
+        "points": 163453,
+    }
+    assert audit["conversion"]["counts"] == report["counts"]
+    assert (
+        audit["conversion"]["origin_points_filtered"]
+        == report["source"]["origin_points_filtered"]
+    )
+    assert (
+        audit["conversion"]["report_sha256"]
+        == hashlib.sha256(
+            (local / "ncore/sequence/conversion.json").read_bytes()
+        ).hexdigest()
+    )
+    assert all(
+        audit["conversion"][field] is True
+        for field in (
+            "all_members_reopened",
+            "member_hashes_verified",
+            "calibration_verified",
+            "poses_verified",
+            "finite_geometry",
+        )
+    )
+    assert audit["s3_readback"]["stable_listing"] is True
+    assert audit["s3_readback"]["object_count"] == len(audit["s3_readback"]["objects"])
 
 
 def _assert_nurec_conversion_members(
@@ -1777,6 +1903,7 @@ def assert_nurec_colmap_live_outputs(
     with tempfile.TemporaryDirectory(prefix="npa-colmap-readback-") as directory:
         local = Path(directory)
         _download_nurec_proof(client, bucket, root, local)
+        _assert_nurec_conversion_audit(local, report)
         _assert_nurec_downstream_proof(
             local, recording_id=root.rstrip("/").split("/")[-1]
         )

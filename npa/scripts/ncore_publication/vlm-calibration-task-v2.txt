@@ -1,0 +1,2 @@
+Determine whether these images form a visually coherent and reviewable ordered
+view sequence of one static scene.

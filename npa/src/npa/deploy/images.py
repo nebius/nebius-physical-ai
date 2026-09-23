@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from importlib import resources
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -35,6 +36,10 @@ LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
 CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
 NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
+NCORE_ACCEPTED_NRE_IMAGE = (
+    "nvcr.io/nvidia/nre/nre-ga@"
+    "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+)
 
 CONTAINER_IMAGE_NAMES = {
     "antioch": "npa-antioch",
@@ -458,6 +463,34 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(source, "ncore_revision", "59c698d206da92b406a4f72619fce3b3a2c64bfd")
     for field in ("lock_sha256", "post_patch_inventory_sha256"):
         match(source, field, r"[0-9a-f]{64}")
+    prepublication = record(payload, "prepublication")
+    equal(prepublication, "status", "pass")
+    for field, expected in (
+        ("source_sha", payload["development_sha"]),
+        ("image_digest", payload["oci_digest"]),
+        ("platform_digest", payload["amd64_manifest"]),
+        ("config_digest", payload["config_digest"]),
+    ):
+        equal(prepublication, field, expected)
+    for field in (
+        "archive_sha256",
+        "evidence_manifest_sha256",
+        "graph_receipt_sha256",
+        "raw_byte_report_sha256",
+        "raw_byte_ledger_sha256",
+        "attribution_receipt_sha256",
+        "attribution_replay_report_sha256",
+        "attribution_replay_ledger_sha256",
+        "provenance_sbom_sha256",
+        "source_delivery_receipt_sha256",
+        "component_receipt_sha256",
+        "selected_base_receipt_sha256",
+        "bootstrap_receipt_sha256",
+        "payload_receipt_sha256",
+        "vulnerability_receipt_sha256",
+        "license_receipt_sha256",
+    ):
+        match(prepublication, field, r"[0-9a-f]{64}")
     for name in ("byte_scan", "payload_scan", "vulnerability_scan", "license_scan"):
         scan = record(payload, name)
         equal(scan, "status", "pass")
@@ -466,9 +499,9 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     byte_scan = payload["byte_scan"]
     equal(byte_scan, "complete", True)
     equal(byte_scan, "config_digest", payload["config_digest"])
+    equal(byte_scan, "archive_sha256", prepublication["archive_sha256"])
     equal(byte_scan, "unresolved_findings", 0)
-    for field in ("archive_sha256", "policy_sha256"):
-        match(byte_scan, field, r"[0-9a-f]{64}")
+    match(byte_scan, "policy_sha256", r"[0-9a-f]{64}")
     for field in ("bytes_scanned", "files_scanned"):
         count(byte_scan, field, 1)
     equal(payload["license_scan"], "unresolved_findings", 0)
@@ -498,6 +531,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     )
     for field in (
         "report_sha256",
+        "audit_sha256",
         "source_archive_sha256",
         "source_inventory_sha256",
         "converted_inventory_sha256",
@@ -535,30 +569,131 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(conversion, "rig_mode", "derive")
     equal(conversion, "poses_component_group", "npa_rig")
 
+    controls = record(payload, "qualification_controls")
+    equal(controls, "status", "pass")
+    for field in (
+        "source_acquisition_receipt_sha256",
+        "s3_probe_receipt_sha256",
+        "source_staging_receipt_sha256",
+        "candidate_image_receipt_sha256",
+        "qualification_execution_receipt_sha256",
+        "wrong_source_execution_receipt_sha256",
+        "conversion_execution_receipt_sha256",
+        "audit_execution_receipt_sha256",
+        "wrong_source_receipt_sha256",
+    ):
+        match(controls, field, r"[0-9a-f]{64}")
+    equal(controls, "wrong_source_format", "npa_ncore_wrong_source_control_v1")
+    equal(controls, "wrong_source_failure_phase", "source_digest_pre_extract")
+    equal(controls, "wrong_source_native_started", False)
+    equal(controls, "control_command_exit_code", 0)
+    equal(controls, "wrong_source_output_objects", 0)
+
     proof = record(payload, "rtx_proof")
     equal(proof, "status", "pass")
+    equal(
+        proof,
+        "qualification_audit_format",
+        "npa_ncore_qualification_audit_v1",
+    )
     equal(proof, "conversion_report_sha256", conversion["report_sha256"])
+    equal(proof, "conversion_audit_sha256", conversion["audit_sha256"])
     equal(proof, "converted_inventory_sha256", conversion["converted_inventory_sha256"])
-    match(proof, "nre_image", r"nvcr\.io/nvidia/nre/nre-ga@sha256:[0-9a-f]{64}")
+    equal(proof, "nre_image", NCORE_ACCEPTED_NRE_IMAGE)
     equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
+    match(proof, "runtime_image_attestation_sha256", r"[0-9a-f]{64}")
+    for field in (
+        "complete_readback_receipt_sha256",
+        "final_workflow_status_sha256",
+        "final_report_sha256",
+    ):
+        match(proof, field, r"[0-9a-f]{64}")
+    equal(proof, "runtime_attestation_format", "npa_nurec_runtime_attestation_v4")
+    equal(proof, "runtime_attested_stages", ["reconstruct", "render"])
     equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
-    count(proof, "gpu_count", 1)
+    equal(proof, "gpu_count", 1)
     # Zero means NRE's full native recipe, not a zero-epoch training workload.
     for field in ("max_epochs", "train_exit_code", "render_exit_code"):
         equal(proof, field, 0)
     for field in (
-        "training_steps",
-        "gaussian_count",
         "usdz_bytes",
         "render_bytes",
         "decoded_frames",
+        "video_count",
+        "decoded_video_frames",
     ):
         count(proof, field, 1)
     for field in ("report_sha256", "usdz_sha256", "render_sha256"):
         match(proof, field, r"[0-9a-f]{64}")
+    equal(proof, "usd_runtime_version", "25.11")
     equal(proof, "rendered_usdz_sha256", proof["usdz_sha256"])
     for field in ("trained_scene_reopened", "finite_pixels", "novel_view"):
         equal(proof, field, True)
+    metrics = record(proof, "observed_metrics")
+    for name in ("test/psnr", "test/ssim", "test/lpips"):
+        value = metrics.get(name)
+        require(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value)),
+            f"finite observed metric {name}",
+        )
+    require(float(metrics["test/psnr"]) >= 15, "minimum PSNR")
+    require(0.5 <= float(metrics["test/ssim"]) <= 1, "minimum SSIM")
+    require(0 <= float(metrics["test/lpips"]) <= 0.5, "maximum LPIPS")
+    visual = record(proof, "visual_review")
+    equal(visual, "status", "pass")
+    equal(visual, "model", "openbmb/MiniCPM-V-4_5")
+    equal(visual, "served_model", visual["model"])
+    equal(visual, "threshold", 0.8)
+    equal(
+        visual,
+        "rubric_sha256",
+        "0669fb4ad6c762ce12df4c11092e9f1752ae6e50026e4cb646ad944710bd2624",
+    )
+    equal(
+        visual,
+        "calibration_task_sha256",
+        "1eac4c5ef02ef5b8a17084b1474fa04df7d0025c07e5ee117dbbdd2c16d466d9",
+    )
+    equal(
+        visual,
+        "task_sha256",
+        "f82c6312fb76b41116fcf68f224533f40178ce770ad8cdf4a8d0706b314377a7",
+    )
+    for field in (
+        "control_manifest_sha256",
+        "label_commitment_sha256",
+        "freeze_acceptance_sha256",
+        "freeze_review_receipt_sha256",
+        "external_attempt_prefix_sha256",
+        "calibration_result_sha256",
+        "final_frame_manifest_sha256",
+        "final_result_sha256",
+        "raw_transport_manifest_sha256",
+    ):
+        match(visual, field, r"[0-9a-f]{64}")
+    equal(visual, "calibration_total", 4)
+    equal(visual, "true_positives", 2)
+    equal(visual, "true_negatives", 2)
+    equal(visual, "false_positives", 0)
+    equal(visual, "false_negatives", 0)
+    score = visual.get("final_score")
+    require(
+        isinstance(score, (int, float))
+        and not isinstance(score, bool)
+        and math.isfinite(float(score))
+        and 0.8 <= float(score) <= 1,
+        "VLM final score",
+    )
+    equal(visual, "final_passed", True)
+    equal(visual, "attempt_count", 5)
+    equal(visual, "external_attempt_markers", 5)
+    equal(visual, "realistic_defect_controls", 1)
+    equal(visual, "response_rederived", True)
+    equal(visual, "transport_metadata_complete", True)
+    equal(visual, "one_shot", True)
+    equal(visual, "claim", "visual_coherence_only")
     from npa.deploy.ncore_acceptance import (
         validate_full_input_proof,
         validate_selected_base_scan,
@@ -566,6 +701,54 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
 
     validate_full_input_proof(conversion, proof)
     validate_selected_base_scan(payload)
+    cleanup = record(payload, "cleanup")
+    equal(cleanup, "format", "npa_ncore_qualification_cleanup_v2")
+    equal(cleanup, "status", "pass")
+    for field in (
+        "receipt_sha256",
+        "build_receipt_sha256",
+        "workflow_status_sha256",
+        "managed_job_identities_sha256",
+        "storage_inventory_sha256",
+    ):
+        match(cleanup, field, r"[0-9a-f]{64}")
+    count(cleanup, "storage_objects", 1)
+    require(
+        type(cleanup.get("managed_jobs")) is int and cleanup["managed_jobs"] >= 1,
+        "managed jobs",
+    )
+    equal(cleanup, "active_job_pods", 0)
+    equal(cleanup, "jobs_terminal_or_absent", True)
+    equal(cleanup, "cancel_before_destroy", True)
+    require(
+        cleanup.get("controller_disposition")
+        in {"retained_not_owned", "destroyed_by_owner", "not_present"},
+        "controller disposition",
+    )
+    require(
+        cleanup.get("storage_disposition")
+        in {"removed", "retained_declared", "not_present"},
+        "storage_disposition",
+    )
+    require(
+        cleanup.get("registry_disposition")
+        in {"not_present", "not_created_local_oci_route"},
+        "registry_disposition",
+    )
+    require(
+        cleanup.get("local_runtime_disposition") in {"removed", "not_present"},
+        "local_runtime_disposition",
+    )
+    equal(cleanup, "orphan_count", 0)
+    acceptance = record(payload, "acceptance_verification")
+    equal(acceptance, "format", "npa_ncore_receipt_derived_acceptance_v1")
+    for field in (
+        "statement_sha256",
+        "evidence_inventory_sha256",
+        "review_receipt_sha256",
+        "reviewer_id_sha256",
+    ):
+        match(acceptance, field, r"[0-9a-f]{64}")
     return payload
 
 
@@ -867,7 +1050,8 @@ def container_image_for_tool(
     if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
         raise ValueError(
             "NCore has no accepted release image. Supply the validated immutable "
-            "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
+            "image for both workbench.nurec.convert_colmap and "
+            "workbench.nurec.audit_colmap with --image-override "
             "or explicitly select a dev-<full-source-sha> tag for validation."
         )
     if tool == "sonic":

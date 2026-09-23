@@ -814,13 +814,40 @@ def cancel_workflow_job(
         check=False,
     )
     cluster_name = cluster or run_id
+    terminal_status = ""
+    terminal_confirmed = False
+    if also_down_cluster and cancel.returncode == 0:
+        from npa.orchestration.npa_workflow.runtime import is_terminal
+        from npa.orchestration.skypilot.workflow import workflow_status
+
+        deadline = time.monotonic() + timeout
+        first_observation = True
+        while first_observation or time.monotonic() < deadline:
+            first_observation = False
+            observed = workflow_status(
+                str(job_id),
+                isolated_config_dir=runtime.isolated_config_dir,
+                config_path=runtime.global_config_path,
+                sky_bin=runtime.sky_bin,
+                timeout=min(max(timeout, 1), 300),
+            )
+            terminal_status = str(observed.status or "UNKNOWN").upper()
+            if terminal_status == "ABSENT" or (
+                terminal_status != "FAILED_CONTROLLER" and is_terminal(terminal_status)
+            ):
+                terminal_confirmed = True
+                break
+            if time.monotonic() < deadline:
+                time.sleep(poll_seconds)
     down = subprocess.CompletedProcess(
         [executable, "down", "--yes", cluster_name],
         0,
         stdout="not requested",
         stderr="",
     )
-    if also_down_cluster:
+    down_attempted = False
+    if also_down_cluster and cancel.returncode == 0 and terminal_confirmed:
+        down_attempted = True
         down = subprocess.run(
             [executable, "down", "--yes", cluster_name],
             env=env,
@@ -832,7 +859,7 @@ def cancel_workflow_job(
         )
     deadline = time.monotonic() + timeout
     last_status = ""
-    while also_down_cluster and time.monotonic() < deadline:
+    while down_attempted and time.monotonic() < deadline:
         status = subprocess.run(
             [executable, "status", "--refresh"],
             env=env,
@@ -852,6 +879,9 @@ def cancel_workflow_job(
         "cancel_returncode": cancel.returncode,
         "cancel_stdout": redact_text(cancel.stdout),
         "cancel_stderr": redact_text(cancel.stderr),
+        "terminal_status": terminal_status,
+        "terminal_confirmed": terminal_confirmed if also_down_cluster else None,
+        "down_attempted": down_attempted,
         "down_returncode": down.returncode,
         "down_stdout": redact_text(down.stdout),
         "down_stderr": redact_text(down.stderr),

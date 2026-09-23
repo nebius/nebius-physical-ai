@@ -980,3 +980,30 @@ def test_gpu_sweep_live_case_caps_concurrency_for_cost() -> None:
     # 4 members with maxConcurrency 2 means the runtime submits two JobGroups, which
     # is also the only live coverage of the multi-batch path.
     assert sweep.expected_parallel_tasks == 4
+
+
+def test_nurec_downstream_matrix_preserves_preconverted_input_and_real_gpu_route():
+    case = next(
+        item
+        for item in SUBMIT_LIVE_MATRIX
+        if item.spec == "nurec-reconstruct-render.yaml"
+    )
+    assert case.tier == "gpu" and not case.plan_only
+    assert (
+        case.rotation_skip
+        and "independently audited NCore sequence" in case.skip_reason
+    )
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "NGC_API_KEY",
+    }
+    assert dict(case.image_overrides) == {"workbench.nurec.visualize": "rerun-viewer"}
+    path = resolve_npa_workflow_spec(case.spec)
+    assert path is not None
+    spec = load_spec(path)
+    assert spec.initial == "reconstruct"
+    assert spec.states["reconstruct"].tool_ref == "workbench.nurec.reconstruct"
+    assert spec.states["render"].tool_ref == "workbench.nurec.render"
+    assert all("convert" not in state.tool_ref for state in spec.states.values())
+    assert "ncore_sequence_uri" in spec.config

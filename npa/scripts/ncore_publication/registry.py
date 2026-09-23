@@ -11,15 +11,15 @@ PACKAGE_API = "/orgs/nebius/packages/container/nebius-physical-ai%2Fnpa-ncore"
 
 
 @phase("registry-tag-lookup")
-def _observed(reference, output, authfile):
+def _observed(reference, output, authfile, anonymous=False):
     argv = [
         "skopeo",
         "inspect",
         "--raw",
-        "--authfile",
-        str(authfile),
-        "docker://" + reference,
     ]
+    if anonymous:
+        argv.append("--no-creds")
+    argv.extend(["--authfile", str(authfile), "docker://" + reference])
     result = subprocess.run(
         argv, cwd=ROOT, capture_output=True, check=False, env=public_environment()
     )
@@ -73,23 +73,33 @@ def transfer(args, directory, build, graph, verification):
         "transfer_source_selection_differs",
     )
     observed = _observed(image, directory / "existing.json", args.authfile)
-    _require_equal_or_absent(observed, digest)
-    if observed is None:
-        # The workflow serializes this immutable SHA. Recheck immediately before
-        # copy; an already equal tag never causes any registry write.
-        observed = _observed(image, directory / "before-copy.json", args.authfile)
-        _require_equal_or_absent(observed, digest)
-        if observed is None:
-            run_phase(
-                "registry-copy",
-                _copy,
-                args,
-                directory,
-                image,
-                digest,
-                archive,
-                verification,
-            )
+    W.require(observed is None, "development_tag_preexisted_acceptance")
+    anonymous_auth = directory / "anonymous-before.json"
+    write_json(anonymous_auth, {"auths": {}})
+    W.require(
+        _observed(
+            image,
+            directory / "anonymous-existing.json",
+            anonymous_auth,
+            True,
+        )
+        is None,
+        "development_tag_was_anonymously_visible_before_acceptance",
+    )
+    # The workflow serializes this immutable SHA. Recheck immediately before
+    # the first registry write and fail closed on every pre-existing tag.
+    observed = _observed(image, directory / "before-copy.json", args.authfile)
+    W.require(observed is None, "development_tag_preexisted_acceptance")
+    run_phase(
+        "registry-copy",
+        _copy,
+        args,
+        directory,
+        image,
+        digest,
+        archive,
+        verification,
+    )
     run_phase(
         "registry-visibility",
         _public_visibility,

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from npa.workbench.nurec import colmap
+from npa.workbench.nurec import colmap, ncore_audit
 
 
 @pytest.mark.parametrize(
@@ -112,8 +112,14 @@ class Storage:
         base = f"s3://{Bucket}/"
         yield {
             "Contents": [
-                {"Key": uri[len(base) :]}
-                for uri in self.uploads
+                {
+                    "Key": uri[len(base) :],
+                    "Size": len(value),
+                    "ETag": '"'
+                    + hashlib.md5(value, usedforsecurity=False).hexdigest()
+                    + '"',
+                }
+                for uri, value in self.uploads.items()
                 if uri.startswith(base + Prefix)
             ]
         }
@@ -137,7 +143,10 @@ class Storage:
         shutil.copytree(self.source, destination, dirs_exist_ok=True)
 
     def download_file(self, uri, destination):
-        shutil.copyfile(self.source, destination)
+        if uri in self.uploads:
+            Path(destination).write_bytes(self.uploads[uri])
+        else:
+            shutil.copyfile(self.source, destination)
 
     def upload_file(self, source, uri):
         self.uploads[uri] = Path(source).read_bytes()
@@ -222,6 +231,169 @@ def test_exact_self_contained_publication(monkeypatch, tmp_path, as_zip):
     assert all(len(member["sha256"]) == 64 for member in report["members"])
     assert str(tmp_path) not in json.dumps(report)
     assert list(storage.uploads)[-1] == result["ncore_meta_uri"]
+
+
+def test_wrong_archive_hash_stops_before_extract_convert_or_upload(
+    monkeypatch, tmp_path
+):
+    storage, events = fake_conversion(monkeypatch, tmp_path)
+    archive = tmp_path / "dataset.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for file in storage.source.rglob("*"):
+            if file.is_file():
+                bundle.write(
+                    file, "scene/" + file.relative_to(storage.source).as_posix()
+                )
+    storage.source = archive
+    request = colmap.ColmapConversionRequest(
+        input_path="s3://test-bucket/input.zip",
+        output_path="s3://test-bucket/negative-control/",
+        expected_archive_sha256="0" * 64,
+        cache_dir=tmp_path / "cache",
+        scratch_dir=tmp_path / "scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+
+    with pytest.raises(colmap.NcoreConversionError, match="SHA-256 differs"):
+        colmap.convert_colmap(request, storage_client=storage)
+
+    assert events == []
+    assert storage.uploads == {}
+
+
+def _published_audit_fixture(monkeypatch, tmp_path):
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    source_info = {
+        "counts": {"images": 2, "cameras": 1, "poses": 2, "points": 3},
+        "source_points": 3,
+        "origin_points_filtered": 0,
+        "cameras": {
+            "camera1": {
+                "frames": [
+                    {
+                        "name": "frame-0.jpg",
+                        "pose": [[1, 0, 0, 0]] * 4,
+                        "encoded_sha256": "a" * 64,
+                    },
+                    {
+                        "name": "frame-1.jpg",
+                        "pose": [[1, 0, 0, 0]] * 4,
+                        "encoded_sha256": "b" * 64,
+                    },
+                ],
+                "resolution": [8, 8],
+                "focal_length": [4.0, 4.0],
+                "principal_point": [4.0, 4.0],
+                "radial_coeffs": [0.0] * 6,
+                "tangential_coeffs": [0.0, 0.0],
+                "thin_prism_coeffs": [0.0] * 4,
+                "target": "world",
+            }
+        },
+    }
+    monkeypatch.setattr(colmap, "inspect_colmap_source", lambda *a, **kw: source_info)
+    monkeypatch.setattr(
+        ncore_audit, "inspect_colmap_source", lambda *a, **kw: source_info
+    )
+    archive = tmp_path / "audit-source.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for file in storage.source.rglob("*"):
+            if file.is_file():
+                bundle.write(
+                    file, "scene/" + file.relative_to(storage.source).as_posix()
+                )
+    storage.source = archive
+    archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+    request = colmap.ColmapConversionRequest(
+        input_path="s3://test-bucket/source.zip",
+        output_path="s3://test-bucket/exact",
+        cache_dir=tmp_path / "cache",
+        scratch_dir=tmp_path / "scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+    colmap.convert_colmap(request, storage_client=storage)
+    monkeypatch.setattr(
+        ncore_audit,
+        "validate_ncore_sequence",
+        lambda *a, **kw: source_info["counts"],
+    )
+    return storage, archive_sha
+
+
+def test_post_s3_audit_enumerates_and_reopens_exact_generation(monkeypatch, tmp_path):
+    storage, archive_sha = _published_audit_fixture(monkeypatch, tmp_path)
+    request = ncore_audit.ColmapAuditRequest(
+        input_path="s3://test-bucket/source.zip",
+        conversion_path="s3://test-bucket/exact/",
+        output_path="s3://test-bucket/evidence/audit.json",
+        expected_archive_sha256=archive_sha,
+        cache_dir=tmp_path / "audit-cache",
+        scratch_dir=tmp_path / "audit-scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+    result = ncore_audit.audit_colmap_conversion(request, storage_client=storage)
+    assert result["status"] == "ok"
+    assert result["source_counts"] == {
+        "images": 2,
+        "cameras": 1,
+        "poses": 2,
+        "points": 3,
+    }
+    raw = storage.uploads[request.output_path]
+    assert result["audit_sha256"] == hashlib.sha256(raw).hexdigest()
+    audit = json.loads(raw)
+    assert audit["conversion"]["all_members_reopened"] is True
+    assert audit["s3_readback"]["stable_listing"] is True
+    assert {item["path"] for item in audit["s3_readback"]["objects"]} == {
+        ".npa-colmap-claim.json",
+        "conversion.json",
+        "data.zarr.itar",
+        "sequence.json",
+    }
+
+
+def test_post_s3_audit_rejects_extra_or_tampered_generation(monkeypatch, tmp_path):
+    storage, archive_sha = _published_audit_fixture(monkeypatch, tmp_path)
+    storage.uploads["s3://test-bucket/exact/extra.bin"] = b"unreviewed"
+    with pytest.raises(ncore_audit.NcoreAuditError, match="audit failed"):
+        ncore_audit.audit_colmap_conversion(
+            ncore_audit.ColmapAuditRequest(
+                input_path="s3://test-bucket/source.zip",
+                conversion_path="s3://test-bucket/exact/",
+                output_path="s3://test-bucket/evidence/audit.json",
+                expected_archive_sha256=archive_sha,
+                cache_dir=tmp_path / "audit-cache",
+                scratch_dir=tmp_path / "audit-scratch",
+                rig_mode="preserve",
+                include_downsampled_images=False,
+            ),
+            storage_client=storage,
+        )
+    assert "s3://test-bucket/evidence/audit.json" not in storage.uploads
+
+
+def test_post_s3_audit_rejects_wrong_source_before_conversion_readback(
+    monkeypatch, tmp_path
+):
+    storage, _archive_sha = _published_audit_fixture(monkeypatch, tmp_path)
+    with pytest.raises(ncore_audit.NcoreAuditError, match="source archive"):
+        ncore_audit.audit_colmap_conversion(
+            ncore_audit.ColmapAuditRequest(
+                input_path="s3://test-bucket/source.zip",
+                conversion_path="s3://test-bucket/exact/",
+                output_path="s3://test-bucket/evidence/audit.json",
+                expected_archive_sha256="0" * 64,
+                cache_dir=tmp_path / "audit-cache",
+                scratch_dir=tmp_path / "audit-scratch",
+                rig_mode="preserve",
+                include_downsampled_images=False,
+            ),
+            storage_client=storage,
+        )
+    assert "s3://test-bucket/evidence/audit.json" not in storage.uploads
 
 
 def test_validation_failure_publishes_nothing(monkeypatch, tmp_path):

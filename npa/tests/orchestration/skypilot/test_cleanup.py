@@ -975,6 +975,33 @@ def test_a_readable_queue_that_is_already_terminal_does_not_wait(
     assert slept == []
 
 
+def test_failed_controller_never_counts_as_terminal_drain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=_queue({"job_id": 7, "status": "FAILED_CONTROLLER"}),
+            stderr="",
+        ),
+    )
+
+    drained, still_running = cleanup_module.wait_for_jobs_terminal(
+        ["7"],
+        isolated_config_dir=tmp_path,
+        sky_bin=sky_bin,
+        timeout=0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert drained is False
+    assert still_running == ["7"]
+
+
 @pytest.mark.parametrize(
     ("returncode", "stdout", "stderr", "match"),
     [

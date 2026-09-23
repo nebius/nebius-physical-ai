@@ -9,7 +9,12 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workbench.nurec import colmap
+from npa.workbench.nurec import (
+    colmap,
+    ncore_audit,
+    runtime_attestation,
+    s3_probe,
+)
 
 
 @pytest.mark.parametrize("has_unrelated_file", [False, True])
@@ -42,6 +47,143 @@ def test_colmap_help():
         assert flag in result.output
 
 
+def test_colmap_audit_help_and_json_contract(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        ncore_audit,
+        "audit_colmap_conversion",
+        lambda request: (
+            seen.append(request)
+            or {"status": "ok", "objects": 4, "audit_sha256": "a" * 64}
+        ),
+    )
+    argv = [
+        "workbench",
+        "nurec",
+        "audit-colmap",
+        "--input-path",
+        "s3://test-bucket/input.zip",
+        "--conversion-path",
+        "s3://test-bucket/conversion/",
+        "--output-path",
+        "s3://test-bucket/evidence/audit.json",
+        "--expected-archive-sha256",
+        "b" * 64,
+        "--rig-mode",
+        "preserve",
+        "--output-format",
+        "json",
+    ]
+    result = CliRunner().invoke(app, argv)
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["objects"] == 4
+    assert seen[0].rig_mode == "preserve"
+    help_result = CliRunner().invoke(
+        app,
+        ["workbench", "nurec", "audit-colmap", "--help"],
+        terminal_width=180,
+    )
+    assert help_result.exit_code == 0
+    for flag in (
+        "--input-path",
+        "--conversion-path",
+        "--output-path",
+        "--scratch-dir",
+    ):
+        assert flag in help_result.output
+
+
+def test_storage_probe_cli_uses_fresh_prefix_and_private_receipt(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(
+        s3_probe,
+        "probe_s3_handoff",
+        lambda prefix, receipt: (
+            seen.append((prefix, receipt))
+            or {"status": "ok", "conditional_nonoverwrite_rejected": True}
+        ),
+    )
+    receipt = tmp_path / "probe.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "probe-storage",
+            "--prefix",
+            "s3://example-bucket/run-owned/future/",
+            "--receipt-path",
+            str(receipt),
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["status"] == "ok"
+    assert seen == [("s3://example-bucket/run-owned/future/", receipt)]
+
+
+def test_runtime_observer_cli_forwards_exact_pod_identity(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(
+        runtime_attestation,
+        "observe_kubernetes_stage",
+        lambda **kwargs: (
+            seen.append(kwargs)
+            or {
+                "format": runtime_attestation.STAGE_FORMAT,
+                "status": "pass",
+                "stage": "reconstruct",
+            }
+        ),
+    )
+    receipt = tmp_path / "runtime.json"
+    status = tmp_path / "status.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "observe-runtime",
+            "--stage",
+            "reconstruct",
+            "--pod-name",
+            "exact-pod",
+            "--managed-job-name",
+            "exact-run",
+            "--managed-job-id",
+            "42",
+            "--workflow-run-id",
+            "exact-workflow",
+            "--workflow-status",
+            str(status),
+            "--namespace",
+            "exact-namespace",
+            "--context",
+            "exact-context",
+            "--expected-image",
+            "registry/image@sha256:" + "a" * 64,
+            "--receipt-path",
+            str(receipt),
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["evidence_status"] == "pass"
+    assert seen[0]["pod_name"] == "exact-pod"
+    assert seen[0]["managed_job_name"] == "exact-run"
+    assert seen[0]["managed_job_id"] == "42"
+    assert seen[0]["workflow_run_id"] == "exact-workflow"
+    assert seen[0]["workflow_status_path"] == status
+    assert seen[0]["context"] == "exact-context"
+    assert seen[0]["output_path"] == receipt
+
+
 def test_cli_json_contract_and_shared_request(monkeypatch):
     seen = []
 
@@ -61,6 +203,8 @@ def test_cli_json_contract_and_shared_request(monkeypatch):
             "s3://test-bucket/input.zip",
             "--output-path",
             "s3://test-bucket/output/",
+            "--expected-archive-sha256",
+            "a" * 64,
             "--rig-mode",
             "preserve",
             "--output-format",
@@ -70,6 +214,7 @@ def test_cli_json_contract_and_shared_request(monkeypatch):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["counts"]["images"] == 2
     assert seen[0].rig_mode == "preserve"
+    assert seen[0].expected_archive_sha256 == "a" * 64
 
 
 def test_cli_validation_errors_do_not_echo_input():
@@ -133,6 +278,26 @@ def test_sdk_calls_module_directly(monkeypatch):
     assert isinstance(seen[0], colmap.ColmapConversionRequest)
 
 
+def test_audit_sdk_calls_independent_module(monkeypatch):
+    from npa.sdk.workbench.nurec import audit_colmap
+
+    seen = []
+    monkeypatch.setattr(
+        ncore_audit,
+        "audit_colmap_conversion",
+        lambda request: seen.append(request) or {"status": "ok"},
+    )
+    result = audit_colmap(
+        "s3://test-bucket/input.zip",
+        "s3://test-bucket/conversion/",
+        "s3://test-bucket/evidence/audit.json",
+        expected_archive_sha256="a" * 64,
+        rig_mode="preserve",
+    )
+    assert result["status"] == "ok"
+    assert isinstance(seen[0], ncore_audit.ColmapAuditRequest)
+
+
 def test_toolref_is_real_configurable_cli_without_nre_gate():
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
@@ -142,6 +307,11 @@ def test_toolref_is_real_configurable_cli_without_nre_gate():
     assert "{{config.ncore_sequence_uri}}" in entry.argv_template
     assert "{{config.rig_mode}}" in entry.argv_template
     assert not entry.access_capabilities
+    audit = TOOL_CATALOG["workbench.nurec.audit_colmap"]
+    assert audit.argv_template[:4] == ["npa", "workbench", "nurec", "audit-colmap"]
+    assert "{{config.colmap_source_sha256}}" in audit.argv_template
+    assert "{{config.ncore_audit_uri}}" in audit.argv_template
+    assert not audit.access_capabilities
 
 
 @pytest.mark.parametrize("override", [False, True])
