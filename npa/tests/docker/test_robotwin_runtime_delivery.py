@@ -280,6 +280,44 @@ def test_runtime_child_environment_excludes_authorization_and_credentials(tmp_pa
     assert env["TORCH_CUDA_ARCH_LIST"] == "12.0"
 
 
+@pytest.mark.parametrize(
+    ("requested", "primary_present", "alternate_present", "expected"),
+    [
+        (
+            "/usr/share/vulkan/icd.d/nvidia_icd.json",
+            False,
+            True,
+            "/etc/vulkan/icd.d/nvidia_icd.json",
+        ),
+        (
+            "/usr/share/vulkan/icd.d/nvidia_icd.json",
+            True,
+            True,
+            "/usr/share/vulkan/icd.d/nvidia_icd.json",
+        ),
+        (
+            "/usr/share/vulkan/icd.d/nvidia_icd.json",
+            False,
+            False,
+            "/usr/share/vulkan/icd.d/nvidia_icd.json",
+        ),
+        ("/another/vendor.json", False, True, "/another/vendor.json"),
+        (None, False, True, None),
+    ],
+)
+def test_runtime_resolves_only_missing_profile_icd_to_actual_driver_location(
+    tmp_path, monkeypatch, requested, primary_present, alternate_present, expected
+):
+    files = {
+        "/usr/share/vulkan/icd.d/nvidia_icd.json": primary_present,
+        "/etc/vulkan/icd.d/nvidia_icd.json": alternate_present,
+    }
+    monkeypatch.setattr(fetch.Path, "is_file", lambda path: files.get(str(path), False))
+    environ = {"VK_ICD_FILENAMES": requested} if requested is not None else {}
+    result = fetch.runtime_environment(tmp_path, environ)
+    assert result.get("VK_ICD_FILENAMES") == expected
+
+
 def request():
     return preflight.CustomerAuthorizationRequest(
         customer.ISSUER,

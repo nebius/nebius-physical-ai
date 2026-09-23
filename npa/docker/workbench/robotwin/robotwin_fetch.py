@@ -281,6 +281,15 @@ def runtime_environment(root: Path, environ: Mapping[str, str]) -> dict[str, str
     ):
         if environ.get(key):
             env[key] = environ[key]
+    # NVIDIA's container runtime can mount its ICD under /etc instead of /usr.
+    requested_icd = env.get("VK_ICD_FILENAMES")
+    if (
+        requested_icd == "/usr/share/vulkan/icd.d/nvidia_icd.json"
+        and not Path(requested_icd).is_file()
+    ):
+        driver_icd = Path("/etc/vulkan/icd.d/nvidia_icd.json")
+        if driver_icd.is_file():
+            env["VK_ICD_FILENAMES"] = str(driver_icd)
     return env
 
 
