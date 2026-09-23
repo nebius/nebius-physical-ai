@@ -5,8 +5,7 @@ permissions:
 
 on:
   workflow_call:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: lint-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
