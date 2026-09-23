@@ -115,7 +115,9 @@ def test_delivered_cursor_crosses_epoch_without_reindexing(monkeypatch):
 
 
 def _install_initialization_modules(monkeypatch, placed):
-    named = lambda mesh, partition: ("named", mesh, partition)
+    def named(mesh, partition):
+        return ("named", mesh, partition)
+
     fake_jax = types.SimpleNamespace(
         devices=lambda platform=None: ["cpu0"] if platform == "cpu" else ["gpu0"],
         device_get=lambda value: value,
