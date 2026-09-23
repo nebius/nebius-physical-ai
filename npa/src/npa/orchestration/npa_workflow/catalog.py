@@ -671,6 +671,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "viewport MP4. Inspect adapter, environment, input, metric, and rendering "
             "status with `npa workbench isaac-arena capabilities`."
         ),
+        # Omit the new option unless requested, preserving existing baked images.
+        config_defaults={"video_profile": ""},
+        omit_flags_when_empty=("--video-profile",),
         argv_template=[
             "npa",
             "workbench",
@@ -697,6 +700,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--object",
             "{{config.object}}",
             "--record-video",
+            "--video-profile",
+            "{{config.video_profile}}",
             "--run-id",
             "{{run.id}}",
         ],
@@ -2698,6 +2703,38 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--max-tokens",
             "{{config.max_tokens}}",
             "--output",
+            "json",
+        ],
+    ),
+    "workbench.token_factory.robot_sdg": ToolEntry(
+        name="workbench.token_factory.robot_sdg",
+        description="Route robot scene planning to open-weight models and record physics-checked RGB/action LeRobot episodes.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "token-factory",
+            "robot-sdg",
+            "--input-path",
+            "{{config.prompts_uri}}",
+            "--output-path",
+            "{{config.robot_sdg_output_uri}}",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.token_factory.sdg": ToolEntry(
+        name="workbench.token_factory.sdg",
+        description="Automatically route, generate, review, and export synthetic instruction data with hosted open-weight models.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "token-factory",
+            "sdg",
+            "--input-path",
+            "{{config.prompts_uri}}",
+            "--output-path",
+            "{{config.sdg_output_uri}}",
+            "--output-format",
             "json",
         ],
     ),

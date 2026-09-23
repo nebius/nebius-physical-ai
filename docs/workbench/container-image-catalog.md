@@ -46,11 +46,12 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **42 packaging entries** (40 redistribution-eligible
-and two restricted) and **43 mapped tools**: 37 public-release members, two
-restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
-`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
-they do not constitute acceptance of the quarantined images.
+The current source inventory has **52 packaging entries** (43 redistribution-eligible
+and nine restricted) and **44 mapped tools**: 37 public-release members, two
+restricted tools, and five quarantined tools (`curobo`, `ncore`, `openpi`,
+`robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+the seven restricted PAIDF images have no mapped tool entry. These counts do not
+constitute acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -65,6 +66,14 @@ The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
+
+SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
+Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
+[publication evidence](validation/sam31-public-development-20260919.json) records
+the independently pulled digest, both verified attestations and clean layer scans.
+Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
+Gated checkpoint access and real GPU qualification remain pending; this does
+not replace the accepted SAM 2.1 release or add a supported release row.
 
 ## Native model publication
 
@@ -661,3 +670,21 @@ redistribution requirements.
 The cuRobo V2 candidate is separately publication-quarantined: its permissively
 licensed source, robot assets and benchmark data have a checked-in recipe, but
 no public release is claimed until exact-image and real-GPU gates are accepted.
+
+## Rerun SDK migration in build sources
+
+Current NPA dependency and viewer build sources use Rerun 0.38.1, including
+its `psutil>=7` dependency. The Rerun viewer, OpenPI sidecar environment, Isaac
+OSS dependency closure, and cuRobo lock file were updated together. Published
+release tags and accepted digests above still identify their original immutable
+builds; changing a source pin does not republish those images. Existing 0.31.4
+recordings remain readable by the new SDK and viewer.
+
+## Genesis training dependency migration in build sources
+
+Genesis build sources select RSL-RL 5.5.1 with a pinned upstream MoviePy
+Pillow-compatibility fix. The Python optional dependency and both CUDA build
+recipes use the same source revision and archive digest, retaining Pillow 12.3
+or newer. The published Genesis release tags above continue to identify their
+original immutable builds; GPU train/save/load/export and demo validation must
+complete before promoting a replacement release.

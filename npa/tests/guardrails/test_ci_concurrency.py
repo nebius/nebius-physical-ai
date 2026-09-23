@@ -1,9 +1,8 @@
-"""Keep validation demand bounded without evicting another PR's waiting jobs.
+"""Keep unrelated validation jobs independent while retaining PR supersession.
 
-One merge candidate waited seventeen minutes for coverage and another twelve
-for its three-second final check. Shared runner slots bound competing PR work;
-merge completion must have its own slot. These checks pin the finite routing
-expressions, cover every runner job, and forbid callers holding child slots.
+Repository-wide test slots filled their 100-job queues during a dependency
+update batch. Validation needs no shared mutable resource lock: let GitHub
+schedule independent jobs, and cancel old commits at the workflow boundary.
 """
 
 from pathlib import Path
@@ -13,55 +12,43 @@ import yaml
 
 
 WORKFLOW_DIR = Path(__file__).resolve().parents[3] / ".github/workflows"
-POOL = (
-    "npa-validation-${{ github.event_name == 'pull_request' && 'pr' || "
-    "github.event_name == 'merge_group' && 'merge' || 'audit' }}-"
+CANDIDATE = (
+    "${{ github.event.pull_request.number || "
+    "github.event.merge_group.head_sha || github.ref }}"
 )
-CANDIDATE = 'contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name)'
-SLOTS = {
-    "checks": "checks",
-    "docs": "${{ github.event_name == 'pull_request' && 'docs' || 'checks' }}",
-    "policy": "${{ " + CANDIDATE + " && 'policy' || 'security' }}",
-    "runtime": "${{ " + CANDIDATE + " && 'runtime' || 'security' }}",
-    "test": "${{ " + CANDIDATE + " && 'test-1' || 'test' }}",
-    "browser": (
-        "${{ github.event_name == 'pull_request' && 'test-2' || "
-        "github.event_name == 'merge_group' && 'test-5' || 'test' }}"
-    ),
-    "shards": (
-        "${{ github.event_name == 'merge_group' && format('test-{0}', matrix.shard) || "
-        "github.event_name == 'pull_request' && "
-        "(contains(fromJSON('[1, 3, 5]'), matrix.shard) && 'test-1' || 'test-2') || 'test' }}"
-    ),
-    "completion": "${{ " + CANDIDATE + " && 'completion' || 'checks' }}",
+WORKFLOW_GROUPS = {
+    "merge-queue-report.yml": "merge-queue-feedback",
+    "security-regression.yml": "pr-gate-" + CANDIDATE,
+    "test.yml": "test-" + CANDIDATE,
+    "lint.yml": "lint-" + CANDIDATE,
+    "harness-guardrails.yml": "guardrails-" + CANDIDATE,
+    "image-security-scan.yml": "image-security-${{ github.run_id }}",
+    "confidentiality-scan.yml": "confidentiality-${{ github.ref }}",
+    "gitleaks.yml": "gitleaks-${{ github.ref }}",
+    "typecheck.yml": None,
 }
-RUNNER_SLOTS = {
+
+PRIORITY_JOBS = {
     "security-regression.yml": {
-        "gitleaks": "checks",
-        "scan": "checks",
-        "security-scanners": "policy",
-        "security-runtime": "runtime",
-        "security-regression": "completion",
-        "ci-timing-report": "report",
+        "gitleaks",
+        "pr-precheck",
+        "scan",
+        "security-scanners",
+        "security-regression",
     },
-    "test.yml": {
-        "scope": "checks",
-        "browser-mocked": "browser",
-        "pr-smoke": "test",
-        "test": "shards",
-        "affected-tests": "test",
-        "coverage": "completion",
-    },
-    "lint.yml": {"ruff": "checks", "docs-drift": "docs"},
-    "harness-guardrails.yml": {"guardrails": "docs"},
+    "test.yml": {"scope", "coverage"},
+    "image-security-scan.yml": {"base-image-plan", "base-image-cve-scan"},
+}
+TEST_JOBS = {
+    "security-regression.yml": {"security-runtime"},
+    "test.yml": {"test", "browser-mocked", "pr-smoke"},
+    "lint.yml": {"ruff", "docs-drift"},
+    "harness-guardrails.yml": {"guardrails"},
     "image-security-scan.yml": {
-        "image-policy": "policy",
-        "base-image-cve-scan": "runtime",
-        "omniverse-payload-scan": "runtime",
+        "image-policy",
+        "base-image-entry",
+        "omniverse-payload-scan",
     },
-    "confidentiality-scan.yml": {"scan": "checks"},
-    "gitleaks.yml": {"gitleaks": "checks"},
-    "typecheck.yml": {"mypy": "test"},
 }
 
 
@@ -74,71 +61,69 @@ def _workflow(name: str) -> dict:
         loader.dispose()
 
 
-@pytest.mark.parametrize("name", RUNNER_SLOTS)
-def test_every_validation_runner_uses_a_shared_retained_queue(name: str) -> None:
-    """Reject unbounded jobs, candidate-specific slots, and pending eviction.
+@pytest.mark.parametrize("name", WORKFLOW_GROUPS)
+def test_validation_jobs_do_not_share_locks_or_cap_parallelism(name: str) -> None:
+    """Prevent independent checks from serializing through a bounded queue.
 
     Args:
-        name: Validation workflow whose runner jobs share the finite pools.
+        name: Validation workflow, including reusable callers and audit jobs.
     Returns:
         None.
     Raises:
-        AssertionError: A runner job bypasses its pool or cancels another job.
+        AssertionError: A job adds a lock or limits matrix parallelism.
     """
-    jobs = _workflow(name)["jobs"]
-    runners = {job_id: job for job_id, job in jobs.items() if "runs-on" in job}
-    assert runners.keys() == RUNNER_SLOTS[name].keys()
-    for job_id, job in runners.items():
-        slot = RUNNER_SLOTS[name][job_id]
-        group = (
-            "npa-validation-audit-checks" if slot == "report" else POOL + SLOTS[slot]
+    for job_id, job in _workflow(name)["jobs"].items():
+        assert "concurrency" not in job, (name, job_id)
+        assert "max-parallel" not in job.get("strategy", {}), (name, job_id)
+
+
+@pytest.mark.parametrize("name", WORKFLOW_GROUPS)
+def test_workflow_groups_isolate_candidates_and_reusable_children(name: str) -> None:
+    """Keep supersession scoped to a candidate with distinct child groups.
+
+    Args:
+        name: Validation workflow whose group must not lock unrelated work.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A workflow shares its group or calls an unguarded child.
+    """
+    workflow = _workflow(name)
+    group = workflow.get("concurrency", {}).get("group")
+    assert group == WORKFLOW_GROUPS[name]
+    for job in workflow["jobs"].values():
+        if "uses" not in job:
+            continue
+        assert job["uses"].startswith("./.github/workflows/")
+        child = job["uses"].removeprefix("./.github/workflows/")
+        assert child in WORKFLOW_GROUPS
+        assert WORKFLOW_GROUPS[child] != group
+
+
+@pytest.mark.parametrize("name", WORKFLOW_GROUPS)
+def test_candidate_runner_roles_keep_bulk_work_out_of_priority_capacity(name):
+    """Reserve configured priority labels for short candidate gates only.
+
+    Args:
+        name: Workflow with concrete or reusable jobs.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Candidate or background work reaches the wrong pool.
+    """
+    for job_id, job in _workflow(name)["jobs"].items():
+        if "runs-on" not in job:
+            continue
+        role = None
+        if job_id in PRIORITY_JOBS.get(name, set()):
+            role = "PRIORITY"
+        elif job_id in TEST_JOBS.get(name, set()):
+            role = "TEST"
+        if role is None:
+            assert job["runs-on"] == "ubuntu-latest"
+            continue
+        expected = (
+            '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) '
+            f"&& (vars.NPA_CI_{role}_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}}}"
         )
-        assert job["concurrency"] == {
-            "group": group,
-            "queue": "max",
-            "cancel-in-progress": "false",
-        }, (name, job_id)
-
-
-def test_reusable_callers_never_hold_a_child_runner_slot() -> None:
-    """Discover candidate dependencies and reject nested-lock deadlocks.
-
-    Args:
-        None.
-    Returns:
-        None.
-    Raises:
-        AssertionError: A caller holds a runner slot or calls an uncovered gate.
-    """
-    for name in RUNNER_SLOTS:
-        workflow = _workflow(name)
-        assert "npa-validation-" not in workflow.get("concurrency", {}).get("group", "")
-        for job in workflow["jobs"].values():
-            if "uses" in job:
-                assert "concurrency" not in job, (name, job["uses"])
-                assert job["uses"].startswith("./.github/workflows/")
-                assert job["uses"].removeprefix("./.github/workflows/") in RUNNER_SLOTS
-
-
-def test_merge_completion_slot_excludes_long_and_optional_work() -> None:
-    """Reserve merge completion for coverage and the final required result.
-
-    Args:
-        None.
-    Returns:
-        None.
-    Raises:
-        AssertionError: Long work or optional reporting can delay completion.
-    """
-    completion = {
-        (name, job_id)
-        for name in RUNNER_SLOTS
-        for job_id, job in _workflow(name)["jobs"].items()
-        if "completion" in job.get("concurrency", {}).get("group", "")
-    }
-    assert completion == {
-        ("test.yml", "coverage"),
-        ("security-regression.yml", "security-regression"),
-    }
-    report = _workflow("security-regression.yml")["jobs"]["ci-timing-report"]
-    assert report["concurrency"]["group"] == "npa-validation-audit-checks"
+        assert job["runs-on"] == expected, (name, job_id)

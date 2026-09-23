@@ -137,6 +137,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
     "workflow.groot.publish_learning": "viz",
@@ -163,7 +164,7 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.transfer_report": (
         ("python:av", "av>=12,<17"),
         ("python:matplotlib", "matplotlib>=3.8,<4"),
-        ("python:rerun", "rerun-sdk>=0.29,<0.32"),
+        ("python:rerun", "rerun-sdk==0.38.1"),
     ),
     "workbench.alpamayo2_super.sweep": (
         ('python:ray;assert(ray.__version__=="2.58.0")', "ray[default]==2.58.0"),
@@ -938,6 +939,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    if tool_ref == "workbench.token_factory.robot_sdg":
+        return "export MUJOCO_GL=osmesa\nexport PYOPENGL_PLATFORM=osmesa\n"
     content_agents_pythonpath = (
         'if [ -n "$PYTHONPATH" ]; then\n'
         '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
@@ -1500,7 +1503,7 @@ def default_npa_setup() -> str:
 #: two ever diverge. (An earlier version imported a ``_rerun_pin`` symbol that does
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
-NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -1721,6 +1724,14 @@ def render_setup_for_tool(
             "fi\n"
         )
     parts = [default_npa_setup()]
+    if tool_ref == "workbench.token_factory.robot_sdg":
+        parts.append(
+            'if [ "$(id -u)" = 0 ]; then\n'
+            "  apt-get update && apt-get install -y --no-install-recommends libosmesa6 ffmpeg\n"
+            "else\n"
+            "  sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 ffmpeg\n"
+            "fi\n"
+        )
     parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))
     extra = tool_pip_extra(tool_ref)
     if extra:
