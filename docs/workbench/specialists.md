@@ -227,3 +227,12 @@ simulator concurrency. It includes all trials, measured token estimates, actual
 MuJoCo action replay and the observed reliability failures. The
 [reproducible example](../../npa/examples/specialists/simulation/README.md) is an
 optional paid workload, separate from the hermetic tests.
+
+The [workflow experiment runner](../../npa/examples/specialists/workflows/README.md)
+compares Astra alone with Astra supervising independent specialists through the
+same Workbench operation grants. It records supervisor and specialist usage,
+preserves failed attempts, and supports exclusive takeover after a worker needs
+attention. Its [NuRec artifact verifier](../../npa/examples/specialists/workflows/VERIFICATION.md)
+checks actual reconstructed scenes, rendered media, Rerun recordings and native
+quality metrics against independently collected execution receipts. Submission
+acceptance alone does not count as a completed workflow.
