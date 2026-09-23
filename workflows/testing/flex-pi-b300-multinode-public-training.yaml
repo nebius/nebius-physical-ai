@@ -33,6 +33,8 @@ resources:
           containers:
             - name: ray-node
               env:
+                # Retain Blackwell PTX kernels across fresh qualification phases.
+                - {name: CUDA_CACHE_MAXSIZE, value: "4294967296"}
                 # Use NCCL sockets between the four independent one-GPU hosts.
                 - name: NPA_FLEX_PI_HOST_ID
                   valueFrom:

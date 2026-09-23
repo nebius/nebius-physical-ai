@@ -322,6 +322,12 @@ sets the resource profile's `num_nodes`; each node requests `B300:1`, 16 CPUs
 and 192 GiB of memory. This is one four-rank DDP training job. Inter-host NCCL
 uses sockets, so throughput must be reported with this topology and must not be
 presented as equivalent to four GPUs sharing one host's NVLink fabric.
+The workflow sets `CUDA_CACHE_MAXSIZE=4294967296` (4 GiB) to retain more compiled
+Blackwell kernels across fresh qualification and resume processes. The default
+1 GiB cache filled during live startup and fresh phases repeated kernel
+initialization. This setting addresses startup overhead; it does not establish
+a training throughput improvement. See NVIDIA's
+[CUDA cache controls](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html).
 
 The renderer sets `NPA_FLEX_PI_NODE_COUNT` from the resolved resource profile
 (one by default). The adapter cross-checks it against SkyPilot's node rank and
