@@ -176,7 +176,7 @@ jobs:
   scan:
     if: github.event_name != 'push'
     name: scan
-    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_SECURITY_RUNNER || vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     env:
       CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
       INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
@@ -232,7 +232,7 @@ jobs:
   security-scanners:
     name: security-scanners
     timeout-minutes: 7
-    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_SECURITY_RUNNER || vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

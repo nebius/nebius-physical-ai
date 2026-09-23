@@ -1,8 +1,12 @@
 # Temporary Nebius CPU runners
 
 Use this pool to reserve CPU capacity for existing CI jobs. It does not change
-required checks or merge-queue concurrency. Start with priority checks when cloud
-quota cannot support the full eight-shard test suite concurrently.
+required checks or merge-queue concurrency. For a small pool, configure
+`NPA_CI_SECURITY_RUNNER` to offload independent confidentiality and source/dependency
+scans. Leave `NPA_CI_PRIORITY_RUNNER` and `NPA_CI_TEST_RUNNER` unset so admission,
+test shards, and final aggregation can use GitHub-hosted capacity without waiting
+for a fresh CPU VM. Other PR branches adopt this routing after updating their
+workflow files to include it.
 
 Each GitHub just-in-time (JIT) registration accepts at most one job. Its VM and
 managed boot disk are then deleted and replaced from a clean image. Workers have
@@ -103,7 +107,7 @@ Reserve one VM and a 64 GiB managed boot disk per worker. No GPU is used.
 | `workers` | Desired VM capacity, selected from available quota |
 | `preset` | An available `cpu-d3` CPU preset, for example `4vcpu-16gb` |
 | `label` | Unique GitHub runner label for this pool |
-| `variable` | `NPA_CI_PRIORITY_RUNNER` or `NPA_CI_TEST_RUNNER` |
+| `variable` | `NPA_CI_SECURITY_RUNNER` for a small pool; priority/test variables require separately sized capacity |
 
 Repository administration access is enough to register these runners; an
 organization runner group is not required. Keep GitHub's existing public-PR

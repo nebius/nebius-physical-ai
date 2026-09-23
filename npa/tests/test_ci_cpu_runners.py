@@ -29,7 +29,7 @@ def config():
         "region": "us-central1",
         "owner": "test-pool",
         "label": "npa-ci-test-pool",
-        "variable": "NPA_CI_PRIORITY_RUNNER",
+        "variable": "NPA_CI_SECURITY_RUNNER",
         "workers": 2,
         "preset": "4vcpu-16gb",
         "image_id": "image-test",

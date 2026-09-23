@@ -44,7 +44,11 @@ def _config(root: Path) -> dict:
         raise ValueError("Pool ownership label must fit worker hostnames")
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", config["repository"]):
         raise ValueError("Invalid GitHub repository")
-    if config["variable"] not in {"NPA_CI_PRIORITY_RUNNER", "NPA_CI_TEST_RUNNER"}:
+    if config["variable"] not in {
+        "NPA_CI_SECURITY_RUNNER",
+        "NPA_CI_PRIORITY_RUNNER",
+        "NPA_CI_TEST_RUNNER",
+    }:
         raise ValueError("Only the existing CI routing variables may be managed")
     if not isinstance(config["workers"], int) or config["workers"] < 1:
         raise ValueError("Worker capacity must be a positive integer")

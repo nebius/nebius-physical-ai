@@ -644,7 +644,7 @@ the `gitleaks` job and checkout. A failed verification restores full validation;
 a failed secret scan still blocks the required context. The other required
 context names are unchanged.
 
-Operators can configure two repository Actions variables after approved Ubuntu
+Operators can configure repository Actions variables after approved Ubuntu
 x64 runners are available to this repository. Repository-scoped disposable Nebius
 CPU runners can provide temporary capacity without organization runner-group
 administration; see the [CPU runner operations guide](.github/ci-runners/README.md)
@@ -652,10 +652,14 @@ for setup, verification, routing rollback, and drain-and-delete commands.
 
 | Variable | Candidate jobs routed to that label | Default |
 | --- | --- | --- |
+| `NPA_CI_SECURITY_RUNNER` | Independent confidentiality and source/dependency scans | Priority label, then `ubuntu-latest` |
 | `NPA_CI_PRIORITY_RUNNER` | Precheck, queue evidence/secrets, confidentiality, source/dependency scans, scope and final aggregation | `ubuntu-latest` |
 | `NPA_CI_TEST_RUNNER` | Full Python/browser tests, docs, runtime and image validation | `ubuntu-latest` |
 
-Use separate capacity for these labels. Main, scheduled and manual audits keep
+For a small CPU pool, configure only `NPA_CI_SECURITY_RUNNER`. Leave admission,
+test shards, and final aggregation on hosted runners so VM replacement cannot
+hold up the merge path. Branches adopt the new security routing after refreshing
+their workflow files. Use separate capacity for configured labels. Main, scheduled and manual audits keep
 using standard runners, as do background image builds unless their existing
 `build_runner_label` input selects another pool. The priority pool must support
 the precheck's Python dependencies and ordinary GitHub Ubuntu tools; use approved
