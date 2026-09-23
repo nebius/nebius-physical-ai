@@ -821,6 +821,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # SkyPilot task surface (the viewer runs in the browser / static image).
         "foxglove",
         "genesis",
+        # S3 artifact GC is a CLI-only maintenance verb (dry-run/apply against
+        # manifests); it has no FastAPI service tier and no npa.workflow stage
+        # surface to stay coherent with. Part of #525 (PR #576).
+        "gc-artifacts",
         "golden-eval",
         "groot",
         "health",
