@@ -3,15 +3,17 @@
 This opt-in runner compares **Astra alone** with **the same Astra coordinator
 delegating to configured Token Factory specialists**. Both arms receive the same
 scoped file tools, named operations and concurrent `run_operations` tool. The
-hybrid adds durable `delegate`, `specialist_status`, `wait_specialist` and
+hybrid adds durable `delegate`, `specialist_status`, `wait_specialist`, `wait_specialists` and
 `take_over` tools; its GLM/DeepSeek workers use the existing LangGraph runtime. Jev is optional in
 Workbench and is not used by this explicitly assigned experiment.
 
 Install the `agent-specialists` extra and the optional MCP dependency described
 in [the simulation example](../simulation/README.md). The runner uses an
 authenticated `codex exec -m gpt-6-astra` with native shell and additional Codex
-workers disabled. Native file edits are outside the matched grant and invalidate
-the recorded tool-scope check. Configure each specialist's explicit
+workers disabled. The recorded tool-scope check accepts only observed Workbench
+MCP tools granted to that arm, plus messages and reasoning. Other native tools,
+unknown item types, other MCP servers and malformed events invalidate the check.
+Configure each specialist's explicit
 model endpoint and sampling policy in an operator-owned `team.json`, following
 [the specialist configuration guide](../../../../docs/workbench/specialists.md).
 Keep credentials in the NPA credential store or the endpoint's `key_env`.
@@ -56,6 +58,16 @@ for up to the requested `observation_seconds` (default 30, maximum 60), spending
 no model tokens during that wait. Its elapsed observation interval leaves the
 worker running. Supply `after_sequence` from the previous response to consume
 only new receipts.
+
+For supervision across several workers, prefer `wait_specialists`. It waits for
+any new terminal state or a paused task and returns compact states and cursors;
+routine model/tool events keep accumulating privately without waking Astra.
+Pass its `after_sequences` mapping into the next call. The default observation
+interval is 60 seconds, after which running tasks are reported without being
+stopped. Inspect full `specialist_status` receipts when attention is needed or a
+task finishes, and remove ended tasks from the next wait. These waits invoke no
+models themselves; coordinator calls before and after each wait still consume
+tokens and belong in the cost comparison.
 
 Use `required_operations` such as `validate` and `verify` for specialist
 completion. `verify` must fail unless the actual remote workflow and its

@@ -187,6 +187,44 @@ class _Bridge:
                 return {**result, "changed": False}
             await asyncio.sleep(min(1, remaining))
 
+    def _team_attention(self, task_ids, after_sequences):
+        states, attention = {}, []
+        for task_id in task_ids:
+            cursor = after_sequences.get(task_id, 0)
+            observed = self._status(task_id, cursor)
+            states[task_id] = {
+                key: observed[key]
+                for key in ("specialist", "status", "paused", "last_sequence", "error")
+            }
+            if observed["paused"] or (
+                observed["status"] in TERMINAL and observed["last_sequence"] > cursor
+            ):
+                attention.append(task_id)
+        return {
+            "tasks": states,
+            "attention_task_ids": attention,
+            "after_sequences": {
+                task_id: state["last_sequence"] for task_id, state in states.items()
+            },
+        }
+
+    async def _wait_all(self, task_ids, after_sequences, observation_seconds):
+        if not task_ids or len(set(task_ids)) != len(task_ids):
+            raise ValueError("task_ids must contain distinct tasks")
+        if set(after_sequences) - set(task_ids) or any(
+            type(value) is not int or value < 0 for value in after_sequences.values()
+        ):
+            raise ValueError("after_sequences must contain nonnegative task cursors")
+        if not 0 < observation_seconds <= 60:
+            raise ValueError("observation_seconds must be in (0, 60]")
+        deadline = time.monotonic() + observation_seconds
+        while True:
+            result = self._team_attention(task_ids, after_sequences)
+            remaining = deadline - time.monotonic()
+            if result["attention_task_ids"] or remaining <= 0:
+                return result
+            await asyncio.sleep(min(1, remaining))
+
 
 def _register_reads(server, bridge):
     @server.tool()
@@ -340,6 +378,35 @@ def _register_takeover(server, bridge):
         )
 
 
+def _register_team_wait(server, bridge):
+    @server.tool()
+    async def wait_specialists(
+        task_ids: list[str],
+        after_sequences: dict[str, int] | None = None,
+        observation_seconds: float = 60,
+    ) -> dict:
+        """Wait for any specialist to finish or need attention; return compact states.
+
+        Routine worker model/tool events do not wake the coordinator. Inspect
+        specialist_status for full receipts on attention, then remove ended tasks.
+        Args: task_ids: Distinct tasks. after_sequences: Last returned cursors.
+            observation_seconds: Observation interval in (0, 60], not a job deadline.
+        Returns: Compact states, attention IDs and new cursors. Raises: None;
+            validation failures are retained as receipts.
+        """
+        cursors = after_sequences or {}
+        arguments = {
+            "task_ids": task_ids,
+            "after_sequences": cursors,
+            "observation_seconds": observation_seconds,
+        }
+        return await bridge._recorded(
+            "wait_specialists",
+            arguments,
+            lambda: bridge._wait_all(task_ids, cursors, observation_seconds),
+        )
+
+
 def _server(config_path, directory, hybrid=False):
     from mcp.server.mcpserver import MCPServer
 
@@ -351,6 +418,7 @@ def _server(config_path, directory, hybrid=False):
     if hybrid:
         _register_delegation(server, bridge)
         _register_wait(server, bridge)
+        _register_team_wait(server, bridge)
         _register_takeover(server, bridge)
     return server
 

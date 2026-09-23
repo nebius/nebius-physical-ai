@@ -20,6 +20,22 @@ For original COLMAP photographs, camera poses and sparse points, see the
 conversion path is **not yet live validated**; the results on this page apply
 to the existing preconverted-NCore input only.
 
+For derived-rig captures with multiple selected cameras, reconstruction exports
+all source SfM points to the native accumulated-point-cloud initializer. Older
+NCore exports may store these points in `virtual_lidar` rather than a
+`PointCloudsComponent`. The public NCore reader decodes every legacy frame's
+float32 direction × distance and original uint8 RGB without narrowing the camera
+selection or changing the training recipe.
+
+This legacy path requires a verified static identity `virtual_lidar -> world`
+pose, one valid return per ray, finite unit directions and nonnegative distances,
+and matching timestamps and colors. Unsupported frames, invalid returns, or
+missing colors fail before training; they are never filtered or fabricated.
+`initialization/ncore-sfm.json` identifies the source representation, records a
+digest of the decoded source fields, and binds it to the exported PLY. Export
+rejects source geometry changed after planning. CPU round trips prove this
+conversion; they do not establish reconstruction quality or training coverage.
+
 ## Ingredients
 
 | | |

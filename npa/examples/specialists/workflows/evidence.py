@@ -6,6 +6,21 @@ import json
 from pathlib import Path
 import sqlite3
 
+DIRECT_TOOLS = (
+    "read_file",
+    "list_files",
+    "edit_file",
+    "run_operation",
+    "run_operations",
+)
+DELEGATION_TOOLS = (
+    "delegate",
+    "specialist_status",
+    "wait_specialist",
+    "wait_specialists",
+    "take_over",
+)
+
 
 def _write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2) + "\n")
@@ -38,24 +53,32 @@ def _astra_events(directory):
     return events, malformed
 
 
-def _astra_usage(directory):
+def _outside_tool_scope(event, allowed):
+    item = event.get("item")
+    if item is None:
+        return str(event.get("type", "")).startswith("item.")
+    if not isinstance(item, dict):
+        return True
+    if item.get("type") in {"agent_message", "reasoning"}:
+        return False
+    return not (
+        item.get("type") == "mcp_tool_call"
+        and item.get("server") == "workbench"
+        and item.get("tool") in allowed
+    )
+
+
+def _astra_usage(directory, arm="astra-only"):
     events, malformed = _astra_events(directory)
     turns = [
         event["usage"] if isinstance(event.get("usage"), dict) else {}
         for event in events
         if event.get("type") == "turn.completed"
     ]
-    forbidden = [
-        event
-        for event in events
-        if isinstance(event.get("item"), dict)
-        and event["item"].get("type")
-        in {
-            "command_execution",
-            "file_change",
-            "collab_agent_tool_call",
-        }
-    ]
+    allowed = set(DIRECT_TOOLS)
+    if arm == "astra-tofa":
+        allowed.update(DELEGATION_TOOLS)
+    forbidden = [event for event in events if _outside_tool_scope(event, allowed)]
     failed = any(event.get("type") in {"turn.failed", "error"} for event in events)
     required = {"input_tokens", "output_tokens"}
     return {
@@ -66,7 +89,7 @@ def _astra_usage(directory):
         and not malformed
         and not failed
         and all(required <= turn.keys() for turn in turns),
-        "matched_tool_scope": not forbidden,
+        "matched_tool_scope": bool(events) and not malformed and not forbidden,
     }
 
 
@@ -110,7 +133,7 @@ def _snapshot(team, coordinator, directory, execution):
             errors[name] = type(error).__name__
     try:
         usage = {
-            "astra": _astra_usage(directory),
+            "astra": _astra_usage(directory, execution["arm"]),
             "specialists": _specialist_usage(receipts),
         }
         usage["usage_complete"] = not errors and all(

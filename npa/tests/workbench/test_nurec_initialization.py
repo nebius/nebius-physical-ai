@@ -497,6 +497,128 @@ def test_public_ncore_v4_points_round_trip_to_native_ply(tmp_path):
     colmap.verify_conversion_inventory(meta.parent)
 
 
+def public_legacy_sequence(root, color_offset=0):
+    v4 = pytest.importorskip("ncore.data.v4")
+    from ncore.impl.common.transformations import HalfClosedInterval
+    from upath import UPath
+
+    writer = v4.SequenceComponentGroupsWriter(
+        output_dir_path=UPath(root),
+        store_base_name="sequence",
+        sequence_id="fixture",
+        sequence_timestamp_interval_us=HalfClosedInterval(0, 2_000_000),
+        generic_meta_data={},
+        store_type="itar",
+    )
+    write_public_cameras(writer, v4)
+    poses = writer.register_component_writer(v4.PosesComponent.Writer, "default")
+    poses.store_static_pose("virtual_lidar", "world", np.eye(4, dtype=np.float32))
+    sensor = writer.register_component_writer(
+        v4.LidarSensorComponent.Writer, "virtual_lidar", group_name="virtual_lidar"
+    )
+    clouds = [write_legacy_frame(sensor, index, color_offset) for index in (0, 1)]
+    paths = writer.finalize()
+    meta = root / "sequence.json"
+    meta.write_text(
+        json.dumps(
+            v4.SequenceComponentGroupsReader(paths).get_sequence_meta().to_dict()
+        )
+    )
+    (root / "npa-rig.json").write_text('{"reference_camera":"camera2"}')
+    return meta, clouds
+
+
+def write_legacy_frame(sensor, index, color_offset):
+    directions = np.array([[1, 0, 0], [0, 0.6, 0.8]], dtype=np.float32)
+    distances = np.array([[2, 3 + index]], dtype=np.float32)
+    rgb = np.array([[1 + color_offset, 2, 3], [4, 5, 6 + index]], dtype=np.uint8)
+    sensor.store_frame(
+        direction=directions,
+        timestamp_us=np.full(2, index, dtype=np.uint64),
+        model_element=None,
+        distance_m=distances,
+        intensity=np.zeros((1, 2), dtype=np.float32),
+        frame_timestamps_us=np.array([index, index], dtype=np.uint64),
+        generic_data={"rgb": rgb},
+        generic_meta_data={},
+    )
+    return directions * distances[0, :, None], rgb
+
+
+def test_public_legacy_ncore_preserves_every_frame_camera_and_color(tmp_path):
+    meta, clouds = public_legacy_sequence(tmp_path / "sequence")
+    before = {p.name: p.read_bytes() for p in meta.parent.iterdir()}
+    result = reconstruct(meta, tmp_path / "out")
+    plan = result.initialization
+    assert plan["camera_ids"] == ["camera1", "camera2", "camera3"]
+    assert plan["point_count"] == 4
+    assert "LidarSensorComponent virtual_lidar" in plan["source"]
+    assert plan["legacy_sources"].keys() == {"virtual_lidar"}
+    assert (
+        "model.layers.background.initialization.num_point_cloud_points=4"
+        in result.command
+    )
+    assert not any("max_epochs=" in item for item in result.command)
+    evidence = initialization.export_initialization(str(meta), plan)
+    _, vertices = read_ply(Path(evidence["point_cloud_path"]))
+    np.testing.assert_array_equal(
+        vertices["xyz"], np.concatenate([p[0] for p in clouds])
+    )
+    np.testing.assert_array_equal(
+        vertices["rgb"], np.concatenate([p[1] for p in clouds])
+    )
+    assert [item["point_count"] for item in evidence["components"]] == [2, 2]
+    assert before == {p.name: p.read_bytes() for p in meta.parent.iterdir()}
+
+
+def test_public_legacy_export_rejects_changed_geometry_store(tmp_path):
+    meta, _ = public_legacy_sequence(tmp_path / "sequence")
+    plan = reconstruct(meta, tmp_path / "out").initialization
+    replacement, _ = public_legacy_sequence(tmp_path / "replacement", color_offset=1)
+    store = next(meta.parent.glob("*virtual_lidar*.itar"))
+    store.write_bytes((replacement.parent / store.name).read_bytes())
+    with pytest.raises(nurec.NurecError, match="source points changed"):
+        initialization.export_initialization(str(meta), plan)
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("boundary", ["_read_clouds", "_store_ply"])
+def test_public_legacy_mutation_during_export_has_no_success_receipt(
+    tmp_path, monkeypatch, boundary
+):
+    meta, _ = public_legacy_sequence(tmp_path / "sequence")
+    plan = reconstruct(meta, tmp_path / "out").initialization
+    replacement, _ = public_legacy_sequence(tmp_path / "replacement", color_offset=1)
+    store = next(meta.parent.glob("*virtual_lidar*.itar"))
+    original = getattr(initialization, boundary)
+
+    def mutate_after(*args, **kwargs):
+        result = original(*args, **kwargs)
+        store.write_bytes((replacement.parent / store.name).read_bytes())
+        return result
+
+    monkeypatch.setattr(initialization, boundary, mutate_after)
+    with pytest.raises(nurec.NurecError, match="source points changed"):
+        initialization.export_initialization(str(meta), plan)
+    assert not (tmp_path / "out/initialization/ncore-sfm.json").exists()
+
+
+def test_modern_points_do_not_open_legacy_lidar_path(tmp_path, monkeypatch):
+    from npa.workbench.nurec import ncore_legacy_sfm
+
+    meta, xyz, _ = public_ncore_sequence(tmp_path / "sequence")
+    monkeypatch.setattr(
+        ncore_legacy_sfm,
+        "legacy_sfm_readers",
+        lambda _: pytest.fail("modern points must retain their existing path"),
+    )
+    result = reconstruct(meta, tmp_path / "out")
+    evidence = initialization.export_initialization(str(meta), result.initialization)
+    assert evidence["point_count"] == len(xyz)
+    assert "legacy_sources" not in evidence
+    colmap.verify_conversion_inventory(meta.parent)
+
+
 def test_native_ply_library_reads_the_exported_geometry_and_colors(capture, tmp_path):
     point_cloud_utils = pytest.importorskip("point_cloud_utils")
     meta, readers = capture

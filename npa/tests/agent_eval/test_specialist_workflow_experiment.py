@@ -308,6 +308,7 @@ def test_mcp_surface_is_matched_and_delegation_calls_are_recorded(
         "delegate",
         "specialist_status",
         "wait_specialist",
+        "wait_specialists",
         "take_over",
     }
     response = asyncio.run(
@@ -323,6 +324,16 @@ def test_mcp_surface_is_matched_and_delegation_calls_are_recorded(
     assert json.loads(response.content[0].text)["status"] == "queued"
     bridge = module._Bridge(prepared[0], directory, True)
     assert bridge.store._events("supervisor")[-1]["name"] == "delegate"
+    response = asyncio.run(
+        hybrid.call_tool(
+            "wait_specialists",
+            {"task_ids": ["mcp-task"], "observation_seconds": 0.001},
+        )
+    )
+    observed = json.loads(response.content[0].text)
+    assert observed["tasks"]["mcp-task"]["status"] == "queued"
+    assert observed["attention_task_ids"] == []
+    assert bridge.store._events("supervisor")[-1]["name"] == "wait_specialists"
 
 
 def test_supervisor_failure_still_freezes_receipts(
@@ -405,3 +416,111 @@ def test_usage_retains_bad_output_and_detects_extra_codex_tools(
     assert result["malformed_lines"] == [2]
     assert result["usage_complete"] is False
     assert result["matched_tool_scope"] is False
+
+
+@pytest.mark.parametrize(
+    "arm,item,accepted",
+    [
+        ("astra-only", {"type": "agent_message"}, True),
+        ("astra-only", {"type": "reasoning"}, True),
+        ("astra-only", {"type": "web_search"}, False),
+        ("astra-tofa", {"type": "unknown_tool"}, False),
+        ("astra-tofa", None, False),
+        ("astra-only", "invalid item", False),
+        *[
+            (
+                arm,
+                {"type": "mcp_tool_call", "server": server, "tool": tool},
+                accepted,
+            )
+            for arm, server, tool, accepted in (
+                ("astra-only", "workbench", "run_operations", True),
+                ("astra-tofa", "workbench", "delegate", True),
+                ("astra-only", "workbench", "delegate", False),
+                ("astra-tofa", "external", "run_operations", False),
+                ("astra-tofa", "workbench", "arbitrary_shell", False),
+            )
+        ],
+    ],
+)
+def test_usage_audits_observed_tools_against_arm_grants(
+    workflow_experiment, tmp_path, arm, item, accepted
+):
+    event = {"type": "item.completed", "item": item}
+    (tmp_path / "codex.jsonl").write_text(json.dumps(event) + "\n")
+    result = workflow_experiment["evidence"]._astra_usage(tmp_path, arm)
+    assert result["matched_tool_scope"] is accepted
+    assert result["out_of_scope_events"] == ([] if accepted else [event])
+
+
+def test_unparseable_events_cannot_prove_tool_scope(workflow_experiment, tmp_path):
+    (tmp_path / "codex.jsonl").write_text("truncated tool event\n")
+    result = workflow_experiment["evidence"]._astra_usage(tmp_path)
+    assert result["matched_tool_scope"] is False
+    assert result["malformed_lines"] == [1]
+
+
+def test_team_wait_ignores_routine_events_and_reports_attention_from_any_worker(
+    workflow_experiment, prepared, tmp_path
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    for profile, task in (("scene-a", "first"), ("scene-b", "second")):
+        bridge._delegate(profile, task, "Operate workflow")
+        bridge.team.store._update(task, "running")
+        bridge.team.store._event(task, {"type": "model", "usage": {}})
+
+    async def observe():
+        waiting = asyncio.create_task(bridge._wait_all(["first", "second"], {}, 0.05))
+        await asyncio.sleep(0)
+        assert not waiting.done(), "routine receipts must not wake the coordinator"
+        bridge.team.store._update("second", "needs_attention", error="fixture blocker")
+        bridge.team.store._event("second", {"type": "needs_attention"})
+        return await waiting
+
+    result = asyncio.run(observe())
+    assert result["attention_task_ids"] == ["second"]
+    assert result["tasks"]["first"]["status"] == "running"
+    assert result["tasks"]["second"]["error"] == "fixture blocker"
+    assert all("events" not in state for state in result["tasks"].values())
+    assert bridge.team.store._calls("first") == []
+    assert bridge.team.status("second")["status"] == "needs_attention"
+
+
+def test_team_wait_consumes_terminal_cursor_without_stopping_running_work(
+    workflow_experiment, prepared, tmp_path
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    bridge._delegate("scene-a", "finished", "Operate workflow")
+    bridge.team.store._update("finished", "completed")
+    bridge.team.store._event("finished", {"type": "completed"})
+    bridge._delegate("scene-b", "active", "Operate workflow")
+    bridge.team.store._update("active", "running")
+    first = asyncio.run(bridge._wait_all(["finished", "active"], {}, 0.01))
+    assert first["attention_task_ids"] == ["finished"]
+    bridge.team.store._event("active", {"type": "tool", "result": {"ok": True}})
+    second = asyncio.run(
+        bridge._wait_all(["finished", "active"], first["after_sequences"], 0.01)
+    )
+    assert second["attention_task_ids"] == []
+    assert second["after_sequences"]["active"] > first["after_sequences"]["active"]
+    assert bridge.team.status("active")["status"] == "running"
+
+
+@pytest.mark.parametrize(
+    "tasks,cursors,seconds",
+    [
+        ([], {}, 1),
+        (["a", "a"], {}, 1),
+        (["a"], {"b": 0}, 1),
+        (["a"], {"a": -1}, 1),
+        (["a"], {"a": True}, 1),
+        (["a"], {}, 0),
+        (["a"], {}, 61),
+    ],
+)
+def test_team_wait_rejects_invalid_observation_requests(
+    workflow_experiment, prepared, tmp_path, tasks, cursors, seconds
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    with pytest.raises(ValueError):
+        asyncio.run(bridge._wait_all(tasks, cursors, seconds))

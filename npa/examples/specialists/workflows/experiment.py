@@ -16,18 +16,10 @@ from npa.agent_backend.specialists.config import load_config, private_directory
 from npa.agent_backend.specialists.team import SpecialistTeam
 from npa.agent_backend.specialists.worker import supervise
 
-from evidence import _receipts, _snapshot, _write_json
+from evidence import DELEGATION_TOOLS, DIRECT_TOOLS, _receipts, _snapshot, _write_json
 from workflow_bridge import _coordinator_store
 
 HERE = Path(__file__).resolve().parent
-DIRECT_TOOLS = (
-    "read_file",
-    "list_files",
-    "edit_file",
-    "run_operation",
-    "run_operations",
-)
-DELEGATION_TOOLS = ("delegate", "specialist_status", "wait_specialist", "take_over")
 
 
 def _settings(config_path, directory, arm, effort):
@@ -98,7 +90,10 @@ def _prompt(common, team, arm):
     if arm == "astra-tofa":
         instructions += (
             "Initially delegate each independent workspace task to its configured Token Factory specialist. Use stable "
-            "task IDs, consume their actual receipts, and wait_specialist for new evidence. "
+            "task IDs. Prefer wait_specialists across active tasks, carrying its after_sequences "
+            "cursors: it waits for completion or attention without waking on routine worker events. "
+            "Inspect full specialist_status receipts when a task finishes or needs attention, "
+            "then remove ended tasks from subsequent waits. "
             "A delegated workspace remains owned until its task ends; do not edit or run "
             "operations concurrently there. If a specialist needs attention, inspect its receipts "
             "and use take_over only when its effects are resolved, then perform the recovery "
