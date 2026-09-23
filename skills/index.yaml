@@ -706,6 +706,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/mjlab-eval.yaml
+  - name: development-desktop
+    category: tools
+    when_to_use: "Set up and operate an Ubuntu development desktop through npa tools desktop, with readable Retina rendering and authenticated public HTTPS access."
+    path: skills/tools/development-desktop/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["tools", "desktop", "setup", "--help"]
+        contains: "ssh-host"
+      - type: cli_help
+        args: ["tools", "desktop", "public-access", "--help"]
+        contains: "public-ip"
   - name: nebius-infra
     category: tools
     when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, retained-backup checksum verification and VM maintenance pauses across reboot."
