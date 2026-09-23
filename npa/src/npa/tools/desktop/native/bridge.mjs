@@ -66,7 +66,7 @@ app.on('event', message => {
 async function list(params) {
   const rows = store.list(params.archived, params.includeAgents);
   if (!params.archived) for (const [id, own] of ownThreads) {
-    if (!rows.some(row => row.id === id) && getRow(id).unsaved) rows.unshift({id, title: own.thread?.preview || 'New chat', cwd: own.thread?.cwd,
+    if (!rows.some(row => row.id === id) && getRow(id).unsaved) rows.unshift({id, source: own.thread?.source, title: own.thread?.preview || 'New chat', cwd: own.thread?.cwd,
       updatedAt: own.thread?.createdAt || 0, ...threadSettings(null, own), archived: false});
   }
   return rows.map(row => ({...row,

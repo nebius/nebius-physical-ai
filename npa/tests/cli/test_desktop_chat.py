@@ -155,7 +155,7 @@ def test_static_page_has_no_inline_script_or_cache(chat):
     assert "unit-test-only-password" not in response.text
 
 
-def test_list_includes_all_providers_and_source_kinds(chat):
+def test_list_limits_sources_to_vscode_across_search_and_archive(chat):
     client, rpc = chat
     rpc.call.side_effect = None
     rpc.call.return_value = {"data": [], "nextCursor": None}
@@ -165,7 +165,7 @@ def test_list_includes_all_providers_and_source_kinds(chat):
     method, params = rpc.call.call_args.args
     assert method == "thread/list"
     assert params["modelProviders"] == []
-    assert {"vscode", "cli", "appServer", "exec"} <= set(params["sourceKinds"])
+    assert params["sourceKinds"] == ["vscode"]
     assert params["archived"] is True
     assert params["searchTerm"] == "example"
 

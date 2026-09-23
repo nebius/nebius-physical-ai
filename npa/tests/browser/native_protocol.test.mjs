@@ -131,3 +131,45 @@ test('native rename uses metadata API without resuming or taking ownership', asy
   assert.deepEqual(calls, [['thread/name/set', {threadId: 'same', name: 'New name'}]]);
   assert.equal(ownThreads.get('same').active, true);
 });
+
+for (const archived of [false, true]) {
+  test(`VS Code scope filters before search and paging (archived=${archived})`, async () => {
+    const rows = [
+      {id: 'cli', source: 'cli', title: 'Matching CLI chat'},
+      {id: 'first', source: 'vscode', title: 'Matching editor chat'},
+      {id: 'exec', source: 'exec', title: 'Matching automated run'},
+      {id: 'child', source: '{"subagent":{"thread_spawn":{}}}', title: 'Matching child'},
+      {id: 'second', source: 'vscode', title: 'Matching saved chat'},
+      {id: 'other', source: 'vscode', title: 'Different title'},
+      {id: 'unknown', title: 'Matching unknown source'},
+    ].map(row => ({...row, archived}));
+    const context = {handlers: {list: async options => {
+      assert.equal(options.archived, archived);
+      return rows;
+    }}};
+    const params = {archived, sourceKinds: ['vscode'], searchTerm: 'matching', limit: 1};
+    const first = await protocolCall(context, {method: 'thread/list', params});
+    assert.deepEqual(first.data.map(row => row.id), ['first']);
+    assert.equal(first.data[0].source, 'vscode');
+    assert.equal(first.data[0].archived, archived);
+    const second = await protocolCall(context, {method: 'thread/list', params: {...params, cursor:first.nextCursor}});
+    assert.deepEqual(second.data.map(row => row.id), ['second']);
+    assert.equal(second.nextCursor, null);
+  });
+}
+
+test('an explicit unfiltered native list remains compatible', async () => {
+  const context = {handlers: {list: async () => [
+    {id:'editor',source:'vscode',title:'Editor'}, {id:'terminal',source:'cli',title:'Terminal'},
+  ]}};
+  const page = await protocolCall(context, {method:'thread/list',params:{sourceKinds:[]}});
+  assert.deepEqual(page.data.map(row => row.id),['editor','terminal']);
+});
+
+test('an unsaved VS Code-origin mobile chat remains in the scoped list', async () => {
+  const context = {handlers: {list: async () => [
+    {id:'new-chat',source:'vscode',title:'New chat',archived:false},
+  ]}};
+  const page = await protocolCall(context, {method:'thread/list',params:{sourceKinds:['vscode']}});
+  assert.deepEqual(page.data.map(row => row.id),['new-chat']);
+});

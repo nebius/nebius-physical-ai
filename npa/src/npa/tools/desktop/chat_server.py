@@ -23,18 +23,8 @@ except ImportError:
     from chat_session import authorized as _authorized, mobile_session, session_key
     from chat_pwa import public_asset
 
-_SOURCES = [
-    "cli",
-    "vscode",
-    "exec",
-    "appServer",
-    "subAgent",
-    "subAgentReview",
-    "subAgentCompact",
-    "subAgentThreadSpawn",
-    "subAgentOther",
-    "unknown",
-]
+_SOURCES = ["vscode"]
+
 _STATIC = {
     "/chat/": ("chat.html", "text/html"),
     "/chat/chat.js": ("chat.js", "text/javascript"),

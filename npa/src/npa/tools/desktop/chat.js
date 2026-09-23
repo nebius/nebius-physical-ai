@@ -312,7 +312,7 @@ function updateActivity() {
     !!activeTurn() || state.statuses.get(state.id)?.type === "active";
   const working =
     selectedBusy ||
-    [...state.statuses.values()].some((status) => status?.type === "active");
+    state.sessions.some(thread => state.statuses.get(thread.id)?.type === "active");
   const waiting = state.pending.some(
     (request) => request.params?.threadId === state.id,
   );

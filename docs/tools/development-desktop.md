@@ -155,8 +155,11 @@ Open `/chat/` on the desktop's HTTPS origin and sign in with the same desktop
 username and password. No VPN is required when the gateway uses a verified
 external address. The layout supports iPhone-sized screens, a session search,
 archived sessions, paginated history, and a composer that stays above the mobile
-keyboard. Session-list titles and previews are shortened for fast refreshes;
-opening a conversation retains its full messages. It sends prompts, streams
+keyboard. Recent, Archived, and search show VS Code-origin chats, including
+closed VS Code history; CLI, execution, subagent, and unknown-origin sessions
+are excluded from this list. Filtering changes visibility only and does not
+delete those sessions. Session-list titles and previews are shortened for fast
+refreshes; opening a conversation retains its full messages. It sends prompts, streams
 replies and tool activity, steers or stops a running turn, and presents command/file
 approvals and questions. Specialized MCP and dynamic-tool requests remain in VS Code.
 

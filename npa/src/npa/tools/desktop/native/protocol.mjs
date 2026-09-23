@@ -16,7 +16,7 @@ export function pendingRequests(ipc, approvals) {
 }
 
 function thread(chat) {
-  return {id: chat.id, name: chat.title, preview: chat.title, cwd: chat.cwd,
+  return {id: chat.id, name: chat.title, preview: chat.title, cwd: chat.cwd, source: chat.source,
     model: chat.model, reasoningEffort: chat.effort, serviceTier: chat.serviceTier,
     mode: chat.mode, updatedAt: chat.updatedAt, owner: chat.owner, archived: Boolean(chat.archived),
     status: {type: chat.active || chat.status === 'active' ? 'active' : 'idle'}};
@@ -49,7 +49,8 @@ function turns(chat, params) {
 
 async function list(context, params) {
   const rows = await context.handlers.list({archived: params.archived, includeAgents: true});
-  const matching = rows.filter(row => !params.searchTerm ||
+  const scoped = rows.filter(row => !params.sourceKinds?.length || params.sourceKinds.includes(row.source));
+  const matching = scoped.filter(row => !params.searchTerm ||
     row.title.toLowerCase().includes(params.searchTerm.toLowerCase()));
   const start = Number(params.cursor || 0);
   const limit = Number(params.limit || 50);

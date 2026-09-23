@@ -111,6 +111,17 @@ describe("Codex conversation experience", () => {
     cy.get(".session").should("have.length",15);
   });
 
+  it("does not report hidden CLI or subagent activity as a visible chat working", () => {
+    cy.visit("/chat/#same-thread");
+    cy.get("#title").should("have.text", "Shared conversation");
+    cy.window().then(win => win.handleEvent({method: "thread/status/changed", params: {
+      threadId: "unlisted-worker", status: {type: "active"},
+    }}));
+    cy.title().should("not.contain", "Working");
+    cy.get("#header-activity").should("not.be.visible");
+    cy.get(".session-spinner").should("not.exist");
+  });
+
   it("does not send while an input method is composing text", () => {
     let sends = 0;
     cy.intercept("POST", "/chat/api/send", req => { sends++; req.reply({accepted:true}); });
