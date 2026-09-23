@@ -54,12 +54,13 @@
     },
     {
       "id": "nvidia-software-license",
-      "name": "NVIDIA Software License Agreement",
+      "name": "NVIDIA Software License Agreement (navigation UUID normalized v1)",
       "boundary": "runtime_packages",
-      "version": "sha256:4c907a13d7234081c482876c3b135ab617b8610dcb71bd53059ec6b46076f3f5",
+      "version": "sha256:3f13fbe637d25533777fff3785752b530401c10055acfcffe28540f33263e17f",
       "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/",
       "size_bytes": 355751,
-      "sha256": "4c907a13d7234081c482876c3b135ab617b8610dcb71bd53059ec6b46076f3f5"
+      "sha256": "3f13fbe637d25533777fff3785752b530401c10055acfcffe28540f33263e17f",
+      "normalization": "nvidia-navigation-uuid-v1"
     },
     {
       "id": "cudnn-eula",

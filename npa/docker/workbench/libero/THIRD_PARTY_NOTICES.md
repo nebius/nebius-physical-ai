@@ -34,6 +34,12 @@ subject to its own upstream terms and the customer's personal acknowledgement. T
 manifest's hash-bound official MIT, CC BY 4.0, Apache 2.0, PyTorch, CUDA,
 NVIDIA software, and cuDNN terms sources are runtime refusal inputs only; none
 of their fetched bytes is retained in this image or treated as acceptance.
+The NVIDIA software agreement uses the explicitly declared
+`nvidia-navigation-uuid-v1` identity: only two equal generated navigation UUIDs
+in fixed HTML and JavaScript contexts become a fixed zero UUID. The complete
+remaining document and its byte length stay hash-bound, including all agreement
+text. Runtime diagnostics retain the observed raw hash and canonical hash.
+Every other terms source and runtime artifact uses its original raw-byte hash.
 All 135 runtime artifacts now have a reviewed positive size and license
 classification, and the image manifest binds the owner review report. Runtime
 use remains disabled until the customer directly signs a short-lived

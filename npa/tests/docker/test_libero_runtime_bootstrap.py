@@ -3623,3 +3623,121 @@ def test_runtime_storage_trust_root_requires_an_immutable_mounted_file(tmp_path,
     mounted.chmod(0o644)
     with pytest.raises(module.BootstrapRefusal, match='mutable or invalid'):
         module._trusted_output_storage_authorization_public_key()
+
+
+def _navigation_terms(uuid: bytes) -> bytes:
+    return (
+        b'<html>\n        <nav class="global-nav" id="meganavigation' + uuid + b'">\n'
+        b'Governing legal text remains entirely hash bound.\n'
+        b'\t        id : "meganavigation' + uuid + b'",\n'
+        b'\t        method : "navigation-megamenu",\n</html>\n'
+    )
+
+
+def test_terms_navigation_normalization_retains_every_other_byte() -> None:
+    module = _load_module()
+    first = _navigation_terms(b'f9ec807f_5dd5_43f7_a392_e8f423436671')
+    second = _navigation_terms(b'364b6441_f425_439f_a728_0cd4473283b3')
+    expected = _navigation_terms(b'00000000_0000_0000_0000_000000000000')
+    assert first != second
+    assert module._canonicalize_nvidia_terms(first) == expected
+    assert module._canonicalize_nvidia_terms(second) == expected
+    assert len(expected) == len(first) == len(second)
+
+
+@pytest.mark.parametrize('mutation', ['mismatch', 'extra', 'malformed', 'wrong_nav', 'wrong_method'])
+def test_terms_navigation_normalization_refuses_unexpected_structure(mutation) -> None:
+    module = _load_module()
+    uuid = b'f9ec807f_5dd5_43f7_a392_e8f423436671'
+    content = _navigation_terms(uuid)
+    if mutation == 'mismatch':
+        content = content.replace(uuid, b'364b6441_f425_439f_a728_0cd4473283b3', 1)
+    elif mutation == 'extra':
+        content += b'meganavigation' + uuid
+    elif mutation == 'malformed':
+        content = content.replace(uuid, b'not-a-uuid')
+    elif mutation == 'wrong_nav':
+        content = content.replace(b'global-nav', b'legal-text')
+    else:
+        content = content.replace(b'navigation-megamenu', b'legal-text')
+    with pytest.raises(module.BootstrapRefusal, match='navigation identity'):
+        module._canonicalize_nvidia_terms(content)
+
+
+@pytest.mark.parametrize('tamper', ['none', 'legal_text', 'other_html', 'raw_hash'])
+def test_verified_terms_download_uses_explicit_canonical_identity(
+    monkeypatch, tmp_path, capsys, tamper
+) -> None:
+    import io
+    module = _load_module()
+    original = _navigation_terms(b'f9ec807f_5dd5_43f7_a392_e8f423436671')
+    payload = _navigation_terms(b'364b6441_f425_439f_a728_0cd4473283b3')
+    expected = module._canonicalize_nvidia_terms(original)
+    if tamper == 'legal_text':
+        payload = payload.replace(b'Governing', b'Modified!')
+    elif tamper == 'other_html':
+        payload = payload.replace(b'<html>', b'<HTML>')
+
+    class Response(io.BytesIO):
+        def getheader(self, name):
+            return str(len(payload)) if name == 'Content-Length' else None
+
+    monkeypatch.setattr(module, '_open_https_download', lambda *_a, **_k: (io.BytesIO(), Response(payload)))
+    target = tmp_path / 'terms'
+    kwargs = dict(url=module.NVIDIA_SOFTWARE_TERMS_URL, sha256=_sha(expected), size=len(expected), terms=True, terms_normalization=module.NVIDIA_TERMS_NORMALIZATION)
+    if tamper == 'raw_hash':
+        kwargs.pop('terms_normalization')
+    if tamper != 'none':
+        with pytest.raises(module.BootstrapRefusal, match='immutable identity'):
+            module._download_verified(target, **kwargs)
+        assert not target.exists()
+        assert not target.with_name('.terms.partial').exists()
+    else:
+        module._download_verified(target, **kwargs)
+        assert target.read_bytes() == expected
+        receipt = json.loads(capsys.readouterr().err)
+        assert receipt['raw_sha256'] == _sha(payload)
+        assert receipt['canonical_sha256'] == _sha(expected)
+        assert receipt['normalization'] == module.NVIDIA_TERMS_NORMALIZATION
+
+
+@pytest.mark.parametrize('change', ['runtime', 'other_url', 'unknown_scheme', 'large'])
+def test_terms_normalization_cannot_apply_to_other_downloads(monkeypatch, tmp_path, change) -> None:
+    module = _load_module()
+    kwargs = dict(url=module.NVIDIA_SOFTWARE_TERMS_URL, sha256='a' * 64, size=20, terms=True, terms_normalization=module.NVIDIA_TERMS_NORMALIZATION)
+    if change == 'runtime':
+        kwargs['terms'] = False
+    elif change == 'other_url':
+        kwargs['url'] = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+    elif change == 'unknown_scheme':
+        kwargs['terms_normalization'] = 'strip-html'
+    else:
+        kwargs['size'] = 1024 * 1024 + 1
+    monkeypatch.setattr(module, '_open_https_download', lambda *_a, **_k: pytest.fail('network reached'))
+    with pytest.raises(module.BootstrapRefusal, match='normalization is invalid'):
+        module._download_verified(tmp_path / 'terms', **kwargs)
+
+
+@pytest.mark.parametrize('change', ['none', 'unknown_scheme', 'wrong_id', 'wrong_url', 'null'])
+def test_manifest_binds_only_nvidia_navigation_normalization(tmp_path, change) -> None:
+    module, args, _ = _fixture(tmp_path)
+    manifest = json.loads(Path(args.manifest).read_bytes())
+    term = next(term for term in manifest['governing_terms'] if term['id'] == 'nvidia-software-license')
+    before = module._governing_terms_identity(manifest)
+    term['normalization'] = module.NVIDIA_TERMS_NORMALIZATION
+    term['url'] = module.NVIDIA_SOFTWARE_TERMS_URL
+    if change == 'unknown_scheme':
+        term['normalization'] = 'strip-html'
+    elif change == 'wrong_id':
+        term['id'] = 'libero-mit'
+    elif change == 'wrong_url':
+        term['url'] += '?unreviewed=true'
+    elif change == 'null':
+        term['normalization'] = None
+    module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(Path(args.manifest), manifest)
+    if change == 'none':
+        module._validate_manifest(Path(args.manifest))
+        assert before != module._governing_terms_identity(manifest)
+    else:
+        with pytest.raises(module.BootstrapRefusal, match='normalization is invalid'):
+            module._validate_manifest(Path(args.manifest))

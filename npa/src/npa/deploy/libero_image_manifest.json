@@ -25,7 +25,7 @@
   },
   "runtime_payloads_baked": false,
   "customer_runtime_authorization_required": true,
-  "runtime_manifest_sha256": "d21a34b58f787023c5ae539a98a9c69c2dc2a032c0094d86f8a2e11fcce3d5da",
+  "runtime_manifest_sha256": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02",
   "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
@@ -72,9 +72,9 @@
       },
       {
         "id": "nvidia-software-license",
-        "name": "NVIDIA Software License Agreement",
+        "name": "NVIDIA Software License Agreement (navigation UUID normalized v1)",
         "official_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/",
-        "version": "sha256:4c907a13d7234081c482876c3b135ab617b8610dcb71bd53059ec6b46076f3f5"
+        "version": "sha256:3f13fbe637d25533777fff3785752b530401c10055acfcffe28540f33263e17f"
       },
       {
         "id": "cudnn-eula",
@@ -120,7 +120,7 @@
     "package_writer_repository": "",
     "customer_authorization_public_key_sha256": "",
     "output_storage_authorization_public_key_sha256": "",
-    "runtime_manifest_sha256": "d21a34b58f787023c5ae539a98a9c69c2dc2a032c0094d86f8a2e11fcce3d5da"
+    "runtime_manifest_sha256": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02"
   },
   "catalog_release": false
 }

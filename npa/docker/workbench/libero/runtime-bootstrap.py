@@ -88,7 +88,7 @@ EXPECTED_BOUNDARIES = {
     "rendering": False,
 }
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "d21a34b58f787023c5ae539a98a9c69c2dc2a032c0094d86f8a2e11fcce3d5da"
+    "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
     "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99"
@@ -96,6 +96,11 @@ EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
 DEFAULT_REQUIREMENTS = Path("/opt/npa/libero/runtime-requirements.txt")
 DEFAULT_CACHE = Path("/workspace/.cache/npa/libero")
+NVIDIA_TERMS_NORMALIZATION = "nvidia-navigation-uuid-v1"
+NVIDIA_SOFTWARE_TERMS_URL = (
+    "https://www.nvidia.com/en-us/agreements/enterprise-software/"
+    "nvidia-software-license-agreement/"
+)
 OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY = Path(
     "/opt/npa/libero/output-storage-authorization-public-key.b64"
 )
@@ -880,7 +885,7 @@ def _validate_manifest(
     term_ids: set[str] = set()
     term_boundaries: set[str] = set()
     for term in governing_terms:
-        if not isinstance(term, dict) or set(term) != {
+        if not isinstance(term, dict) or set(term) - {"normalization"} != {
             "id",
             "name",
             "boundary",
@@ -890,6 +895,12 @@ def _validate_manifest(
             "sha256",
         }:
             raise BootstrapRefusal("governing terms entry is not closed")
+        if "normalization" in term and (
+            term["normalization"] != NVIDIA_TERMS_NORMALIZATION
+            or term["id"] != "nvidia-software-license"
+            or term["url"] != NVIDIA_SOFTWARE_TERMS_URL
+        ):
+            raise BootstrapRefusal("governing terms normalization is invalid")
         term_id = str(term.get("id") or "")
         boundary = str(term.get("boundary") or "")
         if (
@@ -2370,6 +2381,28 @@ def _ensure_deadline(deadline: datetime | None) -> None:
         raise CustomerAcceptanceRequired("authorization_expired_or_replayable")
 
 
+def _canonicalize_nvidia_terms(payload: bytes) -> bytes:
+    """Normalize only the two equal site-navigation UUIDs, retaining all other bytes."""
+    uuid = rb"[0-9a-f]{8}(?:_[0-9a-f]{4}){3}_[0-9a-f]{12}"
+    nav = re.findall(
+        rb'^        <nav class="global-nav" id="meganavigation(' + uuid + rb')">$',
+        payload, re.M,
+    )
+    script = re.findall(
+        rb'^\t        id : "meganavigation(' + uuid + rb')",\n'
+        rb'\t        method : "navigation-megamenu",$', payload, re.M,
+    )
+    if (
+        len(nav) != 1 or script != nav
+        or len(re.findall(rb"meganavigation" + uuid, payload)) != 2
+    ):
+        raise BootstrapRefusal("NVIDIA terms navigation identity is invalid")
+    return payload.replace(
+        b"meganavigation" + nav[0],
+        b"meganavigation00000000_0000_0000_0000_000000000000",
+    )
+
+
 def _download_verified(
     destination: Path,
     *,
@@ -2378,16 +2411,24 @@ def _download_verified(
     size: int,
     terms: bool = False,
     deadline: datetime | None = None,
+    terms_normalization: str | None = None,
 ) -> None:
     _ensure_deadline(deadline)
     if size <= 0 or size > MAX_RUNTIME_CACHE_DOWNLOAD_BYTES:
         raise BootstrapRefusal("runtime download has no valid expected size")
+    if terms_normalization is not None and (
+        not terms or terms_normalization != NVIDIA_TERMS_NORMALIZATION
+        or url != NVIDIA_SOFTWARE_TERMS_URL or size > 1024 * 1024
+    ):
+        raise BootstrapRefusal("governing terms normalization is invalid")
     (_validate_terms_url if terms else _validate_download_url)(url)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.partial")
     temporary.unlink(missing_ok=True)
     digest = hashlib.sha256()
     observed_size = 0
+    terms_payload = bytearray() if terms_normalization is not None else None
+    raw_sha256: str | None = None
     connection: http.client.HTTPSConnection | None = None
     response: http.client.HTTPResponse | None = None
     try:
@@ -2414,7 +2455,15 @@ def _download_verified(
                     raise BootstrapRefusal("runtime download exceeded expected size")
                 stream.write(chunk)
                 digest.update(chunk)
+                if terms_payload is not None:
+                    terms_payload.extend(chunk)
                 observed_size += len(chunk)
+            if terms_payload is not None:
+                raw_sha256 = digest.hexdigest()
+                canonical = _canonicalize_nvidia_terms(bytes(terms_payload))
+                digest = hashlib.sha256(canonical)
+                stream.seek(0)
+                stream.write(canonical)
             stream.flush()
             os.fsync(stream.fileno())
     except Exception:
@@ -2431,6 +2480,13 @@ def _download_verified(
             "runtime download bytes do not match their immutable identity"
         )
     temporary.replace(destination)
+    if terms_normalization is not None:
+        print(json.dumps({
+            "schema": "npa.libero.governing-terms-normalization.v1",
+            "url": url, "normalization": terms_normalization,
+            "raw_sha256": raw_sha256, "canonical_sha256": digest.hexdigest(),
+            "size_bytes": observed_size,
+        }, sort_keys=True), file=sys.stderr, flush=True)
 
 
 def _governing_terms_identity(manifest: dict[str, Any]) -> str:
@@ -2441,6 +2497,7 @@ def _governing_terms_identity(manifest: dict[str, Any]) -> str:
             "sha256": term["sha256"],
             "size_bytes": term["size_bytes"],
             "url": term["url"],
+            **({"normalization": term["normalization"]} if "normalization" in term else {}),
         }
         for term in manifest["governing_terms"]
     ]
@@ -2464,6 +2521,7 @@ def _verify_governing_terms(
                 size=int(term["size_bytes"]),
                 terms=True,
                 deadline=deadline,
+                terms_normalization=term.get("normalization"),
             )
     return _governing_terms_identity(manifest)
 

@@ -414,7 +414,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         "cudnn-eula",
     }
     assert all(
-        set(item)
+        set(item) - {"normalization"}
         == {"id", "name", "boundary", "version", "url", "size_bytes", "sha256"}
         and item["name"].strip()
         and item["version"] == f"sha256:{item['sha256']}"
@@ -423,6 +423,11 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
         for item in manifest["governing_terms"]
     )
+    normalized = [item for item in manifest["governing_terms"] if "normalization" in item]
+    assert len(normalized) == 1
+    assert normalized[0]["id"] == "nvidia-software-license"
+    assert normalized[0]["normalization"] == "nvidia-navigation-uuid-v1"
+    assert normalized[0]["sha256"] == "3f13fbe637d25533777fff3785752b530401c10055acfcffe28540f33263e17f"
     assert "ACCEPT_" not in serialized
     assert manifest["customer_runtime_authorization"] == {
         "schema": "npa.libero.customer-runtime-authorization.v2",
