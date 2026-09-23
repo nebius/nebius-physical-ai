@@ -2,8 +2,8 @@ apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 metadata:
   name: flex-pi-b300-inference
-  description: Run real compiled Flex-Pi inference on one B300 with the pinned runtime-fetched
-    CUDA 12.9 assembler; requires the submitted NPA source overlay.
+  description: Run real compiled Flex-Pi inference on one B300 with a hash-pinned
+    runtime-fetched PyTorch/CUDA/Triton stack; requires the NPA source overlay.
 config:
   bucket: example-bucket
   prefix: runs/{{run.id}}/flex-pi-b300

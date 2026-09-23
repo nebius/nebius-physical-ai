@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "57abe9fe7d5fe598cf59235bf998f2e21ef18875a17e9819d0c9ba0368942b5a",
+  "workflow_sha256": "19425116cde912354db573b444a3d01d4373fdce279a4fb73abe2c28168545f1",
   "planning": {
     "validation": {
       "status": "verified",
@@ -42,15 +42,16 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "Uses the released r2 image plus the current NPA source overlay and separately hash-pinned runtime CUDA 12.9.86 assembler.",
+      "reason": "Uses the released r2 base image, the submitted NPA source overlay, and a separately hash-pinned private PyTorch 2.8.0/CUDA 12.9/Triton 3.4.0 runtime with CUDA 12.9.86 assembler.",
       "evidence": [
         "npa/src/npa/deploy/public_release_manifest.json",
-        "npa/src/npa/workbench/flex_pi/compiler.py"
+        "npa/src/npa/workbench/flex_pi/compiler.py",
+        "npa/src/npa/workbench/flex_pi/b300-runtime-requirements.txt"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Managed B300 deployment and CUDA/SkyPilot health passed. The original compiled inference exposed missing sm_103a assembler support; full policy qualification of the pinned compiler repair remains pending.",
+      "reason": "Managed B300 deployment and CUDA/SkyPilot health passed. Compiled inference exposed both old assembler and LLVM support; policy qualification of the matched runtime repair remains pending.",
       "evidence": [
         "docs/workbench/flex-pi.md",
         "sanitized private B300 deployment and failed-inference evidence"

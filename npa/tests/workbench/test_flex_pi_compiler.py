@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+from urllib.parse import urlparse
 import zipfile
 
 import pytest
@@ -33,7 +34,10 @@ def test_compiler_checks_bytes_and_extracts_only_exact_members(tmp_path, monkeyp
     _wheel(monkeypatch)
     directory = tmp_path / "compiler"
     environment, receipt = compiler.prepare_b300_compiler(directory)
-    assert environment == {"TRITON_PTXAS-BLACKWELL_PATH": str(directory / "ptxas")}
+    assert environment == {
+        "TRITON_PTXAS-BLACKWELL_PATH": str(directory / "ptxas"),
+        "TRITON_PTXAS_PATH": str(directory / "ptxas"),
+    }
     assert (directory / "ptxas").read_bytes() == b"assembler"
     assert (directory / "ptxas").stat().st_mode & 0o777 == 0o700
     assert (directory / "License.txt").read_bytes() == b"vendor terms"
@@ -73,11 +77,15 @@ def test_only_real_compiled_b300_inference_fetches_and_records_compiler(
     calls = []
     receipt = {"version": "12.9.86", "runtime_fetch": True}
 
-    def prepare(directory):
+    def prepare(directory, *, base_python):
         calls.append(directory)
-        return {"TRITON_PTXAS-BLACKWELL_PATH": "/run-owned/ptxas"}, receipt
+        return (
+            "/run-owned/python",
+            {"TRITON_PTXAS-BLACKWELL_PATH": "/run-owned/ptxas"},
+            receipt,
+        )
 
-    monkeypatch.setattr(compiler, "prepare_b300_compiler", prepare)
+    monkeypatch.setattr(compiler, "prepare_b300_runtime", prepare)
     manifest = tmp_path / "input.json"
     manifest.write_text(
         json.dumps(
@@ -93,6 +101,8 @@ def test_only_real_compiled_b300_inference_fetches_and_records_compiler(
     )
 
     def runner(argv, **kwargs):
+        if fetches:
+            assert argv[0] == "/run-owned/python"
         assert kwargs["env"].get("TRITON_PTXAS-BLACKWELL_PATH") == (
             "/run-owned/ptxas" if fetches else None
         )
@@ -123,3 +133,87 @@ def test_only_real_compiled_b300_inference_fetches_and_records_compiler(
     )
     assert len(calls) == fetches
     assert result.get("compiler") == (receipt if fetches else None)
+
+
+def test_private_runtime_is_hash_locked_and_probed_before_return(tmp_path, monkeypatch):
+    monkeypatch.setenv("NPA_FLEX_PI_TOKEN", "private-service-token")
+    monkeypatch.setattr(
+        compiler,
+        "prepare_b300_compiler",
+        lambda directory: ({"TRITON_PTXAS_PATH": "/private/ptxas"}, {}),
+    )
+    calls = []
+
+    def run(argv, **kwargs):
+        assert "NPA_FLEX_PI_TOKEN" not in kwargs["env"]
+        assert kwargs["env"]["TRITON_PTXAS_PATH"] == "/private/ptxas"
+        calls.append(argv)
+        output = (
+            json.dumps({"compiled_kernel_preflight": "passed"})
+            if len(calls) == 4
+            else ""
+        )
+        return subprocess.CompletedProcess(argv, 0, stdout=output)
+
+    monkeypatch.setattr(compiler.subprocess, "run", run)
+    python, environment, receipt = compiler.prepare_b300_runtime(
+        tmp_path / "runtime", base_python="/vendor/python"
+    )
+    assert python == str(tmp_path / "runtime/vendor/bin/python")
+    assert calls[1][:4] == ["/vendor/python", "-m", "venv", "--system-site-packages"]
+    assert {"--no-deps", "--no-index", "--ignore-installed", "--require-hashes"} <= set(
+        calls[2]
+    )
+    assert calls[3] == [python, "-c", compiler._COMPILED_KERNEL_PREFLIGHT]
+    assert environment["TRITON_PTXAS_PATH"] == "/private/ptxas"
+    assert Path(environment["TRITON_CACHE_DIR"]).is_relative_to(tmp_path / "runtime")
+    assert Path(environment["TORCHINDUCTOR_CACHE_DIR"]).is_relative_to(
+        tmp_path / "runtime"
+    )
+    lock = (
+        Path(compiler.__file__).with_name("b300-runtime-requirements.txt").read_bytes()
+    )
+    assert (
+        receipt["vendor_runtime"]["requirements_sha256"]
+        == hashlib.sha256(lock).hexdigest()
+    )
+
+
+def test_private_runtime_stops_at_unverified_install(tmp_path, monkeypatch):
+    monkeypatch.setattr(compiler, "prepare_b300_compiler", lambda directory: ({}, {}))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        failed = "install" in argv
+        return subprocess.CompletedProcess(
+            argv, int(failed), stdout="hash mismatch" if failed else ""
+        )
+
+    monkeypatch.setattr(compiler.subprocess, "run", run)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        compiler.prepare_b300_runtime(
+            tmp_path / "runtime", base_python="/vendor/python"
+        )
+    assert len(calls) == 3
+
+
+def test_b300_runtime_lock_has_only_hash_pinned_official_wheels():
+    lock = (
+        Path(compiler.__file__).with_name("b300-runtime-requirements.txt").read_text()
+    )
+    lines = [line for line in lock.splitlines() if line and not line.startswith("#")]
+    assert len(lines) == 19
+    for line in lines:
+        name, separator, artifact = line.partition(" @ ")
+        assert name and separator
+        url, separator, digest = artifact.partition(" --hash=sha256:")
+        assert (
+            separator
+            and len(digest) == 64
+            and all(c in "0123456789abcdef" for c in digest)
+        )
+        parsed = urlparse(url)
+        assert parsed.scheme == "https"
+        assert parsed.hostname in {"download.pytorch.org", "files.pythonhosted.org"}
+        assert parsed.path.endswith(".whl") and not parsed.query

@@ -309,14 +309,14 @@ def run_inference(
         if request.torch_compile and request.expected_gpu.upper() == "B300":
             from zipfile import BadZipFile
 
-            from npa.workbench.flex_pi.compiler import prepare_b300_compiler
+            from npa.workbench.flex_pi.compiler import prepare_b300_runtime
 
             try:
-                compiler_env, base["compiler"] = prepare_b300_compiler(
-                    root / "compiler"
+                argv[0], compiler_env, base["compiler"] = prepare_b300_runtime(
+                    root / "compiler", base_python=argv[0]
                 )
             except (OSError, ValueError, KeyError, BadZipFile) as exc:
-                raise FlexPiError("B300 compiler preparation failed") from exc
+                raise FlexPiError(f"B300 compiler preparation failed: {exc}") from exc
         _execute(argv, request, runner, compiler_env=compiler_env)
         action_payload = _validate_action_artifact(root / "actions.json", request)
         result = {

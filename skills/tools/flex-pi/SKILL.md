@@ -95,7 +95,20 @@ npa workbench workflow submit workflows/testing/flex-pi-b200-inference.yaml \
 ```
 
 Use `flex-pi-rtxpro-inference.yaml` for the independent RTX PRO 6000 path.
-Both maintained workflow specs resolve through a toolRef that passes the
+Use `flex-pi-b300-inference.yaml` for the experimental one-B300 path. It
+requires the current NPA source overlay and runtime-fetches a hash-pinned private
+PyTorch 2.8.0/CUDA 12.9/Triton 3.4.0 stack plus CUDA 12.9.86 assembler for native
+`sm_103a` compilation. Require its compiled reduction preflight before model fetch. Keep its NVIDIA CUDA Toolkit
+EULA beside the private runtime binary; do not bake or publish that binary.
+Submit automatically stages source when the workflow requests an overlay, even
+with a pinned image. Confirm the rendered task carries `NPA_SRC_S3_URI` and
+`NPA_SRC_OVERLAY=1`; record the source fingerprint and compiler hashes separately
+from the base-image digest. A B300 result with this overlay does not qualify the
+unmodified released image. Four one-GPU hosts also require independent multi-node
+training validation; they are not a performance substitute for four GPUs sharing
+one host's NVLink fabric.
+
+The maintained inference workflow specs resolve through a toolRef that passes the
 literal `--torch-compile` flag. This compiles only the upstream denoising step
 after complete checkpoint load and performs its warmup before timed inference.
 For a direct CLI or SDK call, opt in explicitly; do not infer compile mode from
@@ -201,6 +214,9 @@ down a shared or pre-existing cluster.
   silently reduce cameras, horizon, action dimensions, or checkpoint fidelity.
 - GPU mismatch: inspect scheduler labels and the artifact's device name. Do not
   infer RTX support from a B200 result, or B200 support from an RTX result.
+- B300 `sm_103a` assembler rejection: confirm the source overlay was staged and
+  the pinned runtime compiler was selected. Do not disable compilation or
+  substitute another architecture to make the run pass.
 - Invalid actions: retain the failed artifact privately and diagnose upstream;
   never coerce, clip, or fabricate values to pass validation.
 
