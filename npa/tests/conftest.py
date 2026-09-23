@@ -315,6 +315,23 @@ def scrub_ambient_credential_env(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def isolate_instance_metadata(monkeypatch, request):
+    """Unit tests must not stat the host's mounted credential filesystem."""
+    if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+        return
+    original_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda path: (
+            False
+            if str(path) == "/mnt/cloud-metadata/token"
+            else original_is_file(path)
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
 def isolate_home_config(monkeypatch, tmp_path_factory, request):
     """Isolate non-live tests from the operator's real ~/.npa, ~/.aws, ~/.ssh.
 

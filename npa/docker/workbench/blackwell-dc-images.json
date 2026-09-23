@@ -663,6 +663,14 @@
       "validated_digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"
     },
     {
+      "name": "npa-antioch",
+      "dockerfile": "antioch/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "FastAPI service import, non-root runtime, and proprietary-payload image scan",
+      "notes": "CPU-only control-plane adapter. Antioch-managed simulation capacity is remote; this image contains no CUDA, simulator engine, Antioch wheel, credentials, or customer payloads."
+    },
+    {
       "name": "npa-fiftyone",
       "dockerfile": "fiftyone/Dockerfile",
       "verdict": "not-applicable",
