@@ -124,9 +124,24 @@ def _initialize_rank():
 def _runtime_receipt():
     import torch
 
+    from npa.workbench.flex_pi.training_artifacts import sha256_file
+
+    cudnn_libraries = sorted(
+        {
+            line.split()[-1]
+            for line in Path("/proc/self/maps").read_text().splitlines()
+            if "/libcudnn" in line
+        }
+    )
+
     return {
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version(),
+        "cudnn_libraries": [
+            {"name": Path(library).name, "sha256": sha256_file(library)}
+            for library in cudnn_libraries
+        ],
         "gpu_name": torch.cuda.get_device_name(),
         "gpu_memory_bytes": torch.cuda.get_device_properties(
             torch.cuda.current_device()
