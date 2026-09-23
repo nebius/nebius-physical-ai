@@ -14,6 +14,7 @@ test ! -e "$runtime_root/source/.git"
 export BYOF_REPO_ROOT="$runtime_root/source"
 export LIBERO_CONFIG_PATH="$output_root/.libero-config"
 export LIBERO_EXPERIMENT_DIR="$(mktemp -d /tmp/npa-libero-experiment.XXXXXXXX)"
+export NUMBA_CACHE_DIR="$LIBERO_EXPERIMENT_DIR/numba-cache"
 cleanup_runtime_scratch() {
   rm -f "$LIBERO_CONFIG_PATH/config.yaml"
   if ! rmdir "$LIBERO_CONFIG_PATH"; then

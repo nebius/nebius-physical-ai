@@ -45,7 +45,7 @@ RUN set -eux; \
         base|dependency|direct) test "$(dpkg-query -W -f='${Version}' "$package")" = "$version" ;; \
       esac; \
     done < /opt/npa/libero/debian-packages.lock; \
-    for package in openssh-server rsync sudo cmake make g++; do \
+    for package in openssh-server rsync sudo cmake make g++ libgl1 libegl1 libglib2.0-0; do \
       test "$(dpkg-query -W -f='${Status}' "$package")" = 'install ok installed'; \
     done; \
     test "$(dpkg-query -W -f='${Version}' linux-libc-dev)" = '6.1.180-1'; \

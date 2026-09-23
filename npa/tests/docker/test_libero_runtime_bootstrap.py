@@ -826,6 +826,10 @@ def _install_fake_materializers(
         python.parent.mkdir(parents=True)
         python.write_text(
             '#!/bin/sh\nset -eu\ntest -f "$LIBERO_CONFIG_PATH/config.yaml"\n'
+            'test "$NUMBA_CACHE_DIR" = "$LIBERO_EXPERIMENT_DIR/numba-cache"\n'
+            'mkdir "$NUMBA_CACHE_DIR"\n'
+            'printf compiled > "$NUMBA_CACHE_DIR/fixture.nbc"\n'
+            'printf "%s\\n" "$LIBERO_EXPERIMENT_DIR"\n'
             f"exit {python_exit}\n",
             encoding="utf-8",
         )
@@ -1523,6 +1527,9 @@ def test_real_fd_anchored_venv_install_survives_publication(
     wheel = tmp_path / "fd_fixture-1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("fd_fixture.py", "VALUE = 42\ndef main(): print(VALUE)\n")
+        script = zipfile.ZipInfo("fd_fixture-1.0.data/scripts/fd_script.py")
+        script.external_attr = (stat.S_IFREG | 0o755) << 16
+        archive.writestr(script, "#!python\nimport fd_fixture; print(fd_fixture.VALUE)\n")
         archive.writestr(
             "fd_fixture-1.0.dist-info/METADATA",
             "Metadata-Version: 2.1\nName: fd-fixture\nVersion: 1.0\n",
@@ -1568,6 +1575,7 @@ def test_real_fd_anchored_venv_install_survives_publication(
             published_root=published,
             deadline=datetime.now(timezone.utc) + timedelta(minutes=5) if bounded else None,
         )
+        assert (partial / "venv/bin/__pycache__").is_dir()
         assert module._inventory_entries(partial)  # Blanket no-symlink check.
         os.rename(".partial", "published", src_dir_fd=descriptor, dst_dir_fd=descriptor)
         if bounded:
@@ -1585,6 +1593,9 @@ def test_real_fd_anchored_venv_install_survives_publication(
     ).strip() == "42"
     assert subprocess.check_output(
         [str(published / "venv/bin/fd-fixture")], text=True, env=environment
+    ).strip() == "42"
+    assert subprocess.check_output(
+        [str(published / "venv/bin/fd_script.py")], text=True, env=environment
     ).strip() == "42"
     assert "pip " in subprocess.check_output(
         [str(published / "venv/bin/pip"), "--version"], text=True, env=environment
@@ -1605,6 +1616,32 @@ def test_venv_relocation_refuses_unexpected_links(tmp_path) -> None:
     (venv / "bin" / "linked-script").symlink_to(outside)
     with pytest.raises(module.BootstrapRefusal, match="not a regular file"):
         module._prepare_published_venv(venv, tmp_path / "published")
+    assert outside.read_text() == str(venv)
+
+
+@pytest.mark.parametrize("entry", ["directory", "cache-link", "cache-child-link"])
+def test_venv_script_cache_keeps_nonregular_entry_refusals(tmp_path, entry) -> None:
+    module = _load_module()
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("fixture\n")
+    outside = tmp_path / "outside"
+    outside.write_text(str(venv))
+    cache = venv / "bin/__pycache__"
+    if entry == "directory":
+        (venv / "bin/unexpected").mkdir()
+    elif entry == "cache-link":
+        cache.symlink_to(tmp_path, target_is_directory=True)
+    else:
+        cache.mkdir()
+        (cache / "outside.pyc").symlink_to(outside)
+    if entry == "cache-child-link":
+        module._prepare_published_venv(venv, tmp_path / "published")
+        with pytest.raises(module.BootstrapRefusal, match="may not contain symlinks"):
+            module._inventory_entries(venv)
+    else:
+        with pytest.raises(module.BootstrapRefusal, match="not a regular file"):
+            module._prepare_published_venv(venv, tmp_path / "published")
     assert outside.read_text() == str(venv)
 
 
@@ -2200,6 +2237,9 @@ def test_smoke_propagates_status_and_never_writes_into_sealed_cache(
     assert module._inventory_entries(final) == before
     assert not (final / "libero-config").exists()
     assert not (output / ".libero-config").exists()
+    scratch = Path(completed.stdout.strip())
+    assert scratch.name.startswith("npa-libero-experiment.")
+    assert not scratch.exists()
 
 
 def test_verified_warm_cache_reuse_performs_no_network_fetch(

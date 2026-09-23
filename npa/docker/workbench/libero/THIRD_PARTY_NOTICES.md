@@ -22,6 +22,10 @@ records are authoritative for the separately licensed base and package bytes.
   toolchain and their Debian dependencies build runtime-authorized source
   packages inside the existing network-isolated sandbox; runtime packages
   and their generated wheels remain absent from the image.
+  The pinned GLVND, Mesa, GLib, and associated Debian dependencies provide
+  neutral OpenGL/EGL dispatch and utility libraries needed to import the
+  authorized runtime. NVIDIA driver libraries remain supplied by the host
+  runtime and are absent from the image.
 - The NPA bootstrap, scanner, workflow, and test code is Apache-2.0 under this
   repository's license.
 

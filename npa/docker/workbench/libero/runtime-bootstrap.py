@@ -2972,7 +2972,12 @@ def _prepare_published_venv(venv: Path, published_venv: Path) -> None:
     old_prefix = str(venv).encode()
     new_prefix = str(published_venv).encode()
     for path in [venv / "pyvenv.cfg", *sorted((venv / "bin").iterdir())]:
-        if not stat.S_ISREG(path.lstat().st_mode):
+        mode = path.lstat().st_mode
+        # pip compiles installed .py scripts here. Recursive cache inventory
+        # and sealing still reject symlinks or special entries inside it.
+        if path.name == "__pycache__" and stat.S_ISDIR(mode):
+            continue
+        if not stat.S_ISREG(mode):
             raise BootstrapRefusal("runtime venv entrypoint is not a regular file")
         payload = path.read_bytes()
         # Python executables remain byte-identical; only generated UTF-8 scripts

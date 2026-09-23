@@ -170,6 +170,7 @@ def test_smoke_writes_runtime_configuration_only_under_output_boundary() -> None
     assert 'rm -f "$LIBERO_CONFIG_PATH/config.yaml"' in text
     assert 'rmdir "$LIBERO_CONFIG_PATH"' in text
     assert 'LIBERO_EXPERIMENT_DIR="$(mktemp -d /tmp/' in text
+    assert 'NUMBA_CACHE_DIR="$LIBERO_EXPERIMENT_DIR/numba-cache"' in text
     assert 'rm -rf -- "$LIBERO_EXPERIMENT_DIR"' in text
     assert 'cfg.experiment_dir = os.environ["LIBERO_EXPERIMENT_DIR"]' in (
         IMAGE_ROOT / "libero_smoke.py"
@@ -347,8 +348,8 @@ def test_debian_lock_closes_selected_binary_and_corresponding_source() -> None:
     source_rows = [row for row in lines if row[0] == "source"]
 
     assert f"# Debian rootfs manifest sha256: {DEBIAN_ROOTFS_MANIFEST}" in text
-    assert len(binary_rows) == 193
-    assert len(source_rows) == 387
+    assert len(binary_rows) == 235
+    assert len(source_rows) == 448
     assert len({row[1] for row in binary_rows}) == len(binary_rows)
     direct = {row[1]: row[2] for row in binary_rows if row[0] == "direct"}
     for package in (
@@ -359,6 +360,9 @@ def test_debian_lock_closes_selected_binary_and_corresponding_source() -> None:
         "g++",
         "cmake",
         "make",
+        "libgl1",
+        "libegl1",
+        "libglib2.0-0",
         "git",
         "linux-libc-dev",
         "netcat-openbsd",
