@@ -4770,6 +4770,7 @@ def _durable_workflow_status(
             if isinstance(item, dict)
         ]
         run_manifest = runtime_manifest_view(run_manifest, runtime_waves)
+        _merge_runtime_resource_profiles(run_manifest.steps, runtime_waves)
         recorded_manifest_status = str(run_manifest.status or "").upper()
         for step in run_manifest.steps:
             name = str(step.get("state") or "")
@@ -5148,6 +5149,19 @@ def _runtime_resource_profiles(
     return profiles
 
 
+def _merge_runtime_resource_profiles(
+    steps: Sequence[dict[str, object]],
+    runtime_waves: Sequence[Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Fill missing step resources from the latest durable wave snapshot."""
+    profiles = _runtime_resource_profiles(runtime_waves)
+    for step in steps:
+        state = str(step.get("state") or "")
+        if not step.get("resources_profile") and state in profiles:
+            step["resources_profile"] = dict(profiles[state])
+    return profiles
+
+
 def _preview_failure_diagnostic(workflow_record: Mapping[str, object]) -> str:
     """Return a safe diagnostic for a recorded submission-preview failure."""
     from npa.verification import sanitize_reason
@@ -5196,11 +5210,7 @@ def _manifest_pending_status(
         for item in resolution.runtime_state.get("waves") or []
         if isinstance(item, dict)
     ]
-    runtime_profiles = _runtime_resource_profiles(runtime_waves)
-    for step in steps:
-        state = str(step.get("state") or "")
-        if not step.get("resources_profile") and state in runtime_profiles:
-            step["resources_profile"] = dict(runtime_profiles[state])
+    runtime_profiles = _merge_runtime_resource_profiles(steps, runtime_waves)
     active_wave = next(
         (
             item

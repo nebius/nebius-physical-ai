@@ -478,6 +478,22 @@ wave's actual rendered resource requests and a versioned set of resolved image
 references. Resume and replay reject inconsistent reference hashes. Mutable tags
 remain explicitly reference-string evidence; they do not attest to image bytes.
 
+A subsequent RTX qualification confirmed that resource and image identities were
+persisted, but exposed a status-projection gap: when the available run manifest
+omitted its step list, reconstructed stages lost their resource profiles. Status
+now fills missing profiles from the persisted runtime waves and preserves any
+nonempty profile already supplied by the manifest. Regression coverage exercises
+both the omitted-step case and preservation of an existing profile.
+
+That qualification stopped at its disk-capacity gate before model initialization
+or optimizer updates. The cache had 25.1 GB free against a frozen 34.4 GB admission
+threshold. Independent provider readback preserved the failure manifest and its
+original capacity diagnostic; the readback receipt has SHA-256
+`1f7180b5789438f22ecb2ac74b2e46795104790cd1da0f8d8891ddd630f3a0dc`.
+The worker, controller, and isolated API were cleaned up while retaining the
+cache contents. This is an operational failure observation, with no new policy
+quality result.
+
 ### Specialist recovery and Workbench task status
 
 The released SFT specialist ultimately completed all ten original development

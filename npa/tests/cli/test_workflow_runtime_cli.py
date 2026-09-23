@@ -17,6 +17,8 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
+from npa.orchestration.npa_workflow.run_state import RunManifest
+from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -117,6 +119,77 @@ def test_pending_status_projects_runtime_resource_snapshot_and_preview_error() -
     assert stage["requested_accelerators"] == "B200:1"
     assert stage["resources_profile"] == {"accelerators": "B200:1", "cpus": 16}
     assert any("decision unavailable" in item for item in payload["diagnostics"])
+
+
+def test_available_manifest_projects_runtime_resource_snapshot(mocker) -> None:
+    from npa.cli.workbench.workflow import _durable_workflow_status
+
+    profile = {"accelerators": "GPU:1", "cpus": "16+", "memory": "128+"}
+    manifest = RunManifest(
+        "training", "resource-snapshot", "npa.workflow/v0.0.1", status="running"
+    )
+    resolution = RunResolution(
+        run_id="resource-snapshot",
+        project="test",
+        found=True,
+        source="durable_runtime_ledger",
+        manifest=manifest.to_dict(),
+        runtime_state={
+            "schema_version": "npa.workflow.runtime.v1",
+            "status": "running",
+            "waves": [
+                {
+                    "key": "001|serial|:qualify:-",
+                    "states": ["qualify"],
+                    "status": "running",
+                    "attempt": 1,
+                    "resource_profiles": {"qualify": profile},
+                }
+            ],
+        },
+        state=WorkflowS3Config(
+            bucket="bucket",
+            prefix="resource-snapshot/npa-workflow",
+            endpoint_url="https://storage.example.test",
+            aws_access_key_id="test",
+            aws_secret_access_key="test",
+        ),
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.run_resolution.resolve_run",
+        return_value=resolution,
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.supervisor.SupervisorLedger.latest",
+        return_value=None,
+    )
+
+    payload = _durable_workflow_status("resource-snapshot", cached=True)
+
+    assert payload["stages"]["qualify"]["requested_accelerators"] == "GPU:1"
+    assert payload["stages"]["qualify"]["resources_profile"] == profile
+
+
+def test_runtime_resource_snapshot_preserves_manifest_profile() -> None:
+    from npa.cli.workbench.workflow import _merge_runtime_resource_profiles
+
+    existing = {"accelerators": "GPU:1", "memory": "64+", "source": "manifest"}
+    steps = [{"state": "qualify", "resources_profile": existing.copy()}]
+    waves = [
+        {
+            "resource_profiles": {
+                "qualify": {
+                    "accelerators": "OTHER:8",
+                    "memory": "512+",
+                    "source": "runtime",
+                }
+            }
+        }
+    ]
+
+    _merge_runtime_resource_profiles(steps, waves)
+
+    assert steps[0]["resources_profile"] == existing
 
 
 def test_runtime_submission_receipt_preserves_redacted_preview_failure(
