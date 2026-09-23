@@ -229,6 +229,12 @@ def _observe(core, binding, job_id: str, managed, target: dict[str, Any]):
     statuses = (pod.get("status") or {}).get("containerStatuses") or []
     if not statuses:
         raise LookupError("payload container has not started")
+    if (
+        len(statuses) == 1 and pod["status"].get("phase") == "Pending"
+        and statuses[0].get("imageID", "") == ""
+        and (statuses[0].get("state", {}).get("waiting") or {}).get("reason") == "ContainerCreating"
+    ):
+        raise LookupError("payload container image is still being prepared")
     digest = binding.candidate_image.rsplit("@", 1)[1]
     if len(statuses) != 1 or re.findall(r"sha256:[0-9a-f]{64}", statuses[0].get("imageID", "")) != [digest]:
         raise ValueError("actual payload imageID differs from the qualified digest")

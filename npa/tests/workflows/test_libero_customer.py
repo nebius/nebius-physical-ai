@@ -219,6 +219,46 @@ def test_customer_observer_uses_pinned_single_task_dag_name(monkeypatch, tmp_pat
         module.submit(args)
 
 
+@pytest.mark.parametrize("case", ["creating", "running", "wrong_creating", "wrong_running", "empty_running", "extra_container"])
+def test_customer_observer_waits_only_for_unresolved_creating_image(case):
+    module = driver()
+    digest = "sha256:" + "a" * 64
+    status = {"imageID": "", "state": {"waiting": {"reason": "ContainerCreating"}}}
+    pod = {
+        "spec": {"nodeName": "unit-node", "serviceAccountName": "unit-account",
+                 "containers": [{"resources": {"limits": {"nvidia.com/gpu": "1"}}}]},
+        "status": {"phase": "Pending", "containerStatuses": [status]},
+    }
+    if case.endswith("running"):
+        pod["status"]["phase"] = "Running"
+        status["state"] = {"running": {"startedAt": "2026-01-01T00:00:00Z"}}
+        status["imageID"] = "docker-pullable://unit@" + digest
+    if case.startswith("wrong_"):
+        status["imageID"] = "docker-pullable://unit@sha256:" + "b" * 64
+    elif case == "empty_running":
+        status["imageID"] = ""
+    elif case == "extra_container":
+        pod["status"]["containerStatuses"].append(dict(status))
+    core = SimpleNamespace(read_node=lambda _: SimpleNamespace(
+        metadata=SimpleNamespace(labels={"nvidia.com/gpu.product": "NVIDIA-B200"}),
+        status=SimpleNamespace(allocatable={"nvidia.com/gpu": "1"}),
+    ))
+    binding = SimpleNamespace(candidate_image="unit@" + digest, access_state=SimpleNamespace(service_account_uid="unit-account-uid"))
+    evidence = {"payload_pod_name_sha256": "c" * 64, "payload_pod_uid_sha256": "d" * 64}
+    managed = SimpleNamespace(_libero_payload_pod_record=lambda _binding, **_kwargs: (pod, evidence))
+    target = {"allowed_node": "unit-node", "namespace": "unit-namespace"}
+    if case == "creating":
+        with pytest.raises(LookupError, match="still being prepared"):
+            module._observe(core, binding, "42", managed, target)
+    elif case == "running":
+        observed_pod, observation = module._observe(core, binding, "42", managed, target)
+        assert observed_pod is pod
+        assert observation["pod_observed_image_digest"] == digest
+    else:
+        with pytest.raises(ValueError, match="imageID differs"):
+            module._observe(core, binding, "42", managed, target)
+
+
 @pytest.mark.parametrize("attempted", [False, None, True])
 def test_submit_failure_preserves_ambiguous_launch_recovery(monkeypatch, tmp_path, attempted):
     module, args, calls = _submit_fixture(monkeypatch, tmp_path)
