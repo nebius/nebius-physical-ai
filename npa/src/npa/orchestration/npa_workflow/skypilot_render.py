@@ -688,6 +688,22 @@ def tool_image_key(tool_ref: str) -> str | None:
     return TOOL_REF_IMAGE_TOOL.get(best)
 
 
+def source_overlay_requested(config: Mapping[str, Any]) -> bool:
+    """Resolve the overlay opt-in consistently for staging and rendering."""
+    import os
+
+    if str(config.get("require_baked_npa") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    return str(
+        os.environ.get("NPA_SRC_OVERLAY") or config.get("source_overlay") or ""
+    ).strip().lower() in {"1", "true"}
+
+
 def tool_requires_staged_npa_source(tool_ref: str) -> bool:
     """Return whether a tool's selected runtime image needs staged NPA source.
 
@@ -2196,8 +2212,6 @@ def build_skypilot_task_doc(
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
     # it once with `npa configure --src-s3-uri` so the next shell still finds it.
-    import os
-
     src_uri = resolve_src_s3_uri()
     if require_baked:
         # Exact images must contain the full runtime and pinned dependencies. Never
@@ -2227,17 +2241,7 @@ def build_skypilot_task_doc(
             doc["envs"] = envs
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
-        if (
-            str(
-                os.environ.get("NPA_SRC_OVERLAY")
-                or spec.config.get("source_overlay")
-                or ""
-            )
-            .strip()
-            .lower()
-            in {"1", "true"}
-            and src_uri
-        ):
+        if source_overlay_requested(spec.config) and src_uri:
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
     _inject_operator_registry_docker_secrets(

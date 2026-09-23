@@ -1332,7 +1332,7 @@ def submit_cmd(
             and (not existing_source_uri or persisted_source_is_stale)
         )
         stage_source_planned = stage_src is True or auto_stage_source
-        if image_pins_all_tasks:
+        if image_pins_all_tasks and not requires_npa_source:
             source_action = "image-override"
         elif stage_source_planned:
             source_action = "planned"
@@ -3020,12 +3020,13 @@ def _plan_requires_npa_source(
     config_overrides: Mapping[str, str] | None = None,
     options: SkypilotRenderOptions,
 ) -> bool:
-    """Return whether any fully configured planned step lacks a container image."""
+    """Return whether the merged plan needs source, including an explicit overlay."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
+        source_overlay_requested,
         tool_requires_staged_npa_source,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
@@ -3035,6 +3036,10 @@ def _plan_requires_npa_source(
     # otherwise a fully digest-pinned workflow is incorrectly forced to stage an
     # unused source tree (and ``--no-stage-src`` cannot submit it at all).
     spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
+    # An image supplies the base runtime, but an explicit overlay must still
+    # stage the selected checkout. Otherwise the worker silently runs baked code.
+    if source_overlay_requested(spec.config):
+        return True
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
