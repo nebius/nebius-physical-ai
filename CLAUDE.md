@@ -124,11 +124,16 @@ making architecture, review, or domain judgments.
  toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workflows/physical-ai-data-factory/SKILL.md`: author, run, submit, or
  view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
- OSMO): annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label →
- Cosmos Curator + FiftyOne curate → Rerun visualize. The evaluator and curator
- are the real Apache-2.0 NVIDIA projects, wrapped as
- `npa workbench cosmos-evaluator` and `npa workbench cosmos-curate`; see
- `skills/NOTICE-NVIDIA-COSMOS-OSS` for which upstream code runs where.
+ OSMO/Airflow): annotate → Cosmos Transfer augment → Cosmos Evaluator gate →
+ re-label → Cosmos Curator + FiftyOne curate → Rerun visualize. The official
+ ecosystem and scaled-orchestration relationship is recorded in
+ `skills/NOTICE-NVIDIA-PAIDF`; executable evaluator/curator boundaries are in
+ `skills/NOTICE-NVIDIA-COSMOS-OSS`.
+- `skills/workflows/nvidia-osmo-to-npa-workflow/SKILL.md`: translate pinned
+ NVIDIA OSMO workflow definitions, or related authoritative Airflow DAGs, into
+ semantic `npa.workflow/v0.0.1` graphs while preserving real components, typed
+ handoffs, retry/failure behavior, evidence, licensing, and attribution without
+ claiming control-plane equivalence.
 - `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural
  reconstruction on Nebius — NCore V4 capture (including deriving the
  `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable
@@ -159,7 +164,7 @@ create a new split skill tree.
 
 ### Partner Capability Roadmap
 
-Onboarding NVIDIA Physical AI / Omniverse capabilities (CAD-to-SimReady, USD tooling, defect-image SDG, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`; those are not yet implemented in the workbench. **NuRec/NRE has landed** (`skills/workflows/neural-reconstruction/SKILL.md`), as has video data augmentation (`skills/workflows/physical-ai-data-factory/SKILL.md`). Add each remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
+Onboarding NVIDIA Physical AI / Omniverse capabilities is tracked in `docs/architecture/partner-skills-roadmap.md`. **NuRec/NRE and video data augmentation have landed**, and the PAIDF skill now covers native DIG Day-1 manual-ROI, IAA, and EVG specs. Their Workbench guide distinguishes implementation from completed live acceptance. Remaining DIG Day-0/PCBA alignment, CAD-to-SimReady, USD tooling, and SDG infrastructure capabilities retain their documented roadmap scope. Add a remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
 
 ## Project Instructions
 

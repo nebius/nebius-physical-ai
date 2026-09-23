@@ -24,7 +24,12 @@ licenses:
   - path: skills/NOTICE-NVIDIA-SKILLS
     applies_to:
       - physical-ai-data-factory
+      - nvidia-osmo-to-npa-workflow
       - neural-reconstruction
+  - path: skills/NOTICE-NVIDIA-PAIDF
+    applies_to:
+      - physical-ai-data-factory
+      - nvidia-osmo-to-npa-workflow
   - path: skills/NOTICE-PAIDF-STARTER-MEDIA
     applies_to:
       - physical-ai-data-factory
@@ -79,6 +84,17 @@ skills:
         path: npa/tests/guardrails/test_access_approval_skill.py
       - type: file_exists
         path: npa/tests/agent_eval/test_access_approval.py
+  - name: antioch
+    category: tools
+    when_to_use: "Deploy, operate, debug, or compose Antioch simulation, live OpenPI inference, and dataset-based policy training."
+    path: skills/tools/antioch/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "antioch", "run", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/partners/antioch/antioch-offline-policy-train.yaml
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."
@@ -840,7 +856,7 @@ skills:
         contains: "model-repo"
   - name: token-factory
     category: tools
-    when_to_use: "Zero-GPU hosted inference through Nebius Token Factory: captioning, batch text generation, and Cosmos physical-AI reasoning, plus key setup, model availability, and the CPU-only npa.workflow toolRefs that need no cluster."
+    when_to_use: "Hosted inference through Nebius Token Factory: captioning, text generation, physical-AI reasoning, and automatically routed robot SDG that records real MuJoCo camera/action demonstrations in LeRobot format."
     path: skills/tools/token-factory/SKILL.md
     smoke:
       - type: cli_help
@@ -848,6 +864,9 @@ skills:
         contains: "Token Factory"
       - type: cli_help
         args: ["workbench", "token-factory", "caption", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "token-factory", "robot-sdg", "--help"]
         contains: "input-path"
       - type: file_exists
         path: docs/workbench/token-factory.md
@@ -1134,6 +1153,7 @@ skills:
           - workflows/testing/av-night-scene-hardening.yaml
           - workflows/testing/cosmos-synth-fanout-curation.yaml
           - workflows/testing/physical-ai-data-factory.yaml
+          - workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
           - workflows/testing/tokenfactory-cosmos-gate.yaml
           - workflows/testing/token-factory-parallel-fanout.yaml
           - workflows/testing/token-factory-gate-loop.yaml
@@ -1234,12 +1254,17 @@ skills:
           - workflows/testing/openpi-pi05-full-droid-finetune.yaml
   - name: physical-ai-data-factory
     category: workflows
-    when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos Transfer augment -> Cosmos Evaluator gate -> re-label -> Cosmos Curator + FiftyOne curate -> Rerun visualize."
+    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/physical-ai-data-factory.yaml
+          - workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
+          - workflows/testing/paidf-defect-image-generation.yaml
+          - workflows/testing/paidf-image-attribute-augmentation.yaml
+          - workflows/testing/paidf-event-video-generation.yaml
+          - workflows/main/paidf-cosmos3.yaml
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
         contains: "--configs-uri"
@@ -1249,6 +1274,16 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos2", "transfer", "--help"]
         contains: "--mask-prompt"
+  - name: nvidia-osmo-to-npa-workflow
+    category: workflows
+    when_to_use: "Semantically translate a pinned NVIDIA OSMO workflow definition, or a related authoritative Airflow DAG, into npa.workflow/v0.0.1 without claiming control-plane equivalence."
+    path: skills/workflows/nvidia-osmo-to-npa-workflow/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
+      - type: file_exists
+        path: skills/NOTICE-NVIDIA-PAIDF
   - name: solution-licensing
     category: atomic
     when_to_use: "Adding or onboarding a solution, tool, container image, model weights, dataset, or runtime cache: reuse one operator-responsibility/use-scope decision, classify each artifact, design runtime fetch/cache reuse, and decide public vs restricted redistribution from built bytes."

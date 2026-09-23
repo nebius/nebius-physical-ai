@@ -11,7 +11,7 @@ import av
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 
 REPOSITORY = Path(__file__).parents[3]
 EVIDENCE = REPOSITORY / "docs/workbench/evidence/lerobot-video-subtasks"

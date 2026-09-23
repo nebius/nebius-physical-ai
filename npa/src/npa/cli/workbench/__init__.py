@@ -40,6 +40,30 @@ def _groot_light_app() -> typer.Typer:
     return light
 
 
+def _nurec_light_app() -> typer.Typer:
+    """Build the dependency-minimal NuRec surface used by viewer workers."""
+
+    from npa.cli.nurec import app as nurec_app
+
+    light = typer.Typer(
+        name="workbench",
+        help="Physical AI workbench tools.",
+        no_args_is_help=True,
+    )
+
+    @light.callback()
+    def main() -> None:
+        """Physical AI workbench tools."""
+
+        load_credentials(
+            warn=lambda msg: typer.echo(msg, err=True),
+            export_to_environment=True,
+        )
+
+    light.add_typer(nurec_app, name="nurec")
+    return light
+
+
 def _full_app() -> typer.Typer:
     """Build the complete workstation command tree on ordinary clients."""
 
@@ -51,6 +75,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.isaac_lab import app as isaac_lab_app
     from npa.cli.nurec import app as nurec_app
     from npa.cli.workbench.alpamayo2_super import app as alpamayo2_super_app
+    from npa.cli.workbench.antioch import app as antioch_app
     from npa.cli.workbench.byof import app as byof_app
     from npa.cli.workbench.cosmos2 import app as cosmos2_app
     from npa.cli.workbench.cosmos3 import app as cosmos3_app
@@ -97,6 +122,7 @@ def _full_app() -> typer.Typer:
             export_to_environment=True,
         )
 
+    full.add_typer(antioch_app, name="antioch")
     full.add_typer(lerobot_app, name="lerobot")
     full.add_typer(cosmos_app, name="cosmos")
     full.add_typer(cosmos2_app, name="cosmos2")
@@ -192,6 +218,8 @@ if _LIGHT_IMPORT:
 
         light.add_typer(cosmos3_app, name="cosmos3")
         app = light
+    elif _LIGHT_TOOL == "nurec":
+        app = _nurec_light_app()
     elif _LIGHT_TOOL == "rerun-viewer":
         app = _rerun_viewer_light_app()
     elif _LIGHT_TOOL == "isaac-arena":

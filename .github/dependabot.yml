@@ -1,0 +1,22 @@
+# Review coupled dependency changes together and validate one combined candidate.
+version: 2
+multi-ecosystem-groups:
+  dependencies:
+    schedule:
+      interval: daily
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /npa
+      - /npa/ci
+      - /scripts
+    patterns: ["*"]
+    multi-ecosystem-group: dependencies
+  - package-ecosystem: npm
+    directory: /npa/tests/browser
+    patterns: ["*"]
+    multi-ecosystem-group: dependencies
+  - package-ecosystem: github-actions
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: dependencies
