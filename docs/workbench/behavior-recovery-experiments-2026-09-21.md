@@ -344,6 +344,35 @@ outputs for its first-sample comparison; this does not prove that both paths
 used the intended device at every operation. The loader's explicit device
 placement is under investigation. No training checkpoint was produced.
 
+### Subsequent native training and scorer qualification
+
+Later probes resolved the batch-placement failures above. The real loader
+verified 3,072 sample identities across twelve batches of 256 with eight spawned
+workers. A B200 probe completed a native full-model optimizer update, with all
+3.35 billion parameters trainable and 49 of 51 parameter leaves changed. That
+updated state was discarded. These checks establish execution, not policy quality
+or sustained training throughput.
+
+A fresh-process resume probe restored the saved state and next batch exactly.
+Its continuation matched native parameters and reported metrics but differed in
+four AdamW moment arrays, so resume admission stayed closed. A subsequent probe
+excluded nondeterministic compiler operations, completed two native updates, and
+saved its checkpoint. A separate eager gradient diagnostic then requested another
+59.35 GiB and ran out of memory before the uninterrupted third update or fresh
+restore comparison. All 17 original failure artifacts were independently verified;
+the checkpoint remains unqualified. The next probe removes that duplicate
+gradient computation while retaining exact comparison of the actual native
+continuation's complete optimizer state and metrics.
+
+Two full parent holdout passes exceeded the frozen repeatability tolerance.
+A later diagnostic checked 60 examples across the same three tasks in two fresh
+processes. All transformed inputs, folded random keys, and cross-process loss
+bytes matched; all 120 within-process repeated loss calls also matched, with
+unchanged BF16 model state. Its 14 original artifacts were independently verified.
+This smaller check does not qualify the full 3,840-example scorer. The full check
+must pass without changing the selection rule or tolerance before candidate
+checkpoint scoring begins.
+
 ### Specialist recovery and Workbench task status
 
 The released SFT specialist ultimately completed all ten original development
