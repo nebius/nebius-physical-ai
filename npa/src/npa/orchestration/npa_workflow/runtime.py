@@ -2000,14 +2000,8 @@ class SkyPilotWaveExecutor:
         iteration = steps[0].iteration
         if iteration is not None:
             label = f"{label}-{iteration}"
-        base = _sanitize_job_name(f"{self.run_id}-{self._sequence:02d}-{label}")
-        if suffix:
-            # Preserve both immutable discriminators even when a long run ID
-            # exhausts SkyPilot/Kubernetes' name budget. Truncating either makes
-            # resume reconciliation capable of adopting a different batch or a
-            # prior failed attempt.
-            base = base[: 60 - len(suffix)].rstrip("-_")
-        return f"{base}{suffix}"
+        core = f"{self.run_id}-{self._sequence:02d}-{label}"
+        return _sanitize_job_name(core, suffix=suffix)
 
     def _submit(self, path: Path, job_name: str, attempt: WaveAttempt) -> Any:
         # A failed refresh or retry cannot inherit another launch's capacity proof.
@@ -2257,10 +2251,15 @@ class SkyPilotWaveExecutor:
             return "failed", sanitize_reason(exc)
 
 
-def _sanitize_job_name(name: str) -> str:
+def _sanitize_job_name(name: str, *, suffix: str = "") -> str:
     cleaned = "".join(char if char.isalnum() or char in "-_" else "-" for char in name)
     cleaned = cleaned.strip("-_").lower() or "npa-workflow"
-    return cleaned[:60].rstrip("-_")
+    available = 60 - len(suffix)
+    if len(cleaned) <= available:
+        return f"{cleaned}{suffix}"
+    discriminator = f"-h{hashlib.sha256(cleaned.encode('utf-8')).hexdigest()[:16]}"
+    prefix = cleaned[: available - len(discriminator)].rstrip("-_")
+    return f"{prefix}{discriminator}{suffix}"
 
 
 class RuntimeLedger:

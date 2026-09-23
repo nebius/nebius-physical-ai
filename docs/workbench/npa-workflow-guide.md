@@ -147,6 +147,12 @@ rejected for these workflows because a one-shot plan cannot honor their real
 data-dependent control flow. These workflows also reject `--assume-decision`
 for execution; use it only for offline planning previews.
 
+The runtime derives each managed-job name from the complete run ID, wave sequence,
+stage or group, and loop iteration. Names that exceed the provider limit retain a
+readable prefix plus a deterministic hash to distinguish runs or waves whose
+readable prefixes match. Resume continues to use the exact provider name already
+stored in durable run state, including names written by older NPA versions.
+
 | Field | Purpose |
 | --- | --- |
 | `toolRef` | Cataloged workbench tool (preferred) |

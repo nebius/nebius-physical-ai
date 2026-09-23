@@ -1624,6 +1624,84 @@ def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:
     assert name.endswith("-a3")
 
 
+def test_long_job_names_bind_complete_run_wave_and_iteration(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    prefix = "example-evaluation-run-" + "x" * 42
+    names = set()
+    for run_suffix, sequence, state, iteration in (
+        ("1", 1, "diagnose", None),
+        ("2", 1, "diagnose", None),
+        ("1", 2, "diagnose", None),
+        ("1", 1, "publish", None),
+        ("1", 1, "diagnose", 2),
+        ("1", 1, "diagnose", 3),
+    ):
+        executor = _executor(spec, run_id=f"{prefix}{run_suffix}")
+        executor._sequence = sequence
+        step = SimpleNamespace(state=state, iteration=iteration)
+        name = executor._job_name(
+            [step],
+            group="",
+            attempt=WaveAttempt(key="wave", states=[state], kind="serial"),
+        )
+        assert len(name) <= 60
+        assert "-h" in name
+        discriminator = name.rsplit("-h", maxsplit=1)[1]
+        assert len(discriminator) == 16
+        int(discriminator, 16)
+        names.add(name)
+
+    assert len(names) == 6
+
+
+def test_short_job_name_remains_readable_and_byte_compatible(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    executor = _executor(spec, run_id="short-run")
+    executor._sequence = 1
+    step = SimpleNamespace(state="diagnose", iteration=None)
+
+    name = executor._job_name(
+        [step],
+        group="",
+        attempt=WaveAttempt(key="wave", states=[step.state], kind="serial"),
+    )
+
+    assert name == "short-run-01-diagnose"
+
+
+def test_resume_preserves_recorded_pre_hash_long_job_name(tmp_path: Path) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    step = next(iter(build_plan(spec, run_id="legacy-long-run").steps))
+    key = wave_key([step], group="", sequence_number=1)
+    legacy_name = "example-legacy-job-" + "x" * 41
+    observed = []
+
+    def reconcile(name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        observed.append((name, job_id))
+        return ManagedJobEvidence("found", job_id=job_id, status="SUCCEEDED")
+
+    executor = _executor(spec, run_id="legacy-long-run", reconcile_fn=reconcile)
+    executor.ledger.record(
+        WaveAttempt(
+            key=key,
+            states=[step.state],
+            kind="serial",
+            job_id="41",
+            job_name=legacy_name,
+            status="running",
+            sky_status="RUNNING",
+            logical_launch_id="legacy-logical-launch",
+        )
+    )
+
+    adopted = executor._reconcile_in_flight(key, [step], kind="serial", group="")
+
+    assert adopted is not None and adopted.job_name == legacy_name
+    assert observed == [(legacy_name, "41")]
+
+
 def test_parallel_job_name_fingerprints_exact_batch_membership(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     executor = _executor(spec, run_id="rt-batch-name")
