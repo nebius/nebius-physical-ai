@@ -56,7 +56,14 @@ def _config(root: Path) -> dict:
 
 
 def _records(root: Path) -> list[dict]:
-    return [_load(path) for path in sorted((root / "workers").glob("*.json"))]
+    records = []
+    for path in sorted((root / "workers").glob("*.json")):
+        try:
+            records.append(_load(path))
+        except FileNotFoundError:
+            # A retirement may finish after the directory snapshot.
+            continue
+    return records
 
 
 def _runners(root: Path, config: dict) -> dict[int, dict]:
@@ -187,9 +194,11 @@ def _drained(root: Path, config: dict, runners: dict) -> bool:
     return not remaining and not any(runner.get("busy") for runner in owned)
 
 
-def _reconcile(root: Path, config: dict, runners: dict) -> None:
+def _reconcile(root: Path, config: dict, runners: dict, retiring: dict) -> list[dict]:
     finished = []
     for record in _records(root):
+        if record["name"] in retiring:
+            continue
         if record["phase"] == "creating":
             _recover_worker(root, config, record, runners)
         elif record["runner_id"] not in runners:
@@ -198,7 +207,7 @@ def _reconcile(root: Path, config: dict, runners: dict) -> None:
             instance = _owned_worker(root, config, record)
             if instance is None or instance["status"]["state"] == "STOPPED":
                 finished.append(record)
-    _retire_workers(root, config, finished)
+    return finished
 
 
 def _retire_workers(root: Path, config: dict, records: list[dict]) -> None:
@@ -283,24 +292,41 @@ def _serve(root: Path, config: dict) -> None:
     with (root / "controller.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         _verify_project(root, config)
-        while True:
-            runners = _runners(root, config)
-            if _drained(root, config, runners):
+        with ThreadPoolExecutor(max_workers=config["workers"]) as executor:
+            _maintain(root, config, executor)
+
+
+def _finish_retirements(retiring: dict) -> None:
+    for name, future in list(retiring.items()):
+        if future.done():
+            future.result()
+            del retiring[name]
+
+
+def _maintain(root: Path, config: dict, executor) -> None:
+    retiring = {}
+    while True:
+        _finish_retirements(retiring)
+        runners = _runners(root, config)
+        if _drained(root, config, runners):
+            if not retiring:
                 _retire_workers(root, config, _records(root))
                 _save(root / "status.json", {"phase": "stopped", "workers": 0})
                 return
-            _reconcile(root, config, runners)
+        else:
+            for record in _reconcile(root, config, runners, retiring):
+                retiring[record["name"]] = executor.submit(
+                    _delete_worker, root, config, record
+                )
             _fill(root, config)
-            _save(
-                root / "status.json",
-                {
-                    "phase": "draining"
-                    if (root / "drain.json").exists()
-                    else "running",
-                    "workers": len(_records(root)),
-                },
-            )
-            time.sleep(20)
+        _save(
+            root / "status.json",
+            {
+                "phase": "draining" if (root / "drain.json").exists() else "running",
+                "workers": len(_records(root)),
+            },
+        )
+        time.sleep(20)
 
 
 def _running(root: Path) -> bool:

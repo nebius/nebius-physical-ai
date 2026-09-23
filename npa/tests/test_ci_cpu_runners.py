@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from concurrent.futures import Future
 import json
 from pathlib import Path
 import subprocess
@@ -56,6 +57,7 @@ def test_worker_gets_single_job_credentials_and_a_disposable_disk(modules, confi
     request = cloud._instance_request(config, "worker-test", "single-job-config")
     spec = request["spec"]
     assert "service_account_id" not in spec
+    assert spec["recovery_policy"] == "FAIL"
     assert spec["resources"] == {"platform": "cpu-d3", "preset": "4vcpu-16gb"}
     assert "managed_disk" in spec["boot_disk"]
     assert spec["network_interfaces"][0]["security_groups"] == [{"id": "group-test"}]
@@ -201,12 +203,52 @@ def test_offline_workers_only_retire_after_confirmed_shutdown(
     cloud, pool = modules
     record = _record(tmp_path, cloud)
     monkeypatch.setattr(pool, "_owned_worker", lambda *a: {"status": {"state": state}})
-    retired = []
-    monkeypatch.setattr(pool, "_retire_workers", lambda *a: retired.extend(a[2]))
-    pool._reconcile(
-        tmp_path, config, {record["runner_id"]: {"status": "offline", "busy": False}}
+    retired = pool._reconcile(
+        tmp_path,
+        config,
+        {record["runner_id"]: {"status": "offline", "busy": False}},
+        {},
     )
     assert retired == ([record] if state == "STOPPED" else [])
+
+
+def test_slow_deletion_does_not_block_other_worker_retirements(modules):
+    _, pool = modules
+    slow, complete = Future(), Future()
+    complete.set_result(None)
+    retiring = {"slow": slow, "complete": complete}
+    pool._finish_retirements(retiring)
+    assert retiring == {"slow": slow}
+
+
+def test_deletion_failure_is_not_silently_discarded(modules):
+    _, pool = modules
+    failed = Future()
+    failed.set_exception(RuntimeError("deletion not verified"))
+    retiring = {"failed": failed}
+    with pytest.raises(RuntimeError, match="deletion not verified"):
+        pool._finish_retirements(retiring)
+    assert "failed" in retiring
+
+
+def test_pending_deletion_is_not_started_twice(modules, config, tmp_path):
+    cloud, pool = modules
+    record = _record(tmp_path, cloud)
+    assert pool._reconcile(tmp_path, config, {}, {record["name"]: Future()}) == []
+
+
+def test_inventory_tolerates_a_concurrent_completed_retirement(
+    modules, tmp_path, monkeypatch
+):
+    cloud, pool = modules
+    _record(tmp_path, cloud)
+
+    def retire_before_read(path):
+        path.unlink()
+        return cloud._load(path)
+
+    monkeypatch.setattr(pool, "_load", retire_before_read)
+    assert pool._records(tmp_path) == []
 
 
 @pytest.mark.parametrize("previous", [None, {"value": "ubuntu-latest"}])

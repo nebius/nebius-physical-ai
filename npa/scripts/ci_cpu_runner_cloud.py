@@ -241,6 +241,7 @@ def _instance_request(config: dict, name: str, jit: str) -> dict:
         "metadata": {"parent_id": config["project_id"], "name": name, "labels": labels},
         "spec": {
             "hostname": name,
+            "recovery_policy": "FAIL",
             "resources": {"platform": "cpu-d3", "preset": config["preset"]},
             "boot_disk": {
                 "attach_mode": "READ_WRITE",

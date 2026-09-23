@@ -6,6 +6,8 @@ quota cannot support the full eight-shard test suite concurrently.
 
 Each GitHub just-in-time (JIT) registration accepts at most one job. Its VM and
 managed boot disk are then deleted and replaced from a clean image. Workers have
+automatic VM recovery disabled, and deletions run independently so one slow
+deletion cannot block other workers from being replaced. Workers have
 no Nebius service account, operator credentials, inbound network access, or
 shared writable disks. Their runner events go to the VM serial log; GitHub keeps
 the workflow logs. The controller retains private creation/deletion receipts.
