@@ -411,6 +411,18 @@ All 12 published failure artifacts were independently verified. The retained
 checkpoint and export remain available for recovery; this failure supplies no
 action-parity result and does not admit training or rollouts.
 
+A separate CPU recovery verified the retained preparation and preserved that
+failure. The corrected serving check then loaded the recovered native parameters
+through the production BF16 serving path and loaded the BF16 export. Both cold
+GPU processes produced byte-identical native-derived and exported actions for
+the same real observation and fixed noise; the float32 output shape was
+`[32, 32]`. Actions also matched across the two processes. Independent provider
+readback and local verification covered all 23 original artifacts, including the
+raw action arrays. The output manifest has SHA-256
+`7a5b573ffc1076bbbfcd1d373713f279d7b4b09434ae2502253d2a1572d9bf00`.
+This qualifies the recorded pretraining serving path. It does not qualify a
+later training milestone, the single-24GB deployment requirement, or policy Q.
+
 After complete provider verification, a separate CPU workflow retired the two
 obsolete local resume-probe checkpoints and recovered 63,123,878,368 bytes of
 training-volume space. Independent readback verified its ten original artifacts.
