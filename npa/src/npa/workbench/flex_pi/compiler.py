@@ -1,13 +1,15 @@
 """Runtime-fetch the pinned CUDA assembler needed by B300 compiled inference."""
 
+from contextlib import closing
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
-import urllib.request
+from urllib.parse import urlsplit
 import zipfile
 
 VERSION = "12.9.86"
@@ -24,6 +26,40 @@ PTXAS_MEMBER = "nvidia/cuda_nvcc/bin/ptxas"
 LICENSE_MEMBER = "nvidia_cuda_nvcc_cu12-12.9.86.dist-info/licenses/License.txt"
 
 
+def _copy_verified_wheel(response, wheel):
+    digest = hashlib.sha256()
+    size = 0
+    with wheel.open("xb") as stream:
+        while chunk := response.read(1024 * 1024):
+            size += len(chunk)
+            if size > WHEEL_BYTES:
+                raise ValueError("CUDA compiler wheel exceeds its pinned size")
+            digest.update(chunk)
+            stream.write(chunk)
+    if size != WHEEL_BYTES or digest.hexdigest() != WHEEL_SHA256:
+        raise ValueError("CUDA compiler wheel content verification failed")
+
+
+def _download_compiler_wheel(wheel):
+    source = urlsplit(WHEEL_URL)
+    if (
+        source.scheme != "https"
+        or source.netloc != "files.pythonhosted.org"
+        or source.query
+        or source.fragment
+    ):
+        raise ValueError("CUDA compiler download requires the pinned HTTPS origin")
+    # A direct HTTPS connection cannot dispatch local-file schemes or redirects.
+    with closing(
+        http.client.HTTPSConnection(source.hostname, timeout=60)
+    ) as connection:
+        connection.request("GET", source.path)
+        with connection.getresponse() as response:
+            if response.status != 200:
+                raise OSError(f"CUDA compiler download returned HTTP {response.status}")
+            _copy_verified_wheel(response, wheel)
+
+
 def prepare_b300_compiler(directory: Path) -> tuple[dict[str, str], dict]:
     """Fetch and verify one assembler in the inference run's private directory.
 
@@ -37,18 +73,7 @@ def prepare_b300_compiler(directory: Path) -> tuple[dict[str, str], dict]:
     """
     directory.mkdir(mode=0o700)
     wheel = directory / "compiler.whl"
-    digest = hashlib.sha256()
-    size = 0
-    with urllib.request.urlopen(WHEEL_URL, timeout=60) as response:
-        with wheel.open("xb") as stream:
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > WHEEL_BYTES:
-                    raise ValueError("CUDA compiler wheel exceeds its pinned size")
-                digest.update(chunk)
-                stream.write(chunk)
-    if size != WHEEL_BYTES or digest.hexdigest() != WHEEL_SHA256:
-        raise ValueError("CUDA compiler wheel content verification failed")
+    _download_compiler_wheel(wheel)
     with zipfile.ZipFile(wheel) as archive:
         # Select exact members; never extract archive-provided filesystem paths.
         binary = archive.read(PTXAS_MEMBER)

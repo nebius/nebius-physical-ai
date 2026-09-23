@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+from unittest.mock import Mock
 from urllib.parse import urlparse
 import zipfile
 
@@ -24,8 +25,12 @@ def _wheel(monkeypatch, *, binary=b"assembler"):
     monkeypatch.setattr(compiler, "WHEEL_BYTES", len(data))
     monkeypatch.setattr(compiler, "WHEEL_SHA256", hashlib.sha256(data).hexdigest())
     monkeypatch.setattr(compiler, "PTXAS_SHA256", hashlib.sha256(binary).hexdigest())
+    response = io.BytesIO(data)
+    response.status = 200
+    connection = Mock()
+    connection.getresponse.return_value = response
     monkeypatch.setattr(
-        compiler.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(data)
+        compiler.http.client, "HTTPSConnection", Mock(return_value=connection)
     )
     return data
 
@@ -44,6 +49,43 @@ def test_compiler_checks_bytes_and_extracts_only_exact_members(tmp_path, monkeyp
     assert not (tmp_path / "outside").exists()
     assert not (directory / "compiler.whl").exists()
     assert receipt["ptxas_sha256"] == hashlib.sha256(b"assembler").hexdigest()
+    compiler.http.client.HTTPSConnection.assert_called_once_with(
+        "files.pythonhosted.org", timeout=60
+    )
+    connection = compiler.http.client.HTTPSConnection.return_value
+    connection.request.assert_called_once_with("GET", urlparse(compiler.WHEEL_URL).path)
+    connection.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///tmp/compiler.whl",
+        "http://files.pythonhosted.org/compiler.whl",
+        "https://example.org/compiler.whl",
+        "https://user@files.pythonhosted.org/compiler.whl",
+        "https://files.pythonhosted.org/compiler.whl?download=1",
+        "https://files.pythonhosted.org/compiler.whl#fragment",
+    ],
+)
+def test_compiler_rejects_other_download_origins(tmp_path, monkeypatch, url):
+    _wheel(monkeypatch)
+    monkeypatch.setattr(compiler, "WHEEL_URL", url)
+    with pytest.raises(ValueError, match="pinned HTTPS origin"):
+        compiler.prepare_b300_compiler(tmp_path / "compiler")
+    compiler.http.client.HTTPSConnection.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 404, 500])
+def test_compiler_rejects_redirects_and_http_errors(tmp_path, monkeypatch, status):
+    _wheel(monkeypatch)
+    connection = compiler.http.client.HTTPSConnection.return_value
+    connection.getresponse.return_value.status = status
+    with pytest.raises(OSError, match=f"HTTP {status}"):
+        compiler.prepare_b300_compiler(tmp_path / "compiler")
+    connection.request.assert_called_once()
+    connection.close.assert_called_once_with()
+    assert not (tmp_path / "compiler/ptxas").exists()
 
 
 @pytest.mark.parametrize("mismatch", ["size", "wheel_hash", "binary_hash"])
