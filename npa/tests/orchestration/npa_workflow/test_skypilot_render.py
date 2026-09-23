@@ -396,6 +396,55 @@ def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
     )
 
 
+def test_submit_time_accelerator_override_accepts_single_mapping() -> None:
+    assert (
+        normalize_resources(
+            {"accelerators": {"RTXPRO6000": 2}},
+            accelerator_overrides={
+                "RTXPRO6000:2": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
+            },
+        )["accelerators"]
+        == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
+    )
+
+
+def test_non_kubernetes_renderer_preserves_mapping_alternatives() -> None:
+    alternatives = {"H100": 1, "H200": 1}
+
+    assert (
+        normalize_resources({"cloud": "nebius", "accelerators": alternatives})[
+            "accelerators"
+        ]
+        == alternatives
+    )
+
+
+def test_mapping_product_override_preserves_quantity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", "cluster-product")
+
+    assert (
+        normalize_resources({"cloud": "kubernetes", "accelerators": {"vendor-gpu": 4}})[
+            "accelerators"
+        ]
+        == "cluster-product:4"
+    )
+
+
+def test_kubernetes_renderer_rejects_mapping_alternatives() -> None:
+    with pytest.raises(ValueError, match="SkyPilot alternatives"):
+        normalize_resources(
+            {"cloud": "kubernetes", "accelerators": {"H100": 1, "H200": 1}}
+        )
+
+
+def test_empty_accelerator_mapping_is_omitted() -> None:
+    assert normalize_resources({"cloud": "kubernetes", "accelerators": {}}) == {
+        "cloud": "kubernetes"
+    }
+
+
 def test_nebius_cloud_render_injects_exact_host_docker_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

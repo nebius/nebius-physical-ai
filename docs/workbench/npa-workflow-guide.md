@@ -261,6 +261,13 @@ attempt and observation time of a successful submission; adopting a job without
 that local evidence leaves capacity unknown. Every new or retried submission
 must pass the SDK checks again.
 
+Kubernetes accelerator requests accept either `accelerators: RTXPRO6000:2` or
+the single-entry mapping `accelerators: {RTXPRO6000: 2}`. Submit resolves the
+cluster's GPU product name and preserves the requested count in both forms.
+Mappings with multiple accelerator names describe SkyPilot alternatives;
+select one concrete request before Kubernetes submission so NPA can check its
+capacity. Other cloud targets retain SkyPilot's alternatives syntax.
+
 Submission binds those checks to one effective execution target. The selected
 NPA project must have saved project, tenant and region identities. The provider's
 exact project and bucket-owner responses must agree before any temporary storage

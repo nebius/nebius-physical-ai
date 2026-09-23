@@ -390,6 +390,62 @@ class SkypilotRenderOptions:
     accept_eula: bool = True
 
 
+def _normalize_accelerator(
+    resources: Mapping[str, Any], overrides: Mapping[str, str], env_override: str
+) -> Any:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import accelerator_spec
+
+    value = resources["accelerators"]
+    cloud = str(resources.get("cloud") or "").strip().casefold()
+    alternatives = isinstance(value, Mapping) and len(value) > 1
+    if alternatives and cloud not in {"kubernetes", "k8s"}:
+        return env_override or overrides.get(str(value).strip(), "") or value
+    value = accelerator_spec(value)
+    selected = env_override or overrides.get(value, "")
+    # Product-name remapping must preserve the requested GPU quantity.
+    if selected and ":" not in selected and ":" in value:
+        return f"{selected}:{value.rsplit(':', 1)[1]}"
+    return selected or value
+
+
+def _normalize_resource_memory(value: Any) -> Any:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lower().endswith("gi"):
+            return stripped[:-2]
+        if stripped.lower().endswith("g"):
+            return stripped[:-1]
+    return value
+
+
+def _normalize_cloud_resources(resources: dict[str, Any]) -> dict[str, Any]:
+    cloud = str(resources.get("cloud") or "").strip().casefold()
+    if cloud not in {"kubernetes", "k8s"}:
+        resources.pop("disk_size", None)
+        return resources
+    # SkyPilot ignores Kubernetes disk_size; request pod ephemeral storage.
+    if "disk_size" in resources:
+        resources["ephemeral_storage"] = resources.pop("disk_size")
+    for key in ("cpus", "memory"):
+        if key not in resources:
+            continue
+        raw = str(resources[key]).strip()
+        if raw and not raw.endswith("+"):
+            resources[key] = f"{raw}+"
+    return resources
+
+
+_SKYPILOT_RESOURCE_KEYS = (
+    "cloud",
+    "accelerators",
+    "cpus",
+    "memory",
+    "disk_size",
+    "use_spot",
+    "region",
+)
+
+
 def normalize_resources(
     resources: Mapping[str, Any],
     *,
@@ -397,84 +453,38 @@ def normalize_resources(
 ) -> dict[str, Any]:
     """Map an npa.workflow resource profile onto a SkyPilot ``resources`` block.
 
-    On Kubernetes, exact ``cpus`` / ``memory`` often fail prechecks when no node
-    has that precise free shape. Append ``+`` so SkyPilot can schedule on larger
-    nodes (including GPU nodes with spare CPU).
+    Args:
+        resources: Resolved workflow resource profile.
+        accelerator_overrides: Product names discovered for concrete requests.
+
+    Returns:
+        SkyPilot resources, allowing larger CPU/memory shapes on Kubernetes.
+
+    Raises:
+        ValueError: A Kubernetes accelerator mapping has unselected alternatives.
     """
 
     import os as _os
 
-    # Cluster-specific GPU product override: SkyPilot k8s matches on the node's
-    # advertised accelerator name, which varies by cluster (e.g. RTXPRO6000 vs
-    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). A blanket env override still wins so
-    # operators can retarget without editing the committed blueprint; otherwise
-    # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
     gpu_memory_override = str(_os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or "").strip()
     overrides = dict(accelerator_overrides or {})
-
     out: dict[str, Any] = {}
-    # NOTE: `num_nodes` is deliberately absent. SkyPilot puts it at the TASK level, next
-    # to `resources`, so the renderer lifts it out of the profile in
-    # build_skypilot_task_doc. Adding it here would produce an invalid resources block.
-    for key in (
-        "cloud",
-        "accelerators",
-        "cpus",
-        "memory",
-        "disk_size",
-        "use_spot",
-        "region",
-    ):
+    # num_nodes belongs on the SkyPilot task, not its resources block.
+    for key in _SKYPILOT_RESOURCE_KEYS:
         if key not in resources or resources[key] in (None, ""):
             continue
         value = resources[key]
         if key == "accelerators":
-            selected_override = accel_override or overrides.get(str(value).strip(), "")
-            # A cluster-specific product name should not silently collapse a
-            # multi-GPU request. Accept either an exact ``NAME:COUNT`` override
-            # or a name-only override that preserves the profile's count.
-            if (
-                selected_override
-                and ":" not in selected_override
-                and isinstance(value, str)
-                and ":" in value
-            ):
-                _declared_name, declared_count = value.rsplit(":", 1)
-                value = f"{selected_override}:{declared_count}"
-            elif selected_override:
-                value = selected_override
+            value = _normalize_accelerator(resources, overrides, accel_override)
+            if not value:
+                continue
         if key == "memory":
             if gpu_memory_override and resources.get("accelerators"):
                 value = gpu_memory_override
-            if isinstance(value, str):
-                stripped = value.strip()
-                if stripped.lower().endswith("gi"):
-                    value = stripped[:-2]
-                elif stripped.lower().endswith("g"):
-                    value = stripped[:-1]
+            value = _normalize_resource_memory(value)
         out[key] = value
-
-    cloud = str(out.get("cloud") or "").strip().lower()
-    if cloud in {"kubernetes", "k8s"}:
-        # SkyPilot 0.12.x accepts ``disk_size`` on Kubernetes but explicitly
-        # ignores it because pods have no cloud boot disk. Preserve the profile's
-        # capacity intent using SkyPilot's supported Kubernetes resource request,
-        # which renders as ``ephemeral-storage`` on the pod.
-        if "disk_size" in out:
-            out["ephemeral_storage"] = out.pop("disk_size")
-        for key in ("cpus", "memory"):
-            if key not in out:
-                continue
-            raw = str(out[key]).strip()
-            if raw and not raw.endswith("+"):
-                out[key] = f"{raw}+"
-    else:
-        # Preserve the renderer's historical behavior outside Kubernetes. This
-        # review deliberately settles only the affected Kubernetes profiles and
-        # does not introduce a new VM-cloud boot-disk contract.
-        out.pop("disk_size", None)
-    return out
+    return _normalize_cloud_resources(out)
 
 
 def tool_pip_extra(tool_ref: str) -> str:

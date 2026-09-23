@@ -3471,6 +3471,9 @@ def _resolve_submit_accelerators(
         )
     except NpaWorkflowError:
         return {}
+    except ValueError as exc:
+        _fail(f"accelerator readiness failed: {exc}")
+        return {}
     if not requested:
         return {}
 
@@ -3558,6 +3561,7 @@ def _preflight_submit_gang_capacity(
     )
     from npa.orchestration.npa_workflow.skypilot_render import normalize_resources
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        accelerator_spec,
         discover_kubernetes_gpu_inventory,
         preflight_kubernetes_gpu_gang,
     )
@@ -3579,7 +3583,7 @@ def _preflight_submit_gang_capacity(
             run={"id": "capacity-preflight"},
         )
         nodes = profile_num_nodes(resolved, name=state.resources)
-        accelerator = str(resolved.get("accelerators") or "").strip()
+        accelerator = accelerator_spec(resolved.get("accelerators"))
         if not accelerator:
             continue
         if not context:

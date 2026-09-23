@@ -6,6 +6,11 @@ These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state
 graph. NPA validates the graph, renders SkyPilot tasks, and manages run-scoped
 artifacts. Start with a runbook that matches the result you want.
 
+Kubernetes GPU profiles accept a string such as `RTXPRO6000:2` or a single-entry
+mapping such as `{RTXPRO6000: 2}`. Both preserve the count when resolving the
+cluster's GPU product name. Select one GPU request before submitting a Kubernetes
+profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide.md#durable-run-supervision-and-recovery).
+
 ## Choose a starting point
 
 | Goal | Spec and runbook |
