@@ -19,6 +19,14 @@
   width: 12px;
   height: 12px;
 }
+.session-unread {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #79b8ff;
+}
 @keyframes codex-working {
   to {
     transform: rotate(360deg);

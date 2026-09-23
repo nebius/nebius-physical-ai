@@ -53,6 +53,10 @@ Implementation belongs in `npa/src/npa/tools/desktop`, independently of Workbenc
    their owner releases them. Test real prompts and replies in both directions
    using the actual VS Code window and a phone-sized browser, plus reconnects,
    active-turn steering/stopping, approvals, and working tab/session indicators.
+   Check that background completions replace the spinner with a persistent
+   unread dot, including native status refreshes, and that only successfully
+   viewing the finished reply clears it. Preserve dots across reloads and failed
+   opens; do not mark existing idle history unread on first use.
    Verify shared model/reasoning controls against the live runtime catalog;
    restore test selections afterward. Preserve
    the existing account and model configuration. Never copy account tokens to

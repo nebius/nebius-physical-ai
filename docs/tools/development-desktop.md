@@ -307,6 +307,13 @@ URL. Stop the local LaunchAgents before removing their private runtime directory
 
 Both runtime modes share model/reasoning controls, account-supported speed and
 Plan settings, image input, working indicators, and browser-local text drafts.
+When an observed run finishes while you are away from its reply, its chat shows
+a blue unread dot in place of the spinner. This includes web sends and runs
+started in VS Code. The dot survives reloads and clears after the finished reply
+loads in a focused, visible chat at the latest messages. Opening a chat that
+fails to load does not clear it. Read markers are local to this browser and
+origin; tabs share them, but other devices and native VS Code keep their own
+read state.
 Model and mode changes apply to the next turn. If the Linux runtime has not reported its current mode or speed, the
 picker says **Choose mode** or **Choose speed**; it updates when you make a
 selection or receive a settings notification. The Mac adapter reads these

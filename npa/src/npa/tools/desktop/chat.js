@@ -20,7 +20,79 @@ const state = {
   modes: [],
   hostLabel: "VDI",
   sessionGeneration: 0,
+  activityGeneration: 0,
 };
+const chatActivity = new Map();
+const activityKey = "codex-chat-activity:";
+
+function activityForChat(id) {
+  if (!chatActivity.has(id)) {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(activityKey + id)); }
+    catch { /* Browsing still works when storage is unavailable or corrupt. */ }
+    chatActivity.set(id, saved && typeof saved === "object" ? saved : {});
+  }
+  return chatActivity.get(id);
+}
+function saveChatActivity(id, activity) {
+  chatActivity.set(id, activity);
+  state.activityGeneration++;
+  try { localStorage.setItem(activityKey + id, JSON.stringify(activity)); }
+  catch { /* Keep indicators in memory if the browser cannot persist them. */ }
+}
+function observeChatStatus(id, status, completedTurn = null) {
+  const activity = activityForChat(id);
+  const started = status?.type === "active" && !activity.running;
+  const completed = status?.type === "idle" && (activity.running ||
+    (completedTurn && completedTurn !== activity.completedTurn));
+  if (!started && !completed) return;
+  saveChatActivity(id, {...activity, running: started,
+    unread: completed || !!activity.unread, revision: crypto.randomUUID(),
+    completedTurn: completedTurn || activity.completedTurn});
+}
+function chatReplyVisible() {
+  if (!state.id || state.loading || state.openFailed || document.hidden || !document.hasFocus()) return false;
+  if (document.querySelector("dialog[open]")) return false;
+  if (innerWidth <= 760 && document.body.classList.contains("sidebar-open")) return false;
+  const viewport = $("#conversation");
+  return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 140;
+}
+function markChatRead() {
+  if (!chatReplyVisible()) return;
+  const activity = activityForChat(state.id);
+  // Only acknowledge a history response obtained after this completion.
+  if (!activity.unread || activity.running ||
+      state.readableCompletion?.id !== state.id ||
+      state.readableCompletion.revision !== activity.revision) return;
+  saveChatActivity(state.id, {...activity, unread: false});
+  renderSessions();
+}
+function observeLoadedTurns(turns, revision) {
+  if (revision !== activityForChat(state.id).revision) {
+    refreshUnreadReply();
+    return;
+  }
+  const status = {type: turns.some(turn => turn.status === "inProgress") ? "active" : "idle"};
+  observeChatStatus(state.id, status);
+  state.statuses.set(state.id, status);
+  state.readableCompletion = {id: state.id, revision: activityForChat(state.id).revision};
+  renderSessions();
+}
+function refreshUnreadReply() {
+  const generation = state.generation;
+  clearTimeout(state.unreadRefresh);
+  state.unreadRefresh = setTimeout(() => {
+    if (generation === state.generation && !state.openFailed) loadTurns().catch(() => {});
+  }, 100);
+}
+function observeSentMessage(body, result, revision) {
+  if (revision !== activityForChat(body.id).revision) return;
+  observeChatStatus(body.id, {type: "active"});
+  const status = {type: result.turn && result.turn.status !== "inProgress" ? "idle" : "active"};
+  observeChatStatus(body.id, status, status.type === "idle" ? result.turn.id : null);
+  state.statuses.set(body.id, status);
+  renderSessions();
+}
 const node = (tag, className, text) => {
   const el = document.createElement(tag);
   if (className) el.className = className;
@@ -47,6 +119,7 @@ async function api(path, body) {
 }
 function closeSidebar() {
   document.body.classList.remove("sidebar-open");
+  markChatRead();
 }
 function title(thread) {
   return thread.name || thread.preview || "Untitled session";
@@ -73,6 +146,12 @@ function sessionButton(thread) {
     const spinner = node("span", "spinner session-spinner");
     spinner.setAttribute("aria-label", "Codex is working");
     meta.append(spinner);
+  } else if (activityForChat(thread.id).unread) {
+    const dot = node("span", "session-unread");
+    dot.setAttribute("role", "img");
+    dot.setAttribute("aria-label", "Unread reply");
+    dot.title = "Unread reply";
+    meta.append(dot);
   }
   meta.append(node("span", "workspace", workspace(thread.cwd)),
     node("time", "", relativeTime(thread.updatedAt)));
@@ -101,6 +180,7 @@ function renderSessions() {
 }
 async function loadSessions(append = false, preserve = false) {
   const generation = ++state.sessionGeneration;
+  const activityGeneration = state.activityGeneration;
   const query = new URLSearchParams({
     search: $("#search").value,
     archived: $("#archive").value,
@@ -115,8 +195,12 @@ async function loadSessions(append = false, preserve = false) {
     : keepPages ? mergeById(result.data, state.sessions) : result.data;
   state.sessionPages = append || keepPages;
   state.sessionQuery = collection;
-  for (const thread of result.data)
-    state.statuses.set(thread.id, thread.status);
+  if (activityGeneration === state.activityGeneration) {
+    for (const thread of result.data) {
+      observeChatStatus(thread.id, thread.status);
+      state.statuses.set(thread.id, thread.status);
+    }
+  }
   renderSessions();
   updateActivity();
 }
@@ -210,6 +294,7 @@ async function selectThread(id) {
   } finally {
     if (generation === state.generation) {
       state.loading = false;
+      markChatRead();
       renderRequests();
       updateControls();
     }
@@ -291,10 +376,15 @@ async function changeModel(model, effort) {
 async function refreshThread() {
   if (!state.id) return;
   const generation = state.generation;
+  const revision = activityForChat(state.id).revision;
   const result = await api("thread?id=" + encodeURIComponent(state.id));
   if (generation !== state.generation) return;
   state.thread = {...state.thread, ...result.thread};
-  state.statuses.set(state.id, result.thread.status);
+  if (revision === activityForChat(state.id).revision) {
+    observeChatStatus(state.id, result.thread.status);
+    state.statuses.set(state.id, result.thread.status);
+    renderSessions();
+  }
   $("#title").textContent = title(state.thread);
   renderModelControls();
   updateControls();
@@ -361,6 +451,9 @@ function sessionEvent(event) {
     state.statuses.set(id, { type: "idle" });
   if (event.method === "thread/closed")
     state.statuses.set(id, { type: "notLoaded" });
+  if (["thread/status/changed", "turn/started", "turn/completed"].includes(event.method))
+    observeChatStatus(id, state.statuses.get(id),
+      event.method === "turn/completed" ? params.turn?.id : null);
   if (
     event.method === "thread/settings/updated" &&
     id === state.id &&
@@ -374,11 +467,7 @@ function sessionEvent(event) {
       state.thread.mode = params.threadSettings.collaborationMode.mode;
     renderModelControls();
   }
-  if (
-    ["thread/status/changed", "turn/started", "turn/completed"].includes(
-      event.method,
-    )
-  )
+  if (["thread/status/changed", "turn/started", "turn/completed"].includes(event.method))
     renderSessions();
   updateActivity();
 }
@@ -393,6 +482,7 @@ function mergeById(recent, previous) {
 async function loadTurns(older = false, generation = state.generation) {
   if (!state.id || (older && (!state.turnCursor || state.olderLoading))) return;
   const firstLoad = !state.turns.length;
+  const revision = activityForChat(state.id).revision;
   const query = new URLSearchParams({id: state.id});
   if (older) query.set("cursor", state.turnCursor);
   if (older) state.olderLoading = true;
@@ -409,6 +499,7 @@ async function loadTurns(older = false, generation = state.generation) {
       state.historyExpanded = false;
       state.turnCursor = null;
     }
+    if (!older) observeLoadedTurns(turns, revision);
     renderMessages(!older && firstLoad, older);
     updateControls();
   } finally {
@@ -526,6 +617,7 @@ function renderMessages(forceBottom = false, preserveReading = false) {
   $("#messages").replaceChildren(fragment);
   if (forceBottom || (nearBottom && !preserveReading)) viewport.scrollTop = viewport.scrollHeight;
   else restoreReadingAnchor(anchor);
+  markChatRead();
 }
 function conversationFragment(open) {
   const fragment = document.createDocumentFragment();
@@ -749,9 +841,10 @@ async function events() {
     }
   }
 }
-$("#menu").addEventListener("click", () =>
-  document.body.classList.toggle("sidebar-open"),
-);
+$("#menu").addEventListener("click", () => {
+  document.body.classList.toggle("sidebar-open");
+  markChatRead();
+});
 $("#scrim").addEventListener("click", closeSidebar);
 $("#prompt").addEventListener("input", () => {
   saveDraft();
@@ -913,6 +1006,17 @@ document.addEventListener("visibilitychange", () => {
     loadTurns().catch(() => {});
     refreshThread().catch(() => {});
   }
+});
+window.addEventListener("focus", () => {
+  if (state.initialized && !state.loading && !state.openFailed) loadTurns().catch(() => {});
+});
+$("#conversation").addEventListener("scroll", markChatRead, {passive: true});
+window.addEventListener("storage", event => {
+  if (event.key && !event.key.startsWith(activityKey)) return;
+  if (event.key) chatActivity.delete(event.key.slice(activityKey.length));
+  else chatActivity.clear();
+  state.activityGeneration++;
+  renderSessions();
 });
 if (window.visualViewport) {
   const resize = () => {
@@ -1118,7 +1222,11 @@ async function sendMessage(text) {
     turnId: activeTurn()?.id, clientUserMessageId: crypto.randomUUID()};
   localStorage.setItem(key, JSON.stringify(body));
   $("#clear-send").hidden = false;
+  const revision = activityForChat(body.id).revision;
   const result = await api("send", body);
+  observeSentMessage(body, result, revision);
+  if (!state.sessions.some(thread => thread.id === body.id))
+    loadSessions(false, true).catch(() => {});
   localStorage.removeItem(key);
   if (state.id === body.id) {
     $("#clear-send").hidden = true;
