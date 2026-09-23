@@ -59,8 +59,10 @@ Implementation belongs in `npa/src/npa/tools/desktop`, independently of Workbenc
    VS Code owner, preserving active chats without changing `chatgpt.cliExecutable`.
    Require macOS, Node.js 22.13+, npm, and a signed-in Codex installation. Keep
    credentials in private runtime files. Preserve the existing HTTPS origin,
-   credentials, desktop, and remote chat route; only add the separate local chat
-   route and loopback SSH forwarding. Validate local/remote CLI exclusivity,
+   credentials, desktop, and remote chat route. On a standalone mobile gateway,
+   route old root bookmarks and Home Screen entry points to `/chat/`; preserve
+   the original UI at `/legacy/` and its running services. Verify entry redirects,
+   chat fragments, existing login cookies, and unsent-draft migration. Validate local/remote CLI exclusivity,
    same-thread messages, images, Plan/speed settings, draft retention, reconnects,
    repeated setup, and lost-response delivery without duplicate execution.
    Use `status --local --json` and `open --local --chat` for the saved setup.

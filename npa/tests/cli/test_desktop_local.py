@@ -74,6 +74,35 @@ def test_existing_mobile_route_is_preserved(monkeypatch, suffix):
     assert "handle /chat/*" in candidate
     assert "reverse_proxy 127.0.0.1:7002" in candidate
     assert "handle {\nreverse_proxy 127.0.0.1:8787" + suffix + "\n}" in candidate
+    assert "@npa_chat_entry path / /index.html /chat" in candidate
+    assert "redir * /chat/?{query} 302" in candidate
+    assert "handle /legacy/ {\nrewrite * /\n" in candidate
+
+
+def test_existing_mobile_bookmark_routes_upgrade_once(monkeypatch):
+    original = (
+        "example.test {\n# npa-local-chat\nhandle /chat/* {\n"
+        "reverse_proxy 127.0.0.1:7002\n}\n"
+        "handle {\nreverse_proxy 127.0.0.1:8787\n}\n}\n"
+    )
+    monkeypatch.setattr(gateway_remote, "_read_root", lambda _: original)
+    monkeypatch.setattr(gateway_remote, "_install", Mock())
+    monkeypatch.setattr(gateway_remote, "_ensure_restart", Mock())
+    run = Mock()
+    monkeypatch.setattr(gateway_remote.subprocess, "run", run)
+    replace = Mock()
+    monkeypatch.setattr(gateway_remote, "_replace_and_reload", replace)
+    gateway_remote._configure_mobile(7002)
+    candidate = replace.call_args.args[2]
+    assert candidate.count("# npa-local-chat-entry") == 1
+    assert "handle /chat/* {\nreverse_proxy 127.0.0.1:7002\n}" in candidate
+    assert "validate" in run.call_args.args[0]
+    monkeypatch.setattr(gateway_remote, "_read_root", lambda _: candidate)
+    gateway_remote._configure_mobile(7002)
+    assert replace.call_count == 1
+    assert run.call_count == 1
+    with pytest.raises(RuntimeError, match="another port"):
+        gateway_remote._configure_mobile(7003)
 
 
 def test_linux_chat_stays_on_its_existing_route(monkeypatch):

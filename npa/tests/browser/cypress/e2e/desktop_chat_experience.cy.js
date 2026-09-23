@@ -11,6 +11,28 @@ describe("Codex conversation experience", () => {
   let chat;
   beforeEach(() => { chat = mockChat(); cy.viewport(390, 844); });
 
+  it("carries a legacy Mac draft into the shared UI without sending it", () => {
+    let sends = 0;
+    cy.intercept("POST", "/chat/api/send", () => { sends++; });
+    cy.visit("/chat/#same-thread", {onBeforeLoad(win) {
+      win.localStorage.setItem("draft:same-thread", "Unsent legacy draft");
+    }});
+    cy.get("#prompt").should("be.enabled").and("have.value", "Unsent legacy draft");
+    cy.reload();
+    cy.get("#prompt").should("have.value", "Unsent legacy draft");
+    cy.then(() => expect(sends).to.equal(0));
+  });
+
+  for (const draft of ["A newer draft", ""]) {
+    it(`keeps the current draft instead of restoring stale legacy text (${draft || "cleared"})`, () => {
+      cy.visit("/chat/#same-thread", {onBeforeLoad(win) {
+        win.localStorage.setItem("draft:same-thread", "Old legacy draft");
+        win.localStorage.setItem("codex-draft:same-thread", draft);
+      }});
+      cy.get("#prompt").should("be.enabled").and("have.value", draft);
+    });
+  }
+
   it("recovers a failed chat open through Refresh without losing the draft", () => {
     let attempts = 0;
     cy.intercept("POST", "/chat/api/resume", req => {

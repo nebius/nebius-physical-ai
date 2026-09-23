@@ -163,7 +163,7 @@ function prepareThread(id) {
   state.id = id;
   state.openFailed = false;
   state.externalOwner = false;
-  $("#prompt").value = localStorage.getItem("codex-draft:" + id) || "";
+  $("#prompt").value = draftForChat(id);
   resizePrompt();
   const pendingSend = JSON.parse(localStorage.getItem("codex-send:" + id) || "null");
   state.images = pendingSend?.images || [];
@@ -945,6 +945,15 @@ function configureHost() {
       notice(result.connected ? "Open in VS Code on your Mac." : "Open request sent. Accept the VS Code link on your Mac if prompted.");
     } catch (error) { notice(error.message); }
   };
+}
+
+function draftForChat(id) {
+  const key = "codex-draft:" + id;
+  const current = localStorage.getItem(key);
+  if (current !== null) return current;
+  const legacy = localStorage.getItem("draft:" + id);
+  if (legacy !== null) localStorage.setItem(key, legacy);
+  return legacy || "";
 }
 
 function saveDraft() {

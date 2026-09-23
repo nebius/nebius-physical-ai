@@ -64,12 +64,28 @@ def _install(path, value):
 def _configure_mobile(port):
     path = "/etc/caddy/Caddyfile"
     original = _read_root(path)
+    candidate = _mobile_routes(original, port)
+    if candidate != original:
+        _install(path + ".npa-candidate", candidate)
+        subprocess.run(
+            [
+                "sudo", "-n", "/usr/local/bin/caddy", "validate",
+                "--config", path + ".npa-candidate", "--adapter", "caddyfile",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        _replace_and_reload(path, original, candidate, "caddy")
+    _ensure_restart("caddy")
+
+
+def _mobile_routes(original, port):
     marker = "# npa-local-chat"
     if marker in original:
         if f"127.0.0.1:{port}" not in original:
             raise RuntimeError("An existing local route uses another port.")
-        _ensure_restart("caddy")
-        return
+        return _mobile_entry_routes(original)
     target = "reverse_proxy 127.0.0.1:8787"
     if original.count(target) != 1:
         raise RuntimeError("The managed mobile gateway route was customized.")
@@ -90,24 +106,21 @@ def _configure_mobile(port):
         "}\nhandle {\n" + directive + "\n}"
     )
     candidate = original[:start] + replacement + original[end:]
-    _install(path + ".npa-candidate", candidate)
-    subprocess.run(
-        [
-            "sudo",
-            "-n",
-            "/usr/local/bin/caddy",
-            "validate",
-            "--config",
-            path + ".npa-candidate",
-            "--adapter",
-            "caddyfile",
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    return _mobile_entry_routes(candidate)
+
+
+def _mobile_entry_routes(original):
+    marker = "# npa-local-chat-entry"
+    if marker in original:
+        return original
+    routes = (
+        marker + "\n@npa_chat_entry path / /index.html /chat\n"
+        "handle @npa_chat_entry {\n"
+        "header Cache-Control no-store\nredir * /chat/?{query} 302\n}\n"
+        "handle /legacy/ {\nrewrite * /\n"
+        "reverse_proxy 127.0.0.1:8787\n}\n"
     )
-    _replace_and_reload(path, original, candidate, "caddy")
-    _ensure_restart("caddy")
+    return original.replace("# npa-local-chat\n", "# npa-local-chat\n" + routes, 1)
 
 
 def _ensure_restart(service):

@@ -278,8 +278,12 @@ existing SSH authentication. Both ends of the forwarded listener bind to
 loopback. Setup removes the tunnel if gateway verification fails, including
 when the SSH server forces a public listener; correct the gateway and rerun setup. Phones use the public HTTPS URL and need no VPN or SSH client. A
 desktop gateway retains its Linux chat at `/chat/` and adds the Mac at
-`/local-chat/`; the standalone mobile gateway adds `/chat/` and keeps its original
-root interface. `status --local` reports the selected URL. `--local-port` and
+`/local-chat/`. On a standalone mobile gateway, `/`, `/index.html`, and `/chat`
+redirect to `/chat/`, so old bookmarks and Home Screen apps use the same session
+list and controls. Chat fragments and query parameters survive the redirect;
+existing text drafts migrate without replacing a newer or intentionally cleared
+draft. The original interface remains at `/legacy/`, and its services and APIs
+remain running. `status --local` reports the selected URL. `--local-port` and
 `--gateway-port` default to 6091 and can select unused unprivileged ports for the
 first installation. Repeated setup preserves the saved configuration. A local
 installation can adopt a gateway on a later setup; switching an existing gateway
