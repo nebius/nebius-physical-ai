@@ -255,10 +255,25 @@ Before any initial or recovered launch, submit reuses the normal exact-image,
 credential/access, accelerator-resolution, per-node GPU-shape, and gang-capacity
 preflights. A recovered attempt is permitted only after all of those checks pass
 again, the prior attempt's recorded workflow/source/image identity matches values
-independently recomputed from the current spec, source selection, and digest pins,
+independently recomputed from the current spec, source selection, and recorded
+image-identity version,
 declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
+
+New runtime attempts record a versioned identity for the canonical set of image
+references resolved after overrides and digest pins. The record states whether
+every reference is content-addressed with `@sha256:`. A hash over a mutable tag
+identifies that reference string; it is not evidence of the image bytes. Older,
+unversioned attempts retain their legacy digest-pin-set comparison alongside the
+exact workflow and source identities.
+
+Each wave also records its resolved per-state resource profiles before launch.
+Status uses those snapshots when the initial submission preview is unavailable,
+so requested accelerators, CPU, and memory remain visible. Legacy ledgers without
+the snapshots continue to report those fields as unknown. A safely redacted plan
+preview failure is retained as a status diagnostic while runtime planning remains
+authoritative.
 
 For runtime workflows, GPU capacity is checked against each rendered wave at the
 shared SDK submit boundary. Resuming an existing job does not require spare GPU

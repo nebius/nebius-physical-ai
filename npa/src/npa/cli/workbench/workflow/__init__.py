@@ -2633,7 +2633,9 @@ def _npa_submission_receipt(prepared, run_id: str) -> dict[str, object]:
     )
 
 
-def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
+def _workflow_submission_receipt(
+    spec, steps, run_id: str, *, plan_preview_error: str = ""
+) -> dict[str, object]:
     """Build the shared non-secret receipt for runtime and single-job submits."""
 
     from npa.orchestration.npa_workflow.run_state import (
@@ -2654,7 +2656,7 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
                 f"{canonical!r}, got {prefix!r}"
             )
     run_prefix_uri = f"s3://{bucket}/{prefix}" if bucket and prefix else ""
-    return {
+    receipt = {
         "name": spec.name,
         "api_version": spec.api_version,
         "run_prefix_uri": run_prefix_uri,
@@ -2663,6 +2665,26 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
         ),
         "steps": plan_step_records(steps),
     }
+    if plan_preview_error:
+        receipt["plan_preview"] = {"status": "failed", "error": plan_preview_error}
+    return receipt
+
+
+def _runtime_submission_receipt(
+    spec: Any, run_id: str, assume_decision: str
+) -> dict[str, object]:
+    """Build a runtime receipt while retaining a safe preview failure detail."""
+    from npa.orchestration.npa_workflow.runtime import plan_preview
+    from npa.orchestration.skypilot.workflow_state import redact_text
+    from npa.verification import sanitize_reason
+
+    decision = assume_decision or str(spec.config.get("plan_assume_decision") or "")
+    try:
+        steps = plan_preview(spec, run_id=run_id, assume_decision=decision).steps
+        return _workflow_submission_receipt(spec, steps, run_id)
+    except Exception as exc:  # noqa: BLE001 - runtime is authoritative
+        detail = sanitize_reason(redact_text(f"{type(exc).__name__}: {exc}"))
+        return _workflow_submission_receipt(spec, [], run_id, plan_preview_error=detail)
 
 
 def _runtime_submit_environment(
@@ -2765,24 +2787,12 @@ def _run_npa_workflow_runtime(
         source["config"].update(config_overrides)
         submitted_yaml = yaml.safe_dump(source, sort_keys=False).encode("utf-8")
 
-    from npa.orchestration.npa_workflow.runtime import plan_preview
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
-    try:
-        receipt_plan = plan_preview(
-            spec,
-            run_id=run_id,
-            assume_decision=(
-                assume_decision or str(spec.config.get("plan_assume_decision") or "")
-            ),
-        )
-        receipt_steps = receipt_plan.steps
-    except Exception:  # noqa: BLE001 - runtime remains the authoritative planner
-        receipt_steps = []
     update_submission_state(
         project or "default",
         run_id,
-        {"workflow": _workflow_submission_receipt(spec, receipt_steps, run_id)},
+        {"workflow": _runtime_submission_receipt(spec, run_id, assume_decision)},
     )
 
     resolved_secret_envs = secret_env_names(secret_envs, values=secret_env_values)
@@ -5123,6 +5133,32 @@ def _durable_workflow_status(
     )
 
 
+def _runtime_resource_profiles(
+    runtime_waves: Sequence[Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Return the latest persisted resource profile for each runtime state."""
+    profiles: dict[str, dict[str, object]] = {}
+    for wave in runtime_waves:
+        raw = wave.get("resource_profiles")
+        if not isinstance(raw, Mapping):
+            continue
+        for state, profile in raw.items():
+            if isinstance(state, str) and isinstance(profile, Mapping):
+                profiles[state] = dict(profile)
+    return profiles
+
+
+def _preview_failure_diagnostic(workflow_record: Mapping[str, object]) -> str:
+    """Return a safe diagnostic for a recorded submission-preview failure."""
+    from npa.verification import sanitize_reason
+
+    preview = workflow_record.get("plan_preview")
+    if not isinstance(preview, Mapping) or preview.get("status") != "failed":
+        return ""
+    detail = sanitize_reason(str(preview.get("error") or "unknown preview error"))
+    return f"Submission plan preview failed before runtime planning: {detail}"
+
+
 def _manifest_pending_status(
     resolution,
     *,
@@ -5160,6 +5196,11 @@ def _manifest_pending_status(
         for item in resolution.runtime_state.get("waves") or []
         if isinstance(item, dict)
     ]
+    runtime_profiles = _runtime_resource_profiles(runtime_waves)
+    for step in steps:
+        state = str(step.get("state") or "")
+        if not step.get("resources_profile") and state in runtime_profiles:
+            step["resources_profile"] = dict(runtime_profiles[state])
     active_wave = next(
         (
             item
@@ -5187,7 +5228,9 @@ def _manifest_pending_status(
                         "attempt": int(wave.get("attempt") or 1),
                         "wave_key": str(wave.get("key") or ""),
                         "sky_status": str(wave.get("sky_status") or ""),
-                        "resources_profile": {},
+                        "resources_profile": dict(
+                            runtime_profiles.get(str(state_name), {})
+                        ),
                     }
                 )
     runtime_job_ids = {
@@ -5206,6 +5249,9 @@ def _manifest_pending_status(
     task_rows: list[dict[str, object]] = []
     controller_output = ""
     diagnostics = resolution_diagnostics(resolution)
+    preview_diagnostic = _preview_failure_diagnostic(workflow_record)
+    if preview_diagnostic:
+        diagnostics.append(preview_diagnostic)
     verification_errors: list[str] = []
     if (
         not cached
@@ -5260,7 +5306,11 @@ def _manifest_pending_status(
             {
                 "state": str(row.get("task_name") or f"step-{index}"),
                 "status": "submitted",
-                "resources_profile": {},
+                "resources_profile": dict(
+                    runtime_profiles.get(
+                        str(row.get("task_name") or f"step-{index}"), {}
+                    )
+                ),
             }
             for index, row in enumerate(rows)
         ]

@@ -67,6 +67,77 @@ def test_terminal_ten_wave_runtime_without_active_jobs_stays_succeeded() -> None
     assert payload["manifest_state"] == "pending"
 
 
+def test_pending_status_projects_runtime_resource_snapshot_and_preview_error() -> None:
+    from npa.cli.workbench.workflow import _manifest_pending_status
+
+    resolution = RunResolution(
+        run_id="resource-snapshot",
+        project="live",
+        found=True,
+        source="durable_runtime_ledger",
+        workflow_name="training",
+        run_prefix_uri="s3://bucket/training/resource-snapshot",
+        manifest_uri="s3://bucket/training/resource-snapshot/manifest.json",
+        receipt={
+            "workflow": {
+                "api_version": "npa.workflow/v0.0.1",
+                "steps": [],
+                "plan_preview": {
+                    "status": "failed",
+                    "error": "ValueError: decision unavailable",
+                },
+            }
+        },
+        runtime_state={
+            "schema_version": "npa.workflow.runtime.v1",
+            "status": "running",
+            "waves": [
+                {
+                    "key": "wave-train",
+                    "states": ["train"],
+                    "status": "running",
+                    "attempt": 1,
+                    "resource_profiles": {
+                        "train": {"accelerators": "B200:1", "cpus": 16}
+                    },
+                }
+            ],
+        },
+    )
+
+    payload = _manifest_pending_status(
+        resolution,
+        project="live",
+        sky_bin="",
+        startup_failure_threshold=3,
+        cached=True,
+    )
+
+    stage = next(iter(payload["stages"].values()))
+    assert stage["requested_accelerators"] == "B200:1"
+    assert stage["resources_profile"] == {"accelerators": "B200:1", "cpus": 16}
+    assert any("decision unavailable" in item for item in payload["diagnostics"])
+
+
+def test_runtime_submission_receipt_preserves_redacted_preview_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench.workflow import _runtime_submission_receipt
+    from npa.orchestration.npa_workflow import load_spec
+    from npa.orchestration.npa_workflow import runtime
+
+    def fail_preview(*_args, **_kwargs):
+        raise ValueError("AWS_SECRET_ACCESS_KEY=do-not-persist")
+
+    monkeypatch.setattr(runtime, "plan_preview", fail_preview)
+    receipt = _runtime_submission_receipt(load_spec(FANOUT), "preview-run", "")
+
+    assert receipt["steps"] == []
+    assert receipt["plan_preview"]["status"] == "failed"
+    assert "do-not-persist" not in receipt["plan_preview"]["error"]
+    assert "<redacted>" in receipt["plan_preview"]["error"]
+
+
 def test_terminal_status_uses_latest_attempt_without_erasing_history() -> None:
     from npa.cli.workbench.workflow import _latest_runtime_wave_states
 

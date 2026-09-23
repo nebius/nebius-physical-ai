@@ -428,6 +428,56 @@ obsolete local resume-probe checkpoints and recovered 63,123,878,368 bytes of
 training-volume space. Independent readback verified its ten original artifacts.
 The checkpoint admitted through recovery remains preserved in object storage.
 
+### Full-training startup checks
+
+Four full-training launches failed before full-policy initialization or optimizer
+updates. Their original failures were retained, their published artifacts were
+independently verified against provider bytes, and their exact workers,
+controllers, and isolated APIs were cleaned up.
+
+| Failure boundary | Preserved originals | Failure-manifest SHA-256 |
+| --- | ---: | --- |
+| Obsolete runtime receipt layout | 1 | `409b86eae9c9985ba25a111d434787fe0f9b4f05370968394e4cb8df69d62764` |
+| Fresh checkpoint-test child missed the verified source overlay | 22 | `858d1d777f47c7360963fb905a65d10376555de2b50e2c3fe696868a6555fbd9` |
+| Restore imported the storage SDK inside the locked scientific interpreter | 26 | `c0b95e3537d94e50557f1cf582a06df73a1676846ba22df449c97bd30950bb21` |
+| Training startup cached the not-yet-created overlay directory as missing | 28 | `d260098eeb2d65749188b887adb6fd09bdb96150e440f0089e3cb77cc7b3b818` |
+
+Two separate CPU-only prerequisite workflows passed both native Tiny-model tests,
+including checkpoint restoration in a fresh process. They verified the active
+217-package scientific runtime, interpreter isolation, source imports, and
+unchanged scientific source. Independent provider readback preserved all eight
+originals from the first check and all ten from the storage-boundary successor.
+The latter also exercised the real restore helper under the storage-capable
+control interpreter and selected the released parent from an empty checkpoint
+prefix. Its output manifest has SHA-256
+`c2dac660208c8daf978f48e63b6c7717b7ef58d9b49dcf5e5b93090dc0cec2f8`.
+
+The fourth GPU launch confirmed that restore worked, but exposed an input-import
+path that these prerequisite checks had not exercised. The correction removes
+the premature overlay path and adds a CPU-only stop in the real training
+entrypoint after full input verification, before data-loader or full-policy
+initialization. The CPU successor passed both native tests and that input-only
+branch. It verified the frozen inputs, locked runtime, and imports from the newly
+created overlay. Independent provider readback and local verification covered
+all 12 originals; its output manifest has SHA-256
+`79fd3b41369c3b763e0b8868e8d9d7edf57cb18e0910d6c308be1ff8191cf748`.
+The exact worker, controller, and isolated API were cleaned up after preservation.
+
+The corrected B200 run then initialized the full policy and optimizer. Its live
+logs recorded 64 consecutive native updates with finite loss and gradients.
+The first synchronized update, including compilation, took 59.09 seconds; the
+median for updates 2–64 was 12.50 seconds, with median loader wait of 0.27 seconds.
+The reconstructed log observation has SHA-256
+`17cd17bf45b6c0d1a2d1afb0c4fbda09de8847ac8ebbfc6e374911f43988faab`.
+These are early training measurements. They do not establish publication of a
+real trained milestone, checkpoint selection, or candidate policy quality.
+
+The launches also exposed missing resource metadata when submission preview
+failed, and incomplete image-reference identity. Workbench now persists each
+wave's actual rendered resource requests and a versioned set of resolved image
+references. Resume and replay reject inconsistent reference hashes. Mutable tags
+remain explicitly reference-string evidence; they do not attest to image bytes.
+
 ### Specialist recovery and Workbench task status
 
 The released SFT specialist ultimately completed all ten original development

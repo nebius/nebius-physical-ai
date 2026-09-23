@@ -24,6 +24,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
 from npa.orchestration.npa_workflow.runtime import (
+    IMAGE_IDENTITY_VERSION,
     MAX_TERMINAL_PLAN_MIGRATIONS,
     SCHEDULER_OBSERVATION_SCHEMA,
     SCHEDULER_OBSERVATION_SOURCE,
@@ -32,13 +33,22 @@ from npa.orchestration.npa_workflow.runtime import (
     SkyPilotWaveExecutor,
     WaveAttempt,
     _claims_for_steps,
+    _expected_image_identity,
+    _image_identity,
+    _loaded_image_identity,
     _record_reached_running,
+    _reference_set_identity,
+    _resource_profiles_for_steps,
+    _wave_image_references,
     plan_fingerprint,
     run_workflow_runtime,
     s3_trigger_waiter,
     wave_key,
 )
-from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
+    build_skypilot_task_doc,
+)
 from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
 
 
@@ -78,6 +88,124 @@ def test_wave_attempt_persists_exact_rendered_claim_names() -> None:
     assert claims == ("run-workspace",)
     assert record["persistent_volume_claims"] == ["run-workspace"]
     assert restored.persistent_volume_claims == ["run-workspace"]
+
+
+def test_wave_attempt_round_trip_preserves_resource_and_image_evidence() -> None:
+    reference = "registry.example/npa@sha256:" + "a" * 64
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        image_digest=_reference_set_identity([reference]),
+        image_identity_version=IMAGE_IDENTITY_VERSION,
+        image_references=[reference],
+        resource_profiles={"train": {"accelerators": "B200:1", "cpus": 16}},
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert restored.resource_profiles == attempt.resource_profiles
+    assert restored.image_references == [reference]
+    identity = record["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["all_references_content_addressed"] is True
+    attempt.image_references = ["registry.example/npa:mutable"]
+    mutable = attempt.to_dict()["image_identity"]
+    assert mutable["all_references_content_addressed"] is False
+    legacy = WaveAttempt(
+        key="legacy", states=["train"], kind="serial", image_digest="c" * 64
+    ).to_dict()["image_identity"]
+    assert legacy["kind"] == "legacy_digest_pin_set"
+    assert "reference_set_sha256" not in legacy
+    tampered = json.loads(json.dumps(record))
+    tampered["image_identity"]["references"] = ["registry.example/other:tag"]
+    with pytest.raises(NpaWorkflowError, match="reference-set identity differs"):
+        SkyPilotWaveExecutor._attempt_from_record(
+            tampered, steps=[], kind="serial", group=""
+        )
+
+
+@pytest.mark.parametrize("invalid", [None, "", 1, {}, []])
+def test_image_identity_rejects_invalid_reference_members(invalid) -> None:
+    reference = "registry.example/image:tag"
+    record = {
+        "immutable_identity": {"image_digest": _reference_set_identity([reference])},
+        "image_identity": {
+            "version": IMAGE_IDENTITY_VERSION,
+            "references": [reference, invalid],
+        },
+    }
+    with pytest.raises(NpaWorkflowError, match="must be nonempty strings"):
+        _loaded_image_identity(record)
+
+
+def test_resource_snapshot_matches_rendered_environment_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    accelerators: B200:1"
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="resource-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions(
+        gpu_accelerator_overrides={"B200:1": "nvidia.com/gpu:B200:1"}
+    )
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", "H200:1")
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "96Gi")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://source-role/" + "d" * 64)
+    rendered = build_skypilot_task_doc(
+        spec, step, run_id="resource-evidence", options=options
+    )["resources"]
+    expected = {
+        key: value
+        for key, value in rendered.items()
+        if key not in {"image_id", "image_login_config"}
+    }
+    snapshots = _resource_profiles_for_steps(spec, [step], options, "resource-evidence")
+
+    assert snapshots[step.state] == expected
+    assert snapshots[step.state]["accelerators"] == "H200:1"
+    assert snapshots[step.state]["memory"] == "96+"
+
+
+def test_resolved_image_identity_includes_inline_image_and_keeps_legacy(
+    tmp_path: Path,
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    image: repo/image@sha256:" + "a" * 64
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions()
+
+    references = _wave_image_references(spec, [step], options, "image-evidence")
+    resolved = _expected_image_identity(
+        spec, [step], options, IMAGE_IDENTITY_VERSION, "image-evidence"
+    )
+    changed_spec = load_spec(_write_spec(tmp_path, source.replace("a" * 64, "c" * 64)))
+    changed_step = build_plan(
+        changed_spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+
+    assert references == ("repo/image@sha256:" + "a" * 64,)
+    assert resolved != _image_identity(options)
+    assert resolved != _expected_image_identity(
+        changed_spec,
+        [changed_step],
+        options,
+        IMAGE_IDENTITY_VERSION,
+        "image-evidence",
+    )
+    assert _expected_image_identity(spec, [step], options, "", "image-evidence") == (
+        _image_identity(options)
+    )
 
 
 def _typed_running_observation(
@@ -4075,6 +4203,9 @@ def test_runtime_supervisor_stops_configuration_retry_immediately(
     ]
     assert executor.attempts[0].error_category == "actionable_configuration"
     assert executor.attempts[0].recovery_decision == "cancel_and_terminalize"
+    assert executor.attempts[0].resource_profiles == {
+        "gate": {"cloud": "kubernetes", "cpus": "4+", "memory": "16+"}
+    }
 
 
 def test_runtime_supervisor_recovers_transient_once_without_duplicate(
