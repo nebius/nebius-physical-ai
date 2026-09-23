@@ -486,6 +486,22 @@ The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
 
+Main-branch pushes touching `npa/docker/workbench/` select development builds by
+changed recipe directories, individual packaging/catalog entries, and Dockerfile
+`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+source and staged workflow changes in the same push rebuild their consumers.
+Unchanged images retain their previously validated versions; no new development
+tag is fabricated for them. The existing weekly refresh still builds every
+eligible public image, including shared-source-only updates that do not trigger
+the workbench push filter. Explicit manual build selections remain available.
+
+Missing history, unknown shared workbench files, ambiguous metadata, and
+unsupported build-input syntax conservatively restore the full public build set.
+An empty automatic selection performs no build or release preflight. Every
+selected image retains all pre-publication and exact-digest security checks;
+release promotion remains a separate manual operation. Selection lives in
+`npa.deploy.image_build_scope` and is tested using real Git histories.
+
 The public-plan inventory retains all 34 published release tags. The current
 Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate
 after image security, B200 state, and successful RTX task/visual gates. The
