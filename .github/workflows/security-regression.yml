@@ -16,9 +16,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
-  validation-plan:
-    name: validation-plan
-    runs-on: ubuntu-latest
+  gitleaks:
+    name: ${{ github.event_name == 'push' && 'validation-plan' || 'gitleaks' }}
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     timeout-minutes: 2
     permissions:
       contents: read
@@ -62,10 +62,32 @@ jobs:
             --repository "$GITHUB_REPOSITORY" --event-path "$GITHUB_EVENT_PATH" \
             --github-output "$GITHUB_OUTPUT" --image-policy "$RUNNER_TEMP/image_scope.py"
 
+      - name: Install verified gitleaks release
+        if: github.event_name != 'push'
+        env:
+          GITLEAKS_VERSION: 8.28.0
+          GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+        run: |
+          curl -sSfL --retry 5 "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Reject committed secrets
+        if: github.event_name != 'push'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          git rev-parse --verify "${BASE_SHA}^{commit}"
+          gitleaks detect --source . --config .gitleaks.toml --redact --no-banner \
+            --log-opts="${BASE_SHA}..HEAD"
+
   pr-precheck:
     name: pr-precheck
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,11 +115,7 @@ jobs:
           echo "$GITHUB_WORKSPACE/npa/.venv/bin" >> "$GITHUB_PATH"
       - name: Check lint, formatting, smoke and test collection
         run: |
-          npa/.venv/bin/python -m ruff check npa
-          npa/.venv/bin/python -m ruff format --check npa
-          npa/.venv/bin/python -m pytest npa/tests/smoke npa/tests/guardrails -n auto --dist worksteal -q
-          npa/.venv/bin/python -m pytest npa/tests --collect-only -q > "$RUNNER_TEMP/test-collection.txt"
-          tail -1 "$RUNNER_TEMP/test-collection.txt"
+          bash npa/scripts/ci_precheck.sh
       - name: Publish the early signal
         run: |
           echo '## PR precheck passed' >> "$GITHUB_STEP_SUMMARY"
@@ -106,58 +124,27 @@ jobs:
   # Independent validation jobs use available runners without shared job locks.
   # The workflow-level group above owns cancellation of superseded PR work.
   test-gate:
-    needs: [validation-plan, pr-precheck]
-    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
+    needs: [gitleaks, pr-precheck]
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
     uses: ./.github/workflows/test.yml
 
   lint-gate:
-    needs: [validation-plan, pr-precheck]
-    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
+    needs: [gitleaks, pr-precheck]
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
     uses: ./.github/workflows/lint.yml
 
   queue-guardrails:
-    needs: validation-plan
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) }}
+    needs: gitleaks
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) }}
     uses: ./.github/workflows/harness-guardrails.yml
 
   # Keep these two job names stable while their former standalone workflows
   # become main-only audits. Existing branch protection remains fail closed
   # throughout the rollout and the parent concurrency cancels them atomically.
-  gitleaks:
-    if: github.event_name != 'push'
-    name: gitleaks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out full history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install verified gitleaks release
-        env:
-          GITLEAKS_VERSION: 8.28.0
-          GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
-        run: |
-          curl -sSfL --retry 5 "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
-          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
-          tar -xzf gitleaks.tar.gz gitleaks
-          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
-          gitleaks version
-
-      - name: Reject committed secrets
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: |
-          set -euo pipefail
-          git rev-parse --verify "${BASE_SHA}^{commit}"
-          gitleaks detect --source . --config .gitleaks.toml --redact --no-banner \
-            --log-opts="${BASE_SHA}..HEAD"
-
   scan:
     if: github.event_name != 'push'
     name: scan
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     env:
       CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
       INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
@@ -202,8 +189,8 @@ jobs:
           fi
 
   image-security:
-    needs: [validation-plan, pr-precheck]
-    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && needs.validation-plan.outputs.mode == 'full' && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
+    needs: [gitleaks, pr-precheck]
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && needs.gitleaks.outputs.mode == 'full' && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
     uses: ./.github/workflows/image-security-scan.yml
     permissions:
       contents: read
@@ -213,7 +200,7 @@ jobs:
   security-scanners:
     name: security-scanners
     timeout-minutes: 7
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -264,10 +251,10 @@ jobs:
             --output-dir "$RUNNER_TEMP/security-report"
 
   security-runtime:
-    needs: [validation-plan, pr-precheck]
-    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
+    needs: [gitleaks, pr-precheck]
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
     name: hostile-input-runtime
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
@@ -321,7 +308,6 @@ jobs:
   security-regression:
     name: security-regression
     needs:
-      - validation-plan
       - pr-precheck
       - queue-guardrails
       - test-gate
@@ -333,13 +319,13 @@ jobs:
       - security-runtime
     # Report failed dependencies, but let superseded runs release the PR queue.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Require every candidate gate and security audit
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PLAN_RESULT: ${{ needs.validation-plan.result }}
-          VALIDATION_MODE: ${{ needs.validation-plan.outputs.mode }}
+          PLAN_RESULT: ${{ needs.gitleaks.result }}
+          VALIDATION_MODE: ${{ needs.gitleaks.outputs.mode }}
           PRECHECK_RESULT: ${{ needs.pr-precheck.result }}
           TEST_RESULT: ${{ needs.test-gate.result }}
           LINT_RESULT: ${{ needs.lint-gate.result }}

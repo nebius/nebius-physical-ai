@@ -514,6 +514,10 @@ lint and formatting, all guardrails, smoke tests, and full test collection. Its 
 execution budget provides an early signal; a pass is not permission to merge.
 Fresh source/dependency, secret and confidentiality scans also start immediately.
 A failed precheck prevents the expensive test and image jobs from starting.
+The hosted precheck runs full collection alongside guardrails and smoke tests
+on the same runner with `bash npa/scripts/ci_precheck.sh`. Both must pass;
+collection errors remain blocking, and failed guardrails stop the collector.
+This saves a sequential collection pass without starting another runner.
 
 PR admission still requires eight duration-balanced Python 3.12 coverage shards,
 Cypress, focused Python 3.10/3.14 compatibility tests, security, documentation
@@ -591,8 +595,12 @@ balances measured module durations from `npa/tests/ci_test_durations.json`, then
 uses a deterministic default for new tests. Every full Python 3.12 run uploads
 per-shard module timings, including available measurements from failed shards.
 Successful full runs publish `ci-test-durations-<sha>` with a merged profile.
-Use a successful scheduled `main` audit to refresh the reviewed manifest; PR
-profiles are diagnostic evidence and are never loaded automatically as policy.
+Refresh the reviewed manifest from a successful `main` audit or a successful
+validation of an exact tree that has since merged. Review the source run and
+numeric data before committing them; PR profiles are never loaded automatically
+as policy. The current profile comes from the
+[successful #689 validation](https://github.com/nebius/nebius-physical-ai/actions/runs/35738254239)
+whose tested tree was verified at merge, and covers 938 modules.
 
 ### CI dependency setup and timing reports
 
@@ -623,6 +631,29 @@ from its own measurements. It is outside the required merge checks; cancellation
 of the parent workflow can interrupt reporting.
 
 ### Validation concurrency
+
+Queue evidence verification and secret scanning share the `gitleaks` job and
+checkout. A failed verification restores full validation; a failed secret scan
+still blocks the required context. The other required context names are unchanged.
+
+Operators can configure two repository Actions variables after the organization
+has made approved Ubuntu x64 runner labels available to this repository:
+
+| Variable | Candidate jobs routed to that label | Default |
+| --- | --- | --- |
+| `NPA_CI_PRIORITY_RUNNER` | Precheck, queue evidence/secrets, confidentiality, source/dependency scans, scope and final aggregation | `ubuntu-latest` |
+| `NPA_CI_TEST_RUNNER` | Full Python/browser tests, docs, runtime and image validation | `ubuntu-latest` |
+
+Use separate capacity for these labels. Main, scheduled and manual audits keep
+using standard runners, as do background image builds unless their existing
+`build_runner_label` input selects another pool. The priority pool must support
+the precheck's Python dependencies and ordinary GitHub Ubuntu tools; use approved
+ephemeral runners with the repository's public-PR access policy. Merely setting
+a variable does not create runners or reserve capacity, and an unavailable label
+leaves jobs queued. Verify access with a real candidate before relying on it.
+Without configured pools there is no runner reservation or per-PR fairness
+guarantee. Runner allocation, rather than longer timeouts or skipped checks,
+remains necessary to meet latency targets under sustained load.
 
 Independent validation jobs use GitHub's available runner capacity. Validation
 workflows have no job-level concurrency locks or matrix `max-parallel` caps:

@@ -31,7 +31,7 @@ concurrency:
 jobs:
   image-policy:
     name: Image policy and complete-byte security
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Check out full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -138,7 +138,7 @@ jobs:
 
   base-image-plan:
     name: Plan base image CVE inventory
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     outputs:
       deep: ${{ steps.scope.outputs.deep }}
       matrix: ${{ steps.inventory.outputs.matrix }}
@@ -186,7 +186,7 @@ jobs:
     name: Base image CVE / ${{ matrix.entry }}
     needs: base-image-plan
     if: needs.base-image-plan.outputs.deep == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.base-image-plan.outputs.matrix) }}
@@ -252,7 +252,7 @@ jobs:
     needs: [base-image-plan, base-image-entry]
     # Report scan failures, but release superseded runs without waiting for a runner.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Require complete scoped inventory
         env:
@@ -269,7 +269,7 @@ jobs:
 
   omniverse-payload-scan:
     name: Omniverse payload scan (built image)
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
     steps:
       - name: Check out repository

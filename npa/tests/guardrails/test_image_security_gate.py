@@ -71,9 +71,9 @@ def test_required_gate_calls_image_security_for_every_candidate() -> None:
         "push": {"branches": ["main"]},
     }
     image_job = workflow["jobs"]["image-security"]
-    assert image_job["needs"] == ["validation-plan", "pr-precheck"]
-    assert "needs.validation-plan.result == 'success'" in image_job["if"]
-    assert "needs.validation-plan.outputs.mode == 'full'" in image_job["if"]
+    assert image_job["needs"] == ["gitleaks", "pr-precheck"]
+    assert "needs.gitleaks.result == 'success'" in image_job["if"]
+    assert "needs.gitleaks.outputs.mode == 'full'" in image_job["if"]
     assert {key: image_job[key] for key in ("uses", "permissions")} == {
         "uses": "./.github/workflows/image-security-scan.yml",
         "permissions": {
