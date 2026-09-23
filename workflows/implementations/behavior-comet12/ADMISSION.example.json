@@ -1,0 +1,54 @@
+{
+  "data_asset_id": "REPLACE_WITH_VERIFIED_ASSET_ID",
+  "minimum_checkpoint_free_bytes": 50000000000,
+  "minimum_materialization_free_bytes": 150000000000,
+  "released_parent": {
+    "inventory": {
+      "bytes": 0,
+      "sha256": "REPLACE_WITH_64_HEX"
+    },
+    "role": "released_parent_parameters_cursor_zero_nonresumable"
+  },
+  "schema": "npa.behavior.comet-native-training-admission.v1",
+  "source_files": {
+    "scripts/train.py": {
+      "bytes": 0,
+      "sha256": "REPLACE_WITH_64_HEX"
+    },
+    "src/openpi/training/checkpoints.py": {
+      "bytes": 0,
+      "sha256": "REPLACE_WITH_64_HEX"
+    },
+    "src/openpi/training/data_loader.py": {
+      "bytes": 0,
+      "sha256": "REPLACE_WITH_64_HEX"
+    }
+  },
+  "static_reconstruction": {
+    "batch_size": 256,
+    "ema_decay": null,
+    "freeze_filter": "full_parameter_nnx.Nothing",
+    "fsdp_devices": 1,
+    "keep_period": 5000,
+    "lr_schedule": {
+      "decay_lr": 0.0,
+      "decay_steps": 20000,
+      "peak_lr": 2.5e-06,
+      "warmup_steps": 1000
+    },
+    "model": {},
+    "name": "comet_native_full_parameter_adamw_20k",
+    "num_train_steps": 20000,
+    "num_workers": 8,
+    "optimizer": {
+      "b1": 0.9,
+      "b2": 0.95,
+      "clip_gradient_norm": 1.0,
+      "eps": 1e-08,
+      "weight_decay": 1e-10
+    },
+    "save_interval": 5000,
+    "seed": 42
+  },
+  "status": "qualified_inputs_bound_for_native_training"
+}

@@ -1,0 +1,157 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: behavior-comet-native-full-training
+  description: Real provenance-bound OpenPI preflight and full-state native training.
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: s3://example-bucket/example-comet-native-training
+  openpi_uri: s3://example-bucket/inputs/openpi-source.tar.gz
+  openpi_sha256: REPLACE_WITH_64_HEX
+  openpi_bytes: "0"
+  worker_uri: s3://example-bucket/inputs/npa-worker-source.tar.gz
+  worker_sha256: REPLACE_WITH_64_HEX
+  worker_bytes: "0"
+  dataset_uri: s3://example-bucket/inputs/comet-dataset.tar.gz
+  dataset_sha256: REPLACE_WITH_64_HEX
+  dataset_bytes: "0"
+  parent_uri: s3://example-bucket/inputs/released-parent.tar.gz
+  parent_sha256: REPLACE_WITH_64_HEX
+  parent_bytes: "0"
+  admission_uri: s3://example-bucket/inputs/native-training-admission.json
+  admission_sha256: REPLACE_WITH_64_HEX
+  admission_bytes: "0"
+  runtime_manifest_uri: s3://example-bucket/inputs/runtime-manifest.json
+  runtime_manifest_sha256: REPLACE_WITH_64_HEX
+  scientific_python_relative: work/locked-venv/bin/python
+  scientific_python_link_target: ../../../.local/python/bin/python3.11
+  scientific_python_base_relative: .local/python/bin/python3.11
+  scientific_python_base_sha256: REPLACE_WITH_64_HEX
+  scientific_python_base_bytes: "0"
+  scientific_runtime_receipt_relative: work/locked-venv/runtime-receipt.json
+  scientific_runtime_receipt_sha256: REPLACE_WITH_64_HEX
+  scientific_runtime_receipt_bytes: "0"
+  config_name: pi05_b1k-base
+  split_sha256: REPLACE_WITH_64_HEX
+  dataset_relative: dataset-view
+  split_relative: episode-split.json
+  home: /home/ubuntu
+  runtime_workspace: /home/ubuntu/npa-runtime
+  checkpoint_root: /home/ubuntu/npa-checkpoints
+  runtime_image: registry.example.invalid/operator/comet-native@sha256:REPLACE_WITH_64_HEX
+  gpu_type: B200
+  durable_pvc: REPLACE_WITH_OPERATOR_PVC
+  final_step: "20000"
+  milestones: 0,5000,10000,15000,20000
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: "8"
+    memory: 32Gi
+    image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: native-training
+                  mountPath: /home/ubuntu
+          volumes:
+            - name: native-training
+              persistentVolumeClaim:
+                claimName: "{{config.durable_pvc}}"
+  gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:1"
+    cpus: "16"
+    memory: 128Gi
+    image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: native-training
+                  mountPath: /home/ubuntu
+          volumes:
+            - name: native-training
+              persistentVolumeClaim:
+                claimName: "{{config.durable_pvc}}"
+initial: preflight
+states:
+  preflight:
+    resources: cpu
+    run:
+      shell: |
+        set -eu
+        ATTEMPT_ID="${NPA_WORKFLOW_ATTEMPT_ID:-$(date +%s)-$$}"
+        python -m npa.workflows.behavior_challenge.comet_native_workflow preflight \
+        --prefix '{{config.prefix}}' --preflight-uri '{{config.prefix}}/preflight/receipt.json' \
+        --openpi-uri '{{config.openpi_uri}}' --openpi-sha256 '{{config.openpi_sha256}}' --openpi-bytes '{{config.openpi_bytes}}' \
+        --worker-uri '{{config.worker_uri}}' --worker-sha256 '{{config.worker_sha256}}' \
+        --worker-bytes '{{config.worker_bytes}}' --dataset-uri '{{config.dataset_uri}}' \
+        --dataset-sha256 '{{config.dataset_sha256}}' --dataset-bytes '{{config.dataset_bytes}}' \
+        --parent-uri '{{config.parent_uri}}' --parent-sha256 '{{config.parent_sha256}}' \
+        --parent-bytes '{{config.parent_bytes}}' --admission-uri '{{config.admission_uri}}' \
+        --admission-sha256 '{{config.admission_sha256}}' --admission-bytes '{{config.admission_bytes}}' \
+        --runtime-manifest-uri '{{config.runtime_manifest_uri}}' \
+        --runtime-manifest-sha256 '{{config.runtime_manifest_sha256}}' \
+        --scientific-python-relative '{{config.scientific_python_relative}}' \
+        --scientific-python-link-target '{{config.scientific_python_link_target}}' \
+        --scientific-python-base-relative '{{config.scientific_python_base_relative}}' \
+        --scientific-python-base-sha256 '{{config.scientific_python_base_sha256}}' \
+        --scientific-python-base-bytes '{{config.scientific_python_base_bytes}}' \
+        --scientific-runtime-receipt-relative '{{config.scientific_runtime_receipt_relative}}' \
+        --scientific-runtime-receipt-sha256 '{{config.scientific_runtime_receipt_sha256}}' \
+        --scientific-runtime-receipt-bytes '{{config.scientific_runtime_receipt_bytes}}' \
+        --attempt-id "$ATTEMPT_ID" \
+        --config-name '{{config.config_name}}' --split-sha256 '{{config.split_sha256}}' \
+        --dataset-relative '{{config.dataset_relative}}' --split-relative '{{config.split_relative}}' \
+        --home '{{config.home}}' --runtime-workspace '{{config.runtime_workspace}}' \
+        --workspace "/tmp/comet-native-preflight-$ATTEMPT_ID" --checkpoint-root '{{config.checkpoint_root}}' \
+        --final-step '{{config.final_step}}' --milestones '{{config.milestones}}'
+    outputs:
+      - uri: '{{config.prefix}}/preflight/receipt.json'
+        schema: npa.behavior.comet-native-input-preflight.v1
+    next: train
+  train:
+    resources: gpu
+    run:
+      shell: |
+        set -eu
+        ATTEMPT_ID="${NPA_WORKFLOW_ATTEMPT_ID:-$(date +%s)-$$}"
+        python -m npa.workflows.behavior_challenge.comet_native_workflow train \
+        --prefix '{{config.prefix}}' --preflight-uri '{{config.prefix}}/preflight/receipt.json' \
+        --openpi-uri '{{config.openpi_uri}}' --openpi-sha256 '{{config.openpi_sha256}}' --openpi-bytes '{{config.openpi_bytes}}' \
+        --worker-uri '{{config.worker_uri}}' --worker-sha256 '{{config.worker_sha256}}' \
+        --worker-bytes '{{config.worker_bytes}}' --dataset-uri '{{config.dataset_uri}}' \
+        --dataset-sha256 '{{config.dataset_sha256}}' --dataset-bytes '{{config.dataset_bytes}}' \
+        --parent-uri '{{config.parent_uri}}' --parent-sha256 '{{config.parent_sha256}}' \
+        --parent-bytes '{{config.parent_bytes}}' --admission-uri '{{config.admission_uri}}' \
+        --admission-sha256 '{{config.admission_sha256}}' --admission-bytes '{{config.admission_bytes}}' \
+        --runtime-manifest-uri '{{config.runtime_manifest_uri}}' \
+        --runtime-manifest-sha256 '{{config.runtime_manifest_sha256}}' \
+        --scientific-python-relative '{{config.scientific_python_relative}}' \
+        --scientific-python-link-target '{{config.scientific_python_link_target}}' \
+        --scientific-python-base-relative '{{config.scientific_python_base_relative}}' \
+        --scientific-python-base-sha256 '{{config.scientific_python_base_sha256}}' \
+        --scientific-python-base-bytes '{{config.scientific_python_base_bytes}}' \
+        --scientific-runtime-receipt-relative '{{config.scientific_runtime_receipt_relative}}' \
+        --scientific-runtime-receipt-sha256 '{{config.scientific_runtime_receipt_sha256}}' \
+        --scientific-runtime-receipt-bytes '{{config.scientific_runtime_receipt_bytes}}' \
+        --attempt-id "$ATTEMPT_ID" \
+        --config-name '{{config.config_name}}' --split-sha256 '{{config.split_sha256}}' \
+        --dataset-relative '{{config.dataset_relative}}' --split-relative '{{config.split_relative}}' \
+        --home '{{config.home}}' --runtime-workspace '{{config.runtime_workspace}}' \
+        --workspace "/tmp/comet-native-train-$ATTEMPT_ID" --checkpoint-root '{{config.checkpoint_root}}' \
+        --final-step '{{config.final_step}}' --milestones '{{config.milestones}}'
+    inputs:
+      - uri: '{{config.prefix}}/preflight/receipt.json'
+        schema: npa.behavior.comet-native-input-preflight.v1
+    outputs:
+      - uri: '{{config.prefix}}/train/receipt.json'
+        schema: npa.behavior.comet-native-full-training.v1
+    terminal: true

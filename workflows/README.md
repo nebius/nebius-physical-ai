@@ -188,6 +188,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Spec | Notes |
 | --- | --- |
+| [`behavior-comet-native-full-training.yaml`](testing/behavior-comet-native-full-training.yaml) | Portable real OpenPI native training reference: same-entrypoint CPU input preflight → direct native GPU updates → complete FP32 TrainState/optimizer milestones with provider readback and durable resume ([guide](../docs/workbench/comet-native-full-training.md)); exact private inputs remain operator supplied |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |

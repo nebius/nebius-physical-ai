@@ -59,3 +59,29 @@ and task mapping before staging the server. The serving identity covers both
 adapter modules, the inventory, and task name. Until a real GPU smoke pass
 exists, this is a validated loader and protocol adapter, not a completed
 evaluation result.
+
+## Native full-training reference
+
+The native-training reference uses the real upstream OpenPI loader, model loss,
+direct JIT `train_step`, optimizer, and Orbax checkpoint APIs. It contains no
+weights, datasets, normalization statistics, credentials, provider locations,
+or live run receipts.
+
+The operator supplies immutable archives and a
+`npa.behavior.comet-native-training-admission.v1` document that binds the
+load-bearing upstream source files, full static training reconstruction,
+released non-resumable parent, data identity, and checkpoint space floor.
+`train_comet_native.py preflight` installs the same verified source overlay and
+follows the training config/data entrypoint, stopping before policy
+initialization. The dependent GPU stage uses the same entrypoint and arguments.
+The locked scientific Python never imports the storage SDK; restore and each
+milestone publication execute under the declared control Python.
+
+The portable example is
+`workflows/testing/behavior-comet-native-full-training.yaml`. Its placeholder
+identities intentionally fail until an operator supplies exact authorized
+inputs, image, PVC, and storage prefix. Model and data access remains the
+operator's responsibility.
+
+The checked-in `ADMISSION.example.json` documents both required free-space
+floors. It is an identity template and contains no live artifact locations.

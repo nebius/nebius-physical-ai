@@ -1,0 +1,70 @@
+# Native Comet full training
+
+The Comet native workflow preserves OpenPI's model, `compute_loss(train=True)`,
+optimizer, learning-rate schedule, JAX sharding, and Orbax state. NPA adds a
+committed data cursor and an immutable provider boundary around the native loop.
+
+## Execution boundary
+
+The workflow uses two Python environments. The locked scientific runtime builds
+the verified overlay, transforms the real task-isolated dataset, and performs
+native updates. A storage-capable control Python restores a complete milestone
+and publishes each new milestone. Communication is through immutable JSON files
+and subprocess exit status; no storage SDK is installed into the scientific
+environment.
+
+A milestone is eligible for resume only after every full FP32 TrainState and
+AdamW member, its dense serving-parameter subset, and its receipt have been
+conditionally created and streamed back byte-for-byte. Cursor advancement occurs
+after synchronization of a successful optimizer update. The previous local
+checkpoint is retired only after the next provider manifest is read back.
+Released step zero is a parent-parameter source and is not described as a full
+optimizer checkpoint.
+
+## Portable versus live evidence
+
+The checked-in tests use a fake runtime for loop failure ordering and a tiny
+local checkpoint tree for restore/publication corruption. An optional pinned
+OpenPI CPU test performs two real native updates, saves and restores the Orbax
+state, and compares the next update. A live run still must qualify the full
+OpenPI source, runtime,
+parent, normalization data, dataset inventory, compiler flags, GPU placement,
+complete Orbax restore, provider storage, and sustained updates.
+
+## Runtime, capacity, and recovery boundary
+
+The runtime-ready receipt identifies restored directories and the external
+Python tree; it does not identify the locked scientific environment. The
+workflow separately binds the locked virtual-environment executable, its base
+interpreter, and a package/runtime receipt. Both CPU preflight and GPU training
+verify those identities after `prepare_runtime` returns.
+
+The admission document declares separate materialization and checkpoint free
+space floors. Materialization checks happen after the small admission download
+and before any source, data, or parent archive download. A milestone is
+resume-ready only when its Orbax inventory contains both `params` and
+`train_state`, and its receipt binds the actual FP32 parameter tree and optimizer
+state array inventory. Restore reconstructs the state and compares that contract
+before updates.
+
+Every CPU preflight receipt binds all source, worker, runtime, dataset, split,
+parent, admission, configuration, and Python identities. The recipe explicitly
+sets global batch 256, eight workers, seed 42, full-parameter AdamW, cosine
+decay, and 20,000 updates with 5,000-update milestones. Training accepts only
+an exact match. Ordinary preparation and training failures publish immutable
+attempt-scoped logs and a failure receipt before publishing the failure manifest
+last. A complete locally saved but unpublished milestone is verified and
+published on restart; incomplete or conflicting state fails closed. Exact local
+durable checkpoints are reused without another provider download.
+Owned partial downloads and a checkpoint-renamed/receipt-not-renamed restore
+transaction resume against the same provider manifest. Provider-durable retired
+local milestones are distinguished from unpublished partial state. Workflow
+attempt workspaces are unique, while exact completed canonical receipts are
+reused without rerunning training.
+
+## Qualification status
+
+This reusable workflow remains held pending live qualification. The portable
+CPU and Tiny tests do not establish a completed 20,000-update run, operation on
+a physical 24 GB GPU, exported-serving parity, or final model selection. Those
+claims require their own immutable live receipts and provider readback.
