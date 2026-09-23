@@ -727,3 +727,95 @@ def test_team_wait_rejects_invalid_observation_requests(
     bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
     with pytest.raises(ValueError):
         asyncio.run(bridge._wait_all(tasks, cursors, seconds))
+
+
+def _source_receipt(bridge):
+    from npa.agent_backend.specialists.tools import WorkbenchTools
+
+    bridge._delegate("scene-a", "task", "Review source")
+    profile = bridge.team.config.profile("scene-a")
+    (profile.workspace / "workflow.yaml").write_text("source: " + "α" * 10000)
+    executor = WorkbenchTools(profile, bridge.team.store, "task")
+    receipt = executor.execute(
+        {
+            "id": "source-read",
+            "function": {
+                "name": "read_file",
+                "arguments": json.dumps({"path": "workflow.yaml"}),
+            },
+        }
+    )
+    assert receipt["ok"] is True
+    return receipt, executor
+
+
+def test_status_omits_source_text_without_losing_receipts_or_uncertain_effects(
+    workflow_experiment, prepared, tmp_path
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    receipt, executor = _source_receipt(bridge)
+    failed = executor.execute(
+        {
+            "id": "check",
+            "function": {"name": "run_operation", "arguments": '{"name":"verify"}'},
+        }
+    )
+    bridge.team.store._begin_call("task", "unknown", {"name": "submit"})
+    original = bridge.team.status("task")["events"]
+    compact = bridge._status("task")
+    full = bridge._status("task", include_read_content=True)
+    reads = [event for event in compact["events"] if event.get("name") == "read_file"]
+    assert reads[0]["result"] == {
+        **{key: value for key, value in receipt.items() if key != "content"},
+        "content_omitted": True,
+        "content_bytes": len(receipt["content"].encode("utf-8")),
+    }
+    operations = [
+        event for event in compact["events"] if event.get("name") == "run_operation"
+    ]
+    assert operations[0]["result"] == failed
+    assert failed["returncode"] == 3 and failed["stderr"] == "diagnostic\n"
+    assert compact["uncertain_calls"] == full["uncertain_calls"]
+    assert compact["uncertain_calls"][0]["call_id"] == "unknown"
+    assert compact["last_sequence"] == full["last_sequence"]
+    assert len(json.dumps(compact)) < len(json.dumps(full)) / 3
+    assert full["events"] == original == bridge.team.status("task")["events"]
+
+
+def test_status_cursor_and_single_wait_preserve_compact_source_metadata(
+    workflow_experiment, prepared, tmp_path
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    _source_receipt(bridge)
+    first = bridge._status("task")
+    waited = asyncio.run(bridge._wait("task", 0, 0.01))
+    assert waited["events"] == first["events"]
+    assert bridge._status("task", first["last_sequence"])["events"] == []
+    bridge.team.store._event("task", {"type": "needs_attention", "error": "failure"})
+    later = bridge._status("task", first["last_sequence"])
+    assert len(later["events"]) == 1
+    assert later["events"][0]["error"] == "failure"
+
+
+def test_mcp_status_requires_explicit_opt_in_for_historical_source_content(
+    workflow_experiment, prepared, tmp_path
+):
+    pytest.importorskip("mcp.server.mcpserver")
+    directory = tmp_path / "evidence"
+    bridge = _bridge(workflow_experiment, prepared, directory)
+    receipt, _ = _source_receipt(bridge)
+    server = workflow_experiment["workflow_bridge"]._server(
+        prepared[0], directory, True
+    )
+    responses = []
+    for include in (False, True):
+        arguments = {"task_id": "task", "include_read_content": include}
+        result = asyncio.run(server.call_tool("specialist_status", arguments))
+        events = json.loads(result.content[0].text)["events"]
+        responses.append(
+            next(
+                event["result"] for event in events if event.get("name") == "read_file"
+            )
+        )
+    assert "content" not in responses[0]
+    assert responses[1] == receipt

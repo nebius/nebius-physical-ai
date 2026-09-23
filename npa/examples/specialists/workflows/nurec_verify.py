@@ -260,7 +260,7 @@ def _rrd_document(chunks: list, entity: str) -> dict:
     return json.loads(match.group(1))
 
 
-def _expected_rrd_images(root: Path, settings: dict) -> dict:
+def _legacy_expected_rrd_images(root: Path, settings: dict) -> dict:
     from PIL import Image
 
     groups = {}
@@ -290,7 +290,7 @@ def _expected_rrd_images(root: Path, settings: dict) -> dict:
     return result
 
 
-def _rrd_frames(chunks: list, expected: dict) -> int:
+def _legacy_rrd_frames(chunks: list, expected: dict) -> int:
     from PIL import Image
 
     observed = set()
@@ -319,6 +319,105 @@ def _rrd_frames(chunks: list, expected: dict) -> int:
             observed.add(identity)
     _require(bool(observed) and observed == set(expected), "incomplete_rrd_images")
     return len(observed)
+
+
+def _review_image_bytes(path: Path, settings: dict) -> bytes:
+    from PIL import Image
+
+    with Image.open(path) as source:
+        rgb = source.convert("RGB")
+        dimension = settings["max_frame_dim"]
+        if dimension > 0 and max(rgb.size) > dimension:
+            rgb.thumbnail((dimension, dimension))
+        encoded = io.BytesIO()
+        rgb.save(encoded, format="JPEG", quality=settings["jpeg_quality"])
+    return encoded.getvalue()
+
+
+def _rrd_source_images(root: Path, settings: dict) -> dict:
+    expected = {}
+    for directory, prefix in (
+        ("novel_views", "/novel_view"),
+        ("reconstruction", "/reconstruction"),
+    ):
+        source = root / directory
+        for path in sorted(source.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in _IMAGES:
+                continue
+            relative = path.parent.relative_to(source)
+            group = "frames" if relative == Path(".") else relative.as_posix()
+            match = re.search(r"(\d+)\D*$", path.stem)
+            identity = (f"{prefix}/{group}", int(match.group(1)) if match else 0)
+            _require(identity not in expected, "duplicate_source_frame_identity")
+            expected[identity] = _review_image_bytes(path, settings)
+    _require(bool(expected), "missing_rrd_source_images")
+    return expected
+
+
+def _rrd_source_rows(chunks: list, expected: dict) -> set:
+    from PIL import Image
+
+    observed = set()
+    for chunk in chunks:
+        entity = str(chunk.entity_path)
+        if not entity.startswith(("/novel_view/", "/reconstruction/")):
+            continue
+        batch = chunk.to_record_batch()
+        _require(
+            {"EncodedImage:blob", "frame"} <= set(batch.schema.names),
+            "rrd_missing_image_data",
+        )
+        rows = zip(
+            batch.column("frame").to_pylist(),
+            batch.column("EncodedImage:blob").to_pylist(),
+            strict=True,
+        )
+        for frame, blobs in rows:
+            identity = (entity, frame)
+            _require(identity not in observed, "duplicate_rrd_image")
+            _require(bool(blobs) and len(blobs) == 1, "invalid_rrd_image_row")
+            encoded = bytes(blobs[0])
+            _require(expected.get(identity) == encoded, "rrd_image_differs_from_run")
+            with Image.open(io.BytesIO(encoded)) as image:
+                image.load()
+            observed.add(identity)
+    return observed
+
+
+def _rrd_sample_coverage(expected: dict, observed: set, cap: int) -> None:
+    groups = {entity for entity, _ in expected}
+    _require({entity for entity, _ in observed} == groups, "incomplete_rrd_entities")
+    for entity in groups:
+        source = {frame for group, frame in expected if group == entity}
+        selected = {frame for group, frame in observed if group == entity}
+        count = len(source) if cap <= 0 else min(len(source), cap)
+        _require(len(selected) == count, "incomplete_rrd_images")
+        _require(min(source) in selected, "rrd_missing_first_frame")
+        if count > 1:
+            _require(max(source) in selected, "rrd_missing_last_frame")
+        if cap <= 0 or len(source) <= cap:
+            _require(selected == source, "incomplete_rrd_images")
+
+
+def _rrd_image_checks(root, chunks, settings, settings_source):
+    if settings_source == "independent_pinned_producer":
+        count = _legacy_rrd_frames(chunks, _legacy_expected_rrd_images(root, settings))
+        return {
+            "verified_image_rows": count,
+            "verified_novel_image_rows": count,
+            "verified_reconstruction_image_rows": 0,
+            "image_verification_scope": "legacy_novel_views_only",
+        }
+    expected = _rrd_source_images(root, settings)
+    observed = _rrd_source_rows(chunks, expected)
+    _rrd_sample_coverage(expected, observed, settings["max_frames_per_entity"])
+    novel = sum(entity.startswith("/novel_view/") for entity, _ in observed)
+    return {
+        "verified_image_rows": len(observed),
+        "verified_novel_image_rows": novel,
+        "verified_reconstruction_image_rows": len(observed) - novel,
+        "image_verification_scope": "novel_views_and_reconstruction",
+    }
 
 
 def _legacy_rrd_review(root: Path, terminal: dict, evidence: Path | None) -> dict:
@@ -383,14 +482,14 @@ def _rrd(root: Path, terminal: dict, review_evidence: Path | None = None) -> dic
     _require(recording.recording_id() == terminal["run_id"], "wrong_rrd_run")
     chunks = list(recording.chunks())
     settings, settings_source = _rrd_review(root, terminal, chunks, review_evidence)
-    count = _rrd_frames(chunks, _expected_rrd_images(root, settings))
+    image_checks = _rrd_image_checks(root, chunks, settings, settings_source)
     metrics = yaml.safe_load((root / "reconstruction/metrics.yaml").read_text())
     _require(
         _rrd_document(chunks, "/gaussians/summary") == metrics, "rrd_metrics_mismatch"
     )
     return {
         "chunk_count": len(chunks),
-        "verified_image_rows": count,
+        **image_checks,
         "run_identity_matches": True,
         "review_settings_source": settings_source,
         "review_evidence_sha256": _digest(review_evidence) if review_evidence else None,

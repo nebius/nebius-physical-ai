@@ -113,6 +113,14 @@ current file SHA-256 and one exact matching replacement. Symlinks, hard links,
 parent traversal and `.git` access are rejected. Each task retains a unified
 diff against its own first-edited file contents for human review.
 
+`list_files` accepts an ancestor of a granted path, including `.` for the
+workspace root. For example, with `read_paths: ["src/render.py"]`, listing `src`
+returns `src/render.py` if it exists, without revealing sibling files or
+directories. Directory grants still include their readable descendants, and
+write grants also permit reading and listing those files. Listings exclude
+symlinks, hard links, `.git` entries and nonexistent files. Listing an ancestor
+does not grant permission to read or edit any additional path.
+
 An operation contains fixed `argv`, a description and optional `pass_env` names.
 The model chooses its name; it cannot supply command arguments or shell text.
 `{python}`, `{workspace}`, `{task_id}` and `{run_id}` are the only substitutions.
@@ -274,3 +282,14 @@ attention. Its [NuRec artifact verifier](../../npa/examples/specialists/workflow
 checks actual reconstructed scenes, rendered media, Rerun recordings and native
 quality metrics against independently collected execution receipts. Submission
 acceptance alone does not count as a completed workflow.
+
+The [real NuRec experiment](specialists-nurec-experiment.md) exercised GPU
+reconstruction and rendering on four scenes. Both original agent runs ended
+with zero verified completions; four hybrid artifact sets passed separate
+operator verification. The report retains the failures, costs and unequal
+conditions, which prevent a superiority or savings claim.
+
+The [NuRec source-repair experiment](specialists-nurec-repair-experiment.md)
+required source edits and freshly verified stages: both arms completed 2/2
+repairs. GLM authored the hybrid render fix; Astra repaired the viewer after
+specialist escalation. The hybrid cost more in model-price equivalents.

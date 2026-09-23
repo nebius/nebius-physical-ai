@@ -129,21 +129,13 @@ def _load_rgb(path: Path):
 
 
 def _subsample(items: list, cap: int) -> list:
-    """Evenly subsample ``items`` down to at most ``cap`` (keeps first + last)."""
+    """Evenly subsample items, retaining both endpoints when cap permits."""
     n = len(items)
     if cap <= 0 or n <= cap:
         return items
-    step = n / float(cap)
-    picked = [items[min(n - 1, int(i * step))] for i in range(cap)]
-    # De-dupe while preserving order (integer stepping can repeat near the end).
-    seen: set[int] = set()
-    out = []
-    for it in picked:
-        key = id(it)
-        if key not in seen:
-            seen.add(key)
-            out.append(it)
-    return out
+    if cap == 1:
+        return items[:1]
+    return [items[i * (n - 1) // (cap - 1)] for i in range(cap)]
 
 
 def _latest_iteration_dir(root: Path) -> Path:
@@ -1158,13 +1150,23 @@ def _input_entity(frame: Path, root: Path) -> str:
 
 
 def _grouped_images(root: Path) -> dict[str, list[Path]]:
-    """Group images under ``root`` by their immediate parent directory name."""
-    groups: dict[str, list[Path]] = {}
+    """Group images by their full relative parent and original frame identity."""
+    indexed: dict[str, dict[int, Path]] = {}
     for frame in _image_files(root):
         parent = frame.parent
-        name = "frames" if parent == root else parent.name
-        groups.setdefault(name, []).append(frame)
-    return groups
+        name = "frames" if parent == root else parent.relative_to(root).as_posix()
+        frames = indexed.setdefault(name, {})
+        index = _frame_index(frame.stem)
+        if index in frames:
+            raise DataFactoryVizError(
+                f"duplicate frame index {index} in image group {name!r}: "
+                f"{frames[index].name!r} and {frame.name!r}"
+            )
+        frames[index] = frame
+    return {
+        name: [frames[index] for index in sorted(frames)]
+        for name, frames in indexed.items()
+    }
 
 
 def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:

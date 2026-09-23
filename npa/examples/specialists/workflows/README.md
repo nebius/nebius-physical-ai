@@ -104,6 +104,14 @@ task. Astra can then repair the workspace and continue the existing remote
 workflow through its configured operations. Takeover never cancels a remote
 job, replays a tool or resolves an uncertain effect.
 
+Status and single-task wait responses omit source text from earlier `read_file`
+receipts by default. They retain file hashes, line ranges, omitted byte counts,
+operation output, failures and uncertain calls. This avoids sending whole source
+files repeatedly to the coordinator. The original text remains in the durable
+journal; request `specialist_status(..., include_read_content=True)` to retrieve
+it explicitly. Use `after_sequence` to consume subsequent receipts, or targeted
+`read_file` calls for current source once the workspace is available.
+
 Operators may explicitly declare audited read-only commands with
 `"observation_only": true` in their operation configuration (default `false`).
 Only existing-state observations qualify; a command that starts verification,
@@ -169,3 +177,9 @@ pricing; GPU and artifact-quality comparisons remain separate.
 npa/.venv/bin/python -m pytest \
   npa/tests/agent_eval/test_specialist_workflow_experiment.py -q
 ```
+
+The separate [NuRec repair report](../../../../docs/workbench/specialists-nurec-repair-experiment.md)
+compares actual source edits followed by affected-stage execution. Both arms
+verified 2/2 repairs; the hybrid needed an Astra takeover and cost more.
+It preserves the original measured patches separately from later production
+hardening and runtime improvements.

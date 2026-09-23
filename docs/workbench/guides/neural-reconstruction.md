@@ -70,6 +70,21 @@ check ──▶ fetch ──▶ reconstruct ──▶ render ──▶ visualize
 | `visualize` | Builds `reports/sim2real.rrd` for the agent's Rerun panel |
 | `finalize` | Aggregates the run tree into `reports/final.json` |
 
+Each real `npa workbench nurec render` invocation reserves a fresh child
+generation under `--output-dir`, including the first render into an empty
+directory. Read `output_dir` from the JSON result to locate that invocation's
+media; previous and concurrent generations remain separate. Dry runs do not
+create directories. When publishing, the CLI uses this returned generation.
+Choose a fresh `--output-uri` for each render: publication merges files into
+existing local directories or storage prefixes and preserves unrelated objects,
+so reusing a destination can retain older camera files.
+
+The Rerun recording keeps reconstruction modalities and cameras in distinct
+entities using their full relative paths. Sampled tracks preserve the first and
+last source frame when the per-entity cap permits two frames. Ambiguous images
+with the same numeric frame ID in one entity fail explicitly; the same ID in
+different cameras or modalities remains valid.
+
 ## Fast path
 
 Inspect the workflow locally before preparing its GPU runtime:

@@ -63,8 +63,12 @@ check; novelty is never inferred from filenames.
 older pinned viewers that do not embed their sampling and encoding settings.
 It defaults to `None`; a recording without those settings still fails by
 default. Supplying legacy evidence for a recording that already embeds settings
-also fails. The compatibility input never skips image, frame, run or metric
-comparisons.
+also fails. This explicit legacy path retains its existing novel-view image,
+frame, run and metric comparisons and reports
+`image_verification_scope: "legacy_novel_views_only"`. It does not establish
+reconstruction modality coverage or the corrected endpoint-sampling contract.
+Fresh recordings use the stronger default checks below; supplying producer
+evidence cannot downgrade a recording with embedded settings.
 
 The return value includes `passed`, `offsets_verified`, `checks` and `errors`.
 Checks include an inventory of relative paths, byte sizes and SHA-256 hashes.
@@ -137,7 +141,7 @@ after a trial.
 | Checkpoint | Parseable pickle opcodes with tensor references and at least one nonempty tensor storage; optional zero-length storage is counted, without unpickling or importing vendor model code |
 | Metrics | Finite PSNR, SSIM and LPIPS in valid basic ranges, read from the native metrics document |
 | Media | Every novel-view image loads; every video decodes fully, with nonzero frame counts |
-| Rerun | Correct application/run identity, embedded novel-view image bytes matching the run's sampled images, and embedded metrics matching the native metrics document |
+| Rerun | Correct application/run identity; source-matched image bytes and original frame indices under complete novel-view and reconstruction modality/camera paths; sampling count and endpoints; embedded metrics matching the native metrics document |
 | Render | Native receipt, submitted identity, exact model/media hashes, requested translation, zero rotation, and `--no-replicate-training-views` |
 | Final report | Matching run/capability and success flags consistent with the independently decoded artifacts |
 
@@ -160,8 +164,24 @@ protocol, effective NRE configuration, submitted plan and execution evidence.
 The timestamp check requires a timezone but does not establish freshness; the
 collector must bind observations and artifacts to this trial.
 
-Rerun verification compares the frames selected by the writer's recorded
-sampling settings. Complete video decoding proves media integrity, not visual
+For recordings with embedded settings, the reader inventories source images
+independently of the writer's grouping and sampling helpers. It preserves the
+full relative parent path: for example,
+`reconstruction/val/pred_rgb/camera/000043.png` must appear at
+`/reconstruction/val/pred_rgb/camera` on frame `43`. Each entity/frame pair has
+exactly one image. A positive cap selects `min(source_count, cap)` unique source
+frames; caps of at least two retain both endpoints, cap one retains the first,
+and nonpositive caps retain every frame. Interior interpolation is unrestricted.
+These checks concern semantic frame indices, not physical RRD chunk order.
+
+The result reports `image_verification_scope` and separate verified novel-view
+and reconstruction row counts. Image comparison checks the declared resize and
+JPEG encoding of each source image, including depth/opacity review images; it
+does not establish numerical depth or physical opacity calibration. Legacy
+producer-bound recordings retain their previously reviewed sampling behavior
+and explicitly narrower novel-view scope.
+
+Complete video decoding proves media integrity, not visual
 quality or a pixel-by-pixel equivalence between the MP4 and every source PNG.
 Timing, human interventions, cloud allocation, billing and model token costs
 are outside this verifier. Count failures and recoveries in the comparison.

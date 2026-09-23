@@ -20,6 +20,20 @@ from npa.agent_backend.specialists.tools import WorkbenchTools
 TERMINAL = {"completed", "needs_attention", "cancelled"}
 
 
+def _receipt_event(event, include_read_content):
+    if include_read_content or event.get("type") != "tool":
+        return event
+    if event.get("name") != "read_file":
+        return event
+    result = event.get("result", {})
+    content = result.get("content")
+    if not isinstance(content, str):
+        return event
+    summary = {key: value for key, value in result.items() if key != "content"}
+    summary.update(content_omitted=True, content_bytes=len(content.encode("utf-8")))
+    return {**event, "result": summary}
+
+
 def _coordinator_store(team, directory):
     store = TaskStore(Path(directory) / "coordinator-state")
     for profile in team.config.profiles:
@@ -211,7 +225,7 @@ class _Bridge:
                 "remote_workloads_cancelled": False,
             }
 
-    def _status(self, task_id, after_sequence=0):
+    def _status(self, task_id, after_sequence=0, include_read_content=False):
         if after_sequence < 0:
             raise ValueError("after_sequence must be nonnegative")
         task = self.team.status(task_id)
@@ -224,7 +238,11 @@ class _Bridge:
             "result": task["result"],
             "error": task["error"],
             "last_sequence": events[-1]["sequence"] if events else 0,
-            "events": [event for event in events if event["sequence"] > after_sequence],
+            "events": [
+                _receipt_event(event, include_read_content)
+                for event in events
+                if event["sequence"] > after_sequence
+            ],
             "uncertain_calls": [
                 call for call in task["calls"] if call["status"] != "completed"
             ],
@@ -379,14 +397,23 @@ def _register_delegation(server, bridge):
             ),
         )
 
+
+def _register_status(server, bridge):
     @server.tool()
-    async def specialist_status(task_id: str, after_sequence: int = 0) -> dict:
-        """Observe task state, answer, new receipts and uncertain effects.
+    async def specialist_status(
+        task_id: str, after_sequence: int = 0, include_read_content: bool = False
+    ) -> dict:
+        """Observe state and receipts without repeating previously read source text.
 
         Args: task_id: Delegated task. after_sequence: Last consumed event cursor.
+            include_read_content: Include original read_file text; defaults to false.
         Returns: Current state and subsequent events. Raises: None; failures are receipts.
         """
-        arguments = {"task_id": task_id, "after_sequence": after_sequence}
+        arguments = {
+            "task_id": task_id,
+            "after_sequence": after_sequence,
+            "include_read_content": include_read_content,
+        }
         return await bridge._recorded(
             "specialist_status",
             arguments,
@@ -394,6 +421,7 @@ def _register_delegation(server, bridge):
                 bridge._status,
                 task_id,
                 after_sequence,
+                include_read_content,
             ),
         )
 
@@ -499,6 +527,7 @@ def _server(config_path, directory, hybrid=False):
     _register_operations(server, bridge)
     if hybrid:
         _register_delegation(server, bridge)
+        _register_status(server, bridge)
         _register_wait(server, bridge)
         _register_team_wait(server, bridge)
         _register_takeover(server, bridge)

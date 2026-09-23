@@ -1940,6 +1940,8 @@ def render_novel_views(
     run = runner or subprocess.run
     translation = parse_offset(rig_translation_offset, DEFAULT_RIG_TRANSLATION_OFFSET)
     rotation = parse_offset(rig_rotation_offset, DEFAULT_RIG_ROTATION_OFFSET)
+    if not dry_run:
+        output_dir = str(_new_render_generation(Path(output_dir)))
     args = build_nre_render_args(
         config,
         artifact_path=artifact_path,
@@ -1982,7 +1984,6 @@ def render_novel_views(
             command=tuple(command),
         )
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
     result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
         return NurecRenderResult(
@@ -2016,6 +2017,12 @@ def render_novel_views(
         command=tuple(command),
         errors=tuple(errors),
     )
+
+
+def _new_render_generation(target: Path) -> Path:
+    """Reserve output before concurrent invocations can produce or reuse media."""
+    target.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="gen-", dir=target))
 
 
 def _offset_text(offset: tuple[float, float, float]) -> str:

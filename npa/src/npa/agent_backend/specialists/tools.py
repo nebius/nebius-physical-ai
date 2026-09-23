@@ -48,7 +48,7 @@ _ARGUMENTS = {
     "run_operation": _Operation,
 }
 _DESCRIPTIONS = {
-    "list_files": "List source files under an authorized directory, using a workspace-relative path.",
+    "list_files": "List only readable scoped files below a workspace-relative directory. Use '.' or an ancestor of an authorized file to discover granted paths.",
     "read_file": "Read an authorized source file or inclusive 1-based line range, with the full-file SHA-256 for editing. Paths are workspace-relative.",
     "edit_file": "Replace exactly one occurrence after verifying SHA-256. For a new file use empty old and the SHA-256 of empty bytes.",
     "run_operation": "Execute one named operator-defined test, workflow or status command. Never supply shell commands or arguments.",
@@ -127,7 +127,7 @@ class WorkbenchTools:
         relative = PurePosixPath(name)
         if (
             relative.is_absolute()
-            or not relative.parts
+            or (not relative.parts and not directory)
             or ".." in relative.parts
             or ".git" in relative.parts
         ):
@@ -138,7 +138,9 @@ class WorkbenchTools:
             else [*self.profile.read_paths, *self.profile.write_paths]
         )
         if not any(
-            relative == PurePosixPath(scope) or PurePosixPath(scope) in relative.parents
+            relative == PurePosixPath(scope)
+            or PurePosixPath(scope) in relative.parents
+            or (directory and relative in PurePosixPath(scope).parents)
             for scope in scopes
         ):
             raise ValueError("path is outside the specialist's configured scopes")
@@ -184,13 +186,20 @@ class WorkbenchTools:
             directories[:] = [
                 name
                 for name in directories
-                if name != ".git" and not (Path(current) / name).is_symlink()
+                if self._listable(Path(current) / name, directory=True)
             ]
             for name in files:
                 item = Path(current) / name
-                if not item.is_symlink():
+                if self._listable(item):
                     paths.append(item.relative_to(self.root).as_posix())
         return {"ok": True, "paths": sorted(paths)}
+
+    def _listable(self, path, *, directory=False):
+        try:
+            self._path(path.relative_to(self.root).as_posix(), directory=directory)
+        except ValueError:
+            return False
+        return path.is_dir() if directory else path.is_file()
 
     def _edit_file(self, arguments):
         path = self._path(arguments.path, write=True)

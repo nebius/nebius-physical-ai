@@ -876,11 +876,12 @@ def test_render_reports_frames_and_videos(tmp_path: Path) -> None:
     output = tmp_path / "novel_views"
 
     def fake_runner(command, **_kwargs):
-        camera = output / "camera2"
+        rendered_output = Path(command[command.index("--output-dir") + 1])
+        camera = rendered_output / "camera2"
         camera.mkdir(parents=True, exist_ok=True)
         (camera / "000000.png").write_text("x")
         (camera / "000001.png").write_text("x")
-        (output / "camera2.mp4").write_text("x")
+        (rendered_output / "camera2.mp4").write_text("x")
         return _completed(0)
 
     config = NurecConfig.from_env(environ={})
