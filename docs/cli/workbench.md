@@ -30,6 +30,7 @@ sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab locomotion policy evaluation for SONIC workflows.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
 robocasa  RoboCasa kitchen-task simulation workbench.
+newton  Newton physics engine: teacher training, demo generation, evaluation.
 lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
 ltx2  LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement
     unlocks.
@@ -45,6 +46,7 @@ token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatibl
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
 workflow  Multi-stage training workflow orchestration.
 health  Preflight health checks for workbench workflows.
+gc-artifacts  Garbage-collect expired workbench run artifacts from S3 (dry-run by default).
 golden-eval  Per-container golden-eval / hello-world reruns.
 ```
 
@@ -77,6 +79,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |
+| `newton` | Newton physics engine: teacher training, demo generation, evaluation. |
 | `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |
 | `ltx2` | LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement unlocks. |
 | `alpamayo2-super` | NVIDIA Alpamayo 2 Super trajectory-inference workbench. |
@@ -91,6 +94,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |
 | `workflow` | Multi-stage training workflow orchestration. |
 | `health` | Preflight health checks for workbench workflows. |
+| `gc-artifacts` | Garbage-collect expired workbench run artifacts from S3 (dry-run by default). |
 | `golden-eval` | Per-container golden-eval / hello-world reruns. |
 
 ## Examples

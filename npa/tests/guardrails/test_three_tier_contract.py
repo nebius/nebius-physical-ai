@@ -152,12 +152,34 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "download_assets": "boolean",
         "seed": "knob",
     },
+    "newton/train_teacher": {
+        "config_name": "knob",
+        "train_steps": "knob",
+        "seed": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="newton/train_teacher",
+        cli_module="npa.cli.workbench.newton",
+        cli_callback="train_teacher_cmd",
+        sdk_module="npa.sdk.workbench.newton",
+        sdk_attr="train_teacher",
+        spec_path=SPECS / "newton-train-teacher.yaml",
+        tool_ref="workbench.newton.train_teacher",
+        spec_gap=("config_name", "train_steps", "seed"),
+        params=(
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("config_name", "config_name", "--config-name"),
+            _p("train_steps", "train_steps", "--train-steps"),
+            _p("seed", "seed", "--seed"),
+        ),
+    ),
     CapabilityContract(
         name="curobo/benchmark",
         cli_module="npa.cli.workbench.curobo",
@@ -754,6 +776,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # SkyPilot task surface (the viewer runs in the browser / static image).
         "foxglove",
         "genesis",
+        # S3 artifact GC is a CLI-only maintenance verb (dry-run/apply against
+        # manifests); it has no FastAPI service tier and no npa.workflow stage
+        # surface to stay coherent with. Part of #525 (PR #576).
+        "gc-artifacts",
         "golden-eval",
         "groot",
         "health",
