@@ -53,6 +53,16 @@
   },
   "images": [
     {
+      "name": "npa-sam3",
+      "dockerfile": "sam3/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-gpu",
+      "redistribution": "public",
+      "smoke": "sam3-runtime segment: real text-prompted video masks, frame-aligned decoded overlay and provenance.",
+      "notes": "Neutral Python bootstrap. Pinned CUDA-enabled PyTorch and SAM 3.1 source/weights are runtime fetches; checkpoint access and real GPU qualification are pending. No B200 or B300 result is claimed.",
+      "development_publication": "docs/workbench/validation/sam31-public-development-20260919.json"
+    },
+    {
       "name": "npa-ncore",
       "dockerfile": "ncore/Dockerfile",
       "build_script": "ncore/build.sh",
