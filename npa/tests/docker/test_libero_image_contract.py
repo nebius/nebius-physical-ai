@@ -347,8 +347,8 @@ def test_debian_lock_closes_selected_binary_and_corresponding_source() -> None:
     source_rows = [row for row in lines if row[0] == "source"]
 
     assert f"# Debian rootfs manifest sha256: {DEBIAN_ROOTFS_MANIFEST}" in text
-    assert len(binary_rows) == 175
-    assert len(source_rows) == 357
+    assert len(binary_rows) == 193
+    assert len(source_rows) == 387
     assert len({row[1] for row in binary_rows}) == len(binary_rows)
     direct = {row[1]: row[2] for row in binary_rows if row[0] == "direct"}
     for package in (
@@ -356,6 +356,9 @@ def test_debian_lock_closes_selected_binary_and_corresponding_source() -> None:
         "wget",
         "fuse3",
         "gcc",
+        "g++",
+        "cmake",
+        "make",
         "git",
         "linux-libc-dev",
         "netcat-openbsd",

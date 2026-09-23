@@ -18,7 +18,10 @@ records are authoritative for the separately licensed base and package bytes.
 - Debian 12 packages are redistributed under their individual licenses. The
   authoritative package, source, hash, and corresponding-source locations are
   in `debian-packages.lock`; installed copyright texts remain under
-  `/usr/share/doc/*/copyright`.
+  `/usr/share/doc/*/copyright`. The pinned CMake, GNU Make, and GNU C++
+  toolchain and their Debian dependencies build runtime-authorized source
+  packages inside the existing network-isolated sandbox; runtime packages
+  and their generated wheels remain absent from the image.
 - The NPA bootstrap, scanner, workflow, and test code is Apache-2.0 under this
   repository's license.
 
