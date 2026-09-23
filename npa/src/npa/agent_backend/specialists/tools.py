@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from npa.agent_backend.trajectory import redact
 
@@ -23,6 +23,11 @@ class _Arguments(BaseModel):
 
 class _Read(_Arguments):
     path: str
+
+
+class _ReadFile(_Read):
+    start_line: int = Field(default=1, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
 
 
 class _Edit(_Arguments):
@@ -38,13 +43,13 @@ class _Operation(_Arguments):
 
 _ARGUMENTS = {
     "list_files": _Read,
-    "read_file": _Read,
+    "read_file": _ReadFile,
     "edit_file": _Edit,
     "run_operation": _Operation,
 }
 _DESCRIPTIONS = {
     "list_files": "List source files under an authorized directory, using a workspace-relative path.",
-    "read_file": "Read an authorized source file and its SHA-256. Paths are workspace-relative.",
+    "read_file": "Read an authorized source file or inclusive 1-based line range, with the full-file SHA-256 for editing. Paths are workspace-relative.",
     "edit_file": "Replace exactly one occurrence after verifying SHA-256. For a new file use empty old and the SHA-256 of empty bytes.",
     "run_operation": "Execute one named operator-defined test, workflow or status command. Never supply shell commands or arguments.",
 }
@@ -153,11 +158,21 @@ class WorkbenchTools:
         if not path.exists():
             return {"ok": False, "error": "file does not exist", "sha256": _digest("")}
         content = path.read_text()
+        lines = content.splitlines(keepends=True)
+        start, end = arguments.start_line, arguments.end_line
+        if end is not None and end < start:
+            raise ValueError("end_line must be at least start_line")
+        if start > max(len(lines), 1):
+            raise ValueError("start_line exceeds the file's line count")
+        end = min(end if end is not None else len(lines), len(lines))
         return {
             "ok": True,
             "path": arguments.path,
             "sha256": _digest(content),
-            "content": content,
+            "content": "".join(lines[start - 1 : end]),
+            "start_line": start,
+            "end_line": end,
+            "total_lines": len(lines),
         }
 
     def _list_files(self, arguments):

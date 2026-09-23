@@ -287,13 +287,20 @@ class _Bridge:
 
 def _register_reads(server, bridge):
     @server.tool()
-    async def read_file(specialist: str, path: str) -> dict:
-        """Read a scoped task file with its SHA-256.
+    async def read_file(
+        specialist: str, path: str, start_line: int = 1, end_line: int | None = None
+    ) -> dict:
+        """Read scoped source lines with the full-file hash for subsequent edits.
 
         Args: specialist: Configured workspace. path: Relative authorized file.
+            start_line, end_line: Inclusive 1-based range; omitted end reads to EOF.
         Returns: Workbench read receipt. Raises: None; failures are receipts.
         """
-        return await bridge._direct(specialist, "read_file", {"path": path})
+        return await bridge._direct(
+            specialist,
+            "read_file",
+            {"path": path, "start_line": start_line, "end_line": end_line},
+        )
 
     @server.tool()
     async def list_files(specialist: str, path: str) -> dict:

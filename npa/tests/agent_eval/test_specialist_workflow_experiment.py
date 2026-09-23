@@ -508,6 +508,37 @@ def test_mcp_surface_is_matched_and_delegation_calls_are_recorded(
     assert bridge.store._events("supervisor")[-1]["name"] == "wait_specialists"
 
 
+@pytest.mark.parametrize("hybrid", [False, True])
+def test_mcp_read_ranges_preserve_full_file_hash(
+    workflow_experiment, prepared, tmp_path, hybrid
+):
+    import hashlib
+
+    pytest.importorskip("mcp.server.mcpserver")
+    directory = tmp_path / "range-evidence"
+    directory.mkdir(mode=0o700)
+    path = tmp_path / "scene-a/workflow.yaml"
+    path.write_text("first: 1\nsecond: 2\nthird: 3\n")
+    server = workflow_experiment["workflow_bridge"]._server(
+        prepared[0], directory, hybrid
+    )
+    response = asyncio.run(
+        server.call_tool(
+            "read_file",
+            {
+                "specialist": "scene-a",
+                "path": "workflow.yaml",
+                "start_line": 2,
+                "end_line": 2,
+            },
+        )
+    )
+    observed = json.loads(response.content[0].text)
+    assert observed["ok"] is True and observed["content"] == "second: 2\n"
+    assert observed["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert observed["total_lines"] == 3
+
+
 def test_supervisor_failure_still_freezes_receipts(
     workflow_experiment, prepared, tmp_path, monkeypatch
 ):

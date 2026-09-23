@@ -56,6 +56,12 @@ shows durable task state, the actual responding model, token usage, tool
 receipts, failures, final answers and source patches. The CLI and Python SDK
 share exactly the same coordinator.
 
+For large source files, agents can request an inclusive, 1-based range with
+`read_file(path, start_line=100, end_line=160)`. Omitting the range reads the whole
+file; omitting `end_line` reads through the end. The receipt includes the actual
+range, total line count, and the **complete file's SHA-256**, so an edit still
+detects changes outside the excerpt. The same file grants apply to every range.
+
 Worker process IDs make restarts visible. Model activity shows provider-reported
 cached prompt tokens, including an explicit zero; absent telemetry reads
 `cache unreported`. A cache hit is evidence of reused prompt computation, not a

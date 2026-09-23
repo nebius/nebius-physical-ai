@@ -36,14 +36,21 @@ def _server(path):
 
 def _register_reads(server, invoke):
     @server.tool()
-    async def read_file(specialist: str, path: str) -> dict:
-        """Read an authorized task file and its SHA-256.
+    async def read_file(
+        specialist: str, path: str, start_line: int = 1, end_line: int | None = None
+    ) -> dict:
+        """Read authorized source lines with the full-file SHA-256.
 
         Args: specialist: Task name. path: Workspace-relative file.
+            start_line, end_line: Inclusive 1-based range; omitted end reads to EOF.
         Returns: The identical Workbench read receipt used by specialists.
         Raises: ValueError: Scope or task is invalid.
         """
-        return await invoke(specialist, "read_file", {"path": path})
+        return await invoke(
+            specialist,
+            "read_file",
+            {"path": path, "start_line": start_line, "end_line": end_line},
+        )
 
     @server.tool()
     async def list_files(specialist: str, path: str) -> dict:

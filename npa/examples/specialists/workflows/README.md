@@ -23,7 +23,13 @@ Keep credentials in the NPA credential store or the endpoint's `key_env`.
 Prepare a separate team configuration, fresh state directory and disjoint
 workspaces for each arm. Provide **identical task files, instructions and
 operation grants**; only workspace, run identity and artifact destination may
-differ. The runner takes the same common prompt file for both arms:
+differ.
+
+Both coordinators and specialists can read large files in inclusive, 1-based
+line ranges with `read_file(..., start_line=100, end_line=160)`. The returned hash
+always covers the full file, including unread lines, for subsequent guarded edits.
+
+The runner takes the same common prompt file for both arms:
 
 ```bash
 umask 077
