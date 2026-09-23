@@ -125,23 +125,23 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     assert job["strategy"]["fail-fast"] == (
         "${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}"
     )
-    assert job["needs"] == "scope"
-    assert job["if"] == "needs.scope.outputs.full_suite != 'false'"
+    assert "needs" not in job
+    assert job["if"] == "${{ !inputs.prose_only }}"
     assert "continue-on-error" not in job
-    assert workflow["on"]["workflow_call"] == ""
+    assert workflow["on"]["workflow_call"]["inputs"]["prose_only"] == {
+        "description": "Trusted parent policy proved that only prose changed",
+        "type": "boolean",
+        "default": "false",
+    }
+    assert "scope" not in workflow["jobs"]
 
     smoke = workflow["jobs"]["pr-smoke"]
-    assert smoke["if"] == (
-        "needs.scope.outputs.prose_only == 'true' && "
-        "needs.scope.outputs.full_suite == 'false'"
-    )
+    assert smoke["if"] == "inputs.prose_only"
     commands = "\n".join(step.get("run", "") for step in smoke["steps"])
     assert "npa/tests/smoke" in commands
     assert "test_ci_workflows.py" in commands
 
-    assert workflow["jobs"]["browser-mocked"]["if"] == (
-        "needs.scope.outputs.browser != 'false'"
-    )
+    assert workflow["jobs"]["browser-mocked"]["if"] == ("${{ !inputs.prose_only }}")
     browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
     browser_step_names = {step["name"] for step in browser_steps}
     for version in ("3.10", "3.14"):
@@ -197,10 +197,9 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
     }
 
     coverage = workflow["jobs"]["coverage"]
-    assert coverage["needs"] == ["scope", "test"]
+    assert coverage["needs"] == "test"
     assert coverage["if"] == (
-        "${{ !cancelled() && needs.scope.outputs.full_suite != 'false' "
-        "&& needs.test.result == 'success' }}"
+        "${{ !cancelled() && !inputs.prose_only && needs.test.result == 'success' }}"
     )
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
@@ -276,10 +275,15 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
     command = _step("test.yml", "test", "CPU checkpoint")["run"]
     assert "--torch-backend cpu" in command
     assert "assert torch.version.cuda is None" in command
-    assert (
-        "ci_requirements.py --check"
-        in _step("test.yml", "scope", "dependency pins")["run"]
-    )
+    for job, step in (
+        ("test", "Install npa"),
+        ("pr-smoke", "fast validation"),
+        ("browser-mocked", "Install the production UI renderer"),
+    ):
+        command = _step("test.yml", job, step)["run"]
+        assert command.index("ci_requirements.py --check") < command.index(
+            "uv pip install"
+        )
 
 
 def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
@@ -339,9 +343,68 @@ def test_browser_execution_has_one_owner_and_remains_blocking() -> None:
     assert len(steps) == 1
     assert "if" not in steps[0] and "continue-on-error" not in steps[0]
     assert "continue-on-error" not in browser
-    assert browser["needs"] == "scope"
+    assert "needs" not in browser
     source = (REPO_ROOT / "npa/tests/cli/test_agent_foxglove.py").read_text()
     assert "def test_ci_executes_mocked_agent_cypress" not in source
+
+
+def test_cli_install_check_runs_once_outside_the_coverage_shards() -> None:
+    """Keep the blocking Python 3.12 install check off the slowest shard.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The install check disappears, duplicates, or changes Python.
+    """
+    jobs = _load_workflow("test.yml")["jobs"]
+    assert not any(
+        "test_cli_install.sh" in step.get("run", "") for step in jobs["test"]["steps"]
+    )
+    steps = jobs["browser-mocked"]["steps"]
+    install = _step("test.yml", "browser-mocked", "Run CLI install test")
+    renderer = _step("test.yml", "browser-mocked", "Set up Python for")
+    compatibility = _step("test.yml", "browser-mocked", "Set up Python 3.10")
+    assert steps.index(renderer) < steps.index(install) < steps.index(compatibility)
+    assert renderer["with"]["python-version"] == "3.12"
+    assert "if" not in install and "continue-on-error" not in install
+    assert (
+        len([step for step in steps if "test_cli_install.sh" in step.get("run", "")])
+        == 1
+    )
+    assert (
+        "test_cli_install.sh" in _step("test.yml", "pr-smoke", "Run CLI install")["run"]
+    )
+
+
+def test_test_scope_is_forwarded_only_for_a_complete_prose_decision() -> None:
+    """Keep absent or inconsistent scope outputs on the full-test path.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Selection can skip tests without all three trusted outputs.
+    """
+    jobs = _load_workflow("security-regression.yml")["jobs"]
+    assert jobs["test-gate"]["with"] == {
+        "prose_only": "${{ needs.gitleaks.outputs.prose_only == 'true' && "
+        "needs.gitleaks.outputs.full_suite == 'false' && "
+        "needs.gitleaks.outputs.browser == 'false' }}"
+    }
+    for name in ("prose_only", "full_suite", "browser"):
+        assert (
+            jobs["gitleaks"]["outputs"][name]
+            == "${{ steps.scope.outputs." + name + " }}"
+        )
+    scope = _step("security-regression.yml", "gitleaks", "Select tests")
+    assert (
+        scope["if"]
+        == "github.event_name != 'push' && steps.plan.outputs.mode != 'reuse'"
+    )
+    assert "python -I" in scope["run"]
 
 
 def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> None:
@@ -354,9 +417,9 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
     Raises:
         AssertionError: Selection trusts candidate policy or removes required gates.
     """
-    scope = _load_workflow("test.yml")["jobs"]["scope"]
+    scope = _load_workflow("security-regression.yml")["jobs"]["gitleaks"]
     assert scope["steps"][0]["with"]["fetch-depth"] == "0"
-    command = scope["steps"][-1]["run"]
+    command = next(step["run"] for step in scope["steps"] if step.get("id") == "scope")
     assert 'git show "${BASE_SHA}:${policy}"' in command
     assert '"${RUNNER_TEMP}/ci_test_scope.py"' in command
     assert "echo 'full_suite=true'" in command
@@ -642,10 +705,13 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     # Anchor on what the caveat names: the floor plus the two steps test.yml runs
     # that no make target does. Deleting the caveat, or bumping the floor in CI
     # without updating it, fails here instead of quietly overstating `make check`.
-    unreproduced_steps = ("Run CLI install test", "Warn on source drift")
+    unreproduced_steps = (
+        ("browser-mocked", "Run CLI install test"),
+        ("test", "Warn on source drift"),
+    )
     contributing = (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    for name in unreproduced_steps:
-        script = re.search(r"[\w./-]+\.sh", _step("test.yml", "test", name)["run"])
+    for job, name in unreproduced_steps:
+        script = re.search(r"[\w./-]+\.sh", _step("test.yml", job, name)["run"])
         assert script, f"expected step {name!r} to run a script"
         assert Path(script.group()).name in contributing, (
             f"test.yml step {name!r} runs {script.group()}, which `make check` does "
@@ -735,9 +801,11 @@ def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
     command = next(step["run"] for step in plan["steps"] if step.get("id") == "plan")
     assert 'git show "$BASE_SHA:$policy"' in command
     assert 'python -I "$RUNNER_TEMP/ci_queue_evidence.py"' in command
-    assert 'python -I -m venv "$validation_environment"' in command
-    assert "test -d npa && test ! -L npa" in command
-    assert "test ! -e npa/.venv && test ! -L npa/.venv" in command
+    setup = _step("security-regression.yml", "gitleaks", "Create isolated")
+    assert setup["if"] == "github.event_name != 'push'"
+    assert 'python -I -m venv "$validation_environment"' in setup["run"]
+    assert "test -d npa && test ! -L npa" in setup["run"]
+    assert "test ! -e npa/.venv && test ! -L npa/.venv" in setup["run"]
     assert plan["permissions"] == {
         "contents": "read",
         "actions": "read",

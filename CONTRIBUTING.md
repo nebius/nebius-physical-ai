@@ -556,8 +556,10 @@ queue candidate has verified the new path. A timeout rejects, never merges, an
 unvalidated candidate. Optional timing reports run on PR/main validation only;
 their completion is not a prerequisite for reusing already-passed required jobs.
 
-Full suites collect smoke tests and run the CLI install check in the shards,
-avoiding duplicate smoke and subsystem jobs. Cypress runs once in its own job,
+Full suites collect smoke tests in the shards and run the CLI install check in
+the browser job, avoiding duplicate smoke and subsystem jobs. The install check
+runs on Python 3.12 before that job switches interpreters for compatibility tests;
+it no longer extends the last coverage shard. Cypress runs once in its own job,
 never inside a pytest shard. Cached constrained installs, xdist workers, and
 independent job scheduling retain fast feedback without deferring
 coverage until queue admission. Scheduled and manual audits retain four shards
@@ -572,12 +574,17 @@ or renamed files, mode changes, and edits to fenced/indented code, inline code,
 frontmatter, or templates keep full validation. Mixed merge groups use the full
 combined diff, so a prose PR cannot hide a preceding code change.
 
-The scope job executes `npa/scripts/ci_test_scope.py` from the trusted base
-commit, requesting its merge-candidate policy for both PR and queue events. This
+The existing `gitleaks` runner executes `npa/scripts/ci_test_scope.py` from the
+trusted base commit, requesting its merge-candidate policy for both PR and queue events. This
 also prevents the installing PR from inheriting an older base's narrower PR
-policy. A candidate cannot install its own shortcut. Missing base policy keeps
-the full suite; an invalid comparison fails the job. To inspect a selection
-locally with the candidate checked out, pass full commit SHAs:
+policy. Test selection overlaps the PR precheck and needs no additional runner
+before the shards start. The parent passes the prose exception only when all
+three scope outputs agree; missing outputs, standalone runs, and scheduled
+audits retain full coverage. Queue evidence accepts either the prior scope job
+or the successful trusted-selection step inside `gitleaks`. A candidate cannot
+install its own shortcut. Missing base policy keeps the full suite; an invalid
+comparison fails the job. To inspect a selection locally with the candidate
+checked out, pass full commit SHAs:
 
 ```bash
 npa/.venv/bin/python npa/scripts/ci_test_scope.py \
@@ -632,9 +639,10 @@ of the parent workflow can interrupt reporting.
 
 ### Validation concurrency
 
-Queue evidence verification and secret scanning share the `gitleaks` job and
-checkout. A failed verification restores full validation; a failed secret scan
-still blocks the required context. The other required context names are unchanged.
+Queue evidence verification, trusted test selection, and secret scanning share
+the `gitleaks` job and checkout. A failed verification restores full validation;
+a failed secret scan still blocks the required context. The other required
+context names are unchanged.
 
 Operators can configure two repository Actions variables after the organization
 has made approved Ubuntu x64 runner labels available to this repository:

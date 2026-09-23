@@ -36,7 +36,7 @@ PRIORITY_JOBS = {
         "security-scanners",
         "security-regression",
     },
-    "test.yml": {"scope", "coverage"},
+    "test.yml": {"coverage"},
     "image-security-scan.yml": {"base-image-plan", "base-image-cve-scan"},
 }
 TEST_JOBS = {
