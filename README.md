@@ -15,6 +15,7 @@
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
+**[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
 **[Python & API](docs/workbench/cli-sdk-yaml-walkthrough.md)** ·
 **[Cookbooks](docs/workbench/cookbooks/README.md)** ·
