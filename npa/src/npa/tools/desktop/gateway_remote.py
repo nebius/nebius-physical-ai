@@ -69,8 +69,14 @@ def _configure_mobile(port):
         _install(path + ".npa-candidate", candidate)
         subprocess.run(
             [
-                "sudo", "-n", "/usr/local/bin/caddy", "validate",
-                "--config", path + ".npa-candidate", "--adapter", "caddyfile",
+                "sudo",
+                "-n",
+                "/usr/local/bin/caddy",
+                "validate",
+                "--config",
+                path + ".npa-candidate",
+                "--adapter",
+                "caddyfile",
             ],
             check=True,
             stdout=subprocess.DEVNULL,

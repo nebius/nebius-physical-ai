@@ -211,6 +211,60 @@ def test_repeated_auth_install_preserves_key_and_never_restarts_codex(
     assert "app-server" not in unit
 
 
+def test_auth_readiness_uses_local_listener_without_environment_proxy(
+    login, monkeypatch
+):
+    client, _ = login
+    for variable in ("http_proxy", "HTTP_PROXY"):
+        monkeypatch.setenv(variable, "http://proxy.example.test:1")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setenv("NO_PROXY", "")
+    chat_setup._wait_for_auth({"auth_port": client.base_url.port})
+
+
+@pytest.mark.parametrize("status", [302, 503])
+def test_auth_readiness_rejects_redirects_and_unhealthy_status(
+    login, monkeypatch, status
+):
+    client, _ = login
+    paths = []
+
+    def reply(handler):
+        paths.append(handler.path)
+        handler.send_response(status if handler.path == "/chat/login" else 200)
+        handler.send_header("Location", "/unexpected-readiness-target")
+        handler.end_headers()
+
+    monkeypatch.setattr(LoginHandler, "do_GET", reply)
+    monkeypatch.setattr(chat_setup.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="did not become ready"):
+        chat_setup._wait_for_auth({"auth_port": client.base_url.port})
+    assert paths == ["/chat/login"] * 30
+
+
+def test_auth_readiness_recovers_after_startup_failure(login, monkeypatch):
+    client, _ = login
+    statuses = iter([503, 200])
+    sleeps = []
+
+    def reply(handler):
+        handler.send_response(next(statuses))
+        handler.end_headers()
+
+    monkeypatch.setattr(LoginHandler, "do_GET", reply)
+    monkeypatch.setattr(chat_setup.time, "sleep", sleeps.append)
+    chat_setup._wait_for_auth({"auth_port": client.base_url.port})
+    assert sleeps == [0.2]
+
+
+def test_auth_readiness_closes_failed_connection(monkeypatch):
+    connection = Mock()
+    connection.request.side_effect = ConnectionRefusedError
+    monkeypatch.setattr(chat_setup, "HTTPConnection", Mock(return_value=connection))
+    assert not chat_setup._auth_ready(6092)
+    connection.close.assert_called_once()
+
+
 def test_gateway_enables_form_login_only_after_auth_service_is_ready(
     monkeypatch, tmp_path
 ):

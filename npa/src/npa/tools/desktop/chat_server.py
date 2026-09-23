@@ -76,7 +76,11 @@ def _workspace_choices(threads, default):
         }
     return sorted(
         choices.values(),
-        key=lambda choice: (not choice["preferred"], -choice["lastUsed"], choice["path"]),
+        key=lambda choice: (
+            not choice["preferred"],
+            -choice["lastUsed"],
+            choice["path"],
+        ),
     )
 
 
@@ -259,7 +263,9 @@ class ChatHandler(BaseHTTPRequestHandler):
             if not cursor:
                 break
             if cursor in seen:
-                raise RuntimeError("Recent paths could not be loaded. Enter a path below.")
+                raise RuntimeError(
+                    "Recent paths could not be loaded. Enter a path below."
+                )
             seen.add(cursor)
         return {"data": _workspace_choices(threads, self.server.config["cwd"])}
 

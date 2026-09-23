@@ -1,6 +1,7 @@
 """Install the shared Codex runtime and mobile service in private operator state."""
 
 import json
+from http.client import HTTPConnection, HTTPException
 import os
 from pathlib import Path
 import shlex
@@ -8,6 +9,7 @@ import shutil
 import secrets
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 
 _ROOT = Path.home() / ".local/share/nebius-desktop/codex-chat"
@@ -123,23 +125,25 @@ def _authentication(config):
 
 
 def _wait_for_auth(config):
-    import time
-    from urllib.error import URLError
-    from urllib.request import urlopen
-
     for attempt in range(30):
-        try:
-            with urlopen(
-                f"http://127.0.0.1:{config['auth_port']}/chat/login", timeout=2
-            ) as response:
-                if response.status == 200:
-                    return
-        except URLError:
-            if attempt == 29:
-                raise RuntimeError(
-                    "Desktop sign-in service did not become ready."
-                ) from None
+        if _auth_ready(config["auth_port"]):
+            return
+        if attempt < 29:
             time.sleep(0.2)
+    raise RuntimeError("Desktop sign-in service did not become ready.")
+
+
+def _auth_ready(port):
+    # Readiness must stay on the local listener, without proxies or redirects.
+    connection = HTTPConnection("127.0.0.1", port=port, timeout=2)
+    try:
+        connection.request("GET", "/chat/login")
+        with connection.getresponse() as response:
+            return response.status == 200
+    except (OSError, HTTPException):
+        return False
+    finally:
+        connection.close()
 
 
 def _connect_vscode():

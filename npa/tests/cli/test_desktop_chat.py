@@ -104,19 +104,24 @@ def test_recent_workspaces_include_later_pages_and_prefer_npa(chat, tmp_path):
     alias.symlink_to(recent, target_is_directory=True)
     pages = [
         {"data": [{"cwd": str(recent), "updatedAt": 30}], "nextCursor": "older"},
-        {"data": [
-            {"cwd": str(preferred), "updatedAt": 10},
-            {"cwd": str(alias), "updatedAt": 20},
-            {"cwd": str(tmp_path / "removed"), "updatedAt": 40},
-            {"cwd": "relative-path", "updatedAt": 50},
-        ], "nextCursor": None},
+        {
+            "data": [
+                {"cwd": str(preferred), "updatedAt": 10},
+                {"cwd": str(alias), "updatedAt": 20},
+                {"cwd": str(tmp_path / "removed"), "updatedAt": 40},
+                {"cwd": "relative-path", "updatedAt": 50},
+            ],
+            "nextCursor": None,
+        },
     ]
     rpc.call.side_effect = pages
     response = client.get("/chat/api/workspaces")
     assert response.status_code == 200
     choices = response.json()["data"]
     assert [choice["path"] for choice in choices] == [
-        str(preferred), str(recent), str(tmp_path),
+        str(preferred),
+        str(recent),
+        str(tmp_path),
     ]
     assert choices[0]["preferred"] is True
     assert choices[1]["lastUsed"] == 30
