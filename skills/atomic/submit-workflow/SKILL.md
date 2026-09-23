@@ -156,8 +156,9 @@ successful `npa skypilot verify --cluster <exact-context>`:
   `ok`/`not_found`/`forbidden` and prints the build command for the tag
   `npa/src/npa/deploy/images.py` pins (the guide's tags are pinned to those by
   `tests/guardrails/test_paidf_image_tags_match_code.py`). `submit` runs the same
-  check **before `deployIfAbsent`**, so a missing release costs no
-  cluster time.
+  public-manifest check **before `deployIfAbsent`**, so a missing release costs
+  no cluster time. The exact target-pod proof follows provisioning because it
+  cannot exist before the selected cluster does.
 - **Multi-tool validation images stay distinct.** Repeat
   `--image-override TOOL_REF=IMAGE` on preflight and submit. Exact tool refs take
   precedence over the optional global `--image`; preflight resolves each selected
@@ -165,15 +166,57 @@ successful `npa skypilot verify --cluster <exact-context>`:
 - **A registry `403` stalls rather than fails.** Kubernetes retries image pulls
   forever, so an unpullable image leaves the job in `PENDING`/`ImagePullBackOff`.
   Listing a repository's tags is a *different permission* from pulling it, so a
-  `200` on `/v2/<repo>/tags/list` proves nothing. Submit reproduces each planned
-  pull with the credentials it injects and refuses to launch on a `403`; run it
-  standalone with `npa workbench workflow preflight-images <spec.yaml>`, or skip
-  with `--no-preflight-images`.
+  `200` on `/v2/<repo>/tags/list` proves nothing. Submit verifies every rendered
+  execution path independently: VM paths use the exact host-scoped registry
+  credential, while private Kubernetes paths use an owned pull-probe pod and the
+  declared `imagePullSecret`. Kubernetes verification requires the exact
+  `--infra k8s/<context>` and resolves the same effective namespace SkyPilot
+  0.12 uses: the selected kubeconfig context namespace, otherwise `default`.
+  SkyPilot config-level `kubernetes.namespace` keys are not namespace
+  overrides. The probe also uses the exact rendered ServiceAccount: the
+  context-effective `kubernetes.remote_identity`, with any config-level or task
+  `pod_config.spec.serviceAccountName` override applied. This matters because
+  ServiceAccount admission can attach additional pull Secrets. Every distinct
+  rendered Secret, ServiceAccount, and pull-relevant pod-placement path
+  (`nodeSelector`, affinity, runtime class, tolerations, and related scheduling
+  fields) is probed independently. NPA uses the first `KUBECONFIG` file because
+  that is the file pinned SkyPilot 0.12 exposes in its isolated home.
+  Both the creation response and the observed pod must preserve the requested
+  ServiceAccount, pull Secret references, placement, and the pull container's
+  `Always` image pull policy. Cached-image reuse cannot establish registry
+  credential access. When the pod requests
+  no pull Secrets, preflight first reads that exact ServiceAccount in the same
+  context and namespace and binds its inherited references; an unavailable or
+  changed default cannot produce a verified result. Requested tolerations are
+  preserved, allowing only Kubernetes' two additional `NoExecute` eviction
+  defaults for not-ready/unreachable nodes with finite nonnegative seconds.
+  Additional RuntimeClass or custom admission placement changes are currently
+  reported as unverified rather than assumed equivalent. A rejected proof still
+  runs UID-preconditioned cleanup of the owned probe.
+  SkyPilot 0.12 replaces the first
+  `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
+  that effective set instead of unioning overridden Secrets. An initial empty
+  or multi-entry list is valid; after a base list exists, SkyPilot requires one
+  override entry and cannot merge into an empty base, so NPA rejects those exact
+  invalid merge shapes. For a multi-platform image, a target platform-manifest
+  digest is accepted only when the fetched OCI index declares it. Anonymous
+  host access never substitutes for a target pull, and an opaque runtime image
+  ID without an immutable digest is not proof. Registry credentials are sent
+  only to a trusted HTTPS Bearer realm. Preflight includes every
+  control-flow-reachable image, including mixed outcomes across multiple
+  decisions. If a resource omits `cloud`, pass an exact `--infra`; NPA does not
+  guess VM versus Kubernetes authority. It never falls back to the ambient
+  context or mints a Secret. Run it standalone with
+  `npa workbench workflow preflight-images <spec.yaml>` plus
+  `--infra k8s/<context>`, or skip with `--no-preflight-images`.
 - **A large authenticated cold pull is not an access failure.** Bootstrap probes
   default to a 30-minute observation window. Use
   `--image-bootstrap-timeout-seconds 0` for no deadline while warming large
   images; digest, authentication, attestation, capability, exact ownership, and
-  verified cleanup gates remain mandatory.
+  verified cleanup gates remain mandatory. A pull-probe cleanup failure blocks
+  submission and leaves an auditable
+  `npa.nebius.com/purpose=image-pull-preflight` label; inspect that exact-context
+  pod before retrying rather than deleting an unverified name.
 - **A silent 15-minute submit is usually the kubernetes client.** SkyPilot 0.12.2
   does not cap the client version, and client 36+ makes every `pod_config` fail
   validation, so the managed-jobs controller retries forever. `npa skypilot

@@ -5,6 +5,7 @@ from npa.orchestration.npa_workflow.interpreter import (
     ExecutionPlan,
     RunContext,
     build_plan,
+    build_reachability_plan,
     run_workflow,
 )
 from npa.orchestration.npa_workflow.spec import (
@@ -45,6 +46,7 @@ __all__ = [
     "SupervisorLedger",
     "WorkflowRunSupervisor",
     "build_plan",
+    "build_reachability_plan",
     "load_spec",
     "run_workflow",
     "validate_spec",

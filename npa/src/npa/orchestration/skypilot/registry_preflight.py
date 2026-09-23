@@ -10,24 +10,56 @@ can read ``/v2/<repo>/tags/list`` and still watch every worker pod fail with
 ``403 Forbidden``.
 
 Kubernetes then retries image pulls forever, so the job sits in
-``PENDING``/``ImagePullBackOff`` instead of failing. This module reproduces the
-pull the worker will attempt, with the same credentials the run injects, and
-turns the answer into a fail-fast result.
+``PENDING``/``ImagePullBackOff`` instead of failing. This module verifies each
+execution path independently: host manifest evidence for VM paths and an owned,
+exact-context, exact-namespace probe pod for every Kubernetes path.
 """
 
 from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import hashlib
 import json
+import os
+from pathlib import Path
 import re
+import secrets
 import subprocess
-from typing import Any, Callable, Mapping
+import time
+from typing import Any, Callable, Collection, Mapping
 import urllib.error
 import urllib.parse
 import urllib.request
 
+import yaml
+
+from npa.orchestration.skypilot._bin import resolve_skypilot_kubeconfig_path
+
 DEFAULT_TIMEOUT_SECONDS = 30
+SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME = "skypilot-service-account"
+_SKYPILOT_REMOTE_IDENTITY_SENTINELS = frozenset(
+    {"LOCAL_CREDENTIALS", "SERVICE_ACCOUNT", "NO_UPLOAD"}
+)
+_TRUSTED_CROSS_ORIGIN_TOKEN_AUTHORITIES = {
+    "docker.io": frozenset({("auth.docker.io", 443)}),
+    "registry-1.docker.io": frozenset({("auth.docker.io", 443)}),
+}
+_PULL_PLACEMENT_FIELDS = frozenset(
+    {
+        "affinity",
+        "dnsConfig",
+        "dnsPolicy",
+        "hostNetwork",
+        "nodeName",
+        "nodeSelector",
+        "priorityClassName",
+        "runtimeClassName",
+        "schedulerName",
+        "tolerations",
+        "topologySpreadConstraints",
+    }
+)
 MANIFEST_ACCEPT = ", ".join(
     (
         "application/vnd.docker.distribution.manifest.v2+json",
@@ -83,6 +115,7 @@ class ImagePullCheck:
     target_status: str = "unverified"
     authority: str = "operator"
     digest: str = ""
+    acceptable_digests: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -97,6 +130,146 @@ class ImagePullCheck:
         if self.remedy:
             line = f"{line}\n  Suggested action: {self.remedy}"
         return line
+
+
+@dataclass(frozen=True)
+class KubernetesPullCheck:
+    """Bounded evidence from an exact-target Kubernetes image-pull probe."""
+
+    status: str
+    digest: str = ""
+    cleanup_status: str = "verified"
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "verified" and self.cleanup_status == "verified"
+
+
+@dataclass(frozen=True)
+class KubernetesPullTarget:
+    """Effective SkyPilot namespace and config-level pull-secret set."""
+
+    namespace: str
+    pull_secret_names: tuple[str, ...] = ()
+    pull_secret_names_configured: bool = False
+    service_account_name: str = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    kubeconfig_path: str = ""
+    pod_placement_json: str = "{}"
+
+
+def merge_skypilot_pull_secret_names(
+    base_names: tuple[str, ...] | None,
+    override_names: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    """Apply SkyPilot 0.12's legacy imagePullSecrets override semantics."""
+
+    if override_names is None:
+        return base_names or ()
+    if base_names is None:
+        return override_names
+    if not base_names:
+        raise RegistryPreflightError(
+            "SkyPilot cannot merge imagePullSecrets into an existing empty list"
+        )
+    if len(override_names) != 1:
+        raise RegistryPreflightError(
+            "SkyPilot imagePullSecrets override must contain exactly one entry"
+        )
+    return (override_names[0], *base_names[1:])
+
+
+def _merge_kubernetes_config_value(
+    base: Any,
+    override: Any,
+    *,
+    field_name: str = "",
+) -> Any:
+    if isinstance(base, Mapping) and isinstance(override, Mapping):
+        merged = dict(base)
+        for key, value in override.items():
+            merged[key] = (
+                _merge_kubernetes_config_value(
+                    merged[key],
+                    value,
+                    field_name=str(key),
+                )
+                if key in merged
+                else value
+            )
+        return merged
+    if isinstance(base, list) and isinstance(override, list):
+        if field_name == "topologySpreadConstraints":
+            merged_list = list(base)
+            for override_item in override:
+                topology_key = (
+                    str(override_item.get("topologyKey") or "")
+                    if isinstance(override_item, Mapping)
+                    else ""
+                )
+                existing_index = next(
+                    (
+                        index
+                        for index, base_item in enumerate(merged_list)
+                        if topology_key
+                        and isinstance(base_item, Mapping)
+                        and str(base_item.get("topologyKey") or "") == topology_key
+                    ),
+                    None,
+                )
+                if existing_index is None:
+                    merged_list.append(override_item)
+                else:
+                    merged_list[existing_index] = _merge_kubernetes_config_value(
+                        merged_list[existing_index],
+                        override_item,
+                    )
+            return merged_list
+        return [*base, *override]
+    return override
+
+
+def merge_kubernetes_pull_placement(
+    base_json: str,
+    override_json: str,
+) -> str:
+    """Apply SkyPilot's nested pod-config merge to pull-relevant placement."""
+
+    try:
+        base = json.loads(base_json or "{}")
+        override = json.loads(override_json or "{}")
+    except json.JSONDecodeError:
+        raise RegistryPreflightError(
+            "rendered Kubernetes pull placement is invalid"
+        ) from None
+    if not isinstance(base, Mapping) or not isinstance(override, Mapping):
+        raise RegistryPreflightError(
+            "rendered Kubernetes pull placement must be a mapping"
+        )
+    merged = _merge_kubernetes_config_value(base, override)
+    try:
+        return json.dumps(merged, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise RegistryPreflightError(
+            "rendered Kubernetes pull placement is not JSON-compatible"
+        ) from None
+
+
+def _configured_pull_placement(config: Mapping[str, Any]) -> str:
+    pod_config = config.get("pod_config") or {}
+    if not isinstance(pod_config, Mapping):
+        raise RegistryPreflightError("SkyPilot pod_config must be a mapping")
+    pod_spec = pod_config.get("spec") or {}
+    if not isinstance(pod_spec, Mapping):
+        raise RegistryPreflightError("SkyPilot pod_config.spec must be a mapping")
+    placement = {
+        key: value for key, value in pod_spec.items() if key in _PULL_PLACEMENT_FIELDS
+    }
+    try:
+        return json.dumps(placement, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise RegistryPreflightError(
+            "SkyPilot pod placement must contain JSON-compatible values"
+        ) from None
 
 
 def parse_image_reference(image: str) -> ImageReference:
@@ -152,7 +325,20 @@ def fetch_image_config_metadata(
     fetch = fetcher or _fetch
     reference = parse_image_reference(image)
     headers = {"Accept": MANIFEST_ACCEPT}
-    status, response_headers, body = fetch(reference.manifest_url, headers, timeout)
+
+    def fetch_bounded(
+        url: str, request_headers: dict[str, str], phase: str
+    ) -> HttpResponse:
+        try:
+            return fetch(url, request_headers, timeout)
+        except OSError as exc:
+            raise RegistryPreflightError(
+                f"{phase} unavailable ({type(exc).__name__})"
+            ) from None
+
+    status, response_headers, body = fetch_bounded(
+        reference.manifest_url, headers, "registry manifest request"
+    )
     if status == 401:
         challenge = _parse_www_authenticate(
             response_headers.get("www-authenticate", "")
@@ -162,23 +348,15 @@ def fetch_image_config_metadata(
             raise RegistryPreflightError(
                 "registry authentication challenge has no realm"
             )
-        parsed_realm = urllib.parse.urlsplit(realm)
-        query = dict(urllib.parse.parse_qsl(parsed_realm.query, keep_blank_values=True))
-        query.update(
-            {
-                "service": challenge.get("service", reference.registry),
-                "scope": reference.pull_scope,
-            }
-        )
-        token_url = urllib.parse.urlunsplit(
-            parsed_realm._replace(query=urllib.parse.urlencode(query))
-        )
+        token_url = _registry_token_url(reference, challenge)
         token_headers = (
             {"Authorization": _basic_auth(username or "iam", password)}
             if password
             else {}
         )
-        token_status, _, token_body = fetch(token_url, token_headers, timeout)
+        token_status, _, token_body = fetch_bounded(
+            token_url, token_headers, "registry token request"
+        )
         if token_status >= 400:
             raise RegistryPreflightError(
                 f"registry token request failed with HTTP {token_status}"
@@ -190,7 +368,11 @@ def fetch_image_config_metadata(
         if not bearer:
             raise RegistryPreflightError("registry token response contains no token")
         headers = {"Accept": MANIFEST_ACCEPT, "Authorization": f"Bearer {bearer}"}
-        status, response_headers, body = fetch(reference.manifest_url, headers, timeout)
+        status, response_headers, body = fetch_bounded(
+            reference.manifest_url,
+            headers,
+            "authenticated registry manifest request",
+        )
     if not 200 <= status < 300:
         raise RegistryPreflightError(f"manifest fetch failed with HTTP {status}")
     top_digest = str(response_headers.get("docker-content-digest") or "").strip()
@@ -212,7 +394,9 @@ def fetch_image_config_metadata(
             raise RegistryPreflightError("image index has no linux/amd64 manifest")
         selected_digest = str(selected.get("digest") or "")
         selected_url = f"https://{reference.api_registry}/v2/{reference.repository}/manifests/{selected_digest}"
-        status, selected_headers, body = fetch(selected_url, headers, timeout)
+        status, selected_headers, body = fetch_bounded(
+            selected_url, headers, "platform manifest request"
+        )
         if not 200 <= status < 300:
             raise RegistryPreflightError(
                 f"platform manifest fetch failed with HTTP {status}"
@@ -230,7 +414,7 @@ def fetch_image_config_metadata(
     if not config_digest:
         raise RegistryPreflightError("image manifest contains no config digest")
     config_url = f"https://{reference.api_registry}/v2/{reference.repository}/blobs/{config_digest}"
-    status, _, config_body = fetch(config_url, headers, timeout)
+    status, _, config_body = fetch_bounded(config_url, headers, "image config request")
     if not 200 <= status < 300:
         raise RegistryPreflightError(f"image config fetch failed with HTTP {status}")
     config_payload = json.loads(config_body.decode("utf-8", errors="replace") or "{}")
@@ -287,6 +471,68 @@ def _parse_www_authenticate(header: str) -> dict[str, str]:
     return fields
 
 
+def _https_authority(value: str) -> tuple[str, int] | None:
+    """Return a normalized HTTPS host/port without accepting URL credentials."""
+
+    try:
+        parsed = urllib.parse.urlsplit(value if "://" in value else f"https://{value}")
+        if (
+            parsed.scheme.casefold() != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return None
+        return parsed.hostname.casefold(), parsed.port or 443
+    except ValueError:
+        return None
+
+
+def _registry_token_url(
+    reference: ImageReference,
+    challenge: Mapping[str, str],
+) -> str:
+    """Build one trusted HTTPS Bearer-token URL for a registry challenge."""
+
+    realm = str(challenge.get("realm") or "").strip()
+    try:
+        parsed_realm = urllib.parse.urlsplit(realm)
+    except ValueError:
+        parsed_realm = urllib.parse.SplitResult("", "", "", "", "")
+    realm_authority = _https_authority(realm)
+    source_authorities = {
+        authority
+        for authority in (
+            _https_authority(reference.registry),
+            _https_authority(reference.api_registry),
+        )
+        if authority is not None
+    }
+    trusted_cross_origin = _TRUSTED_CROSS_ORIGIN_TOKEN_AUTHORITIES.get(
+        reference.registry.casefold(),
+        frozenset(),
+    )
+    if (
+        realm_authority is None
+        or parsed_realm.scheme.casefold() != "https"
+        or parsed_realm.fragment
+        or realm_authority not in source_authorities | trusted_cross_origin
+    ):
+        raise RegistryPreflightError(
+            "registry authentication challenge uses an untrusted token realm"
+        )
+    query = dict(urllib.parse.parse_qsl(parsed_realm.query, keep_blank_values=True))
+    query.update(
+        {
+            "service": challenge.get("service", reference.registry),
+            "scope": reference.pull_scope,
+        }
+    )
+    return urllib.parse.urlunsplit(
+        parsed_realm._replace(query=urllib.parse.urlencode(query))
+    )
+
+
 def _basic_auth(username: str, password: str) -> str:
     encoded = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
     return f"Basic {encoded}"
@@ -304,8 +550,25 @@ def _registry_error_detail(body: bytes) -> str:
     if not isinstance(first, dict):
         return ""
     code = str(first.get("code") or "").strip()
-    message = str(first.get("message") or "").strip()
-    return f"{code}: {message}".strip(": ")
+    return code if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", code) else ""
+
+
+def _manifest_pull_digests(body: bytes, top_digest: str) -> tuple[str, ...]:
+    """Return the index and platform-manifest digests a pull may report."""
+
+    digests = []
+    if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", top_digest):
+        digests.append(top_digest.lower())
+    try:
+        payload: Any = json.loads(body.decode("utf-8", errors="replace") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+    manifests = payload.get("manifests") if isinstance(payload, Mapping) else None
+    for item in manifests if isinstance(manifests, list) else []:
+        digest = str(item.get("digest") or "") if isinstance(item, Mapping) else ""
+        if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+            digests.append(digest.lower())
+    return tuple(dict.fromkeys(digests))
 
 
 def check_image_pull(
@@ -321,11 +584,11 @@ def check_image_pull(
     fetch = fetcher or _fetch
     try:
         reference = parse_image_reference(image)
-    except RegistryPreflightError as exc:
+    except RegistryPreflightError:
         return ImagePullCheck(
             image=str(image),
             status="invalid",
-            detail=str(exc),
+            detail="image reference is invalid",
             remedy="fix the image reference in the workflow spec or --image override",
         )
 
@@ -336,7 +599,7 @@ def check_image_pull(
         return ImagePullCheck(
             image=reference.raw,
             status="unreachable",
-            detail=str(exc),
+            detail=f"registry manifest request unavailable ({type(exc).__name__})",
             remedy=f"check network access to https://{reference.registry}/v2/ from this host",
         )
 
@@ -353,17 +616,19 @@ def check_image_pull(
                 detail="registry requires authentication but sent no Bearer realm",
                 remedy="verify the registry host is a Docker Registry v2 endpoint",
             )
-        parsed_realm = urllib.parse.urlsplit(realm)
-        query = dict(urllib.parse.parse_qsl(parsed_realm.query, keep_blank_values=True))
-        query.update(
-            {
-                "service": challenge.get("service", reference.registry),
-                "scope": reference.pull_scope,
-            }
-        )
-        token_url = urllib.parse.urlunsplit(
-            parsed_realm._replace(query=urllib.parse.urlencode(query))
-        )
+        try:
+            token_url = _registry_token_url(reference, challenge)
+        except RegistryPreflightError:
+            return ImagePullCheck(
+                image=reference.raw,
+                status="unauthorized",
+                http_status=status,
+                detail="registry authentication challenge uses an untrusted token realm",
+                remedy=(
+                    "use an HTTPS token service on the registry authority or a "
+                    "reviewed cross-origin authentication host"
+                ),
+            )
         # A public registry (GHCR, Docker Hub) issues a pull token to an anonymous
         # caller, so "no credentials" is not the same as "cannot pull". Ask the
         # token endpoint before concluding anything.
@@ -378,8 +643,11 @@ def check_image_pull(
             return ImagePullCheck(
                 image=reference.raw,
                 status="unreachable",
-                detail=f"token endpoint unreachable: {exc}",
-                remedy=f"check network access to {realm} from this host",
+                detail=f"registry token request unavailable ({type(exc).__name__})",
+                remedy=(
+                    "check network access to the registry token endpoint for "
+                    f"{reference.registry} from this host"
+                ),
             )
         if token_status >= 400:
             if not password:
@@ -428,22 +696,25 @@ def check_image_pull(
             return ImagePullCheck(
                 image=reference.raw,
                 status="unreachable",
-                detail=str(exc),
+                detail=(
+                    "authenticated registry manifest request unavailable "
+                    f"({type(exc).__name__})"
+                ),
                 remedy=f"check network access to https://{reference.registry}/v2/ from this host",
             )
 
     detail = _registry_error_detail(body)
     if 200 <= status < 300:
         digest = str(response_headers.get("docker-content-digest") or "").strip()
+        digest = (
+            reference.reference if reference.reference.startswith("sha256:") else digest
+        )
         return ImagePullCheck(
             image=reference.raw,
             status="ok",
             http_status=status,
-            digest=(
-                reference.reference
-                if reference.reference.startswith("sha256:")
-                else digest
-            ),
+            digest=digest,
+            acceptable_digests=_manifest_pull_digests(body, digest),
         )
     if status == 403:
         return ImagePullCheck(
@@ -522,10 +793,15 @@ def _server_side_copy_hint(reference: ImageReference) -> str:
     return ""
 
 
-def _registry_host(value: str) -> str:
+def canonical_registry_host(value: str) -> str:
+    """Return one credential authority for equivalent registry spellings."""
+
     cleaned = str(value or "").strip().removeprefix("docker:")
     cleaned = cleaned.removeprefix("https://").removeprefix("http://")
-    return cleaned.split("/", 1)[0].rstrip("/")
+    host = cleaned.split("/", 1)[0].rstrip("/").casefold()
+    if host in {"docker.io", "index.docker.io", "registry-1.docker.io"}:
+        return "docker.io"
+    return host
 
 
 def resolve_registry_credentials(
@@ -550,8 +826,8 @@ def resolve_registry_credentials(
 
     import os
 
-    target = _registry_host(registry)
-    configured_server = _registry_host(
+    target = canonical_registry_host(registry)
+    configured_server = canonical_registry_host(
         os.environ.get("SKYPILOT_DOCKER_SERVER")
         or os.environ.get("NPA_REGISTRY_SERVER")
         or os.environ.get("NPA_REGISTRY")
@@ -607,17 +883,33 @@ def check_image_pulls_with_credentials(
     fetcher: Fetcher | None = None,
     pull_secret_names: tuple[str, ...] = (),
     pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
-    namespace: str = "default",
+    pull_secret_sets_by_image: (
+        Mapping[str, tuple[tuple[str, ...], ...]] | None
+    ) = None,
+    service_account_name: str = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME,
+    service_account_names_by_image: Mapping[str, tuple[str, ...]] | None = None,
+    pod_placements_by_image: (
+        Mapping[str, tuple[Mapping[str, Any], ...]] | None
+    ) = None,
+    operator_images: Collection[str] | None = None,
+    kubernetes_images: Collection[str] | None = None,
+    namespace: str = "",
     context: str = "",
+    kubeconfig: str = "",
     secret_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    target_pull_timeout_seconds: int = 300,
+    target_pull_verifier: Callable[..., KubernetesPullCheck] | None = None,
 ) -> list[ImagePullCheck]:
-    """Check operator or declared in-cluster pull authority for each registry."""
+    """Check every classified VM and Kubernetes pull path independently."""
 
     seen: list[str] = []
     for image in images:
         value = str(image or "").strip()
         if value and value not in seen:
             seen.append(value)
+    classified_paths = operator_images is not None or kubernetes_images is not None
+    operator_image_set = {str(item) for item in operator_images or ()}
+    kubernetes_image_set = {str(item) for item in kubernetes_images or ()}
     checks: list[ImagePullCheck] = []
     for image in seen:
         image_secret_names = (
@@ -625,6 +917,62 @@ def check_image_pulls_with_credentials(
             if pull_secrets_by_image is not None
             else pull_secret_names
         )
+        image_secret_sets = (
+            tuple(
+                tuple(dict.fromkeys(str(name).strip() for name in names))
+                for names in pull_secret_sets_by_image.get(image, ())
+            )
+            if pull_secret_sets_by_image is not None
+            else (image_secret_names,)
+        )
+        if classified_paths:
+            requires_operator = image in operator_image_set
+            requires_kubernetes = image in kubernetes_image_set
+        elif pull_secrets_by_image is not None:
+            # An empty tuple previously erased whether this was a VM path or a
+            # Kubernetes path with no declared Secret. Refuse that ambiguity.
+            requires_operator = False
+            requires_kubernetes = bool(image_secret_names)
+        else:
+            requires_kubernetes = bool(image_secret_names)
+            requires_operator = not requires_kubernetes
+        if requires_kubernetes and not image_secret_sets:
+            image_secret_sets = ((),)
+        image_service_account_names = (
+            tuple(
+                str(name).strip()
+                for name in service_account_names_by_image.get(image, ())
+            )
+            if service_account_names_by_image is not None
+            else tuple(service_account_name for _ in image_secret_sets)
+        )
+        image_pod_placements = (
+            tuple(pod_placements_by_image.get(image, ()))
+            if pod_placements_by_image is not None
+            else tuple({} for _ in image_secret_sets)
+        )
+        if pull_secret_sets_by_image is not None:
+            image_secret_names = tuple(
+                dict.fromkeys(name for names in image_secret_sets for name in names)
+            )
+        if not requires_operator and not requires_kubernetes:
+            checks.append(
+                ImagePullCheck(
+                    image=image,
+                    status="target_path_unclassified",
+                    detail="image execution path is not classified as VM or Kubernetes",
+                    remedy=(
+                        "preserve the rendered execution target when planning image "
+                        "preflight; do not infer it from imagePullSecret presence"
+                    ),
+                    operator_status="not_checked",
+                    target_status="unverified",
+                    authority="none",
+                )
+            )
+            continue
+        username = ""
+        password = ""
         try:
             host = parse_image_reference(image).registry
             username, password = resolve_registry_credentials(
@@ -634,7 +982,7 @@ def check_image_pulls_with_credentials(
             operator_check = ImagePullCheck(
                 image=image,
                 status="no_credentials",
-                detail=str(exc),
+                detail=f"registry credential resolution failed ({type(exc).__name__})",
                 remedy="configure credentials for this registry and retry",
             )
             try:
@@ -650,70 +998,514 @@ def check_image_pulls_with_credentials(
                 timeout=timeout,
                 fetcher=fetcher,
             )
-        if operator_check.ok:
-            checks.append(
-                ImagePullCheck(
-                    **{
-                        **operator_check.__dict__,
-                        "operator_status": "verified",
-                        "target_status": "satisfied_by_operator_credential",
-                        "authority": "operator",
-                    }
+        operator_verified = operator_check.ok
+        target_verified = not requires_kubernetes
+        target_status = "not_applicable"
+        target_detail = "Kubernetes target pull is not required"
+        target_digest = ""
+        if requires_kubernetes:
+            if not str(context or "").strip() or not _KUBERNETES_NAME_RE.fullmatch(
+                namespace
+            ):
+                target_verified = False
+                target_status = "exact_context_required"
+                target_detail = (
+                    "an exact Kubernetes context and effective namespace are required"
                 )
-            )
-            continue
-        verified, detail = verify_kubernetes_pull_secret(
-            host,
-            image_secret_names,
-            namespace=namespace,
-            context=context,
-            timeout=timeout,
-            runner=secret_runner,
-        )
-        if verified:
+            elif (
+                len(image_service_account_names) != len(image_secret_sets)
+                or len(image_pod_placements) != len(image_secret_sets)
+                or any(
+                    not _KUBERNETES_NAME_RE.fullmatch(name)
+                    for name in image_service_account_names
+                )
+                or any(
+                    not isinstance(placement, Mapping)
+                    for placement in image_pod_placements
+                )
+            ):
+                target_verified = False
+                target_status = "service_account_invalid"
+                target_detail = (
+                    "every Kubernetes pull path requires its exact ServiceAccount"
+                )
+            else:
+                target_verified = True
+                for (
+                    path_secret_names,
+                    path_service_account_name,
+                    path_pod_placement,
+                ) in zip(
+                    image_secret_sets,
+                    image_service_account_names,
+                    image_pod_placements,
+                    strict=True,
+                ):
+                    if not path_secret_names and not (
+                        operator_verified and not username and not password
+                    ):
+                        target_verified = False
+                        target_status = "pull_secret_required"
+                        target_detail = (
+                            "private Kubernetes path has no declared imagePullSecret"
+                        )
+                        break
+                    inventory_verified = True
+                    inventory_detail = ""
+                    if path_secret_names:
+                        inventory_verified, inventory_detail = (
+                            verify_kubernetes_pull_secret(
+                                host,
+                                path_secret_names,
+                                namespace=namespace,
+                                context=context,
+                                kubeconfig=kubeconfig,
+                                timeout=timeout,
+                                runner=secret_runner,
+                            )
+                        )
+                    if not inventory_verified:
+                        target_verified = False
+                        target_status = "pull_secret_unverified"
+                        target_detail = inventory_detail
+                        break
+                    verifier = target_pull_verifier or verify_kubernetes_image_pull
+                    probe_image = image
+                    if re.fullmatch(
+                        r"sha256:[0-9a-fA-F]{64}",
+                        str(operator_check.digest or ""),
+                    ):
+                        reference = parse_image_reference(image)
+                        probe_image = (
+                            f"{reference.registry}/{reference.repository}"
+                            f"@{operator_check.digest.lower()}"
+                        )
+                    try:
+                        target_check = verifier(
+                            image=probe_image,
+                            secret_names=path_secret_names,
+                            namespace=namespace,
+                            context=context,
+                            kubeconfig=kubeconfig,
+                            timeout_seconds=target_pull_timeout_seconds,
+                            service_account_name=path_service_account_name,
+                            pod_placement=path_pod_placement,
+                        )
+                    except (
+                        OSError,
+                        RuntimeError,
+                        ValueError,
+                        subprocess.SubprocessError,
+                    ) as exc:
+                        target_check = KubernetesPullCheck(
+                            status=f"verifier_unavailable_{type(exc).__name__}",
+                            cleanup_status="unverified",
+                        )
+                    if not target_check.ok:
+                        target_verified = False
+                        target_status = (
+                            "cleanup_unverified"
+                            if target_check.status == "verified"
+                            else target_check.status
+                        )
+                        target_detail = _target_pull_status_detail(target_check.status)
+                        if target_check.cleanup_status != "verified":
+                            target_detail = (
+                                f"{target_detail}; target pull probe cleanup was "
+                                "not verified"
+                            )
+                        break
+                    acceptable_digests = operator_check.acceptable_digests or tuple(
+                        digest
+                        for digest in (operator_check.digest or target_digest,)
+                        if digest
+                    )
+                    if (
+                        target_check.digest
+                        and acceptable_digests
+                        and target_check.digest not in acceptable_digests
+                    ):
+                        target_verified = False
+                        target_status = "digest_mismatch"
+                        target_detail = _target_pull_status_detail(target_status)
+                        break
+                    target_digest = target_digest or target_check.digest
+                if target_verified:
+                    has_secret = any(image_secret_sets)
+                    target_status = (
+                        "verified_pull_secret"
+                        if len(image_secret_sets) == 1 and has_secret
+                        else "verified_target_pull"
+                        if len(image_secret_sets) == 1
+                        else "verified_target_paths"
+                    )
+                    target_detail = (
+                        f"{len(image_secret_sets)} exact target pull path(s) verified"
+                    )
+        operator_requirement_met = not requires_operator or operator_verified
+        if operator_requirement_met and target_verified:
+            if requires_operator and requires_kubernetes:
+                authority = (
+                    "operator_and_kubernetes_image_pull_secret"
+                    if image_secret_names
+                    else "operator_and_kubernetes_target"
+                )
+            elif requires_kubernetes:
+                authority = (
+                    "kubernetes_image_pull_secret"
+                    if image_secret_names
+                    else "kubernetes_target_pull"
+                )
+            else:
+                authority = "operator"
             checks.append(
                 ImagePullCheck(
-                    image=image,
+                    image=operator_check.image,
                     status="ok",
+                    http_status=operator_check.http_status,
                     detail=(
                         f"operator-side manifest check was {operator_check.status}; "
-                        f"target pull authority verified: {detail}"
+                        f"target pull authority: {target_detail}"
                     ),
-                    operator_status=operator_check.status,
-                    target_status="verified_pull_secret",
-                    authority="kubernetes_image_pull_secret",
+                    operator_status=(
+                        "verified" if operator_verified else operator_check.status
+                    ),
+                    target_status=target_status,
+                    authority=authority,
+                    digest=operator_check.digest or target_digest,
                 )
             )
             continue
-        remedy = operator_check.remedy
-        target_remedy = (
-            f"declare a valid imagePullSecret for {host} in namespace "
-            f"{namespace!r} and make it readable in context {context or '<current>'!r}"
-        )
+        target_remedy = ""
+        if requires_kubernetes:
+            target_namespace = namespace
+            target_remedy = (
+                f"prove the exact image pull in namespace {target_namespace!r} and context "
+                f"{context or '<missing>'!r}"
+            )
+            if image_secret_names:
+                target_remedy = (
+                    f"declare a valid imagePullSecret for {host} in namespace "
+                    f"{target_namespace!r}, then prove it in context "
+                    f"{context or '<missing>'!r}"
+                )
+            elif target_status == "pull_secret_required":
+                target_remedy = (
+                    f"declare an operator-managed imagePullSecret for {host} in "
+                    f"namespace {target_namespace!r}"
+                )
+        remedy = operator_check.remedy if requires_operator else ""
         checks.append(
             ImagePullCheck(
                 image=operator_check.image,
                 status=(
                     "target_pull_unverified"
-                    if image_secret_names
+                    if requires_kubernetes and not target_verified
                     else operator_check.status
                 ),
                 http_status=operator_check.http_status,
                 detail=(
                     f"operator-side check: {operator_check.status}"
-                    + (f" ({operator_check.detail})" if operator_check.detail else "")
-                    + f"; target pull authority unverified: {detail}"
+                    + f"; target pull authority: {target_detail}"
                 ),
-                remedy=f"{remedy}; {target_remedy}" if remedy else target_remedy,
-                operator_status=operator_check.status,
-                target_status="unverified",
+                remedy="; ".join(item for item in (remedy, target_remedy) if item),
+                operator_status=(
+                    "verified" if operator_verified else operator_check.status
+                ),
+                target_status=target_status,
                 authority="none",
+                digest=operator_check.digest or target_digest,
             )
         )
     return checks
 
 
+def _target_pull_status_detail(status: str) -> str:
+    """Render only bounded probe classifications, never subprocess text."""
+
+    known = {
+        "verified": "exact target pull verified",
+        "exact_context_required": "an exact Kubernetes context is required",
+        "create_rejected": "target rejected the pull probe",
+        "image_pull_failed": "target image pull failed",
+        "inventory_unavailable": "target pod inventory is unavailable",
+        "timed_out": "target image pull probe timed out",
+        "cleanup_unverified": "target pull succeeded but probe cleanup was not verified",
+        "identity_mismatch": "target pull probe identity could not be verified",
+        "invalid_image": "target pull probe image is invalid",
+        "digest_mismatch": "host and target resolved different immutable image bytes",
+        "digest_unverified": "target runtime did not report an immutable image digest",
+        "placement_invalid": "target pull placement could not be reproduced exactly",
+        "placement_mismatch": "admitted pull probe placement differs from the request",
+        "authority_mismatch": "admitted pull probe authority differs from the request",
+        "service_account_unverified": (
+            "the exact ServiceAccount's default pull Secrets could not be verified"
+        ),
+        "target_probe_failed": "target probe could not start after pulling the image",
+        "pull_secret_required": "private Kubernetes path requires an imagePullSecret",
+        "service_account_invalid": (
+            "exact target ServiceAccount authority is unavailable"
+        ),
+    }
+    if status in known:
+        return known[status]
+    if status.startswith("verifier_unavailable_"):
+        return "target pull verifier is unavailable"
+    return "target image pull is unverified"
+
+
 _KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
+_IMAGE_PULL_FAILURE_REASONS = {
+    "ErrImagePull",
+    "ImagePullBackOff",
+    "ImageInspectError",
+    "ErrImageNeverPull",
+    "InvalidImageName",
+    "RegistryUnavailable",
+}
+_TARGET_PROBE_FAILURE_REASONS = {
+    "CreateContainerConfigError",
+    "CreateContainerError",
+    "RunContainerError",
+    "StartError",
+}
+
+
+def resolve_kubernetes_pull_target(
+    *,
+    context: str,
+    global_config_path: Path | None = None,
+    kubeconfig_path: str | Path | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> KubernetesPullTarget:
+    """Resolve SkyPilot's kubeconfig, namespace, and pod authority layers."""
+
+    selected_context = str(context or "").strip()
+    if not selected_context:
+        raise RegistryPreflightError("an exact Kubernetes context is required")
+    selected_kubeconfig = (
+        Path(kubeconfig_path or resolve_skypilot_kubeconfig_path())
+        .expanduser()
+        .resolve(strict=False)
+    )
+    secret_names: tuple[str, ...] = ()
+    secret_names_configured = False
+    service_account_name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    pod_placement_json = "{}"
+    if global_config_path is not None:
+        try:
+            document = (
+                yaml.safe_load(global_config_path.read_text(encoding="utf-8")) or {}
+            )
+        except (OSError, yaml.YAMLError) as exc:
+            raise RegistryPreflightError(
+                f"selected SkyPilot config is unavailable ({type(exc).__name__})"
+            ) from None
+        if not isinstance(document, Mapping):
+            raise RegistryPreflightError("selected SkyPilot config must be a mapping")
+        kubernetes = document.get("kubernetes") or {}
+        if not isinstance(kubernetes, Mapping):
+            raise RegistryPreflightError(
+                "selected SkyPilot kubernetes config must be a mapping"
+            )
+        context_configs = kubernetes.get("context_configs") or {}
+        if not isinstance(context_configs, Mapping):
+            raise RegistryPreflightError(
+                "selected SkyPilot context_configs must be a mapping"
+            )
+        context_config = context_configs.get(selected_context) or {}
+        if not isinstance(context_config, Mapping):
+            raise RegistryPreflightError(
+                "selected SkyPilot context config must be a mapping"
+            )
+        base_secret_names = _configured_pull_secret_names(kubernetes)
+        override_secret_names = _configured_pull_secret_names(context_config)
+        secret_names = merge_skypilot_pull_secret_names(
+            base_secret_names,
+            override_secret_names,
+        )
+        secret_names_configured = (
+            base_secret_names is not None or override_secret_names is not None
+        )
+        service_account_name = _configured_service_account_name(
+            kubernetes,
+            context_config,
+            context=selected_context,
+        )
+        base_service_account = _configured_pod_service_account_name(kubernetes)
+        context_service_account = _configured_pod_service_account_name(context_config)
+        service_account_name = (
+            context_service_account
+            if context_service_account is not None
+            else base_service_account
+            if base_service_account is not None
+            else service_account_name
+        )
+        pod_placement_json = merge_kubernetes_pull_placement(
+            _configured_pull_placement(kubernetes),
+            _configured_pull_placement(context_config),
+        )
+    execute = runner or subprocess.run
+    try:
+        result = execute(
+            [
+                "kubectl",
+                "--context",
+                selected_context,
+                "config",
+                "view",
+                "--minify",
+                "-o",
+                "json",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env={**os.environ, "KUBECONFIG": str(selected_kubeconfig)},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RegistryPreflightError(
+            f"Kubernetes context namespace is unavailable ({type(exc).__name__})"
+        ) from None
+    if result.returncode != 0:
+        raise RegistryPreflightError(
+            f"Kubernetes context namespace lookup failed (exit {result.returncode})"
+        )
+    try:
+        payload = json.loads(result.stdout or "{}")
+        contexts = payload["contexts"]
+        matches = [
+            item
+            for item in contexts
+            if isinstance(item, Mapping)
+            and str(item.get("name") or "") == selected_context
+        ]
+        if len(matches) != 1:
+            raise ValueError
+        context_payload = matches[0]["context"]
+        if not isinstance(context_payload, Mapping):
+            raise ValueError
+        namespace = str(context_payload.get("namespace") or "default").strip()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise RegistryPreflightError(
+            "Kubernetes context namespace response is invalid"
+        ) from None
+    if not _KUBERNETES_NAME_RE.fullmatch(namespace):
+        raise RegistryPreflightError("effective Kubernetes namespace is invalid")
+    invalid_secret = next(
+        (name for name in secret_names if not _KUBERNETES_NAME_RE.fullmatch(name)),
+        "",
+    )
+    if invalid_secret:
+        raise RegistryPreflightError(
+            "selected SkyPilot config contains an invalid imagePullSecret name"
+        )
+    return KubernetesPullTarget(
+        namespace=namespace,
+        pull_secret_names=secret_names,
+        pull_secret_names_configured=secret_names_configured,
+        service_account_name=service_account_name,
+        kubeconfig_path=str(selected_kubeconfig),
+        pod_placement_json=pod_placement_json,
+    )
+
+
+def _configured_service_account_name(
+    kubernetes: Mapping[str, Any],
+    context_config: Mapping[str, Any],
+    *,
+    context: str,
+) -> str:
+    """Resolve the ServiceAccount rendered by pinned SkyPilot 0.12.2."""
+
+    if "remote_identity" in context_config:
+        remote_identity: Any = context_config["remote_identity"]
+    else:
+        remote_identity = kubernetes.get("remote_identity", "SERVICE_ACCOUNT")
+    if isinstance(remote_identity, Mapping):
+        if context not in remote_identity:
+            raise RegistryPreflightError(
+                "selected SkyPilot remote_identity has no exact context entry"
+            )
+        remote_identity = remote_identity[context]
+    if not isinstance(remote_identity, str):
+        raise RegistryPreflightError(
+            "selected SkyPilot remote_identity must resolve to a ServiceAccount name"
+        )
+    service_account_name = remote_identity.strip()
+    if service_account_name in _SKYPILOT_REMOTE_IDENTITY_SENTINELS:
+        service_account_name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    if not _KUBERNETES_NAME_RE.fullmatch(service_account_name):
+        raise RegistryPreflightError(
+            "selected SkyPilot remote_identity is not a valid ServiceAccount name"
+        )
+    return service_account_name
+
+
+def _configured_pod_service_account_name(
+    config: Mapping[str, Any],
+) -> str | None:
+    """Read one config layer's pod-level ServiceAccount override."""
+
+    pod_config = config.get("pod_config")
+    if pod_config is None:
+        return None
+    if not isinstance(pod_config, Mapping):
+        raise RegistryPreflightError("selected SkyPilot pod_config must be a mapping")
+    pod_spec = pod_config.get("spec")
+    if pod_spec is None:
+        return None
+    if not isinstance(pod_spec, Mapping):
+        raise RegistryPreflightError(
+            "selected SkyPilot pod_config spec must be a mapping"
+        )
+    if "serviceAccountName" not in pod_spec:
+        return None
+    raw_name = pod_spec["serviceAccountName"]
+    if not isinstance(raw_name, str):
+        raise RegistryPreflightError(
+            "selected SkyPilot pod ServiceAccount must be a string"
+        )
+    name = raw_name.strip() or "default"
+    if not _KUBERNETES_NAME_RE.fullmatch(name):
+        raise RegistryPreflightError(
+            "selected SkyPilot pod ServiceAccount is not a valid Kubernetes name"
+        )
+    return name
+
+
+def _configured_pull_secret_names(
+    config: Mapping[str, Any],
+) -> tuple[str, ...] | None:
+    pod_config = config.get("pod_config") or {}
+    if not isinstance(pod_config, Mapping):
+        raise RegistryPreflightError("SkyPilot pod_config must be a mapping")
+    pod_spec = pod_config.get("spec") or {}
+    if not isinstance(pod_spec, Mapping):
+        raise RegistryPreflightError("SkyPilot pod_config.spec must be a mapping")
+    if "imagePullSecrets" not in pod_spec:
+        return None
+    raw_names = pod_spec["imagePullSecrets"]
+    if not isinstance(raw_names, list):
+        raise RegistryPreflightError(
+            "SkyPilot imagePullSecrets must be a list of name mappings"
+        )
+    names: list[str] = []
+    for item in raw_names:
+        if not isinstance(item, Mapping):
+            raise RegistryPreflightError(
+                "SkyPilot imagePullSecrets must contain name mappings"
+            )
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise RegistryPreflightError(
+                "SkyPilot imagePullSecrets entries require a name"
+            )
+        names.append(name)
+    return tuple(names)
 
 
 def verify_kubernetes_pull_secret(
@@ -722,14 +1514,17 @@ def verify_kubernetes_pull_secret(
     *,
     namespace: str = "default",
     context: str = "",
+    kubeconfig: str = "",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> tuple[bool, str]:
-    """Verify a declared docker-config secret covers ``registry`` without leaking it."""
+    """Inspect a declared Secret before the separate target pull probe."""
 
-    host = _registry_host(registry)
+    host = canonical_registry_host(registry)
     if not secret_names:
         return False, "no imagePullSecret is declared for this execution path"
+    if not str(context or "").strip():
+        return False, "an exact Kubernetes context is required"
     if not _KUBERNETES_NAME_RE.fullmatch(namespace):
         return False, f"invalid Kubernetes namespace reference {namespace!r}"
     execute = runner or subprocess.run
@@ -750,15 +1545,18 @@ def verify_kubernetes_pull_secret(
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=({**os.environ, "KUBECONFIG": kubeconfig} if kubeconfig else None),
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            failures.append(f"{name}: Kubernetes inventory unavailable ({exc})")
+            failures.append(
+                f"{name}: Kubernetes inventory unavailable ({type(exc).__name__})"
+            )
             continue
         if result.returncode != 0:
-            detail = (
-                result.stderr or result.stdout or f"exit {result.returncode}"
-            ).strip()
-            failures.append(f"{name}: Kubernetes rejected the secret lookup ({detail})")
+            failures.append(
+                f"{name}: Kubernetes rejected the secret lookup "
+                f"(exit {result.returncode})"
+            )
             continue
         try:
             secret = json.loads(result.stdout or "{}")
@@ -779,7 +1577,7 @@ def verify_kubernetes_pull_secret(
         matching_entries = [
             entry
             for registry_name, entry in auths.items()
-            if _registry_host(str(registry_name)) == host
+            if canonical_registry_host(str(registry_name)) == host
         ]
         if not matching_entries:
             failures.append(f"{name}: docker config does not cover registry {host}")
@@ -801,12 +1599,525 @@ def _docker_auth_entry_has_credential(entry: Any) -> bool:
 
     if not isinstance(entry, dict):
         return False
+    encoded_auth = str(entry.get("auth") or "").strip()
+    if encoded_auth:
+        try:
+            decoded = base64.b64decode(encoded_auth, validate=True)
+            username, password = decoded.split(b":", 1)
+        except (ValueError, TypeError):
+            pass
+        else:
+            if username and password:
+                return True
     if any(
-        str(entry.get(key) or "").strip()
-        for key in ("auth", "identitytoken", "registrytoken")
+        str(entry.get(key) or "").strip() for key in ("identitytoken", "registrytoken")
     ):
         return True
     return bool(
         str(entry.get("username") or "").strip()
         and str(entry.get("password") or "").strip()
     )
+
+
+def _cleanup_pull_probe_iteration(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+    name: str,
+    namespace: str,
+    nonce: str,
+    image: str,
+    expected_uid: str,
+) -> tuple[str, str]:
+    """Inspect and UID-delete one owned probe, returning a bounded outcome."""
+
+    try:
+        current = run(["get", "pod", name, "--ignore-not-found=true", "-o", "json"])
+    except (OSError, subprocess.SubprocessError):
+        return "retry", expected_uid
+    if current.returncode != 0:
+        return "retry", expected_uid
+    if not current.stdout.strip():
+        return "absent", expected_uid
+    identity = _pull_probe_identity(
+        current.stdout,
+        name=name,
+        nonce=nonce,
+        image=image,
+        expected_uid=expected_uid,
+    )
+    if identity is None:
+        return "identity_mismatch", expected_uid
+    observed_uid = identity[0]
+    delete_options = {
+        "apiVersion": "meta.k8s.io/v1",
+        "kind": "DeleteOptions",
+        "gracePeriodSeconds": 0,
+        "preconditions": {"uid": observed_uid},
+    }
+    try:
+        deleted = run(
+            [
+                "delete",
+                "--raw",
+                f"/api/v1/namespaces/{namespace}/pods/{name}",
+                "-f",
+                "-",
+            ],
+            input_text=json.dumps(delete_options, separators=(",", ":")),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "retry", observed_uid
+    return ("deleted" if deleted.returncode == 0 else "retry"), observed_uid
+
+
+def _cleanup_kubernetes_pull_probe(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+    name: str,
+    namespace: str,
+    nonce: str,
+    image: str,
+    expected_uid: str,
+    creation_confirmed: bool,
+) -> tuple[str, KeyboardInterrupt | None]:
+    """Finish bounded owned cleanup before propagating an operator interrupt."""
+
+    interrupted: KeyboardInterrupt | None = None
+    absent_observations = 0
+    for _attempt in range(4):
+        try:
+            outcome, expected_uid = _cleanup_pull_probe_iteration(
+                run=run,
+                name=name,
+                namespace=namespace,
+                nonce=nonce,
+                image=image,
+                expected_uid=expected_uid,
+            )
+        except KeyboardInterrupt as exc:
+            interrupted = interrupted or exc
+            continue
+        if outcome == "identity_mismatch":
+            return "identity_mismatch", interrupted
+        if outcome != "absent":
+            absent_observations = 0
+            continue
+        absent_observations += 1
+        if creation_confirmed or absent_observations >= 2:
+            return "verified", interrupted
+    return "unverified", interrupted
+
+
+def _service_account_pull_secrets(
+    run: Callable[..., subprocess.CompletedProcess[str]],
+    *,
+    name: str,
+    namespace: str,
+) -> list[dict[str, str]] | None:
+    """Read only references needed to bind normal ServiceAccount admission."""
+
+    try:
+        result = run(["get", "serviceaccount", name, "-o", "json"])
+        if result.returncode != 0:
+            return None
+        account = json.loads(result.stdout)
+        metadata = account["metadata"]
+        if metadata["name"] != name or metadata["namespace"] != namespace:
+            return None
+        references = account.get("imagePullSecrets", [])
+        if not isinstance(references, list):
+            return None
+        for reference in references:
+            if (
+                not isinstance(reference, dict)
+                or set(reference) != {"name"}
+                or not isinstance(reference["name"], str)
+                or not _KUBERNETES_NAME_RE.fullmatch(reference["name"])
+            ):
+                return None
+    except (OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError):
+        return None
+    return references
+
+
+def _normalized_toleration(value: Any) -> dict[str, Any] | None:
+    """Account for Kubernetes' omitted empty fields and default Equal operator."""
+
+    if not isinstance(value, Mapping):
+        return None
+    return {"key": "", "operator": "Equal", "value": "", "effect": "", **value}
+
+
+def _pull_tolerations_match(requested: Any, observed: Any) -> bool:
+    """Preserve requested tolerations and allow only standard eviction defaults."""
+
+    if not isinstance(requested, list) or not isinstance(observed, list):
+        return False
+    remaining = [_normalized_toleration(value) for value in observed]
+    if None in remaining:
+        return False
+    for value in requested:
+        normalized = _normalized_toleration(value)
+        if normalized is None or normalized not in remaining:
+            return False
+        remaining.remove(normalized)
+    seen = set()
+    for value in remaining:
+        key = value.get("key")
+        seconds = value.get("tolerationSeconds")
+        if (
+            not isinstance(key, str)
+            or key
+            not in {"node.kubernetes.io/not-ready", "node.kubernetes.io/unreachable"}
+            or key in seen
+            or value.get("operator") != "Exists"
+            or value.get("effect") != "NoExecute"
+            or value.get("value") != ""
+            or type(seconds) is not int
+            or seconds < 0
+            or set(value) != {"key", "operator", "value", "effect", "tolerationSeconds"}
+        ):
+            return False
+        seen.add(key)
+    return True
+
+
+def _pull_probe_admission_status(
+    raw: str, *, requested: Mapping[str, Any], pull_secrets: list[dict[str, str]]
+) -> str:
+    """Reject changed authority independently of the UID used for owned cleanup."""
+
+    try:
+        observed = json.loads(raw)["spec"]
+    except (KeyError, TypeError, ValueError):
+        return "authority_mismatch"
+    if (
+        not isinstance(observed, Mapping)
+        or observed.get("serviceAccountName") != requested["serviceAccountName"]
+        or observed.get("imagePullSecrets", []) != pull_secrets
+    ):
+        return "authority_mismatch"
+    containers = observed.get("containers")
+    if not isinstance(containers, list):
+        return "authority_mismatch"
+    pull_containers = [
+        item
+        for item in containers
+        if isinstance(item, Mapping) and item.get("name") == "pull"
+    ]
+    if (
+        len(pull_containers) != 1
+        or pull_containers[0].get("imagePullPolicy") != "Always"
+    ):
+        return "authority_mismatch"
+    for field in _PULL_PLACEMENT_FIELDS.intersection(requested):
+        if field == "tolerations":
+            if not _pull_tolerations_match(requested[field], observed.get(field)):
+                return "placement_mismatch"
+        elif observed.get(field) != requested[field]:
+            return "placement_mismatch"
+    return ""
+
+
+def verify_kubernetes_image_pull(
+    *,
+    image: str,
+    secret_names: tuple[str, ...],
+    namespace: str,
+    context: str,
+    timeout_seconds: int,
+    service_account_name: str = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME,
+    kubeconfig: str = "",
+    pod_placement: Mapping[str, Any] | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    poll_interval_seconds: float = 1.0,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+    nonce_factory: Callable[[], str] = lambda: secrets.token_hex(12),
+) -> KubernetesPullCheck:
+    """Prove an image reaches one exact target, then delete the owned probe pod."""
+
+    try:
+        parse_image_reference(image)
+    except RegistryPreflightError:
+        return KubernetesPullCheck(status="invalid_image")
+    if (
+        not str(context or "").strip()
+        or not _KUBERNETES_NAME_RE.fullmatch(namespace)
+        or not _KUBERNETES_NAME_RE.fullmatch(service_account_name)
+        or any(not _KUBERNETES_NAME_RE.fullmatch(name) for name in secret_names)
+        or timeout_seconds < 0
+    ):
+        return KubernetesPullCheck(status="exact_context_required")
+    nonce = str(nonce_factory() or "").lower()
+    if not re.fullmatch(r"[a-z0-9]{1,24}", nonce):
+        return KubernetesPullCheck(status="identity_mismatch")
+    selected_placement = dict(pod_placement or {})
+    if any(key not in _PULL_PLACEMENT_FIELDS for key in selected_placement):
+        return KubernetesPullCheck(status="placement_invalid")
+    try:
+        placement_json = json.dumps(
+            selected_placement,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        effective_pod_spec = json.loads(
+            merge_kubernetes_pull_placement(
+                json.dumps(
+                    {
+                        "nodeSelector": {"kubernetes.io/os": "linux"},
+                        "tolerations": [
+                            {
+                                "key": "nvidia.com/gpu",
+                                "operator": "Exists",
+                                "effect": "NoSchedule",
+                            }
+                        ],
+                    },
+                    separators=(",", ":"),
+                ),
+                placement_json,
+            )
+        )
+    except (RegistryPreflightError, TypeError, ValueError):
+        return KubernetesPullCheck(status="placement_invalid")
+    image_key = hashlib.sha256(image.encode("utf-8")).hexdigest()[:12]
+    name = f"npa-pull-{image_key}-{nonce}"
+    labels = {
+        "npa.nebius.com/owned": "true",
+        "npa.nebius.com/purpose": "image-pull-preflight",
+        "npa.nebius.com/probe-id": nonce,
+    }
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": effective_pod_spec,
+    }
+    manifest["spec"].update(
+        {
+            "restartPolicy": "Never",
+            "serviceAccountName": service_account_name,
+            "terminationGracePeriodSeconds": 0,
+            "containers": [
+                {
+                    "name": "pull",
+                    "image": image,
+                    "imagePullPolicy": "Always",
+                    "command": ["/bin/sh", "-c", "exit 0"],
+                }
+            ],
+            "imagePullSecrets": [{"name": item} for item in secret_names],
+        }
+    )
+    if timeout_seconds:
+        manifest["spec"]["activeDeadlineSeconds"] = max(1, timeout_seconds)
+    execute = runner or subprocess.run
+    common = ["kubectl", "--context", context, "--namespace", namespace]
+
+    def run(
+        args: list[str], *, input_text: str = ""
+    ) -> subprocess.CompletedProcess[str]:
+        return execute(
+            [*common, *args],
+            input=input_text or None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+            check=False,
+            env=({**os.environ, "KUBECONFIG": kubeconfig} if kubeconfig else None),
+        )
+
+    expected_pull_secrets = manifest["spec"]["imagePullSecrets"]
+    if not expected_pull_secrets:
+        expected_pull_secrets = _service_account_pull_secrets(
+            run, name=service_account_name, namespace=namespace
+        )
+        if expected_pull_secrets is None:
+            return KubernetesPullCheck(status="service_account_unverified")
+    create_attempted = False
+    creation_confirmed = False
+    expected_uid = ""
+    status = "create_rejected"
+    digest = ""
+    cleanup_status = "not_applicable"
+    try:
+        create_attempted = True
+        try:
+            create = run(
+                ["create", "-f", "-", "-o", "json"],
+                input_text=json.dumps(manifest, separators=(",", ":")),
+            )
+        except (OSError, subprocess.SubprocessError):
+            status = "create_rejected"
+        else:
+            if create.returncode == 0:
+                creation_confirmed = True
+                created_identity = _pull_probe_identity(
+                    create.stdout,
+                    name=name,
+                    nonce=nonce,
+                    image=image,
+                )
+                if created_identity is not None:
+                    expected_uid = created_identity[0]
+                created_admission_status = _pull_probe_admission_status(
+                    create.stdout,
+                    requested=manifest["spec"],
+                    pull_secrets=expected_pull_secrets,
+                )
+                deadline = monotonic() + timeout_seconds if timeout_seconds else None
+                while True:
+                    if created_admission_status:
+                        status = created_admission_status
+                        break
+                    try:
+                        observed = run(["get", "pod", name, "-o", "json"])
+                    except (OSError, subprocess.SubprocessError):
+                        status = "inventory_unavailable"
+                        break
+                    if observed.returncode != 0:
+                        status = "inventory_unavailable"
+                        break
+                    identity = _pull_probe_identity(
+                        observed.stdout,
+                        name=name,
+                        nonce=nonce,
+                        image=image,
+                        expected_uid=expected_uid,
+                    )
+                    if identity is None:
+                        status = "identity_mismatch"
+                        break
+                    expected_uid, image_id, waiting_reason = identity
+                    admission_status = _pull_probe_admission_status(
+                        observed.stdout,
+                        requested=manifest["spec"],
+                        pull_secrets=expected_pull_secrets,
+                    )
+                    if admission_status:
+                        status = admission_status
+                        break
+                    digest_match = re.search(
+                        r"(?:@|://)(sha256:[0-9a-fA-F]{64})$",
+                        image_id,
+                    )
+                    if image_id:
+                        if digest_match is None:
+                            status = "digest_unverified"
+                            break
+                        status = "verified"
+                        digest = digest_match.group(1).lower()
+                        break
+                    if waiting_reason in _IMAGE_PULL_FAILURE_REASONS:
+                        status = "image_pull_failed"
+                        break
+                    if waiting_reason in _TARGET_PROBE_FAILURE_REASONS:
+                        status = "target_probe_failed"
+                        break
+                    if deadline is not None and monotonic() >= deadline:
+                        status = "timed_out"
+                        break
+                    sleeper(max(0.0, poll_interval_seconds))
+            else:
+                status = "create_rejected"
+    finally:
+        if create_attempted:
+            cleanup_status, cleanup_interrupt = _cleanup_kubernetes_pull_probe(
+                run=run,
+                name=name,
+                namespace=namespace,
+                nonce=nonce,
+                image=image,
+                expected_uid=expected_uid,
+                creation_confirmed=creation_confirmed,
+            )
+            if cleanup_interrupt is not None:
+                if cleanup_status != "verified":
+                    note = f"target pull probe cleanup={cleanup_status}"
+                    add_note = getattr(cleanup_interrupt, "add_note", None)
+                    if callable(add_note):
+                        add_note(note)
+                    else:
+                        setattr(
+                            cleanup_interrupt,
+                            "__npa_cleanup_note__",
+                            note,
+                        )
+                raise cleanup_interrupt
+    return KubernetesPullCheck(
+        status=status, digest=digest, cleanup_status=cleanup_status
+    )
+
+
+def _pull_probe_identity(
+    raw: str,
+    *,
+    name: str,
+    nonce: str,
+    image: str,
+    expected_uid: str = "",
+) -> tuple[str, str, str] | None:
+    """Read only immutable ownership and bounded pull-state fields."""
+
+    try:
+        payload = json.loads(raw or "{}")
+        if not isinstance(payload, Mapping):
+            return None
+        metadata = payload["metadata"]
+        if not isinstance(metadata, Mapping):
+            return None
+        labels = metadata["labels"]
+        if not isinstance(labels, Mapping):
+            return None
+        uid = str(metadata["uid"])
+        spec = payload["spec"]
+        if not isinstance(spec, Mapping):
+            return None
+        containers = spec["containers"]
+        pull_containers = [
+            item
+            for item in containers
+            if isinstance(item, Mapping) and str(item.get("name") or "") == "pull"
+        ]
+        if len(pull_containers) != 1:
+            return None
+        actual_image = str(pull_containers[0]["image"])
+    except (AttributeError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+        return None
+    if (
+        str(metadata.get("name") or "") != name
+        or str(labels.get("npa.nebius.com/owned") or "") != "true"
+        or str(labels.get("npa.nebius.com/purpose") or "") != "image-pull-preflight"
+        or str(labels.get("npa.nebius.com/probe-id") or "") != nonce
+        or not uid
+        or actual_image != image
+        or (expected_uid and uid != expected_uid)
+    ):
+        return None
+    status = payload.get("status")
+    status = status if isinstance(status, Mapping) else {}
+    statuses = status.get("containerStatuses") or []
+    image_id = ""
+    waiting_reason = ""
+    pull_statuses = [
+        row
+        for row in statuses
+        if isinstance(row, Mapping) and str(row.get("name") or "") == "pull"
+    ]
+    if len(pull_statuses) > 1:
+        return None
+    for row in pull_statuses:
+        image_id = str(row.get("imageID") or "").strip()
+        state = row.get("state")
+        waiting = state.get("waiting") if isinstance(state, Mapping) else {}
+        if isinstance(waiting, Mapping):
+            candidate = str(waiting.get("reason") or "").strip()
+            if candidate in _IMAGE_PULL_FAILURE_REASONS | _TARGET_PROBE_FAILURE_REASONS:
+                waiting_reason = candidate
+    return uid, image_id, waiting_reason

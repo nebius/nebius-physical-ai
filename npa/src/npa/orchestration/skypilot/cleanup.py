@@ -24,6 +24,7 @@ from npa.orchestration.skypilot._bin import (
     ensure_skypilot_version,
     resolve_config,
     resolve_isolated_config_dir,
+    resolve_skypilot_kubeconfig_path,
 )
 from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
@@ -1989,21 +1990,16 @@ def sky_environment(
     # Link the first (highest-precedence) KUBECONFIG into the isolated default
     # location.  This keeps auth live and operator-owned without copying a
     # credential-bearing file into run state.
-    raw_kubeconfig = str(env.get("KUBECONFIG") or "").strip()
-    if raw_kubeconfig:
-        selected_kubeconfig = Path(raw_kubeconfig.split(os.pathsep, 1)[0]).expanduser()
-        if selected_kubeconfig.is_file():
-            isolated_kubeconfig = home / ".kube" / "config"
-            isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
-            selected_target = selected_kubeconfig.resolve()
-            if isolated_kubeconfig.is_symlink():
-                if isolated_kubeconfig.resolve(strict=False) != selected_target:
-                    isolated_kubeconfig.unlink()
-            if (
-                not isolated_kubeconfig.exists()
-                and not isolated_kubeconfig.is_symlink()
-            ):
-                isolated_kubeconfig.symlink_to(selected_target)
+    selected_kubeconfig = resolve_skypilot_kubeconfig_path(env)
+    if selected_kubeconfig.is_file():
+        isolated_kubeconfig = home / ".kube" / "config"
+        isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+        selected_target = selected_kubeconfig.resolve()
+        if isolated_kubeconfig.is_symlink():
+            if isolated_kubeconfig.resolve(strict=False) != selected_target:
+                isolated_kubeconfig.unlink()
+        if not isolated_kubeconfig.exists() and not isolated_kubeconfig.is_symlink():
+            isolated_kubeconfig.symlink_to(selected_target)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)
     # SkyPilot otherwise derives its user hash from the unchanged operator and

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import json
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
     normalize_resources,
+    plan_image_pull_requirements,
     plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
@@ -493,6 +496,27 @@ def test_render_ok_when_registry_matches_credentials(
     assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
 
+def test_render_uses_same_docker_hub_alias_as_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry-1.docker.io")
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="docker.io/operator"),
+    )
+
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "docker.io"
+    assert task["secrets"]["SKYPILOT_DOCKER_USERNAME"] == "operator"
+    assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "test-token"
+
+
 def test_kubernetes_private_image_references_the_refreshed_pull_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -533,6 +557,236 @@ def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
     )
 
     assert set(authorities.values()) == {()}
+    requirements = plan_image_pull_requirements(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    assert all(
+        requirement.requires_kubernetes and not requirement.requires_operator
+        for requirement in requirements.values()
+    )
+
+
+def test_mixed_image_preserves_vm_and_kubernetes_pull_requirements() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    kubernetes = replace(
+        step,
+        state="kubernetes-path",
+        resources_profile={
+            **step.resources_profile,
+            "cloud": "kubernetes",
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {
+                        "imagePullSecrets": [{"name": "target-secret"}],
+                        "serviceAccountName": "task-service-account",
+                    }
+                }
+            },
+        },
+    )
+    operator = replace(
+        step,
+        state="vm-path",
+        resources_profile={**step.resources_profile, "cloud": "nebius"},
+    )
+    options = SkypilotRenderOptions(registry="registry.example/customer")
+
+    requirements = plan_image_pull_requirements(
+        spec, [kubernetes, operator], run_id="demo", options=options
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.requires_operator is True
+    assert requirement.requires_kubernetes is True
+    assert requirement.pull_secret_names == ("target-secret",)
+    assert requirement.pull_secret_name_sets == (("target-secret",),)
+    assert requirement.service_account_names == ("task-service-account",)
+    assert set(
+        plan_image_pull_secrets(
+            spec, [kubernetes, operator], run_id="demo", options=options
+        ).values()
+    ) == {()}
+
+
+def test_missing_cloud_preserves_unresolved_pull_target() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    unresolved = replace(
+        step,
+        resources_profile={
+            key: value
+            for key, value in step.resources_profile.items()
+            if key != "cloud"
+        },
+    )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [unresolved],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.target_unresolved is True
+    assert requirement.requires_operator is False
+    assert requirement.requires_kubernetes is False
+
+
+def test_same_image_preserves_each_kubernetes_pull_secret_set() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_secret(state: str, name: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {"spec": {"imagePullSecrets": [{"name": name}]}}
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [with_secret("path-a", "secret-a"), with_secret("path-b", "secret-b")],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("secret-a",),
+        ("secret-b",),
+    )
+    assert requirement.pull_secret_names == ("secret-a", "secret-b")
+
+
+def test_same_secret_preserves_distinct_service_account_paths() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_service_account(state: str, name: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "imagePullSecrets": [{"name": "shared-secret"}],
+                            "serviceAccountName": name,
+                        }
+                    }
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [
+            with_service_account("path-a", "service-account-a"),
+            with_service_account("path-b", "service-account-b"),
+        ],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("shared-secret",),
+        ("shared-secret",),
+    )
+    assert requirement.service_account_names == (
+        "service-account-a",
+        "service-account-b",
+    )
+
+
+def test_same_authority_preserves_distinct_pod_placement_paths() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_node_selector(state: str, pool: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "imagePullSecrets": [{"name": "shared-secret"}],
+                            "serviceAccountName": "shared-account",
+                            "nodeSelector": {"nebius.com/node-group": pool},
+                            "runtimeClassName": "nvidia",
+                        }
+                    }
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [
+            with_node_selector("path-a", "pool-a"),
+            with_node_selector("path-b", "pool-b"),
+        ],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("shared-secret",),
+        ("shared-secret",),
+    )
+    assert tuple(json.loads(item) for item in requirement.pod_placement_specs) == (
+        {
+            "nodeSelector": {"nebius.com/node-group": "pool-a"},
+            "runtimeClassName": "nvidia",
+        },
+        {
+            "nodeSelector": {"nebius.com/node-group": "pool-b"},
+            "runtimeClassName": "nvidia",
+        },
+    )
+
+
+def test_pull_requirements_preserve_explicit_empty_task_pull_secrets() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    kubernetes = replace(
+        step,
+        resources_profile={
+            **step.resources_profile,
+            "cloud": "kubernetes",
+            "kubernetes": {
+                "pod_config": {"spec": {"imagePullSecrets": []}},
+            },
+        },
+    )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [kubernetes],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+
+    requirement = next(iter(requirements.values()))
+    assert requirement.pull_secret_name_sets == ((),)
+    assert requirement.pull_secret_names == ()
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
