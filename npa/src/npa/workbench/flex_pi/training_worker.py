@@ -93,6 +93,11 @@ def _rank_main(request_path):
     result["initialization_seconds"] = initialized
     result["runtime"] = _runtime_receipt()
     result["memory_fill"] = memory_fill_receipt(cfg)
+    if getattr(trainer, "_profile_receipt", None) is not None:
+        result["profiling"] = {
+            **trainer._profile_receipt,
+            "runtime": plan["profiler_runtime"],
+        }
     if plan["execution"]["mode"] == "qualify":
         result["qualification_seconds"] = trainer._qualification_seconds
     if torch.distributed.get_rank() == 0:
@@ -203,12 +208,24 @@ def _parent_main(request_path):
     receipt = prepare_assets(assets)
     receipt["preparation_seconds"] = time.perf_counter() - started
     plan["configuration"] = _configuration(plan, root, assets)
+    from npa.workbench.flex_pi.training_profiler_runtime import (
+        prepare_profiler_environment,
+    )
+
+    environment, profiler = prepare_profiler_environment(
+        capability,
+        plan["execution"]["mode"],
+        root / "profiler-runtime",
+        _worker_environment(assets, root),
+    )
+    if profiler is not None:
+        plan["profiler_runtime"] = profiler
     phase_barrier("assets-ready")
     rank_request = root / "rank-request.json"
     rank_request.write_text(json.dumps(plan))
     rank_request.chmod(0o600)
     command = rank_command("--rank-request", rank_request)
-    subprocess.run(command, check=True, env=_worker_environment(assets, root))
+    subprocess.run(command, check=True, env=environment)
     if training_topology()["node_rank"] == 0:
         _finalize_phase(plan, root, assets, receipt, capability, request_path)
 

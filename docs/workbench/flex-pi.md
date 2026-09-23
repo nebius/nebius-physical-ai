@@ -329,6 +329,21 @@ initialization. This setting addresses startup overhead; it does not establish
 a training throughput improvement. See NVIDIA's
 [CUDA cache controls](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html).
 
+B300 diagnostic profiles use native CUPTI 13.0.85 with CUPTI Python 13.0.0.
+The image's CUPTI 12.8 interface reported `CUPTI_ERROR_INVALID_DEVICE` and
+produced a CPU-only trace; preloading a newer library did not repair the older
+PyTorch profiler binding. NPA fetches a separate, hash-pinned profiler directory
+for B300 profile phases while retaining the original Torch, NumPy and CUDA
+compute libraries. Update five records GPU kernels and memory activity; the
+first six updates remain excluded from the steady windows. Zero kernels,
+invalid timestamps or dropped records reject the profile. The result records
+the profiler package-lock and native-library hashes separately from training
+provenance. This repairs diagnostic visibility and does not establish a speedup.
+See NVIDIA's [CUPTI Python interface](https://docs.nvidia.com/cupti-python/13.0.0/user-guide/topics/tutorial.html).
+The private runtime retains the CUDA Toolkit, CUPTI Python and CUDA Python
+license files plus cuda-pathfinder's Apache-2.0 license; these packages and
+populated caches are never added to the public image.
+
 The renderer sets `NPA_FLEX_PI_NODE_COUNT` from the resolved resource profile
 (one by default). The adapter cross-checks it against SkyPilot's node rank and
 peer addresses, allowing only one node with four GPUs or four nodes with one

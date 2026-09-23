@@ -520,6 +520,11 @@ images:
       recorded in the publication inventories. Replacement development bytes must
       pass every publication gate and both GPU targets before release acceptance;
       the existing release evidence does not validate changed source or patches.
+      B300 training-profile source overlays fetch hash-pinned CUPTI 13, CUPTI
+      Python and CUDA Python into a private runtime directory under their NVIDIA
+      software terms, with Apache-2.0 cuda-pathfinder and all package licenses
+      retained. These diagnostic SDKs and populated caches are not baked into
+      the public image; the training compute stack remains unchanged.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import random
 import shutil
@@ -266,6 +267,17 @@ class VerifiedTrainer(Wan22Trainer):
     def _profile_updates(self, updates):
         if not self.accelerator.is_main_process:
             return self._train_updates(updates)
+        if os.environ.get("NPA_FLEX_PI_PROFILE_BACKEND") == "cupti13":
+            from npa.workbench.flex_pi.training_profiler import CuptiProfile
+
+            with CuptiProfile(Path(self.output_dir) / "profile.json") as profiler:
+                self._profiler = profiler
+                try:
+                    indices = self._train_updates(updates)
+                finally:
+                    self._profiler = None
+            self._profile_receipt = profiler.receipt
+            return indices
         with torch.profiler.profile(
             activities=[
                 torch.profiler.ProfilerActivity.CPU,

@@ -63,6 +63,15 @@ separately from the single-host NVLink result; local CPU tests are not GPU
 acceptance. A preempted peer must fail the gang instead of leaving surviving
 phase workers waiting indefinitely.
 
+On B300, diagnostic profiles fetch hash-pinned CUPTI 13.0.85 and its Python
+13.0.0 interface into a private directory. The original training compute stack
+remains in use. Require actual GPU kernel events and zero dropped records;
+the released CUPTI 12.8 binding can emit `CUPTI_ERROR_INVALID_DEVICE` and a
+CPU-only trace despite successful training. A library preload alone does not
+repair that binding. Keep the fetched SDKs and their license files outside the
+public image. Profile update five and retain all six excluded initial updates.
+GPU profiling support is diagnostic evidence, not a throughput improvement.
+
 Freeze the bundled source/split manifests before profiling. Measure the
 six excluded startup/trace updates and three eight-update steady windows
 separately. Accept an execution-only optimization only after fixed-input
