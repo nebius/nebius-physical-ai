@@ -59,6 +59,13 @@ components in meters. This verifier expects zero rig rotation. Although the
 Python signature permits `render_evidence=None`, that produces a failed render
 check; novelty is never inferred from filenames.
 
+`legacy_rrd_review_evidence=Path(...)` is an explicit compatibility input for
+older pinned viewers that do not embed their sampling and encoding settings.
+It defaults to `None`; a recording without those settings still fails by
+default. Supplying legacy evidence for a recording that already embeds settings
+also fails. The compatibility input never skips image, frame, run or metric
+comparisons.
+
 The return value includes `passed`, `offsets_verified`, `checks` and `errors`.
 Checks include an inventory of relative paths, byte sizes and SHA-256 hashes.
 Missing evidence, missing decoder dependencies or failed decoding produce
@@ -97,6 +104,29 @@ status hash but does not itself interpret its provider-specific status schema.
 The collector must verify that the raw status supports its normalized success,
 stage names and run identity. Agents must not author those receipts.
 
+For a legacy viewer, the additional review receipt contains:
+
+- `source: "workbench-pinned-viewer"`, the exact `run_id` and
+  `submitted_spec_sha256`, and `rrd_sha256` for the unchanged recording.
+- `producer_image` with an immutable `@sha256:` reference, and
+  `producer_source_sha256` for the verified image's writer source.
+- `raw_producer_path` and `raw_producer_sha256`, binding the retained producer
+  evidence relative to the receipt's directory. That JSON document uses
+  `source: "verified-viewer-producer"` and repeats the same `producer_image`,
+  `producer_source_sha256` and `settings` values.
+- `settings` with `schema: "npa.nurec.rrd-review.v1"` and integer
+  `max_frames_per_entity`, `max_frame_dim` and `jpeg_quality` values.
+
+The trusted collector must establish these settings from the exact pinned
+producer and its declared invocation/environment before comparing the output.
+Do not search encoding settings until an image matches. Preserve OCI/source
+verification records and distinguish observed environment from anything not
+captured. The artifact reader checks the bindings and every expected encoded
+image; it does not authenticate a registry or attest the producer from hashes
+alone. Its result records `review_settings_source` and the external review
+receipt's hash. Preserve any earlier failed verdict when adding compatibility
+after a trial.
+
 ## What the checks establish
 
 | Evidence | Check |
@@ -104,7 +134,7 @@ stage names and run identity. Agents must not author those receipts.
 | Workflow | Terminal success for all six stages, timestamp format, submitted-spec digest and unchanged raw status bytes |
 | Capture | Requested and observed scene/variant match, with camera and shard counts in the fetch manifest |
 | USDZ | Safe unique archive members, uncompressed USDZ entries, CRC checks, a readable USD stage with prims, and a nonempty native checkpoint archive |
-| Checkpoint | Parseable pickle opcodes with tensor references and nonempty tensor-storage members, without unpickling or importing vendor model code |
+| Checkpoint | Parseable pickle opcodes with tensor references and at least one nonempty tensor storage; optional zero-length storage is counted, without unpickling or importing vendor model code |
 | Metrics | Finite PSNR, SSIM and LPIPS in valid basic ranges, read from the native metrics document |
 | Media | Every novel-view image loads; every video decodes fully, with nonzero frame counts |
 | Rerun | Correct application/run identity, embedded novel-view image bytes matching the run's sampled images, and embedded metrics matching the native metrics document |

@@ -126,7 +126,7 @@ def _media(root):
     )
 
 
-def _recording(root, *, strings_only=False, wrong_frame=False):
+def _recording(root, *, strings_only=False, wrong_frame=False, legacy=False):
     rr = pytest.importorskip("rerun")
     pytest.importorskip("rerun.chunk")
     image = pytest.importorskip("PIL.Image")
@@ -143,6 +143,8 @@ def _recording(root, *, strings_only=False, wrong_frame=False):
         ("provenance/rrd_review", settings),
         ("gaussians/summary", metrics),
     ):
+        if legacy and entity == "provenance/rrd_review":
+            continue
         recording.log(
             entity, rr.TextDocument(f"```json\n{json.dumps(payload)}\n```"), static=True
         )
@@ -435,3 +437,130 @@ def test_edited_normalized_receipt_cannot_borrow_unchanged_raw_receipt(
     assert {"check": "render", "reason": "render_receipt_differs_from_raw"} in result[
         "errors"
     ]
+
+
+@pytest.mark.parametrize("sizes", [(12, 0, 0), (0, 0), ()])
+def test_checkpoint_allows_optional_empty_storage_but_requires_model_data(
+    verifier, sizes
+):
+    checkpoint = io.BytesIO()
+    with zipfile.ZipFile(checkpoint, "w") as archive:
+        archive.writestr("archive/data.pkl", _TENSOR_METADATA)
+        archive.writestr("archive/version", "3\n")
+        for index, size in enumerate(sizes):
+            archive.writestr(f"archive/data/{index}", bytes(size))
+    package = io.BytesIO()
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("checkpoint.ckpt", checkpoint.getvalue())
+    package.seek(0)
+    with zipfile.ZipFile(package) as archive:
+        if not any(sizes):
+            with pytest.raises(ValueError, match="no_checkpoint_tensors"):
+                verifier._checkpoint(archive, archive.infolist())
+            return
+        result = verifier._checkpoint(archive, archive.infolist())
+    assert result["tensor_storage_count"] == 3
+    assert result["empty_tensor_storage_count"] == 2
+
+
+def _legacy_review(run_tree):
+    root, terminal, _ = run_tree
+    producer = {
+        "source": "verified-viewer-producer",
+        "producer_image": "example.invalid/viewer@sha256:" + "b" * 64,
+        "producer_source_sha256": "c" * 64,
+        "settings": {
+            "schema": "npa.nurec.rrd-review.v1",
+            "max_frames_per_entity": 24,
+            "max_frame_dim": 512,
+            "jpeg_quality": 75,
+        },
+    }
+    raw = terminal.parent / "raw-producer.json"
+    _json(raw, producer)
+    evidence = terminal.parent / "legacy-review.json"
+    _json(
+        evidence,
+        {
+            **producer,
+            "source": "workbench-pinned-viewer",
+            "run_id": "test-run",
+            "submitted_spec_sha256": "a" * 64,
+            "rrd_sha256": _hash(root / "reports/sim2real.rrd"),
+            "raw_producer_path": raw.name,
+            "raw_producer_sha256": _hash(raw),
+        },
+    )
+    return evidence
+
+
+def test_legacy_rrd_requires_explicit_producer_evidence(verifier, run_tree):
+    _recording(run_tree[0], legacy=True)
+    rejected = _verify(verifier, run_tree)
+    assert {"check": "rrd", "reason": "missing_or_duplicate_rrd_document"} in rejected[
+        "errors"
+    ]
+    accepted = _verify(
+        verifier, run_tree, legacy_rrd_review_evidence=_legacy_review(run_tree)
+    )
+    assert accepted["passed"], accepted["errors"]
+    assert accepted["checks"]["rrd"]["verified_image_rows"] == 1
+    assert (
+        accepted["checks"]["rrd"]["review_settings_source"]
+        == "independent_pinned_producer"
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "run_id",
+        "submitted_spec_sha256",
+        "rrd_sha256",
+        "producer_image",
+        "producer_source_sha256",
+        "raw_producer_sha256",
+        "settings",
+    ],
+)
+def test_legacy_rrd_evidence_cannot_be_rebound_or_edited(verifier, run_tree, field):
+    _recording(run_tree[0], legacy=True)
+    evidence = _legacy_review(run_tree)
+    payload = json.loads(evidence.read_text())
+    payload[field] = {} if field == "settings" else "changed"
+    _json(evidence, payload)
+    result = _verify(verifier, run_tree, legacy_rrd_review_evidence=evidence)
+    assert not result["passed"]
+    assert any(error["check"] == "rrd" for error in result["errors"])
+
+
+@pytest.mark.parametrize("defect", ["wrong_image", "producer_bytes", "wrong_encoding"])
+def test_legacy_evidence_preserves_image_and_raw_producer_checks(
+    verifier, run_tree, defect
+):
+    _recording(run_tree[0], legacy=True, wrong_frame=defect == "wrong_image")
+    evidence = _legacy_review(run_tree)
+    payload = json.loads(evidence.read_text())
+    raw = evidence.parent / payload["raw_producer_path"]
+    if defect == "producer_bytes":
+        raw.write_text("changed")
+    elif defect == "wrong_encoding":
+        producer = json.loads(raw.read_text())
+        producer["settings"]["jpeg_quality"] = 10
+        _json(raw, producer)
+        payload.update(settings=producer["settings"], raw_producer_sha256=_hash(raw))
+        _json(evidence, payload)
+    result = _verify(verifier, run_tree, legacy_rrd_review_evidence=evidence)
+    assert not result["passed"]
+    assert any(error["check"] == "rrd" for error in result["errors"])
+
+
+def test_external_settings_cannot_override_current_recording(verifier, run_tree):
+    result = _verify(
+        verifier, run_tree, legacy_rrd_review_evidence=_legacy_review(run_tree)
+    )
+    assert not result["passed"]
+    assert {
+        "check": "rrd",
+        "reason": "legacy_evidence_for_current_recording",
+    } in result["errors"]

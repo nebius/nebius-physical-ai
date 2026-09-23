@@ -120,12 +120,13 @@ def _checkpoint(package: zipfile.ZipFile, members: list) -> dict:
             entry for entry in entries if re.search(r"/data/\d+$", entry.filename)
         ]
         _require(
-            bool(tensors) and all(entry.file_size > 0 for entry in tensors),
+            any(entry.file_size > 0 for entry in tensors),
             "no_checkpoint_tensors",
         )
     return {
         "checkpoint_bytes": matches[0].file_size,
         "tensor_storage_count": len(tensors),
+        "empty_tensor_storage_count": sum(entry.file_size == 0 for entry in tensors),
         "checkpoint_validation": "archive_structure_only_no_pickle_execution",
     }
 
@@ -320,16 +321,45 @@ def _rrd_frames(chunks: list, expected: dict) -> int:
     return len(observed)
 
 
-def _rrd(root: Path, terminal: dict) -> dict:
-    from npa.viz.recordings import load_recording
-
-    recording = load_recording(root / "reports/sim2real.rrd")
+def _legacy_rrd_review(root: Path, terminal: dict, evidence: Path | None) -> dict:
+    _require(evidence is not None, "missing_or_duplicate_rrd_document")
+    payload = _document(evidence)
+    _require(payload.get("source") == "workbench-pinned-viewer", "wrong_viewer_source")
+    _require(payload.get("run_id") == terminal["run_id"], "wrong_viewer_run")
     _require(
-        recording.application_id() == "neural-reconstruction", "wrong_rrd_application"
+        payload.get("submitted_spec_sha256") == terminal["submitted_spec_sha256"],
+        "wrong_viewer_spec",
     )
-    _require(recording.recording_id() == terminal["run_id"], "wrong_rrd_run")
-    chunks = list(recording.chunks())
-    settings = _rrd_document(chunks, "/provenance/rrd_review")
+    _require(
+        payload.get("rrd_sha256") == _digest(root / "reports/sim2real.rrd"),
+        "viewer_recording_changed",
+    )
+    _raw_evidence(evidence, payload, "raw_producer")
+    producer = _document(evidence.parent / payload["raw_producer_path"])
+    _require(producer.get("source") == "verified-viewer-producer", "unverified_viewer")
+    for key in ("producer_image", "producer_source_sha256", "settings"):
+        _require(payload.get(key) == producer.get(key), "viewer_producer_mismatch")
+    _require(
+        re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", payload.get("producer_image", ""))
+        is not None,
+        "unpinned_viewer_producer",
+    )
+    _require(
+        _DIGEST.fullmatch(payload.get("producer_source_sha256", "")) is not None,
+        "missing_viewer_source_digest",
+    )
+    return payload["settings"]
+
+
+def _rrd_review(root, terminal, chunks, evidence):
+    embedded = any(
+        str(chunk.entity_path) == "/provenance/rrd_review" for chunk in chunks
+    )
+    if embedded:
+        _require(evidence is None, "legacy_evidence_for_current_recording")
+        settings = _rrd_document(chunks, "/provenance/rrd_review")
+    else:
+        settings = _legacy_rrd_review(root, terminal, evidence)
     _require(
         settings.get("schema") == "npa.nurec.rrd-review.v1", "wrong_rrd_review_schema"
     )
@@ -340,6 +370,19 @@ def _rrd(root: Path, terminal: dict) -> dict:
         ),
         "invalid_rrd_settings",
     )
+    return settings, "embedded" if embedded else "independent_pinned_producer"
+
+
+def _rrd(root: Path, terminal: dict, review_evidence: Path | None = None) -> dict:
+    from npa.viz.recordings import load_recording
+
+    recording = load_recording(root / "reports/sim2real.rrd")
+    _require(
+        recording.application_id() == "neural-reconstruction", "wrong_rrd_application"
+    )
+    _require(recording.recording_id() == terminal["run_id"], "wrong_rrd_run")
+    chunks = list(recording.chunks())
+    settings, settings_source = _rrd_review(root, terminal, chunks, review_evidence)
     count = _rrd_frames(chunks, _expected_rrd_images(root, settings))
     metrics = yaml.safe_load((root / "reconstruction/metrics.yaml").read_text())
     _require(
@@ -349,6 +392,8 @@ def _rrd(root: Path, terminal: dict) -> dict:
         "chunk_count": len(chunks),
         "verified_image_rows": count,
         "run_identity_matches": True,
+        "review_settings_source": settings_source,
+        "review_evidence_sha256": _digest(review_evidence) if review_evidence else None,
     }
 
 
@@ -476,14 +521,22 @@ def _check(result: dict, name: str, operation) -> Any:
 
 
 def _artifact_checks(
-    root, terminal, result, *, scene, variant, novel_offsets, render_evidence
+    root,
+    terminal,
+    result,
+    *,
+    scene,
+    variant,
+    novel_offsets,
+    render_evidence,
+    legacy_rrd_review_evidence,
 ):
     operations = (
         ("provenance", lambda: _provenance(root, scene, variant)),
         ("usdz", lambda: _usdz(root)),
         ("metrics", lambda: _metrics(root)),
         ("media", lambda: _media(root)),
-        ("rrd", lambda: _rrd(root, terminal)),
+        ("rrd", lambda: _rrd(root, terminal, legacy_rrd_review_evidence)),
         ("render", lambda: _render(root, render_evidence, terminal, novel_offsets)),
         ("final", lambda: _final(root, terminal, result["checks"])),
     )
@@ -492,7 +545,13 @@ def _artifact_checks(
 
 
 def _verification(
-    root, scene, variant, novel_offsets, terminal_evidence, render_evidence
+    root,
+    scene,
+    variant,
+    novel_offsets,
+    terminal_evidence,
+    render_evidence,
+    legacy_rrd_review_evidence,
 ):
     root = Path(root)
     result = {"passed": False, "offsets_verified": False, "errors": [], "checks": {}}
@@ -515,6 +574,7 @@ def _verification(
         variant=variant,
         novel_offsets=novel_offsets,
         render_evidence=render_evidence,
+        legacy_rrd_review_evidence=legacy_rrd_review_evidence,
     )
     result["offsets_verified"] = (
         result["checks"].get("render", {}).get("offsets_verified", False)
@@ -531,6 +591,7 @@ def verify_run(
     novel_offsets: tuple[float, float, float],
     terminal_evidence: Path,
     render_evidence: Path | None = None,
+    legacy_rrd_review_evidence: Path | None = None,
 ) -> dict:
     """Verify downloaded native artifacts against independently collected receipts.
 
@@ -541,6 +602,9 @@ def verify_run(
         novel_offsets: Required rig translation in meters; rotation must be zero.
         terminal_evidence: Normalized live status with raw evidence path and hash.
         render_evidence: Native render result, submitted identity and output hashes.
+        legacy_rrd_review_evidence: Optional independent encoding evidence for a
+            pinned older viewer without embedded review settings. The collector
+            must verify producer origin; local hashes alone do not attest an image.
     Returns:
         Sanitized checks, artifact hashes and a fail-closed overall verdict.
         Checkpoint validation is structural; this does not evaluate model weights.
@@ -548,5 +612,11 @@ def verify_run(
         None. Unreadable evidence and unavailable decoders produce failed checks.
     """
     return _verification(
-        root, scene, variant, novel_offsets, terminal_evidence, render_evidence
+        root,
+        scene,
+        variant,
+        novel_offsets,
+        terminal_evidence,
+        render_evidence,
+        legacy_rrd_review_evidence,
     )
