@@ -1642,6 +1642,9 @@ def test_source_archives_become_identity_checked_hash_locked_wheels(
         assert "mount --make-rprivate /" in script
         assert "/usr/sbin/chroot" in script
         assert "mount --bind" in script and "mount -o remount,ro,bind" in script
+        for root in ("/bin", "/lib", "/lib64", "/sbin", "/usr"):
+            assert f"mount --rbind {root} " in script
+        assert script.count("mount --rbind ") == 5
         assert "--no-index" in script and "--find-links /npa-build/input" in script
         assert "--wheel-dir /npa-build/output" in script
         assert "/npa-build/source-requirements.txt" in script
@@ -1671,6 +1674,28 @@ def test_source_archives_become_identity_checked_hash_locked_wheels(
         + hashlib.sha256(
             (build_wheelhouse / "fixture_source-1.0-py3-none-any.whl").read_bytes()
         ).hexdigest()
+    ]
+
+
+def test_source_build_recursive_mount_scope_and_read_only_children(tmp_path) -> None:
+    module = _load_module()
+    root = tmp_path / "system root"
+    root.mkdir()
+    escaped = str(root).replace(" ", r"\040")
+    row = f"101 100 8:1 /driver {escaped}/driver ro,nosuid,nodev - ext4 /dev/root rw\n"
+    module._validate_read_only_system_submounts(root, row)
+    with pytest.raises(module.BootstrapRefusal, match="writable mount"):
+        module._validate_read_only_system_submounts(root, row.replace(" ro,", " rw,"))
+    with pytest.raises(module.BootstrapRefusal, match="inventory is invalid"):
+        module._validate_read_only_system_submounts(root, "malformed")
+    seccomp = json.loads((ROOT / "npa/src/npa/workflows/byof/profiles/libero-customer-seccomp.json").read_bytes())
+    mount_rules = [item for item in seccomp["syscalls"] if "mount" in item["names"]]
+    assert all(item["args"][0]["index"] == 3 and item["args"][0]["op"] == "SCMP_CMP_EQ" for item in mount_rules)
+    assert {item["args"][0]["value"] for item in mount_rules} == {0, 4096, 20480, 278528, 2101281, 2101287}
+    apparmor = (ROOT / "npa/src/npa/workflows/byof/profiles/libero-customer-apparmor").read_text()
+    recursive_rules = [line.strip() for line in apparmor.splitlines() if "rbind" in line]
+    assert recursive_rules == [
+        "mount options=(rw,rbind) /{bin,sbin,lib,lib64,usr,usr/bin,usr/sbin,usr/lib,usr/lib64}/ -> /workspace/.cache/npa/libero/**/.source-build-sandbox/{bin,sbin,lib,lib64,usr}/,"
     ]
 
 

@@ -544,6 +544,19 @@
       "args": [
         {
           "index": 3,
+          "value": 20480,
+          "op": "SCMP_CMP_EQ"
+        }
+      ]
+    },
+    {
+      "names": [
+        "mount"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {
+          "index": 3,
           "value": 0,
           "op": "SCMP_CMP_EQ"
         }

@@ -2731,6 +2731,19 @@ def _built_wheel_identity(path: Path) -> tuple[str, str]:
     return values["Name"], values["Version"]
 
 
+def _validate_read_only_system_submounts(source: Path, mountinfo: str) -> None:
+    """Keep GPU-injected child mounts without introducing writable subtrees."""
+
+    source = source.resolve(strict=True)
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if len(fields) < 10 or "-" not in fields:
+            raise BootstrapRefusal("source build mount inventory is invalid")
+        mountpoint = Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4]))
+        if mountpoint.is_relative_to(source) and "ro" not in fields[5].split(","):
+            raise BootstrapRefusal("source build system subtree contains a writable mount")
+
+
 def _build_source_wheels(
     pip: str,
     source_artifacts: list[dict[str, Any]],
@@ -2802,10 +2815,15 @@ def _build_source_wheels(
         (str(venv), sandbox_root / "npa-build/venv"),
     ]
     bind_commands = []
+    mountinfo = Path("/proc/self/mountinfo").read_text()
+    system_roots = {"/bin", "/lib", "/lib64", "/sbin", "/usr"}
     for source, destination in readonly_binds:
+        recursive = source in system_roots
+        if recursive:
+            _validate_read_only_system_submounts(Path(source), mountinfo)
         bind_commands.extend(
             [
-                f"mount --bind {quote(source)} {quote(str(destination))}",
+                f"mount {'--rbind' if recursive else '--bind'} {quote(source)} {quote(str(destination))}",
                 f"mount -o remount,ro,bind {quote(str(destination))}",
             ]
         )

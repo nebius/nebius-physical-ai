@@ -37,6 +37,7 @@ profile "npa-libero-customer-v1" flags=(attach_disconnected,mediate_deleted) {
 
   mount options=(rprivate) -> /,
   mount options=(rw,bind) /{bin,sbin,lib,lib64,usr,usr/bin,usr/sbin,usr/lib,usr/lib64}/ -> /workspace/.cache/npa/libero/**/.source-build-sandbox/{bin,sbin,lib,lib64,usr}/,
+  mount options=(rw,rbind) /{bin,sbin,lib,lib64,usr,usr/bin,usr/sbin,usr/lib,usr/lib64}/ -> /workspace/.cache/npa/libero/**/.source-build-sandbox/{bin,sbin,lib,lib64,usr}/,
   mount options=(rw,bind) /workspace/.cache/npa/libero/** -> /workspace/.cache/npa/libero/**/.source-build-sandbox/npa-build/**,
   mount options=(ro,remount,bind,relatime) -> /workspace/.cache/npa/libero/**/.source-build-sandbox/**,
   mount options=(ro,nosuid,nodev,remount,bind,relatime) -> /workspace/.cache/npa/libero/**/.source-build-sandbox/**,
