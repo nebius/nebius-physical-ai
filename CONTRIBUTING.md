@@ -644,8 +644,11 @@ the `gitleaks` job and checkout. A failed verification restores full validation;
 a failed secret scan still blocks the required context. The other required
 context names are unchanged.
 
-Operators can configure two repository Actions variables after the organization
-has made approved Ubuntu x64 runner labels available to this repository:
+Operators can configure two repository Actions variables after approved Ubuntu
+x64 runners are available to this repository. Repository-scoped disposable Nebius
+CPU runners can provide temporary capacity without organization runner-group
+administration; see the [CPU runner operations guide](.github/ci-runners/README.md)
+for setup, verification, routing rollback, and drain-and-delete commands.
 
 | Variable | Candidate jobs routed to that label | Default |
 | --- | --- | --- |
