@@ -101,14 +101,21 @@ class PPOConfig:
         Raises:
             None.
         """
-        actor = self._model_config(self.actor_hidden_dims)
+        # __post_init__ replaces None with defaults, but mypy cannot narrow
+        # attribute types across methods; assert the post-init invariant here.
+        actor_dims = self.actor_hidden_dims
+        critic_dims = self.critic_hidden_dims
+        assert actor_dims is not None and critic_dims is not None, (
+            "actor/critic hidden dims must be set by __post_init__"
+        )
+        actor = self._model_config(actor_dims)
         actor["distribution_cfg"] = {
             "class_name": "GaussianDistribution",
             "init_std": self.init_noise_std,
         }
         return {
             "actor": actor,
-            "critic": self._model_config(self.critic_hidden_dims),
+            "critic": self._model_config(critic_dims),
             "algorithm": self._algorithm_config(),
             "obs_groups": {"actor": ["policy"], "critic": ["policy"]},
             "num_steps_per_env": self.num_steps_per_env,
