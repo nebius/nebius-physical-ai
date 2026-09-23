@@ -21,6 +21,7 @@ from film_cache import (
     _render_lock,
 )
 from film_player import _write_player
+from film_output import _deliver_output, _output_arguments, _validate_output
 from film_profiles import (
     _PROFILES,
     _audio_inputs,
@@ -654,7 +655,9 @@ def _arguments():
         "--check", action="store_true", help="Verify all media without rendering."
     )
     parser.add_argument("--workers", type=int, default=2)
+    _output_arguments(parser)
     args = parser.parse_args()
+    _validate_output(args, parser)
     if not all(shutil.which(binary) for binary in ("ffmpeg", "ffprobe")):
         parser.error("Install FFmpeg with libx264 and ffprobe before rendering")
     if args.workers < 1:
@@ -846,6 +849,7 @@ def _render_film(args, storyboard, assets, environment):
     print(
         f"Render integrity verified: {destination / 'film.mp4'}; use studio review for narration/picture alignment."
     )
+    return destination / "film.mp4"
 
 
 def _main():
@@ -869,7 +873,8 @@ def _main():
     with _render_lock(args.voice_dir), _render_lock(args.output_dir):
         selected, _ = _selection(storyboard, args.scene)
         _verify_narration([scene for _, scene in selected], args.voice_dir)
-        _render_film(args, storyboard, assets, environment)
+        video = _render_film(args, storyboard, assets, environment)
+        _deliver_output(args, video)
 
 
 if __name__ == "__main__":
