@@ -1,5 +1,5 @@
 # CPU preprocess image for SONIC retargeting/motion-lib conversion.
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
 
 ARG RETARGETING_VERSION=0.1.1
 ARG SONIC_REPO_URL=https://github.com/NVlabs/GR00T-WholeBodyControl.git

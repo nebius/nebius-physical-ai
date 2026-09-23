@@ -240,7 +240,7 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
     import rerun as rr
 
     rows = read_journal(journal)
-    recording = rr.RecordingStream("npa.curobo", recording_id=run_id)
+    recording = rr.RecordingStream("npa-curobo", recording_id=run_id)
     recording.save(str(output))
     try:
         recording.log(
