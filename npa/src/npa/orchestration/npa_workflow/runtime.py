@@ -344,6 +344,8 @@ class WaveAttempt:
     recovery_reservation: dict[str, Any] = field(default_factory=dict)
     #: Driver recovery reused this record/intent; this does not imply payload replay.
     recovery_resumed: bool = False
+    #: Exact rendered PVC names for this wave, captured before provider launch.
+    persistent_volume_claims: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -400,7 +402,21 @@ class WaveAttempt:
             "partial_launch": dict(self.partial_launch),
             "recovery_reservation": dict(self.recovery_reservation),
             "recovery_resumed": self.recovery_resumed,
+            "persistent_volume_claims": list(self.persistent_volume_claims),
         }
+
+
+def _claims_for_steps(steps: Sequence[PlanStep]) -> tuple[str, ...]:
+    """Capture PVC identities from the exact rendered wave resources."""
+
+    from npa.orchestration.skypilot.job_blockers import (
+        persistent_volume_claim_names,
+    )
+
+    claims: set[str] = set()
+    for step in steps:
+        claims.update(persistent_volume_claim_names(step.resources_profile))
+    return tuple(sorted(claims))
 
 
 def plan_fingerprint(
@@ -698,6 +714,11 @@ class SkyPilotWaveExecutor:
                     replayed.get("scheduler_fence_sequence") or self._sequence
                 ),
                 launch_sequence=int(replayed.get("launch_sequence") or 0),
+                persistent_volume_claims=[
+                    item
+                    for item in replayed.get("persistent_volume_claims") or []
+                    if isinstance(item, str) and item
+                ],
                 replayed=True,
             )
             self._log(f"wave {key}: replayed from ledger (job {attempt.job_id})")
@@ -873,6 +894,7 @@ class SkyPilotWaveExecutor:
                 started_at=utc_now(),
                 outputs=[dict(item) for step in steps for item in step.outputs],
                 scheduler_fence_sequence=self._sequence,
+                persistent_volume_claims=list(_claims_for_steps(steps)),
                 recovery_reservation=dict(reservation),
                 infrastructure_recovery_count=infrastructure_recoveries,
                 infrastructure_recovery_limit=(
@@ -1060,6 +1082,11 @@ class SkyPilotWaveExecutor:
             partial_launch=dict(record.get("partial_launch") or {}),
             recovery_reservation=dict(record.get("recovery_reservation") or {}),
             recovery_resumed=bool(record.get("recovery_resumed", False)),
+            persistent_volume_claims=[
+                item
+                for item in record.get("persistent_volume_claims") or []
+                if isinstance(item, str) and item
+            ],
         )
 
     def _reconcile_in_flight(
@@ -1785,6 +1812,8 @@ class SkyPilotWaveExecutor:
             canceller=cancel_exact,
             launcher=reserve_recovery,
             context=self.options.infra.removeprefix("k8s/"),
+            claim_names=tuple(attempt.persistent_volume_claims),
+            attempt_started_at=attempt.started_at,
         )
         result = WorkflowRunSupervisor(
             adapter=adapter,

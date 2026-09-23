@@ -4787,6 +4787,7 @@ def _durable_workflow_status(
         attribution = reconstruct_stage_job_attribution(
             run_manifest, runtime_waves=runtime_waves
         )
+        claims_by_job = _rendered_claims_by_managed_job(run_manifest, attribution)
         job_ids = sorted(
             {
                 str(item.get("managed_job_id") or "")
@@ -4977,6 +4978,7 @@ def _durable_workflow_status(
                 str(observation.get("status") or ""),
                 sky_bin=sky_bin,
                 isolated_config_dir=isolated_config_dir,
+                claim_names=claims_by_job.get(managed_job_id, ()),
             )
         ]
         if blockers:
@@ -5133,6 +5135,7 @@ def _manifest_pending_status(
         RunManifest,
         build_actionable_run_status,
         reconcile_submitted_manifest,
+        reconstruct_stage_job_attribution,
     )
     from npa.orchestration.skypilot.workflow import (
         workflow_controller_logs,
@@ -5387,6 +5390,12 @@ def _manifest_pending_status(
         live_status,
         sky_bin=sky_bin,
         isolated_config_dir=isolated_config_dir,
+        claim_names=_rendered_claims_by_managed_job(
+            pending_manifest,
+            reconstruct_stage_job_attribution(
+                pending_manifest, runtime_waves=runtime_waves
+            ),
+        ).get(job_id, ()),
     )
     if blockers:
         payload["blockers"] = blockers
@@ -5438,12 +5447,63 @@ def _manifest_pending_status(
     return result
 
 
+def _rendered_claims_by_managed_job(
+    manifest: object,
+    attribution: Mapping[str, Mapping[str, object]],
+) -> dict[str, tuple[str, ...]]:
+    """Join rendered PVC names only to their exact latest managed-job identity."""
+
+    from npa.orchestration.skypilot.job_blockers import (
+        persistent_volume_claim_names,
+    )
+
+    claims: dict[str, set[str]] = {}
+    seen_keys: set[str] = set()
+    for index, step in enumerate(getattr(manifest, "steps", ())):
+        if not isinstance(step, Mapping):
+            continue
+        key = _emitted_stage_key(step, index=index, seen=seen_keys)
+        managed_job_id = str(
+            (attribution.get(key) or {}).get("managed_job_id") or ""
+        ).strip()
+        if not managed_job_id:
+            continue
+        profile = step.get("resources_profile")
+        resource_profile = profile if isinstance(profile, Mapping) else {}
+        claims.setdefault(managed_job_id, set()).update(
+            persistent_volume_claim_names(resource_profile)
+        )
+    return {
+        managed_job_id: tuple(sorted(names))
+        for managed_job_id, names in claims.items()
+        if names
+    }
+
+
+def _emitted_stage_key(
+    step: Mapping[str, object], *, index: int, seen: set[str]
+) -> str:
+    """Reproduce the runtime's collision-safe key for one emitted stage."""
+
+    name = str(step.get("state") or f"step-{index}")
+    raw_iteration = step.get("iteration")
+    try:
+        iteration = int(raw_iteration) if raw_iteration is not None else None
+    except (TypeError, ValueError):
+        iteration = None
+    base = f"{name}#{iteration}" if iteration is not None else name
+    key = f"{base}@{index}" if base in seen else base
+    seen.add(key)
+    return key
+
+
 def _stalled_job_blockers(
     job_id: str,
     live_status: str,
     *,
     sky_bin: str = "",
     isolated_config_dir: Path | None = None,
+    claim_names: tuple[str, ...] = (),
 ) -> list[dict[str, object]]:
     """Explain a managed job that is not progressing, from its own pods.
 
@@ -5494,6 +5554,7 @@ def _stalled_job_blockers(
                 environment=diagnostic_environment,
                 expected_task_names=task_names,
                 controller_user_id=diagnostic_user_id,
+                claim_names=claim_names,
             )
             for cluster in clusters
         ]
@@ -5505,6 +5566,7 @@ def _stalled_job_blockers(
                 environment=diagnostic_environment,
                 expected_task_names=task_names,
                 controller_user_id=diagnostic_user_id,
+                claim_names=claim_names,
             )
         ]
     )
@@ -5539,6 +5601,10 @@ def _stalled_job_blockers(
                     "source": blocker.source,
                     "observed_at": blocker.observed_at,
                     "live": blocker.live,
+                    "namespace": blocker.namespace,
+                    "resource_uid": blocker.resource_uid,
+                    "event_timestamp": blocker.event_timestamp,
+                    "temporally_bound": blocker.temporally_bound,
                     "remedy": report.remedy(),
                 }
             )

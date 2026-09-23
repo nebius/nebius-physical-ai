@@ -17,10 +17,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 
@@ -30,6 +33,15 @@ CLUSTER_LABEL = "skypilot-cluster-name"
 MANAGED_JOB_ID_ANNOTATION = "skypilot-managed-job-id"
 MANAGED_JOB_NAME_ANNOTATION = "skypilot-managed-job-name"
 DEFAULT_TIMEOUT_SECONDS = 60
+_DNS_LABEL = r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+_DNS_SUBDOMAIN_RE = re.compile(rf"(?:{_DNS_LABEL}\.)*{_DNS_LABEL}")
+_STORAGE_FAILURE_CODES = frozenset(
+    {
+        "STORAGE_QUOTA_EXCEEDED",
+        "STORAGE_CAPACITY_UNAVAILABLE",
+        "STORAGE_PROVISIONING_FAILED",
+    }
+)
 
 # Container waiting reasons that Kubernetes will retry forever.
 _TERMINAL_INTENT_REASONS = {
@@ -71,6 +83,25 @@ _NODES_LOST_REMEDY = (
     "on a preemptible GPU pool."
 )
 
+_STORAGE_QUOTA_REMEDY = (
+    "the exact rendered PersistentVolumeClaim cannot be provisioned because the "
+    "storage quota is exhausted. Increase the applicable storage quota or reduce "
+    "the claim request, then explicitly start or resume the workflow; automatic "
+    "retry is disabled."
+)
+
+_STORAGE_CAPACITY_REMEDY = (
+    "the exact rendered PersistentVolumeClaim is still Pending because storage "
+    "capacity is unavailable. Keep observing this exact attempt or add capacity; "
+    "do not launch a second worker against the same claim."
+)
+
+_STORAGE_PROVISIONING_REMEDY = (
+    "the exact rendered PersistentVolumeClaim failed provisioning. Inspect its "
+    "current UID-bound Kubernetes event, correct the storage class or claim "
+    "configuration, then explicitly start or resume the workflow."
+)
+
 
 @dataclass(frozen=True)
 class PodBlocker:
@@ -84,6 +115,10 @@ class PodBlocker:
     source: str = "kubernetes_pod_condition"
     observed_at: str = ""
     live: bool = True
+    namespace: str = ""
+    resource_uid: str = ""
+    event_timestamp: str = ""
+    temporally_bound: bool = False
 
     def render(self) -> str:
         detail = f"{self.pod}: {self.reason}"
@@ -113,6 +148,14 @@ class JobBlockerReport:
     def remedy(self) -> str:
         if self.unready_nodes and not self.blockers:
             return _NODES_LOST_REMEDY
+        storage_remedies = (
+            ("STORAGE_QUOTA_EXCEEDED", _STORAGE_QUOTA_REMEDY),
+            ("STORAGE_PROVISIONING_FAILED", _STORAGE_PROVISIONING_REMEDY),
+            ("STORAGE_CAPACITY_UNAVAILABLE", _STORAGE_CAPACITY_REMEDY),
+        )
+        for code, remedy in storage_remedies:
+            if any(blocker.reason_code == code for blocker in self.blockers):
+                return remedy
         for blocker in self.blockers:
             explanation = _TERMINAL_INTENT_REASONS.get(blocker.reason)
             if explanation:
@@ -153,6 +196,8 @@ def inspect_job_blockers(
     environment: Mapping[str, str] | None = None,
     expected_task_names: Iterable[str] = (),
     controller_user_id: str = "",
+    claim_names: Sequence[str] = (),
+    event_not_before: str = "",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     runner: Runner | None = None,
 ) -> JobBlockerReport:
@@ -177,6 +222,9 @@ def inspect_job_blockers(
             These are checked against SkyPilot's untruncated pod annotation.
         controller_user_id: Isolated controller owner appended to the pod's
             cluster label.
+        claim_names: Exact PVC names declared by the rendered wave resources.
+        event_not_before: When nonempty, accept PVC events only when their
+            timestamp is at or after this exact attempt start time.
         timeout: Kubectl timeout in seconds.
         runner: Optional subprocess-compatible runner for tests.
 
@@ -247,6 +295,19 @@ def inspect_job_blockers(
         user_id = str(controller_user_id).strip()
         if user_id:
             if not task_names:
+                if not items:
+                    report.blockers = _pvc_event_blockers(
+                        claim_names=claim_names,
+                        namespace=namespace,
+                        context=context,
+                        kubeconfig=kubeconfig,
+                        environment=environment,
+                        event_not_before=event_not_before,
+                        timeout=timeout,
+                        runner=execute,
+                    )
+                    if report.blockers:
+                        return report
                 report.error = (
                     "the isolated controller did not return an exact managed task name"
                 )
@@ -268,6 +329,18 @@ def inspect_job_blockers(
         else:
             items = [item for item in items if _pod_belongs_to_job(item, str(job_id))]
         if not items:
+            report.blockers = _pvc_event_blockers(
+                claim_names=claim_names,
+                namespace=namespace,
+                context=context,
+                kubeconfig=kubeconfig,
+                environment=environment,
+                event_not_before=event_not_before,
+                timeout=timeout,
+                runner=execute,
+            )
+            if report.blockers:
+                return report
             report.error = (
                 f"no pods found for managed job {job_id}; it is between tasks, or "
                 "nothing has been scheduled yet"
@@ -296,6 +369,19 @@ def inspect_job_blockers(
             for existing in report.blockers
         )
     )
+    if not report.blockers:
+        report.blockers.extend(
+            _pvc_event_blockers(
+                claim_names=claim_names,
+                namespace=namespace,
+                context=context,
+                kubeconfig=kubeconfig,
+                environment=environment,
+                event_not_before=event_not_before,
+                timeout=timeout,
+                runner=execute,
+            )
+        )
     if not report.blockers:
         # A pod pending because its node vanished has no waiting reason of its own;
         # the cause is on that pod's assigned node. Do not classify an unrelated
@@ -389,6 +475,8 @@ def classify_pending_reason(
     normalized = str(reason or "").lower()
     detail = str(message or "").lower()
     combined = f"{normalized} {detail}"
+    if normalized == "provisioningfailed":
+        return _storage_provisioning_reason(detail)
     if "unschedul" in combined or "failedscheduling" in combined:
         # Kubernetes names GPU resources in ordinary capacity shortages too.
         if any(item in combined for item in ("quota", "capacity", "insufficient")):
@@ -434,6 +522,93 @@ def classify_pending_reason(
     if "notready" in combined:
         return "NODE_NOT_READY"
     return "PENDING_UNKNOWN"
+
+
+def _storage_provisioning_reason(message: str) -> str:
+    """Keep retryable provisioning transport errors out of cancellation paths."""
+
+    retryable = (
+        "deadlineexceeded",
+        "deadline exceeded",
+        "timed out",
+        "timeout",
+        "temporarily unavailable",
+        "service unavailable",
+        "code = unavailable",
+        "toomanyrequests",
+        "too many requests",
+        "rate limit",
+        "request throttled",
+    )
+    if any(fragment in message for fragment in retryable):
+        return "STORAGE_PENDING"
+    if "quota" in message or "limit reached" in message:
+        return "STORAGE_QUOTA_EXCEEDED"
+    if any(
+        fragment in message
+        for fragment in (
+            "capacity",
+            "no space left",
+            "insufficient storage",
+            "out of space",
+        )
+    ):
+        return "STORAGE_CAPACITY_UNAVAILABLE"
+    return "STORAGE_PROVISIONING_FAILED"
+
+
+def persistent_volume_claim_names(
+    resources_profile: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Return valid PVC names declared by one rendered resource profile.
+
+    Args:
+        resources_profile: Rendered workflow resource profile to inspect.
+
+    Returns:
+        Sorted, de-duplicated Kubernetes PersistentVolumeClaim names.
+
+    Raises:
+        None.
+    """
+
+    kubernetes = _as_dict(resources_profile.get("kubernetes"))
+    pod_config = _as_dict(kubernetes.get("pod_config"))
+    spec = _as_dict(pod_config.get("spec"))
+    volumes = spec.get("volumes") or []
+    if not isinstance(volumes, list):
+        return ()
+    names: set[str] = set()
+    for volume in volumes:
+        if not isinstance(volume, dict):
+            continue
+        claim = _as_dict(volume.get("persistentVolumeClaim"))
+        raw_name = claim.get("claimName")
+        name = raw_name if isinstance(raw_name, str) else ""
+        if is_valid_persistent_volume_claim_name(name):
+            names.add(name)
+    return tuple(sorted(names))
+
+
+def is_valid_persistent_volume_claim_name(name: object) -> bool:
+    """Check whether a value is an unchanged Kubernetes DNS-subdomain name.
+
+    Args:
+        name: Candidate claim name.
+
+    Returns:
+        Whether ``name`` is a valid PersistentVolumeClaim name.
+
+    Raises:
+        None.
+    """
+
+    return (
+        isinstance(name, str)
+        and bool(name)
+        and len(name) <= 253
+        and bool(_DNS_SUBDOMAIN_RE.fullmatch(name))
+    )
 
 
 def _diagnostic_error_code(message: str) -> str:
@@ -518,6 +693,332 @@ def _event_blockers(
             )
         )
     return blockers
+
+
+def _pvc_event_blockers(
+    *,
+    claim_names: Sequence[str],
+    namespace: str,
+    context: str,
+    kubeconfig: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None,
+    event_not_before: str,
+    timeout: int,
+    runner: Runner,
+) -> list[PodBlocker]:
+    """Return current UID-bound provisioning failures for exact rendered claims."""
+
+    not_before = _parse_timestamp(event_not_before) if event_not_before else None
+    if event_not_before and not_before is None:
+        return []
+    blockers: list[PodBlocker] = []
+    valid_names = sorted(
+        {name for name in claim_names if is_valid_persistent_volume_claim_name(name)}
+    )
+    for claim_name in valid_names:
+        blockers.extend(
+            _blockers_for_pending_claim(
+                claim_name=claim_name,
+                namespace=namespace,
+                context=context,
+                kubeconfig=kubeconfig,
+                environment=environment,
+                not_before=not_before,
+                timeout=timeout,
+                runner=runner,
+            )
+        )
+    return sorted(
+        blockers,
+        key=lambda item: (item.namespace, item.pod, item.event_timestamp, item.reason),
+    )
+
+
+def _blockers_for_pending_claim(
+    *,
+    claim_name: str,
+    namespace: str,
+    context: str,
+    kubeconfig: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None,
+    not_before: datetime | None,
+    timeout: int,
+    runner: Runner,
+) -> list[PodBlocker]:
+    identity = _pending_claim_identity(
+        claim_name=claim_name,
+        namespace=namespace,
+        context=context,
+        kubeconfig=kubeconfig,
+        environment=environment,
+        timeout=timeout,
+        runner=runner,
+    )
+    if identity is None:
+        return []
+    claim_namespace, claim_uid = identity
+    return _events_for_pending_claim(
+        claim_name=claim_name,
+        claim_namespace=claim_namespace,
+        claim_uid=claim_uid,
+        context=context,
+        kubeconfig=kubeconfig,
+        environment=environment,
+        not_before=not_before,
+        timeout=timeout,
+        runner=runner,
+    )
+
+
+def _pending_claim_identity(
+    *,
+    claim_name: str,
+    namespace: str,
+    context: str,
+    kubeconfig: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None,
+    timeout: int,
+    runner: Runner,
+) -> tuple[str, str] | None:
+    """Resolve one exact, currently Pending, non-deleting claim."""
+
+    payload = _kubectl_resource_json(
+        resource="pvc",
+        field_selector=f"metadata.name={claim_name}",
+        namespace=namespace,
+        context=context,
+        kubeconfig=kubeconfig,
+        environment=environment,
+        timeout=timeout,
+        runner=runner,
+    )
+    if payload is None:
+        return None
+    matches = _matching_claims(payload, claim_name=claim_name, namespace=namespace)
+    return _pending_claim_coordinates(matches[0]) if len(matches) == 1 else None
+
+
+def _matching_claims(
+    payload: Mapping[str, Any], *, claim_name: str, namespace: str
+) -> list[dict[str, Any]]:
+    items = payload.get("items") or []
+    if not isinstance(items, list):
+        return []
+    matches: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = _as_dict(item.get("metadata"))
+        if str(metadata.get("name") or "") != claim_name:
+            continue
+        item_namespace = str(metadata.get("namespace") or "")
+        if namespace.strip() and item_namespace != namespace.strip():
+            continue
+        matches.append(item)
+    return matches
+
+
+def _pending_claim_coordinates(claim: Mapping[str, Any]) -> tuple[str, str] | None:
+    metadata = _as_dict(claim.get("metadata"))
+    status = _as_dict(claim.get("status"))
+    namespace = str(metadata.get("namespace") or "")
+    uid = str(metadata.get("uid") or "")
+    if (
+        not namespace
+        or not uid
+        or metadata.get("deletionTimestamp")
+        or str(status.get("phase") or "") != "Pending"
+    ):
+        return None
+    return namespace, uid
+
+
+def _events_for_pending_claim(
+    *,
+    claim_name: str,
+    claim_namespace: str,
+    claim_uid: str,
+    context: str,
+    kubeconfig: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None,
+    not_before: datetime | None,
+    timeout: int,
+    runner: Runner,
+) -> list[PodBlocker]:
+    payload = _kubectl_resource_json(
+        resource="events",
+        field_selector=f"involvedObject.uid={claim_uid}",
+        namespace=claim_namespace,
+        context=context,
+        kubeconfig=kubeconfig,
+        environment=environment,
+        timeout=timeout,
+        runner=runner,
+    )
+    if payload is None or not isinstance(payload.get("items") or [], list):
+        return []
+    return [
+        blocker
+        for item in payload.get("items") or []
+        if isinstance(item, dict)
+        and (
+            blocker := _pending_claim_event_blocker(
+                item,
+                claim_name=claim_name,
+                claim_namespace=claim_namespace,
+                claim_uid=claim_uid,
+                not_before=not_before,
+            )
+        )
+        is not None
+    ]
+
+
+def _pending_claim_event_blocker(
+    item: Mapping[str, Any],
+    *,
+    claim_name: str,
+    claim_namespace: str,
+    claim_uid: str,
+    not_before: datetime | None,
+) -> PodBlocker | None:
+    metadata = _as_dict(item.get("metadata"))
+    involved = _as_dict(item.get("involvedObject") or item.get("regarding"))
+    identity = (
+        str(involved.get("kind") or ""),
+        str(involved.get("name") or ""),
+        str(involved.get("namespace") or metadata.get("namespace") or ""),
+        str(involved.get("uid") or ""),
+    )
+    if str(item.get("type") or "") != "Warning" or identity != (
+        "PersistentVolumeClaim",
+        claim_name,
+        claim_namespace,
+        claim_uid,
+    ):
+        return None
+    event_time_text, event_time = _event_timestamp(item)
+    if not_before is not None and (event_time is None or event_time < not_before):
+        return None
+    return _classified_claim_event(
+        item,
+        claim_name=claim_name,
+        claim_namespace=claim_namespace,
+        claim_uid=claim_uid,
+        event_time_text=event_time_text,
+        temporally_bound=not_before is not None,
+    )
+
+
+def _classified_claim_event(
+    item: Mapping[str, Any],
+    *,
+    claim_name: str,
+    claim_namespace: str,
+    claim_uid: str,
+    event_time_text: str,
+    temporally_bound: bool,
+) -> PodBlocker | None:
+    reason = str(item.get("reason") or "")
+    message = sanitize_reason(item.get("message") or item.get("note") or "")
+    code = classify_pending_reason(reason, message, source="pvc_event")
+    if code not in _STORAGE_FAILURE_CODES:
+        return None
+    return PodBlocker(
+        pod=f"pvc/{claim_name}",
+        phase="Pending",
+        reason=reason or "ProvisioningFailed",
+        message=message,
+        reason_code=code,
+        source="kubernetes_pvc_event",
+        observed_at=utc_now(),
+        namespace=claim_namespace,
+        resource_uid=claim_uid,
+        event_timestamp=event_time_text,
+        temporally_bound=temporally_bound,
+    )
+
+
+def _kubectl_resource_json(
+    *,
+    resource: str,
+    field_selector: str,
+    namespace: str,
+    context: str,
+    kubeconfig: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None,
+    timeout: int,
+    runner: Runner,
+) -> dict[str, Any] | None:
+    cmd = ["kubectl"]
+    if kubeconfig is not None and os.fspath(kubeconfig).strip():
+        cmd.extend(["--kubeconfig", str(Path(kubeconfig).expanduser())])
+    if context.strip():
+        cmd.extend(["--context", context.strip()])
+    cmd.extend(["get", resource, "--field-selector", field_selector, "-o", "json"])
+    cmd.extend(["-n", namespace.strip()] if namespace.strip() else ["--all-namespaces"])
+    return _run_json_command(
+        cmd, environment=environment, timeout=timeout, runner=runner
+    )
+
+
+def _run_json_command(
+    cmd: list[str],
+    *,
+    environment: Mapping[str, str] | None,
+    timeout: int,
+    runner: Runner,
+) -> dict[str, Any] | None:
+    try:
+        result = runner(
+            cmd,
+            env=dict(environment) if environment is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _event_timestamp(item: Mapping[str, Any]) -> tuple[str, datetime | None]:
+    series = _as_dict(item.get("series"))
+    metadata = _as_dict(item.get("metadata"))
+    candidates = (
+        series.get("lastObservedTime"),
+        item.get("lastTimestamp"),
+        item.get("eventTime"),
+        metadata.get("creationTimestamp"),
+        item.get("firstTimestamp"),
+    )
+    for value in candidates:
+        text = str(value or "").strip()
+        parsed = _parse_timestamp(text)
+        if parsed is not None:
+            return text, parsed
+    return "", None
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _pod_belongs_to_job(item: object, job_id: str) -> bool:

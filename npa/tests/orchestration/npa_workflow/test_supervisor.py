@@ -139,6 +139,9 @@ class RecordingAdapter:
         ("IMAGE_PULL_AUTH", FailureClass.ACTIONABLE_CONFIGURATION),
         ("MISSING_SECRET", FailureClass.ACTIONABLE_CONFIGURATION),
         ("ACCELERATOR_MISMATCH", FailureClass.ACTIONABLE_CONFIGURATION),
+        ("STORAGE_QUOTA_EXCEEDED", FailureClass.ACTIONABLE_CONFIGURATION),
+        ("STORAGE_PROVISIONING_FAILED", FailureClass.ACTIONABLE_CONFIGURATION),
+        ("STORAGE_CAPACITY_UNAVAILABLE", FailureClass.TRANSIENT_INFRASTRUCTURE),
         ("NODE_NOT_READY", FailureClass.TRANSIENT_INFRASTRUCTURE),
         ("CONTAINER_CRASH", FailureClass.PAYLOAD),
         ("SOMETHING_NEW", FailureClass.UNKNOWN),
@@ -175,6 +178,26 @@ def test_configuration_stall_cancels_only_exact_attempt_and_terminalizes() -> No
         "decision",
         "cancellation",
     ]
+
+
+def test_storage_quota_cancels_exact_attempt_without_relaunch() -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(
+            BackendState.QUEUED,
+            reason_code="STORAGE_QUOTA_EXCEEDED",
+            message="disk quota exceeded",
+        )
+    )
+
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(identity(), context())
+
+    assert result["recovery"]["action"] == "cancel_and_terminalize"
+    assert result["recovery"]["relaunch_allowed"] is False
+    assert "storage quota" in result["recovery"]["remediation"]
+    assert adapter.cancelled == ["job-1"]
+    assert adapter.launched == []
 
 
 def test_transient_live_attempt_is_cancelled_verified_then_relaunched() -> None:
@@ -380,6 +403,220 @@ def test_skypilot_adapter_prefers_typed_event_over_unknown_pod_diagnostic() -> N
     assert classify_observation(observation) is FailureClass.TRANSIENT_INFRASTRUCTURE
 
 
+def test_skypilot_adapter_binds_claims_to_attempt_start() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    captured: dict[str, object] = {}
+
+    def inspect(**kwargs):
+        captured.update(kwargs)
+        return JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=True,
+                )
+            ]
+        )
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=inspect,
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert captured["claim_names"] == ("run-workspace",)
+    assert captured["event_not_before"] == "2026-09-22T12:00:00Z"
+    assert observation.reason_code == "STORAGE_QUOTA_EXCEEDED"
+    assert classify_observation(observation) is FailureClass.ACTIONABLE_CONFIGURATION
+    blocker = observation.evidence["blockers"][0]
+    assert blocker["source"] == "kubernetes_pvc_event"
+    assert blocker["namespace"] == "workloads"
+    assert blocker["resource_uid"] == "pvc-uid-1"
+    assert blocker["temporally_bound"] is True
+
+
+def test_skypilot_adapter_without_attempt_time_does_not_admit_claim_evidence() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    captured: dict[str, object] = {}
+
+    def inspect(**kwargs):
+        captured.update(kwargs)
+        return JobBlockerReport(
+            error="no pods found for managed job job-1",
+            error_code="KUBERNETES_PODS_NOT_FOUND",
+        )
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=inspect,
+        claim_names=("run-workspace",),
+        attempt_started_at="",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert "claim_names" not in captured
+    assert "event_not_before" not in captured
+    assert observation.reason_code == ""
+    assert observation.message == "no pods found for managed job job-1"
+
+
+def test_skypilot_adapter_rejects_injected_unbound_storage_blocker() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=False,
+                )
+            ]
+        ),
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
+def test_skypilot_adapter_rejects_injected_storage_without_configured_identity() -> (
+    None
+):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=True,
+                )
+            ]
+        ),
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
+def test_skypilot_adapter_independently_rejects_stale_claim_event() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T11:59:59Z",
+                    temporally_bound=True,
+                )
+            ]
+        ),
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
+@pytest.mark.parametrize(
+    ("namespace", "resource_uid"),
+    [("", "pvc-uid-1"), ("workloads", "")],
+)
+def test_skypilot_adapter_rejects_storage_without_pvc_identity(
+    namespace: str, resource_uid: str
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace=namespace,
+                    resource_uid=resource_uid,
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=True,
+                )
+            ]
+        ),
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
 def test_process_restart_reads_content_addressed_immutable_history() -> None:
     objects: dict[str, bytes] = {}
     first = SupervisorLedger(MemoryStore(objects))
@@ -559,7 +796,14 @@ def test_failure_record_has_machine_readable_fields() -> None:
 
 
 @pytest.mark.parametrize("state", [BackendState.QUEUED, BackendState.RUNNING])
-@pytest.mark.parametrize("code", ["CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "CAPACITY_OR_QUOTA",
+        "GANG_CAPACITY_UNAVAILABLE",
+        "STORAGE_CAPACITY_UNAVAILABLE",
+    ],
+)
 @pytest.mark.parametrize("used", [0, 1])
 def test_live_capacity_wait_keeps_attempt_without_spending_recovery_budget(
     state: BackendState,

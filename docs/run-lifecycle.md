@@ -154,6 +154,36 @@ text output identify every source they checked.
 
 Unrelated nested S3 keys are never guessed as runs.
 
+### Pending storage claims
+
+When a managed job has no remaining worker pod, live status can still report a
+typed storage blocker from its rendered persistent-volume claim. This lookup is
+deliberately narrow: NPA uses only claim names declared by the exact rendered
+stage and attributed to the exact recorded managed-job ID. It then requires one
+current claim with the same namespace, name, and Kubernetes UID. The claim must
+still be `Pending` and must not be deleting. Events are queried in that claim's
+namespace and accepted only when their involved-object identity matches all
+three fields.
+
+`ProvisioningFailed` warnings become `STORAGE_QUOTA_EXCEEDED`,
+`STORAGE_CAPACITY_UNAVAILABLE`, or `STORAGE_PROVISIONING_FAILED`. Normal
+provisioning progress such as `ExternalProvisioning`, `Provisioning`, and
+`WaitForFirstConsumer` remains pending and is not treated as a failure. A
+warning caused by a provisioning timeout, temporary service outage, or rate
+limit also remains pending and cannot authorize cancellation. A prior
+warning on a claim that is now `Bound`, a warning for an older claim UID, an
+ambiguous claim, or a malformed declared name also falls back to the existing
+unknown/no-pod status.
+
+Status may display a current UID-bound event without proving that it belongs to
+the latest launch attempt. The supervisor acts only when the event's latest
+observed timestamp is at or after the durable attempt start. Otherwise it fails
+closed: it neither cancels nor relaunches. An actionable quota or provisioning
+error can terminalize only the exact recorded managed job; a capacity blocker
+can retain that same attempt for recovery. A declared claim name identifies
+placement, not ownership, so it never authorizes broad claim discovery or
+cancellation.
+
 If a shell cannot resolve the project storage location, point status at the
 prefix explicitly:
 

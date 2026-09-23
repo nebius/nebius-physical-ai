@@ -31,6 +31,7 @@ from npa.orchestration.npa_workflow.runtime import (
     RuntimeOptions,
     SkyPilotWaveExecutor,
     WaveAttempt,
+    _claims_for_steps,
     _record_reached_running,
     plan_fingerprint,
     run_workflow_runtime,
@@ -39,6 +40,44 @@ from npa.orchestration.npa_workflow.runtime import (
 )
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+
+def test_wave_attempt_persists_exact_rendered_claim_names() -> None:
+    steps = [
+        SimpleNamespace(
+            resources_profile={
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [
+                                {
+                                    "persistentVolumeClaim": {
+                                        "claimName": "run-workspace"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+    ]
+    claims = _claims_for_steps(steps)
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        persistent_volume_claims=list(claims),
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert claims == ("run-workspace",)
+    assert record["persistent_volume_claims"] == ["run-workspace"]
+    assert restored.persistent_volume_claims == ["run-workspace"]
 
 
 def _typed_running_observation(

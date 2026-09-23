@@ -18,6 +18,7 @@ from npa.orchestration.skypilot.job_blockers import (
     MANAGED_JOB_NAME_ANNOTATION,
     classify_pending_reason,
     inspect_job_blockers,
+    persistent_volume_claim_names,
 )
 
 
@@ -194,6 +195,304 @@ def test_a_job_with_no_pods_yet_says_so() -> None:
     report = inspect_job_blockers(job_id="2", cluster_name="", runner=runner)
 
     assert "nothing has been scheduled yet" in report.error
+
+
+def _pvc_runner(*, claims: list[dict], events: list[dict]):
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):  # noqa: ANN001 - test stub
+        calls.append(list(cmd))
+        if "pods" in cmd:
+            payload = {"items": []}
+        elif "pvc" in cmd:
+            payload = {"items": claims}
+        elif "events" in cmd:
+            payload = {"items": events}
+        else:
+            payload = {"items": []}
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    run.calls = calls  # type: ignore[attr-defined]
+    return run
+
+
+def _claim(
+    name: str,
+    *,
+    namespace: str = "jobs",
+    uid: str = "claim-uid",
+    phase: str = "Pending",
+    deleting: bool = False,
+) -> dict:
+    metadata = {"name": name, "namespace": namespace, "uid": uid}
+    if deleting:
+        metadata["deletionTimestamp"] = "2026-09-22T12:00:00Z"
+    return {"metadata": metadata, "status": {"phase": phase}}
+
+
+def _claim_event(
+    name: str,
+    *,
+    namespace: str = "jobs",
+    uid: str = "claim-uid",
+    timestamp: str = "2026-09-22T12:01:00Z",
+    message: str = "failed to provision volume: disk quota exceeded",
+) -> dict:
+    return {
+        "metadata": {"namespace": namespace, "creationTimestamp": timestamp},
+        "involvedObject": {
+            "kind": "PersistentVolumeClaim",
+            "name": name,
+            "namespace": namespace,
+            "uid": uid,
+        },
+        "type": "Warning",
+        "reason": "ProvisioningFailed",
+        "message": message,
+        "eventTime": timestamp,
+    }
+
+
+def test_no_pod_reports_current_exact_claim_quota_event() -> None:
+    runner = _pvc_runner(
+        claims=[_claim("run-workspace")],
+        events=[_claim_event("run-workspace")],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2",
+        claim_names=("run-workspace",),
+        event_not_before="2026-09-22T12:00:00Z",
+        runner=runner,
+    )
+
+    assert report.error == ""
+    assert len(report.blockers) == 1
+    blocker = report.blockers[0]
+    assert blocker.pod == "pvc/run-workspace"
+    assert blocker.reason_code == "STORAGE_QUOTA_EXCEEDED"
+    assert blocker.source == "kubernetes_pvc_event"
+    assert blocker.namespace == "jobs"
+    assert blocker.resource_uid == "claim-uid"
+    assert blocker.temporally_bound is True
+    assert "automatic retry is disabled" in report.remedy()
+    pvc_call = next(cmd for cmd in runner.calls if "pvc" in cmd)
+    assert "metadata.name=run-workspace" in pvc_call
+    event_call = next(cmd for cmd in runner.calls if "events" in cmd)
+    assert "involvedObject.uid=claim-uid" in event_call
+    assert "-n" in event_call and "jobs" in event_call
+    assert "--all-namespaces" not in event_call
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+        "rpc error: code = Unavailable desc = storage service unavailable",
+        "request rate limit reached; retry after backoff",
+        "failed to query storage quota: rpc error: code = DeadlineExceeded; timed out",
+    ],
+)
+def test_retryable_provisioning_warning_does_not_admit_cancellation(
+    message: str,
+) -> None:
+    runner = _pvc_runner(
+        claims=[_claim("run-workspace")],
+        events=[_claim_event("run-workspace", message=message)],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2",
+        claim_names=("run-workspace",),
+        event_not_before="2026-09-22T12:00:00Z",
+        runner=runner,
+    )
+
+    assert classify_pending_reason("ProvisioningFailed", message) == "STORAGE_PENDING"
+    assert report.blockers == []
+    assert "no pods found" in report.error
+
+
+def test_no_pod_claim_diagnostic_does_not_require_a_pod_task_annotation() -> None:
+    runner = _pvc_runner(
+        claims=[_claim("run-workspace")],
+        events=[_claim_event("run-workspace")],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2",
+        controller_user_id="isolated-owner",
+        expected_task_names=(),
+        claim_names=("run-workspace",),
+        runner=runner,
+    )
+
+    assert report.blockers[0].reason_code == "STORAGE_QUOTA_EXCEEDED"
+
+
+def test_stale_claim_event_does_not_replace_no_pod_unknown() -> None:
+    runner = _pvc_runner(
+        claims=[_claim("run-workspace")],
+        events=[_claim_event("run-workspace", timestamp="2026-09-22T11:59:59Z")],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2",
+        claim_names=("run-workspace",),
+        event_not_before="2026-09-22T12:00:00Z",
+        runner=runner,
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+
+
+def test_repeated_claim_event_uses_latest_observation_for_attempt_binding() -> None:
+    event = _claim_event("run-workspace", timestamp="2026-09-22T11:00:00Z")
+    event["series"] = {"lastObservedTime": "2026-09-22T12:01:00Z"}
+    runner = _pvc_runner(claims=[_claim("run-workspace")], events=[event])
+
+    report = inspect_job_blockers(
+        job_id="2",
+        claim_names=("run-workspace",),
+        event_not_before="2026-09-22T12:00:00Z",
+        runner=runner,
+    )
+
+    assert report.blockers[0].event_timestamp == "2026-09-22T12:01:00Z"
+    assert report.blockers[0].temporally_bound is True
+
+
+@pytest.mark.parametrize(
+    "reason", ["ExternalProvisioning", "Provisioning", "WaitForFirstConsumer"]
+)
+def test_normal_claim_wait_events_do_not_cancel(reason: str) -> None:
+    event = _claim_event("run-workspace")
+    event["reason"] = reason
+    event["message"] = "waiting for a volume to be created"
+    runner = _pvc_runner(claims=[_claim("run-workspace")], events=[event])
+
+    report = inspect_job_blockers(
+        job_id="2", claim_names=("run-workspace",), runner=runner
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        _claim("run-workspace", phase="Bound"),
+        _claim("run-workspace", deleting=True),
+    ],
+)
+def test_historical_failure_is_ignored_for_nonpending_claim(claim: dict) -> None:
+    runner = _pvc_runner(
+        claims=[claim],
+        events=[_claim_event("run-workspace")],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2", claim_names=("run-workspace",), runner=runner
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+    assert not any("events" in cmd for cmd in runner.calls)
+
+
+def test_duplicate_claim_name_across_namespaces_is_ambiguous() -> None:
+    runner = _pvc_runner(
+        claims=[
+            _claim("run-workspace", namespace="jobs-a", uid="a"),
+            _claim("run-workspace", namespace="jobs-b", uid="b"),
+        ],
+        events=[_claim_event("run-workspace")],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2", claim_names=("run-workspace",), runner=runner
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+    assert not any("events" in cmd for cmd in runner.calls)
+
+
+def test_current_claim_uid_must_match_event_uid() -> None:
+    runner = _pvc_runner(
+        claims=[_claim("run-workspace", uid="current")],
+        events=[_claim_event("run-workspace", uid="replaced")],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2", claim_names=("run-workspace",), runner=runner
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+
+
+def test_known_namespace_never_lists_claims_across_namespaces() -> None:
+    runner = _pvc_runner(
+        claims=[_claim("run-workspace")],
+        events=[_claim_event("run-workspace")],
+    )
+
+    report = inspect_job_blockers(
+        job_id="2",
+        namespace="jobs",
+        claim_names=("run-workspace",),
+        runner=runner,
+    )
+
+    assert report.blockers[0].reason_code == "STORAGE_QUOTA_EXCEEDED"
+    pvc_call = next(cmd for cmd in runner.calls if "pvc" in cmd)
+    assert "-n" in pvc_call and "jobs" in pvc_call
+    assert "--all-namespaces" not in pvc_call
+
+
+def test_rendered_claim_extraction_is_narrow_and_validated() -> None:
+    profile = {
+        "kubernetes": {
+            "pod_config": {
+                "spec": {
+                    "volumes": [
+                        {
+                            "name": "workspace",
+                            "persistentVolumeClaim": {"claimName": "run-workspace"},
+                        },
+                        {
+                            "name": "duplicate",
+                            "persistentVolumeClaim": {"claimName": "run-workspace"},
+                        },
+                        {
+                            "name": "unsafe",
+                            "persistentVolumeClaim": {"claimName": "../other"},
+                        },
+                        {
+                            "name": "empty-label",
+                            "persistentVolumeClaim": {"claimName": "a..b"},
+                        },
+                        {
+                            "name": "whitespace",
+                            "persistentVolumeClaim": {"claimName": " other-claim "},
+                        },
+                        {
+                            "name": "leading-hyphen",
+                            "persistentVolumeClaim": {"claimName": "-other"},
+                        },
+                        {"name": "memory", "emptyDir": {}},
+                    ]
+                }
+            }
+        }
+    }
+
+    assert persistent_volume_claim_names(profile) == ("run-workspace",)
 
 
 def test_missing_kubectl_is_reported() -> None:
@@ -607,6 +906,30 @@ def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:
         ("CrashLoopBackOff", "worker exited", "container", "CONTAINER_CRASH"),
         ("BackOff", "controller retry backoff", "event", "CONTROLLER_BACKOFF"),
         ("FailedMount", "persistentvolumeclaim is pending", "event", "STORAGE_PENDING"),
+        (
+            "ProvisioningFailed",
+            "failed to provision volume: disk quota exceeded",
+            "pvc_event",
+            "STORAGE_QUOTA_EXCEEDED",
+        ),
+        (
+            "ProvisioningFailed",
+            "insufficient storage capacity",
+            "pvc_event",
+            "STORAGE_CAPACITY_UNAVAILABLE",
+        ),
+        (
+            "ProvisioningFailed",
+            "storage class configuration rejected the request",
+            "pvc_event",
+            "STORAGE_PROVISIONING_FAILED",
+        ),
+        (
+            "ExternalProvisioning",
+            "waiting for a volume to be created",
+            "pvc_event",
+            "PENDING_UNKNOWN",
+        ),
     ],
 )
 def test_pending_reason_codes_are_stable(

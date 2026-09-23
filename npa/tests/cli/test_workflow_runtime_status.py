@@ -99,6 +99,90 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+def test_status_probes_only_claims_attributed_to_each_managed_job(
+    observed_status, mocker
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [
+        _wave("prepare", "11", "succeeded"),
+        _wave("train", "12", "pending"),
+    ]
+    resolution.manifest["steps"] = [
+        {
+            "state": name,
+            "status": "submitted",
+            "resources_profile": {
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [
+                                {
+                                    "persistentVolumeClaim": {
+                                        "claimName": f"{name}-workspace"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        for name in ("prepare", "train")
+    ]
+    stalled = mocker.patch(
+        "npa.cli.workbench.workflow._stalled_job_blockers", return_value=[]
+    )
+
+    _durable_workflow_status("run-test")
+
+    calls = {
+        call.args[0]: call.kwargs["claim_names"] for call in stalled.call_args_list
+    }
+    assert calls == {
+        "11": ("prepare-workspace",),
+        "12": ("train-workspace",),
+    }
+
+
+def test_claim_attribution_preserves_collisions_with_emitted_stage_keys():
+    from types import SimpleNamespace
+
+    from npa.cli.workbench.workflow import _rendered_claims_by_managed_job
+
+    steps = [
+        {
+            "state": name,
+            "resources_profile": {
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [{"persistentVolumeClaim": {"claimName": claim}}]
+                        }
+                    }
+                }
+            },
+        }
+        for name, claim in (
+            ("train", "first-workspace"),
+            ("train", "second-workspace"),
+            ("train@1", "third-workspace"),
+        )
+    ]
+    attribution = {
+        "train": {"managed_job_id": "11"},
+        "train@1": {"managed_job_id": "12"},
+        "train@1@2": {"managed_job_id": "13"},
+    }
+
+    assert _rendered_claims_by_managed_job(
+        SimpleNamespace(steps=steps), attribution
+    ) == {
+        "11": ("first-workspace",),
+        "12": ("second-workspace",),
+        "13": ("third-workspace",),
+    }
+
+
 def test_failed_workflow_status_exposes_running_sibling_tasks(observed_status, mocker):
     resolution, _ = observed_status
     resolution.runtime_state.update(
