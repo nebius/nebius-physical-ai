@@ -671,6 +671,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "viewport MP4. Inspect adapter, environment, input, metric, and rendering "
             "status with `npa workbench isaac-arena capabilities`."
         ),
+        # Omit the new option unless requested, preserving existing baked images.
+        config_defaults={"video_profile": ""},
+        omit_flags_when_empty=("--video-profile",),
         argv_template=[
             "npa",
             "workbench",
@@ -697,6 +700,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--object",
             "{{config.object}}",
             "--record-video",
+            "--video-profile",
+            "{{config.video_profile}}",
             "--run-id",
             "{{run.id}}",
         ],
@@ -2778,6 +2783,37 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--models",
             "{{config.vlm_models}}",
             "--format",
+            "json",
+        ],
+    ),
+    "workbench.antioch.run": ToolEntry(
+        name="workbench.antioch.run",
+        description=(
+            "Idempotently run a queued Antioch suite through the deployed CPU adapter, "
+            "collect verified artifacts, and publish a strict offline LeRobotDataset."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "antioch",
+            "run",
+            "--input-path",
+            "{{config.antioch_project_uri}}",
+            "--output-path",
+            "{{config.antioch_run_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--state-id",
+            "{{config.antioch_state_id}}",
+            "--robot-type",
+            "{{config.antioch_robot_type}}",
+            "--task",
+            "{{config.antioch_task}}",
+            "--suite",
+            "{{config.antioch_suite}}",
+            "--endpoint",
+            "{{config.antioch_endpoint}}",
+            "--output",
             "json",
         ],
     ),

@@ -88,6 +88,12 @@ MANUAL_GATES = {
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_ANTIOCH_ACCEPT_TERMS": (
+        "Antioch live validation requires the operator's own runtime terms acceptance"
+    ),
+    "NPA_OPENPI_ACCEPT_GEMMA_TERMS": (
+        "OpenPI live validation requires the operator's own Gemma terms acceptance"
+    ),
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_WORKER_VERIFY": (
@@ -119,6 +125,9 @@ MANUAL_GATES = {
         "targets an operator-selected retained RTX cluster and creates live graphics validation pods"
     ),
     "NPA_TEST_GROOT_NGC_E2E": "gated NGC model access remains a product-specific manual test",
+    "NPA_E2E_INSIGHTS_BUCKET_ROOT": (
+        "bucket-root metadata listing requires an explicitly selected operator-owned validation bucket"
+    ),
     "NPA_E2E_CLEAR_WORKBENCH_IMAGES": "optional negative-path knob, not a suite gate",
     "NPA_SRC_S3_URI": "runtime source-staging prerequisite, not an authorization gate",
     "NPA_PREEMPTIBLE_E2E": "destructive preemptible VM suite remains operator-selected",

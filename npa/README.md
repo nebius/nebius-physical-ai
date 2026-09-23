@@ -19,6 +19,15 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For [Isaac Arena footage](../docs/workbench/isaac-arena.md#supported-policies),
+`npa workbench isaac-arena evaluate --record-video --video-profile film`
+requests native 4K capture with additional physics-frozen settling renders.
+`standard` remains the default; workflows opt in with `config.video_profile`.
+The updated capture runtime must be present in the selected image or a recorded
+source overlay. Retained live output can be checked with
+`NPA_INTEGRATION_E2E=1 NPA_ARENA_FILM_RESULT=/path/to/result.json npa/.venv/bin/python -m pytest npa/tests/e2e/test_isaac_arena_film_capture_live.py -q`.
+That check reads the complete downloaded output bundle and launches no new job.
+
 ## Install
 
 From the repository root, with your virtual environment active:
@@ -190,6 +199,13 @@ For artifact conversion and sharing, see the
 [Foxglove export](../docs/workbench/foxglove-export.md), and
 [Rerun sharing](../docs/workbench/rerun-sharing.md).
 
+NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
+Recording inspection uses the supported streaming reader and accepts existing
+0.31.4 RRD files without rewriting their contents or provenance. A recording
+validator rejects ambiguous multi-recording files unless it selects each store
+explicitly. For a custom viewer image, use a version that supports the producing
+SDK; previously published container pins retain their recorded build versions.
+
 ## Package map
 
 - `npa.cli`: Typer CLI entrypoints
@@ -198,6 +214,17 @@ For artifact conversion and sharing, see the
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+
+  Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
+  retains legacy ActorCritic checkpoint support and validates saved dimensions
+  before inference. ONNX export preserves RSL-RL 5 observation normalization.
+  The Genesis extra pins an upstream MoviePy compatibility fix by source revision
+  and archive hash so installation retains Pillow 12.3 or newer. The
+  `genesis-test` extra adds CPU checkpoint regression tests to the complete test
+  stage; the fast precheck does not install PyTorch. Genesis simulation remains
+  in the separate `genesis` extra.
+  The [Genesis skill](../skills/tools/genesis/SKILL.md#teacher-checkpoint-compatibility)
+  describes the live GPU migration check and its numerical report.
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands
@@ -241,9 +268,15 @@ python3 -m venv npa/.venv
 npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 
 make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
-make lint PYTHON="$(pwd)/npa/.venv/bin/python"        # ruff
+make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
+
+After committing, run `git fetch origin main` and `make merge-precheck` before
+pushing. This checks committed HEAD's merge with current main for conflicts and
+inconsistent dependency fingerprints without modifying your index. It does not
+run the full suite. Queue rejections receive a PR comment with failed jobs/steps
+or timeout details; see the [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
 
 For the **full unit suite**, use CPython 3.12 on Linux with `ffmpeg` and `ffprobe` available.
 Some runtime tests exercise Linux `/proc` and filesystem semantics, so macOS
@@ -252,25 +285,52 @@ The interpreter must provide `os.memfd_create`; some Conda builds omit it.
 Install CI's CPU checkpoint/export dependencies in this same environment:
 
 ```bash
-npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
 npa/.venv/bin/python -m pip install -e "npa[sonic]"
 umask 077  # Private files are required by publication handoff tests.
 PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
   make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
 ```
 
+To recheck checkpoint selection from a completed GPU validation job, set
+`NPA_E2E_CHECKPOINT_SELECTION_EVIDENCE_CONFIG` to an owner-only JSON file and run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py -q
+```
+
+There is no default evidence target; the live check skips without the variable.
+The [test module](tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py)
+documents the required provider identity, digest-pinned image, source archive,
+GPU platform/count, training-output prefix, and minimum episode count. It reads
+existing resources, verifies checkpoint and source bytes, recomputes distances
+from recorded final positions, and reruns selection in both candidate orders.
+The input bundle must come from real policy rollouts; this check does not launch
+training, establish policy quality, or claim a complete Sim2Real pipeline run.
+Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and merge candidates run the same full Python 3.12 suite,
+Pull requests run the full Python 3.12 suite,
 dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
 Five duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
-and CLI install checks without a duplicate subsystem job. The queue reruns
-these checks against the combined latest-main candidate. Recognized prose-only
+and CLI install checks without a duplicate subsystem job. The queue verifies
+this evidence against its combined latest-main candidate. Recognized prose-only
 edits retain smoke, documentation, lint, guardrail, and security checks while
 skipping runtime suites.
+The five-minute `pr-precheck` checks dependency inputs, lint/format, guardrails, smoke and
+full collection before expensive validation. The merge queue verifies fresh,
+successful PR evidence for its identical Git tree and repeats secret,
+confidentiality, source and dependency scans. Changed combined trees rerun
+all tests, lint, guardrails and hostile-input checks; image checks rerun when
+their inputs changed. Missing, failed or stale proof restores full queue
+validation, so older PRs can adopt the policy without a forced branch refresh. The queue target
+is ten minutes; hosted runner waiting can add delay.
+
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
 on all three supported versions. Every full Python 3.12 run publishes module
@@ -287,6 +347,11 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
+Mocked browser checks require Google Chrome and run with
+`bash npa/scripts/run_agent_cypress.sh --mock` from the repository root.
+They use Chrome's software WebGL renderer for real canvas capture coverage;
+Cypress 16's deprecated Electron browser cannot provide that context in CI.
+
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
 --update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
@@ -295,20 +360,34 @@ also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
 For queue rejections, follow the
 [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
-The shared [validation concurrency pools](../CONTRIBUTING.md#validation-concurrency)
-allow seven PR jobs, nine merge-candidate jobs, and three background audit jobs at
-once across the repository. Each candidate pool has a separate slot for coverage
-and the final required check. Waiting jobs are retained up to GitHub's queue limit,
-while superseded commits of the same PR still cancel their old checks.
-Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
-parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
+The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
+lets independent jobs use available GitHub runner capacity without shared
+repository-wide job queues. Newer commits still cancel older checks of the same
+PR. The final image-inventory check reports failed scans but stops when a run
+is cancelled, so it cannot hold the replacement run behind an obsolete job.
+Organization runner limits can cause waiting; already queued runs retain
+their original workflow configuration until their branches are refreshed.
+Full-suite PRs retain smoke coverage in their shards; the early precheck runs
+guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
 same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
-requirements. `.github/dependabot.yml` schedules daily update proposals for
-Python, browser-test npm, and GitHub Actions dependencies. Reproduce the scan
+requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
+GitHub Actions dependencies daily and groups version updates into one
+`dependencies` PR. Review package declarations and generated locks together,
+regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
+
+The base-image scanner uses Docker with Buildx and the checksum-verified Trivy
+binary. From the repository root, `npa/.venv/bin/python
+npa/scripts/scan_base_images.py --inventory
+npa/docker/workbench/base-image-security.json --cache-dir <private-directory>`
+scans the full inventory. `--matrix` emits every validated entry name without
+starting a scan; `--entry-name <name>` scans exactly that existing entry and
+rejects unknown names. These options are mutually exclusive. CI isolates each
+entry on its own runner and requires every applicable result. See
+[base-image scan storage and cleanup](../docs/security/image-reproducibility.md#cve-scanning).
 
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,
@@ -319,11 +398,11 @@ scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. All seven bases run inside one job with two
-bounded local workers. One Trivy database download is hard-linked into isolated
-worker caches, rather than using seven queued runners or a lock-contended shared
-cache. This baseline check does not replace the
-complete image scans required before publication.
+on fixable CRITICAL OS findings. Each base has its own runner, temporary archive,
+cache, and isolated builder. Owned build state is removed before the archive
+scan; archives and temporary scan data are cleaned after each entry. The required
+inventory aggregate fails when any applicable entry fails or does not finish.
+This baseline check does not replace complete image scans before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment
@@ -336,10 +415,22 @@ authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
 
+For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
+plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
+`NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the
+configured bucket and storage service account for real. See
+[`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
+for the full env contract and safety preconditions.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
 ## Workbench Studio
+
+Studio `preview` and `final` can also deliver the finished MP4 with
+`--output-path s3://<your-bucket>/<your-key>.mp4`. Optional `--storage-project`
+selects an external NPA project alias. Uploads are verified by SHA-256 readback;
+local renders and caches remain available.
 
 `npa studio init --directory ./my-studio` creates a portable local film editor
 using the installed renderer. Create a project from your own media with
