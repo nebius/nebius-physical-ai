@@ -19,6 +19,7 @@ __all__ = [
     "lancedb",
     "lerobot",
     "mjlab",
+    "newton",
     "retargeting",
     "robocasa",
     "scenario_gen",
