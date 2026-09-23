@@ -57,12 +57,38 @@ The final MP4, optional captions, offline player and provenance manifest are in
 `projects/demo/renders/final/`. File names are `film.mp4`, `film.srt` and
 `watch.html`. `--plan` on preview/final reports visual cache hits before encoding.
 
+To deliver a rendered video to object storage, use the existing `final` or
+`preview` command with an explicit MP4 output path:
+
+```sh
+npa studio demo final --output-path 's3://<your-bucket>/films/revision-1/video.mp4' \
+  --storage-project '<your-project-alias>'
+```
+
+`--storage-project` selects credentials and the endpoint from external NPA
+configuration; omit it to use the configured default. It requires `--output-path`.
+The destination is an exact MP4 object URI, not a directory. Writing the same
+URI replaces that object; use a new key for each delivery you want to preserve.
+Studio renders and caches locally, then uploads only the completed MP4 and
+verifies its full SHA-256 and byte count by reading it back. Upload or verification
+failure exits nonzero and leaves the local video available. The final JSON record
+reports `output_path`, `sha256`, `bytes`, `verified`, and the provider's optional
+`version_id`. Captions, source media and private provenance stay local.
+`--open` opens the local copy; `--plan` and the renderer's `--check` never upload.
+Without `--output-path`, rendering remains local and needs no storage credentials.
+
+The same options work on `renderer/render.py`; `--output-dir` remains its local
+cache and render directory. Python video tools can deliver an existing MP4 with
+`npa.video_output.write_video_output(local_path, output_path, project=...)` without
+rendering again. This uses the same configuration and verification path.
+
 The optional `narrate` generator sends narration text to Microsoft's Edge speech
 service through edge-tts. For an entirely offline flow, supply one MP3 and SRT per
 scene in the narration directory and run `npa studio demo narrate --recorded`.
-Rendering retained media and recorded speech makes no cloud or model calls.
+Rendering retained media and recorded speech makes no model calls and stays
+offline unless S3 output is explicitly requested.
 The optional hosted visual review described below sends sampled frames and cue
-context to the selected model. Other editing commands do not upload the film.
+context to the selected model. Video uploads require explicit `--output-path`.
 Studio does not send messages to collaboration services.
 
 ## Review narration against the finished picture
@@ -411,8 +437,16 @@ npa/.venv/bin/python -m pytest npa/tests/unit/test_studio_entry.py \
   npa/tests/unit/test_studio_artifacts.py npa/tests/unit/test_film_studio.py \
   npa/tests/unit/test_film_brief.py npa/tests/unit/test_executive_film.py \
   npa/tests/unit/test_executive_film_player.py \
-  npa/tests/unit/test_picture_timeline.py -q
+  npa/tests/unit/test_picture_timeline.py npa/tests/unit/test_video_output.py \
+  npa/tests/unit/test_film_output.py -q
 ```
+
+For a real CPU render and S3 delivery check, set `NPA_INTEGRATION_E2E=1`,
+`NPA_STUDIO_S3_PREFIX=s3://<your-bucket>/<test-prefix>` and optionally
+`NPA_STUDIO_STORAGE_PROJECT=<your-project-alias>`, then run
+`npa/.venv/bin/python -m pytest npa/tests/e2e/test_studio_s3_output_live.py -q`.
+It retains three small synthetic videos under a fresh UUID, verifies their
+downloaded bytes, and checks cache reuse and planning without storage access.
 
 The official Nebius logo and the font retain source and licensing records under
 `npa/src/npa/studio_renderer/brand/` and `fonts/`. Brand display is optional in the

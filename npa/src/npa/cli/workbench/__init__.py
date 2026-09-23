@@ -70,11 +70,13 @@ def _full_app() -> typer.Typer:
     from npa.cli.cosmos import app as cosmos_app
     from npa.cli.fiftyone import app as fiftyone_app
     from npa.cli.genesis import app as genesis_app
+    from npa.cli.workbench.newton import app as newton_app
     from npa.cli.groot import app as groot_app
     from npa.cli.isaac_lab import app as isaac_lab_app
     from npa.cli.nurec import app as nurec_app
     from npa.cli.workbench.alpamayo2_super import app as alpamayo2_super_app
     from npa.cli.workbench.antioch import app as antioch_app
+    from npa.cli.workbench.artifacts_gc import app as artifacts_gc_app
     from npa.cli.workbench.byof import app as byof_app
     from npa.cli.workbench.cosmos2 import app as cosmos2_app
     from npa.cli.workbench.cosmos3 import app as cosmos3_app
@@ -141,6 +143,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(mjlab_app, name="mjlab")
     full.add_typer(openarm_app, name="openarm")
     full.add_typer(robocasa_app, name="robocasa")
+    full.add_typer(newton_app, name="newton")
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
@@ -155,6 +158,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(byof_app, name="byof")
     full.add_typer(workflow_app, name="workflow")
     full.add_typer(health_app, name="health")
+    full.add_typer(artifacts_gc_app, name="gc-artifacts")
     full.add_typer(sim2real_app, name="sim2real", hidden=True)
     # Internal typed surface for npa.workflow toolRefs. Keep it out of Workbench
     # help: the public Sim2Real command family remains intentionally retired.

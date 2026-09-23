@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlparse
@@ -246,10 +247,114 @@ def _items_for_ci_shard(
     return sorted(shards[shard_index], key=lambda item: item.nodeid)
 
 
+_CHECKOUT = Path(__file__).resolve().parents[2]
+_GROUP_OR_OTHER_WRITABLE = stat.S_IWGRP | stat.S_IWOTH
+
+_WRITABLE_CHECKOUT_REMEDY = f"""\
+image_byte_scan cannot run: this checkout is group- or other-writable.
+
+{{offenders}}
+
+`authorized_roots` refuses a writable scan root and `private_path` refuses a
+writable input file, because those bytes could change between the scan and the
+use of its result. The refusal is correct and the code under test is fine, but
+the scanner reports it as a bare error code, so a checkout created under
+`umask 002` turns into hundreds of `root_permissions` and `input_permissions`
+failures with nothing naming the cause.
+
+Fix the checkout, then rerun:
+
+    chmod -R g-w,o-w {_CHECKOUT}
+
+Files created afterwards are group-writable again under `umask 002`, so run
+validation with `umask 022` if this keeps coming back.\
+"""
+
+
+def _scan_inputs() -> list[Path]:
+    """Return exactly the paths whose mode ``image_byte_scan`` rejects.
+
+    Only two kinds qualify, and the distinction matters because getting it wrong
+    turns a diagnostic into a stricter gate. ``authorized_roots`` stats the
+    trusted root itself, and ``private_path`` stats each source file; both walk
+    the intervening directories for symlinks only and never look at their modes.
+    So a group-writable `npa/` or `npa/scripts/image_byte_scan/` is a checkout
+    the production scanner accepts, and listing those here would abort
+    collection for a state that binds successfully.
+
+    Directory modes alone would also be insufficient in the other direction: one
+    `0664` file inside the scanner package raises `input_permissions`, and that
+    is where a new file lands under `umask 002` after the directories are fixed.
+
+    This mirrors ``core.source_bindings``; keep it in step with that function,
+    including its suffix filter, which is what keeps `__pycache__` out of the
+    result. ``test_scan_input_closure_matches_production`` fails when it drifts.
+
+    Returns:
+        The trusted root and every source file whose mode the scanner checks.
+    """
+
+    folder = _CHECKOUT / "npa/scripts/image_byte_scan"
+    suffixes = {".py", ".go", ".mod", ".sum", ".json", ".md"}
+    inputs = [
+        _CHECKOUT,
+        _CHECKOUT / ".gitleaks.toml",
+        _CHECKOUT / "npa/scripts/scan_image_bytes.py",
+        _CHECKOUT / "npa/tests/docker/test_image_byte_go_build.py",
+    ]
+    inputs.extend(
+        path
+        for path in folder.rglob("*")
+        if path.is_file()
+        and (path.suffix in suffixes or path.name.startswith("LICENSE"))
+    )
+    return inputs
+
+
+def _writable_scan_inputs() -> list[str]:
+    """Describe the scan inputs the scanner will reject, most useful first.
+
+    Returns:
+        Readable ``path is mode`` lines, truncated after six entries.
+    """
+
+    offenders = []
+    for path in _scan_inputs():
+        try:
+            mode = path.stat().st_mode
+        except OSError:
+            continue
+        if mode & _GROUP_OR_OTHER_WRITABLE:
+            offenders.append(
+                f"  {path.relative_to(_CHECKOUT.parent)} is mode {oct(mode & 0o777)}"
+            )
+    if len(offenders) > 6:
+        return [*offenders[:6], f"  ...and {len(offenders) - 6} more"]
+    return offenders
+
+
+def _needs_scan_inputs(item: pytest.Item) -> bool:
+    """Report whether a test reaches the scanner and therefore needs clean modes.
+
+    Args:
+        item: One collected test.
+    Returns:
+        True when the test's module imported ``image_byte_scan``.
+    """
+
+    module = getattr(item, "module", None)
+    if module is None:
+        return False
+    return any(
+        getattr(value, "__name__", "").split(".")[0] == "image_byte_scan"
+        for value in vars(module).values()
+    )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Partition the full suite when GitHub Actions supplies shard coordinates.
+    """Partition the full suite and reject a checkout the scanner cannot trust.
 
     Args:
         config: Active pytest configuration.
@@ -257,17 +362,26 @@ def pytest_collection_modifyitems(
     Returns:
         None.
     Raises:
-        pytest.UsageError: CI shard coordinates are invalid.
+        pytest.UsageError: CI shard coordinates are invalid, or a selected scan
+            test cannot run because the checkout is group- or other-writable.
     """
 
     coordinates = _ci_shard_coordinates()
-    if coordinates is None:
+    if coordinates is not None:
+        selected_items = _items_for_ci_shard(items, *coordinates)
+        selected_node_ids = {item.nodeid for item in selected_items}
+        deselected_items = [
+            item for item in items if item.nodeid not in selected_node_ids
+        ]
+        config.hook.pytest_deselected(items=deselected_items)
+        items[:] = selected_items
+    if not any(_needs_scan_inputs(item) for item in items):
         return
-    selected_items = _items_for_ci_shard(items, *coordinates)
-    selected_node_ids = {item.nodeid for item in selected_items}
-    deselected_items = [item for item in items if item.nodeid not in selected_node_ids]
-    config.hook.pytest_deselected(items=deselected_items)
-    items[:] = selected_items
+    offenders = _writable_scan_inputs()
+    if offenders:
+        raise pytest.UsageError(
+            _WRITABLE_CHECKOUT_REMEDY.format(offenders="\n".join(offenders))
+        )
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:

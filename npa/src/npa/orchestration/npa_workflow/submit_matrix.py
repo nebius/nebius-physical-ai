@@ -201,6 +201,21 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
     ),
     SubmitLiveCase(
+        "newton-train-teacher.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "Newton workbench pipeline stages are stubs in this release: "
+            "train-teacher raises NewtonPipelineError (not implemented), so the "
+            "spec exercises config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the newton/train_teacher three-tier contract "
+            "(CLI <-> SDK <-> spec); real Newton simulation lands with "
+            "nebius/nebius-physical-ai#499."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-super-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
