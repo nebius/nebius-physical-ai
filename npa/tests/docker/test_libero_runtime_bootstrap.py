@@ -3105,7 +3105,7 @@ def _valid_upload_payloads(module, run_id: str) -> dict[str, bytes]:
         "governing_terms_sha256": digest,
         "governing_terms_count": 1,
         "source_revision": "source-revision",
-        "source_tree": digest,
+        "source_tree": "b" * 40,
         "source_license_sha256": digest,
         "runtime_artifact_count": 135,
         "demonstration_sha256": digest,
@@ -3374,6 +3374,34 @@ def test_canonical_output_payload_rejects_unknown_fields_and_embedded_bytes():
         module._canonical_output_payload(
             "libero-smoke.json", json.dumps({**base, "payload": "secret"}).encode()
         )
+
+
+@pytest.mark.parametrize("mutation", [None, "unknown", "tree", "task_hash"])
+def test_real_completion_record_satisfies_closed_output_schemas(tmp_path, mutation):
+    module = _load_module()
+    manifest = json.loads((SCRIPT.parent / "runtime-manifest.json").read_bytes())
+    root = tmp_path / "cache"
+    root.mkdir()
+    (root / "entry").write_bytes(b"synthetic inventory content")
+    record = module._complete_record(
+        root, manifest, "a" * 64, "b" * 64, "c" * 64,
+        "synthetic-run", "d" * 64, "e" * 64,
+    )
+    assert len(record["source_tree"]) == 40
+    if mutation == "unknown":
+        record["unknown"] = "field"
+    elif mutation == "tree":
+        record["source_tree"] = "f" * 64
+    elif mutation == "task_hash":
+        record["task_bddl_sha256"] = "f" * 40
+    bootstrap = {**record, "status": "ready", "cache_path": str(root),
+                 "warm_reuse": False, "governing_terms_fetched_this_invocation": True}
+    for name, value in (("npa_runtime_metadata.json", record), ("npa_runtime_bootstrap.json", bootstrap)):
+        if mutation:
+            with pytest.raises(module.BootstrapRefusal):
+                module._canonical_output_payload(name, json.dumps(value).encode())
+        else:
+            assert json.loads(module._canonical_output_payload(name, json.dumps(value).encode())) == value
 
 
 def test_output_upload_allowlist_excludes_checkpoint_and_raw_logs():

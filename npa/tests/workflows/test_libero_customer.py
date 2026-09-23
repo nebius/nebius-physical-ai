@@ -9,6 +9,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -122,6 +124,31 @@ def test_customer_profile_survives_standard_kubernetes_config_lift():
     task["resources"]["region"] = "unit-context"
     customer.validate_profile(docs)
     assert driver().libero_executable_profile_bytes(docs) == signed_profile
+
+
+@pytest.mark.parametrize("seal_status,inventory,expected_calls", [
+    (2, False, ["execute-and-seal"]),
+    (0, True, ["execute-and-seal", "wait-for-retrieval"]),
+    (1, True, ["execute-and-seal", "wait-for-retrieval"]),
+])
+def test_customer_run_skips_impossible_retrieval_after_sealing_failure(tmp_path, seal_status, inventory, expected_calls):
+    run = list(yaml.safe_load_all(customer.PROFILE.read_text()))[1]["run"]
+    run = run[run.index("status=0\n"):]
+    supervisor = tmp_path / "supervisor"
+    calls = tmp_path / "calls"
+    supervisor.write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n'
+        'if [[ "$1" == execute-and-seal ]]; then exit "$SEAL_STATUS"; fi\n'
+    )
+    supervisor.chmod(0o700)
+    completed = tmp_path / "completed.json"
+    if inventory:
+        completed.write_text("{}")
+    run = run.replace("/usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py", shlex.quote(str(supervisor)))
+    run = run.replace('"/workspace/byof-runs/${NPA_BYOF_RUN_ID}/completed.json"', shlex.quote(str(completed)))
+    result = subprocess.run(["bash", "-euc", run], env={**os.environ, "CALLS": str(calls), "SEAL_STATUS": str(seal_status)}, check=False)
+    assert result.returncode == seal_status
+    assert calls.read_text().splitlines() == expected_calls
 
 
 @pytest.mark.parametrize("status", ["SUCCEEDED", "FAIL", "FAILED_PRECHECKS", "FAILED_CONTROLLER", "FAILED_NEW_KIND", "CANCELED", "STOPPED"])

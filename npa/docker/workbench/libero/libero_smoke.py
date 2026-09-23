@@ -443,6 +443,7 @@ try:
     import h5py
     import numpy as np
     import torch
+    from easydict import EasyDict
     from hydra import compose, initialize_config_dir
     from libero.lifelong.algos.base import Sequential
     from libero.lifelong.datasets import SequenceVLDataset, get_dataset
@@ -454,6 +455,10 @@ try:
     from omegaconf import OmegaConf, open_dict
     from torch.utils.data import DataLoader
     from transformers import AutoModel, AutoTokenizer
+
+    # Locked robomimic 0.2.0 uses the removed NumPy alias for pad masks.
+    if "bool" not in np.__dict__:
+        np.bool = bool
 
     if torch.cuda.device_count() != 1:
         raise RuntimeError(
@@ -601,6 +606,9 @@ try:
             }
         )
 
+    # Upstream lifelong/main.py passes a mutable EasyDict to policy builders,
+    # which add input/output dimensions to their encoder and head kwargs.
+    cfg = EasyDict(OmegaConf.to_container(cfg, resolve=True))
     control_seed(SPLIT_SEED)
     algorithm = Sequential(n_tasks=1, cfg=cfg).to("cuda")
     algorithm.start_task(0)

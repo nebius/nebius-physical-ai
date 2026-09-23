@@ -388,6 +388,8 @@ _OUTPUT_JSON_TOP_LEVEL_KEYS = {
             "source_revision",
             "source_tree",
             "status",
+            "task_bddl_sha256",
+            "task_initial_states_sha256",
             "warm_reuse",
         }
     ),
@@ -448,6 +450,7 @@ _STRING = ("string",)
 _BOOL = ("bool",)
 _INTEGER = ("integer",)
 _NUMBER = ("number",)
+_HEX40 = ("hex40",)
 _HEX64 = ("hex64",)
 _SMOKE_SOURCE = _output_object(
     {
@@ -629,7 +632,7 @@ _RUNTIME_METADATA_FIELDS = {
     "governing_terms_sha256": _HEX64,
     "governing_terms_count": _INTEGER,
     "source_revision": _STRING,
-    "source_tree": _HEX64,
+    "source_tree": _HEX40,
     "source_license_sha256": _HEX64,
     "runtime_artifact_count": _INTEGER,
     "demonstration_sha256": _HEX64,
@@ -701,6 +704,8 @@ def _validate_output_value(value: Any, spec: tuple, *, path: str) -> None:
         valid = isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2**63 - 1
     elif kind == "number":
         valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+    elif kind == "hex40":
+        valid = isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
     elif kind == "hex64":
         valid = isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
     elif kind == "object":

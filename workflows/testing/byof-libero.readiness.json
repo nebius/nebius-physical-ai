@@ -9,8 +9,8 @@
     "resource_profile": "ab02acb123bb991e0d016f094659aff45156a78f1de2b28b93da252e56adc1fd",
     "runtime_manifest": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02",
     "runtime_requirements": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
-    "runtime_bootstrap": "0ceda23ba6c5c6e529d3b8cef5a4c7fb81b9660a4e683d011ec702ffb9da9dfc",
-    "smoke": "4e81a5f2ec9892c9a441a7482da53694660575dcbe2496935d9ff9937735790b",
+    "runtime_bootstrap": "97f513ec0ce6f8f0fcc8f22490ace24a037df4c9069f1cd77abcd71f500ca657",
+    "smoke": "f3849f012ecaffd1caeaeba8ba61d7f0949cb4775931a471a3cb7ad4c9b7aaa6",
     "image_manifest": "e7c88becfe3cdab897f8127c1cbe708b2536bca5936092e60cec7d9266437fe6"
   },
   "public_image_digest": "",

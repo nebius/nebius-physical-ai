@@ -173,5 +173,8 @@ run: |
   # exclusive execution ownership through smoke and sealing for controller retrieval.
   status=0
   /usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py execute-and-seal || status=$?
+  if [[ "${status}" != 0 && ! -f "/workspace/byof-runs/${NPA_BYOF_RUN_ID}/completed.json" ]]; then
+    exit "${status}"
+  fi
   /usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py wait-for-retrieval
   exit "${status}"
