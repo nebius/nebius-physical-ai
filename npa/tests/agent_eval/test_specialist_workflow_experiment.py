@@ -186,13 +186,15 @@ def test_dismissal_refuses_coordinator_uncertainty_and_active_ownership(
     assert bridge.team.status("task")["calls"][0]["status"] == "started"
 
 
-def test_mcp_and_scope_grant_recovery_only_when_explicitly_configured(
-    workflow_experiment, prepared, tmp_path
+@pytest.mark.parametrize("observations", [False, True])
+def test_mcp_grants_recovery_only_when_explicitly_configured(
+    workflow_experiment, prepared, tmp_path, observations
 ):
-    _enable_observations(prepared)
+    pytest.importorskip("mcp.server.mcpserver")
+    if observations:
+        _enable_observations(prepared)
     directory = tmp_path / "evidence"
     directory.mkdir(mode=0o700)
-    directory.joinpath("team.json").write_bytes(prepared[0].read_bytes())
     module = workflow_experiment["workflow_bridge"]
     for hybrid in (False, True):
         names = {
@@ -201,7 +203,17 @@ def test_mcp_and_scope_grant_recovery_only_when_explicitly_configured(
                 module._server(prepared[0], directory, hybrid).list_tools()
             )
         }
-        assert ("dismiss_interrupted_observation" in names) is hybrid
+        assert ("dismiss_interrupted_observation" in names) is (hybrid and observations)
+
+
+def test_scope_grants_recovery_only_when_explicitly_configured(
+    workflow_experiment, prepared, tmp_path
+):
+    _enable_observations(prepared)
+    directory = tmp_path / "evidence"
+    directory.mkdir(mode=0o700)
+    directory.joinpath("team.json").write_bytes(prepared[0].read_bytes())
+    for hybrid in (False, True):
         arm = "astra-tofa" if hybrid else "astra-only"
         settings = workflow_experiment["experiment"]._settings(
             prepared[0], directory, arm, "medium"
