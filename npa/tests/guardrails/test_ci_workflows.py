@@ -149,6 +149,8 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
         install_step = f"Install Python {version} compatibility environment"
         assert install_step in browser_step_names
         assert f"Run Python {version} compatibility regressions" in browser_step_names
+        regression = _step("test.yml", "browser-mocked", f"Run Python {version}")
+        assert "npa/tests/test_anyio_security_regressions.py" in regression["run"]
 
 
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
@@ -164,6 +166,7 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     }
     assert "continue-on-error" not in regression
     for path in (
+        "npa/tests/test_anyio_security_regressions.py",
         "npa/tests/guardrails/test_ci_workflows.py",
         "npa/tests/docker/test_base_image_scan.py",
         "npa/tests/orchestration/skypilot/test_workflow_logs.py",

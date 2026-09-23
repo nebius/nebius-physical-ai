@@ -54,6 +54,24 @@ def _generate_ca() -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(minutes=10))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+            critical=False,
+        )
         .sign(ca_key, hashes.SHA256())
     )
     return ca_key, ca_cert
@@ -75,6 +93,10 @@ def _issue_leaf_certificate(
         .not_valid_after(now + datetime.timedelta(minutes=10))
         .add_extension(
             x509.SubjectAlternativeName([x509.DNSName(dns_name)]), critical=False
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+            critical=False,
         )
         .sign(ca_key, hashes.SHA256())
     )
@@ -136,6 +158,9 @@ def _start_loopback_tls_server(
 async def _tls_handshake(port: int, ca_path) -> None:
     """Complete a client TLS handshake to 127.0.0.1:port for the Unicode hostname."""
     client_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    # Python 3.13+ enables strict certificate validation by default. Exercise
+    # that same verification path on every supported interpreter.
+    client_ctx.verify_flags |= ssl.VERIFY_X509_STRICT
     client_ctx.load_verify_locations(cafile=str(ca_path))
     with anyio.fail_after(_HANDSHAKE_TIMEOUT_S):
         sock = await anyio.connect_tcp("127.0.0.1", port)
