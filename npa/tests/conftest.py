@@ -141,6 +141,7 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
     # a profile (the normal state on a machine that actually runs npa) shifts
     # every argv assertion by two elements. Tests of the profile behavior itself
     # set these via monkeypatch after this scrub.
+    "NPA_ISAAC_ARENA_VIDEO_PROFILE",
     "NPA_NEBIUS_PROFILE",
     "NEBIUS_PROFILE",
 )
