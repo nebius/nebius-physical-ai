@@ -296,6 +296,8 @@ jobs:
             npa/tests/docker/test_image_payload_scan.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
+            npa/tests/docker/test_sam3_runtime.py \
+            npa/tests/docker/test_sam3_image_payload_scan.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
@@ -534,6 +536,11 @@ jobs:
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
+          fi
+          if [ "$TOOL" = sam3 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_sam3_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-sam3-payload.json"
           fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
@@ -781,6 +788,11 @@ jobs:
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
+          fi
+          if [ "$TOOL" = sam3 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_sam3_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-sam3-payload.json"
           fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \

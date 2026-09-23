@@ -38,6 +38,7 @@ def evaluate(
     embodiment: str = "",
     object_name: str = "",
     record_video: bool = False,
+    video_profile: str = "standard",
     run_id: str = "",
     runtime_image: str = "",
     dry_run: bool = False,
@@ -56,6 +57,7 @@ def evaluate(
         embodiment: Optional registered robot override.
         object_name: Optional task-compatible object override.
         record_video: Require viewport video and its visual qualification.
+        video_profile: Standard capture or native 4K film capture.
         run_id: Optional identifier binding the resulting evidence.
         runtime_image: Optional exact image identity recorded in the manifest.
         dry_run: Build the request without executing the simulator.
@@ -81,6 +83,7 @@ def evaluate(
             embodiment=embodiment,
             object_name=object_name,
             record_video=record_video,
+            video_profile=video_profile,
             run_id=run_id,
             runtime_image=runtime_image,
             dry_run=dry_run,

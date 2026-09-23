@@ -11,7 +11,7 @@ import sys
 
 _HELP = """Usage: npa studio [--registry studio.json] <film> <command> [options]
 
-Commands: init, create, list, brief, scenes, narrate, draft, watch, preview, final.
+Commands: init, create, list, brief, scenes, narrate, draft, watch, preview, final, review.
 Example: npa studio inference draft --scene 01-opening --open
 
 Search accessible object storage using external NPA configuration:
