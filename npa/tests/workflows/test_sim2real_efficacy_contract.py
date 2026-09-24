@@ -78,7 +78,10 @@ from npa.workflows.sim2real.task_contract import (
     validate_seed_dataset_manifest,
     validate_task_dataset,
 )
-from npa.workflows.sim2real.temporal_credit import convert_evaluation
+from npa.workflows.sim2real.temporal_credit import (
+    TemporalCreditError,
+    convert_evaluation,
+)
 from npa.workflows.sim2real_envgen import (
     EnvGenConfig,
     SceneSpec,
@@ -688,6 +691,15 @@ def _recorded_visual_fields(step: int) -> dict:
     }
 
 
+_TEMPORAL_TRUTH_BOOLEAN_FIELDS = (
+    "contact",
+    "stable_grasp",
+    "placement_stable",
+    "dropped",
+    "terminated",
+)
+
+
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     evaluation = {
         "rollout_id": "rollout-1",
@@ -806,6 +818,82 @@ def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:
     assert calibration["vlm_contradictory_steps"] == 1
     assert signal["per_step"][0]["confidence"] == 0.0
     assert signal["per_step"][1]["confidence"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("scope", "field"),
+    [
+        ("evaluation", "success"),
+        ("step", "model_disagreement"),
+        ("truth", "contact"),
+        ("truth", "stable_grasp"),
+        ("truth", "placement_stable"),
+        ("truth", "dropped"),
+        ("truth", "terminated"),
+    ],
+)
+@pytest.mark.parametrize(
+    "hostile_value", ["false", "true", 0, 1, 0.0, 1.0, None, [], {}]
+)
+def test_temporal_credit_rejects_nonliteral_boolean_evidence(
+    scope: str, field: str, hostile_value: Any
+) -> None:
+    truth = {
+        "object_goal_distance_m": 0.01,
+        "end_effector_object_distance_m": 0.01,
+        "contact": False,
+        "stable_grasp": False,
+        "placement_stable": False,
+        "dropped": False,
+        "terminated": False,
+    }
+    evaluation: dict[str, Any] = {
+        "success": False,
+        "per_step": [
+            {
+                "step": 0,
+                "model_disagreement": False,
+                "simulator_ground_truth": truth,
+            }
+        ],
+    }
+    target = evaluation if scope == "evaluation" else evaluation["per_step"][0]
+    if scope == "truth":
+        target = truth
+    target[field] = hostile_value
+
+    with pytest.raises(TemporalCreditError, match=rf"\.{field} must be"):
+        convert_evaluation(evaluation)
+
+
+@pytest.mark.parametrize("explicit", [None, False, True])
+def test_temporal_credit_preserves_literal_boolean_semantics(
+    explicit: bool | None,
+) -> None:
+    truth: dict[str, Any] = {
+        "object_goal_distance_m": 0.01,
+        "end_effector_object_distance_m": 0.01,
+        "termination_reason": "failure",
+    }
+    evaluation: dict[str, Any] = {
+        "per_step": [{"step": 0, "simulator_ground_truth": truth}]
+    }
+    if explicit is not None:
+        evaluation["success"] = explicit
+        evaluation["per_step"][0]["model_disagreement"] = explicit
+        truth.update(dict.fromkeys(_TEMPORAL_TRUTH_BOOLEAN_FIELDS, explicit))
+
+    signal = convert_evaluation(evaluation)
+    row = signal["per_step"][0]
+    components = row["reward_components"]
+    expected = explicit is True
+    assert signal["success"] is expected
+    assert row["model_disagreement"] is expected
+    assert components["contact"] == (0.08 if expected else 0.0)
+    assert components["stable_grasp"] == (0.14 if expected else 0.0)
+    assert components["placement"] == (0.30 if expected else 0.0)
+    assert components["drop_penalty"] == (-0.15 if expected else 0.0)
+    assert components["termination_penalty"] == (-0.10 if expected else 0.0)
 
 
 def test_checkpoint_selection_uses_validation_and_prefers_earlier_exact_tie() -> None:
