@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from npa.lifecycle_intent import json_stdout_contract
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 from npa.workbench.namespaces import apply_namespace, write_namespace_context
 
 
@@ -22,6 +22,7 @@ _JSON_FORMAT = typer.Option("json", "--output-format", help="Output format (json
 
 
 @app.command("apply")
+@intent_boundary(OperationIntent.MUTATE)
 @json_stdout_contract
 def apply_cmd(
     name: str = typer.Argument(..., help="Dedicated Kubernetes namespace."),
