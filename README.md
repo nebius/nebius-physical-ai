@@ -273,6 +273,6 @@ their own licenses and access terms.
 [MJLab integration](docs/workbench/mjlab.md) provides native training and resume,
 measured evaluation, ONNX export, a scoped authenticated service, and CLI/SDK
 clients. Use the [train/evaluate workflow](workflows/testing/mjlab-train-eval.yaml)
-on a Nebius GPU with an explicitly built MJLab image; image publication and GPU
-qualification remain gated. The former deterministic scoring placeholder has
-been removed.
+on a Nebius GPU with an explicitly built MJLab image. Native GPU acceptance
+results are recorded in the guide; public image promotion remains gated.
+The former deterministic scoring placeholder has been removed.

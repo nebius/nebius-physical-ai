@@ -480,8 +480,9 @@ images:
     notes: >-
       Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
       No checkpoints, motion datasets, credentials or populated runtime caches.
-      Publication quarantined until built-layer license/security inspection and
-      actual GPU train/eval/export qualification; see mjlab/REDISTRIBUTION.md.
+      Operator image passed native B200 and RTX PRO 6000 train/eval/export and service qualification.
+      Public promotion still requires built-layer license/security and bootstrap
+      gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
   curobo:
     dockerfile: curobo/Dockerfile
     tier: service

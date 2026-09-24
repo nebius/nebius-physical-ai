@@ -125,7 +125,7 @@ likewise predates its current coherent release.
 | `npa-diffusers` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-lingbot-world` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-sam3` | unverified | unverified | unverified | unverified | unverified |
-| `npa-mjlab` (unbuilt candidate) | unverified | unverified | unverified | unverified | unverified |
+| `npa-mjlab` (private candidate) | unverified | unverified | **verified** [native acceptance and video](validation/mjlab-gpu-20260924.json) | **verified** [native acceptance](validation/mjlab-gpu-20260924.json) (1 and 8 GPUs) | unverified |
 | `npa-sam2` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |

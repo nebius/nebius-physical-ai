@@ -4,13 +4,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 REPO_ROOT="$(cd "$NPA_ROOT/.." && pwd)"
 MJLAB_PYTHON="${NPA_PYTHON_BIN:-$NPA_ROOT/.venv/bin/python}"
+QUALIFIED_IMAGE_TAG="dev-7ccb0e8cfbf97f414916b0f026b8f204f1277781"
 REGISTRY=""
 PUSH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --registry) REGISTRY="${2:?}"; shift 2 ;;
     --push) PUSH=1; shift ;;
-    -h|--help) echo "Usage: $0 [--registry HOST/PATH] [--push]"; exit 0 ;;
+    -h|--help)
+      echo "Usage: $0 [--registry HOST/PATH] [--push]"
+      echo "Qualified operator candidate: npa-mjlab:$QUALIFIED_IMAGE_TAG"
+      echo "Build its source commit to reproduce it; new commits get their own dev-SHA tag."
+      exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done

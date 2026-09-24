@@ -690,5 +690,7 @@ original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
 
 MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
-publication plan while it is unbuilt and awaits exact-image scans and real GPU
-qualification. See [MJLab](mjlab.md) for operator builds and workflow overrides.
+publication plan. A private operator image has completed native B200 and RTX PRO 6000 GPU
+qualification; public promotion still requires the exact-image security,
+licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
+operator builds and workflow overrides.

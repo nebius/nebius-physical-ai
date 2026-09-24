@@ -8,8 +8,9 @@ Use a Nebius GPU workflow for training. The image recipe is
 `npa/docker/workbench/mjlab/Dockerfile`; its pinned dependency closure includes
 PyTorch's CUDA 12.8 wheels. **The MJLab image is not a published release.** Build
 an operator image and supply its complete reference in the workflow GPU resource
-profile (`image_id: docker:<your-image>`). Public promotion remains quarantined
-until exact-image scans and real GPU qualification pass.
+profile (`image_id: docker:<your-image>`). A private operator image has passed
+native B200 and RTX PRO 6000 GPU qualification. Public promotion remains quarantined until the
+exact-image security, licensing and bootstrap gates pass.
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/mjlab-train-eval.yaml
@@ -140,6 +141,63 @@ For real S3 readback and hash verification, run
 `NPA_MJLAB_E2E_OUTPUT_PATH` set to an authorized disposable prefix on a GPU
 runtime. The training workflow is registered in the live matrix but excluded
 from unattended rotation while the image is quarantined.
+
+### Measured GPU acceptance
+
+The 2026-09-24 operator qualification uses the immutable development image built
+from source `7ccb0e8cfbf97f414916b0f026b8f204f1277781`. Full reports and artifacts
+are retained in private project storage; the
+[committed qualification record](validation/mjlab-gpu-20260924.json)
+contains hardware, artifact hashes and measured results without live
+infrastructure identifiers. A Docker image configuration ID identifies the
+tested local image; it is not an OCI registry manifest digest or a public tag.
+
+| GPU | Native cases | Complete evaluation episodes | Verified artifact hashes |
+|---|---|---:|---:|
+| 8 × B200 (`sm_100`) | Cartpole, G1, Go1, YAM; Cartpole service resume; eight-GPU Cartpole | 48 | 77 |
+| 1 × RTX PRO 6000 (`sm_120`) | Cartpole, G1 with MP4, Go1, YAM; Cartpole service resume | 40 | 58 |
+
+Each task trains for two PPO updates with 64 environments, reloads its actual
+checkpoint, evaluates eight complete episodes, exports ONNX, checks the model,
+and downloads its S3 outputs to verify hashes and byte counts. G1 training runs
+through the CLI; the other task cycles use the SDK. Service acceptance verifies
+HTTP 401 without a token, HTTP 400 for an out-of-scope input, HTTP 409 during an
+active training request, and successful authenticated train/resume, evaluation
+and export. Resume advances optimizer state and changes actor weights. B200
+telemetry confirms eight simultaneous worker processes on eight GPUs, in
+addition to the native launcher's eight-worker record.
+
+The separate golden capability smoke also passes on both GPU families and adds
+two measured Cartpole episodes per family. The RTX G1 MP4 contains 68 frames, all
+decoded successfully using system FFmpeg. These are functional integration tests.
+Two PPO updates do not establish policy convergence: the G1 acceptance policy
+has zero survival at the evaluation horizon, and that measured result is preserved.
+
+The B200 host had one NVIDIA Container Toolkit 1.20.0 `create-symlinks` startup
+failure before the application started. The unchanged image and configuration
+started on retry; the record preserves that failure. Its error matches the
+[upstream toolkit fix](https://github.com/NVIDIA/nvidia-container-toolkit/commit/9f4201be9e351fa560e5fc6623cdfbd31d3ec0bc).
+
+Reproduce acceptance inside the built image with the matching source's
+`npa/scripts/qualify_mjlab_gpu.py` mounted at `/opt/qualify_mjlab_gpu.py`, runtime
+storage credentials, and a writable evidence mount:
+
+```bash
+python /opt/qualify_mjlab_gpu.py --family b200 --gpu-count 8 \
+  --evidence-dir /evidence/b200 \
+  --output-path "s3://${NPA_S3_BUCKET}/runs/${RUN_ID}/b200"
+```
+
+The evidence directory and output prefix must be fresh. `--family rtx6000
+--gpu-count 1` additionally requires a fully decoded first-episode G1 MP4. Each
+GPU family needs its own successful acceptance report for the same image bytes.
+Full reports stay private; `acceptance.json` is suitable for a sanitized handoff.
+
+GPU qualification here covers native state-based tasks and the HTTP service in
+Docker on Nebius VMs. Kubernetes deployment, a submitted SkyPilot workflow,
+motion-tracking inputs, camera-policy training, B300 and multi-node training are
+outside this measured scope. The declarative workflows have offline routing and
+argv coverage; they have not been submitted as part of this acceptance run.
 
 Upstream references: [MJLab source](https://github.com/mujocolab/mjlab),
 [training API](https://mujocolab.github.io/mjlab/v1.6.0/source/training/rsl_rl.html),

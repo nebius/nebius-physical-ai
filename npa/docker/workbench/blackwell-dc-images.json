@@ -56,10 +56,10 @@
       "name": "npa-mjlab",
       "dockerfile": "mjlab/Dockerfile",
       "build_script": "mjlab/build.sh",
-      "verdict": "unknown",
-      "validation": "pending-build",
+      "verdict": "ready",
+      "validation": "validated",
       "smoke": "npa.smoke.test_mjlab_functional: native CUDA Cartpole PPO update, checkpoint-backed complete episodes and checked ONNX policy export.",
-      "notes": "MJLab 1.6.0 has a locked CUDA 12.8 runtime recipe, but no image has been built or run on a GPU. Public publication remains quarantined. B200/B300 and other GPU families are unvalidated."
+      "notes": "Operator image dev-7ccb0e8cfbf97f414916b0f026b8f204f1277781 passed native B200 Cartpole, G1, Go1 and YAM train/eval/export, authenticated service resume, eight-GPU torchrunx, S3 hash readback and the golden capability smoke. The identical image independently passed RTX PRO 6000 acceptance, including a fully decoded 68-frame G1 MP4. Torch 2.11.0+cu128 reports sm_100 and sm_120. Exact image and scope: docs/workbench/validation/mjlab-gpu-20260924.json. Public publication remains quarantined; B300 is unvalidated."
     },
     {
       "name": "npa-sam3",

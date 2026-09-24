@@ -8,7 +8,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     tool_image_key,
     tool_vendor_interpreters,
 )
-from npa.deploy.images import UNVALIDATED_PUBLICATION_TOOLS, publicly_publishable_tools
+from npa.deploy.images import VALIDATION_CANDIDATE_TOOLS, publicly_publishable_tools
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -32,6 +32,6 @@ def test_complete_workflow_uses_native_container_and_independent_seed():
     assert plan.steps[1].argv != argv
 
 
-def test_unbuilt_image_cannot_enter_public_release_plan():
-    assert "mjlab" in UNVALIDATED_PUBLICATION_TOOLS
+def test_operator_candidate_cannot_enter_public_release_plan():
+    assert "mjlab" in VALIDATION_CANDIDATE_TOOLS
     assert "mjlab" not in publicly_publishable_tools()

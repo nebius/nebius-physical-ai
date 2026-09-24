@@ -1,7 +1,9 @@
 # MJLab image inventory
 
-This image is **unbuilt and publication-quarantined**. The Dockerfile and
-hash-locked dependency inventory are build inputs, not built-byte validation.
+This image is **publication-quarantined**. An operator build has completed native
+B200 and RTX PRO 6000 GPU acceptance; the exact artifact and scope are recorded in
+`docs/workbench/mjlab.md`. GPU execution does not establish redistribution or
+security approval for the built dependency closure.
 
 MJLab 1.6.0 and MuJoCo are Apache-2.0; MuJoCo Warp and Warp carry their own
 upstream notices. The robot assets installed by MJLab retain the package's
@@ -17,7 +19,7 @@ Before public publication, inspect every built layer and exact dependency wheel,
 retain all required third-party notices and corresponding-source obligations,
 resolve CUDA/cuDNN redistribution requirements for the actual shipped members,
 and pass the repository's security, payload, bootstrap and real GPU capability
-gates. No built-image redistribution or hardware qualification is claimed here.
+gates. No public-release redistribution approval is claimed here.
 
 Source references:
 

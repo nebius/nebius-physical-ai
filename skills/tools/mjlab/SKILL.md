@@ -52,9 +52,11 @@ fall back to unsafe pickle.
   outputs. H100 is the state-based workflow default; camera/video workloads need
   a compatible rendering GPU/runtime.
 - The dedicated Dockerfile has a hash-locked Linux Python 3.12 CUDA wheel closure.
-  It is **unbuilt and publication-quarantined**, not a public supported image.
+  An operator image passed native B200 and RTX PRO 6000 acceptance, including
+  eight-GPU B200 training;
+  see the guide for the exact tested artifact. It remains publication-quarantined.
   Require an explicit operator-built image override until exact-image security,
-  license, bootstrap and GPU capability gates pass. Do not route to SONIC's image.
+  license and bootstrap gates pass. Do not route to SONIC's image.
 - Keep orchestration in declarative workflow YAML, not a SONIC Python runner.
 
 ## Validation
@@ -66,3 +68,11 @@ checkpoint reload, measured episodes and ONNX validation. The live test
 `npa/tests/e2e/test_mjlab_live.py` adds S3 hash readback; configure
 `NPA_MJLAB_E2E_OUTPUT_PATH` on an authorized GPU runtime. Do not report mocked
 or CPU-only evaluation as GPU training qualification.
+
+`npa/scripts/qualify_mjlab_gpu.py` runs Cartpole, G1, Go1 and YAM training,
+checkpoint evaluation, ONNX validation, S3 hash readback, authenticated service
+resume, and rejection of unauthorized, out-of-scope and concurrent requests.
+Use `--family b200 --gpu-count 8` for native one-node torchrunx acceptance or
+`--family rtx6000 --gpu-count 1` to include a fully decoded G1 rollout video.
+Both require the built image and an authorized fresh S3 output prefix. Preserve
+full reports privately; its `acceptance.json` omits infrastructure identifiers.
