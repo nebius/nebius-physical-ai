@@ -92,7 +92,7 @@ def _run_patrol(run, seconds, speed, width, start_x, start_y, view):
 def warehouse_spot_patrol(
     run: antioch.ScenarioRun,
     seconds: float = antioch.param(
-        24.0, ge=0.04, description="Recorded simulation duration"
+        8.0, ge=0.04, description="Recorded simulation duration"
     ),
     speed: float = antioch.param(
         0.8, ge=0, le=1.5, description="Forward velocity command in m/s"
@@ -100,7 +100,7 @@ def warehouse_spot_patrol(
     width: int = antioch.param(
         1920, description="RGB video width; height is 9/16 of width"
     ),
-    start_x: float = 0.0,
+    start_x: float = -3.0,
     start_y: float = 0.0,
     view: str = "tracking",
 ) -> None:

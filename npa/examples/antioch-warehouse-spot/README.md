@@ -76,7 +76,7 @@ npa workbench antioch submit \
   --robot-type boston_dynamics_spot \
   --task "Record physical quadruped locomotion in a warehouse" \
   --scenario warehouse_spot_patrol \
-  --parameters-json '{"seconds":24.0,"speed":0.8,"width":1920,"view":"tracking"}' \
+  --parameters-json '{"seconds":8.0,"speed":0.8,"width":1920,"start_x":-3.0,"view":"tracking"}' \
   --output json
 npa workbench antioch status \
   --output-path "$WAREHOUSE_OUTPUT_URI" \
@@ -88,6 +88,8 @@ npa workbench antioch status \
 32 and at least 320; height is 9/16 of width. The alternative `overview` camera
 helps inspect placement. `start_x` and `start_y` place the initial robot in metres.
 The robot's root is not repositioned during the recording.
+The default eight-second shot starts at x=-3 m to leave room for the forward walk;
+inspect placement and adapt the path before extending it.
 
 ## Collect and inspect
 

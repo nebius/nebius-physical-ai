@@ -135,6 +135,10 @@ For a video-producing example, see the
 It uses a pretrained locomotion policy, native RTX capture, and measured run
 checks. Collect its review artifacts with `--allow-artifacts-only`; the default
 collection path instead requires policy-training data.
+The [retained warehouse evidence](antioch-warehouse-evidence.json) records a
+successful native capture, its measured checks, source hash, and artifact hashes.
+It establishes simulated locomotion and camera capture, not autonomous navigation
+or physical-robot performance.
 
 The sanitized operation record contains the vendor run id. Open that run in the
 Antioch Mission Control console using the authenticated account; never paste a
