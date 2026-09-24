@@ -14,7 +14,9 @@ from npa.cluster.state import (
 )
 
 
-def _state(name: str = "cluster-a-h100-gpu") -> NodeGroupState:
+def _state(
+    name: str = "cluster-a-h100-gpu", *, public_ip: bool = False
+) -> NodeGroupState:
     return NodeGroupState(
         cluster_name="cluster-a",
         name=name,
@@ -25,18 +27,33 @@ def _state(name: str = "cluster-a-h100-gpu") -> NodeGroupState:
         node_count=1,
         created_at="2026-05-14T22:46:30Z",
         last_seen_state="RUNNING",
-        public_ip=False,
+        public_ip=public_ip,
     )
 
 
-def test_node_group_state_roundtrip(tmp_path) -> None:
-    saved = save_node_group_state(_state(), base_dir=tmp_path)
+@pytest.mark.parametrize("public_ip", [False, True])
+def test_node_group_state_roundtrip(tmp_path, public_ip: bool) -> None:
+    state = _state(public_ip=public_ip)
+    saved = save_node_group_state(state, base_dir=tmp_path)
 
     assert saved == tmp_path / "cluster-a" / "node-groups" / "cluster-a-h100-gpu.json"
     assert (
         load_node_group_state("cluster-a", "cluster-a-h100-gpu", base_dir=tmp_path)
-        == _state()
+        == state
     )
+
+
+@pytest.mark.parametrize("public_ip", ["false", "true", 0, 1, None, [], {}])
+def test_node_group_state_rejects_non_boolean_public_ip(
+    tmp_path, public_ip: object
+) -> None:
+    path = save_node_group_state(_state(), base_dir=tmp_path)
+    data = json.loads(path.read_text())
+    data["public_ip"] = public_ip
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ClusterStateError, match="public_ip must be a boolean"):
+        load_node_group_state("cluster-a", "cluster-a-h100-gpu", base_dir=tmp_path)
 
 
 def test_missing_node_group_state_returns_none(tmp_path) -> None:

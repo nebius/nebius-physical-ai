@@ -84,6 +84,9 @@ class NodeGroupState:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "NodeGroupState":
         try:
+            public_ip = data.get("public_ip", False)
+            if not isinstance(public_ip, bool):
+                raise TypeError("public_ip must be a boolean")
             return cls(
                 cluster_name=str(data["cluster_name"]),
                 name=str(data["name"]),
@@ -94,7 +97,7 @@ class NodeGroupState:
                 node_count=int(data["node_count"]),
                 created_at=str(data["created_at"]),
                 last_seen_state=str(data.get("last_seen_state", "UNKNOWN")),
-                public_ip=bool(data.get("public_ip", False)),
+                public_ip=public_ip,
                 autoscaling_min=_optional_int(data.get("autoscaling_min")),
                 autoscaling_max=_optional_int(data.get("autoscaling_max")),
             )
