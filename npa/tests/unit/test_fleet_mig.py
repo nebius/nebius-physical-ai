@@ -383,6 +383,21 @@ def test_live_snapshot_rejects_cordoned_notready_and_stale_rollouts() -> None:
     assert any("generation has not been observed" in error for error in report.errors)
 
 
+@pytest.mark.parametrize("value", ["false", 0, None, {}])
+def test_live_snapshot_rejects_malformed_unschedulable(value: object) -> None:
+    nodes, policy, daemonsets, deployment = _live_payloads()
+    nodes["items"][0]["spec"]["unschedulable"] = value
+
+    report = inspect_mig_state(nodes, policy, daemonsets, deployment, expected_nodes=1)
+
+    assert not report.ready
+    assert not report.nodes[0].schedulable
+    assert any(
+        "node gpu-node-0: Kubernetes spec.unschedulable must be a boolean" in error
+        for error in report.errors
+    )
+
+
 def test_live_snapshot_rejects_stale_mig_readiness_taint() -> None:
     nodes, policy, daemonsets, deployment = _live_payloads()
     nodes["items"][0]["spec"]["taints"] = [
@@ -784,6 +799,55 @@ def test_driver_replacement_timeout_is_actionable(monkeypatch) -> None:  # noqa:
     ]
 
 
+def test_driver_replacement_rejects_false_like_container_readiness(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    clock = [10.0]
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr("npa.fleet.mig.subprocess.run", run)
+    monkeypatch.setattr(
+        "npa.fleet.mig._kubectl_json",
+        lambda *_a, **_k: {
+            "items": [
+                {
+                    "metadata": {"uid": "replacement"},
+                    "spec": {"nodeName": "gpu-node-0"},
+                    "status": {
+                        "phase": "Running",
+                        "containerStatuses": [{"ready": "false"}],
+                    },
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(
+        MigVerificationError,
+        match="timed out waiting for the replacement NVIDIA driver pod",
+    ):
+        _replace_driver_pod(
+            kubectl_bin="kubectl",
+            kubeconfig=Path("/tmp/kubeconfig"),
+            pod_name="driver-old",
+            pod_uid="old",
+            node="gpu-node-0",
+            deadline=20.0,
+            sleep_fn=sleep,
+            monotonic_fn=lambda: clock[0],
+        )
+
+    assert len(commands) == 1
+    assert commands[0][3:5] == ["delete", "pod"]
+
+
 @pytest.mark.parametrize(
     ("already_cordoned", "expected_commands"),
     [(False, ["cordon", "uncordon"]), (True, [])],
@@ -834,6 +898,51 @@ def test_driver_reconciliation_restores_only_its_own_cordon(
             monotonic_fn=lambda: 0.0,
         )
     assert commands == expected_commands
+
+
+def test_driver_reconciliation_rejects_malformed_node_state_before_mutation(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    driver_pods = {
+        "items": [
+            {
+                "metadata": {
+                    "namespace": "gpu-operator",
+                    "name": "driver-old",
+                    "uid": "old",
+                    "labels": {"app": "nvidia-driver-daemonset"},
+                },
+                "spec": {"nodeName": "gpu-node-0"},
+                "status": {"phase": "Running"},
+            }
+        ]
+    }
+
+    def kubectl_json(_bin, _config, args, **_kwargs):  # noqa: ANN001, ANN202
+        if args[:2] == ["get", "node"]:
+            return {"spec": {"unschedulable": "false"}}
+        return driver_pods
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr("npa.fleet.mig._kubectl_json", kubectl_json)
+    monkeypatch.setattr(
+        "npa.fleet.mig.subprocess.run",
+        lambda command, **_kwargs: commands.append(command),
+    )
+
+    with pytest.raises(
+        MigVerificationError,
+        match=r"node gpu-node-0: Kubernetes spec.unschedulable must be a boolean",
+    ):
+        _reconcile_ondelete_driver(
+            "kubectl",
+            Path("/tmp/kubeconfig"),
+            deadline=30.0,
+            sleep_fn=lambda _seconds: None,
+            monotonic_fn=lambda: 0.0,
+        )
+
+    assert commands == []
 
 
 def test_driver_reconciliation_uncordons_after_ambiguous_cordon_timeout(
