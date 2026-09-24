@@ -54,8 +54,8 @@ def _queue(payload: dict[str, Any]) -> dict[str, Any]:
     import sky
 
     job_id = int(payload["job_id"])
-    refresh = bool(payload.get("refresh", True))
-    skip_finished = bool(payload.get("skip_finished", False))
+    refresh = _json_boolean(payload, "refresh", default=True)
+    skip_finished = _json_boolean(payload, "skip_finished", default=False)
     stream = io.StringIO()
     with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
         request_id = sky.jobs.queue(
@@ -76,8 +76,8 @@ def _logs(payload: dict[str, Any]) -> dict[str, Any]:
     import sky
 
     job_id = int(payload["job_id"])
-    follow = bool(payload.get("follow", False))
-    refresh = bool(payload.get("refresh", True))
+    follow = _json_boolean(payload, "follow", default=False)
+    refresh = _json_boolean(payload, "refresh", default=True)
     tail = payload.get("tail")
     if tail is not None:
         tail = int(tail)
@@ -99,6 +99,15 @@ def _logs(payload: dict[str, Any]) -> dict[str, Any]:
         "output": status_stream.getvalue(),
         "exit_code": exit_code,
     }
+
+
+def _json_boolean(payload: dict[str, Any], key: str, *, default: bool) -> bool:
+    if key not in payload:
+        return default
+    value = payload[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a JSON boolean")
+    return value
 
 
 def _json_default(value: Any) -> Any:
