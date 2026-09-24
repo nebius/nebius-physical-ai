@@ -333,7 +333,7 @@ B300 diagnostic profiles use native CUPTI 13.0.85 with CUPTI Python 13.0.0.
 The image's CUPTI 12.8 interface reported `CUPTI_ERROR_INVALID_DEVICE` and
 produced a CPU-only trace; preloading a newer library did not repair the older
 PyTorch profiler binding. NPA fetches a separate, hash-pinned profiler directory
-for B300 profile phases while retaining the original Torch, NumPy and CUDA
+for B300 profile phases without replacing the selected Torch, NumPy or CUDA
 compute libraries. Update five records GPU kernels and memory activity; the
 first six updates remain excluded from the steady windows. Zero kernels,
 invalid timestamps or dropped records reject the profile. The result records
@@ -344,36 +344,101 @@ The private runtime retains the CUDA Toolkit, CUPTI Python and CUDA Python
 license files plus cuda-pathfinder's Apache-2.0 license; these packages and
 populated caches are never added to the public image.
 
-Two profiles on four separate preemptible one-GPU B300 instances reached
+Four profiles on four separate preemptible one-GPU B300 instances reached
 live-verified terminal `SUCCEEDED` on 2026-09-23. Each measured 30 updates /
 2,880 public training anchors and completed the initial and checkpoint
 three-phase numerical qualifications, checkpoint readback, and exact fresh
-continuation. The second profile set `NCCL_SOCKET_NTHREADS=4` and
-`NCCL_NSOCKS_PERTHREAD=4` in each worker's pod environment:
+continuation. All runs retained microbatch one, accumulation 24, global batch
+96, eager BF16, the default optimizer, the pinned public dataset, and the
+original normalization bytes.
 
-| Four-host B300 profile | Aggregate samples/s, all 30 updates | Median steady samples/s |
+| Four-instance B300 profile | Aggregate samples/s, all 30 updates | Median steady samples/s |
 | --- | ---: | ---: |
-| Original socket settings | 2.565879 | 2.645909 |
-| Four helper threads, four sockets each | 2.978842 | 3.109365 |
+| Original socket settings and cuDNN 9.7 | 2.565879 | 2.645909 |
+| Four NCCL helper threads, four sockets each | 2.978842 | 3.109365 |
+| Same sockets, private cuDNN 9.26 runtime | 4.473873 | 4.785060 |
+| Same runtime, activation checkpointing off | 6.129717 | 6.684018 |
 
-The steady windows exclude the first six updates and cover three consecutive
-eight-update windows. The second profile measured 3.109365, 3.099759 and
-3.120109 samples/s, a **17.52% median improvement** over the original four-host
-profile. All 31 step/sample/loss records, including the separate continuation
-probe, matched exactly. Both attempts also matched initial/final model state,
-full checkpoint and resumed state, and all numerical fixture reports; all nine
-checkpoint files had identical byte hashes. The second profile used source
-`3b1b98f9936ebef122abe83ac047c0c04bcdc277` and retained the original training
-compute libraries. Its native GPU trace contained 562,365 kernels and 38,490
-memory events with zero dropped records; the published 147,038,296-byte trace
-matched the worker readback.
+The steady measurement excludes the first six startup/profiler updates and
+uses the median of three consecutive eight-update windows. The socket change
+improved this median by **17.52%** while preserving all 31 step/sample/loss
+records, complete model and training state, and all nine checkpoint file hashes.
+It set `NCCL_SOCKET_NTHREADS=4` and `NCCL_NSOCKS_PERTHREAD=4`; the accepted
+profiles retained automatic NCCL protocol/channel selection.
 
-This qualifies the profile and fresh-resume path. It does not establish a
-complete B300 epoch or full held-out validation. Throughput remains below the
-public B200 result, whose steady median was 6.363063 samples/s; the separate-host
-socket topology and the recorded B200 shared-host contention remain distinct.
-The unavailable historical dataset remains non-comparable, and
-`reference_benchmark_beaten` remains false.
+The cuDNN experiment replaced the complete loader/backend library set with
+`nvidia-cudnn-cu12==9.26.0.51`, retaining Torch 2.7.1+cu128 and CUDA 12.8.
+The private runtime verified the pinned wheel and all mapped library hashes;
+package licenses remained with that runtime. The wheel SHA-256 is
+`ce8603d4ea88d134be5a92c5e0833d513bea1ce0ee4bbc5d649fcb8718d51cbf`.
+This runtime changes numerical results relative to the original cuDNN 9.7
+stack: exact cross-runtime replacement qualification failed. The complete
+epoch below evaluates this separate compute runtime against the predeclared
+held-out quality and fresh-resume gates.
+
+Disabling activation checkpointing within that same cuDNN 9.26 runtime
+improved the steady median by **39.69%**, to **6.684018 samples/s**. Its three
+windows were 6.673791, 6.684018, and 6.697200 samples/s. All 31 step/sample/loss
+records, six qualification reports, complete initial/final and resumed training
+state, and all nine checkpoint file hashes matched the activation-on profile
+exactly. All eight phase receipts verified the three actual checkpointing flags
+were off. Peak allocated GPU memory was 74,348,137,984 bytes. This establishes
+an execution-only gain for the activation policy within the selected runtime.
+
+The activation-off profile used source
+`101cf4bb9c05cf1a3db2d958b86b9fc9460d53cc` with source-overlay fingerprint
+`019281801cb99c92929befb364471be73e14fdf0a300b586282c9394452167de`.
+All 19 recorded training source files matched that clean, pushed commit.
+Its native GPU trace contained 501,837 kernels and 39,738 memory events with
+zero dropped records; the published 131,354,010-byte trace matched worker
+readback. The trace is a diagnostic for one instrumented update, not the
+denominator for steady throughput.
+
+The final profile median is **152.62% above the original four-instance B300
+profile** and **5.04% numerically above** the public B200 steady median of
+6.363063 samples/s. The B200 run used a different topology and compute runtime,
+with shared-host contention recorded. These measurements do not isolate a
+hardware-only improvement. The unavailable historical dataset remains
+non-comparable, and `reference_benchmark_beaten` remains false.
+
+The private runtime overlay is separate from the unchanged public image digest.
+The maintained four-instance workflow still defaults to its original compute
+stack and activation checkpointing on; the measured candidate must not be
+described as qualification of the unmodified image or default workflow.
+
+The same activation-off configuration subsequently completed the full epoch
+and reached live-verified terminal `SUCCEEDED` on 2026-09-24.
+It processed **115,620 anchors in 1,205 updates**, including the actual 36-anchor
+tail, at **6.921861 aggregate samples/s** and **6.940044 median steady
+samples/s**. The aggregate uses measured training-update durations; validation,
+qualification, checkpoint I/O and the separate continuation update are excluded.
+The steady median uses 149 complete eight-update windows after the first
+six updates; the trailing partial window remains included in the aggregate.
+It is **8.95% numerically above** the public B200 aggregate of
+6.353262 samples/s, with the topology and compute-runtime differences described
+above. This is a complete-epoch measurement, separate from the 30-update
+profile comparisons.
+
+Both complete held-out passes processed 12,390 anchors. Validation loss changed
+from **3.069520630549** to **0.471179730231**. The final loss satisfies the
+predeclared maximum of 0.47188222932935736; full-epoch quality and fresh-resume
+acceptance passed.
+All losses and update durations were finite. Both three-phase numerical
+qualifications passed, and fresh step 1,206 matched the separately measured
+uninterrupted continuation in sample count, loss, model/optimizer/scheduler
+state and current CUDA RNG state. Checkpoint restoration also verified the
+saved cursor, normalization and all four ranks' complete RNG state.
+All eight phases verified the selected activation policy, loaded compute
+runtime and the same 19 training-source file hashes. Published result artifacts
+passed readback, and throughput was independently recomputed from the complete
+measurement log.
+
+After the terminal audit, NPA removed the owned controller and stopped its
+owned local APIs, then destroyed this experiment's four GPU instances and CPU
+helper. Provider inventory verified absence of the owned cluster, instances
+and managed root disks. Artifact storage was retained. This cleanup does not
+resolve the earlier B200 resources whose ownership and provider access remain
+incomplete.
 
 The renderer sets `NPA_FLEX_PI_NODE_COUNT` from the resolved resource profile
 (one by default). The adapter cross-checks it against SkyPilot's node rank and
