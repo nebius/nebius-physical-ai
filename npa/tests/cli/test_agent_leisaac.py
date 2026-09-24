@@ -121,6 +121,47 @@ def _manifest_v2(**overrides):
     return data
 
 
+def _health_payload(
+    manifest: dict,
+    *,
+    schema: str,
+    readiness_field: str,
+    readiness_value: object,
+    view_orbit: object = False,
+) -> dict:
+    """Build a schema-appropriate health attestation for boundary tests."""
+
+    payload = {
+        "schema": schema,
+        "state": "ready",
+        readiness_field: readiness_value,
+        "run_id": manifest["run_id"],
+        "task": manifest["task"],
+        "source_commit": manifest["source_commit"],
+        "signal_port": LEISAAC_SIGNAL_PORT,
+        "view_orbit": view_orbit,
+    }
+    if schema == "npa.leisaac.health.v1":
+        payload["session_nonce"] = manifest["session_nonce"]
+        return payload
+    payload.update(
+        {
+            "session_attestation": manifest["session_attestation"],
+            "task_registry_fingerprint": manifest["task_registry_fingerprint"],
+            "environment_id": manifest["environment_id"],
+            "environment_index": manifest["environment_index"],
+            "seed": manifest["seed"],
+            "recorder": {
+                "task": manifest["task"],
+                "environment_id": manifest["environment_id"],
+                "environment_index": manifest["environment_index"],
+                "dataset_uri": manifest["dataset_uri"],
+            },
+        }
+    )
+    return payload
+
+
 def test_selected_run_requires_safe_exact_identifier() -> None:
     # An unrelated shared-viewer selection must not turn the default status
     # probe into remote artifact discovery. The UI passes selected artifacts as
@@ -488,6 +529,82 @@ def test_live_health_attestation_gates_secret_free_status() -> None:
     serialized = repr(payload)
     assert manifest["session_nonce"] not in serialized
     assert manifest["service_url"] not in serialized
+
+
+@pytest.mark.parametrize(
+    ("schema", "readiness_field", "readiness_value", "expected_available"),
+    [
+        ("npa.leisaac.health.v2", "stream_ready", True, True),
+        ("npa.leisaac.health.v2", "stream_ready", False, False),
+        ("npa.leisaac.health.v2", "stream_ready", "false", False),
+        ("npa.leisaac.health.v2", "stream_ready", 1, False),
+        ("npa.leisaac.health.v1", "webrtc_ready", True, True),
+        ("npa.leisaac.health.v1", "webrtc_ready", False, False),
+        ("npa.leisaac.health.v1", "webrtc_ready", "false", False),
+        ("npa.leisaac.health.v1", "webrtc_ready", 1, False),
+    ],
+)
+def test_health_readiness_requires_literal_true(
+    schema: str,
+    readiness_field: str,
+    readiness_value: object,
+    expected_available: bool,
+) -> None:
+    manifest = (
+        normalize_manifest(_manifest_v2(), expected_run_id="leisaac-live-1")[0]
+        if schema == "npa.leisaac.health.v2"
+        else _normalized()
+    )
+    assert manifest is not None
+
+    health_payload = _health_payload(
+        manifest,
+        schema=schema,
+        readiness_field=readiness_field,
+        readiness_value=readiness_value,
+    )
+    if readiness_value == "false":
+        health_payload["detail"] = "x" * 1024
+    health, reason = validate_health(manifest, health_payload)
+    payload = status_payload(manifest, health, reason=reason)
+
+    assert payload["available"] is expected_available
+    if expected_available:
+        assert health is not None
+        assert reason == ""
+    else:
+        assert health is None
+        assert reason.startswith("LeIsaac service is not ready:")
+        assert len(reason) <= 288
+
+
+@pytest.mark.parametrize(
+    ("view_orbit", "expected_value"),
+    [(False, False), (True, True), ("false", None)],
+)
+def test_health_view_orbit_requires_a_boolean(
+    view_orbit: object, expected_value: bool | None
+) -> None:
+    manifest = _normalized()
+    health, reason = validate_health(
+        manifest,
+        _health_payload(
+            manifest,
+            schema="npa.leisaac.health.v1",
+            readiness_field="webrtc_ready",
+            readiness_value=True,
+            view_orbit=view_orbit,
+        ),
+    )
+
+    if expected_value is None:
+        assert health is None
+        assert "view-orbit telemetry" in reason
+        assert status_payload(manifest, health, reason=reason)["available"] is False
+    else:
+        assert reason == ""
+        assert health is not None
+        assert health["view_orbit"] is expected_value
 
 
 def test_v2_manifest_and_health_bind_task_environment_dataset_and_recorder() -> None:
