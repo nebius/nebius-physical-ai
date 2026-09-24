@@ -8,7 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 from npa.clients.config import StorageConfig
-from npa.orchestration.npa_workflow.run_resolution import resolve_run
+from npa.orchestration.npa_workflow.run_resolution import (
+    RunResolution,
+    list_resolved_artifacts,
+    resolve_run,
+)
 from npa.orchestration.npa_workflow.submission_state import update_submission_state
 from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 from npa.orchestration.skypilot.workflow_state import WorkflowStateError
@@ -532,13 +536,141 @@ def test_explicit_nested_uri_supports_manifest_pending_exact_prefix(
     assert resolved.found is True
     assert resolved.manifest_pending is True
     assert resolved.source == "explicit_workflow_s3_uri"
+    assert list_resolved_artifacts(resolved) == [f"s3://alias-bucket/{partial_key}"]
     assert resolver_env.queries == [
         (
             "alias-bucket",
             f"runs/{run_id}/{workflow}/",
             {"MaxItems": 1, "PageSize": 1},
-        )
+        ),
+        (
+            "alias-bucket",
+            f"runs/{run_id}/{workflow}/",
+            {"MaxItems": 10_000, "PageSize": 1000},
+        ),
     ]
+
+
+def _resolved_declarative_run(
+    resolver_env: ExactS3, *, run_id: str = "declarative-artifacts"
+) -> tuple[RunResolution, str]:
+    workflow = "token-factory-caption"
+    root = f"runs/{run_id}/{workflow}"
+    manifest = _manifest(run_id, workflow=workflow)
+    manifest["run_prefix_uri"] = f"s3://alias-bucket/{root}"
+    resolver_env.put_json(
+        "alias-bucket", f"{root}/npa-workflow/manifest.json", manifest
+    )
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}/npa-workflow",
+    )
+    return resolved, root
+
+
+def test_completed_declarative_run_lists_exact_root_outputs(
+    resolver_env: ExactS3,
+) -> None:
+    resolved, root = _resolved_declarative_run(resolver_env)
+    expected = {
+        f"s3://alias-bucket/{root}/caption/captions.json",
+        f"s3://alias-bucket/{root}/reports/result.future-format",
+    }
+    for uri in expected:
+        resolver_env.objects[
+            ("alias-bucket", uri.removeprefix("s3://alias-bucket/"))
+        ] = b"output"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{root}/npa-workflow/runtime.json",
+        {"schema_version": "npa.workflow.runtime.v1", "run_id": resolved.run_id},
+    )
+    resolver_env.objects[
+        ("alias-bucket", f"{root}/npa-workflow/supervisor/attempt.json")
+    ] = b"{}"
+    resolver_env.objects[
+        ("alias-bucket", f"{root}-other/reports/not-this-run.json")
+    ] = b"{}"
+
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert set(artifacts) == expected
+    assert resolver_env.queries[-1][1] == f"{root}/"
+
+
+def test_completed_declarative_stage_filter_is_an_exact_component(
+    resolver_env: ExactS3,
+) -> None:
+    resolved, root = _resolved_declarative_run(resolver_env, run_id="declarative-stage")
+    for relative in (
+        "train/model.bin",
+        "train-extra/not-train.bin",
+        "eval/metrics.json",
+    ):
+        resolver_env.objects[("alias-bucket", f"{root}/{relative}")] = b"output"
+
+    artifacts = list_resolved_artifacts(resolved, stage="train")
+
+    assert artifacts == [f"s3://alias-bucket/{root}/train/model.bin"]
+
+
+def test_completed_declarative_artifact_failure_is_typed(
+    resolver_env: ExactS3,
+) -> None:
+    resolved, _root = _resolved_declarative_run(
+        resolver_env, run_id="declarative-provider-error"
+    )
+    resolver_env.failure = PermissionError("fixture listing denied")
+
+    with pytest.raises(WorkflowStateError, match="artifact verification unavailable"):
+        list_resolved_artifacts(resolved)
+
+
+def test_legacy_manifest_keeps_historical_artifact_layout(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "legacy-artifacts"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"checkpoints/{run_id}/manifest.json",
+        {
+            "schema_version": 1,
+            "run_id": run_id,
+            "workflow_name": "ordinary",
+            "stages": {"train": {"name": "train"}},
+        },
+    )
+    legacy = f"checkpoints/{run_id}/artifacts/train/model.bin"
+    resolver_env.objects[("alias-bucket", legacy)] = b"model"
+
+    resolved = resolve_run(run_id, project="paidf")
+    artifacts = list_resolved_artifacts(resolved, stage="train")
+
+    assert artifacts == [f"s3://alias-bucket/{legacy}"]
+    assert resolver_env.queries[-1][1] == f"checkpoints/{run_id}/artifacts/train/"
+
+
+@pytest.mark.parametrize("run_id", ["bare-v1-artifacts", "npa-workflow"])
+def test_v1_shaped_manifest_at_bare_root_keeps_historical_layout(
+    resolver_env: ExactS3, run_id: str
+) -> None:
+    root = f"checkpoints/{run_id}"
+    manifest = _manifest(run_id, workflow="ordinary")
+    manifest["run_prefix_uri"] = f"s3://alias-bucket/{root}"
+    resolver_env.put_json("alias-bucket", f"{root}/manifest.json", manifest)
+    legacy = f"{root}/artifacts/train/model.bin"
+    resolver_env.objects[("alias-bucket", legacy)] = b"model"
+    resolver_env.objects[("alias-bucket", f"{root}/logs/train/run.log")] = b"log"
+    resolver_env.objects[
+        ("alias-bucket", "checkpoints/unrelated-run/train/secret.bin")
+    ] = b"other-run"
+
+    resolved = resolve_run(run_id, project="paidf")
+    artifacts = list_resolved_artifacts(resolved, stage="train")
+
+    assert artifacts == [f"s3://alias-bucket/{legacy}"]
+    assert resolver_env.queries[-1][1] == f"{root}/artifacts/train/"
 
 
 def test_explicit_nested_uri_must_contain_supplied_run_id(
