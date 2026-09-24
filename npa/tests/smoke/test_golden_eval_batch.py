@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -70,6 +71,52 @@ def test_run_all_serverless_parallel(mock_submit) -> None:
     assert mock_submit.call_count == 2
     assert not batch.ok
     assert sum(1 for r in batch.ran if r.ok) == 1
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected_ok", "expected_exit_code"),
+    [
+        pytest.param({"ok": True}, True, 0, id="true"),
+        pytest.param({"ok": False}, False, 1, id="false"),
+        pytest.param({}, False, 1, id="missing"),
+        pytest.param({"ok": "true"}, False, 1, id="true-string"),
+        pytest.param({"ok": "false"}, False, 1, id="false-string"),
+        pytest.param({"ok": 1}, False, 1, id="one"),
+        pytest.param({"ok": 0}, False, 1, id="zero"),
+        pytest.param({"ok": None}, False, 1, id="null"),
+        pytest.param({"ok": []}, False, 1, id="list"),
+        pytest.param({"ok": {}}, False, 1, id="mapping"),
+    ],
+)
+@patch("npa.smoke.serverless_runner.submit_golden_eval")
+def test_run_container_eval_serverless_requires_literal_true(
+    mock_submit, detail, expected_ok, expected_exit_code
+) -> None:
+    mock_submit.return_value = detail
+
+    result = run_container_eval("retargeting", serverless=True)
+
+    assert result.ok is expected_ok
+    assert result.exit_code == expected_exit_code
+
+
+@patch("npa.smoke.serverless_runner.submit_golden_eval")
+def test_run_all_serverless_false_like_strings_do_not_pass(mock_submit) -> None:
+    mock_submit.side_effect = [
+        {"ok": True, "status": "completed"},
+        {"ok": "true", "status": "completed"},
+        {"ok": "false", "status": "failed"},
+    ]
+
+    batch = run_all(
+        ["retargeting", "cosmos2-transfer", "fiftyone"],
+        serverless=True,
+        parallel=1,
+    )
+
+    summary = json.loads(batch.to_json())
+    assert summary["passed"] == 1
+    assert summary["failed"] == 2
 
 
 @patch("npa.smoke.serverless_runner.submit_golden_eval")

@@ -160,11 +160,12 @@ def run_container_eval(
                 command=ge.command,
                 detail={"error": type(exc).__name__, "message": str(exc)},
             )
+        passed = detail.get("ok") is True
         return ContainerRunResult(
             name=name,
             mode=mode,
-            ok=bool(detail.get("ok")),
-            exit_code=0 if detail.get("ok") else 1,
+            ok=passed,
+            exit_code=0 if passed else 1,
             status=ge.status,
             gpu=ge.gpu,
             command=ge.command,
