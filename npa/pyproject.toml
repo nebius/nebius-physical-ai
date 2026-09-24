@@ -71,6 +71,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mjlab = ["mjlab==1.6.0", "uvicorn>=0.52.4"]
+encord = ["encord>=0.1.202,<0.2"]
 studio = ["edge-tts==7.2.8"]
 # SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
 orchestration = []
