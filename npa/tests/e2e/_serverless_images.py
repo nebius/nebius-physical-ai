@@ -15,15 +15,11 @@ _RT_CORE_SERVERLESS_GPU = "gpu-rtx6000"
 
 def resolve_registry() -> str:
     """Return the configured live registry prefix, or the placeholder when unset."""
-    return (
-        os.environ.get("NPA_E2E_REGISTRY", "").strip()
-        or os.environ.get("NPA_REGISTRY", "").strip()
-        or _PLACEHOLDER_REGISTRY
-    )
+    return os.environ.get("NPA_E2E_REGISTRY", "").strip() or _PLACEHOLDER_REGISTRY
 
 
 def resolve_image(image_or_repo_tag: str) -> str:
-    """Rewrite placeholder registry images to ``NPA_REGISTRY`` / ``NPA_E2E_REGISTRY``.
+    """Rewrite public placeholders only through explicit ``NPA_E2E_REGISTRY``.
 
     Accepts either a full image reference or ``npa-<tool>:<tag>``.
     """

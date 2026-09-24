@@ -8,6 +8,7 @@ import stat
 import tempfile
 import fcntl
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -21,8 +22,9 @@ CREDENTIALS_PATH = NPA_CONFIG_DIR / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
 FOXGLOVE_API_TOKEN_KEY = "FOXGLOVE_API_TOKEN"
-ENCORD_ENV_KEYS = ("ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64")
-ENCORD_TOKEN_KEYS = (*ENCORD_ENV_KEYS, "ENCORD_SSH_KEY_FILE")
+ENCORD_ENV_KEYS = ("ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64", "ENCORD_SSH_KEY_FILE")
+ENCORD_TOKEN_KEYS = ENCORD_ENV_KEYS
+ANTIOCH_TOKEN_KEY = "ANTIOCH_TOKEN"
 KNOWN_TOKEN_KEYS = (
     "HF_TOKEN",
     TOKEN_FACTORY_ENV_KEY,
@@ -30,8 +32,10 @@ KNOWN_TOKEN_KEYS = (
 )
 SUPPORTED_ENV_CREDENTIALS = (
     "NEBIUS_TOKEN_FACTORY_KEY",
+    "TYPESAFE_API_KEY",
     FOXGLOVE_API_TOKEN_KEY,
     *ENCORD_ENV_KEYS,
+    ANTIOCH_TOKEN_KEY,
     "HF_TOKEN",
     "NGC_API_KEY",
     "NGC_ORG",
@@ -83,6 +87,7 @@ class CredentialsConfig:
     s3_project_id: str = ""
     s3_ownership: str = ""
     foxglove_api_token: str = field(default="", repr=False)
+    antioch_token: str = field(default="", repr=False)
 
     @property
     def hf_token(self) -> str:
@@ -349,6 +354,7 @@ def load_credentials(
     file_ssh: dict[str, str] = {}
     file_storage: dict[str, str] = {}
     foxglove_api_token = ""
+    antioch_token = ""
 
     if credentials_path.exists():
         # Validate once up front so a present-but-corrupt store can never look
@@ -359,6 +365,7 @@ def load_credentials(
             warnings.append(PERMISSIONS_WARNING)
         file_tokens = _read_file_tokens(credentials_path)
         foxglove_api_token = file_tokens.pop(FOXGLOVE_API_TOKEN_KEY, "")
+        antioch_token = file_tokens.pop(ANTIOCH_TOKEN_KEY, "")
         file_ssh = _read_file_ssh(credentials_path)
         file_storage = _read_file_storage(credentials_path)
 
@@ -375,6 +382,9 @@ def load_credentials(
     foxglove_api_token = str(
         env.get(FOXGLOVE_API_TOKEN_KEY) or foxglove_api_token or ""
     )
+    # Antioch credentials belong only in the local Antioch client process.
+    # Excluding them from tokens also prevents generic process-wide export.
+    antioch_token = str(env.get(ANTIOCH_TOKEN_KEY) or antioch_token or "")
 
     for message in warnings:
         if warn is not None:
@@ -412,6 +422,7 @@ def load_credentials(
         s3_project_id=file_storage.get("project_id", ""),
         s3_ownership=file_storage.get("ownership", ""),
         foxglove_api_token=foxglove_api_token,
+        antioch_token=antioch_token,
     )
 
 
@@ -550,6 +561,7 @@ def persist_supported_env_credentials(
             TOKEN_FACTORY_ENV_KEY,
             FOXGLOVE_API_TOKEN_KEY,
             *ENCORD_ENV_KEYS,
+            ANTIOCH_TOKEN_KEY,
         )
         if str(env.get(name) or "")
     }
@@ -658,18 +670,24 @@ def _private_store_lock(path: Path):
 def update_private_yaml(
     path: Path,
     updater: Callable[[dict[str, Any]], Mapping[str, Any] | None],
+    *,
+    skip_if_unchanged: bool = False,
 ) -> Path:
     """Lock and atomically update a protected YAML mapping.
 
     The updater receives the latest document after the lock is acquired. This
     prevents concurrent configure/agent commands from replacing one another's
     successful fields with an older snapshot.
+
+    Resolution paths can preserve exact verified file bytes when the document
+    is unchanged. Explicit writes and durability probes retain the default.
     """
 
     with _private_store_lock(path):
         existing: dict[str, Any] = {}
         if path.exists():
             existing = _read_credentials_document(path)
+        original = deepcopy(existing) if skip_if_unchanged else None
         updated = updater(existing)
         if updated is None:
             path.unlink(missing_ok=True)
@@ -678,6 +696,9 @@ def update_private_yaml(
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
+            return path
+        if skip_if_unchanged and path.exists() and updated == original:
+            path.chmod(0o600, follow_symlinks=False)
             return path
         return write_private_yaml(path, updated)
 

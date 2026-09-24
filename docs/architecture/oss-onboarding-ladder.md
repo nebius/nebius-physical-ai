@@ -9,7 +9,7 @@ ladder; it does **not** replace per-solution registry catalogs.
 | Tier | When to stop here | What you get | Surfaces |
 | --- | --- | --- | --- |
 | **0 — BYOF container** | Validate an OSS repo runs on Nebius GPUs without a marketplace product | Image in an operator-owned standards registry + container-verify smoke | `npa workbench byof run`, `workbench.byof.repo` toolRef, `byof.yaml` |
-| **1 — Solution workflow** | Repeatable pipeline for one OSS capability (train/eval/datagen) | Declarative `npa.workflow` YAML + SkyPilot smoke | Catalog `toolRef` + workflow under `npa/workflows/workbench/npa-workflows/` |
+| **1 — Solution workflow** | Repeatable pipeline for one OSS capability (train/eval/datagen) | Declarative `npa.workflow` YAML + SkyPilot smoke | Catalog `toolRef` + workflow under `workflows/testing/` |
 | **2 — First-class workbench tool** | Shared marketplace tool with API/CLI/SDK parity | FastAPI service, golden eval, skill, image in `CONTAINER_IMAGE_NAMES` | `npa workbench <tool>`, `npa.sdk.workbench.<tool>`, catalog entries |
 
 ```mermaid
@@ -44,7 +44,7 @@ YAML:
 
 ```bash
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof.yaml --json
+  workflows/testing/byof.yaml --json
 ```
 
 ## Tier 1 — Solution workflow
@@ -88,7 +88,7 @@ a skill lands).
 
 | Model | Path | Use |
 | --- | --- | --- |
-| Declarative `npa.workflow` | `npa/workflows/workbench/npa-workflows/` | Agent/plan/validate; `toolRef` catalog |
+| Declarative `npa.workflow` | `workflows/` | Agent/plan/validate; `toolRef` catalog |
 | Raw SkyPilot task YAML | Tool-specific guarded examples or customer-owned paths | Single-task execution modes that are not workflow authoring surfaces |
 
 BYOF uses both: `byof.yaml` for the declarative contract, and guarded SkyPilot

@@ -31,7 +31,9 @@ def _write_rollout(root: Path, name: str, frames: int = 2) -> Path:
     rollout = root / name
     rollout.mkdir(parents=True, exist_ok=True)
     for index in range(frames):
-        Image.new("RGB", (32, 24), (10 * index, 20, 30)).save(rollout / f"frame_{index:03d}.png")
+        Image.new("RGB", (32, 24), (10 * index, 20, 30)).save(
+            rollout / f"frame_{index:03d}.png"
+        )
     return rollout
 
 
@@ -115,7 +117,11 @@ def test_aggregate_gate_is_the_mean_not_the_pass_rate() -> None:
 
 def test_aggregate_handles_an_empty_set_without_dividing_by_zero() -> None:
     report = aggregate_loop_report(
-        [], model="m", frame_selection="keyframes", success_threshold=0.8, output_dir="out"
+        [],
+        model="m",
+        frame_selection="keyframes",
+        success_threshold=0.8,
+        output_dir="out",
     )
 
     assert report["total_rollouts"] == 0
@@ -142,7 +148,9 @@ def test_report_uri_for(output_path: str, expected: str) -> None:
 # ------------------------------------------------------------------------ end to end
 
 
-def test_loop_scores_every_rollout_and_writes_both_artifact_levels(tmp_path: Path) -> None:
+def test_loop_scores_every_rollout_and_writes_both_artifact_levels(
+    tmp_path: Path,
+) -> None:
     """The stub backend needs no GPU, so the whole loop is checkable offline."""
 
     root = tmp_path / "rollouts"

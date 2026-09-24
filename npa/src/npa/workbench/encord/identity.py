@@ -149,12 +149,37 @@ def resolve_exact_identity(
     candidates: Iterable[Any],
     sidecar: IdentitySidecarRow | None = None,
 ) -> IdentityResolution:
+    """Resolve one item from durable metadata, transport URLs, or a sidecar.
+
+    Args:
+        source_uri: Canonical S3 object identity.
+        record_id: Optional source record identifier.
+        submitted_object_url: Current HTTP transport locator.
+        candidates: Encord inventory views, possibly sharing a UUID.
+        sidecar: Optional operator assertion of source and item identity.
+
+    Returns:
+        The resolved UUID and signal, or an unresolved/conflict result.
+
+    Raises:
+        EncordToolError: The submitted object URL is invalid.
+    """
     expected_url = (
         normalize_object_url(submitted_object_url) if submitted_object_url else ""
     )
     views = [IdentityCandidate.from_item(candidate) for candidate in candidates]
     views = [view for view in views if view.item_uuid]
 
+    matched = _match_candidates(views, source_uri, record_id, expected_url)
+    sidecar_error = _match_sidecar(matched, sidecar, source_uri, record_id)
+    if sidecar_error is not None:
+        return sidecar_error
+    return _resolve_matches(matched, views, source_uri, record_id, expected_url)
+
+
+def _match_candidates(
+    views: list[IdentityCandidate], source_uri: str, record_id: str, expected_url: str
+) -> list[tuple[IdentityCandidate, str]]:
     matched: list[tuple[IdentityCandidate, str]] = []
     for view in views:
         signal = ""
@@ -168,6 +193,13 @@ def resolve_exact_identity(
             continue
         matched.append((view, signal))
 
+    return matched
+
+
+def _match_sidecar(
+    matched: list[tuple[IdentityCandidate, str]], sidecar: IdentitySidecarRow | None,
+    source_uri: str, record_id: str,
+) -> IdentityResolution | None:
     if sidecar is not None:
         if sidecar.source_uri != source_uri:
             return IdentityResolution(
@@ -191,7 +223,16 @@ def resolve_exact_identity(
                 )
             )
 
-    uuids = {view.item_uuid for view, _ in matched}
+    return None
+
+
+def _identity_conflicts(
+    views: list[IdentityCandidate], uuids: set[str], source_uri: str,
+    record_id: str, expected_url: str,
+) -> list[str]:
+    # Metadata describes the durable S3 object; URLs are transport locators that
+    # can change host or representation across inventory views and later pushes.
+    metadata_uuids = {view.item_uuid for view in views if view.source_uri == source_uri}
     conflicts: list[str] = []
     for view in views:
         if view.item_uuid not in uuids:
@@ -200,8 +241,20 @@ def resolve_exact_identity(
             conflicts.append(f"{view.item_uuid}:source_uri")
         if record_id and view.record_id and view.record_id != record_id:
             conflicts.append(f"{view.item_uuid}:record_id")
-        if expected_url and view.object_url and view.object_url != expected_url:
+        if (
+            view.item_uuid not in metadata_uuids
+            and expected_url and view.object_url and view.object_url != expected_url
+        ):
             conflicts.append(f"{view.item_uuid}:object_url")
+    return conflicts
+
+
+def _resolve_matches(
+    matched: list[tuple[IdentityCandidate, str]], views: list[IdentityCandidate],
+    source_uri: str, record_id: str, expected_url: str,
+) -> IdentityResolution:
+    uuids = {view.item_uuid for view, _ in matched}
+    conflicts = _identity_conflicts(views, uuids, source_uri, record_id, expected_url)
     if conflicts or len(uuids) > 1:
         detail = ", ".join(sorted(conflicts)) or "multiple exact UUID candidates"
         return IdentityResolution(

@@ -24,15 +24,15 @@ iteration without customer-specific names or infrastructure baked into source.
 
 ## Three-Tier Contract
 
-- CLI: use `npa workbench workflow`, `npa workbench trigger`, and tool commands
+- CLI: use `npa workbench workflow` and tool commands
   such as Genesis, LeRobot, SONIC, MJLab, Retargeting, LanceDB, Cosmos, and
   VLM-eval.
 - SDK: keep workflow submission and config materialization in shared helpers so
   notebooks and services use the same artifact paths.
-- Workflows: `npa-workflows/vlm-eval-loop.yaml` is the executable reference for the
+- Workflows: `workflows/testing/vlm-eval-loop.yaml` is the executable reference for the
   VLM-eval gating loop (scores a whole rollout set and writes
   `task_success_report.json`). The staged engine's single maintained end-to-end
-  YAML is `npa/workflows/workbench/npa-workflows/sim2real.yaml`; similarly named
+  YAML is `workflows/main/sim2real.yaml`; similarly named
   npa.workflow files are explicitly demo-only DSL fixtures.
   `sim-to-real-pipeline.yaml` and `sim-to-real-trigger.yaml` are retired — the first ran
   `npa.workflows.sim_to_real real-loop`, which raises a DeprecationWarning pointing here.

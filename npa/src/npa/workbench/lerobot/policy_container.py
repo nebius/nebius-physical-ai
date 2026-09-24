@@ -374,6 +374,7 @@ def build_lerobot_train_command(
     resume: bool = False,
     extra_args: list[str] | None = None,
     training_config: TrainingConfig | None = None,
+    lerobot_version: str | None = None,
 ) -> list[str]:
     """Build a real `lerobot-train` command for a local LeRobotDataset."""
 
@@ -400,7 +401,7 @@ def build_lerobot_train_command(
         f"--output_dir={output_dir}",
         f"--steps={steps}",
         f"--save_freq={save_freq}",
-        train_env_eval_arg(eval_freq),
+        train_env_eval_arg(eval_freq, version=lerobot_version),
         f"--log_freq={log_freq}",
         f"--batch_size={batch_size}",
         f"--num_workers={num_workers}",
@@ -643,7 +644,7 @@ def validate_lerobot_checkpoint(
             raise PolicyContainerError(
                 "torch is required to validate pytorch_model.bin"
             ) from exc
-        payload = torch.load(str(weight_file), map_location="cpu")
+        payload = torch.load(str(weight_file), map_location="cpu", weights_only=True)
         tensors = payload if isinstance(payload, dict) else {}
     tensor_count = 0
     parameter_count = 0

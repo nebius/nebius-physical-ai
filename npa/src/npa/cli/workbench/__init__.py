@@ -40,21 +40,49 @@ def _groot_light_app() -> typer.Typer:
     return light
 
 
+def _nurec_light_app() -> typer.Typer:
+    """Build the dependency-minimal NuRec surface used by viewer workers."""
+
+    from npa.cli.nurec import app as nurec_app
+
+    light = typer.Typer(
+        name="workbench",
+        help="Physical AI workbench tools.",
+        no_args_is_help=True,
+    )
+
+    @light.callback()
+    def main() -> None:
+        """Physical AI workbench tools."""
+
+        load_credentials(
+            warn=lambda msg: typer.echo(msg, err=True),
+            export_to_environment=True,
+        )
+
+    light.add_typer(nurec_app, name="nurec")
+    return light
+
+
 def _full_app() -> typer.Typer:
     """Build the complete workstation command tree on ordinary clients."""
 
     from npa.cli.cosmos import app as cosmos_app
     from npa.cli.fiftyone import app as fiftyone_app
     from npa.cli.genesis import app as genesis_app
+    from npa.cli.workbench.newton import app as newton_app
     from npa.cli.groot import app as groot_app
     from npa.cli.isaac_lab import app as isaac_lab_app
     from npa.cli.nurec import app as nurec_app
     from npa.cli.workbench.alpamayo2_super import app as alpamayo2_super_app
+    from npa.cli.workbench.antioch import app as antioch_app
+    from npa.cli.workbench.artifacts_gc import app as artifacts_gc_app
     from npa.cli.workbench.byof import app as byof_app
     from npa.cli.workbench.cosmos2 import app as cosmos2_app
     from npa.cli.workbench.cosmos3 import app as cosmos3_app
     from npa.cli.workbench.cosmos_curate import app as cosmos_curate_app
     from npa.cli.workbench.cosmos_evaluator import app as cosmos_evaluator_app
+    from npa.cli.workbench.curobo import app as curobo_app
     from npa.cli.workbench.data import app as data_app
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
@@ -63,12 +91,17 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.golden_eval import app as golden_eval_app
     from npa.cli.workbench.health import app as health_app
     from npa.cli.workbench.insights import app as insights_app
+    from npa.cli.workbench.isaac_arena import app as isaac_arena_app
     from npa.cli.workbench.lancedb import app as lancedb_app
     from npa.cli.workbench.leisaac import app as leisaac_app
     from npa.cli.workbench.lerobot import app as lerobot_app
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
+    from npa.cli.workbench.molmoact import app as molmoact_app
+    from npa.cli.workbench.openvla import app as openvla_app
+    from npa.cli.workbench.openarm import app as openarm_app
+    from npa.cli.workbench.robocasa import app as robocasa_app
     from npa.cli.workbench.scenario_gen import app as scenario_gen_app
     from npa.cli.workbench.sim2real import app as sim2real_app
     from npa.cli.workbench.sim2real_envgen import app as sim2real_envgen_app
@@ -76,6 +109,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.token_factory import app as token_factory_app
     from npa.cli.workbench.vlm_eval import app as vlm_eval_app
     from npa.cli.workbench.workflow import app as workflow_app
+
     full = typer.Typer(
         name="workbench",
         help="Physical AI workbench tools.",
@@ -91,6 +125,7 @@ def _full_app() -> typer.Typer:
             export_to_environment=True,
         )
 
+    full.add_typer(antioch_app, name="antioch")
     full.add_typer(lerobot_app, name="lerobot")
     full.add_typer(cosmos_app, name="cosmos")
     full.add_typer(cosmos2_app, name="cosmos2")
@@ -102,13 +137,20 @@ def _full_app() -> typer.Typer:
     full.add_typer(genesis_app, name="genesis")
     full.add_typer(groot_app, name="groot")
     full.add_typer(isaac_lab_app, name="isaac-lab")
+    full.add_typer(isaac_arena_app, name="isaac-arena")
     full.add_typer(leisaac_app, name="leisaac")
     full.add_typer(nurec_app, name="nurec")
     full.add_typer(sonic_app, name="sonic")
     full.add_typer(mjlab_app, name="mjlab")
+    full.add_typer(molmoact_app, name="molmoact")
+    full.add_typer(openvla_app, name="openvla")
+    full.add_typer(openarm_app, name="openarm")
+    full.add_typer(robocasa_app, name="robocasa")
+    full.add_typer(newton_app, name="newton")
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
+    full.add_typer(curobo_app, name="curobo")
     full.add_typer(lancedb_app, name="lancedb")
     full.add_typer(detection_training_app, name="detection-training")
     full.add_typer(encord_app, name="encord")
@@ -120,6 +162,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(byof_app, name="byof")
     full.add_typer(workflow_app, name="workflow")
     full.add_typer(health_app, name="health")
+    full.add_typer(artifacts_gc_app, name="gc-artifacts")
     full.add_typer(sim2real_app, name="sim2real", hidden=True)
     # Internal typed surface for npa.workflow toolRefs. Keep it out of Workbench
     # help: the public Sim2Real command family remains intentionally retired.
@@ -130,12 +173,71 @@ def _full_app() -> typer.Typer:
     return full
 
 
+def _rerun_viewer_light_app() -> typer.Typer:
+    """Build the dependency-minimal nurec surface for the Rerun viewer image.
+
+    The npa-rerun-viewer image bakes the light flag, but the workflow stages it
+    exists for (``workbench.nurec.visualize`` / ``workbench.nurec.finalize``)
+    live under ``npa workbench nurec`` — without this registration those stages
+    fail with "No such command 'nurec'" even though the image's setup installed
+    the nurec runtime deps. The nurec CLI chain imports only stdlib + typer, so
+    it is safe on the dependency-minimal surface.
+    """
+
+    from npa.cli.nurec import app as nurec_app
+
+    light = typer.Typer(
+        name="workbench",
+        help="Physical AI workbench tools.",
+        no_args_is_help=True,
+    )
+
+    @light.callback()
+    def main() -> None:
+        """Physical AI workbench tools."""
+
+        load_credentials(
+            warn=lambda msg: typer.echo(msg, err=True),
+            export_to_environment=True,
+        )
+
+    light.add_typer(nurec_app, name="nurec")
+    return light
+
+
 if _LIGHT_IMPORT:
     # Capability images need only this one command and deliberately omit the
     # unrelated platform SDK dependency tree. Preserve the historical Cosmos2
     # surface unless an image explicitly declares another narrow capability.
     if _LIGHT_TOOL == "groot":
         app = _groot_light_app()
+    elif _LIGHT_TOOL in ("cosmos3-ray-serve",):
+        from npa.cli.workbench.cosmos3 import app as cosmos3_app
+
+        light = typer.Typer(
+            name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
+        )
+
+        @light.callback()
+        def _light_cosmos3_main() -> None:
+            pass
+
+        light.add_typer(cosmos3_app, name="cosmos3")
+        app = light
+    elif _LIGHT_TOOL == "nurec":
+        app = _nurec_light_app()
+    elif _LIGHT_TOOL == "rerun-viewer":
+        app = _rerun_viewer_light_app()
+    elif _LIGHT_TOOL == "isaac-arena":
+        from npa.cli.workbench.isaac_arena import app
+    elif _LIGHT_TOOL == "openarm":
+        from npa.cli.workbench.openarm import app as openarm_app
+
+        light = typer.Typer(
+            name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
+        )
+        light.add_typer(openarm_app, name="openarm")
+        app = light
     else:
         from npa.cli.workbench.cosmos2 import app
 else:

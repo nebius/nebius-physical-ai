@@ -30,11 +30,12 @@ DEFAULT_API_KEY_ENV = "NEBIUS_TOKEN_FACTORY_KEY"
 DEFAULT_TIMEOUT_S = 600.0
 DEFAULT_RETRY_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
-DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
-# NVIDIA Cosmos3 Super-Reasoner: hosted vision-language physical-AI reasoner.
-# Confirm availability for your key with `npa workbench token-factory models`.
-DEFAULT_REASONER_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+# Public serverless replacements from the August 2026 deprecation notice.
+# Explicit model IDs and endpoint overrides remain authoritative, including
+# dedicated endpoints serving older models.
+DEFAULT_TEXT_MODEL = "nvidia/Nemotron-3_5-Lightning"
+DEFAULT_VISION_MODEL = "MiniMaxAI/MiniMax-M3"
+DEFAULT_REASONER_MODEL = "MiniMaxAI/MiniMax-M3"
 
 # Batch inference is a separate entitlement from real-time chat: a model can
 # serve /chat/completions and still reject a batch operation. The batch default
@@ -50,13 +51,26 @@ BASE_URL_ENV_KEYS = (
     "NEBIUS_TOKEN_FACTORY_BASE_URL",
     "NEBIUS_BASE_URL",
 )
-API_KEY_ENV_KEYS = (
-    DEFAULT_API_KEY_ENV,
-)
+API_KEY_ENV_KEYS = (DEFAULT_API_KEY_ENV,)
 
 
 class TokenFactoryError(RuntimeError):
     """Raised when a Token Factory request is misconfigured or fails."""
+
+
+def default_chat_extra(model: str) -> dict[str, Any]:
+    """Keep visible-output workloads from spending their allowance on thinking.
+
+    These are model-specific template parameters, verified on Token Factory.
+    Callers can explicitly enable thinking through ``extra``. Unknown and
+    dedicated model IDs receive no guessed template parameters.
+    """
+
+    if model == "nvidia/Nemotron-3_5-Lightning":
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    if model == "MiniMaxAI/MiniMax-M3":
+        return {"chat_template_kwargs": {"thinking_mode": "disabled"}}
+    return {}
 
 
 @dataclass(frozen=True)
@@ -119,10 +133,14 @@ def resolve_config(
     """
 
     env = _resolve_env(environ)
-    resolved_base = base_url.strip() or _first_env(env, BASE_URL_ENV_KEYS) or DEFAULT_BASE_URL
+    resolved_base = (
+        base_url.strip() or _first_env(env, BASE_URL_ENV_KEYS) or DEFAULT_BASE_URL
+    )
     resolved_key = api_key.strip()
     if not resolved_key:
-        key_candidates = (api_key_env, *API_KEY_ENV_KEYS) if api_key_env else API_KEY_ENV_KEYS
+        key_candidates = (
+            (api_key_env, *API_KEY_ENV_KEYS) if api_key_env else API_KEY_ENV_KEYS
+        )
         resolved_key = _first_env(env, key_candidates)
     if require_api_key and not resolved_key:
         raise TokenFactoryError(
@@ -132,29 +150,49 @@ def resolve_config(
         )
     if timeout_s <= 0:
         raise TokenFactoryError("timeout_s must be positive")
-    return TokenFactoryConfig(base_url=resolved_base, api_key=resolved_key, timeout_s=timeout_s)
+    return TokenFactoryConfig(
+        base_url=resolved_base, api_key=resolved_key, timeout_s=timeout_s
+    )
 
 
 def validate_model_access(api_key: str, model: str) -> TokenFactoryAccessResult:
     """Verify key scope, model availability, and ability to execute inference."""
 
     try:
-        client = TokenFactoryClient(resolve_config(api_key=api_key, environ={}))
+        # Probe the same endpoint runtime inference uses, including a dedicated
+        # deployment of a retired public model. Keep the supplied key exclusive
+        # so a missing preflight key cannot fall back to another account's key.
+        endpoint_env = {
+            key: os.environ[key] for key in BASE_URL_ENV_KEYS if key in os.environ
+        }
+        client = TokenFactoryClient(
+            resolve_config(api_key=api_key, environ=endpoint_env)
+        )
         if model not in client.list_models():
-            return TokenFactoryAccessResult(False, model, "model unavailable to this key")
+            return TokenFactoryAccessResult(
+                False, model, "model unavailable to this key"
+            )
         response = client.chat_completion(
             model=model,
             messages=[
                 {
                     "role": "user",
-                    "content": "Return the single JSON object {\"preflight\":true}.",
+                    "content": 'Return the single JSON object {"preflight":true}.',
                 }
             ],
             temperature=0.0,
             max_tokens=16,
         )
         if not response.get("choices"):
-            return TokenFactoryAccessResult(False, model, "inference returned no choice")
+            return TokenFactoryAccessResult(
+                False, model, "inference returned no choice"
+            )
+        choice = response["choices"][0]
+        visible, _ = split_reasoning(choice.get("message") or {})
+        if not visible or choice.get("finish_reason") == "length":
+            return TokenFactoryAccessResult(
+                False, model, "inference returned no complete visible answer"
+            )
         return TokenFactoryAccessResult(
             True, model, request_id=str(response.get("id") or "") or None
         )
@@ -183,7 +221,9 @@ def split_reasoning(message: dict[str, Any]) -> tuple[str, str | None]:
     if isinstance(content, str):
         match = _THINK_RE.match(content)
         if match:  # Cosmos 3: leading <think>...</think>
-            return content[match.end():].strip(), (match.group("reasoning").strip() or reasoning)
+            return content[match.end() :].strip(), (
+                match.group("reasoning").strip() or reasoning
+            )
         if "<think>" in content and "</think>" not in content:
             # Truncated mid-think (finish_reason=length): all reasoning, no answer.
             return "", (content.split("<think>", 1)[1].strip() or reasoning)
@@ -242,13 +282,20 @@ class TokenFactoryClient:
             "model": model,
             "messages": list(messages),
             "temperature": temperature,
+            **default_chat_extra(model),
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
         if extra:
+            template = payload.get("chat_template_kwargs", {})
             payload.update(extra)
+            if isinstance(extra.get("chat_template_kwargs"), dict):
+                payload["chat_template_kwargs"] = {
+                    **template,
+                    **extra["chat_template_kwargs"],
+                }
 
         data = self._post_json(self._config.chat_completions_url, payload)
         if not isinstance(data, dict):
@@ -301,7 +348,11 @@ class TokenFactoryClient:
         items = data.get("data") if isinstance(data, dict) else None
         if not isinstance(items, list):
             raise TokenFactoryError("Token Factory models response missing data list")
-        return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
+        return [
+            str(item["id"])
+            for item in items
+            if isinstance(item, dict) and item.get("id")
+        ]
 
     # ------------------------------------------------------------------
     # Batch inference.
@@ -336,10 +387,14 @@ class TokenFactoryClient:
         payload = {
             "name": name,
             "folder": folder or "/",
-            "schema": [{"name": key, "type": {"name": kind}} for key, kind in columns.items()],
+            "schema": [
+                {"name": key, "type": {"name": kind}} for key, kind in columns.items()
+            ],
             "rows": list(rows),
         }
-        return _expect_object(self._post_json(self._config.datasets_url, payload), "dataset")
+        return _expect_object(
+            self._post_json(self._config.datasets_url, payload), "dataset"
+        )
 
     def get_dataset(self, dataset_id: str) -> dict[str, Any]:
         url = f"{self._config.datasets_url}/{dataset_id}"
@@ -391,7 +446,9 @@ class TokenFactoryClient:
             "src": [{"id": dataset_id, "version": dataset_version, "mapping": mapping}],
             "params": {"model": model, "completion_window": completion_window},
         }
-        return _expect_object(self._post_json(self._config.operations_url, payload), "operation")
+        return _expect_object(
+            self._post_json(self._config.operations_url, payload), "operation"
+        )
 
     def get_operation(self, operation_id: str) -> dict[str, Any]:
         url = f"{self._config.operations_url}/{operation_id}"

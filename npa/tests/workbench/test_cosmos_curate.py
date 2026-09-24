@@ -43,7 +43,9 @@ UPSTREAM_META = {
     "video_codec": "h264",
     "num_bytes": 35265,
     "motion_score": {"global_mean": 0.00031337200198322535, "per_patch_min_256": 0.0},
-    "windows": [{"start_frame": 0, "end_frame": 72, "qwen_caption": "A test pattern in motion."}],
+    "windows": [
+        {"start_frame": 0, "end_frame": 72, "qwen_caption": "A test pattern in motion."}
+    ],
     "valid": False,
 }
 
@@ -74,12 +76,19 @@ def test_availability_without_a_checkout_names_the_env_var() -> None:
     assert "NPA_COSMOS_CURATE_SRC" in availability.reason()
 
 
-def test_availability_without_a_usable_encoder_explains_the_encoder_requirement() -> None:
+def test_availability_without_a_usable_encoder_explains_the_encoder_requirement() -> (
+    None
+):
     availability = CuratorAvailability(
-        source="/opt/cosmos-curate", importable=True, ffmpeg="/usr/bin/ffmpeg", encoders=()
+        source="/opt/cosmos-curate",
+        importable=True,
+        ffmpeg="/usr/bin/ffmpeg",
+        encoders=(),
     )
     assert not availability.can_run_in_process
-    assert "libopenh264" in availability.reason() and "h264_nvenc" in availability.reason()
+    assert (
+        "libopenh264" in availability.reason() and "h264_nvenc" in availability.reason()
+    )
 
 
 def test_availability_names_the_python_version_gap() -> None:
@@ -121,7 +130,9 @@ def test_availability_surfaces_an_import_failure() -> None:
     assert "cosmos_xenna" in availability.reason()
 
 
-def test_availability_prefers_nvenc_only_with_a_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_availability_prefers_nvenc_only_with_a_gpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     availability = CuratorAvailability(
         source="/opt/cosmos-curate",
         importable=True,
@@ -139,13 +150,19 @@ def test_availability_prefers_nvenc_only_with_a_gpu(monkeypatch: pytest.MonkeyPa
 def test_upstream_source_dir_requires_the_pipelines_package(tmp_path: Path) -> None:
     empty = tmp_path / "not-a-checkout"
     empty.mkdir()
-    assert upstream_mod.upstream_source_dir(environ={"NPA_COSMOS_CURATE_SRC": str(empty)}) is None
+    assert (
+        upstream_mod.upstream_source_dir(environ={"NPA_COSMOS_CURATE_SRC": str(empty)})
+        is None
+    )
 
     checkout = tmp_path / "checkout"
     (checkout / "cosmos_curator" / "pipelines").mkdir(parents=True)
-    assert upstream_mod.upstream_source_dir(
-        environ={"NPA_COSMOS_CURATE_SRC": str(checkout)}
-    ) == checkout
+    assert (
+        upstream_mod.upstream_source_dir(
+            environ={"NPA_COSMOS_CURATE_SRC": str(checkout)}
+        )
+        == checkout
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -186,14 +203,18 @@ def test_split_pipeline_argv_keeps_embeddings_when_requested() -> None:
 
 def test_split_pipeline_argv_omits_stride_flags_for_transnetv2() -> None:
     argv = split_pipeline_argv(
-        input_video_path="/in", output_clip_path="/out", splitting_algorithm="transnetv2"
+        input_video_path="/in",
+        output_clip_path="/out",
+        splitting_algorithm="transnetv2",
     )
     assert "--fixed-stride-split-duration" not in argv
 
 
 def test_split_pipeline_argv_rejects_an_unknown_algorithm() -> None:
     with pytest.raises(CosmosCurateError, match="fixed-stride or transnetv2"):
-        split_pipeline_argv(input_video_path="/in", output_clip_path="/out", splitting_algorithm="magic")
+        split_pipeline_argv(
+            input_video_path="/in", output_clip_path="/out", splitting_algorithm="magic"
+        )
 
 
 def test_split_pipeline_argv_requires_both_paths() -> None:
@@ -230,7 +251,9 @@ def test_ingest_output_is_empty_for_a_missing_tree(tmp_path: Path) -> None:
 
 def test_ingest_output_skips_unreadable_metadata(tmp_path: Path) -> None:
     _write_curator_output(tmp_path, clips=1)
-    (tmp_path / "metas" / "v0" / "broken.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "metas" / "v0" / "broken.json").write_text(
+        "{not json", encoding="utf-8"
+    )
     assert len(ingest_output(tmp_path)["clips"]) == 1
 
 
@@ -260,7 +283,10 @@ def test_stage_variants_names_each_download_after_its_variant(tmp_path: Path) ->
         str(augment), staged, store=object(), max_variants=0, warnings=warnings
     )
     assert set(variants.values()) == {"clip-a", "clip b"}
-    assert sorted(path.name for path in staged.iterdir()) == ["clip-a.mp4", "clip_b.mp4"]
+    assert sorted(path.name for path in staged.iterdir()) == [
+        "clip-a.mp4",
+        "clip_b.mp4",
+    ]
     assert any("no-video" in warning for warning in warnings)
 
 
@@ -329,7 +355,9 @@ def test_curate_augmented_summarizes_a_real_curator_tree(
         ),
     )
 
-    def fake_curate_videos(*, input_dir: Any, output_dir: Any, **kwargs: Any) -> CuratorRunResult:
+    def fake_curate_videos(
+        *, input_dir: Any, output_dir: Any, **kwargs: Any
+    ) -> CuratorRunResult:
         out = Path(output_dir)
         (out / "clips").mkdir(parents=True)
         (out / "metas" / "v0").mkdir(parents=True)
@@ -406,7 +434,9 @@ def test_the_gpu_encoder_is_only_chosen_when_a_device_is_really_there(
     monkeypatch.setattr(
         up.subprocess,
         "run",
-        lambda *a, **k: subprocess.CompletedProcess(a[0], returncode, stdout=stdout, stderr=""),
+        lambda *a, **k: subprocess.CompletedProcess(
+            a[0], returncode, stdout=stdout, stderr=""
+        ),
     )
     try:
         assert up._has_gpu() is expected
@@ -414,7 +444,9 @@ def test_the_gpu_encoder_is_only_chosen_when_a_device_is_really_there(
         up._has_gpu.cache_clear()
 
 
-def test_variants_whose_names_sanitize_alike_are_staged_separately(tmp_path: Path) -> None:
+def test_variants_whose_names_sanitize_alike_are_staged_separately(
+    tmp_path: Path,
+) -> None:
     """Every unsafe character maps to ``_``, so distinct variants can collide.
 
     Staged under one name the second download overwrites the first, and its clips are
@@ -443,7 +475,9 @@ def _weights_env(root: Path) -> dict[str, str]:
     return {"NPA_COSMOS_CURATE_WEIGHTS_DIR": str(root)}
 
 
-def test_an_interrupted_download_is_not_mistaken_for_a_finished_one(tmp_path: Path) -> None:
+def test_an_interrupted_download_is_not_mistaken_for_a_finished_one(
+    tmp_path: Path,
+) -> None:
     """Files on disk are not evidence of a complete fetch.
 
     Registry entries carry no file list, so "any file is here" accepted a download
@@ -463,7 +497,9 @@ def test_an_interrupted_download_is_not_mistaken_for_a_finished_one(tmp_path: Pa
     assert "no completion stamp" in status.stale_reason
 
 
-def test_weights_from_another_revision_do_not_satisfy_a_pinned_request(tmp_path: Path) -> None:
+def test_weights_from_another_revision_do_not_satisfy_a_pinned_request(
+    tmp_path: Path,
+) -> None:
     """The pin is only meaningful if a cache at a different commit is re-fetched."""
 
     from npa.workbench.cosmos_curate.models import (
@@ -475,7 +511,9 @@ def test_weights_from_another_revision_do_not_satisfy_a_pinned_request(tmp_path:
     local = tmp_path / "org" / "model"
     local.mkdir(parents=True)
     (local / "weights.bin").write_bytes(b"weights")
-    write_completion_stamp(local, ModelSpec(key="motion", model_id="org/model", revision="old"))
+    write_completion_stamp(
+        local, ModelSpec(key="motion", model_id="org/model", revision="old")
+    )
 
     wanted = ModelSpec(key="motion", model_id="org/model", revision="new")
     status = model_status([wanted], environ=_weights_env(tmp_path))[0]
@@ -526,7 +564,10 @@ def test_a_checkout_at_another_commit_is_refused(tmp_path: Path) -> None:
     from inside an upstream constructor, which reads like a bug in our call.
     """
 
-    from npa.workbench.cosmos_curate.upstream import REVISION_STAMP_FILE, probe_availability
+    from npa.workbench.cosmos_curate.upstream import (
+        REVISION_STAMP_FILE,
+        probe_availability,
+    )
 
     checkout = tmp_path / "cosmos-curator"
     (checkout / "cosmos_curator" / "pipelines").mkdir(parents=True)
@@ -546,7 +587,10 @@ def test_a_wrong_commit_says_which_commit_and_which_file_to_revisit() -> None:
     probe would only exercise the message on some interpreters.
     """
 
-    from npa.workbench.cosmos_curate.upstream import PINNED_REVISION, CuratorAvailability
+    from npa.workbench.cosmos_curate.upstream import (
+        PINNED_REVISION,
+        CuratorAvailability,
+    )
 
     reason = CuratorAvailability(
         source="/opt/cosmos-curator",
@@ -611,7 +655,9 @@ def test_a_moved_upstream_signature_is_reported_as_unavailable() -> None:
             self.brand_new_name = brand_new_name
 
     with pytest.raises(CosmosCurateError, match="does not accept the arguments"):
-        _construct({"ClipWriterStage": MovedOn}, "ClipWriterStage", output_path="/tmp/x")
+        _construct(
+            {"ClipWriterStage": MovedOn}, "ClipWriterStage", output_path="/tmp/x"
+        )
 
 
 def _stub_a_successful_curator_run(
@@ -637,7 +683,9 @@ def _stub_a_successful_curator_run(
         ),
     )
 
-    def fake_curate_videos(*, input_dir: Any, output_dir: Any, **kwargs: Any) -> CuratorRunResult:
+    def fake_curate_videos(
+        *, input_dir: Any, output_dir: Any, **kwargs: Any
+    ) -> CuratorRunResult:
         out = Path(output_dir)
         (out / "clips").mkdir(parents=True)
         (out / "metas" / "v0").mkdir(parents=True)
@@ -695,7 +743,9 @@ def test_a_failed_publish_is_reported_degraded_not_completed(
     )
     assert report.status == "degraded"
     assert report.clip_count == 2  # what it curated is still reported honestly
-    assert any("could not publish" in warning for warning in report.warnings), report.warnings
+    assert any("could not publish" in warning for warning in report.warnings), (
+        report.warnings
+    )
 
 
 def test_a_failed_publish_raises_when_the_curator_is_required(
@@ -729,15 +779,23 @@ def test_curate_augmented_requires_variants(
     empty.mkdir()
     with pytest.raises(CosmosCurateError, match="no augmented variant videos"):
         report_mod.curate_augmented(
-            augment_uri=str(empty), curated_uri=str(tmp_path / "curated"), storage=object()
+            augment_uri=str(empty),
+            curated_uri=str(tmp_path / "curated"),
+            storage=object(),
         )
 
 
 def test_result_uri_for_appends_the_result_filename() -> None:
     from npa.workbench.cosmos_curate import RESULT_FILENAME
 
-    assert result_uri_for("s3://b/run/curation/") == f"s3://b/run/curation/{RESULT_FILENAME}"
-    assert result_uri_for("s3://b/run/curation/custom.json") == "s3://b/run/curation/custom.json"
+    assert (
+        result_uri_for("s3://b/run/curation/")
+        == f"s3://b/run/curation/{RESULT_FILENAME}"
+    )
+    assert (
+        result_uri_for("s3://b/run/curation/custom.json")
+        == "s3://b/run/curation/custom.json"
+    )
 
 
 def test_write_report_round_trips_locally(tmp_path: Path) -> None:
@@ -809,7 +867,9 @@ def test_curator_stages_only_the_manifest_committed_recovery_attempt(
     assert (staged / "aug-current.mp4").read_bytes() == b"current"
 
 
-def test_curator_refuses_attempt_layout_without_canonical_manifest(tmp_path: Path) -> None:
+def test_curator_refuses_attempt_layout_without_canonical_manifest(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "cosmos_augmented"
     (root / "_attempts" / "orphan" / "clip").mkdir(parents=True)
     with pytest.raises(CosmosCurateError, match="without a valid canonical"):

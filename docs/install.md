@@ -1,4 +1,6 @@
-# Installing npa on every platform
+# Install npa
+
+[Docs](README.md)
 
 `npa` targets **macOS**, **Linux**, and **Windows via WSL2**, and works with
 **Python 3.10+**. It is not published to PyPI, so you always install it editable
@@ -35,29 +37,29 @@ If it is older than 3.10 (or missing):
   [pyenv](https://github.com/pyenv/pyenv).
 - **Debian/Ubuntu:** the interpreter is usually current; also install the venv
   module (shipped separately): `sudo apt-get install -y python3 python3-venv`.
-- **Windows:** install from [python.org](https://www.python.org/downloads/)
-  (check "Add python.exe to PATH"), or from the Microsoft Store.
+- **Windows:** use the Debian/Ubuntu commands inside WSL2 Ubuntu. A native
+  Windows Python installation is not used by this setup.
 
-## 2. Create a virtual environment
+## 2. Clone the repository and create a virtual environment
 
 ```bash
+git clone https://github.com/nebius/nebius-physical-ai.git
+cd nebius-physical-ai
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
 On Windows, do this inside **WSL2 Ubuntu** (see [§6](#6-windows-via-wsl2)).
 
-> **`.venv` vs `npa/.venv`.** Every user-facing doc uses repo-root `.venv`.
-> Contributor tooling — [`docs/testing/e2e.md`](testing/e2e.md), the agent
-> skills, and `AGENTS.md` — validates the repo with `npa/.venv/bin/python`.
-> Both work; pick one per checkout so `npa` resolves to the interpreter you
-> think it does.
+> Create the environment **after entering the clone** so activation and cleanup
+> resolve the same directory. User-facing quickstarts use repo-root `.venv`.
+> [Contributor tooling](../CONTRIBUTING.md#testing-requirements) and `AGENTS.md`
+> use `npa/.venv/bin/python` for repository validation. Both layouts work; keep
+> one environment per checkout and use its path consistently.
 
 ## 3. Install npa (editable, from the clone)
 
 ```bash
-git clone https://github.com/nebius/nebius-physical-ai.git
-cd nebius-physical-ai
 pip install -e npa
 ```
 
@@ -65,32 +67,39 @@ Verify:
 
 ```bash
 npa --version
+npa workbench --help
 ```
 
-Prefer [`uv`](https://docs.astral.sh/uv/)? It can install Python and create the
-env in one go: `uv venv .venv && source .venv/bin/activate && uv pip install -e npa`.
-
-The base install is fully capable: a plain `pip install -e npa` already
-includes every non-GPU workbench dependency (dataframe/reporting, LanceDB, the
-Rerun viewer, and the local eval/agent server). There is no separate
-`npa[full]` step. Only these extras are opt-in:
+Prefer [`uv`](https://docs.astral.sh/uv/)? The commands below are equivalent to
+the venv creation and installation commands above — pick whichever tool you
+prefer; the quickstarts standardize on `venv`/`pip`. From the clone root:
 
 ```bash
-pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
-pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
-pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
-pip install -e "npa[agent-eval]"  # guardrails-ai output validators (optional)
-pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
-pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
+uv venv .venv
+source .venv/bin/activate
+uv pip install --python .venv/bin/python -e npa
 ```
 
-The GPU/simulation wheels above are only needed when you run those engines
-**locally**; cloud jobs execute them inside the Nebius images they launch. The
-`full`, `data`, `lancedb`, `viz`, and `server` extras still resolve (as no-ops
-now folded into the base install) so older `npa[full]` commands keep working.
+The base install includes dataframe/reporting tools, LanceDB, Rerun, and the
+local eval/agent server. Heavy GPU engines can also run on Nebius cloud GPUs
+— the cloud engines run in their containers, so you do not need a local GPU
+to use them. Install extras only to run an engine locally (needs a local GPU),
+for contributor development, tracing, or tests:
 
-Activate the venv in every new shell (`source .venv/bin/activate`), or call the
-interpreter directly with `./.venv/bin/npa` without activating.
+```bash
+pip install -e "npa[genesis]"   # Genesis sim + distillation (local GPU)
+pip install -e "npa[groot]"     # GR00T SDK (local GPU)
+pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (local GPU)
+pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
+pip install -e "npa[dev,adapter]" # tests, lint (pytest, ruff, pyarrow for dataset tests)
+```
+
+The `full`, `data`, `lancedb`, `viz`, `server`, and `agent-eval` extras are
+compatibility aliases already covered by the base install.
+
+From the clone root, activate the venv in every new shell
+(`source .venv/bin/activate`), or call `.venv/bin/npa` directly without
+activating.
 
 ### Safely uninstall the repository-local environment
 
@@ -110,27 +119,8 @@ Actual removal requires both explicit flags:
 npa uninstall --remove-environment --yes
 ```
 
-NPA refuses system, conda, pipx, user-wide, externally managed, symlinked,
-arbitrary, dirty-overlapping, active, and identity-mismatched environments. The
-command writes a mode-0600 one-time receipt, prints and flushes the status path,
-then launches a base-Python helper outside the target. The helper waits for the
-parent process to exit and revalidates the exact realpath, device/inode,
-`pyvenv.cfg` digest, repository markers, nonce, and other-process use before
-descriptor-relative removal. Source, `.git`, credentials, user data, and
-unrelated caches are never in the plan.
-
-If deferred deletion fails, the target and failure receipt remain. While the
-environment still exists, inspect or retry with the exact commands printed in
-the receipt:
-
-```bash
-npa uninstall --status <receipt-id>
-npa uninstall --remove-environment --yes --retry <receipt-id>
-```
-
-Successful removal naturally removes that environment's `npa` executable; the
-receipt remains under `~/.npa/uninstall-receipts/` for direct inspection or for
-`npa uninstall --status` after reinstalling NPA.
+For removal safeguards, failure receipts, and retries, see
+[environment removal and recovery](teardown.md#repository-local-environment-removal-and-recovery).
 
 ## 4. Nebius CLI (required)
 
@@ -153,7 +143,28 @@ runtime parser contract cannot silently drift apart.
 `nebius profile create` step). See <https://docs.nebius.com/cli/install> for
 details.
 
-## 5. Optional operator tools
+<a id="5-optional-operator-tools"></a>
+
+## 5. Tools for cloud workloads
+
+Install the tools your workload uses:
+
+- **Terraform 1.x** is required for managed VM/cluster provisioning and agent
+  deployment; the managed cluster recipe requires **1.12.0 or newer**. The Python
+  package does not install it. Check `terraform version`; `NPA_TERRAFORM_BIN` can
+  select a compatible binary outside `PATH`.
+  Agent bootstrap installs the tested 1.13.3 baseline only if Terraform is absent.
+- **kubectl** is required for Kubernetes operations.
+- **AWS CLI v2** is used by direct S3 artifact upload/download examples. Use the
+  [bundled installer](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+  and confirm that the selected `aws --version` begins with `aws-cli/2.`.
+- **socat** is required by SkyPilot Kubernetes on Debian/Ubuntu:
+  `sudo apt-get install -y socat`.
+- **Docker** is needed for local container runs and image builds. Supported NPA
+  images pull anonymously from GHCR.
+- **jq** is used by shell examples that parse JSON.
+
+Platform installation:
 
 - **macOS:** `brew install jq`, plus `kubectl` and `terraform` from their
   official installers (Terraform is no longer in Homebrew core:
@@ -187,3 +198,8 @@ These work but are not covered by the copy-paste path:
   yet): pin to the latest Python that has wheels, or build from source.
 - **Air-gapped machines:** pre-mirror the repo and a wheelhouse; `pip install -e`
   still needs the transitive dependencies available offline.
+
+## Next step
+
+[Configure your project](configuration.md), choose a [workload](workbench/guides/README.md),
+and prepare its [runtime](workbench/getting-started.md).

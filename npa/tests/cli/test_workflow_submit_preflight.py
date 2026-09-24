@@ -24,49 +24,66 @@ runner = CliRunner()
 
 SPEC = (
     Path(__file__).resolve().parents[3]
-    / "npa"
     / "workflows"
-    / "workbench"
-    / "npa-workflows"
+    / "testing"
     / "physical-ai-data-factory.yaml"
 )
 COSMOS3_SPEC = (
+    Path(__file__).resolve().parents[3] / "workflows" / "main" / "paidf-cosmos3.yaml"
+)
+NVIDIA_VDA_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "npa"
     / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "paidf-cosmos3.yaml"
+    / "testing"
+    / "nvidia-paidf-vda-cosmos-transfer25.yaml"
 )
 SIM2REAL_SPEC = (
-    Path(__file__).resolve().parents[3]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "sim2real.yaml"
+    Path(__file__).resolve().parents[3] / "workflows" / "main" / "sim2real.yaml"
 )
+SONIC_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "workflows"
+    / "testing"
+    / "sonic-export-eval.yaml"
+)
+
+
+def test_nvidia_vda_conditioning_policy_is_versioned_by_the_committed_spec() -> None:
+    from npa.cli.workbench.workflow import _paidf_conditioning_policy
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+
+    assert (
+        _paidf_conditioning_policy(NVIDIA_PAIDF_VDA_WORKFLOW_NAME, {})
+        == "source-fidelity-v2"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == "source-fidelity-v3"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            "physical-ai-data-factory",
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == ""
+    )
 
 
 @pytest.fixture(autouse=True)
 def _no_ambient_src(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests isolate prerequisite/image/provisioning ordering. Exact
+    # provider scope and prefix probes have independent CLI contract coverage.
+    monkeypatch.setattr(
+        workflow_cli, "_execution_target_preflight", lambda *args, **kwargs: (None, {})
+    )
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
-    from npa.clients import storage_validation
-    from npa.clients.storage_validation import StorageProbeResult
-
-    monkeypatch.setattr(
-        storage_validation,
-        "probe_storage_write",
-        lambda **_kwargs: StorageProbeResult(
-            True,
-            "ok",
-            "Writable S3 verified with a cleaned write/delete probe.",
-            cleanup_attempted=True,
-            cleanup_succeeded=True,
-        ),
-    )
 
 
 def _submit(*args: str):
@@ -97,6 +114,24 @@ def _submit_cosmos3(*args: str):
             str(COSMOS3_SPEC),
             "--run-id",
             "paidf-cosmos3-preflight-demo",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            *args,
+        ],
+    )
+
+
+def _submit_nvidia_vda(*args: str):
+    return runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NVIDIA_VDA_SPEC),
+            "--run-id",
+            "nvidia-vda-preflight-demo",
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
@@ -256,6 +291,7 @@ def test_paidf_kubernetes_helper_propagates_context_and_kubeconfig(
 def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
+    _mock_sky_bin_ok(monkeypatch)
     for name in (
         "NEBIUS_TOKEN_FACTORY_KEY",
         "AWS_ACCESS_KEY_ID",
@@ -322,9 +358,27 @@ def test_paidf_placement_fails_before_storage_or_staging_without_explicit_infra(
     stage_source.assert_not_called()
 
 
+@pytest.mark.parametrize("control", ["edge", "vis", "seg"])
 def test_paidf_existing_target_orders_placement_exact_access_then_image(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    control: str,
 ) -> None:
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    _mock_sky_bin_ok(monkeypatch)
+
+    # The selected Transfer tool routes through cosmos2, so catalog expansion
+    # must not broaden PAIDF's deliberately narrow submit-time access fence.
+    assert {
+        item.repo
+        for item in workflow_cli._workflow_access_requirements(load_spec(SPEC))
+    } == {
+        "nvidia/Cosmos-Transfer2.5-2B",
+        "nvidia/Cosmos-Guardrail1",
+        "nvidia/Cosmos-Predict2.5-2B",
+    }
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "access.json"))
     events: list[str] = []
     for name in (
         "NEBIUS_TOKEN_FACTORY_KEY",
@@ -385,6 +439,8 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            "--var",
+            f"augment_control={control}",
             "--assume-decision",
             "promote_checkpoint",
             "--secret-env",
@@ -400,7 +456,90 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
 
     assert result.exit_code == 1
     assert isinstance(result.exception, RuntimeError)
-    assert events == ["placement", "exact:edge", "image"]
+    assert events == ["placement", f"exact:{control}", "image"]
+
+
+@pytest.mark.parametrize(
+    ("count_name", "count"),
+    [("rollout_count", "513"), ("validation_count", "65"), ("gold_count", "65")],
+)
+def test_sim2real_submit_rejects_oversized_sealed_split_before_images_or_launch(
+    monkeypatch: pytest.MonkeyPatch, mocker, count_name: str, count: str
+) -> None:
+    from types import SimpleNamespace
+
+    secret_names = (
+        "NEBIUS_TOKEN_FACTORY_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    )
+    for name in secret_names:
+        monkeypatch.setenv(name, "redacted")
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch(
+        "npa.orchestration.npa_workflow.sim2real_preflight.kubernetes_prerequisites",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.clients.huggingface.validate_hf_access",
+        return_value=SimpleNamespace(ok=True),
+    )
+    mocker.patch(
+        "npa.clients.token_factory.validate_model_access",
+        return_value=SimpleNamespace(ok=True),
+    )
+    images = mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    runtime = mocker.patch("npa.cli.workbench.workflow._run_npa_workflow_runtime")
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    config = {
+        "bucket": "test-bucket",
+        "source_sha": "a" * 40,
+        "isaac_cache_pvc": "test-isaac-cache",
+        "env_count": "640",
+        "train_fraction": "0.8",
+        "rollout_count": "64",
+        "validation_count": "64",
+        "gold_count": "64",
+        **{
+            key: "ghcr.io/example/test@sha256:" + "a" * 64
+            for key in (
+                "controller_image",
+                "transfer_image",
+                "envgen_image",
+                "isaac_image",
+                "viewer_image",
+            )
+        },
+        count_name: count,
+    }
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_SPEC),
+            "--run-id",
+            "sim2real-split-preflight",
+            "--no-deploy-if-absent",
+            *[
+                arg
+                for key, value in config.items()
+                for arg in ("--var", f"{key}={value}")
+            ],
+            *[arg for name in secret_names for arg in ("--secret-env", name)],
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "sealed train/validation/gold" in result.output
+    assert "available=512/64/64" in result.output
+    images.assert_not_called()
+    launch.assert_not_called()
+    runtime.assert_not_called()
+    stage.assert_not_called()
 
 
 def test_sim2real_submit_propagates_explicit_kubernetes_target(
@@ -439,27 +578,19 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
             "k8s/sim2real-review",
             "--var",
             "bucket=real-bucket",
+            "--var",
+            "isaac_cache_pvc=npa-isaac-cache",
         ],
     )
 
     assert result.exit_code == 1
     assert calls
     assert all(call[1]["context"] == "sim2real-review" for call in calls)
-    assert all(
-        call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls
-    )
-    namespaced_calls = [
-        call[0]
-        for call in calls
-        if call[0][:2] in (
-            ["get", "pvc"],
-            ["get", "localqueue.kueue.x-k8s.io"],
-        )
-    ]
+    assert all(call[1]["kubeconfig"] == "/tmp/sim2real-kubeconfig" for call in calls)
+    namespaced_calls = [call[0] for call in calls if call[0][:2] == ["get", "pvc"]]
     assert namespaced_calls
     assert all(
-        args[args.index("-n") + 1] == "sim2real-benchmark"
-        for args in namespaced_calls
+        args[args.index("-n") + 1] == "sim2real-benchmark" for args in namespaced_calls
     )
 
 
@@ -516,6 +647,25 @@ def test_plan_only_without_source_uri_is_read_only(
     assert not state_root.exists()
     stage.assert_not_called()
     upload_input.assert_not_called()
+
+
+def test_nvidia_vda_plan_stages_input_beneath_its_own_run_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+
+    result = _submit_nvidia_vda(
+        "--plan-only", "--var", "bucket=real-bucket", "--output-format", "json"
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["plan"]["steps"][0]["state"] == "record-upstream"
+    serialized_plan = json.dumps(payload["plan"], sort_keys=True)
+    assert (
+        "s3://real-bucket/nvidia-paidf-vda-cosmos-transfer25/"
+        "nvidia-vda-preflight-demo/input/"
+    ) in serialized_plan
 
 
 def test_plan_only_human_output_is_compact_and_details_are_explicit() -> None:
@@ -737,7 +887,7 @@ def test_paidf_fixture_is_explicit_in_rendered_plan(
     assert "--condition-on-input" in result.output
 
 
-def test_skip_preflight_bypasses_the_checks(mocker) -> None:
+def test_skip_preflight_bypasses_static_prerequisites(mocker) -> None:
     mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow",
         side_effect=AssertionError("submit reached"),
@@ -745,71 +895,125 @@ def test_skip_preflight_bypasses_the_checks(mocker) -> None:
 
     result = _submit("--skip-preflight")
 
-    # Not the preflight error: the run got past it (and then failed later).
+    # Convenience checks are skipped; mandatory execution preflight is covered
+    # independently below and in test_execution_preflight.py.
     assert "missing prerequisites" not in result.output
 
 
-@pytest.mark.parametrize(
-    ("code", "summary"),
-    [
-        (
-            "missing_configuration",
-            "Writable S3 is not configured; missing AWS credentials.",
-        ),
-        ("bucket_unreachable", "S3 write probe could not find the configured bucket."),
-        ("forbidden", "S3 write probe was forbidden."),
-        ("cleanup_failed", "S3 probe cleanup failed; a temporary object remains."),
-    ],
-)
-def test_s3_workflow_requires_a_successful_cleaned_write_probe(
-    monkeypatch, code, summary
+@pytest.mark.parametrize("skip_preflight", [False, True])
+def test_submit_rechecks_execution_scope_before_persist_or_staging(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path, skip_preflight: bool
+) -> None:
+    from npa import execution_preflight
+    from npa.orchestration.npa_workflow import first_run_state
+
+    _mock_sky_bin_ok(monkeypatch)
+
+    spec = tmp_path / "scope.yaml"
+    spec.write_text(
+        "apiVersion: npa.workflow/v0.0.1\n"
+        "kind: Workflow\n"
+        "metadata: {name: scope}\n"
+        "config: {bucket: unit-output}\n"
+        "resources: {cpu: {cloud: kubernetes, cpus: 1, memory: 1Gi}}\n"
+        "initial: execute\n"
+        "states:\n"
+        "  execute:\n"
+        "    resources: cpu\n"
+        "    run: {shell: 'true'}\n"
+        "    terminal: true\n",
+        encoding="utf-8",
+    )
+    selected = execution_preflight.ExecutionTarget(
+        project="unit",
+        project_id="project-unit",
+        tenant_id="tenant-unit",
+        region="eu-west1",
+        context="unit-context",
+        output_uris=("s3://unit-output/results/",),
+    )
+    events = []
+
+    def initial_preflight(*args, **kwargs):
+        events.append("execution-target")
+        return selected, {"execution_readiness": "pass"}
+
+    def images(*args, **kwargs):
+        events.append("images")
+        return {}
+
+    def missing_project(*args, **kwargs):
+        events.append("execution-scope")
+        return None
+
+    monkeypatch.setattr(workflow_cli, "_execution_target_preflight", initial_preflight)
+    monkeypatch.setattr(workflow_cli, "_preflight_submit_images", images)
+    monkeypatch.setattr(
+        workflow_cli, "_available_kube_contexts", lambda: ["unit-context"]
+    )
+    monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda context: True)
+    monkeypatch.setattr(
+        workflow_cli, "_verify_submit_controller_owner", lambda **kwargs: None
+    )
+    monkeypatch.setattr("npa.clients.nebius.get_project_identity", missing_project)
+    scope = mocker.spy(execution_preflight, "verify_execution_scope")
+    prepare = mocker.spy(first_run_state, "prepare_run")
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    runtime = mocker.patch("npa.cli.workbench.workflow._run_npa_workflow_runtime")
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    args = [
+        "workbench",
+        "workflow",
+        "submit",
+        str(spec),
+        "--project",
+        "unit",
+        "--run-id",
+        "scope-recheck",
+        "--infra",
+        "k8s/unit-context",
+        "--sky-bin",
+        "/bin/true",
+        "--image",
+        "ghcr.io/example/unit:dev",
+        "--no-deploy-if-absent",
+        "--no-stage-src",
+    ]
+    if skip_preflight:
+        args.append("--skip-preflight")
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1, result.output
+    assert "execution preflight scope: selected project does not exist" in result.output
+    assert events == ["execution-target", "images", "execution-scope"]
+    scope.assert_called_once_with(selected)
+    prepare.assert_called_once()
+    assert prepare.call_args.kwargs["persist"] is False
+    stage.assert_not_called()
+    runtime.assert_not_called()
+    launch.assert_not_called()
+
+
+@pytest.mark.parametrize("requires_s3", [False, True])
+def test_static_submit_prerequisites_never_probe_storage(
+    monkeypatch: pytest.MonkeyPatch, mocker, requires_s3
 ) -> None:
     from npa.cli.workbench.workflow import _submit_prerequisites
-    from npa.clients import storage_validation
-    from npa.clients.storage_validation import StorageProbeResult
 
-    monkeypatch.setattr(
-        storage_validation,
-        "probe_storage_write",
-        lambda **_kwargs: StorageProbeResult(False, code, summary),
-    )
+    _mock_sky_bin_ok(monkeypatch)
+    probe = mocker.patch("npa.clients.storage_validation.probe_storage_write")
 
     missing = _submit_prerequisites(
-        {"bucket": "real-bucket"},
+        {"bucket": "unit-output"} if requires_s3 else {},
         sky_bin="/bin/true",
         image="registry.example/npa-tool:v1",
         plan_only=False,
-        requires_s3=True,
-        s3_endpoint="https://storage.example",
-        s3_access_key_id="access",
-        s3_secret_access_key="secret",
-    )
-
-    assert any(summary in item for item, _remedy in missing)
-    assert any("provision-if-absent" in remedy for _item, remedy in missing)
-
-
-def test_non_s3_workflow_does_not_probe_or_require_storage(monkeypatch) -> None:
-    from npa.cli.workbench.workflow import _submit_prerequisites
-    from npa.clients import storage_validation
-
-    monkeypatch.setattr(
-        storage_validation,
-        "probe_storage_write",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("a non-S3 workflow must not probe storage")
-        ),
-    )
-
-    missing = _submit_prerequisites(
-        {},
-        sky_bin="/bin/true",
-        image="registry.example/npa-tool:v1",
-        plan_only=False,
-        requires_s3=False,
+        requires_s3=requires_s3,
     )
 
     assert missing == []
+    probe.assert_not_called()
 
 
 def test_storage_requirement_is_derived_from_the_workflow_contract(tmp_path) -> None:
@@ -863,6 +1067,23 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
     )
 
 
+def test_runtime_fetch_sonic_image_requires_staged_npa_source() -> None:
+    """An image route is insufficient when the image omits the NPA CLI."""
+
+    from npa.cli.workbench.workflow import _plan_requires_npa_source
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    assert (
+        _plan_requires_npa_source(
+            SONIC_SPEC,
+            run_id="sonic-runtime-fetch-source",
+            assume_decision="",
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+        is True
+    )
+
+
 def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
     """An empty canonical image input must be overridable before pull probes."""
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
@@ -910,13 +1131,22 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
         return_value=[],
     )
     args = [
-        "workbench", "workflow", "preflight-images", str(SIM2REAL_SPEC),
-        "--assume-decision", "promote_checkpoint",
-        "--image-pull-secret", "operator-registry",
+        "workbench",
+        "workflow",
+        "preflight-images",
+        str(SIM2REAL_SPEC),
+        "--assume-decision",
+        "promote_checkpoint",
+        "--image-pull-secret",
+        "operator-registry",
     ]
     for name in (
-        "controller_image", "transfer_image", "envgen_image",
-        "reason_image", "isaac_image", "viewer_image",
+        "controller_image",
+        "transfer_image",
+        "envgen_image",
+        "reason_image",
+        "isaac_image",
+        "viewer_image",
     ):
         args.extend(["--var", f"{name}={digest_image}"])
 
@@ -1160,10 +1390,8 @@ def test_plan_only_skips_the_kube_context_check(monkeypatch, tmp_path) -> None:
 
 HARDENING_SPEC = (
     Path(__file__).resolve().parents[3]
-    / "npa"
     / "workflows"
-    / "workbench"
-    / "npa-workflows"
+    / "testing"
     / "adversarial-scenario-hardening.yaml"
 )
 
@@ -1180,9 +1408,9 @@ def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
             "compute.instance.count required=2 available=0 shortfall=2"
         ),
     )
-    storage = mocker.patch(
+    prerequisites = mocker.patch(
         "npa.cli.workbench.workflow._submit_prerequisites",
-        side_effect=AssertionError("storage preflight reached after quota blocker"),
+        side_effect=AssertionError("submit prerequisites reached after quota blocker"),
     )
     images = mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
@@ -1209,7 +1437,7 @@ def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
     assert result.exit_code == 1
     assert "compute.instance.count" in result.output
     plan.assert_called_once()
-    storage.assert_not_called()
+    prerequisites.assert_not_called()
     images.assert_not_called()
     stage.assert_not_called()
     ensure.assert_not_called()

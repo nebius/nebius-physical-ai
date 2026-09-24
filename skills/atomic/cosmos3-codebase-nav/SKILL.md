@@ -31,11 +31,14 @@ Primary NPA files:
 | Containerized runtime (framework pinned, no weights baked) | `npa/docker/workbench/cosmos3/Dockerfile` |
 | Build-time proof the generate deps resolve for every mode | `npa/docker/workbench/cosmos3/verify_env.py` |
 | Generate CLI / SDK | `npa/src/npa/cli/workbench/cosmos3.py`, `npa/src/npa/sdk/workbench/cosmos3.py` |
-| Generate workflow | `npa/workflows/workbench/npa-workflows/cosmos3-generate.yaml` |
+| Nano vLLM-Omni continuation and source-conditioned augmentation | `npa/src/npa/workbench/cosmos/nano_video.py`, `npa/src/npa/workbench/cosmos/nano_video_augment.py` |
+| Nano augmentation artifact handoff and recovery | `npa/src/npa/workbench/cosmos/nano_video_augment_client.py` |
+| Nano diffusion serving, routing and measured deployment recipe | `npa/src/npa/workbench/cosmos/nano_video_server.py`, `npa/src/npa/workbench/cosmos/nano_video_router.py`, `npa/deploy/cosmos3-nano-video/README.md` |
+| Generate workflow | `workflows/testing/cosmos3-generate.yaml` |
 | Human CLI commands for real workflows | `npa/src/npa/cli/cosmos/__init__.py` |
 | SDK compatibility exports | `npa/src/npa/workbench/cosmos/__init__.py`, `npa/src/npa/sdk/workbench/cosmos.py` |
-| Fetch workflow | `npa/workflows/workbench/npa-workflows/cosmos-fetch.yaml` |
-| Text-to-image H100 smoke workflow | `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml` |
+| Fetch workflow | `workflows/testing/cosmos-fetch.yaml` |
+| Text-to-image H100 smoke workflow | `workflows/testing/cosmos3-text-to-image.yaml` |
 | Unit tests for access, fetch, inference YAML, and skill artifacts | `npa/tests/workbench/test_cosmos3_access.py` |
 | CLI tests for `check` and `fetch` | `npa/tests/cli/test_cosmos3_cli.py` |
 
@@ -55,9 +58,9 @@ coding agents to read.
 
 The retained Cosmos3 workflow YAMLs are real executable specs:
 
-- `npa-workflows/cosmos-fetch.yaml`
-- `npa-workflows/cosmos3-generate.yaml`
-- `npa-workflows/cosmos3-text-to-image.yaml`
+- `workflows/testing/cosmos-fetch.yaml`
+- `workflows/testing/cosmos3-generate.yaml`
+- `workflows/testing/cosmos3-text-to-image.yaml`
 
 Do not restore `cosmos3-setup.yaml`, `cosmos3-codebase-nav.yaml`,
 `cosmos3-env-troubleshoot.yaml`, `cosmos3-post-training.yaml`, or retired raw
@@ -95,6 +98,11 @@ Common upstream paths:
 
 2. If the answer depends on upstream behavior, inspect the upstream file rather
    than guessing from NPA wrappers.
+
+   For the Nano diffusion deployment, inspect the installed vLLM-Omni video
+   parser and `Cosmos3OmniDiffusersPipeline`; the framework inference argument
+   map does not establish what that image accepts. The deployment README
+   links the pinned implementation and records the effective transfer contract.
 
 3. Keep NPA and upstream responsibilities separate. NPA owns CLI/SDK wrappers,
    SkyPilot workflows, image defaults, and tests. NVIDIA's repo owns Cosmos3

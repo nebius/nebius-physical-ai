@@ -23,7 +23,7 @@ conversion, serving, inference, and validation.
    training, `eval` for offline scoring, `serve` and `infer` for runtime calls,
    and `convert` when transforming checkpoints for downstream use.
    For declarative N1.7 training, use
-   `npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml`; its
+   `workflows/testing/groot-1-7-finetune.yaml`; its
    `gpu_count` is a positive single-node world size that controls both the
    scheduler allocation and the real trainer.
 3. Use `status`, `system-info`, and `list` for operational checks. Keep

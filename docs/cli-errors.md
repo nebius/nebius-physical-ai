@@ -1,5 +1,7 @@
 # NPA CLI Error Reference
 
+[Docs](README.md)
+
 The `npa` CLI formats known serverless failures as actionable errors instead
 of raw Python exceptions. Typed serverless errors exit with code `1`.
 Unexpected errors exit with code `2` and hide stack traces unless

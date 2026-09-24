@@ -21,16 +21,23 @@ def convert_cmd(
         ..., "--input-path", "--input", "-i", help="Directory of episode numpy arrays."
     ),
     output_dir: str = typer.Option(
-        ..., "--output-path", "--output", "-o", help="Output LeRobotDataset v3 directory."
+        ...,
+        "--output-path",
+        "--output",
+        "-o",
+        help="Output LeRobotDataset v3 directory.",
     ),
     fps: int = typer.Option(20, "--fps", help="Frame rate for video encoding."),
-    robot: str = typer.Option(
-        "franka_panda", "--robot", help="Robot type identifier."
-    ),
+    robot: str = typer.Option("franka_panda", "--robot", help="Robot type identifier."),
     task: str = typer.Option(
         "Pick and place cube to target",
         "--task",
         help="Task description for the dataset.",
+    ),
+    task_from_metadata: bool = typer.Option(
+        False,
+        "--task-from-metadata/--no-task-from-metadata",
+        help="Use each exported episode's RoboCasa task from metadata.json.",
     ),
 ) -> None:
     """Convert Genesis/sim demo numpy arrays to LeRobotDataset v3 format."""
@@ -73,7 +80,14 @@ def convert_cmd(
         console.print(f"  fps={fps}  robot={robot}")
 
         try:
-            convert(inp, out, fps=fps, robot_type=robot, task=task)
+            convert(
+                inp,
+                out,
+                fps=fps,
+                robot_type=robot,
+                task=task,
+                task_from_metadata=task_from_metadata,
+            )
         except AdapterError as exc:
             console.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(1)
@@ -81,7 +95,9 @@ def convert_cmd(
         if _is_s3_uri(output_dir):
             from npa.clients.storage import StorageClient
 
-            uploaded = StorageClient.from_environment().upload_directory(str(out), output_dir)
+            uploaded = StorageClient.from_environment().upload_directory(
+                str(out), output_dir
+            )
             console.print(f"[green]Conversion complete.[/green] Dataset at: {uploaded}")
         else:
             console.print(f"[green]Conversion complete.[/green] Dataset at: {out}")

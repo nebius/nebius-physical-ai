@@ -35,7 +35,7 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = REPO_ROOT / "workflows" / "testing"
 RUNNER = CliRunner()
 
 
@@ -115,7 +115,7 @@ def test_guide_sim2real_promote_plans_finalize_once(
             "workbench",
             "workflow",
             "plan-spec",
-            str(SPECS / "sim2real.yaml"),
+            str(SPECS.parent / "main" / "sim2real.yaml"),
             "--run-id",
             "guide-promote-live",
             "--assume-decision",
@@ -251,7 +251,7 @@ def test_guide_require_inputs_fails_on_missing_artifact(
 
 def test_guide_loop_back_assume_expands_outer_loop(e2e_project: str | None) -> None:
     live_bucket(e2e_project)
-    spec = load_spec(SPECS / "sim2real.yaml")
+    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
     plan = build_plan(spec, run_id="guide-loop-back", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
     inner = int(spec.config["inner_iterations"])

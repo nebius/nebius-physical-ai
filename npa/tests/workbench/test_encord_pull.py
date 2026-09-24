@@ -160,26 +160,54 @@ def test_download_records_sha256_while_streaming() -> None:
     assert row.source_checksum == hashlib.sha256(b"video").hexdigest()
 
 
-def test_server_side_copy_heads_destination() -> None:
+@pytest.mark.parametrize("port", ["", ":443"])
+def test_server_side_copy_heads_destination(port: str) -> None:
     storage = FakeStorageClient()
     storage.s3.objects[("source-bucket", "incoming/clip.mp4")] = b"video"
     descriptor = item(
         "uuid-1",
         "clip.mp4",
-        "https://storage.test.example/source-bucket/incoming/clip.mp4?signature=x",
+        f"https://storage.test.example{port}/source-bucket/incoming/clip.mp4?signature=x",
     )
     row = _preallocate_media(descriptor, "s3://result-bucket/run")
     _transfer_one(
         descriptor,
         row,
         storage_client=storage,
-        downloader=BytesDownloader(b"unused"),
+        downloader=SequenceDownloader({}),
         endpoint_url="https://storage.test.example",
     )
     assert row.transfer == "copy"
     assert row.destination_exists
     assert any(event[0] == "copy" for event in storage.s3.events)
     assert storage.s3.events[-2][0] == "head" or storage.s3.events[-1][0] == "put"
+
+
+@pytest.mark.parametrize("scheme,port", [("https", 443), ("http", 80)])
+@pytest.mark.parametrize("signed_explicit", [False, True])
+@pytest.mark.parametrize("virtual_host", [False, True])
+def test_same_endpoint_accepts_equivalent_default_ports(
+    scheme: str, port: int, signed_explicit: bool, virtual_host: bool,
+) -> None:
+    host = "storage.test.example"
+    signed_host = f"source-bucket.{host}" if virtual_host else host
+    path = "incoming/clip.mp4" if virtual_host else "source-bucket/incoming/clip.mp4"
+    signed_port = f":{port}" if signed_explicit else ""
+    endpoint_port = "" if signed_explicit else f":{port}"
+    assert _same_endpoint_source(
+        f"{scheme}://{signed_host}{signed_port}/{path}",
+        f"{scheme}://{host}{endpoint_port}",
+    ) == ("source-bucket", "incoming/clip.mp4")
+
+
+@pytest.mark.parametrize("signed_base,endpoint", [
+    ("https://storage.test.example:8443", "https://storage.test.example"),
+    ("http://storage.test.example", "https://storage.test.example"),
+    ("http://storage.test.example:443", "https://storage.test.example:443"),
+    ("https://other.test.example", "https://storage.test.example"),
+])
+def test_same_endpoint_rejects_different_origins(signed_base: str, endpoint: str) -> None:
+    assert _same_endpoint_source(f"{signed_base}/source-bucket/clip.mp4", endpoint) is None
 
 
 @pytest.mark.parametrize(

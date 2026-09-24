@@ -31,6 +31,42 @@ pytest npa/tests/e2e/test_cosmos_serverless_e2e.py -v -m e2e_serverless
 
 ## Credentials
 
+### Genesis create-response recovery
+
+`test_genesis_serverless_recovery_e2e.py` runs real PPO training through the
+changed CLI, deliberately drops one successful provider create response, then
+reconnects with a fresh client. It records the changed client commit and module
+hashes separately from the immutable payload image's digest and source revision,
+and independently checks the final provider ID, backing Compute instance IDs,
+readable checkpoint, and artifact hashes. The workload is created once; the
+second CLI invocation reuses its completed outputs.
+Compatible evidence is retained when the test process is restarted: the same
+client source, request, project and image resume verification with the original
+create count and response-loss proof. Each CLI invocation keeps a separate
+owner-only stdout/stderr capture with credentials removed. A different workload
+or source refuses to overwrite the existing evidence.
+
+Set `NPA_E2E_GENESIS_RECOVERY_CONFIG` to an owner-only JSON file containing
+`argv` (the complete `workbench genesis train-teacher ...` argument list),
+`project_id`, `image`, `source_revision` (the changed client's commit), `output_uri`, and an external
+`evidence_dir`. Include an explicit `--job-name`, `--runtime serverless`,
+`--image ...@sha256:...`, and `--output-format json`; omit `--submit-only`.
+Use the intended project's isolated NPA configuration and credentials, and
+verify authorized capacity before invoking the test. Keep this configuration
+and the evidence directory outside Git.
+
+```bash
+npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_genesis_serverless_recovery_e2e.py -q -m e2e_serverless
+```
+
+The test does not provision or change capacity. Its evidence retains the exact
+Compute identities so the operator can independently prove reservation use and
+verify cleanup. A timeout or test failure is not permission to submit another
+training job: reconcile the existing job and submission journal first.
+
+### Cosmos credentials
+
 Cosmos serverless inference uses the gated
 `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` model. The e2e harness requires a
 Hugging Face token from `~/.npa/credentials.yaml` or from `HF_TOKEN`,

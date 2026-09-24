@@ -1,9 +1,8 @@
 """Generic credential preflight shared across workbench tools and deploys.
 
-Validates the credentials nearly every GPU job or deploy needs — Hugging Face,
-NVIDIA NGC, Nebius object storage (S3), and Nebius Token Factory — as explicit
-PASS/WARN/FAIL/SKIP checks, so a customer hits them as a clear preflight
-instead of a mid-pipeline failure.
+Validates the service credentials nearly every GPU job or deploy needs as
+explicit PASS/WARN/FAIL/SKIP checks. An optional Nebius CLI check verifies the
+control-plane authentication required for provisioning.
 
 Every check is a pure function that takes the resolved credentials plus an
 injectable probe. The CLI wires real probes (Hugging Face identity, NGC token
@@ -13,19 +12,26 @@ packages or touches infrastructure at import time.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
 from npa.workflows.sim2real_health import (
     FAIL,
     PASS,
+    SKIP,
     WARN,
     CheckResult,
     has_failure,
+    run_checks_concurrently,
 )
 
-# Canonical order a customer should reason about credentials in.
-CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory", "encord")
+# Preserve the lightweight default for hosted-inference users. The explicit
+# ``all`` selection also checks the Nebius CLI profile needed for cloud work.
+DEFAULT_CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
+SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (*DEFAULT_CREDENTIAL_CHECKS, "encord", "nebius")
+# Backward-compatible name for callers that use the default check set.
+CREDENTIAL_CHECKS = DEFAULT_CREDENTIAL_CHECKS
 
 
 @dataclass
@@ -33,9 +39,10 @@ class CredentialProbes:
     """Injectable side-effecting dependencies for credential checks.
 
     Defaults are ``None`` so the engine stays pure and import-safe. The CLI fills
-    these with real implementations; tests pass fakes. When a probe is ``None``
-    the corresponding live check is downgraded to a "present but unverified"
-    PASS/WARN rather than reaching the network.
+    these with real implementations; tests pass fakes. When a service probe is
+    ``None``, the check reports presence without reaching the network. A missing
+    Nebius profile probe produces SKIP because profile presence is not proof of
+    usable authentication.
     """
 
     hf_validator: Callable[[str], Any] | None = None
@@ -43,6 +50,7 @@ class CredentialProbes:
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
     encord_verifier: Callable[[], str] | None = None
+    nebius_profile_verifier: Callable[[], Any] | None = None
 
 
 def _looks_like_auth_failure(text: str) -> bool:
@@ -61,7 +69,7 @@ def _looks_like_auth_failure(text: str) -> bool:
 
 
 def check_hf(credentials: Any, probes: CredentialProbes) -> CheckResult:
-    """Check the Hugging Face token is present and (optionally) accepted."""
+    """Check the Hugging Face token is present and optionally authenticated."""
 
     token = getattr(credentials, "hf_token", "") or ""
     if not token:
@@ -121,15 +129,6 @@ def check_ngc(credentials: Any, probes: CredentialProbes) -> CheckResult:
                 "at https://org.ngc.nvidia.com/setup/api-key and run `npa configure`."
             ),
         )
-    # Personal NGC API keys are prefixed 'nvapi-' (older docs sometimes show
-    # 'nvapi_'); accept either separator.
-    if not key.lower().startswith(("nvapi-", "nvapi_")):
-        return CheckResult(
-            name="ngc",
-            status=FAIL,
-            summary="NGC_API_KEY is set but does not look like an NGC key.",
-            remedy="NGC keys start with 'nvapi-'. Re-check the value in ~/.npa/credentials.yaml.",
-        )
     if probes.ngc_validator is None:
         return CheckResult(
             name="ngc",
@@ -141,7 +140,15 @@ def check_ngc(credentials: Any, probes: CredentialProbes) -> CheckResult:
         return CheckResult(
             name="ngc", status=PASS, summary="NGC_API_KEY is authenticated by NGC."
         )
-    if outcome in {"entitlement-required", "tags-401", "tags-403", "tags-404"}:
+    if outcome in {
+        "entitlement-required",
+        "manifest-401",
+        "manifest-403",
+        "manifest-404",
+        "tags-401",
+        "tags-403",
+        "tags-404",
+    }:
         return CheckResult(
             name="ngc",
             status=PASS,
@@ -208,7 +215,7 @@ def check_s3(credentials: Any, probes: CredentialProbes) -> CheckResult:
         )
     try:
         client = probes.s3_client_factory()
-        client.list_checkpoints(bucket)
+        client.probe_list_access(bucket)
     except Exception as exc:  # noqa: BLE001 - surface any reachability/auth error
         text = str(exc)
         remedy = (
@@ -307,13 +314,90 @@ def check_encord(credentials: Any, probes: CredentialProbes) -> CheckResult:
     )
 
 
+def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
+    """Check that the selected Nebius CLI profile can call the control plane."""
+
+    if probes.nebius_profile_verifier is None:
+        return CheckResult(
+            name="nebius",
+            status=SKIP,
+            summary="Nebius CLI authentication was not verified in offline mode.",
+            remedy="Run the same check without `--offline` before provisioning.",
+        )
+    verification = probes.nebius_profile_verifier()
+    profile_source = (
+        "Configured Nebius CLI profile"
+        if getattr(verification, "profile", "")
+        else "Default Nebius CLI profile"
+    )
+    if verification.identity_verified and verification.iam_token_minted:
+        return CheckResult(
+            name="nebius",
+            status=PASS,
+            summary=f"{profile_source} is authenticated.",
+        )
+    failure_reason = getattr(verification, "failure_reason", "")
+    if failure_reason == "cli_unavailable":
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary="Nebius CLI is not available.",
+            remedy="Install the Nebius CLI or put `nebius` on PATH, then retry.",
+        )
+    if failure_reason == "timeout":
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary="Nebius CLI authentication check timed out.",
+            remedy=(
+                "Check connectivity to Nebius IAM and retry. Re-authenticate the "
+                "selected profile if the timeout persists."
+            ),
+        )
+    if failure_reason == "probe_error":
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary="Nebius CLI authentication check could not run.",
+            remedy=(
+                "Run `nebius --profile <profile> --no-browser --no-check-update iam "
+                "whoami` with the selected profile to diagnose, then retry."
+            ),
+        )
+    if failure_reason == "token_mint_failed" or verification.identity_verified:
+        return CheckResult(
+            name="nebius",
+            status=FAIL,
+            summary=f"{profile_source} resolved identity but could not mint an IAM token.",
+            remedy="Re-authenticate the selected Nebius CLI profile, then retry.",
+        )
+    return CheckResult(
+        name="nebius",
+        status=FAIL,
+        summary=f"{profile_source} could not resolve an authenticated identity.",
+        remedy="Authenticate the selected Nebius CLI profile, then retry.",
+    )
+
+
 _CHECK_FUNCS: dict[str, Callable[[Any, CredentialProbes], CheckResult]] = {
     "hf": check_hf,
     "ngc": check_ngc,
     "s3": check_s3,
     "token_factory": check_token_factory,
     "encord": check_encord,
+    "nebius": check_nebius,
 }
+
+
+def _validate_checks(selected: list[str]) -> None:
+    """Raise if any name in *selected* is not a supported credential check."""
+
+    unknown = [name for name in selected if name not in _CHECK_FUNCS]
+    if unknown:
+        raise ValueError(
+            f"unknown credential check(s): {', '.join(unknown)}. "
+            f"Choices: {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
+        )
 
 
 def run_credential_preflight(
@@ -322,25 +406,49 @@ def run_credential_preflight(
     probes: CredentialProbes | None = None,
     checks: Iterable[str] | None = None,
 ) -> list[CheckResult]:
-    """Run the selected credential checks and return their results in order."""
+    """Run the selected credential checks and return their results in order.
+
+    Each check is an independent network probe (HF, NGC, S3, Token Factory,
+    Nebius CLI); see ``run_checks_concurrently`` for the concurrency and
+    ordering contract. Duplicate ``checks`` names are preserved and each
+    re-run; the worker pool is capped at the distinct-check count, since
+    repeating one name gains nothing from proportionally more threads.
+
+    Args:
+        credentials: Resolved credentials object each check reads fields
+            from (see individual ``check_*`` functions for which fields).
+        probes: Injectable side-effecting probes; defaults to presence-only.
+        checks: Check names to run, in return order. Defaults to
+            :data:`CREDENTIAL_CHECKS`. May contain duplicates.
+
+    Returns:
+        One :class:`CheckResult` per entry in ``checks``, in that order.
+
+    Raises:
+        ValueError: ``checks`` contains a name outside
+            :data:`SUPPORTED_CREDENTIAL_CHECKS`.
+    """
 
     active_probes = probes or CredentialProbes()
     selected = list(checks) if checks is not None else list(CREDENTIAL_CHECKS)
-    unknown = [name for name in selected if name not in _CHECK_FUNCS]
-    if unknown:
-        raise ValueError(
-            f"unknown credential check(s): {', '.join(unknown)}. "
-            f"Choices: {', '.join(CREDENTIAL_CHECKS)}."
-        )
-    return [_CHECK_FUNCS[name](credentials, active_probes) for name in selected]
+    _validate_checks(selected)
+    thunks = [
+        functools.partial(_CHECK_FUNCS[name], credentials, active_probes)
+        for name in selected
+    ]
+    max_workers = min(len(selected), len(SUPPORTED_CREDENTIAL_CHECKS))
+    return run_checks_concurrently(thunks, max_workers=max_workers)
 
 
 __all__ = [
     "CREDENTIAL_CHECKS",
+    "DEFAULT_CREDENTIAL_CHECKS",
+    "SUPPORTED_CREDENTIAL_CHECKS",
     "CredentialProbes",
     "check_encord",
     "check_hf",
     "check_ngc",
+    "check_nebius",
     "check_s3",
     "check_token_factory",
     "has_failure",

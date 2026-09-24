@@ -24,7 +24,8 @@ To update a base image:
 4. If the pinned upstream base still carries a fixable OS-package CVE in a
    package that is not needed at runtime, remove only that package from final
    image layers after build-time compilation and mirror that removal in the CI
-   base-image scan's minimal derivative.
+   base-image scan's minimal derivative. For required packages, apply the vendor
+   security updates in both the runtime build and the scan target.
 5. Run CI and verify the Trivy scan passes against the resulting scan target.
 
 All workbench bases are now digest-pinned public Docker Hub images. The one
@@ -76,23 +77,75 @@ The canonical mapping is maintained in `npa/docker/workbench/tags.yaml`, and CI 
 
 ## CVE Scanning
 
-CI runs Trivy in `.github/workflows/image-security-scan.yml`:
+CI runs Trivy in `.github/workflows/image-security-scan.yml`, called by the
+required `security-regression` check:
 
-- Pull requests that modify Dockerfiles, `npa/docker/workbench/**`, or the scan workflow
-- Pushes to `main`
+- Every pull request and merge queue candidate, with deep work selected inside
+  the always-reporting jobs when image, packaging, workflow, or policy paths changed
+- Every push to `main`, always deeply
 - A weekly scheduled scan to catch newly disclosed CVEs in already-pinned bases
 
+The image workflow is reusable; the required check waits for both automatic
+jobs and fails if applicable image scanning fails or is cancelled. The separate
+schedule and manual trigger remain available. Its concurrency group differs from
+the caller's group so a reusable run cannot cancel its own parent. It has no
+top-level path filter: irrelevant candidates run and report the internal scope
+decision, avoiding permanently pending required checks. Deep PR and merge-group
+runs block without uploading SARIF; main and scheduled runs retain the existing
+SARIF categories and analysis keys. The action's
+[analysis-key override](https://github.com/github/codeql-action/blob/v4/src/environment.ts)
+preserves that identity across direct and reusable invocation. No additional
+branch-protection context is needed when `security-regression` is already required.
+
 The workflow scans Dockerfile/config issues and the digest-pinned public base
-image lineages. Dockerfile/config misconfigurations fail on HIGH and CRITICAL
-findings. Base-image CVE jobs are intentionally OS-package only, use
-`--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
+image lineages. Every validated inventory entry receives its own standard
+runner. Isolating image working sets replaces the earlier single-runner
+consolidation, which accumulated image/build caches and overlapping layer exports.
+The matrix does not cancel sibling scans when one fails. Its required aggregate
+accepts only a complete successful deep inventory or a verified irrelevant-change
+fast path. Each runner downloads the Trivy database for its private entry cache. Each entry removes its
+archive, mutable Trivy cache, and temporary layer files on completion or failure.
+Patched targets export directly from an isolated Buildx `docker-container`
+builder, which is removed before the archive scan begins. Unmodified digest
+references use Trivy's remote source, avoiding the shared Docker image store.
+No global image, builder, or volume pruning occurs. A builder-removal failure
+fails validation and retains its private `builder.json` and Buildx configuration
+for recovery; it is never reported as successful cleanup.
+
+The isolated build tool is Apache-2.0 Moby BuildKit v0.33.0, pinned by OCI digest
+in `scan_base_images.py`; Docker with the Buildx plugin is required for patched
+entries. The tool image may remain cached, but completed base-image build state
+is not retained. Concurrent active images still require disk space: per-entry
+cleanup prevents accumulated old images, not arbitrary image-size exhaustion.
+The workflow records actual runner free space before and after each scan.
+Per-image isolation removes contention between inventory entries; it does not
+prove that any arbitrarily large image fits a standard runner. No vulnerability
+threshold, preparation flag, or inventory entry is removed.
+
+Dockerfile/config misconfigurations fail on HIGH
+and CRITICAL findings. Base-image CVE jobs are intentionally OS-package only,
+use `--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
 CUDA base contains a fixable CRITICAL in a build-only OS package that consuming
 Dockerfiles remove before the final runtime layer, CI builds a minimal purged
 derivative of that pinned base and scans that derivative. This keeps the
 digest-pinned lineage visible while validating the remediation that is present
-in the shipped workbench images. HIGH base-image CVEs stay visible in SARIF and
-scheduled scan output, but they are advisory while the repo is not shipping
-those upstream bases unchanged as final runtime images.
+in the workbench build. The configured base scan reports fixed CRITICAL OS
+findings; it does not assess all severity levels or application dependencies.
+
+The Python base uses the existing OS update/upgrade preparation that matches
+FiftyOne's Dockerfile. Its inventory routing, update failures, and scan target are
+covered by `npa/tests/docker/test_base_image_scan.py`; the required workflow
+reuses that implementation. Full-image publication scans remain separate.
+
+Run the deterministic update and CI wiring regressions locally:
+
+```bash
+npa/.venv/bin/python -m pytest \
+  npa/tests/docker/test_base_image_scan.py \
+  npa/tests/docker/test_base_image_scan_cleanup.py \
+  npa/tests/guardrails/test_image_security_gate.py \
+  npa/tests/guardrails/test_security_gate.py -q
+```
 
 The repository-level `trivy.yaml` mirrors the base-image CVE policy for local
 operator scans: fixed CRITICAL OS-package vulnerabilities are the blocking gate,

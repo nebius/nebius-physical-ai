@@ -1,6 +1,6 @@
 ---
 name: health-preflight
-description: Use before any deploy, image build, or GPU submit to prove credentials and gated-model access up front with `npa workbench health preflight` and `npa workbench health access`, instead of discovering a missing token mid-run.
+description: Use before any deploy, image build, provisioning, or GPU submit to prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access`.
 ---
 
 # Health preflight (the doctor before you spend)
@@ -11,27 +11,66 @@ provisions cloud resources.
 
 ```bash
 npa workbench health preflight --json
+npa workbench health preflight --checks nebius --json
 npa workbench health access --json
 ```
 
-Both exit non-zero on any FAIL. That is the point: they are gates, not reports.
+All three exit non-zero on any FAIL. That is the point: they are gates, not reports.
 Use `--warn-only` only when you deliberately want the report without the gate
 (for example while collecting a status snapshot), never to make a red run green.
 
 ## What each command answers
 
 `preflight` answers *"do I hold the credentials nearly every workbench tool
-needs?"* with one PASS/WARN/FAIL/SKIP row per check over Hugging Face, NGC, S3,
-Token Factory, and Encord:
+needs?"* — one PASS/WARN/FAIL/SKIP row per check over Hugging Face, NGC, S3, and
+Token Factory. Request the optional `nebius` check before provisioning:
 
 ```bash
 npa workbench health preflight --checks all
-npa workbench health preflight --checks s3,encord
-npa workbench health preflight --offline    # presence only, no network probes
+npa workbench health preflight --checks nebius --json
+npa workbench health preflight --checks s3,token_factory
+npa workbench health preflight --project <alias> --checks s3,nebius
+npa workbench health preflight --checks all --offline  # presence only; Nebius is SKIP
 ```
 
-Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`, `encord`;
-the default is `hf,ngc,s3,token_factory,encord`.
+Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`,
+`encord`, `nebius`. The default remains `hf,ngc,s3,token_factory`, so hosted-inference
+work does not require a Nebius Cloud profile. Explicit `all` includes `encord` and `nebius`.
+Empty selections and unknown check names are errors, including unknown names
+combined with `all`. Repeated names run once.
+
+Select `--project <alias>` (or `-p`) when checking a configured project's S3
+storage. This reads the project's bucket, endpoint, and credential pair through
+the project storage resolver, without adopting host credential files or shell S3 settings, or
+changing saved configuration. A complete exact-project record wins over ambient
+S3 settings. Unknown projects and missing or deselected project storage produce
+a JSON-compatible FAIL and a nonzero exit, including offline; `--warn-only`
+preserves that FAIL while returning zero. The flag scopes only the S3 check;
+other checks and Nebius auth profile selection are unchanged.
+
+The S3 probe issues one `ListObjectsV2` request with `MaxKeys=1`. An empty bucket
+or prefix is valid. It discards object names and continuation tokens instead of
+enumerating checkpoint directories, so a large dataset does not increase the
+number of requests. Listing permission still does not prove write access.
+
+Online `nebius` runs the selected Nebius CLI profile through `iam whoami` and
+`iam get-access-token` with browser launch and update checks disabled. It
+discards both commands' output and removes ambient `NEBIUS_IAM_TOKEN` and
+`NEBIUS_IAM_TOKEN_FILE` values so a stale token cannot mask profile readiness.
+PASS requires both calls to succeed. In offline mode it returns SKIP because a
+local profile file is not proof of usable authentication.
+
+A failed Nebius identity probe does not establish that a token expired. Profile
+configuration may be missing, or access or connectivity may have failed. For
+diagnosis or authorized human login on an operator VM, see
+`skills/atomic/vm-nebius-auth/SKILL.md`. A readiness-only request does not
+authorize login or credential changes. Authentication PASS also leaves project
+permissions, quota, and capacity unverified.
+
+Profile selection uses `NPA_NEBIUS_PROFILE`, then `NEBIUS_PROFILE`, then the
+CLI's active/default profile. The project selector does not choose an auth
+profile. PASS proves authentication; permission to provision a particular
+resource still depends on the selected identity's access to that project.
 
 Online `hf` authenticates against Hugging Face `whoami-v2`; public repository
 metadata is not sufficient. Online `ngc` performs a registry token exchange;
@@ -40,8 +79,11 @@ authenticates and performs the cheapest read-only storage-folder listing.
 `access` performs the capability-specific repository/artifact probe.
 
 `access` answers the different and more specific question *"is my token actually
-entitled to the gated models this capability pulls?"* Holding an HF token is not
-the same as having accepted a model's license.
+entitled to fetch bytes from the gated assets this capability pulls?"* It probes
+a representative payload path at the exact catalog revision with HEAD or a
+one-byte Range request. Metadata access is not proof. Holding an HF token is not
+the same as having account entitlement, and `Ready` is technical fetch evidence,
+not proof of legal acceptance.
 
 ```bash
 npa workbench health access --capability all
@@ -64,11 +106,13 @@ already paid for a cluster. Run the checks in this order:
 
 1. `npa configure --show`: confirm the project stanza, bucket, and endpoint you
    think you are using are the ones on disk.
-2. `npa workbench health preflight`: credentials exist and authenticate.
-3. `npa workbench health access --capability <the one you will run>`: gated
+2. `npa workbench health preflight` — credentials exist and authenticate.
+3. `npa workbench health preflight --checks nebius`: the selected Nebius CLI
+   profile can resolve identity and mint an IAM token before provisioning.
+4. `npa workbench health access --capability <the one you will run>`: gated
    model entitlements for that capability only; `all` is slower and reports
    failures you do not care about today.
-4. Only then `npa provision-if-absent`, `npa cluster up`, or
+5. Only then `npa provision-if-absent`, `npa cluster up`, or
    `npa workbench workflow submit`.
 
 Image pullability is a *separate* gate that health does not cover; see
@@ -76,21 +120,38 @@ Image pullability is a *separate* gate that health does not cover; see
 `skills/atomic/submit-workflow/SKILL.md`. A green health report with an
 unpullable image still hangs in `ImagePullBackOff`.
 
-**A green `s3` row does not mean the submit can write.** The `s3` check lists
-the configured project bucket; `submit` runs a stricter one that puts a unique
-object into the bucket the *workflow* resolves, which is a different bucket
-whenever `NPA_S3_BUCKET` or `AWS_ENDPOINT_URL` is set in the environment. The
-two disagreeing looks like a passing preflight followed by:
+**A green `s3` row does not mean the submit is execution-ready.** The generic
+`s3` check lists its configured bucket. Submit resolves one effective target,
+verifies provider project/tenant/region and exact bucket ownership before any
+write, then writes and reads a unique object in each actual workload output,
+ledger and source-staging prefix using the executing credential pair. It also
+checks the exact Kubernetes context and requested GPU product/shape, including
+single-node requests. An explicit destination never falls back to another
+writable bucket. A mismatch or unknown ownership blocks creation, even with
+`--skip-preflight`. A denied task prefix can therefore follow a green generic
+health check:
 
 ```
-Error: Cannot submit <spec>.yaml: missing prerequisites:
-  - writable S3 for this workflow (S3 write permission was denied.)
+Error: execution preflight storage_access: exact output prefix write failed (authorization)
 ```
 
-Believe the submit, not the preflight row: it is the check closer to the write
-you are about to do. Reconcile the endpoint and bucket the workflow sees with
-the ones `npa configure --show` reports before reaching for the printed
-`npa provision-if-absent --project <alias> --skip-k8s` fix.
+Use submit's execution diagnosis. Reconcile the selected project and the exact
+endpoint/bucket/prefix before changing IAM. `--s3-bucket` / `--s3-prefix` bind
+the actual spec and ledger; `--s3-endpoint` binds both probe and worker endpoint.
+S3 keys are selected as a pair from one source, with non-secret provenance;
+an incomplete explicit pair cannot borrow a saved principal's other key.
+
+Without `--project`, credential preflight resolves its bucket from `NPA_CHECKPOINT_BUCKET`, then
+`NEBIUS_S3_BUCKET`, then saved credentials. Setting only `NPA_S3_BUCKET` changes
+the workflow destination but does not select the credential preflight bucket.
+For configured project storage, prefer `--project <alias>`. When checking an
+explicitly authorized destination through environment credentials, set
+`NPA_CHECKPOINT_BUCKET` to an unsigned `s3://` URI for that same bucket in the
+private process environment and use the matching endpoint and credentials.
+The list probe requires a URI, so a bare bucket name fails before S3 access.
+Verify bucket ownership first;
+do not change shared configuration or provision storage to repair a stale
+default selection.
 
 ## Persisting credentials you already hold
 
@@ -107,12 +168,12 @@ for "it worked in my shell but the submit could not resolve the secret": submit
 resolves each requested secret from the explicit process environment first, then
 the selected project's configured NPA credentials.
 
-## Hidden sim2real check
+## Sim2real preflight check
 
-`npa workbench health sim2real` exists but is hidden, and is specific to the
-14-stage Sim2Real graph rather than general readiness. It adds cluster-shaped
-checks (`config`, `coherence`, `s3`, `registry`, `tokens`, `cluster`) including
-schedulable GPU count and kube-context pinning:
+`npa workbench health sim2real` is specific to the 14-stage Sim2Real graph
+rather than general readiness. It adds cluster-shaped checks (`config`,
+`coherence`, `s3`, `registry`, `tokens`, `cluster`) including schedulable GPU
+count and kube-context pinning:
 
 ```bash
 npa workbench health sim2real --checks all --json
@@ -126,10 +187,10 @@ with `npa workbench workflow gpus --cluster <name>`.
 
 ## Gotchas
 
-- **`--offline` proves presence, not validity.** It skips the live
-  HF/NGC/S3/Token Factory/Encord probes. An expired-but-present token passes
-  offline and fails the moment a stage pulls. Use offline only where there is
-  genuinely no egress.
+- **`--offline` proves presence, not validity.** It skips live provider probes.
+  Existing credentials may pass presence checks, while `nebius` returns SKIP
+  because profile configuration is not authentication proof. Use offline only
+  where there is genuinely no egress.
 - **A SKIP is not a PASS.** Checks skip when the corresponding capability is not
   configured. If you are about to run a Cosmos stage and the NGC row says SKIP,
   you have not verified anything about NGC.
@@ -146,4 +207,21 @@ with `npa workbench workflow gpus --cluster <name>`.
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
+```
+
+With an authenticated operator profile, exercise the real CLI's successful,
+missing-profile, and offline paths (including stale ambient token scrubbing):
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_nebius_auth_preflight.py -q
+```
+
+For selected-project S3 coverage, use an explicitly configured disposable test
+project. The live tests use private configuration copies and clean up their
+unique fixture objects:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_E2E_PROJECT=<alias> npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_health_project_preflight_live.py -q
 ```

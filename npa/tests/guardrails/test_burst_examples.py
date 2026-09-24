@@ -9,7 +9,7 @@ API is deliberately scoped to *one* executable task.
 Two properties keep that boundary honest:
 
 * **one task per file** — the moment a second stage appears it is a workflow, and belongs in
-  `npa/workflows/workbench/npa-workflows/` as an `npa.workflow/v0.0.1` spec;
+  `workflows/testing/` as an `npa.workflow/v0.0.1` spec;
 * **`${VAR}` placeholders survive** — they are the burst substitution surface, so a concrete
   registry id, bucket name or run id must never be committed here.
 """
@@ -37,7 +37,7 @@ def test_example_set_is_pinned() -> None:
 
     assert found == set(PINNED_EXAMPLES), (
         "burst examples changed. A multi-stage pipeline is a workflow: author an "
-        "npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead. "
+        "npa.workflow/v0.0.1 spec under workflows/testing/ instead. "
         f"expected {sorted(PINNED_EXAMPLES)}, found {sorted(found)}"
     )
 
@@ -54,7 +54,9 @@ def test_the_directory_documents_the_boundary() -> None:
 def test_example_is_a_single_task(name: str) -> None:
     docs = _documents(EXAMPLES_DIR / name)
 
-    assert len(docs) == 1, f"{name} has {len(docs)} documents; burst submits exactly one task"
+    assert len(docs) == 1, (
+        f"{name} has {len(docs)} documents; burst submits exactly one task"
+    )
     task = docs[0]
     assert "run" in task, f"{name} must be an executable task"
     # A SkyPilot pipeline header (`execution:`) is the marker of a multi-stage document.
@@ -70,7 +72,9 @@ def test_example_keeps_its_substitution_placeholders(name: str) -> None:
     task = _documents(EXAMPLES_DIR / name)[0]
     unresolved = _unresolved_task_placeholders(task)
 
-    assert unresolved, f"{name} has no ${{VAR}} placeholders left; did a real value get baked in?"
+    assert unresolved, (
+        f"{name} has no ${{VAR}} placeholders left; did a real value get baked in?"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(PINNED_EXAMPLES))
@@ -107,4 +111,6 @@ def test_examples_are_not_in_the_retiring_workflow_catalog() -> None:
     catalog = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 
     for name in PINNED_EXAMPLES:
-        assert not (catalog / name).exists(), f"{name} came back to the retiring catalog"
+        assert not (catalog / name).exists(), (
+            f"{name} came back to the retiring catalog"
+        )

@@ -257,11 +257,6 @@ def write_json_object(
     return str(path)
 
 
-def _json_path(uri: str, *, filename: str = "artifact.json") -> Path:
-    path = Path(uri)
-    return path if path.suffix == ".json" else path / filename
-
-
 def _digest(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 

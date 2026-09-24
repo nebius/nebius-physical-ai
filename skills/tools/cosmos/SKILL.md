@@ -119,22 +119,27 @@ for workloads that generate kernels at runtime. A B300 port must move the whole
 locked environment to CUDA 13/cu130 and pass the full depth-conditioned
 Video2Video smoke; a CUDA probe or import is not sufficient.
 
-## Sim2Real VLM (hosted Cosmos3 only)
+## Sim2Real VLM (hosted evaluator)
 
 Sim2Real stage 8 evaluates every exact Stage 7 rollout with one CPU-only leaf:
-`nvidia/Cosmos3-Super-Reasoner`, hosted by Nebius Token Factory.
+`MiniMaxAI/MiniMax-M3`, hosted by Nebius Token Factory. The former public
+Cosmos3 model was retired; explicit serving Cosmos3 overrides remain supported.
 
-Implementation lives in `npa.workbench.cosmos.reason`. The Cosmos3 leaf uses the
+Implementation lives in `npa.workbench.cosmos.reason`. The hosted evaluator leaf uses the
 CPU controller image, bounded deterministic event-frame selection, and the
 existing OpenAI-compatible Token Factory client. Stage 9 consumes its event-local
 structured judgments directly after exact coverage and provenance checks. It
 must never request a GPU or require the general-purpose Reason image.
 
 **Access setup:** configure `NEBIUS_TOKEN_FACTORY_KEY` privately, run `npa workbench
-token-factory models`, and confirm the exact Super-Reasoner model plus a minimal
+token-factory models`, and confirm the exact selected model plus a minimal
 inference before submitting. Model availability is key/project-specific.
 
-The canonical model knob is `VLM_COSMOS3_MODEL`. Cosmos3-Super-Reasoner model materials are
+The canonical workflow model knob is `config.cosmos3_model`; the legacy
+`VLM_COSMOS3_MODEL` override remains. MiniMax-M3 has its own Community License
+(see `docs/workbench/token-factory-deprecation-verification.md`); it is not a
+Cosmos model. The stable Cosmos3 lane/schema names are compatibility names.
+For explicit legacy Cosmos3 selections, model materials are
 OpenMDW-1.1; retain
 `skills/LICENSE-NVIDIA-COSMOS3-OPENMDW-1.1` and
 `skills/NOTICE-NVIDIA-COSMOS3`. Hosted weights never enter NPA image layers.

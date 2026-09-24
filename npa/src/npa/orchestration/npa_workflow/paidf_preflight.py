@@ -27,9 +27,7 @@ _PAIDF_MEMORY_BYTES = (16 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3
 
 
 def cpu_placement_requirement() -> str:
-    return format_cpu_memory_requirement(
-        _PAIDF_CPU_MILLICORES, _PAIDF_MEMORY_BYTES
-    )
+    return format_cpu_memory_requirement(_PAIDF_CPU_MILLICORES, _PAIDF_MEMORY_BYTES)
 
 
 def static_prerequisites(

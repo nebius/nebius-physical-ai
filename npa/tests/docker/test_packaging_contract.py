@@ -12,6 +12,7 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    RESTRICTED_PUBLICATION_TOOLS,
     SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
     SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS,
 )
@@ -263,9 +264,8 @@ def test_packaging_contract_file_exists() -> None:
 def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
     """Hatch metadata generation must see every force-included workflow YAML.
 
-    ``pyproject.toml`` force-includes files below ``workflows/``. A Dockerfile that
-    copies the project metadata and installs ``/opt/npa`` therefore cannot copy only
-    ``src/npa``: pip fails before it can build editable or regular package metadata.
+    The build hook includes the staged catalog below ``src/npa/workflows/``.
+    Dockerfiles installing ``/opt/npa`` must copy that package source directory.
     """
 
     missing: list[str] = []
@@ -283,7 +283,7 @@ def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
         if not installs_npa or "/opt/npa/pyproject.toml" not in instructions:
             continue
         if not re.search(
-            r"\bCOPY\b[^\n]*\b(?:npa/)?workflows\s+/opt/npa/workflows\b",
+            r"\bCOPY\b[^\n]*\b(?:npa/)?src(?:/npa)?\s+/opt/npa/src(?:/npa)?\b",
             instructions,
         ):
             missing.append(str(dockerfile.relative_to(ROOT)))
@@ -301,8 +301,7 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         text = _build_contract_text(dockerfile)
         assert version == "skypilot-0.12.2-v1", name
         assert (
-            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"'
-            in dockerfile_text
+            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in dockerfile_text
         ), name
         for package in ("openssh-server", "rsync", "sudo"):
             assert package in text, f"{name}: missing {package}"
@@ -320,7 +319,18 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
                 _normalize_dockerfile(dockerfile_text),
             )
             if copy_match:
-                script = ROOT / "npa" / copy_match.group("src")
+                source = Path(copy_match.group("src"))
+                assert not source.is_absolute() and ".." not in source.parts, name
+                # Workbench images use either npa/ or docker/workbench/ as
+                # their build context. Require one unambiguous source file.
+                candidates = [
+                    (context / source).resolve()
+                    for context in (ROOT / "npa", WORKBENCH_DOCKER)
+                    if (context / source).is_file()
+                ]
+                assert len(candidates) == 1, f"{name}: ambiguous or missing COPY source"
+                script = candidates[0]
+                assert script.is_relative_to(WORKBENCH_DOCKER.resolve()), name
         assert script.is_file(), f"{name}: entrypoint source not found: {script}"
         entrypoint_text = script.read_text(encoding="utf-8")
         assert (
@@ -473,9 +483,7 @@ def test_groot_uses_a_fixed_consistent_linux_headers_snapshot() -> None:
     assert "ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z" in text
     assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in text
     assert "NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT}" in text
-    assert (
-        "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
-    )
+    assert "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
     assert '"linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}"' in text
     assert "dpkg --purge --force-depends linux-libc-dev" not in text
 
@@ -828,19 +836,73 @@ def test_no_image_bakes_eula_acceptance(image_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
-def test_no_image_builds_from_an_nvcr_base(image_name: str) -> None:
-    """No workbench image may pull from NVIDIA's credentialed registry.
+def _assert_restricted_nvcr_parent(
+    image_name: str,
+    entry: Mapping,
+    bases: list[str],
+    restricted_tools: frozenset[str] | set[str] = RESTRICTED_PUBLICATION_TOOLS,
+) -> None:
+    """Only reviewed, exact PAIDF parents may enter operator-private recipes."""
+    from npa.workflows.paidf_upstream import upstream_contract
 
-    An nvcr.io base both bakes proprietary content and makes the build depend on an NGC
-    login, so build-your-own stops working for anyone without NGC credentials.
-    """
+    roles = {
+        "paidf-detection-sky": "detection-and-tracking-rfdetr",
+        "paidf-captioning-sky": "captioning",
+        "paidf-visual-qa-sky": "visual-qa",
+        "paidf-attribute-search-sky": "event-and-person-attribute-search",
+    }
+    vendor_bases = [base for base in bases if "nvcr.io" in base]
+    declared = entry.get("restricted_parent_image")
+    if not vendor_bases and not declared:
+        return
+    assert image_name in roles, f"{image_name}: unreviewed NGC parent"
+    assert entry.get("redistribution") == "restricted", image_name
+    assert image_name in restricted_tools, f"{image_name}: missing restricted inventory"
+    parents = upstream_contract("event-video-generation")["npa_integration"][
+        "components"
+    ]["reference_runtime_images"]
+    expected = next(
+        ref
+        for ref in parents
+        if ref.startswith(f"nvcr.io/nvidia/paidf-{roles[image_name]}-service@")
+    )
+    assert re.fullmatch(r"nvcr\.io/[^@]+@sha256:[0-9a-f]{64}", expected)
+    assert declared == expected, f"{image_name}: unreviewed parent digest"
+    assert vendor_bases == [expected], f"{image_name}: parent differs from provenance"
+
+
+@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
+def test_nvcr_parents_require_exact_restricted_contract(image_name: str) -> None:
+    """Public recipes exclude NGC; private exceptions remain exact and inventoried."""
     contract = _load_contract()
     text = (WORKBENCH_DOCKER / contract["images"][image_name]["dockerfile"]).read_text(
         encoding="utf-8"
     )
-    for base in _base_image_refs(_normalize_dockerfile(text)):
-        assert "nvcr.io" not in base, f"{image_name}: builds FROM {base}"
+    _assert_restricted_nvcr_parent(
+        image_name,
+        contract["images"][image_name],
+        _base_image_refs(_normalize_dockerfile(text)),
+    )
+
+
+@pytest.mark.parametrize("mutation", ["wrong-digest", "public", "missing-inventory"])
+def test_restricted_nvcr_parent_rejects_unsafe_contract_mutations(
+    mutation: str,
+) -> None:
+    name = "paidf-detection-sky"
+    entry = deepcopy(_load_contract()["images"][name])
+    bases = [entry["restricted_parent_image"]]
+    restricted = set(RESTRICTED_PUBLICATION_TOOLS)
+    if mutation == "wrong-digest":
+        entry["restricted_parent_image"] = bases[0] = bases[0].split("@")[0] + (
+            "@sha256:" + "0" * 64
+        )
+    elif mutation == "public":
+        entry["redistribution"] = "public"
+    else:
+        restricted.remove(name)
+    with pytest.raises(AssertionError):
+        _assert_restricted_nvcr_parent(name, entry, bases, restricted)
 
 
 def test_packaging_doc_exists() -> None:
@@ -850,3 +912,22 @@ def test_packaging_doc_exists() -> None:
     assert "Packaging tiers" in text
     assert "Security baseline" in text
     assert "packaging-contract.yaml" in text
+
+
+def test_sim2real_control_requirement_sets_have_consistent_shared_pins() -> None:
+    """The control image installs both exact requirement sets in one pip call."""
+
+    requirement_files = (
+        WORKBENCH_DOCKER / "common" / "sim2real-controller-requirements.txt",
+        WORKBENCH_DOCKER / "common" / "sim2real-control-requirements.txt",
+    )
+    versions: dict[str, set[str]] = {}
+    for path in requirement_files:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s;]+)", line.strip())
+            if match:
+                name = match.group(1).lower().replace("_", "-")
+                versions.setdefault(name, set()).add(match.group(2))
+
+    conflicts = {name: pins for name, pins in versions.items() if len(pins) > 1}
+    assert not conflicts, f"Sim2Real control requirement pin conflicts: {conflicts}"

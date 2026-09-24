@@ -10,8 +10,9 @@ Preflight health checks for workbench workflows.
 Options
 --help  Show this message and exit.
 Commands
-preflight  Validate HF, NGC, S3, Token Factory, and Encord credentials before use.
+preflight  Validate service credentials and optional Nebius CLI authentication.
 access  Check HF + NGC access to every gated model the workbench capabilities need.
+sim2real  Validate a sim2real config and check the recurring blockers up front.
 ```
 
 ## Options
@@ -24,8 +25,9 @@ access  Check HF + NGC access to every gated model the workbench capabilities ne
 
 | Command | Description |
 | --- | --- |
-| `preflight` | Validate HF, NGC, S3, Token Factory, and Encord credentials before use. |
+| `preflight` | Validate service credentials and optional Nebius CLI authentication. |
 | `access` | Check HF + NGC access to every gated model the workbench capabilities need. |
+| `sim2real` | Validate a sim2real config and check the recurring blockers up front. |
 
 ## Examples
 

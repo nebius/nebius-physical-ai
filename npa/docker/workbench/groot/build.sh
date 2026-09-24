@@ -137,6 +137,7 @@ if [ "$PUSH" -eq 1 ]; then
     docker buildx rm "$BUILDX_BUILDER" >/dev/null 2>&1 || true
     docker buildx create --name "$BUILDX_BUILDER" --driver docker-container --bootstrap >/dev/null
   fi
+  "${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
   docker buildx build --builder "$BUILDX_BUILDER" --push "${BUILD_ARGS[@]}" \
     -t "$REGISTRY_IMAGE" "$NPA_ROOT"
   echo "Built and pushed: $REGISTRY_IMAGE"
@@ -148,6 +149,7 @@ if [ -n "$REGISTRY_IMAGE" ]; then
   BUILD_ARGS+=(-t "$REGISTRY_IMAGE")
 fi
 
+"${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
 docker build "${BUILD_ARGS[@]}" "$NPA_ROOT"
 
 SIZE_BYTES="$(docker image inspect "$LOCAL_IMAGE" --format '{{.Size}}')"

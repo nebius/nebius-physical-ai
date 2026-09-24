@@ -17,6 +17,7 @@ import uuid
 import pytest
 
 from agent_eval.harness import (
+    _fake_embed,
     assert_scorecard_not_regressed,
     run_operate_eval,
     run_suite,
@@ -58,6 +59,43 @@ def test_agent_eval_scorecard_does_not_regress_from_committed_baseline():
     assert_scorecard_not_regressed(current, _baseline_scorecard())
 
 
+@pytest.mark.parametrize("hash_seed", [0, 269, 471])
+def test_mocked_embeddings_and_scorecard_ignore_process_hash_seed(hash_seed):
+    """Keep retrieval results stable across workers with different hash seeds.
+
+    Args:
+        hash_seed: Includes seeds that previously ranked an unrelated document first.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Embeddings differ or a fresh process regresses the scorecard.
+    """
+    script = (
+        "import json\n"
+        "from agent_eval.harness import _fake_embed, run_suite\n"
+        "print(json.dumps({'vectors': _fake_embed(['genesis gpu physics simulator']), "
+        "'scorecard': run_suite()['scorecard']}))\n"
+    )
+    tests_directory = str(Path(__file__).resolve().parents[1])
+    environment = {
+        **os.environ,
+        "PYTHONHASHSEED": str(hash_seed),
+        "PYTHONPATH": os.pathsep.join(
+            [tests_directory, os.environ.get("PYTHONPATH", "")]
+        ),
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(result.stdout)
+    assert_scorecard_not_regressed(report["scorecard"], _baseline_scorecard())
+    assert report["vectors"] == _fake_embed(["genesis gpu physics simulator"])
+
+
 def test_agent_eval_regression_gate_rejects_negative_control():
     class BrokenGroundedRouter:
         """Deterministically break the zero-token router used by four scenarios."""
@@ -86,7 +124,9 @@ def test_laundered_baseline_cannot_lower_the_policy_bar():
     current = run_suite()["scorecard"]
     laundered = {**current, "success_rate": 0.9}
 
-    with pytest.raises(AssertionError, match="baseline success_rate=0.9 is below policy=1.0"):
+    with pytest.raises(
+        AssertionError, match="baseline success_rate=0.9 is below policy=1.0"
+    ):
         assert_scorecard_not_regressed(current, laundered)
 
 
@@ -97,7 +137,9 @@ def test_scenario_identity_and_count_are_policy_pinned():
     assert scorecard["scenario_sha256"] == SCENARIO_SHA256
 
     dropped = run_suite(SCENARIOS[:-1])["scorecard"]
-    with pytest.raises(AssertionError, match="scenario_count|scenario_ids|scenario_sha256"):
+    with pytest.raises(
+        AssertionError, match="scenario_count|scenario_ids|scenario_sha256"
+    ):
         assert_scorecard_not_regressed(dropped, _baseline_scorecard())
 
 
@@ -155,7 +197,9 @@ def test_every_scenario_kind_is_exercised():
 
 def test_no_task_crashes():
     report = run_suite()
-    crashed = [r for r in report["results"] if str(r.get("detail", "")).startswith("error:")]
+    crashed = [
+        r for r in report["results"] if str(r.get("detail", "")).startswith("error:")
+    ]
     assert not crashed, crashed
 
 
@@ -193,7 +237,11 @@ def test_operate_eval_mocked_round_trip_is_grounded(
             ),
             encoding="utf-8",
         )
-        return {"status": "completed", "run_id": observed_run_id, "run_uri": str(fixture)}
+        return {
+            "status": "completed",
+            "run_id": observed_run_id,
+            "run_uri": str(fixture),
+        }
 
     def ingest(submission: dict, output_uri: str, observed_run_id: str) -> dict:
         response = ingest_run(
@@ -211,7 +259,11 @@ def test_operate_eval_mocked_round_trip_is_grounded(
     def ask(input_uri: str) -> dict:
         result = observe(input_uri)
         reply = summarize_observations([{"tool": "insights_query", "result": result}])
-        return {"reply": reply, "tools_used": ["insights_query"], "usage": {"total_tokens": 0}}
+        return {
+            "reply": reply,
+            "tools_used": ["insights_query"],
+            "usage": {"total_tokens": 0},
+        }
 
     report = run_operate_eval(
         run_id=run_id,
@@ -256,7 +308,7 @@ def test_agent_eval_live_operate_round_trip():  # pragma: no cover - opt-in live
     prefix = f"agent-eval/{run_id}"
     store_uri = f"s3://{bucket}/{prefix}/store/"
     empty_store_uri = f"s3://{bucket}/{prefix}/empty/"
-    workflow_path = Path(__file__).parents[2] / "workflows/workbench/npa-workflows/insights-smoke.yaml"
+    workflow_path = Path(__file__).parents[3] / "workflows/testing/insights-smoke.yaml"
 
     def submit(observed_run_id: str) -> dict:
         npa_executable = str(Path(sys.executable).with_name("npa"))
@@ -288,7 +340,11 @@ def test_agent_eval_live_operate_round_trip():  # pragma: no cover - opt-in live
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
         if completed.returncode:
             raise AssertionError(completed.stderr or completed.stdout)
-        return {"status": "completed", "run_id": observed_run_id, "stdout": completed.stdout}
+        return {
+            "status": "completed",
+            "run_id": observed_run_id,
+            "stdout": completed.stdout,
+        }
 
     def ingest(submission: dict, output_uri: str, observed_run_id: str) -> dict:
         # The submitted workflow's first real state is insights ingest-run. Query

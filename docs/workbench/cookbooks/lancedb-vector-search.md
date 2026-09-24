@@ -1,5 +1,7 @@
 # LanceDB Vector Search
 
+[Cookbooks](README.md)
+
 LanceDB gives the Workbench a CPU-only vector-search and data-lake layer for
 robotics datasets. The v1 integration wraps the OSS Python package in a small
 NPA service that stores Lance data in a local path or an S3-compatible object
@@ -24,7 +26,7 @@ npa workbench lancedb deploy \
   --storage-path /tmp/npa-lancedb \
   --port 8686 \
   --auth-mode none \
-  --image <your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z
+  --image "<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 ```
 
 Create a table from local JSON, JSONL, parquet, or a directory of parquet

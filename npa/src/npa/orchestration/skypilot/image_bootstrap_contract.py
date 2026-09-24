@@ -94,16 +94,22 @@ def parse_oci_reference(image: str) -> OCIReference:
     if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise ImageBootstrapContractError("image digest is not a valid sha256 digest")
     if "/" not in named:
-        raise ImageBootstrapContractError("image must have a registry-qualified repository")
+        raise ImageBootstrapContractError(
+            "image must have a registry-qualified repository"
+        )
     registry, path = named.split("/", 1)
     if not registry or not path or path.startswith("/") or path.endswith("/"):
         raise ImageBootstrapContractError("image has an invalid registry or repository")
     if registry.startswith("["):
         close = registry.find("]")
-        if close < 2 or registry[close + 1 :] not in {""} and not re.fullmatch(
-            r":[0-9]+", registry[close + 1 :]
+        if (
+            close < 2
+            or registry[close + 1 :] not in {""}
+            and not re.fullmatch(r":[0-9]+", registry[close + 1 :])
         ):
-            raise ImageBootstrapContractError("image has an invalid IPv6 registry authority")
+            raise ImageBootstrapContractError(
+                "image has an invalid IPv6 registry authority"
+            )
     elif registry.count(":") > 1 or (
         ":" in registry and not registry.rsplit(":", 1)[1].isdigit()
     ):
@@ -204,12 +210,14 @@ def verify_attestation(
 def probe_name(digest: str, nonce: str = "") -> str:
     """Return a per-invocation name while retaining digest correlation."""
 
-    correlation = hashlib.sha256(
-        f"{digest}\0{CONTRACT_VERSION}".encode()
-    ).hexdigest()[:10]
+    correlation = hashlib.sha256(f"{digest}\0{CONTRACT_VERSION}".encode()).hexdigest()[
+        :10
+    ]
     unique = str(nonce or secrets.token_hex(8)).lower()
     if not re.fullmatch(r"[0-9a-f]{8,32}", unique):
-        raise ImageBootstrapContractError("probe nonce must be 8-32 hexadecimal characters")
+        raise ImageBootstrapContractError(
+            "probe nonce must be 8-32 hexadecimal characters"
+        )
     return f"npa-sky-image-probe-{correlation}-{unique}"[:63].rstrip("-")
 
 
@@ -271,6 +279,26 @@ def _observe_terminal_phase(
     )
 
 
+def _runtime_bootstrap_script() -> str:
+    """Prepare the packages SkyPilot installs after overriding a vendor entrypoint."""
+
+    return """set -eu
+if [ "$(id -u)" != 0 ]; then command -v sudo; sudo -n true; fi
+as_root() {
+    if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi
+}
+packages=""
+command -v rsync >/dev/null || packages="$packages rsync"
+(command -v sshd >/dev/null || test -x /usr/sbin/sshd) || packages="$packages openssh-server"
+command -v service >/dev/null || packages="$packages init-system-helpers"
+if [ -n "$packages" ]; then
+    command -v apt-get
+    as_root apt-get update
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y $packages
+fi
+"""
+
+
 def probe_image_capabilities(
     *,
     image: str,
@@ -278,12 +306,29 @@ def probe_image_capabilities(
     context: str,
     kubeconfig: str = "",
     image_pull_secrets: tuple[str, ...] = (),
+    runtime_bootstrap: bool = False,
     observation_timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS,
     runner: Runner = _run,
     terminal_observer: TerminalObserver = _observe_terminal_phase,
     nonce_factory: Callable[[], str] = lambda: secrets.token_hex(8),
 ) -> ImageContractEvidence:
-    """Run and exactly clean one bounded capability pod for an unattested image."""
+    """Verify worker capabilities and clean up the exact probe pod.
+
+    Args:
+        image, digest: Registry reference and immutable bytes to inspect.
+        context, kubeconfig: Exact Kubernetes target and credentials file.
+        image_pull_secrets: Existing registry authentication Secret names.
+        runtime_bootstrap: Reproduce SkyPilot's shell override and package
+            installation for vendor images; first-party byte probes stay strict.
+        observation_timeout_seconds: Watch deadline; zero waits indefinitely.
+        runner, terminal_observer, nonce_factory: Injectable execution boundaries.
+
+    Returns:
+        Capability evidence including verified cleanup.
+
+    Raises:
+        ImageBootstrapContractError: An input reference or target is invalid.
+    """
 
     immutable = immutable_image_reference(image, digest)
     if observation_timeout_seconds < 0:
@@ -307,12 +352,16 @@ def probe_image_capabilities(
         env["KUBECONFIG"] = kubeconfig
     script = (
         "set -eu; "
-        "test -w /tmp; test -w \"$HOME\"; "
+        'test -w /tmp; test -w "$HOME"; '
         "command -v rsync; command -v service; "
         "(command -v sshd || test -x /usr/sbin/sshd); "
-        "if [ \"$(id -u)\" != 0 ]; then command -v sudo; sudo -n true; fi; "
+        'if [ "$(id -u)" != 0 ]; then command -v sudo; sudo -n true; fi; '
         "test \"$(/bin/sh -c 'printf %s forwarded' sentinel)\" = forwarded"
     )
+    command_override = ["--command"] if runtime_bootstrap else []
+    shell = "/bin/bash" if runtime_bootstrap else "/bin/sh"
+    if runtime_bootstrap:
+        script = _runtime_bootstrap_script() + script
     common = ["kubectl", "--context", context]
     name = ""
     probe_id = ""
@@ -352,8 +401,9 @@ def probe_image_capabilities(
                     f"--image={immutable}",
                     f"--labels={labels}",
                     *overrides,
+                    *command_override,
                     "--",
-                    "/bin/sh",
+                    shell,
                     "-c",
                     script,
                 ],
@@ -519,7 +569,11 @@ def probe_image_capabilities(
         digest=digest,
         contract_version=CONTRACT_VERSION,
         state="compatible",
-        source="ephemeral_capability_probe",
+        source=(
+            "ephemeral_runtime_bootstrap_probe"
+            if runtime_bootstrap
+            else "ephemeral_capability_probe"
+        ),
         checks=(
             "effective_user",
             "passwordless_sudo_or_root",
@@ -527,7 +581,9 @@ def probe_image_capabilities(
             "rsync",
             "service_init",
             "writable_locations",
-            "entrypoint_argument_forwarding",
+            "kubernetes_command_override"
+            if runtime_bootstrap
+            else "entrypoint_argument_forwarding",
         ),
         cleanup=cleanup,
     )
@@ -625,7 +681,10 @@ def _read_owned_probe_identity(
         or actual_image != immutable
         or (expected_uid and uid != expected_uid)
     ):
-        return None, "probe ownership or immutable pod identity did not match this caller"
+        return (
+            None,
+            "probe ownership or immutable pod identity did not match this caller",
+        )
     return uid, ""
 
 
@@ -648,6 +707,10 @@ def load_cached_evidence(path: Path, digest: str) -> ImageContractEvidence | Non
 
 
 def store_cached_evidence(path: Path, evidence: ImageContractEvidence) -> None:
+    # Runtime-installed packages depend on the selected cluster's live mirrors,
+    # so this result must never become an attestation of the image's own bytes.
+    if evidence.source == "ephemeral_runtime_bootstrap_probe":
+        return
     if not evidence.ok or evidence.cleanup == "failed":
         return
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

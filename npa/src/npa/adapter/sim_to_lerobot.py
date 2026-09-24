@@ -32,7 +32,9 @@ DEFAULT_VIDEO_SIZE_MB = 500
 
 DATA_PATH_TPL = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
 VIDEO_PATH_TPL = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
-EPISODES_PATH_TPL = "meta/episodes/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+EPISODES_PATH_TPL = (
+    "meta/episodes/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+)
 
 
 class AdapterError(Exception):
@@ -56,16 +58,26 @@ def encode_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "rawvideo",
-        "-pix_fmt", "rgb24",
-        "-s", f"{w}x{h}",
-        "-r", str(fps),
-        "-i", "pipe:",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-crf", "23",
-        "-g", "2",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{w}x{h}",
+        "-r",
+        str(fps),
+        "-i",
+        "pipe:",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+        "-g",
+        "2",
         str(output_path),
     ]
     proc = subprocess.run(
@@ -83,6 +95,49 @@ def encode_video(
 # ── Statistics ──────────────────────────────────────────────────────────
 
 
+def _compute_video_stats(arrays: list[np.ndarray]) -> dict[str, Any]:
+    """Merge per-frame moments without allocating a float64 copy of the dataset."""
+    if not arrays or arrays[0].ndim != 4:
+        raise ValueError("video statistics require arrays shaped (N, H, W, C)")
+    shape = arrays[0].shape[1:]
+    if not all(shape) or any(
+        array.ndim != 4 or array.shape[1:] != shape for array in arrays
+    ):
+        raise ValueError("video statistics require matching nonempty frame shapes")
+    channels = shape[-1]
+    minimum, maximum = np.full(channels, np.inf), np.full(channels, -np.inf)
+    mean, squared_deviations = np.zeros(channels), np.zeros(channels)
+    pixels = frames = 0
+    for array in arrays:
+        for frame in array:
+            frame_pixels = frame.shape[0] * frame.shape[1]
+            frame_mean = frame.mean(axis=(0, 1), dtype=np.float64)
+            delta = frame_mean - mean
+            combined_pixels = pixels + frame_pixels
+            # Parallel variance merge retains small differences between frames.
+            squared_deviations += frame.var(
+                axis=(0, 1), dtype=np.float64
+            ) * frame_pixels + delta * delta * (pixels * frame_pixels / combined_pixels)
+            mean += delta * (frame_pixels / combined_pixels)
+            minimum = np.minimum(minimum, frame.min(axis=(0, 1)))
+            maximum = np.maximum(maximum, frame.max(axis=(0, 1)))
+            pixels = combined_pixels
+            frames += 1
+    if not frames:
+        raise ValueError("video statistics require at least one frame")
+    values = {
+        "min": minimum / 255.0,
+        "max": maximum / 255.0,
+        "mean": mean / 255.0,
+        "std": np.sqrt(squared_deviations / pixels) / 255.0,
+    }
+    result = {
+        key: value.reshape(channels, 1, 1).tolist() for key, value in values.items()
+    }
+    result["count"] = [frames]
+    return result
+
+
 def _compute_feature_stats(
     arrays: list[np.ndarray],
     is_video: bool = False,
@@ -93,18 +148,7 @@ def _compute_feature_stats(
     computed on normalized [0, 1] float values.
     """
     if is_video:
-        # Flatten all frames into (N, H, W, C), normalize to [0,1]
-        all_frames = np.concatenate(arrays, axis=0).astype(np.float64) / 255.0
-        n, h, w, c = all_frames.shape
-        # Per-channel stats → shape (C, 1, 1)
-        per_channel = all_frames.reshape(-1, c)  # (N*H*W, C)
-        return {
-            "min": [[[float(per_channel[:, ch].min())]] for ch in range(c)],
-            "max": [[[float(per_channel[:, ch].max())]] for ch in range(c)],
-            "mean": [[[float(per_channel[:, ch].mean())]] for ch in range(c)],
-            "std": [[[float(per_channel[:, ch].std())]] for ch in range(c)],
-            "count": [n],
-        }
+        return _compute_video_stats(arrays)
 
     concat = np.concatenate(arrays, axis=0).astype(np.float64)
     if concat.ndim == 1:
@@ -137,15 +181,37 @@ def _build_data_schema(
     n_actions: int,
 ) -> pa.Schema:
     """Build the Arrow schema for data parquet files."""
-    return pa.schema([
-        ("observation.state", pa.list_(pa.float32(), n_state)),
-        ("action", pa.list_(pa.float32(), n_actions)),
-        ("episode_index", pa.int64()),
-        ("frame_index", pa.int64()),
-        ("timestamp", pa.float32()),
-        ("index", pa.int64()),
-        ("task_index", pa.int64()),
-    ])
+    return pa.schema(
+        [
+            ("observation.state", _numeric_feature_type(n_state)),
+            ("action", _numeric_feature_type(n_actions)),
+            ("episode_index", pa.int64()),
+            ("frame_index", pa.int64()),
+            ("timestamp", pa.float32()),
+            ("index", pa.int64()),
+            ("task_index", pa.int64()),
+        ]
+    )
+
+
+def _numeric_feature_type(width: int) -> pa.DataType:
+    """Match LeRobot's Hugging Face feature encoding for 1-D numerics.
+
+    LeRobot 0.5.x maps metadata shape ``[1]`` to ``datasets.Value`` rather
+    than a one-element ``Sequence``.  The physical feature is still described
+    as shape ``[1]`` in ``info.json``; only its Arrow storage is scalar.
+    """
+
+    return pa.float32() if width == 1 else pa.list_(pa.float32(), width)
+
+
+def _numeric_feature_values(
+    rows: list[dict[str, Any]], key: str, width: int
+) -> list[Any]:
+    values = [row[key] for row in rows]
+    if width == 1:
+        return [float(value[0]) for value in values]
+    return values
 
 
 # ── Main conversion ────────────────────────────────────────────────────
@@ -154,8 +220,7 @@ def _build_data_schema(
 def discover_episodes(input_dir: Path) -> list[Path]:
     """Find episode directories sorted by name."""
     episodes = sorted(
-        d for d in input_dir.iterdir()
-        if d.is_dir() and d.name.startswith("episode_")
+        d for d in input_dir.iterdir() if d.is_dir() and d.name.startswith("episode_")
     )
     if not episodes:
         raise AdapterError(f"No episode_* directories found in {input_dir}")
@@ -169,6 +234,7 @@ def convert(
     fps: int = 20,
     robot_type: str = "franka_panda",
     task: str = "Pick and place cube to target",
+    task_from_metadata: bool = False,
 ) -> Path:
     """Convert a directory of episode numpy arrays to LeRobotDataset v3.0.
 
@@ -184,6 +250,25 @@ def convert(
     """
     episodes = discover_episodes(input_dir)
     n_episodes = len(episodes)
+    episode_tasks = [task] * n_episodes
+    if task_from_metadata:
+        metadata_path = input_dir / "metadata.json"
+        if not metadata_path.is_file():
+            raise AdapterError("--task-from-metadata requires metadata.json")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        records = metadata.get("episodes") or []
+        by_index = {
+            int(record["episode_index"]): str(
+                record.get("task") or record.get("env_id") or ""
+            ).strip()
+            for record in records
+            if isinstance(record, dict) and "episode_index" in record
+        }
+        episode_tasks = [by_index.get(index, "") for index in range(n_episodes)]
+        if any(not value for value in episode_tasks):
+            raise AdapterError("metadata.json does not name a task for every episode")
+    tasks = list(dict.fromkeys(episode_tasks))
+    task_indices = {name: index for index, name in enumerate(tasks)}
 
     # Peek at first episode to determine shapes
     first_state = np.load(episodes[0] / "state.npy")
@@ -230,19 +315,29 @@ def convert(
         actions = np.load(ep_dir / "actions.npy")
 
         ep_len = state.shape[0]
-        if obs_workspace.shape[0] != ep_len:
-            raise AdapterError(
-                f"Episode {ep_idx}: obs_workspace has {obs_workspace.shape[0]} "
-                f"frames but state has {ep_len}"
-            )
+        for stream_name, stream in [
+            ("obs_workspace", obs_workspace),
+            ("obs_wrist", obs_wrist),
+            ("actions", actions),
+        ]:
+            if stream.shape[0] != ep_len:
+                raise AdapterError(
+                    f"Episode {ep_idx}: {stream_name} has {stream.shape[0]} "
+                    f"frames but state has {ep_len}"
+                )
 
         # ── Encode videos ───────────────────────────────────────────
         for cam_key, cam_frames in [
             ("observation.images.workspace", obs_workspace),
             ("observation.images.wrist", obs_wrist),
         ]:
-            video_path = output_dir / "videos" / cam_key / "chunk-000" / f"file-{ep_idx:03d}.mp4"
+            video_path = (
+                output_dir / "videos" / cam_key / "chunk-000" / f"file-{ep_idx:03d}.mp4"
+            )
             encode_video(cam_frames, video_path, fps)
+
+        episode_task = episode_tasks[ep_idx]
+        episode_task_index = task_indices[episode_task]
 
         # ── Build data rows ─────────────────────────────────────────
         dataset_from_index = global_index
@@ -254,7 +349,7 @@ def convert(
                 "frame_index": frame_idx,
                 "timestamp": frame_idx / fps,
                 "index": global_index,
-                "task_index": 0,
+                "task_index": episode_task_index,
             }
             all_data_rows.append(row)
             global_index += 1
@@ -272,7 +367,7 @@ def convert(
             "frame_index": np.arange(ep_len, dtype=np.int64),
             "episode_index": np.full(ep_len, ep_idx, dtype=np.int64),
             "index": np.arange(dataset_from_index, dataset_to_index, dtype=np.int64),
-            "task_index": np.zeros(ep_len, dtype=np.int64),
+            "task_index": np.full(ep_len, episode_task_index, dtype=np.int64),
         }
         ep_stats = _compute_episode_stats(ep_arrays, video_keys)
 
@@ -288,7 +383,7 @@ def convert(
             "dataset_from_index": dataset_from_index,
             "dataset_to_index": dataset_to_index,
             "length": ep_len,
-            "tasks": [task],
+            "tasks": [episode_task],
             "meta/episodes/chunk_index": 0,
             "meta/episodes/file_index": 0,
         }
@@ -310,12 +405,12 @@ def convert(
     # ── Write data parquet ──────────────────────────────────────────
     arrays = {
         "observation.state": pa.array(
-            [r["observation.state"] for r in all_data_rows],
-            type=pa.list_(pa.float32(), n_state),
+            _numeric_feature_values(all_data_rows, "observation.state", n_state),
+            type=_numeric_feature_type(n_state),
         ),
         "action": pa.array(
-            [r["action"] for r in all_data_rows],
-            type=pa.list_(pa.float32(), n_actions),
+            _numeric_feature_values(all_data_rows, "action", n_actions),
+            type=_numeric_feature_type(n_actions),
         ),
         "episode_index": pa.array(
             [r["episode_index"] for r in all_data_rows], type=pa.int64()
@@ -326,9 +421,7 @@ def convert(
         "timestamp": pa.array(
             [r["timestamp"] for r in all_data_rows], type=pa.float32()
         ),
-        "index": pa.array(
-            [r["index"] for r in all_data_rows], type=pa.int64()
-        ),
+        "index": pa.array([r["index"] for r in all_data_rows], type=pa.int64()),
         "task_index": pa.array(
             [r["task_index"] for r in all_data_rows], type=pa.int64()
         ),
@@ -348,7 +441,7 @@ def convert(
     _print_progress("Writing tasks parquet...")
 
     # ── Write tasks parquet ─────────────────────────────────────────
-    _write_tasks_parquet(task, output_dir / "meta" / "tasks.parquet")
+    _write_tasks_parquet(tasks, output_dir / "meta" / "tasks.parquet")
 
     _print_progress("Computing global stats...")
 
@@ -369,7 +462,7 @@ def convert(
         "robot_type": robot_type,
         "total_episodes": n_episodes,
         "total_frames": total_frames,
-        "total_tasks": 1,
+        "total_tasks": len(tasks),
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,
         "splits": {"train": f"0:{n_episodes}"},
@@ -487,12 +580,17 @@ def _write_episodes_parquet(
     pq.write_table(table, output_path, compression="snappy")
 
 
-def _write_tasks_parquet(task: str, output_path: Path) -> None:
+def _write_tasks_parquet(task: str | list[str], output_path: Path) -> None:
     """Write the tasks.parquet metadata file."""
-    table = pa.table({
-        "task_index": pa.array([0], type=pa.int64()),
-        "task": pa.array([task], type=pa.string()),
-    })
+    import pandas as pd
+
+    tasks = [task] if isinstance(task, str) else task
+    frame = pd.DataFrame(
+        {"task_index": list(range(len(tasks)))},
+        index=pd.Index(tasks, name="task"),
+    )
+    # Native LeRobot looks up the task text through the DataFrame index.
+    table = pa.Table.from_pandas(frame, preserve_index=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path, compression="snappy")
 

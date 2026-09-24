@@ -1,5 +1,7 @@
 # Caching runtime-downloaded model weights and reviewed SDKs
 
+[Workbench docs](README.md)
+
 The workbench images bake **no model weights**. Every NVIDIA Cosmos checkpoint and
 guardrail, GR00T, the Cosmos-Curate towers, the Qwen VLMs, Wan 2.2 and LTX are
 license-gated or too large to redistribute, so
@@ -38,7 +40,7 @@ On by default wherever the answer is not "invent storage nobody asked for":
   default to; name a Nebius filesystem and every job attaches it:
 
   ```bash
-  export NPA_MODEL_CACHE_FILESYSTEM=<filesystem>   # not an s3:// bucket
+  export NPA_MODEL_CACHE_FILESYSTEM="<filesystem>"   # not an s3:// bucket
   ```
 
 Nothing here provisions storage. NPA will not create a claim, guess a class, or bill
@@ -212,6 +214,7 @@ which is the failure this exists to remove.
 | `NPA_COSMOS_REASON_CACHE`, `NPA_COSMOS_REASON2_CACHE`, `NPA_COSMOS_REASON3_CACHE` | `huggingface/cosmos-reason*` | Self-hosted Cosmos Reason families |
 | `NPA_COSMOS_CURATE_WEIGHTS_DIR` | `cosmos-curate/models` | rebinds upstream Cosmos-Curate's hardcoded `/config/models` |
 | `HF_LEROBOT_HOME`, `LEROBOT_HF_HOME` | `lerobot` | LeRobot datasets and policies |
+| `NPA_SAM3_CACHE` | `sam3` | SAM 3.1 source, runtime closure and gated checkpoint |
 | `WAN22_CACHE_DIR`, `NPA_LTX_MODEL_CACHE` | `wan2.2`, `ltx-2.5` | the BYOF video models |
 | `NPA_CONTENT_AGENTS_RUNTIME_CACHE` | `runtimes/content-agents` | exact OVRTX SDK delivered directly by NVIDIA to the operator |
 

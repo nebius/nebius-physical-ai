@@ -9,8 +9,9 @@ module "kuberay" {
     module.gpu-operator,
   ]
 
-  parent_id  = var.parent_id
-  cluster_id = nebius_mk8s_v1_cluster.k8s-cluster.id
+  parent_id   = var.parent_id
+  cluster_id  = nebius_mk8s_v1_cluster.k8s-cluster.id
+  cpu_cluster = var.kuberay_cpu_cluster
   #cpu worker setup
   cpu_platform     = local.cpu_nodes_platform
   cpu_worker_image = var.kuberay_cpu_worker_image

@@ -134,6 +134,31 @@ def test_default_selection_is_pinned_real_starter() -> None:
     assert result.config_overrides()["seed_fixture"] == "false"
 
 
+def test_nvidia_vda_plan_uses_its_workflow_specific_artifact_prefix() -> None:
+    result = dfi.plan_paidf_input(
+        run_id="paidf-one",
+        bucket="bucket",
+        artifact_prefix="nvidia-paidf-vda-cosmos-transfer25/paidf-one",
+        conditioning_policy=dfi.SOURCE_FIDELITY_CONDITIONING_POLICY,
+    )
+
+    assert result.provenance["staged_canonical_s3_uri"] == (
+        "s3://bucket/nvidia-paidf-vda-cosmos-transfer25/paidf-one/input/"
+    )
+    assert result.provenance["provenance_uri"].endswith("/input/provenance.json")
+    assert result.provenance["derivation"]["policy"] == "source-fidelity-v3"
+
+
+@pytest.mark.parametrize(
+    "prefix", ["../escape", "nested//empty", "s3://bucket/key", "nested\\escape"]
+)
+def test_custom_artifact_prefix_rejects_unsafe_object_keys(prefix: str) -> None:
+    with pytest.raises(dfi.PaidfInputError, match="safe relative"):
+        dfi.plan_paidf_input(
+            run_id="paidf-one", bucket="bucket", artifact_prefix=prefix
+        )
+
+
 @pytest.mark.parametrize(
     ("video", "uri", "fixture"),
     [
@@ -154,8 +179,7 @@ def test_explicit_selectors_override_default() -> None:
     assert dfi.select_paidf_input(input_uri="s3://bucket/capture.mp4") == "object_uri"
     assert dfi.select_paidf_input(seed_fixture=True) == "synthetic_fixture"
     assert (
-        dfi.select_paidf_input(lerobot_uri="s3://bucket/dataset/")
-        == "lerobot_dataset"
+        dfi.select_paidf_input(lerobot_uri="s3://bucket/dataset/") == "lerobot_dataset"
     )
 
 
@@ -201,23 +225,20 @@ def test_lerobot_selector_materializes_only_selected_camera_episode(
     storage.s3.objects[
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.front/episode_000001.mp4",
+            prefix + "videos/chunk-000/observation.images.front/episode_000001.mp4",
         )
     ] = b"front-episode-one"
     storage.s3.objects[
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
+            prefix + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
         )
     ] = b"wrist-episode-one"
     # An unrelated episode proves that PAIDF does not materialize the full dataset.
     storage.s3.objects[
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.front/episode_000000.mp4",
+            prefix + "videos/chunk-000/observation.images.front/episode_000000.mp4",
         )
     ] = b"front-episode-zero"
 
@@ -247,8 +268,7 @@ def test_lerobot_selector_materializes_only_selected_camera_episode(
     assert storage.s3.downloads == [
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
+            prefix + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
         )
     ]
     assert storage.s3.list_requests == []
@@ -270,9 +290,7 @@ def test_lerobot_camera_and_episode_validation_is_fail_closed() -> None:
             lerobot_episode=-1,
         )
     with pytest.raises(dfi.PaidfInputError, match="require --lerobot-uri"):
-        dfi.plan_paidf_input(
-            run_id="bad", bucket="artifacts", lerobot_camera="front"
-        )
+        dfi.plan_paidf_input(run_id="bad", bucket="artifacts", lerobot_camera="front")
 
 
 @pytest.mark.parametrize(
@@ -407,10 +425,14 @@ def test_lerobot_rejects_unsafe_format_fields_and_nonfinite_timestamps(
         )
 
 
+@pytest.mark.parametrize("metadata_chunk", [0, 2])
+@pytest.mark.parametrize("file_index", [0, 2])
 def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
     tmp_path: Path,
     fake_media_pipeline: None,
     monkeypatch: pytest.MonkeyPatch,
+    metadata_chunk: int,
+    file_index: int,
 ) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -432,7 +454,7 @@ def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
             {
                 "episode_index": 7,
                 f"videos/{feature}/chunk_index": 0,
-                f"videos/{feature}/file_index": 2,
+                f"videos/{feature}/file_index": file_index,
                 f"videos/{feature}/from_timestamp": 1.25,
                 f"videos/{feature}/to_timestamp": 2.75,
             }
@@ -440,10 +462,9 @@ def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
     )
     parquet = tmp_path / "episodes.parquet"
     pq.write_table(table, parquet)
-    storage.s3.objects[
-        ("artifacts", prefix + "meta/episodes/chunk-000/file-000.parquet")
-    ] = parquet.read_bytes()
-    shared_key = prefix + f"videos/{feature}/chunk-000/file-002.mp4"
+    metadata_key = prefix + f"meta/episodes/chunk-{metadata_chunk:03d}/file-000.parquet"
+    storage.s3.objects[("artifacts", metadata_key)] = parquet.read_bytes()
+    shared_key = prefix + f"videos/{feature}/chunk-000/file-{file_index:03d}.mp4"
     storage.s3.objects[("artifacts", shared_key)] = b"shared-video"
     trim_args: list[tuple[float, float]] = []
 
@@ -464,12 +485,10 @@ def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
     assert result.selection == "lerobot_dataset"
     assert trim_args == [(1.25, 2.75)]
     assert [key for _bucket, key in storage.s3.downloads] == [
-        prefix + "meta/episodes/chunk-000/file-000.parquet",
+        metadata_key,
         shared_key,
     ]
-    assert storage.s3.list_requests == [
-        ("artifacts", prefix + "meta/episodes/chunk-000/")
-    ]
+    assert storage.s3.list_requests == [("artifacts", prefix + "meta/episodes/")]
 
 
 def test_lerobot_rejects_unsupported_version_and_unsafe_video_template(
@@ -719,7 +738,9 @@ def test_fetch_verifies_caches_and_supports_offline_hit(
 ) -> None:
     body = b"verified physical video bytes"
     contract = _contract_for_bytes(body)
-    monkeypatch.setattr(dfi, "urlopen", lambda *_args, **_kwargs: _Response(body))
+    monkeypatch.setattr(
+        dfi, "_open_starter_url", lambda *_args, **_kwargs: _Response(body)
+    )
 
     path, status = dfi._fetch_starter(
         contract, cache_dir=tmp_path, offline=False, reporter=lambda _message: None
@@ -729,7 +750,7 @@ def test_fetch_verifies_caches_and_supports_offline_hit(
 
     monkeypatch.setattr(
         dfi,
-        "urlopen",
+        "_open_starter_url",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(URLError("offline")),
     )
     same, status = dfi._fetch_starter(
@@ -750,7 +771,7 @@ def test_offline_cache_miss_and_checksum_mismatch_fail_closed(
         )
 
     monkeypatch.setattr(
-        dfi, "urlopen", lambda *_args, **_kwargs: _Response(b"tampered")
+        dfi, "_open_starter_url", lambda *_args, **_kwargs: _Response(b"tampered")
     )
     with pytest.raises(dfi.PaidfInputError, match="SHA-256 mismatch"):
         dfi._fetch_starter(
@@ -837,6 +858,10 @@ def _ffprobe_payload(**stream_overrides) -> str:
         "pix_fmt": "yuv420p",
         "avg_frame_rate": "16/1",
         "nb_frames": "93",
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
     }
     stream.update(stream_overrides)
     return json.dumps(
@@ -862,6 +887,241 @@ def test_real_probe_parser_derives_missing_frame_count_from_valid_bounded_fields
 
     assert media["frame_count"] == 93
     assert media["frame_rate"] == "16/1"
+    assert media["color_range"] == "tv"
+    assert media["color_space"] == "bt709"
+    assert media["color_transfer"] == "bt709"
+    assert media["color_primaries"] == "bt709"
+
+
+def test_source_fidelity_conditioning_preserves_channels_timeline_and_shape(
+    tmp_path: Path,
+) -> None:
+    if dfi.shutil.which("ffmpeg") is None or dfi.shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg and ffprobe are required for media regression coverage")
+
+    import av
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    frames = tmp_path / "source-frames"
+    frames.mkdir()
+    source_count = 169
+    for index in range(source_count):
+        image = Image.new("RGB", (320, 240))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 105, 239), fill=(230, 10, 10))
+        draw.rectangle((106, 0, 212, 239), fill=(10, 230, 10))
+        draw.rectangle((213, 0, 319, 239), fill=(10, 10, 230))
+        marker_x = round(index * 319 / (source_count - 1))
+        draw.rectangle((marker_x - 2, 96, marker_x + 2, 144), fill=(255, 255, 255))
+        image.save(frames / f"frame-{index:04d}.png")
+
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-framerate",
+            "50",
+            "-i",
+            str(frames / "frame-%04d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuvj420p",
+            "-color_range",
+            "pc",
+            "-colorspace",
+            "smpte170m",
+            "-color_primaries",
+            "smpte170m",
+            "-color_trc",
+            "smpte170m",
+            str(source),
+        ],
+        check=True,
+    )
+    source_media = dfi.probe_video(source)
+    source_timestamps = dfi._decoded_video_timestamps(source, source_media)
+    output = tmp_path / "conditioning.mp4"
+    contract = dfi._derive_source_fidelity_conditioning(
+        source, output, source_media, source_timestamps
+    )
+    output_media = dfi.probe_video(output)
+
+    assert "-stream_loop" not in contract["arguments"]
+    assert output_media["frame_count"] == dfi.CONDITIONING_FRAME_COUNT
+    assert output_media["frame_rate"] == "16/1"
+    assert output_media["duration_seconds"] == pytest.approx(93 / 16, abs=0.002)
+    assert output_media["width"] == 1280 and output_media["height"] == 720
+    assert output_media["pixel_format"] == "yuv420p"
+    assert {
+        key: output_media[key]
+        for key in ("color_range", "color_space", "color_transfer", "color_primaries")
+    } == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
+
+    with av.open(str(output)) as container:
+        decoded = list(container.decode(video=0))
+    assert [float(frame.time) for frame in decoded] == pytest.approx(
+        [index / 16 for index in range(93)], abs=1e-9
+    )
+    arrays = [frame.to_ndarray(format="rgb24") for frame in decoded]
+
+    # 4:3 content is letterboxed into 16:9 without cropping either source edge.
+    middle = arrays[46]
+    assert np.asarray(middle[:, :140]).mean() < 5
+    assert np.asarray(middle[:, 1140:]).mean() < 5
+    assert middle[360, 180, 0] > 150
+    assert middle[360, 1100, 2] > 150
+
+    # Primary channels remain in RGB order after full-range SD -> limited BT.709.
+    mean_frame = np.mean(np.stack(arrays), axis=0)
+    red = mean_frame[200:300, 250:350].mean(axis=(0, 1))
+    green = mean_frame[200:300, 590:690].mean(axis=(0, 1))
+    blue = mean_frame[200:300, 930:1030].mean(axis=(0, 1))
+    assert red[0] > max(red[1], red[2]) * 4
+    assert green[1] > max(green[0], green[2]) * 4
+    assert blue[2] > max(blue[0], blue[1]) * 4
+
+    # The moving marker traverses the source exactly once; it never wraps/repeats.
+    marker_positions = []
+    for frame in arrays:
+        row = frame[360]
+        white = np.flatnonzero(np.min(row, axis=1) > 210)
+        marker_positions.append(float(np.median(white)))
+    assert marker_positions[0] == pytest.approx(160, abs=12)
+    assert marker_positions[46] == pytest.approx(640, abs=12)
+    assert marker_positions[-1] == pytest.approx(1119, abs=12)
+    assert all(
+        right >= left - 4 for left, right in zip(marker_positions, marker_positions[1:])
+    )
+
+    aligned = tmp_path / "aligned"
+    aligned.mkdir()
+    extracted = dfi._extract_aligned_conditioning_frames(output, aligned)
+    assert len(extracted) == dfi.CONDITIONING_FRAMES
+    assert dfi._aligned_conditioning_frame_indices() == [0, 13, 26, 39, 53, 66, 79, 92]
+    alignment = dfi._source_fidelity_alignment(source_media, source_timestamps)
+    assert alignment["loop_count"] == 0
+    assert alignment["frame_map"][0]["source_index"] == 0
+    assert alignment["frame_map"][-1]["source_index"] == 168
+    inferred_source_indices = [
+        round((position - 160) * (source_count - 1) / 959)
+        for position in marker_positions
+    ]
+    expected_source_indices = [item["source_index"] for item in alignment["frame_map"]]
+    assert (
+        max(
+            abs(observed - expected)
+            for observed, expected in zip(
+                inferred_source_indices, expected_source_indices
+            )
+        )
+        <= 1
+    )
+
+
+def test_source_fidelity_alignment_uses_decoded_vfr_timestamps() -> None:
+    media = {"frame_count": 5, "frame_rate": "30/1"}
+    timestamps = [0.0, 0.02, 0.05, 0.4, 1.0]
+
+    alignment = dfi._source_fidelity_alignment(media, timestamps)
+
+    assert alignment["method"] == (
+        "single-pass-endpoint-aligned-fps-round-near-decoded-pts"
+    )
+    assert alignment["frame_map"][0]["source_index"] == 0
+    assert alignment["frame_map"][46]["source_index"] == 3
+    assert alignment["frame_map"][-1]["source_index"] == 4
+    assert dfi._source_fidelity_time_scale(timestamps) == pytest.approx(5.75)
+
+
+def test_source_fidelity_v2_contract_remains_resume_compatible() -> None:
+    media = {
+        "frame_count": 169,
+        "frame_rate": "50/1",
+        "color_range": "pc",
+        "color_space": "bt470bg",
+    }
+
+    arguments = dfi._source_fidelity_v2_conditioning_arguments(media)
+    alignment = dfi._source_fidelity_v2_alignment(media)
+
+    assert arguments[3] == (
+        "setpts=(PTS-STARTPTS)*1.71130952380952,"
+        "fps=16:round=near:start_time=0,"
+        "scale=1280:720:force_original_aspect_ratio=decrease:"
+        "in_range=pc:in_color_matrix=bt470bg:out_range=tv:out_color_matrix=bt709,"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+    )
+    assert alignment["method"] == "single-pass-endpoint-aligned-nearest-frame"
+    assert [alignment["frame_map"][index]["source_index"] for index in (0, 46, 92)] == [
+        0,
+        84,
+        168,
+    ]
+    assert dfi._conditioning_policy("source-fidelity-v2") == "source-fidelity-v2"
+    assert dfi._conditioning_policy("source-fidelity-v3") == "source-fidelity-v3"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "color_space": "bt2020nc",
+            "color_transfer": "smpte2084",
+            "color_primaries": "bt2020",
+        },
+        {
+            "color_space": "bt2020nc",
+            "color_transfer": "arib-std-b67",
+            "color_primaries": "bt2020",
+        },
+    ],
+)
+def test_source_fidelity_rejects_hdr_instead_of_retagging(overrides: dict) -> None:
+    media = {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        **overrides,
+    }
+
+    with pytest.raises(dfi.PaidfInputError, match="does not silently retag HDR"):
+        dfi._source_color_filter(media)
+
+
+def test_source_fidelity_records_bounded_sdr_color_tag_inference() -> None:
+    conversion = dfi._source_color_conversion(
+        {
+            "color_range": "pc",
+            "color_space": "bt470bg",
+            "color_transfer": "unknown",
+            "color_primaries": "unknown",
+        }
+    )
+
+    assert conversion["inferred_fields"] == ["color_transfer", "color_primaries"]
+    assert conversion["resolved_input"] == {
+        "color_range": "pc",
+        "color_space": "bt470bg",
+        "color_transfer": "bt470bg",
+        "color_primaries": "bt470bg",
+    }
+    assert conversion["output"] == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
 
 
 @pytest.mark.parametrize(

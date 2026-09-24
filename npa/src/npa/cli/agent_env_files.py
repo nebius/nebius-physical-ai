@@ -7,16 +7,22 @@ them there keep working.
 
 from __future__ import annotations
 
+import base64
 import json
-from pathlib import Path
+import os
 import re
 import shlex
 import uuid
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+
+import yaml
 
 from npa.clients.config import CONFIG_PATH, _load_yaml_file
 from npa.clients.project_credential_store import merge_project_credentials_document
 from npa.clients.ssh import SSHClient
+from npa.cli.agent_access import normalize_configured_artifact_sources
 
 
 _REMOTE_KUBERNETES_KEYS = (
@@ -25,6 +31,138 @@ _REMOTE_KUBERNETES_KEYS = (
     "gpu_profile",
     "gpu_accelerator",
 )
+
+_LLM_PROVIDER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}\Z")
+_CUSTOM_LLM_MIN_TIMEOUT_SECONDS = 180.0
+_CUSTOM_LLM_MAX_CONCURRENCY = 8
+_ARTIFACT_CREDENTIAL_MODES = frozenset(
+    {"isolated-read", "deployment-write-migration", "unconfigured"}
+)
+
+
+def _agent_kubeconfig_without_operator_profile(content: str) -> str:
+    """Keep an agent-staged Nebius exec credential portable across machines.
+
+    A kubeconfig fetched on an operator machine can pin ``nebius --profile`` to
+    that machine's human profile. The agent VM instead authenticates through
+    its attached service-account metadata profile (selected by its command
+    environment), so retaining the operator-only argument makes an otherwise
+    valid kubeconfig unusable. Only Nebius exec entries are normalized; other
+    credential plugins retain their exact arguments.
+    """
+
+    try:
+        document = yaml.safe_load(content) or {}
+    except yaml.YAMLError:
+        return content
+    if not isinstance(document, dict):
+        return content
+    changed = False
+    for entry in document.get("users") or []:
+        user = entry.get("user") if isinstance(entry, dict) else None
+        executable = user.get("exec") if isinstance(user, dict) else None
+        if not isinstance(executable, dict):
+            continue
+        raw_command = str(executable.get("command") or "")
+        command = Path(raw_command).name.lower()
+        args = executable.get("args")
+        if command != "nebius" or not isinstance(args, list):
+            continue
+        if raw_command != "nebius":
+            # Kubeconfigs downloaded on an operator laptop commonly reference
+            # the absolute local CLI path. The agent service resolves its own
+            # installed ``nebius`` binary through PATH instead.
+            executable["command"] = "nebius"
+            changed = True
+        normalized: list[Any] = []
+        index = 0
+        while index < len(args):
+            value = str(args[index])
+            if value == "--profile":
+                changed = True
+                index += 2
+                continue
+            if value.startswith("--profile="):
+                changed = True
+                index += 1
+                continue
+            normalized.append(args[index])
+            index += 1
+        executable["args"] = normalized
+    if not changed:
+        return content
+    return yaml.safe_dump(document, sort_keys=False)
+
+
+def _remote_cluster_state_content(
+    cluster_name: str, *, remote_kubeconfig_path: str = ""
+) -> str:
+    """Return one non-secret NPA cluster identity record for agent preflight."""
+
+    name = str(cluster_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        return ""
+    try:
+        from npa.cluster.state import state_file
+
+        document = json.loads(state_file(name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(document, dict):
+        return ""
+    # ``cluster.json`` normally refers to the operator's local kubeconfig.  The
+    # agent gets an owner-only copy at a different path, and identity verification
+    # deliberately refuses that stale local reference.  Rewrite only this local
+    # path while preserving the immutable cluster and project identity fields.
+    if remote_kubeconfig_path:
+        document["kubeconfig_path"] = remote_kubeconfig_path
+    return json.dumps(document, sort_keys=True) + "\n"
+
+
+def _adopted_project_kubernetes_config(project_id: str) -> tuple[dict[str, str], str]:
+    """Return one locally adopted project kubeconfig, or fail closed.
+
+    ``npa cluster kubeconfig`` intentionally stores its credential under the
+    local cluster state rather than rewriting the operator's project config.
+    Agent bootstrap must be able to stage that normal NPA-managed credential,
+    but only when it can unambiguously bind it to one project-owned context.
+    """
+
+    normalized_project_id = str(project_id or "").strip()
+    if not normalized_project_id:
+        return {}, ""
+    try:
+        from npa.cluster.state import existing_kubeconfig, list_local_clusters
+
+        candidates = [
+            (state, kubeconfig)
+            for state in list_local_clusters()
+            if str(getattr(state, "project_id", "") or "").strip()
+            == normalized_project_id
+            and str(getattr(state, "last_seen_state", "") or "").strip().upper()
+            == "RUNNING"
+            and bool(str(getattr(state, "endpoint", "") or "").strip())
+            and int(getattr(state, "node_count", 0) or 0) > 0
+            and (kubeconfig := existing_kubeconfig(str(getattr(state, "name", ""))))
+            is not None
+            and kubeconfig.is_file()
+        ]
+    except (OSError, RuntimeError, ValueError):
+        return {}, ""
+    if len(candidates) != 1:
+        return {}, ""
+    state, kubeconfig = candidates[0]
+    context = str(getattr(state, "name", "") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", context):
+        return {}, ""
+    try:
+        content = kubeconfig.read_text(encoding="utf-8")
+    except OSError:
+        return {}, ""
+    return {
+        "cluster_name": context,
+        "context": context,
+    }, _agent_kubeconfig_without_operator_profile(content)
 
 
 def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:
@@ -42,7 +180,12 @@ def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:
     project = projects.get(project_alias) if isinstance(projects, dict) else None
     kubernetes = project.get("kubernetes") if isinstance(project, dict) else None
     if not isinstance(kubernetes, dict):
-        return {}, ""
+        project_id = (
+            str(project.get("project_id") or "").strip()
+            if isinstance(project, dict)
+            else ""
+        )
+        return _adopted_project_kubernetes_config(project_id)
     result = {
         key: value
         for key in _REMOTE_KUBERNETES_KEYS
@@ -56,7 +199,7 @@ def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:
         content = Path(source).expanduser().read_text(encoding="utf-8")
     except OSError:
         content = ""
-    return result, content
+    return result, _agent_kubeconfig_without_operator_profile(content)
 
 
 def _stage_private_text(
@@ -86,6 +229,101 @@ def _stage_private_text(
         ssh.run(f"rm -f {shlex.quote(remote_source)} {shlex.quote(remote_target)}")
 
 
+def _load_agent_llm_config_file(path: str) -> dict[str, Any]:
+    """Load one owner-only OpenAI-compatible provider configuration.
+
+    The API key itself remains in a separate owner-only file so neither the
+    command line nor the durable agent record contains secret material.
+    """
+
+    source = Path(str(path or "")).expanduser()
+    if not source.is_file():
+        raise ValueError("LLM config file does not exist")
+    if source.stat().st_mode & 0o077:
+        raise ValueError("LLM config file must not be readable by group or others")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("LLM config file is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("LLM config file must contain a JSON object")
+    allowed = {
+        "provider",
+        "base_url",
+        "api_key_file",
+        "model",
+        "models",
+        "timeout_seconds",
+        "max_concurrency",
+    }
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        raise ValueError("LLM config file contains unsupported fields")
+    provider = str(payload.get("provider") or "").strip().lower().replace("-", "_")
+    if not _LLM_PROVIDER_RE.fullmatch(provider):
+        raise ValueError("LLM provider name is invalid")
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")
+    parsed = urlparse(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "LLM base URL must be credential-free HTTPS without query or fragment"
+        )
+    model = str(payload.get("model") or "").strip()
+    if not model or any(char in model for char in "\r\n"):
+        raise ValueError("LLM model is invalid")
+    raw_models = payload.get("models") or [model]
+    if not isinstance(raw_models, list):
+        raise ValueError("LLM models must be a JSON array")
+    models: list[str] = []
+    for item in [model, *raw_models]:
+        value = str(item or "").strip()
+        if not value or any(char in value for char in "\r\n"):
+            raise ValueError("LLM models contain an invalid entry")
+        if value not in models:
+            models.append(value)
+    key_path = Path(str(payload.get("api_key_file") or "")).expanduser()
+    if not key_path.is_file():
+        raise ValueError("LLM API key file does not exist")
+    if key_path.stat().st_mode & 0o077:
+        raise ValueError("LLM API key file must not be readable by group or others")
+    try:
+        api_key = key_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError("LLM API key file is unreadable") from exc
+    if not api_key or "\n" in api_key or "\r" in api_key:
+        raise ValueError("LLM API key file must contain exactly one non-empty value")
+    try:
+        timeout_seconds = float(payload.get("timeout_seconds", 180))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LLM timeout_seconds must be numeric") from exc
+    if timeout_seconds < _CUSTOM_LLM_MIN_TIMEOUT_SECONDS:
+        raise ValueError("custom LLM timeout_seconds must be at least 180")
+    try:
+        max_concurrency = int(payload.get("max_concurrency", 8))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("LLM max_concurrency must be an integer") from exc
+    if not 1 <= max_concurrency <= _CUSTOM_LLM_MAX_CONCURRENCY:
+        raise ValueError("LLM max_concurrency must be between 1 and 8")
+    return {
+        "provider": provider,
+        "base_url": base_url,
+        "api_key_file": str(key_path),
+        "api_key": api_key,
+        "model": model,
+        "models": models,
+        "timeout_seconds": timeout_seconds,
+        "max_concurrency": max_concurrency,
+        "config_file": str(source),
+    }
+
+
 def _write_agent_s3_env(
     ssh: SSHClient,
     *,
@@ -96,7 +334,7 @@ def _write_agent_s3_env(
     secret_key: str,
     region: str,
 ) -> None:
-    """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
+    """Stage the deployment/home S3 identity used for state and workflow writes."""
     if not (bucket.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
@@ -106,13 +344,103 @@ def _write_agent_s3_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    env_lines.append("")
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),
         target="/opt/npa-agent/s3.env",
     )
+
+
+def _write_agent_artifact_sources_env(
+    ssh: SSHClient,
+    *,
+    artifact_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+    bucket: str = "",
+    endpoint: str = "",
+    access_key: str = "",
+    secret_key: str = "",
+    region: str = "",
+    credential_mode: str = "",
+) -> None:
+    """Stage exact read selectors and an explicit artifact identity mode."""
+    normalized_sources = normalize_configured_artifact_sources(artifact_sources)
+    complete_credentials = bool(
+        bucket.strip()
+        and endpoint.strip()
+        and access_key.strip()
+        and secret_key.strip()
+    )
+    partial_credentials = (
+        any(value.strip() for value in (bucket, endpoint, access_key, secret_key))
+        and not complete_credentials
+    )
+    mode = str(credential_mode or "").strip() or (
+        "isolated-read"
+        if normalized_sources and complete_credentials
+        else "unconfigured"
+    )
+    if mode not in _ARTIFACT_CREDENTIAL_MODES:
+        raise ValueError("unsupported artifact credential mode")
+    if partial_credentials:
+        raise ValueError("artifact read credentials must be complete")
+    source_buckets = {item["bucket"] for item in normalized_sources}
+    if complete_credentials and source_buckets and bucket.strip() not in source_buckets:
+        raise ValueError(
+            "artifact read credential bucket does not match its source scope"
+        )
+    if mode in {"isolated-read", "deployment-write-migration"} and (
+        not normalized_sources or not complete_credentials
+    ):
+        raise ValueError(
+            "configured artifact credential mode requires sources and complete credentials"
+        )
+    if mode == "unconfigured" and complete_credentials:
+        raise ValueError("unconfigured artifact mode must not stage credentials")
+
+    env_lines: list[str] = [f"NPA_AGENT_ARTIFACT_CREDENTIAL_MODE={mode}"]
+    if mode == "deployment-write-migration":
+        env_lines.append(
+            "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION=deployment-write-exact-source-v1"
+        )
+    if normalized_sources:
+        encoded_sources = base64.urlsafe_b64encode(
+            json.dumps(
+                list(normalized_sources), separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")
+        ).decode("ascii")
+        env_lines.append(f"NPA_AGENT_ARTIFACT_SOURCES_B64={encoded_sources}")
+    if complete_credentials:
+        env_lines.extend(
+            [
+                f"NPA_AGENT_ARTIFACT_S3_BUCKET={bucket.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_ENDPOINT={endpoint.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID={access_key.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY={secret_key.strip()}",
+                f"NPA_AGENT_ARTIFACT_S3_REGION={region.strip() or 'eu-north1'}",
+            ]
+        )
+    env_lines.append("")
+    _stage_private_text(
+        ssh,
+        content="\n".join(env_lines),
+        target="/opt/npa-agent/artifact-sources.env",
+    )
+
+
+def _load_agent_artifact_sources_file(path: str) -> tuple[dict[str, str], ...]:
+    """Load an owner-only JSON array used by ``npa agent bootstrap``."""
+    source = Path(str(path or "")).expanduser()
+    if not source.is_file():
+        raise ValueError("artifact source file does not exist")
+    if source.stat().st_mode & 0o077:
+        raise ValueError("artifact source file must not be readable by group or others")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("artifact source file is not valid JSON") from exc
+    return normalize_configured_artifact_sources(payload)
 
 
 def _write_agent_operator_profile(
@@ -207,6 +535,9 @@ def _write_agent_operator_profile(
             remote_config_payload["projects"][project_alias]["kubernetes"][
                 "kubeconfig"
             ] = remote_kubeconfig
+            cluster_state_content = _remote_cluster_state_content(
+                cluster_name, remote_kubeconfig_path=remote_kubeconfig
+            )
             ssh.run_or_raise(
                 f"sudo install -d -m 700 -o {shlex.quote(owner.split(':', 1)[0])} "
                 f"-g {shlex.quote(owner.split(':', 1)[1])} {shlex.quote(cluster_dir)}",
@@ -218,6 +549,13 @@ def _write_agent_operator_profile(
                 target=remote_kubeconfig,
                 owner=owner,
             )
+            if cluster_state_content:
+                _stage_private_text(
+                    ssh,
+                    content=cluster_state_content,
+                    target=f"{cluster_dir}/cluster.json",
+                    owner=owner,
+                )
         config_path = f"{npa_dir}/config.yaml"
         creds_path = f"{npa_dir}/credentials.yaml"
         ssh.run_or_raise(
@@ -266,6 +604,25 @@ def _write_agent_nebius_env(
     del iam_token
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
+    dataset_tenant = os.environ.get("NPA_AGENT_DATASET_TENANT_ID", "").strip()
+    dataset_uri = os.environ.get("NPA_AGENT_DATASET_URI", "").strip()
+    if bool(dataset_tenant) != bool(dataset_uri):
+        raise ValueError("agent dataset tenant and URI must be configured together")
+    if dataset_tenant:
+        parsed_dataset = urlparse(dataset_uri)
+        if dataset_tenant != tenant_id.strip():
+            raise ValueError(
+                "agent dataset tenant does not match the deployment tenant"
+            )
+        if (
+            parsed_dataset.scheme != "s3"
+            or parsed_dataset.netloc != bucket.strip()
+            or parsed_dataset.query
+            or parsed_dataset.fragment
+        ):
+            raise ValueError(
+                "agent dataset URI must use the deployment's unsigned S3 bucket"
+            )
     env_lines = [
         f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
         f"NPA_AGENT_NAME={agent_name.strip()}",
@@ -282,8 +639,15 @@ def _write_agent_nebius_env(
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
     ]
+    if dataset_tenant:
+        env_lines.extend(
+            [
+                f"NPA_AGENT_DATASET_TENANT_ID={dataset_tenant}",
+                f"NPA_AGENT_DATASET_URI={dataset_uri}",
+            ]
+        )
+    env_lines.append("")
     _stage_private_text(
         ssh,
         content="\n".join(env_lines),

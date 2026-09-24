@@ -1,5 +1,14 @@
 # Hackathon Quickstart — Cosmos3 Reasoner on Nebius Token Factory (serverless)
 
+[Docs](README.md)
+
+> Historical Cosmos3 recipe: its public hosted model was retired under the
+> [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
+> Use the current [Token Factory guide](workbench/token-factory.md) and
+> [migration verification](workbench/token-factory-deprecation-verification.md)
+> for current defaults. Explicit legacy model IDs require a serving endpoint;
+> this page does not establish their current availability.
+
 This is the **foolproof, copy‑paste** path to call NVIDIA
 **`nvidia/Cosmos3-Super-Reasoner`** as a *serverless* backend for your hackathon
 project. Inference is hosted by **Nebius Token Factory** (an OpenAI‑compatible
@@ -126,7 +135,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://api.tokenfactory.nebius.com/v1/",
-    api_key=os.environ["NEBIUS_TOKEN_FACTORY_KEY"],   # never hardcode the key
+    api_key=os.environ["NEBIUS_TOKEN_FACTORY_KEY"],  # never hardcode the key
 )
 
 resp = client.chat.completions.create(
@@ -134,8 +143,14 @@ resp = client.chat.completions.create(
     temperature=0.2,
     max_tokens=300,
     messages=[
-        {"role": "system", "content": "You are a physical-AI reasoning assistant for a robot."},
-        {"role": "user", "content": "How should a robot grasp a ceramic mug without dropping it?"},
+        {
+            "role": "system",
+            "content": "You are a physical-AI reasoning assistant for a robot.",
+        },
+        {
+            "role": "user",
+            "content": "How should a robot grasp a ceramic mug without dropping it?",
+        },
     ],
 )
 print(resp.choices[0].message.content)
@@ -156,19 +171,30 @@ python3 reason.py
 import base64, os
 from openai import OpenAI
 
-client = OpenAI(base_url="https://api.tokenfactory.nebius.com/v1/",
-                api_key=os.environ["NEBIUS_TOKEN_FACTORY_KEY"])
+client = OpenAI(
+    base_url="https://api.tokenfactory.nebius.com/v1/",
+    api_key=os.environ["NEBIUS_TOKEN_FACTORY_KEY"],
+)
 
-with open("scene.png", "rb") as f:                       # your scene photo
+with open("scene.png", "rb") as f:  # your scene photo
     data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
 resp = client.chat.completions.create(
     model="nvidia/Cosmos3-Super-Reasoner",
-    max_tokens=400, temperature=0.2,
-    messages=[{"role": "user", "content": [
-        {"type": "text", "text": "What objects are here and what should the robot do?"},
-        {"type": "image_url", "image_url": {"url": data_url}},
-    ]}],
+    max_tokens=400,
+    temperature=0.2,
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "What objects are here and what should the robot do?",
+                },
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        }
+    ],
 )
 print(resp.choices[0].message.content)
 ```
@@ -303,7 +329,7 @@ Token Factory **hosts** the model. Your code only makes an HTTPS call, so the
 You do **not** need to provision compute for the reasoner.
 
 > The repo also ships heavier SkyPilot templates
-> (`npa/workflows/workbench/npa-workflows/token-factory-cosmos-reason.yaml`) that run
+> (`workflows/testing/token-factory-cosmos-reason.yaml`) that run
 > the *orchestration* on Nebius Kubernetes. Those require a container image in
 > your registry, an S3 bucket, and a cluster — **skip them for a hackathon.**
 > The three paths above are all you need.

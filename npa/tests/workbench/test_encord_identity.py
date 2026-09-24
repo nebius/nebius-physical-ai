@@ -34,6 +34,45 @@ def test_exact_returned_object_key_attaches_uuid() -> None:
     assert result.item_uuid == "uuid-1"
 
 
+@pytest.mark.parametrize("record_id", ["", "record-1"])
+def test_source_metadata_survives_changed_transport_host(record_id: str) -> None:
+    candidates = [
+        item("uuid-1", metadata={"npa": {"source_uri": SOURCE, "record_id": record_id}}, url=URL),
+        item("uuid-1", url=URL),
+    ]
+    result = resolve_exact_identity(
+        source_uri=SOURCE, record_id=record_id,
+        submitted_object_url=URL.replace("storage.test.example", "new-storage.test.example"),
+        candidates=candidates,
+    )
+    assert result.resolved
+    assert result.item_uuid == "uuid-1"
+    assert result.signal == ("record_id_metadata" if record_id else "source_uri_metadata")
+
+
+@pytest.mark.parametrize("field,value", [("source_uri", "s3://source-bucket/other.mp4"), ("record_id", "other-record")])
+def test_metadata_host_drift_does_not_hide_conflicting_views(field: str, value: str) -> None:
+    metadata = {"source_uri": SOURCE, "record_id": "record-1"}
+    result = resolve_exact_identity(
+        source_uri=SOURCE, record_id="record-1",
+        submitted_object_url=URL.replace("storage.test.example", "new-storage.test.example"),
+        candidates=[
+            item("uuid-1", metadata={"npa": metadata}, url=URL),
+            item("uuid-1", metadata={"npa": {**metadata, field: value}}, url=URL),
+        ],
+    )
+    assert result.error_code == "identity_conflict"
+
+
+def test_sidecar_alone_cannot_suppress_a_conflicting_object_url() -> None:
+    result = resolve_exact_identity(
+        source_uri=SOURCE, record_id="", submitted_object_url=URL,
+        candidates=[item("uuid-1", url=URL.replace("incoming", "archive"))],
+        sidecar=IdentitySidecarRow(source_uri=SOURCE, item_uuid="uuid-1"),
+    )
+    assert result.error_code == "identity_conflict"
+
+
 def test_exact_normalized_object_url_attaches_uuid() -> None:
     candidate = item(
         "uuid-1",

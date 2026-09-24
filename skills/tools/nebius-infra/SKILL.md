@@ -1,6 +1,6 @@
 ---
 name: nebius-infra
-description: Use for Nebius runtime configuration, provision-if-absent setup, cluster, registry, storage, GPU routing, and credential assumptions that affect NPA runs.
+description: Use for Nebius runtime configuration, provisioning, cluster, registry, storage, GPU routing, credentials, retained-backup verification and VM maintenance pauses that affect NPA runs.
 ---
 
 # Nebius Infrastructure
@@ -12,6 +12,13 @@ object storage, container registry access, Kubernetes, or GPU routing. Also use
 it when reviewing setup changes touching `npa configure`, `npa
 provision-if-absent`, `~/.npa/config.yaml`, `~/.npa/credentials.yaml`, or
 workflow environment variables.
+
+For these specific tasks, read the matching reference:
+
+- [Retained-backup verification](references/backup-verification.md): missing or
+  mismatched checksum metadata, object-version identity and restore evidence.
+- [VM maintenance pauses](references/maintenance-pauses.md): keep owned systemd
+  jobs paused across reboot, verify execution history and restore their state.
 
 ## Procedure
 
@@ -125,8 +132,9 @@ or provider/auth verification failure is partial cleanup and exits 2.
 ## Three-Tier Contract
 
 - CLI: `npa configure` writes project/storage config and credentials; public
-  workbench images default to GHCR, while `NPA_REGISTRY` and existing saved
-  overrides select custom/private images. `npa
+  workbench images default to GHCR and ignore `NPA_REGISTRY` plus existing saved
+  registry values. Those values remain build/BYOF destinations; explicit image
+  or workflow `--registry` arguments select custom runtime bytes. `npa
   provision-if-absent` ensures missing S3/Kubernetes resources or reports the
   dry-run plan.
 - SDK: `npa.provisioning.provision_if_absent` and project settings via

@@ -5,6 +5,23 @@ description: Use for zero-GPU hosted inference through Nebius Token Factory — 
 
 # Token Factory (zero-GPU hosted inference)
 
+## Robot demonstration SDG
+
+For robot training data, use `npa workbench token-factory robot-sdg`, not the
+text-only `sdg` command. It routes declarative scene planning through hosted
+Lightning/MiniMax, executes real MuJoCo Fetch pick-and-place, records workspace
+and wrist RGB with aligned joint state/actions, and exports accepted episodes
+through the LeRobot v3 adapter. Physics state and contact checks judge success;
+model text cannot declare an episode successful.
+
+Install `npa[robot-sdg]` and `ffmpeg`. The public CLI uses S3 input/output paths;
+the shared SDK `robot_sdg(RobotSdgRequest(...))` also accepts local files. Outputs
+must be new. Open `index.html` for real videos, and validate the dataset with the
+native LeRobot reader. The simulator uses a scripted teacher with privileged
+state; do not describe the output as physical robot capture, learned-policy
+performance, or photorealistic video. See `docs/workbench/token-factory-robot-sdg.md`
+for the supported scene contract, live test, and workflow prerequisites.
+
 Nebius Token Factory is an OpenAI-compatible hosted-inference API for open text
 and vision models. It is the cheapest tier in the workbench that produces a real
 artifact: **no cluster, no GPU, no provisioning**. Reach for it before standing up
@@ -37,13 +54,65 @@ availability is per-key, so a model in the docs may not be in your project.
 Defaults: base URL `https://api.tokenfactory.nebius.com/v1/`, overridable with
 `NEBIUS_TOKEN_FACTORY_BASE_URL`. Requests retry on 429 and 5xx.
 
+## August 2026 migration
+
+The [official notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice)
+retires the old public text, vision, and reasoning defaults. The replacements
+are Nemotron-3.5-Lightning for text and MiniMax-M3 for vision/reasoning.
+See `docs/workbench/token-factory-deprecation-verification.md` for exact IDs,
+live observations, API differences, vendor terms, and verification commands.
+MiniMax-M3 is under the MiniMax Community License; hosted API access does not
+establish the operator's commercial entitlement. No vendor weights are bundled.
+
+Direct-output client calls disable thinking with model-specific template keys:
+Lightning `enable_thinking=false`, MiniMax `thinking_mode=disabled`. Explicit
+client `extra` values win. Agent reasoning turns enable thinking deliberately.
+
 ## Commands
+
+### Automatically routed synthetic instruction data
+
+`npa workbench token-factory sdg` runs seed classification, generation, model
+review, exact-pair deduplication, and JSONL export through the shared SDK pipeline.
+Its default router runs on Lightning through Token Factory and maps
+transformation tasks to Lightning and reasoning tasks to MiniMax. `--router jev`
+uses the optional TypeSafe adapter and additionally requires `TYPESAFE_API_KEY`.
+Generation and review use hosted open-weight models in either mode.
+
+This command uses S3 handoff paths; the SDK accepts local files for contributor
+development. Its `--dry-run` reads and validates inputs without inference or
+writes. Every input seed is processed once; no record-count or token cap is
+added. Outputs are `dataset.jsonl`, `rejected.jsonl`, `provenance.jsonl`, and
+`report.json`. Review is a fallible model judgment, so inspect samples before
+training. See `docs/workbench/token-factory-sdg.md` for the runnable SDK example,
+live evidence, and the `workbench.token_factory.sdg` workflow.
+
+### Current pricing and usage
+
+When the task requires a price check, fetch the official public catalog at
+<https://tokenfactory.nebius.com/api/public/models_info>. The field meanings
+are documented at <https://tokenfactory.nebius.com/model-catalog.md>; the site
+also exposes <https://tokenfactory.nebius.com/llms.txt> for discovery. An empty
+rendered pricing page is not evidence that pricing is unavailable.
+
+Match pricing to the exact catalog model/flavor. Record the retrieval date and
+applicable input/output rates, including the serving mode. A public-price lookup
+does not require credentials. When inference is requested, also verify that the
+selected model is in the key-scoped model list. Public catalog presence does not
+prove account access or account-specific billing.
+If required pricing remains unresolved, stop before paid inference.
+
+Report inference usage and finish reason only when the response exposes them.
+Keep the coding agent's token usage separate. Requested output tokens are a
+limit, not measured usage; missing provider usage means cost is unmeasured.
+
+### Inference commands
 
 Every command takes local paths or `s3://` URIs for both input and output, and
 supports `--dry-run` (compute without writing the artifact) and
 `--output text|json`.
 
-**Caption images** — default model `Qwen/Qwen2.5-VL-72B-Instruct`:
+**Caption images** — default model `MiniMaxAI/MiniMax-M3`:
 
 ```bash
 npa workbench token-factory caption \
@@ -54,7 +123,7 @@ npa workbench token-factory caption \
 ```
 
 **Batch text generation** over a JSONL/text prompt file — default model
-`meta-llama/Llama-3.3-70B-Instruct`:
+`nvidia/Nemotron-3_5-Lightning`:
 
 ```bash
 npa workbench token-factory generate \
@@ -66,6 +135,17 @@ npa workbench token-factory generate \
 
 `--max-prompts 0` means all of them. Set a small non-zero value first: this is
 the command that turns a typo into a large token bill.
+
+Prompt parsing depends on the file extension. Keep plain prompt lines in a
+`.txt` file. Each nonempty `.jsonl` line must be a JSON string or an object with
+a `prompt`, `text`, or `instruction` field, not bare text. Use a JSON serializer
+when converting prompts, including prompts written by a workflow shell step.
+For a local, no-inference check, the installed
+`npa.workbench.token_factory._load_prompts(Path(...))` reader returns
+`(id, prompt)` pairs. Compare the prompt values and count with the requested
+input. This is an internal Python helper, not a CLI validation command;
+confirm it exists in the installed version before using it. It does not verify
+remote staging or model access.
 
 **Batch text generation** — same prompt file, same `generations.jsonl`, batch
 token rates, default model `openai/gpt-oss-120b`:
@@ -86,7 +166,7 @@ answer, which is most bulk stages. Three properties are unique to it, and each
 one has already cost real debugging time:
 
 - **Batch routing is a per-model entitlement, unrelated to real-time chat.** Most
-  models that serve `generate` are rejected for batch. Measured live across eight
+  models that serve `generate` are rejected for batch. Historical measurements across eight
   text models on one key, exactly one — `openai/gpt-oss-120b` — was batch
   routable; `meta-llama/Llama-3.3-70B-Instruct`, `Qwen/Qwen3-32B`,
   `Qwen/Qwen3-30B-A3B-Instruct-2507`, `Qwen/Qwen3-235B-A22B-Instruct-2507`,
@@ -138,7 +218,7 @@ long history look artificially short) and count the non-terminal ones. All
 terminal plus a 403 with no `x-ratelimit-*` headers means availability, not quota.
 
 **Physical-AI reasoning over a scene** — default model
-`nvidia/Cosmos3-Super-Reasoner`. Point it at scene images and ask what a robot
+`MiniMaxAI/MiniMax-M3`. Point it at scene images and ask what a robot
 should do:
 
 ```bash
@@ -162,9 +242,10 @@ npa workbench workflow submit <spec.yaml> --secret-env NEBIUS_TOKEN_FACTORY_KEY
 toolRefs: `workbench.token_factory.caption`, `.generate`, `.batch_generate`,
 `.reason`, `.triage` (digest a run's textual artifacts into a triage report).
 
-`npa workbench token-factory workflow` prints exactly four:
+`npa workbench token-factory workflow` prints six:
 `token-factory-caption.yaml`, `token-factory-generate.yaml`,
-`token-factory-cosmos-reason.yaml`, and `vlm-eval-token-factory.yaml`. Several
+`token-factory-cosmos-reason.yaml`, `token-factory-sdg.yaml`,
+`token-factory-robot-sdg.yaml`, and `vlm-eval-token-factory.yaml`. Several
 more are checked in but not listed by that command, so do not treat its output as
 the full inventory:
 
@@ -177,7 +258,7 @@ the full inventory:
   reason about a scene, then judge a rollout against that plan.
 - `tokenfactory-train-triage.yaml` — triage a training run's artifacts.
 
-All live under `npa/workflows/workbench/npa-workflows/`.
+All live under `workflows/testing/`.
 
 ## Choosing between Token Factory and VLM eval
 
@@ -191,13 +272,25 @@ plan an earlier stage wrote rather than a hardcoded string.
 ## Gotchas
 
 - **Canonical Sim2Real is scoring, not planning.** Stage 8 uses
-  `nvidia/Cosmos3-Super-Reasoner` as its only Stage 8 evaluator, on CPU with no
+  `MiniMaxAI/MiniMax-M3` by default as its single Stage 8 evaluator, on CPU with no
   self-hosted evaluator image. It sends a bounded, deterministic rollout-wide
   frame sample and requires event-local structured scores. Stage 9 compares the
   single evaluator result with the authoritative Stage 7 rollout set and rejects
   missing, duplicate, or extra evaluations before PPO. Preserve request
   IDs, token usage, latency, retries, and an authoritative returned cost or
   explicit null separately from model-agent tokens.
+  Hosted rollout requests use a strict JSON response schema for required event
+  fields, selected camera filenames, action indices, and nonempty error-tag
+  arrays. The parser still rejects incomplete coverage, invalid values, and
+  substituted model identities; an endpoint that rejects the schema must fail
+  visibly instead of retrying without it.
+  The v4 hosted contract binds events to recorded primary-frame `sim_step`
+  values. A sampled frame may support only an action at that exact time. For
+  unsampled actions, the model must return a null camera, zero confidence,
+  neutral tags, and an explicit insufficient-evidence critique. Those events
+  retain simulator truth but cannot shape visual corrections or PPO tag counts.
+  Preserve selected frame metadata and generated bindings in the artifact;
+  Stage 9 reconstructs them and rejects older unbound evaluator artifacts.
 - **Sim2Real preflight is stronger than model listing.** Its submit and prepared
   action paths declare `NEBIUS_TOKEN_FACTORY_KEY` by name only, then require
   both key-scoped model availability and a minimal inference before provisioning.

@@ -1,5 +1,7 @@
 # Isaac Lab 3 workbench
 
+[Workbench docs](README.md)
+
 NPA pins the newest released point in the Isaac Lab 3 beta line:
 `v3.0.0-beta2.patch1` (`isaaclab==3.0.0b2.post1`) at commit
 `ffff603eafc6b74264a5261cc0183d6a65390d78`, paired with Isaac Sim
@@ -13,11 +15,19 @@ The public `npa-isaac-lab:3.0.0b2.post1` image contains the Ubuntu 24.04,
 Python 3.12, CUDA 12.8, PyTorch 2.11, NPA, and OSS training dependency layers.
 Its accepted release digest is
 `sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46`.
-It contains no Isaac Sim, Isaac Lab, Omniverse Client, or other proprietary
-NVIDIA runtime payload. On first invocation, `/isaac-sim/python.sh` verifies
+It contains no Isaac Sim or Isaac Lab wheels, Omniverse Client, or proprietary
+NVIDIA runtime payload. The pinned Isaac Lab 3.0.0b2.post1 wheel declares
+`License: BSD-3-Clause` in its exact `METADATA` bytes (wheel SHA-256
+`dd32886588479ffd70f7348019aeac1582eb9ad16c40244f41d9f458f96f73c3`,
+`METADATA` SHA-256
+`365d9b867dddc244d5aebe02becfe7a9bb8afea8fcdbfef7a4a9fb0a0266fae0`);
+the wheel has no standalone license member. Isaac Sim and its proprietary
+runtime dependencies retain their separate NVIDIA terms. On first invocation,
+`/isaac-sim/python.sh` verifies
 every runtime wheel against `isaac3-nvidia-wheels.txt`, then installs it into
-the operator's cache under the operator's EULA acceptance. Explicit opt-out
-fails before download with exit 78.
+the operator's cache after the shared EULA preflight, and rejects a changed
+installed Isaac Lab license field. Explicit opt-out fails before download with
+exit 78.
 
 Use an RT-core GPU for this PhysX/renderer workbench: L40S or RTX PRO 6000.
 B200 is a datacenter compute GPU and is not a substitute for this graphics
@@ -26,8 +36,8 @@ path. Managed deployments default to the reproducible container:
 ```bash
 npa workbench isaac-lab deploy \
   --runtime container \
-  --gpu-type <discovered-rtx-platform> \
-  --gpu-preset <matching-preset>
+  --gpu-type "<discovered-rtx-platform>" \
+  --gpu-preset "<matching-preset>"
 ```
 
 Native `--runtime vm` installation is intentionally unsupported for generation
@@ -35,17 +45,17 @@ Native `--runtime vm` installation is intentionally unsupported for generation
 contract. `--runtime byovm` still uses the same container on an existing host.
 
 The reference hardened pipeline is
-`npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`. Its four
+`workflows/testing/isaac-lab-rl-sweep.yaml`. Its four
 parallel stages invoke the pinned upstream RSL-RL trainer, require successful
 numeric reward and checkpoint evidence, and join at a fail-closed ranking
 barrier:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml \
-  --run-id <unique-run-id> \
+  workflows/testing/isaac-lab-rl-sweep.yaml \
+  --run-id "<unique-run-id>" \
   --runtime \
-  --var bucket=<configured-bucket> \
+  --var bucket="<configured-bucket>" \
   --image ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:3.0.0b2.post1 \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -57,7 +67,7 @@ export. RGB capture is enabled by default for that post-training rollout:
 ```bash
 npa workbench isaac-lab train \
   --task Isaac-Cartpole-v0 \
-  --output-dir <output-directory> \
+  --output-dir "<output-directory>" \
   --export-trajectories
 ```
 
@@ -70,6 +80,25 @@ encodes one video per episode, records checkpoint/runtime/render provenance,
 and the Rerun adapter opens the trained-policy environment view as the primary
 pane. Metadata-only datasets remain supported and are labeled without a visual
 claim. `--no-export-rgb` is an explicit opt-out for scalar-only exports.
+
+Standalone checkpoint evaluation uses Isaac Lab's version-aware RSL-RL config
+migration before constructing the policy, just like training and trajectory
+export. This matters for RSL-RL 5, which replaces the legacy `stochastic`
+model options with `distribution_cfg`. Evaluation also preserves the task's
+action clipping. Policy construction and checkpoint-load errors remain fatal;
+an evaluation never substitutes random actions for an unavailable policy.
+For Reach tasks without an `ee_frame` sensor, goal-distance evaluation reads
+the pose command's measured position error in metres. Missing or nonfinite
+distance data fails the requested metric instead of becoming a survival test.
+
+The read-only live gate `test_isaac_lab_policy_eval_live.py` accepts an
+owner-private JSON file through `NPA_ISAAC_EVAL_VERIFY_CONFIG`. Supply
+`project_id`, `provenance_uri`, `task`, `seed`, `num_episodes`, and
+`success_metric`. The provenance object identifies the evaluator source hash
+and the report/checkpoint URIs and byte hashes. The gate reads those objects
+with the exact project's saved credentials, verifies their bytes, and requires
+a successful policy load from the current evaluator. Keep this configuration
+and all concrete artifact references outside Git.
 
 ## Generation 2 comparison
 

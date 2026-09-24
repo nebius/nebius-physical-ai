@@ -36,6 +36,29 @@ def _binding(state: nebius.IamBindingState) -> nebius.StorageIamBindingEvidence:
     )
 
 
+def test_project_alias_registration_changes_identity_once(tmp_path, monkeypatch):
+    from npa.clients import project_credential_store as store
+
+    path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-01T00:00:00+00:00")
+    write_project_credentials(
+        "project-a",
+        {"storage": {"bucket": "fixture-bucket"}},
+        alias="first",
+        path=path,
+    )
+    before = path.read_bytes()
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-02T00:00:00+00:00")
+    added = project_credential_record("project-a", alias="second", path=path)
+    assert added["aliases"] == ["first", "second"]
+    assert added["updated_at"] == "2025-01-02T00:00:00+00:00"
+    registered = path.read_bytes()
+    assert registered != before
+    monkeypatch.setattr(store, "_now", lambda: "2025-01-03T00:00:00+00:00")
+    assert project_credential_record("project-a", alias="second", path=path) == added
+    assert path.read_bytes() == registered
+
+
 def _bootstrap_result(binding_state: str) -> dict[str, str]:
     return {
         "service_account_id": "serviceaccount-stable",
@@ -277,9 +300,7 @@ def test_bootstrap_tenant_denial_creates_only_project_scoped_storage_binding(
         if argv[:3] == ["iam", "group", "get-by-name"]:
             parent = argv[argv.index("--parent-id") + 1]
             if parent == "tenant-a":
-                raise nebius.NebiusError(
-                    "PermissionDenied: tenant group inventory"
-                )
+                raise nebius.NebiusError("PermissionDenied: tenant group inventory")
             if parent == "project-a":
                 raise nebius.NebiusError("NotFound")
         if argv[:3] == ["iam", "group", "create"]:
@@ -329,7 +350,9 @@ def test_bootstrap_tenant_denial_creates_only_project_scoped_storage_binding(
     assert project_create[project_create.index("--parent-id") + 1] == "project-a"
     assert permit_create[permit_create.index("--parent-id") + 1] == "group-a"
     assert permit_create[permit_create.index("--resource-id") + 1] == "bucket-a"
-    assert permit_create[permit_create.index("--role") + 1] == nebius.STORAGE_RUNTIME_ROLE
+    assert (
+        permit_create[permit_create.index("--role") + 1] == nebius.STORAGE_RUNTIME_ROLE
+    )
     assert membership_create[membership_create.index("--parent-id") + 1] == "group-a"
     assert membership_create[membership_create.index("--member-id") + 1] == "sa-a"
     assert [kind for kind, _argv in events][-1] == "key"

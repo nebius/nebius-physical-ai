@@ -55,9 +55,9 @@ separately because B200 `sm_100` does not prove RTX `sm_120`.
 
 ```bash
 npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml
+  workflows/testing/alpamayo2-super-inference.yaml
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/alpamayo2-super-inference.yaml \
+  workflows/testing/alpamayo2-super-inference.yaml \
   --infra <configured-infra-target> --var bucket=<operator-bucket> \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -69,6 +69,19 @@ The run must publish non-empty `trajectory.json`, `trajectory.png`, and
 tier. Treat success without all three artifacts as failure.
 
 ## Diagnose
+
+For HTTP serving, configure `NPA_ALPAMAYO2_SUPER_TOKEN` as a deployment secret
+and `NPA_ALPAMAYO2_SUPER_OUTPUT_ROOT` as an operator-owned local `0700`
+directory or authorized S3 prefix. All operational routes require bearer
+authentication; keep transport private or terminate HTTPS. HTTP clients can
+select samples and inference controls, but cannot change the pinned model,
+dataset revision, or startup snapshot of `NPA_ALPAMAYO2_SUPER_MANIFEST`.
+Their `output_path` is a result label, and the server creates a fresh prefix
+under its configured root. Trusted CLI/SDK customization remains available.
+Keep the container-native health check on
+`npa.workbench.alpamayo2_super.healthcheck`; it reads the admission credential
+from the runtime environment and authenticates `/health` without putting the
+credential in process arguments or output.
 
 - 401/403 before GPU allocation: accept the dataset agreement with the same HF
   account or replace the rejected token; do not add an NPA bypass boolean.
@@ -85,13 +98,19 @@ merely because a validation job finished.
 
 ## Accepted release baseline
 
-`0.1.0-cu128` is the accepted runtime-fetch baseline. Its OCI index digest is
-`sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5`.
-On 2026-08-18 the exact digest completed the real upstream workflow on B200
-(`sm_100`) and, independently, RTX PRO 6000 (`sm_120`). The 26-layer payload
-scan was clean. RTX peak allocation was 71,447 MiB; the B200 run completed but
-was not sampled for peak memory, so retain NVIDIA's 72,115 MiB H100 measurement
-as the conservative documented reference rather than inventing a B200 number.
+`0.1.0-cu128-r3` is the accepted runtime-fetch baseline. Its OCI index digest is
+`sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07`.
+It was built from source commit `5b693476c113c833e9d9d4f8c7aa492492a27505`,
+which includes the `HTTPConnection` loopback healthcheck fix. Later acceptance
+metadata commits are not the image source. On 2026-09-16 the exact digest
+completed the real upstream workflow on B200 (`sm_100`) and, independently,
+RTX PRO 6000 (`sm_120`). The 25-layer payload scan and complete
+vulnerability/secret/license scan were clean. Both runs
+produced all three required artifacts, projected shape `[1, 1, 1, 64, 3]`, and
+runtime-only model/data provenance. B200 measured ADE 1.503835 and FDE 4.357265;
+RTX measured ADE 1.501321 and FDE 4.351557. Neither r3 run recorded a trustworthy
+peak allocation, so retain NVIDIA's 72,115 MiB H100 measurement as the
+conservative documented reference rather than inventing a B200 or RTX number.
 
 For RTX qualification, preserve the committed B200 default and override the
 submitted accelerator with `NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:1`. Require
@@ -100,11 +119,31 @@ B200 result.
 
 ## Verify changes
 
+For Ray scenario/seed/diffusion experiments, use
+`workflows/testing/alpamayo2-ray-sweep.yaml` and
+`workflows/testing/alpamayo2-ray-hardcases.yaml`, derived from the inference
+template. Accepted release `0.1.0-cu128-r3` contains
+`npa workbench alpamayo2-super sweep` and Ray 2.58.0 in the NPA interpreter.
+Use `--stage-src` only to test intentionally newer source. GPU actors reuse
+downloaded snapshots while upstream subprocesses reload weights per case; do
+not claim resident-model reuse.
+CPU reductions report measured errors and seed variability. Refinement inherits
+baseline seeds, verifies source manifest and revision identity, and supports an
+empty selection without fabricating inference. Keep public handoffs on S3.
+See `docs/workbench/alpamayo2-super.md#ray-experiments` for controls and outputs.
+
+Inference now snapshots and validates its manifest before fetching the model,
+verifies sidecar sample/seed/projection identity, and fully decodes the PNG before
+publication. The upstream sidecar contains metadata and metrics, not full XYZ
+coordinates; do not describe it as a coordinate recording.
+
 ```bash
 npa/.venv/bin/python ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   skills/tools/alpamayo2-super
 npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_alpamayo2_super.py \
+  npa/tests/workbench/test_alpamayo_ray_sweep.py \
+  npa/tests/workbench/test_alpamayo2_super_service_security.py \
   npa/tests/guardrails/test_skills_index.py \
   npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py -q
 ```

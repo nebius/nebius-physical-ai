@@ -1,7 +1,6 @@
 name: confidentiality scan
 
 on:
-  pull_request:
   push:
     branches: [main]
 
@@ -9,10 +8,8 @@ permissions:
   contents: read
 
 concurrency:
-  # Keep workflows independent, but let a newer commit supersede older work for
-  # the same PR. Non-PR runs use run_id and are never cancelled by this policy.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: confidentiality-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   scan:
@@ -22,14 +19,16 @@ jobs:
       INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
       - name: Install npa guardrail module
         run: |
@@ -37,12 +36,16 @@ jobs:
           npa/.venv/bin/python -m pip install -e npa
 
       - name: Run confidentiality scans
+        env:
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
 
           scan_range=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             scan_range="${{ github.event.pull_request.base.sha }}..HEAD"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            scan_range="${MERGE_BASE}..HEAD"
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             scan_range="${{ github.event.before }}..HEAD"
           fi
@@ -64,6 +67,11 @@ jobs:
             fi
 
             echo "Running ${label} confidentiality scan"
+            if [ "${pattern_env}" = "CUSTOMER_DENYLIST" ]; then
+              proof_directory="${RUNNER_TEMP}/ncore-source-attribution-proof"
+              install -d -m 0700 "${proof_directory}"
+              set -- "$@" --ncore-attribution-proof-directory "${proof_directory}"
+            fi
             npa/.venv/bin/python -m npa.guardrails.confidentiality "${args[@]}" --pattern-env "${pattern_env}" "$@"
           }
 

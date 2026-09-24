@@ -634,7 +634,7 @@ selects a 2-node profile already *is* the gang); and a submit-time `--num-nodes`
 (node count is a property of the stage, not of one invocation — unlike
 `--max-concurrency`, which is a cost cap).
 
-The live proof is `npa-workflows/multi-node-probe.yaml`: the gang stage writes one
+The live proof is `workflows/testing/multi-node-probe.yaml`: the gang stage writes one
 `rank-<n>.json` per node and a single-node stage fails unless it finds one report per
 expected rank **from distinct hostnames** — so a gang that collapsed onto one node cannot
 pass. See `EVIDENCE.md` §R14.

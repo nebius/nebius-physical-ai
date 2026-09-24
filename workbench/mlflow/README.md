@@ -1,29 +1,93 @@
-# MLflow + Postgres Workbench Stack
+# MLflow and Postgres on a Linux workbench VM
 
-This VM-scoped stack uses Docker Compose because the dev VM already has Docker and the requested service is local workbench infrastructure, not a multi-node Workbench/Kubernetes workload. Postgres metadata stays on a host bind mount (`./postgres-data`) backed by the VM block disk; artifacts go to an isolated Nebius Object Storage bucket through the MLflow server artifact proxy when the installed MLflow version supports `--serve-artifacts`.
+[Workbench docs](../../docs/workbench/README.md)
 
-MLflow is published only on `127.0.0.1:5000`; Postgres is on an internal Docker network only and has no host-published port. If MLflow is exposed beyond localhost, place it behind TLS and authentication (for example an HTTPS reverse proxy with Basic/OIDC auth) before changing the bind address.
+Run a local MLflow tracking server with Postgres metadata and an S3 artifact
+proxy. Docker Compose owns the two containers; Nebius holds the artifact bucket.
+This stack is separate from NPA's Kubernetes workflow runtime.
 
-Postgres migration note: this Compose service is intentionally containerized for the dev workbench. To migrate to Nebius Managed PostgreSQL, create a managed instance/database/role, restore a `pg_dump` from `./postgres-data`, and replace `MLFLOW_PG_HOST`/credentials in `.env` and `secrets/postgres_password`; no MLflow schema changes are required.
+## Before you start
 
-## Commands
+Use a **Linux VM you own**, Docker Engine, Bash, `jq`, OpenSSL, an authenticated
+Nebius CLI profile, and permission to manage the selected project's storage and
+IAM. The deploy script installs the Compose plugin if needed. It also creates or
+reuses a dedicated bucket, service account, IAM group, and access key.
+
+Use a dedicated bucket: bootstrap updates its `mlflow/*` bucket policy.
+Keep `.env`, `secrets/`, `evidence/`, and `postgres-data/` private and out of Git.
+Set the region and endpoint explicitly; the legacy discovery fallback assumes
+a particular operator checkout path.
+
+## Deploy and verify
+
+From the repository root:
 
 ```bash
-cd ~/nebius-physical-ai-mlflow/workbench/mlflow
-export NPA_PROJECT_ID="<project-id>"
-export NPA_TENANT_ID="<tenant-id>"
+cd workbench/mlflow
+export NPA_PROJECT_ID='<your-project-id>'
+export NPA_TENANT_ID='<your-tenant-id>'
+export NPA_NEBIUS_PROFILE='<your-authenticated-profile>'
+export NPA_REGION=us-central1
+export NPA_STORAGE_ENDPOINT=https://storage.us-central1.nebius.cloud
+
 ./scripts/deploy.sh
 ./scripts/verify.sh
+```
+
+Use the region and HTTPS endpoint for your actual project. Deployment builds the
+local image and waits for service health. Verification exercises the tracking,
+model, and S3 artifact path and writes `evidence/verify-summary.json`; require
+`status: passed`. Open `http://127.0.0.1:5000` on the VM, or access that loopback
+port through an authenticated SSH tunnel.
+
+| Location | Data and lifetime |
+| --- | --- |
+| `postgres-data/` | Database on the VM's block disk; survives container restart |
+| Dedicated S3 bucket, `mlflow/*` | Artifacts through the server proxy where the installed MLflow supports it |
+| `secrets/` | Runtime-mounted Postgres and S3 credentials |
+| `evidence/resource-summary.json` | Exact cloud resources selected or created by bootstrap |
+
+MLflow binds only to `127.0.0.1:5000`; Postgres has no host-published port. A
+remote/public service needs an authenticating HTTPS proxy before its bind
+address changes.
+
+## Optional checks and image reuse
+
+To test restart persistence, run:
+
+```bash
 ./scripts/verify-twice-clean.sh
+```
 
-# Publish the MLflow and pinned Postgres images to the configured operator registry.
+This stops and redeploys the stack twice, verifies each pass, and keeps the
+existing database and S3 data. Use it only when those restarts are acceptable.
+
+To publish the MLflow and pinned Postgres images to your configured operator
+registry, follow the repository's [image packaging procedure](../../docs/workbench/container-packaging.md),
+then use the existing scripts:
+
+```bash
 ./scripts/push-image.sh
-
-# Redeploy from the pushed images instead of rebuilding/pulling from public registries.
 set -a
 . evidence/pushed-images.env
 set +a
 MLFLOW_USE_PUBLISHED_IMAGE=1 ./scripts/deploy.sh
 ```
 
-`bootstrap-nebius.sh` discovers the project region and storage endpoint from `~/.npa/config.yaml` for the `NPA_PROJECT_ID` supplied at runtime, creates/reuses a dedicated bucket, service account, bucket policy scoped to the mlflow/* prefix, and runtime-mounted S3 key files under `secrets/`.
+The environment file selects the pushed images for redeployment. Keep it private.
+
+## Stop and remove resources
+
+```bash
+docker compose down --remove-orphans
+```
+
+This stops the containers and retains the database, secrets, and cloud resources.
+Back up needed metadata with Postgres tools and preserve artifacts before
+removing storage. Review `evidence/resource-summary.json`, then retire only the
+bucket, access key, service account, and IAM group owned by this stack through
+Nebius administration. Do not delete the VM disk until its database is saved.
+
+For Managed PostgreSQL migration, create the destination database and role,
+restore a `pg_dump`, and update `MLFLOW_PG_HOST` and credentials. The Compose
+stack's containerized database is not automatically migrated by NPA.

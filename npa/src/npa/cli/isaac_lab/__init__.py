@@ -37,21 +37,28 @@ from npa.clients.config import (
     remove_workbench_config,
     resolve_credentials,
     resolve_environment,
-    resolve_container_registry,
     resolve_project_storage,
     resolve_ssh_config,
     update_workbench_app_status,
     workbench_is_byovm,
     write_config,
 )
-from npa.clients.credentials import apply_shared_credential_env, load_credentials, shared_credential_env
+from npa.clients.credentials import (
+    apply_shared_credential_env,
+    load_credentials,
+    shared_credential_env,
+)
 from npa.clients.project_credentials import storage_client_for_project
 from npa.clients.scoped_credentials import (
     bucket_from_s3_uri,
     run_with_host_credential_fallback,
 )
 from npa.clients.ssh import SSHClient, SSHError
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    ServerlessClient,
+    ServerlessClientError,
+)
 from npa.errors import ScopedCredentialError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
@@ -96,6 +103,7 @@ from npa.serverless_common import (
     split_serverless_env,
     validate_output_path,
 )
+from npa.workbench.isaac_lab import routing as isaac_lab_routing
 from npa.cli.isaac_lab.trajectory_export_script import TRAJECTORY_CAMERA_HELPERS
 from npa.workbench.training_config import (
     TrainingConfig,
@@ -237,7 +245,8 @@ def _serverless_job_env(
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
     s3_credentials = {
-        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_access_key_id": storage.aws_access_key_id
+        or shared_env.get("AWS_ACCESS_KEY_ID", ""),
         "aws_secret_access_key": storage.aws_secret_access_key
         or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
         "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
@@ -250,7 +259,9 @@ def _serverless_job_env(
     explicit_env["ACCEPT_EULA"] = acceptance
     env = build_serverless_job_env(
         output_path=output_path,
-        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        hf_token=shared_env.get("HF_TOKEN")
+        or shared_env.get("HUGGING_FACE_HUB_TOKEN")
+        or None,
         s3_credentials=s3_credentials,
         extra_env=explicit_env,
     )
@@ -263,8 +274,8 @@ ISAAC_LAB_RT_CORE_PLATFORMS = {"gpu-l40s-a", "gpu-l40s-d", "gpu-rtx6000"}
 def _isaac_lab_require_rt_gpu(platform: str) -> None:
     if platform not in ISAAC_LAB_RT_CORE_PLATFORMS:
         _fail(
-            "Isaac Lab requires RT-core GPUs. Use --gpu-type l40s or "
-            "--gpu-type gpu-rtx-pro-6000; do not use H100/H200."
+            "Isaac Lab rendering requires RT-core GPUs. Use --gpu-type l40s or "
+            "--gpu-type gpu-rtx-pro-6000; headless training may target H100/H200/B200."
         )
 
 
@@ -321,18 +332,20 @@ def _isaac_lab_serverless_train(
     try:
         validate_output_path(output_path)
         platform, preset, resolved_gpu_count = resolve_gpu_platform(gpu_type, gpu_count)
+        isaac_lab_routing.validate_train_gpu_target(platform, task=task)
     except ValueError as exc:
         _fail(str(exc))
     if gpu_preset:
         preset = gpu_preset
-    _isaac_lab_require_rt_gpu(platform)
 
     proj_alias = _project_alias or default_project_name()
     wb_name = _workbench_name or default_workbench_name()
     env_cfg = resolve_environment(proj_alias)
     resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
     if not resolved_project_id:
-        _fail("Isaac Lab train --runtime serverless requires --project-id or a configured project.")
+        _fail(
+            "Isaac Lab train --runtime serverless requires --project-id or a configured project."
+        )
     name = job_name or _serverless_job_name(proj_alias, wb_name, "isaac-lab")
     out = output_path.rstrip("/") + "/"
     try:
@@ -361,7 +374,17 @@ def _isaac_lab_serverless_train(
         existing = None
     try:
         if existing is not None:
-            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = (
+                existing
+                if submit_only
+                or existing.status in {"succeeded", "failed", "cancelled"}
+                else client.poll_job(
+                    existing.id,
+                    resolved_project_id,
+                    interval_s=poll_interval,
+                    ceiling_s=timeout,
+                )
+            )
             _output(
                 {
                     "status": "existing",
@@ -376,7 +399,7 @@ def _isaac_lab_serverless_train(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image or container_image_for_tool("isaac-lab", registry=resolve_container_registry(proj_alias)),
+            image=image or container_image_for_tool("isaac-lab"),
             command=_isaac_lab_serverless_train_command(
                 task,
                 num_envs,
@@ -393,14 +416,27 @@ def _isaac_lab_serverless_train(
             extra_env=extra_env,
         )
         if not submit_only:
-            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=timeout,
+            )
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
         _fail(f"Serverless Job failed: {exc}")
     except TimeoutError as exc:
         _fail(str(exc))
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output_format)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+        },
+        output_format,
+    )
 
 
 def _is_container_runtime(cfg: Any) -> bool:
@@ -453,7 +489,8 @@ def _storage_client(
     return StorageClient.from_environment(
         endpoint_url=cfg.storage.endpoint_url or credentials.s3_endpoint,
         aws_access_key_id=cfg.storage.aws_access_key_id or credentials.s3_access_key_id,
-        aws_secret_access_key=cfg.storage.aws_secret_access_key or credentials.s3_secret_access_key,
+        aws_secret_access_key=cfg.storage.aws_secret_access_key
+        or credentials.s3_secret_access_key,
     )
 
 
@@ -697,7 +734,8 @@ def _gpu_selection_error() -> str:
         "  Suggested starting points:\n"
         "    Simulation workloads (L40S): --gpu-type gpu-l40s-a --gpu-preset 1gpu-40vcpu-160gb\n"
         "    RTX Pro 6000 fallback: --gpu-type gpu-rtx-pro-6000 --gpu-preset 1gpu-24vcpu-218gb\n"
-        "  Do not use H100/H200; Isaac Lab requires RT cores."
+        "  A deployed workbench is the render surface, so it needs RT cores; headless\n"
+        "  training may select H100/H200/B200 via `isaac-lab train --runtime serverless`."
     )
 
 
@@ -1396,6 +1434,16 @@ try:
         target = torch.tensor(camera_target, device=origins.device).unsqueeze(0) + origins
         camera.set_world_poses_from_view(eyes=eye, targets=target)
     env = render_env
+    # One trajectory row is captured per policy/control step, not physics step.
+    try:
+        step_dt = float(render_env.unwrapped.step_dt)
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError("Isaac control timestep must be finite and positive") from exc
+    if not math.isfinite(step_dt) or step_dt <= 0:
+        raise RuntimeError("Isaac control timestep must be finite and positive")
+    trajectory_fps = 1.0 / step_dt
+    if not math.isfinite(trajectory_fps):
+        raise RuntimeError("Isaac control timestep must yield a finite frame rate")
 
     policy = None
     policy_loaded = False
@@ -1606,7 +1654,8 @@ try:
         "policy_loaded": policy_loaded,
         "runtime_version": metadata.version("isaaclab"),
         "checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
-        "fps": 50,
+        "fps": trajectory_fps,
+        "control_dt": step_dt,
         "state_names": state_names,
         "action_names": action_names,
         "source_joint_names": joint_names,
@@ -2398,10 +2447,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = container_image_for_tool(
-                    "isaac-lab",
-                    registry=resolve_container_registry(proj_alias),
-                )
+                image_ref = container_image_for_tool("isaac-lab")
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,
@@ -2920,9 +2966,7 @@ def train_cmd(
                     diagnostic_parts.append("stdout:\n" + traj_stdout.strip())
                 if traj_stderr and traj_stderr.strip():
                     diagnostic_parts.append("stderr:\n" + traj_stderr.strip())
-                result["trajectory_export_error"] = "\n".join(diagnostic_parts)[
-                    -4000:
-                ]
+                result["trajectory_export_error"] = "\n".join(diagnostic_parts)[-4000:]
         if output_is_s3:
             try:
                 try:

@@ -17,6 +17,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
+
 @dataclass
 class ServerlessClientError(Exception):
     """Base exception for serverless client errors."""
@@ -44,6 +45,30 @@ class AuthError(ServerlessClientError):
     """Authentication or authorization failure. Not a NER condition."""
 
     hint: str = "Run `npa configure` to set up or refresh Nebius credentials."
+
+
+@dataclass
+class TransientServerlessError(ServerlessClientError):
+    """A failed observation, not evidence that the provider job failed."""
+
+
+@dataclass
+class JobIdentityError(ServerlessClientError):
+    """Provider evidence does not establish the requested exact job and scope."""
+
+
+@dataclass
+class JobSubmissionIndeterminateError(ServerlessClientError):
+    """Create may have succeeded; preserve this identity and never resubmit it."""
+
+    project_id: str = ""
+    job_name: str = ""
+    provider_job_id: str = ""
+    # Only a durable call site (`create_job(..., durable=True)`) reconnects a
+    # same-name retry to the existing job automatically; a non-durable call
+    # site has no such record, so a same-name retry there still issues a new
+    # `create` request with no client-side duplicate protection.
+    durable: bool = False
 
 
 @dataclass
@@ -82,6 +107,7 @@ _NER_PATTERNS = [
 
 _AUTH_PATTERNS = (
     "unauthorized",
+    "unauthenticated",
     "permission denied",
     "401",
     "403",
@@ -150,7 +176,16 @@ class EndpointStatus(str, Enum):
 
 
 _JOB_STATUS_ALIASES = {
-    "queued": {"queued", "pending", "created", "provisioning", "starting"},
+    "queued": {
+        "queued",
+        "pending",
+        "created",
+        "creating",
+        "provisioning",
+        "starting",
+        # nebius.ai.v1.JobStatus.State: STARTING -> IMAGE_PULLING -> RUNNING.
+        "image_pulling",
+    },
     "running": {"running", "active"},
     "succeeded": {"succeeded", "success", "completed", "complete", "done"},
     "failed": {"failed", "error", "crashed"},
@@ -165,7 +200,7 @@ _QUEUE_CAPACITY_THRESHOLD_SECONDS = 180
 
 
 def _job_status(value: Any) -> str:
-    normalized = str(value or "").strip().lower()
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     for status, aliases in _JOB_STATUS_ALIASES.items():
         if normalized in aliases:
             return status
@@ -199,9 +234,14 @@ def _map_scheduling_state(value: str) -> str:
     normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
     if not normalized:
         return ""
-    if any(marker in normalized for marker in ("capacity", "resource", "quota", "no_gpu")):
+    if any(
+        marker in normalized for marker in ("capacity", "resource", "quota", "no_gpu")
+    ):
         return "waiting_for_capacity"
-    if any(marker in normalized for marker in ("scheduled", "accepted", "queued", "pending")):
+    if any(
+        marker in normalized
+        for marker in ("scheduled", "accepted", "queued", "pending")
+    ):
         return "scheduled"
     if "running" in normalized:
         return "running"
@@ -261,6 +301,7 @@ class JobInfo:
     output_uris: tuple[str, ...] = ()
     log_tail: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
+    provider_state: str = ""
 
 
 SubprocessRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -270,8 +311,12 @@ def _classify_error(returncode: int, stderr: str) -> type[ServerlessClientError]
     """Map subprocess error output to a typed exception class."""
     lower = stderr.lower()
 
-    auth_text_patterns = tuple(pattern for pattern in _AUTH_PATTERNS if not pattern.isdigit())
-    if any(pattern in lower for pattern in auth_text_patterns) or re.search(r"\b(401|403)\b", lower):
+    auth_text_patterns = tuple(
+        pattern for pattern in _AUTH_PATTERNS if not pattern.isdigit()
+    )
+    if any(pattern in lower for pattern in auth_text_patterns) or re.search(
+        r"\b(401|403)\b", lower
+    ):
         return AuthError
     if "quota" in lower and any(
         marker in lower for marker in ("exceeded", "limit", "reached")
@@ -281,6 +326,23 @@ def _classify_error(returncode: int, stderr: str) -> type[ServerlessClientError]
         return NotEnoughResourcesError
     if any(pattern in lower for pattern in _NOT_FOUND_PATTERNS):
         return EndpointNotFoundError
+    if any(
+        pattern in lower
+        for pattern in (
+            "deadline exceeded",
+            "deadlineexceeded",
+            "timed out",
+            "timeout",
+            "connection reset",
+            "connection refused",
+            "temporarily unavailable",
+            "temporary",
+            "unavailable",
+            "too many requests",
+            "rate limit",
+        )
+    ) or re.search(r"\b(429|502|503|504)\b", lower):
+        return TransientServerlessError
     return ServerlessClientError
 
 
@@ -292,7 +354,7 @@ def _arg_value(args: Sequence[Any], *flags: str) -> str:
                 return values[index + 1]
             prefix = f"{flag}="
             if value.startswith(prefix):
-                return value[len(prefix):]
+                return value[len(prefix) :]
     return ""
 
 
@@ -517,7 +579,9 @@ def _is_secret_env_key(key: str) -> bool:
 
 def _is_sensitive_log_key(key: str) -> bool:
     lowered = key.lower()
-    return any(part in lowered for part in ("token", "key", "secret", "password", "passwd"))
+    return any(
+        part in lowered for part in ("token", "key", "secret", "password", "passwd")
+    )
 
 
 def _redact_env_arg(value: str) -> str:
@@ -613,7 +677,10 @@ class ServerlessClient:
         args = self._build_create_args(spec, extra_env=extra_env)
         result = self._run(args, timeout=self._timeout)
         if result.returncode != 0:
-            self._raise_for_error(result, f"create_endpoint failed for {spec.name} in project {spec.project_id}")
+            self._raise_for_error(
+                result,
+                f"create_endpoint failed for {spec.name} in project {spec.project_id}",
+            )
         try:
             info = self._parse_endpoint_info(result.stdout, project_id=spec.project_id)
         except json.JSONDecodeError:
@@ -625,17 +692,21 @@ class ServerlessClient:
 
     def list_endpoints(self, project_id: str) -> list[EndpointInfo]:
         """List endpoints in a project."""
-        result = self._run([
-            "ai",
-            "endpoint",
-            "list",
-            "--parent-id",
-            project_id,
-            "--format",
-            "json",
-        ])
+        result = self._run(
+            [
+                "ai",
+                "endpoint",
+                "list",
+                "--parent-id",
+                project_id,
+                "--format",
+                "json",
+            ]
+        )
         if result.returncode != 0:
-            self._raise_for_error(result, f"list_endpoints failed for project {project_id}")
+            self._raise_for_error(
+                result, f"list_endpoints failed for project {project_id}"
+            )
         data = _json_loads(result.stdout)
         return [
             self._info_from_dict(item, fallback_project_id=project_id)
@@ -648,15 +719,17 @@ class ServerlessClient:
             if endpoint in {info.id, info.name}:
                 return info
 
-        result = self._run([
-            "ai",
-            "endpoint",
-            "get",
-            "--id",
-            endpoint,
-            "--format",
-            "json",
-        ])
+        result = self._run(
+            [
+                "ai",
+                "endpoint",
+                "get",
+                "--id",
+                endpoint,
+                "--format",
+                "json",
+            ]
+        )
         if result.returncode != 0:
             self._raise_for_error(result, f"get_endpoint failed for {endpoint}")
         info = self._parse_endpoint_info(result.stdout, project_id=project_id)
@@ -675,13 +748,15 @@ class ServerlessClient:
             info = self.get_endpoint(project_id, endpoint)
         except EndpointNotFoundError:
             return
-        result = self._run([
-            "ai",
-            "endpoint",
-            "delete",
-            "--id",
-            info.id,
-        ])
+        result = self._run(
+            [
+                "ai",
+                "endpoint",
+                "delete",
+                "--id",
+                info.id,
+            ]
+        )
         if result.returncode != 0:
             error_class = _classify_error(result.returncode, result.stderr)
             if error_class is EndpointNotFoundError:
@@ -691,15 +766,17 @@ class ServerlessClient:
     def stop_endpoint(self, project_id: str, endpoint: str) -> EndpointInfo:
         """Stop an endpoint by name or ID."""
         info = self.get_endpoint(project_id, endpoint)
-        result = self._run([
-            "ai",
-            "endpoint",
-            "stop",
-            "--id",
-            info.id,
-            "--format",
-            "json",
-        ])
+        result = self._run(
+            [
+                "ai",
+                "endpoint",
+                "stop",
+                "--id",
+                info.id,
+                "--format",
+                "json",
+            ]
+        )
         if result.returncode != 0:
             self._raise_for_error(result, f"stop_endpoint failed for {endpoint}")
         return self._parse_endpoint_info(result.stdout, project_id=project_id)
@@ -707,15 +784,17 @@ class ServerlessClient:
     def start_endpoint(self, project_id: str, endpoint: str) -> EndpointInfo:
         """Start an endpoint by name or ID."""
         info = self.get_endpoint(project_id, endpoint)
-        result = self._run([
-            "ai",
-            "endpoint",
-            "start",
-            "--id",
-            info.id,
-            "--format",
-            "json",
-        ])
+        result = self._run(
+            [
+                "ai",
+                "endpoint",
+                "start",
+                "--id",
+                info.id,
+                "--format",
+                "json",
+            ]
+        )
         if result.returncode != 0:
             self._raise_for_error(result, f"start_endpoint failed for {endpoint}")
         return self._parse_endpoint_info(result.stdout, project_id=project_id)
@@ -747,12 +826,18 @@ class ServerlessClient:
         args.extend(["--format", "json"])
         result = self._run(args)
         if result.returncode != 0:
-            self._raise_for_error(result, f"set_endpoint_autoscale failed for {endpoint}")
+            self._raise_for_error(
+                result, f"set_endpoint_autoscale failed for {endpoint}"
+            )
         try:
             parsed = self._parse_endpoint_info(result.stdout, project_id=project_id)
         except json.JSONDecodeError:
             parsed = EndpointInfo(id="", name="", project_id=project_id)
-        return parsed if parsed.id or parsed.name else self.get_endpoint(project_id, info.id)
+        return (
+            parsed
+            if parsed.id or parsed.name
+            else self.get_endpoint(project_id, info.id)
+        )
 
     def get_endpoint_logs(
         self,
@@ -801,11 +886,26 @@ class ServerlessClient:
         )
 
     def create_job(
-        self, *, project_id: str, name: str, image: str, command: str, gpu_type: str,
-        gpu_count: int, output_path: str, extra_env: Mapping[str, str] | None = None,
-        env: Mapping[str, str] | None = None, preset: str = "", timeout: str = "1h",
-        subnet_id: str = "", preemptible: bool = False,
+        self,
+        *,
+        project_id: str,
+        name: str,
+        image: str,
+        command: str,
+        gpu_type: str,
+        gpu_count: int,
+        output_path: str,
+        extra_env: Mapping[str, str] | None = None,
+        env: Mapping[str, str] | None = None,
+        preset: str = "",
+        timeout: str = "1h",
+        subnet_id: str = "",
+        preemptible: bool = False,
+        durable: bool = False,
+        adopt_only: bool = False,
     ) -> JobInfo:
+        if adopt_only and not durable:
+            raise ValueError("adopt_only requires the durable submission journal")
         for label, value in {
             "Job name": name,
             "Project ID": project_id,
@@ -817,7 +917,14 @@ class ServerlessClient:
         if gpu_count < 1:
             raise ValueError("GPU count must be positive")
         args = ["ai", "job", "create", "--parent-id", project_id, "--name", name]
-        args += ["--image", image, "--container-command", command, "--platform", gpu_type]
+        args += [
+            "--image",
+            image,
+            "--container-command",
+            command,
+            "--platform",
+            gpu_type,
+        ]
         args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb"]
         if preemptible:
             args.append("--preemptible")
@@ -839,7 +946,9 @@ class ServerlessClient:
         job_env: dict[str, str] = {"NPA_OUTPUT_PATH": output_path}
         for key, value in (env or {}).items():
             if _is_secret_env_key(key):
-                raise ValueError(f"Refusing to pass secret-like env var {key} on the command line")
+                raise ValueError(
+                    f"Refusing to pass secret-like env var {key} on the command line"
+                )
             if not extra_env or key not in extra_env:
                 job_env[key] = value
         for key, value in (extra_env or {}).items():
@@ -859,59 +968,178 @@ class ServerlessClient:
             if value:
                 args.extend([flag, value])
         args.extend(["--format", "json"])
+        if durable:
+            from npa.serverless_common.launch import durable_create_job
+
+            return durable_create_job(
+                self,
+                args=args,
+                project_id=project_id,
+                name=name,
+                create=lambda: self._create_job_request(
+                    args, name=name, project_id=project_id, durable=True
+                ),
+                allow_create=not adopt_only,
+            )
+        return self._create_job_request(args, name=name, project_id=project_id)
+
+    def _create_job_request(
+        self,
+        args: list[str],
+        *,
+        name: str,
+        project_id: str,
+        durable: bool = False,
+    ) -> JobInfo:
         try:
             result = self._run(args, timeout=_JOB_CREATE_TIMEOUT, wrap_timeout=False)
         except subprocess.TimeoutExpired as exc:
             logger.warning(
-                "create_job CLI call timed out after %ss; recovering by lookup-by-name for %s",
-                _JOB_CREATE_TIMEOUT,
-                name,
+                "Serverless create response timed out; reconciling the existing job identity"
             )
             try:
                 info = self.get_job(name, project_id)
             except EndpointNotFoundError as lookup_exc:
-                raise ServerlessClientError(
-                    f"create_job timed out after {_JOB_CREATE_TIMEOUT}s and lookup-by-name recovery failed "
-                    f"for {name} in project {project_id}"
+                raise JobSubmissionIndeterminateError(
+                    "create_job lookup-by-name recovery failed after a response timeout; "
+                    "submission is indeterminate, preserve the launch record and reconnect",
+                    project_id=project_id,
+                    job_name=name,
+                    durable=durable,
                 ) from lookup_exc
-            if info.name == name:
+            if info.id and info.name == name and info.project_id == project_id:
                 return info
-            raise ServerlessClientError(
-                f"create_job timed out after {_JOB_CREATE_TIMEOUT}s and lookup-by-name recovered "
-                f"unexpected job {info.name or info.id}"
+            raise JobIdentityError(
+                "create_job timeout recovery returned an unexpected job identity or project"
             ) from exc
         if result.returncode != 0:
-            self._raise_for_error(result, f"create_job failed for {name} in project {project_id}")
+            self._raise_for_error(
+                result, f"create_job failed for {name} in project {project_id}"
+            )
         try:
             info = self._parse_job_info(result.stdout, project_id=project_id)
         except json.JSONDecodeError:
             return self.get_job(name, project_id)
-        return info if info.name else self.get_job(info.id or name, project_id)
+        if not info.id or not info.name:
+            info = self.get_job(info.id or name, project_id)
+        if not info.id or info.name != name or info.project_id != project_id:
+            raise JobIdentityError(
+                "create_job returned an unexpected job identity or project"
+            )
+        return info
 
-    def list_jobs(self, project_id: str, name_prefix: str | None = None) -> list[JobInfo]:
-        result = self._run(["ai", "job", "list", "--parent-id", project_id, "--format", "json"], timeout=_JOB_QUERY_TIMEOUT)
+    def list_jobs(
+        self, project_id: str, name_prefix: str | None = None
+    ) -> list[JobInfo]:
+        result = self._run(
+            ["ai", "job", "list", "--parent-id", project_id, "--format", "json"],
+            timeout=_JOB_QUERY_TIMEOUT,
+        )
         if result.returncode != 0:
             self._raise_for_error(result, f"list_jobs failed for project {project_id}")
         jobs = [
             self._job_info_from_dict(item, fallback_project_id=project_id)
             for item in _as_items(_json_loads(result.stdout))
         ]
-        return [job for job in jobs if not name_prefix or job.name.startswith(name_prefix)]
+        return [
+            job for job in jobs if not name_prefix or job.name.startswith(name_prefix)
+        ]
 
     def get_job(self, job_id_or_name: str, project_id: str) -> JobInfo:
         commands = (
             ["ai", "job", "get", "--id", job_id_or_name, "--format", "json"],
-            ["ai", "job", "get-by-name", "--parent-id", project_id, "--name", job_id_or_name, "--format", "json"],
+            [
+                "ai",
+                "job",
+                "get-by-name",
+                "--parent-id",
+                project_id,
+                "--name",
+                job_id_or_name,
+                "--format",
+                "json",
+            ],
         )
         for index, args in enumerate(commands):
             result = self._run(args, timeout=_JOB_QUERY_TIMEOUT)
             if result.returncode == 0:
-                info = self._parse_job_info(result.stdout, project_id=project_id)
-                if info.id or info.name:
-                    return info
-            elif index == 0:
+                # get --id is global: its request does not establish project
+                # ownership. A scoped name lookup can corroborate missing
+                # provider parent metadata, but must return this exact ID.
+                info = self._parse_job_info(
+                    result.stdout, project_id=project_id if index else ""
+                )
+                if not index and not info.project_id:
+                    if (
+                        not info.id
+                        or not info.name
+                        or job_id_or_name not in {info.id, info.name}
+                    ):
+                        raise JobIdentityError(
+                            "Job lookup returned missing identity/project evidence"
+                        )
+                    scoped = self._run(
+                        [
+                            "ai",
+                            "job",
+                            "get-by-name",
+                            "--parent-id",
+                            project_id,
+                            "--name",
+                            info.name,
+                            "--format",
+                            "json",
+                        ],
+                        timeout=_JOB_QUERY_TIMEOUT,
+                    )
+                    if scoped.returncode != 0:
+                        if (
+                            _classify_error(scoped.returncode, scoped.stderr)
+                            is EndpointNotFoundError
+                        ):
+                            raise JobIdentityError(
+                                "Job project ownership could not be corroborated"
+                            )
+                        self._raise_for_error(
+                            scoped, "Job project corroboration failed"
+                        )
+                    verified = self._parse_job_info(
+                        scoped.stdout, project_id=project_id
+                    )
+                    if verified.id != info.id or verified.name != info.name:
+                        raise JobIdentityError(
+                            "Scoped job lookup returned a different identity"
+                        )
+                    info = verified
+                if (
+                    not info.id
+                    or info.project_id != project_id
+                    or (
+                        info.name != job_id_or_name
+                        if index
+                        else job_id_or_name not in {info.id, info.name}
+                    )
+                ):
+                    raise JobIdentityError(
+                        "Job lookup returned missing or mismatched identity/project"
+                    )
+                return info
+            error_type = _classify_error(result.returncode, result.stderr)
+            # Names are accepted for backward compatibility, but an auth or
+            # transport failure querying an ID must never be hidden by fallback.
+            if index == 0 and (
+                error_type is EndpointNotFoundError
+                or (
+                    error_type is ServerlessClientError
+                    and re.search(
+                        r"invalid.?argument|invalid (?:job |resource )?id",
+                        result.stderr,
+                        re.IGNORECASE,
+                    )
+                )
+            ):
                 continue
-            elif _classify_error(result.returncode, result.stderr) is not EndpointNotFoundError:
+            if error_type is not EndpointNotFoundError:
                 self._raise_for_error(result, f"get_job failed for {job_id_or_name}")
         raise EndpointNotFoundError(
             f"Job {job_id_or_name} not found in project {project_id}",
@@ -944,7 +1172,10 @@ class ServerlessClient:
         info = self.get_job(job_id_or_name, project_id)
         if info.status in _JOB_TERMINAL_STATUSES:
             return info
-        result = self._run(["ai", "job", "cancel", "--id", info.id, "--format", "json"], timeout=_JOB_CANCEL_TIMEOUT)
+        result = self._run(
+            ["ai", "job", "cancel", "--id", info.id, "--format", "json"],
+            timeout=_JOB_CANCEL_TIMEOUT,
+        )
         if result.returncode != 0:
             error_class = _classify_error(result.returncode, result.stderr)
             if error_class is EndpointNotFoundError:
@@ -957,8 +1188,13 @@ class ServerlessClient:
         return parsed if parsed.id or parsed.name else self.get_job(info.id, project_id)
 
     def poll_job(
-        self, job_id: str, project_id: str, *, interval_s: float = 30.0,
-        ceiling_s: float = 2400.0, on_state_change: Callable[[JobInfo], None] | None = None,
+        self,
+        job_id: str,
+        project_id: str,
+        *,
+        interval_s: float = 30.0,
+        ceiling_s: float = 2400.0,
+        on_state_change: Callable[[JobInfo], None] | None = None,
     ) -> JobInfo:
         deadline = time.monotonic() + ceiling_s
         last: JobInfo | None = None
@@ -968,7 +1204,7 @@ class ServerlessClient:
             while time.monotonic() <= deadline:
                 try:
                     current = self.get_job(job_id, project_id)
-                except ServerlessClientError:
+                except TransientServerlessError:
                     transient_failures += 1
                     if transient_failures > 1:
                         raise
@@ -986,10 +1222,14 @@ class ServerlessClient:
             try:
                 self.cancel_job(job_id, project_id)
             except ServerlessClientError as exc:
-                logger.warning("Job cancellation after interrupt failed for %s: %s", job_id, exc)
+                logger.warning(
+                    "Job cancellation after interrupt failed for %s: %s", job_id, exc
+                )
             raise
         status = last.status if last else "unknown"
-        raise TimeoutError(f"Job {job_id} did not finish within {ceiling_s}s (last status: {status})")
+        raise TimeoutError(
+            f"Job {job_id} did not finish within {ceiling_s}s (last status: {status})"
+        )
 
     def classify_queue_state(
         self,
@@ -1002,6 +1242,8 @@ class ServerlessClient:
             return job.status
         if job.status != "queued":
             return job.status
+        if job.provider_state.strip().upper() in {"STARTING", "IMAGE_PULLING"}:
+            return "starting"
         explicit = _map_scheduling_state(job.scheduling_state or job.pending_reason)
         if explicit:
             return explicit
@@ -1035,7 +1277,7 @@ class ServerlessClient:
         except subprocess.TimeoutExpired as exc:
             if not wrap_timeout:
                 raise
-            raise ServerlessClientError(
+            raise TransientServerlessError(
                 f"Nebius CLI timed out after {effective_timeout}s: {shlex.join(_redact_cli_args(full_args))}"
             ) from exc
 
@@ -1132,19 +1374,58 @@ class ServerlessClient:
             return JobInfo(id="", name="", project_id=project_id, raw={})
         return self._job_info_from_dict(items[0], fallback_project_id=project_id)
 
-    def _job_info_from_dict(self, data: dict[str, Any], *, fallback_project_id: str = "") -> JobInfo:
-        outputs = _deep_get(data, ("status", "output_uris"), ("status", "outputs"), ("output_uris",), ("output_path",), ("spec", "output_path"))
+    def _job_info_from_dict(
+        self, data: dict[str, Any], *, fallback_project_id: str = ""
+    ) -> JobInfo:
+        outputs = _deep_get(
+            data,
+            ("status", "output_uris"),
+            ("status", "outputs"),
+            ("output_uris",),
+            ("output_path",),
+            ("spec", "output_path"),
+        )
         if isinstance(outputs, str):
             output_uris = (outputs,) if outputs else ()
         elif isinstance(outputs, list):
             output_uris = tuple(str(value) for value in outputs if value)
         else:
             output_uris = ()
-        created_at = str(_deep_get(data, ("metadata", "created_at"), ("metadata", "createdAt"), ("created_at",), ("createdAt",)))
-        status = _job_status(_deep_get(data, ("status", "state"), ("status",), ("state",)))
-        platform = str(_deep_get(data, ("spec", "platform"), ("spec", "gpu_type"), ("platform",), ("gpu_type",)))
+        created_at = str(
+            _deep_get(
+                data,
+                ("metadata", "created_at"),
+                ("metadata", "createdAt"),
+                ("created_at",),
+                ("createdAt",),
+            )
+        )
+        provider_state = str(
+            _deep_get(
+                data,
+                ("status", "state"),
+                ("status", "phase"),
+                ("status", "status"),
+                ("status",),
+                ("state",),
+            )
+        )
+        status = _job_status(provider_state)
+        platform = str(
+            _deep_get(
+                data,
+                ("spec", "platform"),
+                ("spec", "gpu_type"),
+                ("platform",),
+                ("gpu_type",),
+            )
+        )
         preset = str(_deep_get(data, ("spec", "preset"), ("preset",)))
-        gpu_count = _int_value(_deep_get(data, ("spec", "gpu_count"), ("spec", "gpus"), ("gpu_count",), ("gpus",)))
+        gpu_count = _int_value(
+            _deep_get(
+                data, ("spec", "gpu_count"), ("spec", "gpus"), ("gpu_count",), ("gpus",)
+            )
+        )
         if not gpu_count:
             gpu_count = _gpu_count_from_preset(preset)
         return JobInfo(
@@ -1154,16 +1435,52 @@ class ServerlessClient:
             status=status,
             created_at=created_at,
             started_at=str(_deep_get(data, ("status", "started_at"), ("started_at",))),
-            ended_at=str(_deep_get(data, ("status", "ended_at"), ("ended_at",))),
-            scheduling_state=str(_deep_get(data, ("status", "scheduling_state"), ("status", "schedulingState"), ("scheduling_state",), ("schedulingState",))),
-            pending_reason=str(_deep_get(data, ("status", "pending_reason"), ("status", "pendingReason"), ("status", "reason"), ("pending_reason",), ("pendingReason",))),
+            ended_at=str(
+                _deep_get(
+                    data,
+                    ("status", "finished_at"),
+                    ("status", "ended_at"),
+                    ("ended_at",),
+                )
+            ),
+            scheduling_state=str(
+                _deep_get(
+                    data,
+                    ("status", "scheduling_state"),
+                    ("status", "schedulingState"),
+                    ("scheduling_state",),
+                    ("schedulingState",),
+                )
+            ),
+            pending_reason=str(
+                _deep_get(
+                    data,
+                    ("status", "state_details", "code"),
+                    ("status", "pending_reason"),
+                    ("status", "pendingReason"),
+                    ("status", "reason"),
+                    ("pending_reason",),
+                    ("pendingReason",),
+                )
+            ),
             platform=platform,
             preset=preset,
             gpu_count=gpu_count,
-            queued_for_seconds=_queued_for_seconds(created_at) if status == "queued" else 0,
+            queued_for_seconds=_queued_for_seconds(created_at)
+            if status == "queued"
+            else 0,
             output_uris=output_uris,
-            log_tail=str(_deep_get(data, ("status", "message"), ("status", "log_tail"), ("log_tail",))),
+            log_tail=str(
+                _deep_get(
+                    data,
+                    ("status", "state_details", "message"),
+                    ("status", "message"),
+                    ("status", "log_tail"),
+                    ("log_tail",),
+                )
+            ),
             raw=data,
+            provider_state=provider_state,
         )
 
     def _raise_for_error(
@@ -1175,7 +1492,8 @@ class ServerlessClient:
         stderr = result.stderr.strip()
         args = (
             result.args
-            if isinstance(result.args, Sequence) and not isinstance(result.args, (str, bytes))
+            if isinstance(result.args, Sequence)
+            and not isinstance(result.args, (str, bytes))
             else ()
         )
         raise _metadata_error(

@@ -1,4 +1,5 @@
 import {
+  ASSETS,
   ARTIFACT_ONLY_RUN_ID,
   COMPLEX_WORKFLOW_YAML,
   DF_INPUT_ONLY_RUN_ID,
@@ -8,8 +9,17 @@ import {
   NON_STOCK_RUN_ID,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
+  WORKFLOW_VALIDATION,
   WORKFLOW_YAML,
 } from "../support/e2e";
+
+const NON_STOCK_DISCOVERY_SOURCE = {
+  runId: NON_STOCK_RUN_ID,
+  projectId: "project-a",
+  bucket: "project-artifacts",
+  resolvedPrefix: "",
+  sourceType: "artifact_storage",
+};
 
 describe("NPA agent UI with mocked APIs", () => {
   beforeEach(() => {
@@ -34,6 +44,225 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stageList").should("contain.text", "Render");
     cy.get("#stageList").should("contain.text", "Succeeded");
     cy.get("#runSummary").should("contain.text", "mock-run");
+  });
+
+  it("keeps equal run refs distinct by full project, bucket, prefix, and run identity", () => {
+    const runId = "project-qualified-run";
+    const runRef = "npa1_same_ref_without_project";
+    const bucket = "shared-artifacts";
+    const resolvedPrefix = "workflow-output";
+    const source = (projectId, lastModified) => ({
+      run_id: runId,
+      run_ref: runRef,
+      project_id: projectId,
+      bucket,
+      resolved_prefix: resolvedPrefix,
+      source_type: "artifact_storage",
+      has_viewable: true,
+      summary_complete: true,
+      artifact_count: 1,
+      last_modified: lastModified,
+    });
+    const projectA = source("project-a", "2026-08-30T04:00:00Z");
+    const projectB = source("project-b", "2026-08-30T05:00:00Z");
+    const projectBHistory = {
+      ...projectB,
+      source_type: "workflow_history",
+      source_label: "Workflow history",
+      stage: "artifact-loaded",
+    };
+    const rrdKey = `${resolvedPrefix}/${runId}/review.rrd`;
+
+    cy.intercept("GET", `/api/artifacts/run/${runRef}*`, (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("project_id")).to.eq("project-b");
+      expect(url.searchParams.get("resource_bucket")).to.eq(bucket);
+      expect(url.searchParams.get("resolved_prefix")).to.eq(resolvedPrefix);
+      expect(url.searchParams.get("source_selected")).to.eq("1");
+      req.alias = "projectQualifiedArtifacts";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          ...projectB,
+          artifacts: [{ key: rrdKey, render: "rerun", role: "output", size: 4096 }],
+          count: 1,
+          truncated: false,
+          next_cursor: "",
+          pagination_complete: true,
+        },
+      });
+    });
+
+    cy.window().then((win) => {
+      const merged = win.__NPA_AGENT_TEST__.mergeRunsLatestFirst(
+        [projectBHistory], [projectA, projectB]
+      );
+      expect(merged).to.have.length(2);
+      expect(new Set(merged.map((item) => item.entry_key)).size).to.eq(2);
+      expect(merged.map((item) => item.project_id).sort()).to.deep.eq(["project-a", "project-b"]);
+      expect(merged.find((item) => item.project_id === "project-b").source).to.eq("both");
+      win.__NPA_AGENT_TEST__.setArtifactRunsForTest(
+        [projectBHistory], [projectA, projectB], {}
+      );
+    });
+
+    cy.get('#stagesRunSelect option[data-run-ref="npa1_same_ref_without_project"]')
+      .should("have.length", 2)
+      .then(($options) => {
+        const values = [...$options].map((option) => option.value);
+        expect(new Set(values).size, "colliding run_ref options retain distinct tuple keys").to.eq(2);
+      });
+    cy.get('#stagesRunSelect option[data-project-id="project-b"]')
+      .invoke("val")
+      .then((value) => {
+        cy.get("#stagesRunSelect").select(String(value), { force: true });
+      });
+    cy.wait("@projectQualifiedArtifacts");
+  });
+
+  it("invalidates idle discovered source tuples on every forced access refresh", () => {
+    const stale = {
+      run_id: "idle-stale-run",
+      run_ref: "npa1_idle_stale_source",
+      project_id: "project-a",
+      bucket: "project-artifacts",
+      resolved_prefix: "stale/workflow-runs",
+      source_type: "artifact_storage",
+      has_viewable: true,
+      summary_complete: true,
+      artifact_count: 1,
+      last_modified: "2026-08-30T05:00:00Z",
+    };
+
+    cy.window().then((win) => {
+      win.__NPA_AGENT_TEST__.setArtifactRunsForTest([], [stale], {});
+    });
+    cy.get('#runIdSelect option[data-run-ref="npa1_idle_stale_source"]')
+      .should("have.length", 1);
+
+    // No access action is active here. The old implementation only cleared
+    // discovery state when cancelAccessAction() returned true, so this idle
+    // refresh left a stale server-issued tuple selectable.
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@agentAccess");
+    cy.get('#runIdSelect option[data-run-ref="npa1_idle_stale_source"]')
+      .should("not.exist");
+    cy.get("#runSummary").should("have.text", "Select a run to load its result.");
+    cy.get("#artifactList").should("contain.text", "Select a run to list its artifacts");
+  });
+
+  it("does not let delayed discovery repopulate a stale source after forced access refresh", () => {
+    const stale = {
+      run_id: "delayed-stale-run",
+      run_ref: "npa1_delayed_stale_source",
+      project_id: "project-before-refresh",
+      bucket: "artifacts-before-refresh",
+      resolved_prefix: "workflow-runs",
+      source_type: "artifact_storage",
+      has_viewable: true,
+      summary_complete: true,
+      artifact_count: 1,
+      last_modified: "2026-08-30T05:00:00Z",
+    };
+    let staleRequestStarted = false;
+    let releaseStaleDiscovery;
+    cy.intercept({ method: "GET", url: "/api/artifacts/runs*", times: 1 }, (req) => {
+      staleRequestStarted = true;
+      return new Cypress.Promise((resolve) => {
+        releaseStaleDiscovery = () => {
+          req.reply({
+            statusCode: 200,
+            body: {
+              ok: true,
+              runs: [stale],
+              total_runs: 1,
+              query_complete: true,
+              pagination_complete: true,
+              next_cursor: "",
+            },
+          });
+          resolve();
+        };
+      });
+    });
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wrap(null).should(() => {
+      expect(staleRequestStarted, "stale discovery is in flight").to.eq(true);
+      expect(releaseStaleDiscovery, "stale discovery release is captured").to.be.a("function");
+    });
+
+    cy.get("#tabMain").click();
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@agentAccess");
+    cy.get('#runIdSelect option[data-run-ref="npa1_delayed_stale_source"]')
+      .should("not.exist");
+
+    cy.then(() => releaseStaleDiscovery());
+    cy.get('#runIdSelect option[data-run-ref="npa1_delayed_stale_source"]')
+      .should("not.exist");
+    cy.get('#stagesRunSelect option[data-run-ref="npa1_delayed_stale_source"]')
+      .should("not.exist");
+    cy.get("#runSummary").should("have.text", "Select a run to load its result.");
+  });
+
+  it("quarantines stale status-known artifact sources until current-generation discovery confirms them", () => {
+    const stale = {
+      run_id: "status-known-stale-run",
+      run_ref: "npa1_status_known_stale",
+      project_id: "project-a",
+      bucket: "project-artifacts",
+      resolved_prefix: "status-known-prefix",
+      source_type: "artifact_storage",
+      source_label: "S3 artifacts",
+      has_viewable: true,
+      summary_complete: true,
+      artifact_count: 1,
+      last_modified: "2026-08-30T05:00:00Z",
+    };
+    const statusWithStaleSource = {
+      ...SIM_VIZ,
+      available_run_ids: [stale.run_id],
+      available_runs: [stale],
+    };
+    const staleSelector =
+      `#runIdSelect option[data-run-id="${stale.run_id}"]` +
+      `[data-run-ref="${stale.run_ref}"]` +
+      `[data-project-id="${stale.project_id}"]` +
+      `[data-bucket="${stale.bucket}"]` +
+      `[data-resolved-prefix="${stale.resolved_prefix}"]`;
+
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.updateRunSelector(statusWithStaleSource));
+    cy.get(staleSelector).should("have.length", 1);
+
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@agentAccess");
+    cy.get(staleSelector).should("not.exist");
+
+    // A periodic status response can still carry a tuple learned before the
+    // access refresh. It must not re-authorize or rehydrate that tuple.
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.updateRunSelector(statusWithStaleSource));
+    cy.get(staleSelector).should("not.exist");
+
+    // Only discovery completed in the new access generation may release the
+    // same source identity back into the picker.
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        runs: [stale],
+        total_runs: 1,
+        query_complete: true,
+        pagination_complete: true,
+        next_cursor: "",
+      },
+    }).as("currentGenerationStaleDiscovery");
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@currentGenerationStaleDiscovery");
+    cy.get(staleSelector).should("have.length", 1);
   });
 
   it("merges every artifact page before globally preferring a later-page RRD", () => {
@@ -174,6 +403,95 @@ describe("NPA agent UI with mocked APIs", () => {
       .should("have.class", "is-preferred")
       .and("contain.text", "recommended");
     cy.get("#renderedDataSummary").should("contain.text", rrdKey);
+  });
+
+  it("renders one page by default, resumes on List artifacts, and filters from cache", () => {
+    const runId = "lazy-inventory-run";
+    const runRef = "npa1_lazy_inventory";
+    const source = {
+      run_id: runId,
+      run_ref: runRef,
+      project_id: "project-a",
+      bucket: "project-artifacts",
+      resolved_prefix: "workflow-runs",
+      source_type: "artifact_storage",
+      source_selected: true,
+    };
+    let inventoryRequests = 0;
+    let workflowFallbackRequests = 0;
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${runId}*`, (req) => {
+      req.reply({
+        delay: 1200,
+        body: { run: { run_id: runId, status: "running", stages: [], logs: [] } },
+      });
+    });
+    cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
+      workflowFallbackRequests += 1;
+      req.reply({ statusCode: 500, body: { detail: "unexpected workflow fallback" } });
+    });
+    cy.intercept("GET", `/api/artifacts/run/${runRef}*`, (req) => {
+      inventoryRequests += 1;
+      const cursor = new URL(req.url).searchParams.get("cursor") || "";
+      const common = { ...source, ok: true };
+      if (!cursor) {
+        req.alias = "lazyInventoryFirstPage";
+        req.reply({
+          body: {
+            ...common,
+            artifacts: [{
+              key: "workflow-runs/lazy-inventory-run/preview.mp4",
+              render: "video",
+              role: "output",
+              size: 1024,
+            }],
+            truncated: true,
+            next_cursor: "lazy-page-two",
+            summary: { run_id: runId, has_recording: false },
+          },
+        });
+        return;
+      }
+      expect(cursor).to.eq("lazy-page-two");
+      req.alias = "lazyInventorySecondPage";
+      req.reply({
+        body: {
+          ...common,
+          artifacts: [{
+            key: "workflow-runs/lazy-inventory-run/reports/sim2real.rrd",
+            render: "rerun",
+            role: "output",
+            size: 4096,
+          }],
+          truncated: false,
+          next_cursor: "",
+        },
+      });
+    });
+
+    cy.window().then((win) => {
+      win.__NPA_AGENT_TEST__.setArtifactRunsForTest([], [source], {});
+      return win.__NPA_AGENT_TEST__.loadRunData({ run_id: runId, run_ref: runRef });
+    });
+    cy.wait("@lazyInventoryFirstPage");
+    cy.get("#artifactList")
+      .should("contain.text", "preview.mp4")
+      .and("not.contain.text", "sim2real.rrd");
+    cy.get("#artifactRunSummary .no-recording").should("not.exist");
+    cy.get("#tabRerun").click();
+    cy.get("#artifactTypeFilter").select("video");
+    cy.then(() => expect(inventoryRequests, "filter reuses partial cache").to.eq(1));
+
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@lazyInventorySecondPage");
+    cy.get("#artifactList")
+      .should("contain.text", "2 artifacts")
+      .and("contain.text", "2 inventory pages merged")
+      .and("not.contain.text", "sim2real.rrd");
+    cy.get("#artifactTypeFilter").select("");
+    cy.get("#artifactList").should("contain.text", "sim2real.rrd");
+    cy.get("#artifactSort").select("largest");
+    cy.then(() => expect(inventoryRequests, "filters reuse completed cache").to.eq(2));
+    cy.then(() => expect(workflowFallbackRequests, "superseded inventory does not fall back").to.eq(0));
   });
 
   it("constructs fully scoped media URLs and rejects JSON before rendering video", () => {
@@ -493,7 +811,7 @@ describe("NPA agent UI with mocked APIs", () => {
       cy.get(`#${id}`).should("exist");
     }
     cy.get("#workflowYaml").should("contain.value", "apiVersion: npa.workflow/v0.0.1");
-    cy.get("#workflowSubmitHint").should("contain.text", "plan-only");
+    cy.get("#workflowSubmitHint").should("contain.text", "single-use confirmation");
     cy.get("#tabMain").should("have.attr", "aria-selected", "true");
     cy.get("#tabRerun").click();
     cy.get("#tabRerun").should("have.attr", "aria-selected", "true");
@@ -1084,8 +1402,11 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
+    // Boot and ordinary chat must not execute the optional viewer application.
+    cy.get("#lichtblickFrame").should("have.attr", "src", "about:blank");
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
+    cy.get("#lichtblickFrame").should("have.attr", "src", "about:blank");
 
     // Lichtblick render-mode tab + dedicated iframe pane exist and activate.
     cy.get("#renderModeLichtblick").should("exist").click();
@@ -1110,7 +1431,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
     cy.wait("@loadArtifact");
     cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
@@ -1189,6 +1510,217 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "show status");
   });
 
+  for (const refreshMethod of ["refreshChatSessions", "refresh", "restoreSession", "prefetchedRestoreSession"]) {
+    it(`keeps a new chat and its reply when an older ${refreshMethod} completes`, () => {
+      let releaseRefresh;
+      let refreshDone;
+      let releaseChat;
+      const path = refreshMethod === "refreshChatSessions" ? "/api/chat/sessions" : "/api/session";
+      const stale = {
+        active_session_id: "default", active_chat_session_id: "default",
+        sessions: [{ id: "default", title: "Old chat" }],
+        chat_sessions: [{ id: "default", title: "Old chat" }],
+        chat_history: [{ role: "assistant", content: "Stale transcript" }],
+        sim_viz: SIM_VIZ,
+      };
+      cy.intercept({ method: "GET", url: path, times: 1 }, (request) =>
+        new Cypress.Promise((resolve) => {
+          releaseRefresh = () => { request.reply({ statusCode: 200, body: stale }); resolve(); };
+        }),
+      ).as("oldChatRefresh");
+      cy.window().then((win) => {
+        const api = win.__NPA_AGENT_TEST__;
+        refreshDone = refreshMethod === "prefetchedRestoreSession"
+          ? api.restoreSession().then((session) => api.refresh({ session }))
+          : api[refreshMethod]();
+      });
+      cy.wrap(null).should(() => expect(releaseRefresh).to.be.a("function"));
+      cy.get("#newChatSession").click();
+      cy.wait("@newChatSession");
+      cy.get("#chatSessionSelect").should("have.value", "new-session");
+      cy.intercept("POST", "/api/chat", (request) =>
+        new Cypress.Promise((resolve) => {
+          expect(request.body.session_id).to.eq("new-session");
+          expect(request.body.model).to.eq("mock/model");
+          releaseChat = () => {
+            request.reply({ statusCode: 200, body: {
+              ok: true, session_id: request.body.session_id,
+              model: "mock/model", reply: "A green boat floats under a silver moon.",
+            } });
+            resolve();
+          };
+        }),
+      ).as("newSessionChat");
+      cy.get("#chatModel").select("mock/model");
+      cy.get("#chatInput").type("Write about a green boat and a silver moon.");
+      cy.get("#chatSend").click();
+      cy.wrap(null).should(() => expect(releaseChat).to.be.a("function"));
+      cy.then(() => releaseRefresh());
+      cy.wait("@oldChatRefresh");
+      cy.then(() => refreshDone);
+      cy.get("#chatSessionSelect").should("have.value", "new-session");
+      cy.get("#chatLog").should("not.contain.text", "Stale transcript");
+      cy.then(() => releaseChat());
+      cy.wait("@newSessionChat");
+      cy.get("#chatLog .msg-row.assistant").should("contain.text", "A green boat floats under a silver moon.");
+    });
+  }
+
+  it("waits for initial session hydration before sending the first chat", () => {
+    let releaseSession;
+    let chatRequests = 0;
+    cy.intercept({ method: "GET", url: "/api/session", times: 1 }, (request) =>
+      new Cypress.Promise((resolve) => {
+        releaseSession = () => {
+          request.reply({ statusCode: 200, body: {
+            selection: ASSETS.selection,
+            sim_viz: SIM_VIZ,
+            latest_submit: { run_id: "mock-run" },
+            camera_selection: ["workspace"],
+            chat_history: [],
+            active_chat_session_id: "session-two",
+            chat_sessions: [{ id: "session-two", title: "Restored chat" }],
+            llm: { model: "mock/model", models: ["mock/model"] },
+            workflow_draft: { yaml: WORKFLOW_YAML, validation: WORKFLOW_VALIDATION },
+          } });
+          resolve();
+        };
+      }),
+    ).as("delayedInitialSession");
+    cy.intercept("POST", "/api/chat", (request) => {
+      chatRequests += 1;
+      expect(request.body.session_id).to.eq("session-two");
+      request.reply({ statusCode: 200, body: {
+        ok: true,
+        session_id: "session-two",
+        model: "mock/model",
+        reply: "The hydrated first reply remains visible.",
+      } });
+    }).as("hydratedFirstChat");
+
+    cy.reload();
+    cy.get("#chatInput").type("Send after hydration.");
+    cy.get("#chatSend").click();
+    cy.wrap(null).should(() => expect(releaseSession).to.be.a("function"));
+    cy.then(() => {
+      expect(chatRequests, "chat before session hydration").to.eq(0);
+      releaseSession();
+    });
+    cy.wait("@delayedInitialSession");
+    cy.wait("@hydratedFirstChat");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
+    cy.get("#chatLog .msg-row.assistant").should(
+      "contain.text", "The hydrated first reply remains visible."
+    );
+  });
+
+  it("serializes overlapping chat mutations so fresh discovery keeps the newest session", () => {
+    let releaseFirst;
+    let serverActive = "default";
+    const writes = [];
+    cy.intercept({ method: "POST", url: /\/api\/chat\/sessions(?:\/[^/]+\/select)?$/ }, (request) => {
+      const id = request.url.endsWith("/select") ? "session-two" : "created-1";
+      writes.push(id);
+      const reply = () => {
+        serverActive = id;
+        request.reply({ statusCode: 200, body: {
+          active_session_id: id, session: { id, chat_history: [] },
+          sessions: writes.map((value) => ({ id: value, title: value })),
+        } });
+      };
+      if (writes.length === 1) {
+        return new Cypress.Promise((resolve) => {
+          releaseFirst = () => { reply(); resolve(); };
+        });
+      }
+      reply();
+    }).as("serializedChatMutation");
+    cy.intercept("GET", "/api/chat/sessions", (request) => request.reply({
+      statusCode: 200, body: { active_session_id: serverActive,
+        sessions: writes.map((id) => ({ id, title: id })) },
+    })).as("currentChatDiscovery");
+    cy.get("#newChatSession").click();
+    cy.wrap(null).should(() => expect(releaseFirst).to.be.a("function"));
+    // The New chat button is busy; the separate selector remains actionable.
+    cy.get("#chatSessionSelect").select("session-two");
+    cy.then(() => {
+      expect(writes, "second server write waits for the first").to.deep.eq(["created-1"]);
+      releaseFirst();
+    });
+    cy.wait("@serializedChatMutation");
+    cy.wait("@serializedChatMutation");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refreshChatSessions());
+    cy.wait("@currentChatDiscovery");
+    cy.get("#chatSessionSelect").should("have.value", "session-two");
+    cy.intercept("POST", "/api/chat", (request) => {
+      expect(request.body.session_id).to.eq("session-two");
+      request.reply({ statusCode: 200, body: {
+        ok: true, session_id: request.body.session_id, reply: "Newest session reply remains visible.",
+      } });
+    }).as("newestSessionReply");
+    cy.get("#chatInput").type("Reply in the newest session.");
+    cy.get("#chatSend").click();
+    cy.wait("@newestSessionReply");
+    cy.get("#chatLog .msg-row.assistant").should("contain.text", "Newest session reply remains visible.");
+  });
+
+  it("restores exact artifact status scope before discovery and preserves explicit overrides", () => {
+    const runId = "restored-synthetic-artifact";
+    let detailRequests = 0;
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${runId}*`, (request) => {
+      detailRequests += 1;
+      const query = new URL(request.url).searchParams;
+      expect(query.get("source_selected")).to.eq("1");
+      expect(query.get("resource_bucket")).to.eq(detailRequests <= 3 ? "project-artifacts" : "explicit-artifacts");
+      expect(query.get("project_id")).to.eq(detailRequests <= 3 ? "project-a" : "project-b");
+      expect(query.get("resolved_prefix")).to.eq(detailRequests <= 3 ? "synthetic-results" : null);
+      request.reply({ statusCode: 200, body: { ok: true, run: { run_id: runId, stages: [] } } });
+    }).as("restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.setArtifactRunsForTest([], [], { run_id: runId });
+      hooks.updateRunSelector({
+        run_id: runId, active_run_id: runId, artifact_run_ref: "npa1_restored_source",
+        bucket: "project-artifacts", project_id: "project-a", resolved_prefix: "synthetic-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.updateRunSelector({
+        run_id: runId, active_run_id: runId, artifact_run_ref: "npa1_stale_other_source",
+        bucket: "stale-artifacts", project_id: "project-stale", resolved_prefix: "stale-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => {
+      const hooks = win.__NPA_AGENT_TEST__;
+      hooks.updateRunSelector({
+        run_id: "different-artifact", active_run_id: runId, artifact_run_ref: "npa1_restored_source",
+        bucket: "mismatched-artifacts", project_id: "project-other", resolved_prefix: "other-results",
+        available_runs: [], available_run_ids: [],
+      });
+      return hooks.loadRunDetails(runId);
+    });
+    cy.wait("@restoredArtifactStatus");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.loadRunDetails(runId, {
+      resourceBucket: "explicit-artifacts", projectId: "project-b", resolvedPrefix: "", sourceSelected: true,
+    }));
+    cy.wait("@restoredArtifactStatus");
+    cy.intercept("GET", "/api/workflows/sim2real/runs/different-artifact*", (request) => {
+      const query = new URL(request.url).searchParams;
+      expect(query.has("resource_bucket"), "scope never crosses run identities").to.eq(false);
+      request.reply({ statusCode: 200, body: { ok: true, run: { run_id: "different-artifact", stages: [] } } });
+    }).as("differentArtifactStatus");
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.loadRunDetails("different-artifact"));
+    cy.wait("@differentArtifactStatus");
+  });
+
   it("covers workflow draft upload, validate, plan, and submit buttons", () => {
     cy.get("#workflowYaml").clear().type(WORKFLOW_YAML, { delay: 0 });
 
@@ -1209,8 +1741,14 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#workflowSubmitYaml").click();
     cy.wait("@workflowSubmitYaml");
-    cy.get("#chatLog").should("contain.text", "Submitted npa.workflow");
-    cy.get("#chatLog").should("contain.text", "plan");
+    cy.get("#workflowExecutionConfirm").should("be.visible");
+    cy.get("#workflowExecutionConfirm").should("contain.text", "Confirm workflow execution");
+    cy.get("#workflowExecutionConfirm button").click();
+    cy.wait("@workflowSubmitYaml");
+    cy.get("#chatLog").should("contain.text", "Completed workflow run");
+    cy.get("#chatLog").should("contain.text", "SUCCEEDED");
+    cy.get("#workflowExecutionStatus").should("contain.text", "Durable workflow status");
+    cy.get("#workflowExecutionStatus").should("contain.text", "SUCCEEDED");
   });
 
   it("covers Stages panel, Rerun buttons, and run-data loading", () => {
@@ -1240,7 +1778,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Latest workflow status");
 
     cy.get("#tabRerun").click();
-    cy.get('#runIdSelect option[value="mock-run"][data-source-type="workflow_history"]').then(($opt) => {
+    cy.get('#runIdSelect option[data-run-id="cosmos-reason-run"][data-source-type="workflow_history"]')
+      .should("have.length", 1)
+      .then(($opt) => {
       const select = $opt[0].parentElement;
       select.selectedIndex = [...select.options].indexOf($opt[0]);
       cy.wrap(select).trigger("change");
@@ -1248,7 +1788,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded run context");
-    cy.get("#runLog").should("contain.text", "mock run log");
+    cy.get("#runLog").should("contain.text", "generic workflow stages active");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
 
     cy.get("#tabRerun").click();
@@ -1268,15 +1808,15 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@artifactRuns");
     cy.get("#artifactDiscoverStatus").should("contain.text", "latest first");
     cy.get("#runIdSelect option").then(($opts) => {
-      const values = [...$opts].map((opt) => opt.value).filter(Boolean);
+      const runIds = [...$opts].map((opt) => opt.dataset.runId).filter(Boolean);
       // Discovered non-stock run is newest; must appear before older mock-run.
-      expect(values[0]).to.eq(NON_STOCK_RUN_ID);
-      expect(values).to.include("mock-run");
-      expect(values).to.include("submitted-run");
+      expect(runIds[0]).to.eq(NON_STOCK_RUN_ID);
+      expect(runIds).to.include("mock-run");
+      expect(runIds).to.include("submitted-run");
     });
     cy.get("#stagesRunSelect option").then(($opts) => {
-      const values = [...$opts].map((opt) => opt.value).filter(Boolean);
-      expect(values[0]).to.eq(NON_STOCK_RUN_ID);
+      const runIds = [...$opts].map((opt) => opt.dataset.runId).filter(Boolean);
+      expect(runIds[0]).to.eq(NON_STOCK_RUN_ID);
     });
   });
 
@@ -1309,10 +1849,10 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@viewabilityRuns");
-    cy.get('#runIdSelect option[value="known-viewable-run"]')
+    cy.get('#runIdSelect option[data-run-id="known-viewable-run"][data-source-type="artifact_storage"]')
       .should("contain.text", "viewable")
       .and("not.contain.text", "viewability unknown");
-    cy.get('#runIdSelect option[value="unknown-viewability-run"]')
+    cy.get('#runIdSelect option[data-run-id="unknown-viewability-run"][data-source-type="artifact_storage"]')
       .should("contain.text", "viewability unknown");
   });
 
@@ -1393,8 +1933,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@pagedRuns");
     cy.get("#runIdSelect").select("npa1_paged_ui");
-    cy.wait(["@pagedArtifacts", "@pagedArtifacts"]);
+    cy.wait("@pagedArtifacts");
     cy.get("#artifactList").should("contain.text", `category/${runId}/a.json`);
+    cy.get("#artifactList").should("not.contain.text", `category/${runId}/b.json`);
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@pagedArtifacts");
     cy.get("#artifactList")
       .should("contain.text", `category/${runId}/a.json`)
       .and("contain.text", `category/${runId}/b.json`);
@@ -1417,7 +1960,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "mock-run/preview.png");
 
     cy.get("#artifactLoadRunArtifacts").click();
-    cy.wait("@artifactList");
+    cy.get("@artifactList.all").should("have.length", 1);
     cy.get("#artifactList button[data-action='preview-artifact']").click();
     cy.wait("@artifactContentImage");
     // loadArtifact no longer spams chat; the viewer / preview host reflects the load.
@@ -1452,21 +1995,24 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get(`#runIdSelect option[value="${JSON_RUN_ID}"]`)
+    cy.get(`#runIdSelect option[data-run-id="${JSON_RUN_ID}"][data-project-id="project-a"][data-bucket="project-artifacts"][data-resolved-prefix=""]`)
       .should("have.attr", "data-source-type", "artifact_storage")
       .and("contain.text", "S3 artifacts");
-    cy.get("#runIdSelect").select(JSON_RUN_ID);
+    cy.selectRunSource("#runIdSelect", {
+      runId: JSON_RUN_ID, projectId: "project-a", bucket: "project-artifacts",
+      resolvedPrefix: "", sourceType: "artifact_storage",
+    });
     cy.wait("@jsonOnlyArtifactList");
     cy.wait("@loadArtifact");
     cy.get("#renderModeData").should("have.class", "is-active");
     cy.get("#artifactPreviewHost pre").should("contain.text", "evaluations");
     cy.get("#stageList").should("contain.text", "evaluation");
     cy.get("#artifactList").should("contain.text", "policy.ckpt");
-    cy.get(`#runIdSelect option[value="${JSON_RUN_ID}"][data-source-type="artifact_storage"]`)
+    cy.get(`#runIdSelect option[data-run-id="${JSON_RUN_ID}"][data-project-id="project-a"][data-bucket="project-artifacts"][data-resolved-prefix=""][data-source-type="artifact_storage"]`)
       .should("have.length", 1);
     cy.wrap(null).should(() => expect(workflowLoads, "S3 selection never calls load-run").to.eq(0));
 
-    cy.get("#runIdSelect").select("franka-demo");
+    cy.selectRunSource("#runIdSelect", { runId: "franka-demo", sourceType: "local_demo" });
     cy.wait("@provenanceLocalLoad");
     cy.get("#tabMain").click();
     cy.get("#stageList").should("contain.text", "Local Franka demo");
@@ -1474,7 +2020,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wrap(null).should(() => expect(localLoads, "local demo endpoint called once").to.eq(1));
 
     cy.get("#tabRerun").click();
-    cy.get("#runIdSelect").select("cosmos-reason-run");
+    cy.selectRunSource("#runIdSelect", { runId: "cosmos-reason-run", sourceType: "workflow_history" });
     cy.wait("@provenanceWorkflowLoad");
     cy.get("#tabMain").click();
     cy.get("#stageList").should("contain.text", "Fetch checkpoint");
@@ -1490,7 +2036,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
     cy.wait("@loadArtifact");
 
@@ -1504,38 +2050,30 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "View in Rerun");
     cy.get("#artifactList").should("contain.text", "View");
     cy.get("#artifactTypeFilter").select("video");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
     cy.get("#artifactList").should("not.contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
     cy.get("#artifactSort").select("largest");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", "Showing 1 grouped rows from 1 selected");
     cy.get("#artifactTypeFilter").select("");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#simRunId").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
     cy.get("#simCamera").should("contain.text", "customer-overhead");
 
-    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`)
-      .should("have.length", 1);
-    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`).then(($opt) => {
-      const select = $opt[0].parentElement;
-      select.selectedIndex = [...select.options].indexOf($opt[0]);
-      // Dispatch in the same browser turn as selection. Queuing a later
-      // Cypress trigger leaves a repaint window where a status poll can rebuild
-      // the options and restore the artifact source before the handler reads it.
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    cy.wait("@loadRun");
-    cy.get("#tabMain").click();
-    cy.get("#stagesPanel h3").should("have.text", "Stages");
-    cy.get("#runSummary").should("contain.text", NON_STOCK_RUN_ID);
-    cy.get("#stageList").should("contain.text", "Customer assets");
-    cy.get("#runLog").should("contain.text", "non-stock sim2real artifacts");
+    // Workflow history for this basename is intentionally consolidated into
+    // the one discovered S3 tuple; it must not create an unscoped duplicate.
+    cy.get(`#runIdSelect option[data-run-id="${NON_STOCK_RUN_ID}"]`)
+      .should("have.length", 1)
+      .and("have.attr", "data-source-type", "artifact_storage")
+      .and("have.attr", "data-project-id", "project-a")
+      .and("have.attr", "data-bucket", "project-artifacts")
+      .and("have.attr", "data-resolved-prefix", "");
 
     cy.get("#tabRerun").click();
     cy.get("#artifactLoadRunArtifacts").click();
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.wait("@loadArtifact");
     cy.get(
       `#artifactList button[data-action='preview-artifact'][data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`
@@ -1588,22 +2126,22 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     cy.get("#runIdSelect option").then(($opts) => {
-      const values = [...$opts].map((o) => o.value).filter(Boolean);
-      expect(values).to.include(NON_STOCK_RUN_ID);
-      expect(values).to.include("mock-run");
+      const runIds = [...$opts].map((o) => o.dataset.runId).filter(Boolean);
+      expect(runIds).to.include(NON_STOCK_RUN_ID);
+      expect(runIds).to.include("mock-run");
     });
     // Typing part of a run name/ID filters the list client-side.
     cy.get("#artifactPrefix").clear().type("non-stock");
     cy.get("#runIdSelect option").then(($opts) => {
-      const values = [...$opts].map((o) => o.value).filter(Boolean);
-      expect(values).to.include(NON_STOCK_RUN_ID);
-      expect(values).to.not.include("mock-run");
+      const runIds = [...$opts].map((o) => o.dataset.runId).filter(Boolean);
+      expect(runIds).to.include(NON_STOCK_RUN_ID);
+      expect(runIds).to.not.include("mock-run");
     });
     // Clearing restores the full list.
     cy.get("#artifactPrefix").clear();
     cy.get("#runIdSelect option").then(($opts) => {
-      const values = [...$opts].map((o) => o.value).filter(Boolean);
-      expect(values).to.include("mock-run");
+      const runIds = [...$opts].map((o) => o.dataset.runId).filter(Boolean);
+      expect(runIds).to.include("mock-run");
     });
   });
 
@@ -1634,7 +2172,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     // Clicking the Augment stage row scopes the artifact list to that stage.
     cy.get('#artifactProvenance .prov-clickable[data-stage="cosmos_augmented"]').click();
-    cy.wait("@dfArtifactList");
+    cy.get("@dfArtifactList.all").should("have.length", 2);
     cy.get("#artifactStageFilter").should("have.value", "cosmos_augmented");
     cy.get("#artifactList").should("contain.text", "cosmos_augmented/aug0/augmented_video.mp4");
     cy.get("#artifactList").should("not.contain.text", "/input/video_0.mp4");
@@ -1649,7 +2187,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     // Click the "Source frames" (input) pipeline stage.
     cy.get('#artifactProvenance .prov-clickable[data-stage="input"]').should("contain.text", "Source frames").click();
-    cy.wait("@dfArtifactList");
+    cy.get("@dfArtifactList.all").should("have.length", 2);
 
     // The artifact list scopes to the input stage and shows the source frames...
     cy.get("#artifactStageFilter").should("have.value", "input");
@@ -1681,7 +2219,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
-    cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.selectRunSource("#runIdSelect", NON_STOCK_DISCOVERY_SOURCE);
     cy.wait("@nonStockArtifactList");
     cy.wait("@loadArtifact");
 
@@ -1694,13 +2232,13 @@ describe("NPA agent UI with mocked APIs", () => {
 
     // Selecting a stage scopes the artifact list to that workflow-progress step.
     cy.get("#artifactStageFilter").select("rollouts");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
     cy.get("#artifactList").should("not.contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
 
     // Clearing the stage filter restores the full listing.
     cy.get("#artifactStageFilter").select("");
-    cy.wait("@nonStockArtifactList");
+    cy.get("@nonStockArtifactList.all").should("have.length", 1);
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
 
     // The artifact-derived timeline tags rows with a stage key so they are
@@ -1982,6 +2520,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#runSummary").should("contain.text", "mock-run");
     cy.get("#stagesRunInput").clear().type(maintenanceId, { delay: 0 });
+    cy.wait("@artifactRuns");
     cy.get("#stagesLoadRun").click();
     cy.wait("@maintenanceNotFound");
     cy.get("#runSummary").should("contain.text", "currently loaded run");
@@ -1989,6 +2528,18 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("not.contain.text", maintenanceId);
     cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
     cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
+
+    // A later discovery refresh must preserve the actionable exact-lookup
+    // failure, even though it rebuilds the run picker for the same query.
+    cy.get("#artifactRefreshRuns").click({ force: true });
+    cy.wait("@artifactRuns");
+    cy.get("#artifactRefreshRuns").should("not.be.disabled");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
+    cy.get("#stagesRunInput").clear().type("another-missing-run", { delay: 0 });
+    cy.get("#stagesRunSearchResult")
+      .should("contain.text", "Search results are separate")
+      .and("not.contain.text", "Codex maintenance job IDs");
   });
 
   it("loads an artifact-backed training run without a Rerun recording", () => {
@@ -2124,7 +2675,8 @@ describe("NPA agent UI with mocked APIs", () => {
     // The refresh request and select rendering are separate async steps. Retry
     // until the response is represented in the DOM instead of sampling the old
     // options synchronously on a busy CI host.
-    cy.get('#runIdSelect option[value="npa1_training_run"]').should("have.length", 1);
+    cy.get(`#runIdSelect option[data-run-id="${TRAIN_RUN}"][data-run-ref="npa1_training_run"][data-project-id="project-local"][data-bucket="mock"][data-resolved-prefix=""]`)
+      .should("have.length", 1);
     cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((opt) => opt.value).filter(Boolean);
       expect(values).not.to.include("checkpoints");
@@ -2418,8 +2970,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRunsPaged");
     cy.get("#runIdSelect option").then(($opts) => {
-      const values = [...$opts].map((o) => o.value).filter(Boolean);
-      expect(values, "default page omits the old run").to.not.include(OLD_RUN_ID);
+      const runIds = [...$opts].map((o) => o.dataset.runId).filter(Boolean);
+      expect(runIds, "default page omits the old run").to.not.include(OLD_RUN_ID);
     });
     // …but typing a fragment triggers a debounced server search that finds it.
     cy.get("#artifactPrefix").clear().type(FRAGMENT, { delay: 0 });
@@ -2427,8 +2979,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("contain.text", "mock-run");
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
     cy.get("#runIdSelect option").should(($opts) => {
-      const values = [...$opts].map((o) => o.value).filter(Boolean);
-      expect(values, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
+      const runIds = [...$opts].map((o) => o.dataset.runId).filter(Boolean);
+      expect(runIds, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
     });
     cy.get("#artifactDiscoverStatus")
       .should("contain.text", "matching in bounded index 1")
@@ -2445,8 +2997,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stagesRunSearchResult").should("contain.text", "separate from the currently loaded run mock-run");
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
     cy.get("#stagesRunSelect option").should(($opts) => {
-      const values = [...$opts].map((o) => o.value).filter(Boolean);
-      expect(values, "server search surfaces the old run in the Stages picker").to.include(OLD_RUN_ID);
+      const runIds = [...$opts].map((o) => o.dataset.runId).filter(Boolean);
+      expect(runIds, "server search surfaces the old run in the Stages picker").to.include(OLD_RUN_ID);
     });
   });
 
@@ -2496,20 +3048,20 @@ describe("NPA agent UI with mocked APIs", () => {
       expect(capturedUrls[1], "second request follows the cursor").to.include("cursor=page-two");
     });
     cy.get("#runIdSelect option").should(($opts) => {
-      const values = [...$opts].map((o) => o.value).filter(Boolean);
+      const runIds = [...$opts].map((o) => o.dataset.runId).filter(Boolean);
       // Far more than the historical 100-run cap render without any search
       // (the picker also unions the sim-viz "known" runs, so allow >=).
-      expect(values.length, "all runs render without search").to.be.at.least(bigList.length);
-      const valueSet = new Set(values);
+      expect(runIds.length, "all runs render without search").to.be.at.least(bigList.length);
+      const runIdSet = new Set(runIds);
       for (const run of bigList) {
-        expect(valueSet.has(run.run_id), `${run.run_id} present without search`).to.eq(true);
+        expect(runIdSet.has(run.run_id), `${run.run_id} present without search`).to.eq(true);
       }
       // The oldest run (would fall off a 100-run page) is present by default.
-      expect(values, "oldest run shows without typing").to.include("bulk-run-149");
+      expect(runIds, "oldest run shows without typing").to.include("bulk-run-149");
     });
   });
 
-  it("keeps duplicate run basenames as separate source-qualified cards", () => {
+  it("keeps different resolved prefixes for one bucket and run independently selectable", () => {
     const RUN_ID = "duplicate-run";
     const REF_A = "npa1_source_a";
     const REF_B = "npa1_source_b";
@@ -2519,8 +3071,8 @@ describe("NPA agent UI with mocked APIs", () => {
         ok: true,
         contract: "s3-source-qualified-v1",
         runs: [
-          { run_id: RUN_ID, run_ref: REF_A, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-a", source_prefix: "shared/category-a", has_viewable: true, artifact_count: 1 },
-          { run_id: RUN_ID, run_ref: REF_B, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-b", source_prefix: "shared/category-b", has_viewable: true, artifact_count: 1 },
+          { run_id: RUN_ID, run_ref: REF_A, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-a", source_prefix: "shared/category-a", has_viewable: true, summary_complete: true, artifact_count: 1 },
+          { run_id: RUN_ID, run_ref: REF_B, bucket: "mock", project_id: "project-local", resolved_prefix: "shared/category-b", source_prefix: "shared/category-b", has_viewable: true, summary_complete: true, artifact_count: 2 },
         ],
         total_runs: 2,
         truncated: false,
@@ -2549,8 +3101,10 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").should("be.enabled").and("have.attr", "aria-busy", "false");
     cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((option) => option.value).filter(Boolean);
-      expect(values).to.include(REF_A);
       expect(values).to.include(REF_B);
+      expect(values).to.include(REF_A);
+      expect(values.filter((value) => value === REF_A)).to.have.length(1);
+      expect(values.filter((value) => value === REF_B)).to.have.length(1);
       expect(values.filter((value) => value === RUN_ID)).to.have.length(0);
     });
     cy.get("#runIdSelect").select(REF_B, { force: true });
@@ -2950,22 +3504,24 @@ describe("NPA agent UI with mocked APIs", () => {
 
   it("keeps priming when Rerun replaces a decoded loading canvas", () => {
     cy.get("#tabRerun").click();
-    cy.window().then(async (win) => {
-      const api = win.__NPA_AGENT_TEST__;
+    cy.window().then((win) => {
       const iframe = win.document.getElementById("rerunFrame");
       iframe.hidden = false;
       iframe.srcdoc = `<!doctype html><html><body><script>
         const state = { initialCaptured: false, replacementCaptured: false };
+        let paintFrame;
         const paint = (canvas, color) => {
-          canvas.width = 320;
-          canvas.height = 180;
           const ctx = canvas.getContext("2d");
           ctx.fillStyle = color;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.fillStyle = "#5eead4";
           ctx.fillRect(170, 45, 110, 85);
+          paintFrame = window.requestAnimationFrame(() => paint(canvas, color));
         };
+        state.stop = () => window.cancelAnimationFrame(paintFrame);
         const initial = document.createElement("canvas");
+        initial.width = 320;
+        initial.height = 180;
         const initialCapture = initial.captureStream.bind(initial);
         initial.captureStream = (rate) => {
           state.initialCaptured = true;
@@ -2974,8 +3530,11 @@ describe("NPA agent UI with mocked APIs", () => {
         document.body.appendChild(initial);
         paint(initial, "#07111f");
         window.__NPA_CAPTURE_REPLACEMENT__ = state;
-        window.setTimeout(() => {
+        state.replace = () => {
+          state.stop();
           const replacement = document.createElement("canvas");
+          replacement.width = 320;
+          replacement.height = 180;
           const replacementCapture = replacement.captureStream.bind(replacement);
           replacement.captureStream = (rate) => {
             state.replacementCaptured = true;
@@ -2983,30 +3542,50 @@ describe("NPA agent UI with mocked APIs", () => {
           };
           initial.replaceWith(replacement);
           paint(replacement, "#ff8a1f");
-        }, 700);
+        };
       <\/script></body></html>`;
-
-      const documentDeadline = Date.now() + 1500;
-      while (
-        Date.now() < documentDeadline
-        && !iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      api.primeRerunCaptureBridge(iframe, 2200);
-      const replacementDeadline = Date.now() + 1800;
-      while (
-        Date.now() < replacementDeadline
-        && !(iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__ || {}).replacementCaptured
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 40));
-      }
-      const lifecycle = iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__;
+    });
+    cy.window().should((win) => {
+      const iframe = win.document.getElementById("rerunFrame");
+      expect(iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__, "replacement fixture loaded").to.exist;
+      const bridge = win.__NPA_AGENT_TEST__.ensureRerunCaptureBridge(iframe);
+      expect(bridge, "initial native stream").to.exist;
+      expect(bridge.video.readyState, "initial canvas has a decoded frame").to.be.at.least(2);
+      expect(bridge.video.videoWidth).to.eq(320);
+    });
+    cy.window().then((win) => {
+      const iframe = win.document.getElementById("rerunFrame");
+      // Replace only after the initial stream decoded. Continued real paints
+      // deliver frames after the primer attaches to the replacement canvas.
+      win.__NPA_AGENT_TEST__.primeRerunCaptureBridge(iframe, 2200);
+      iframe.contentWindow.__NPA_CAPTURE_REPLACEMENT__.replace();
+    });
+    cy.window().should((win) => {
+      const lifecycle = win.document.getElementById("rerunFrame").contentWindow.__NPA_CAPTURE_REPLACEMENT__;
       expect(lifecycle.initialCaptured, "loading canvas stream").to.eq(true);
       expect(lifecycle.replacementCaptured, "replacement canvas stream").to.eq(true);
-      const grabbed = await api.grabFromRerunCaptureBridge(3000, { forceRestart: false });
-      expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
-      expect(grabbed.length).to.be.greaterThan(1000);
+    });
+    cy.window().then(async (win) => {
+      const lifecycle = win.document.getElementById("rerunFrame").contentWindow.__NPA_CAPTURE_REPLACEMENT__;
+      try {
+        const grabbed = await win.__NPA_AGENT_TEST__.grabFromRerunCaptureBridge(3000, { forceRestart: false });
+        expect(grabbed).to.match(/^data:image\/jpeg;base64,/);
+        expect(grabbed.length).to.be.greaterThan(1000);
+        const image = new win.Image();
+        image.src = grabbed;
+        await image.decode();
+        const sampled = win.document.createElement("canvas");
+        sampled.width = image.width;
+        sampled.height = image.height;
+        const context = sampled.getContext("2d");
+        context.drawImage(image, 0, 0);
+        const [red, green, blue] = context.getImageData(25, 25, 1, 1).data;
+        expect(red, "captured replacement orange, not the initial dark canvas").to.be.greaterThan(200);
+        expect(green).to.be.within(90, 180);
+        expect(blue).to.be.lessThan(80);
+      } finally {
+        lifecycle.stop();
+      }
     });
   });
 
@@ -3274,6 +3853,487 @@ describe("NPA agent UI with mocked APIs", () => {
       } else {
         expect(String(content)).to.include("success_rate");
       }
+    });
+  });
+});
+
+describe("NPA agent durable artifact discovery journeys", () => {
+  it("recovers a cold searched run, traverses every artifact page, and loads its exact RRD source", () => {
+    const runId = "cold-restart-artifact-run";
+    const runRef = "npa1_cold_restart_artifact_run";
+    const projectId = "project-a";
+    const bucket = "project-artifacts";
+    const resolvedPrefix = "durable-workflow-runs";
+    const unknownKey = `${resolvedPrefix}/${runId}/reports/result.future`;
+    const rrdKey = `${resolvedPrefix}/${runId}/reports/review.rrd`;
+    const capabilityPath = `/rerun/recordings/cap-${"C".repeat(43)}.rrd`;
+    let artifactLoaded = false;
+
+    cy.installAgentApiMocks();
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const url = new URL(req.url);
+      const query = String(url.searchParams.get("q") || "");
+      if (!query) {
+        req.alias = "coldIncompleteDiscovery";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            runs: [],
+            total_runs: null,
+            total_runs_scope: "unavailable",
+            observed_run_count: 0,
+            observed_match_count: 0,
+            query_complete: false,
+            pagination_complete: false,
+            next_cursor: "",
+            access: { status: "partial", scope: "partial_tenant" },
+          },
+        });
+        return;
+      }
+      expect(query).to.eq("cold-restart");
+      req.alias = "coldRunSearch";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: [{
+            run_id: runId,
+            run_ref: runRef,
+            project_id: projectId,
+            bucket,
+            resolved_prefix: resolvedPrefix,
+            source_type: "artifact_storage",
+            source_label: "S3 artifacts",
+            summary_complete: false,
+            has_viewable: null,
+          }],
+          total_runs: null,
+          total_runs_scope: "unavailable",
+          observed_run_count: 1,
+          observed_match_count: 1,
+          query_complete: false,
+          pagination_complete: false,
+          next_cursor: "",
+          access: { status: "partial", scope: "partial_tenant" },
+        },
+      });
+    });
+    cy.intercept("GET", `/api/artifacts/run/${runRef}*`, (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("project_id")).to.eq(projectId);
+      expect(url.searchParams.get("resource_bucket")).to.eq(bucket);
+      expect(url.searchParams.get("resolved_prefix")).to.eq(resolvedPrefix);
+      expect(url.searchParams.get("source_selected")).to.eq("1");
+      const cursor = String(url.searchParams.get("cursor") || "");
+      const common = {
+        ok: true,
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        bucket,
+        resolved_prefix: resolvedPrefix,
+      };
+      if (!cursor) {
+        req.alias = "coldInventoryPageOne";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ...common,
+            artifacts: [{
+              key: unknownKey,
+              s3_uri: `s3://${bucket}/${unknownKey}`,
+              render: "download",
+              role: "output",
+              size: 31,
+            }],
+            truncated: true,
+            pagination_complete: false,
+            next_cursor: "cold-inventory-page-two",
+          },
+        });
+        return;
+      }
+      expect(cursor).to.eq("cold-inventory-page-two");
+      req.alias = "coldInventoryPageTwo";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ...common,
+          artifacts: [{
+            key: rrdKey,
+            s3_uri: `s3://${bucket}/${rrdKey}`,
+            render: "rerun",
+            role: "output",
+            size: 4096,
+          }],
+          truncated: false,
+          pagination_complete: true,
+          next_cursor: "",
+        },
+      });
+    });
+    cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+      expect(req.body).to.deep.eq({
+        run_id: runId,
+        run_ref: runRef,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        source_selected: true,
+        key: rrdKey,
+        s3_uri: "",
+      });
+      artifactLoaded = true;
+      req.alias = "coldRrdLoad";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          render: "rerun",
+          run_ref: runRef,
+          artifact_uri: `s3://${bucket}/${rrdKey}`,
+          sim_viz: {
+            ...SIM_VIZ,
+            run_id: runId,
+            active_run_id: runId,
+            stage: "artifact-loaded",
+            artifact_render: "rerun",
+            artifact_key: rrdKey,
+            artifact_run_ref: runRef,
+            project_id: projectId,
+            resource_bucket: bucket,
+            bucket,
+            resolved_prefix: resolvedPrefix,
+            artifact_preview_url: capabilityPath,
+            artifact_download_url: capabilityPath,
+            rerun_ready: true,
+          },
+        },
+      });
+    });
+    cy.intercept("GET", "/api/sim-viz/status*", (req) => {
+      const requestedRun = new URL(req.url).searchParams.get("run_id") || "";
+      if (!artifactLoaded || requestedRun !== runId) {
+        req.reply({ statusCode: 200, body: SIM_VIZ });
+        return;
+      }
+      req.alias = "coldRrdStatus";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ...SIM_VIZ,
+          run_id: runId,
+          active_run_id: runId,
+          stage: "artifact-loaded",
+          artifact_render: "rerun",
+          artifact_key: rrdKey,
+          artifact_run_ref: runRef,
+          project_id: projectId,
+          resource_bucket: bucket,
+          bucket,
+          resolved_prefix: resolvedPrefix,
+          artifact_preview_url: capabilityPath,
+          artifact_download_url: capabilityPath,
+          rerun_ready: true,
+        },
+      });
+    });
+
+    cy.visit("/");
+    cy.wait("@coldIncompleteDiscovery");
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "discovery incomplete")
+      .and("not.contain.text", "total 0");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactPrefix").clear().type("cold-restart", { delay: 0 });
+    cy.wait("@coldRunSearch");
+    cy.get(`#runIdSelect option[data-run-id="${runId}"][data-run-ref="${runRef}"][data-project-id="${projectId}"][data-bucket="${bucket}"][data-resolved-prefix="${resolvedPrefix}"]`)
+      .should("have.length", 1)
+      .and("have.attr", "data-run-id", runId);
+    cy.get("#artifactDiscoverStatus")
+      .should("contain.text", "matching in bounded index 1")
+      .and("contain.text", "discovery incomplete");
+
+    cy.selectRunSource("#runIdSelect", {
+      runId, runRef, projectId, bucket, resolvedPrefix, sourceType: "artifact_storage",
+    });
+    cy.wait("@coldInventoryPageOne");
+    cy.get("#artifactList .artifact-card[data-render='download']")
+      .should("contain.text", unknownKey)
+      .within(() => {
+        cy.get("button[data-action='load-artifact']").should("not.exist");
+        cy.get("button[data-action='download-artifact']")
+          .should("have.attr", "data-run-ref", runRef)
+          .and("have.attr", "data-project-id", projectId)
+          .and("have.attr", "data-bucket", bucket)
+          .and("have.attr", "data-resolved-prefix", resolvedPrefix);
+      });
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@coldInventoryPageTwo");
+    cy.wait("@coldRrdLoad");
+    cy.get("#artifactList")
+      .should("contain.text", "2 artifacts")
+      .and("contain.text", "2 inventory pages merged");
+    cy.get(`#artifactList button[data-action="load-artifact"][data-key="${rrdKey}"]`)
+      .should("have.attr", "data-run-ref", runRef)
+      .and("have.attr", "data-project-id", projectId)
+      .and("have.attr", "data-bucket", bucket)
+      .and("have.attr", "data-resolved-prefix", resolvedPrefix);
+
+    cy.window().then((win) => win.__NPA_AGENT_TEST__.refresh());
+    cy.wait("@coldRrdStatus").then(({ request, response }) => {
+      expect(new URL(request.url).searchParams.get("run_id")).to.eq(runId);
+      expect(response.body).to.deep.include({
+        run_id: runId,
+        artifact_run_ref: runRef,
+        artifact_key: rrdKey,
+        project_id: projectId,
+        resource_bucket: bucket,
+        resolved_prefix: resolvedPrefix,
+        rerun_ready: true,
+      });
+    });
+    cy.get("#simRunId").should("have.text", runId);
+    cy.get("#renderedDataSummary").should("contain.text", rrdKey);
+    cy.get("#rerunFrame").should("not.have.attr", "hidden");
+    cy.get("#rerunFrame").should("have.attr", "data-rerun-run-key", runId);
+    cy.get("#rerunFrame")
+      .invoke("attr", "data-rerun-recording-url")
+      .should("include", capabilityPath);
+  });
+
+  it("invalidates a stale selected source after access refresh and loads only the refreshed tuple", () => {
+    const runId = "access-refreshed-run";
+    const projectId = "project-a";
+    const oldSource = {
+      run_ref: "npa1_access_source_before",
+      bucket: "artifacts-before-refresh",
+      resolved_prefix: "runs-before-refresh",
+    };
+    const newSource = {
+      run_ref: "npa1_access_source_after",
+      bucket: "artifacts-after-refresh",
+      resolved_prefix: "runs-after-refresh",
+    };
+    const oldKey = `${oldSource.resolved_prefix}/${runId}/review.rrd`;
+    const newKey = `${newSource.resolved_prefix}/${runId}/review.rrd`;
+    const capabilityPath = `/rerun/recordings/cap-${"D".repeat(43)}.rrd`;
+    let accessRefreshed = false;
+    let oldLoads = 0;
+    let newLoads = 0;
+
+    const accessReport = (source) => ({
+      apiVersion: "npa.agent.access/v1",
+      identity: {
+        deployment_project_id: projectId,
+        deployment_project_name: "Synthetic project",
+      },
+      status: "partial",
+      scope: "partial_tenant",
+      capabilities: {},
+      projects: [{
+        id: projectId,
+        name: "Synthetic project",
+        deployment_project: true,
+        status: "available",
+        capabilities: {
+          artifact_discovery: { status: "available", reason: "Fixture listing is available." },
+          artifact_read: { status: "available", reason: "Fixture reads are available." },
+          workflow_submission: { status: "available", reason: "Fixture home project." },
+        },
+        resources: [{
+          type: "object_storage_bucket",
+          id: `resource-${source.run_ref}`,
+          name: source.bucket,
+          project_id: projectId,
+          capabilities: {
+            artifact_discovery: { status: "available", reason: "Fixture listing is available." },
+            artifact_read: { status: "available", reason: "Fixture reads are available." },
+          },
+        }],
+      }],
+      errors: [],
+    });
+    const runRow = (source) => ({
+      run_id: runId,
+      run_ref: source.run_ref,
+      project_id: projectId,
+      bucket: source.bucket,
+      resolved_prefix: source.resolved_prefix,
+      source_type: "artifact_storage",
+      source_label: "S3 artifacts",
+      summary_complete: true,
+      has_viewable: true,
+      artifact_count: 1,
+    });
+
+    cy.installAgentApiMocks();
+    cy.intercept("GET", "/api/access*", (req) => {
+      const refresh = new URL(req.url).searchParams.get("refresh") === "true";
+      if (refresh) accessRefreshed = true;
+      req.alias = refresh ? "accessTupleAfter" : "accessTupleBefore";
+      req.reply({ statusCode: 200, body: accessReport(refresh ? newSource : oldSource) });
+    });
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const url = new URL(req.url);
+      const requestedProject = url.searchParams.get("project_id") || "";
+      const requestedBucket = url.searchParams.get("resource_bucket") || "";
+      if (!requestedBucket) {
+        req.alias = "unscopedTupleDiscovery";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            runs: [],
+            total_runs: null,
+            observed_run_count: 0,
+            query_complete: false,
+            pagination_complete: false,
+            next_cursor: "",
+          },
+        });
+        return;
+      }
+      expect(requestedProject).to.eq(projectId);
+      const expected = accessRefreshed ? newSource : oldSource;
+      expect(requestedBucket).to.eq(expected.bucket);
+      req.alias = accessRefreshed ? "newTupleRuns" : "oldTupleRuns";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: [runRow(expected)],
+          total_runs: 1,
+          query_complete: true,
+          pagination_complete: true,
+          next_cursor: "",
+        },
+      });
+    });
+    cy.intercept(
+      "GET",
+      new RegExp(`/api/artifacts/run/(?:${oldSource.run_ref}|${newSource.run_ref})(?:\\?|$)`),
+      (req) => {
+        const requestedRef = decodeURIComponent(new URL(req.url).pathname.split("/").pop());
+        const source = requestedRef === newSource.run_ref ? newSource : oldSource;
+        const key = source === newSource ? newKey : oldKey;
+        const url = new URL(req.url);
+        expect(url.searchParams.get("project_id")).to.eq(projectId);
+        expect(url.searchParams.get("resource_bucket")).to.eq(source.bucket);
+        expect(url.searchParams.get("resolved_prefix")).to.eq(source.resolved_prefix);
+        expect(url.searchParams.get("source_selected")).to.eq("1");
+        req.alias = source === newSource ? "newTupleInventory" : "oldTupleInventory";
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            ...runRow(source),
+            artifacts: [{
+              key,
+              s3_uri: `s3://${source.bucket}/${key}`,
+              render: "rerun",
+              role: "output",
+              size: 2048,
+            }],
+            truncated: false,
+            pagination_complete: true,
+            next_cursor: "",
+          },
+        });
+      },
+    );
+    cy.intercept("POST", "/api/sim-viz/load-artifact", (req) => {
+      const source = req.body.run_ref === newSource.run_ref ? newSource : oldSource;
+      const key = source === newSource ? newKey : oldKey;
+      expect(req.body).to.deep.eq({
+        run_id: runId,
+        run_ref: source.run_ref,
+        project_id: projectId,
+        resource_bucket: source.bucket,
+        resolved_prefix: source.resolved_prefix,
+        source_selected: true,
+        key,
+        s3_uri: "",
+      });
+      if (source === newSource) newLoads += 1;
+      else oldLoads += 1;
+      req.alias = source === newSource ? "newTupleLoad" : "oldTupleLoad";
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          render: "rerun",
+          run_ref: source.run_ref,
+          sim_viz: {
+            ...SIM_VIZ,
+            run_id: runId,
+            active_run_id: runId,
+            stage: "artifact-loaded",
+            artifact_render: "rerun",
+            artifact_key: key,
+            artifact_run_ref: source.run_ref,
+            project_id: projectId,
+            resource_bucket: source.bucket,
+            bucket: source.bucket,
+            resolved_prefix: source.resolved_prefix,
+            artifact_preview_url: capabilityPath,
+            artifact_download_url: capabilityPath,
+            rerun_ready: true,
+          },
+        },
+      });
+    });
+
+    cy.visit("/");
+    cy.wait("@accessTupleBefore");
+    cy.wait("@unscopedTupleDiscovery");
+    cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
+    cy.get('#agentAccessProjects button[data-access-action="list"]').click();
+    cy.wait("@oldTupleRuns");
+    cy.get("#tabRerun").click();
+    cy.selectRunSource("#runIdSelect", oldSource);
+    cy.wait("@oldTupleInventory");
+    cy.wait("@oldTupleLoad");
+    cy.get("#simRunId").should("have.text", runId);
+    cy.then(() => {
+      expect(oldLoads, "old source loaded once before refresh").to.eq(1);
+      expect(newLoads, "new source has not loaded before refresh").to.eq(0);
+    });
+
+    cy.get("#tabMain").click();
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@accessTupleAfter");
+    cy.get("#agentAccessBucketSelect").should("have.value", newSource.bucket);
+    cy.window().its("__NPA_AGENT_TEST__.activeRunId").invoke("call").should("eq", "");
+    cy.get("#runSummary").should("have.text", "Select a run to load its result.");
+    cy.get("#artifactList").should("contain.text", "Select a run to list its artifacts");
+    cy.get(`#runIdSelect option[data-run-ref="${oldSource.run_ref}"][data-project-id="${projectId}"][data-bucket="${oldSource.bucket}"][data-resolved-prefix="${oldSource.resolved_prefix}"]`)
+      .should("not.exist");
+    cy.then(() => expect(oldLoads, "refresh does not replay the stale source").to.eq(1));
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@newTupleRuns");
+    cy.get(`#runIdSelect option[data-run-ref="${newSource.run_ref}"][data-project-id="${projectId}"][data-bucket="${newSource.bucket}"][data-resolved-prefix="${newSource.resolved_prefix}"]`)
+      .should("have.length", 1)
+      .and("have.attr", "data-bucket", newSource.bucket)
+      .and("have.attr", "data-resolved-prefix", newSource.resolved_prefix);
+    cy.selectRunSource("#runIdSelect", newSource);
+    cy.wait("@newTupleInventory");
+    cy.wait("@newTupleLoad");
+    cy.get(`#artifactList button[data-action="load-artifact"][data-key="${newKey}"]`)
+      .should("have.attr", "data-run-ref", newSource.run_ref)
+      .and("have.attr", "data-bucket", newSource.bucket)
+      .and("have.attr", "data-resolved-prefix", newSource.resolved_prefix);
+    cy.get("#artifactList").should("not.contain.text", oldKey);
+    cy.get("#renderedDataSummary").should("contain.text", newKey);
+    cy.then(() => {
+      expect(oldLoads, "stale tuple is never reloaded").to.eq(1);
+      expect(newLoads, "refreshed tuple loads once").to.eq(1);
     });
   });
 });

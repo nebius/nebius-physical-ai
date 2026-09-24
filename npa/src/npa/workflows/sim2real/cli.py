@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
             "Replay through the deprecated compatibility DAG instead of "
             "run_staged(). Pass a spec path, or bare --dag for the shipped "
             "sim2real.dag.yaml. New runs must use `npa workbench workflow submit` "
-            "with npa-workflows/sim2real.yaml."
+            "with workflows/main/sim2real.yaml."
         ),
     )
     inner = subparsers.add_parser(

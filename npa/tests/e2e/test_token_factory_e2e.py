@@ -13,6 +13,10 @@ They live under ``tests/e2e`` (excluded from the default unit run via
 
 from __future__ import annotations
 
+import json
+import os
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -21,12 +25,46 @@ from PIL import Image, ImageDraw
 from npa.clients.token_factory import (
     DEFAULT_REASONER_MODEL,
     DEFAULT_TEXT_MODEL,
+    DEFAULT_VISION_MODEL,
     TokenFactoryClient,
     resolve_config,
 )
 from npa.workbench.token_factory import reason_scene
 
 pytestmark = pytest.mark.token_factory_e2e
+
+
+def test_live_provider_contract_recheck(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
+    """Recheck real outputs, thinking controls and structured-output drift."""
+    _require_key()
+    from npa.live_verification.token_factory_contract import run_contract
+
+    additional = tuple(
+        filter(
+            None,
+            (
+                value.strip()
+                for value in os.environ.get("NPA_TF_RECHECK_REQUIRED_MODELS", "").split(
+                    ","
+                )
+            ),
+        )
+    )
+    report = run_contract(
+        TokenFactoryClient(),
+        additional_models=additional,
+        expected_json_behavior=os.environ.get(
+            "NPA_TF_RECHECK_JSON_BASELINE", "healthy"
+        ),
+    )
+    request.node.user_properties.append(("provider_contract", report))
+    (tmp_path / "provider-contract.json").write_text(
+        json.dumps(report, indent=2) + "\n"
+    )
+    failures = [check["check"] for check in report["checks"] if not check["passed"]]
+    assert report["passed"], f"Provider contract drift: {', '.join(failures)}"
 
 
 def _require_key() -> str:
@@ -37,14 +75,6 @@ def _require_key() -> str:
             "or ~/.npa/credentials.yaml (tokens.NEBIUS_TOKEN_FACTORY_KEY)."
         )
     return config.api_key
-
-
-def _has_model(client: TokenFactoryClient, model_id: str) -> bool:
-    try:
-        models = client.list_models()
-    except Exception:  # pragma: no cover - network dependent
-        return False
-    return model_id in models
 
 
 def _write_scene_image(path: Path) -> Path:
@@ -68,24 +98,17 @@ def test_live_list_models_authenticates() -> None:
 def test_live_text_chat_completion() -> None:
     _require_key()
     client = TokenFactoryClient()
-    model = DEFAULT_TEXT_MODEL if _has_model(client, DEFAULT_TEXT_MODEL) else client.list_models()[0]
+    model = DEFAULT_TEXT_MODEL
     text = client.chat_completion_text(
         model=model,
         messages=[{"role": "user", "content": "Reply with the single word: ready"}],
-        max_tokens=16,
     )
     assert isinstance(text, str)
     assert text.strip()
 
 
-def test_live_cosmos_super_reasoner_scene_plan(tmp_path: Path) -> None:
+def test_live_default_reasoner_scene_plan(tmp_path: Path) -> None:
     _require_key()
-    client = TokenFactoryClient()
-    if not _has_model(client, DEFAULT_REASONER_MODEL):
-        pytest.skip(
-            f"{DEFAULT_REASONER_MODEL} is not available for this key; "
-            "check `npa workbench token-factory models`."
-        )
     scene = tmp_path / "scene"
     _write_scene_image(scene / "frame.png")
 
@@ -94,10 +117,262 @@ def test_live_cosmos_super_reasoner_scene_plan(tmp_path: Path) -> None:
         output_path=str(tmp_path / "out"),
         task="What objects are in this scene and what steps should a robot take to pick up the red box?",
         model=DEFAULT_REASONER_MODEL,
-        max_tokens=512,
     )
 
     assert result.status == "completed"
     assert result.model == DEFAULT_REASONER_MODEL
     assert result.image_count == 1
     assert result.analysis.strip(), "reasoner returned an empty analysis"
+
+
+@pytest.mark.parametrize("access_path", ["cli", "sdk"])
+def test_live_generate_inventory_artifact(tmp_path: Path, access_path: str) -> None:
+    """Exercise default selection, every prompt, and the durable output contract."""
+    _require_key()
+    from npa.cli.main import app
+    from npa.sdk.workbench import token_factory
+    from typer.testing import CliRunner
+
+    source = tmp_path / "inventory.jsonl"
+    counts = [(12, 8), (9, 4), (23, 17), (6, 11), (32, 9), (19, 1)]
+    source.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "id": f"inventory-{index}",
+                    "prompt": f"There are {red} red crates and {blue} blue crates. "
+                    "Return only JSON with integer keys red, blue, total, without a code fence.",
+                }
+            )
+            + "\n"
+            for index, (red, blue) in enumerate(counts)
+        )
+    )
+    output = tmp_path / "generations.jsonl"
+    if access_path == "cli":
+        result = CliRunner().invoke(
+            app,
+            [
+                "workbench",
+                "token-factory",
+                "generate",
+                "--input-path",
+                str(source),
+                "--output-path",
+                str(output),
+                "--temperature",
+                "0",
+                "--output",
+                "json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        stdout = result.output
+    else:
+        captured = StringIO()
+        with redirect_stdout(captured):
+            token_factory.generate(
+                input_path=str(source),
+                output_path=str(output),
+                temperature=0,
+                output="json",
+            )
+        stdout = captured.getvalue()
+    payload = json.loads(stdout)
+    assert payload["status"] == "completed"
+    assert payload["model"] == DEFAULT_TEXT_MODEL
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert len(rows) == payload["prompt_count"] == len(counts)
+    for index, (row, (red, blue)) in enumerate(zip(rows, counts)):
+        assert row["id"] == f"inventory-{index}"
+        assert json.loads(row["completion"]) == {
+            "red": red,
+            "blue": blue,
+            "total": red + blue,
+        }
+
+
+def _shape_frame(path: Path, *, red_inside: bool) -> Path:
+    """Synthetic diagram, not a simulated robot or a policy success claim."""
+    image = Image.new("RGB", (640, 480), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((360, 130, 610, 430), outline="green", width=12)
+    draw.ellipse((40, 30, 130, 120), fill="blue")
+    x = 420 if red_inside else 170
+    draw.rectangle((x, 230, x + 90, 320), fill="red")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+    return path
+
+
+def _episode_without_reset() -> dict[str, object]:
+    """Describe one continuous simulator episode for the synthetic diagrams."""
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }
+
+
+def test_live_hosted_rollout_preserves_sparse_frame_bindings(tmp_path: Path) -> None:
+    """Exercise positional generation constraints against the actual hosted model."""
+    _require_key()
+    from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm
+    from npa.workbench.cosmos.visual_grounding import validate_stored_visual_grounding
+
+    frames = [
+        _shape_frame(tmp_path / f"frame-{index:03d}.png", red_inside=index >= 3)
+        for index in range(6)
+    ]
+    actions = [
+        {
+            "step": index,
+            "sim_step": index,
+            "action": [0.1],
+            "episode_boundary": _episode_without_reset(),
+        }
+        for index in range(5)
+    ]
+    metadata = [
+        {
+            "path": frame.name,
+            "sim_step": index,
+            "view_name": "primary",
+            "episode_id": "synthetic-diagram",
+            "simulator_episode_id": 0,
+        }
+        for index, frame in enumerate(frames)
+    ]
+    result = run_token_factory_rollout_vlm(
+        model_id=DEFAULT_REASONER_MODEL,
+        image_paths=frames,
+        actions=actions,
+        frame_metadata=metadata,
+        rollout_id="synthetic-diagram",
+        threshold=0.5,
+        task_description="Move the red square inside the green outline in these diagrams.",
+        max_frames=3,
+    )
+    validate_stored_visual_grounding(result)
+    assert result["model"] == DEFAULT_REASONER_MODEL
+    assert result["selected_frames"] == [frames[index].name for index in (0, 2, 5)]
+    events = {event["step"]: event for event in result["per_step"]}
+    assert len(result["per_step"]) == len(events) == 5
+    assert set(events) == set(range(5))
+    for index, event in events.items():
+        expected = frames[index].name if index in {0, 2} else None
+        assert event["camera_observation"] == expected
+        assert event["visual_grounding"]["action_sim_step"] == index
+        if expected is None:
+            assert event["confidence"] == 0 and event["error_tags"] == ["ok"]
+            assert (
+                event["critique_text"]
+                == f"Insufficient visual evidence for step {index}."
+            )
+    assert result["request"]["request_id"] and result["request"]["total_tokens"] > 0
+    (tmp_path / "hosted-rollout-evaluation.json").write_text(
+        json.dumps(result, indent=2)
+    )
+
+
+def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
+    _require_key()
+    from npa.cli.main import app
+    from typer.testing import CliRunner
+
+    frames = tmp_path / "frames"
+    for index, inside in enumerate((False, False, True)):
+        _shape_frame(frames / f"frame-{index:03d}.png", red_inside=inside)
+    runner = CliRunner()
+    for command, filename in (("caption", "captions.json"), ("reason", "plan.json")):
+        target = tmp_path / filename
+        args = [
+            "workbench",
+            "token-factory",
+            command,
+            "--input-path",
+            str(frames),
+            "--output-path",
+            str(target),
+            "--output",
+            "json",
+        ]
+        if command == "reason":
+            args += [
+                "--task",
+                "Describe the red square, blue circle, and green outline "
+                "in these diagrams and their change across ordered frames.",
+            ]
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(target.read_text())
+        assert payload["status"] == "completed"
+        assert payload["model"] == DEFAULT_VISION_MODEL
+        assert payload["image_count"] == 3
+        texts = (
+            [row["caption"] for row in payload["captions"]]
+            if command == "caption"
+            else [payload["analysis"]]
+        )
+        assert all(
+            all(color in text.lower() for color in ("red", "blue", "green"))
+            for text in texts
+        )
+
+
+@pytest.mark.parametrize("inside", [True, False])
+def test_live_visual_judge_distinguishes_completion(
+    tmp_path: Path, inside: bool
+) -> None:
+    _require_key()
+    from npa.workbench.vlm_eval import evaluate_vlm, write_result
+    from dataclasses import asdict
+
+    frames = tmp_path / "rollout"
+    for index, state in enumerate((False, False, inside)):
+        _shape_frame(frames / f"frame-{index:03d}.png", red_inside=state)
+    output = tmp_path / "evaluation.json"
+    result = evaluate_vlm(
+        input_path=str(frames),
+        output_path=str(output),
+        backend="api",
+        task="Move the red square fully inside the green rectangular outline by the final frame.",
+        frame_selection="sequence",
+    )
+    write_result(asdict(result), result_uri=result.result_uri)
+    saved = json.loads(output.read_text())
+    assert saved["model"] == DEFAULT_VISION_MODEL
+    assert saved["served_model"] == DEFAULT_VISION_MODEL
+    assert saved["frame_count"] == 3
+    assert saved["passed"] is inside
+    assert saved["rationale"].strip()
+
+
+def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:
+    _require_key()
+    from dataclasses import asdict
+    from npa.workbench.cosmos_evaluator.attribute_verification import verify_attributes
+
+    frame = _shape_frame(tmp_path / "scene.png", red_inside=True)
+    result = verify_attributes(
+        clip_id="synthetic-diagram",
+        frame=frame,
+        selected_variables={"square_color": "red", "circle_color": "blue"},
+        variable_options={
+            "square_color": ["red", "yellow", "purple"],
+            "circle_color": ["blue", "orange", "black"],
+        },
+    )
+    (tmp_path / "attributes.json").write_text(json.dumps(asdict(result), indent=2))
+    assert result.question_model == DEFAULT_TEXT_MODEL
+    assert result.vlm_model == DEFAULT_VISION_MODEL
+    assert result.total_checks == result.passed_checks == 2
+    assert result.passed
+    assert all(
+        check.question and check.vlm_answer and not check.error
+        for check in result.checks
+    )

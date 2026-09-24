@@ -5,7 +5,7 @@
 ```text
 Usage: npa storage [OPTIONS] COMMAND [ARGS]...
 
-Inspect and tear down npa-managed object storage.
+Inspect, configure, and tear down npa-managed object storage.
 
 Options
 --help  Show this message and exit.

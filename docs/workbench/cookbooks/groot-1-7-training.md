@@ -1,5 +1,7 @@
 # GR00T N1.7 operational training pipeline
 
+[Cookbooks](README.md)
+
 Use `groot-1-7-finetune.yaml` to validate the complete real-data path from a
 GR00T-format LeRobot dataset through distributed optimizer work, an immutable
 checkpoint, aligned offline inference, synchronized RRD/MCAP diagnostics, S3
@@ -28,7 +30,7 @@ agent_ui_load_viewer_verification
 Use the repository virtual environment for repository validation:
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml
+SPEC=workflows/testing/groot-1-7-finetune.yaml
 RUN_ID=groot-n1-7-operational-example
 
 npa/.venv/bin/npa workbench workflow validate-spec "$SPEC"
@@ -61,15 +63,15 @@ runtime secrets at submission time; do not commit tenant or customer values.
 ```bash
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
-  --var bucket=<bucket> \
-  --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
-  --var agent_url=https://<agent-host> \
+  --var bucket="<bucket>" \
+  --var source_data_uri="s3://<bucket>/datasets/my-groot-dataset/" \
+  --var agent_url="https://<agent-host>" \
   --var gpu_type=B200 \
   --var gpu_count=2 \
   --var per_device_batch_size=1 \
   --var gradient_accumulation_steps=1 \
   --var global_batch_size=2 \
-  --registry <registry>/npa-groot:<validated-tag> \
+  --registry "<registry>/npa-groot:<validated-tag>" \
   --secret-env HF_TOKEN \
   --secret-env NPA_AGENT_BASIC_AUTH
 ```

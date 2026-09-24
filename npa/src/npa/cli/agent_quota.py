@@ -7,15 +7,25 @@ re-exported from ``npa.cli.agent`` for the existing call sites and tests.
 The agent VM always needs exactly one public IP, and compute placement follows
 the *project's* region (not the ``--region`` flag). Both helpers therefore
 resolve the project's real region and check the tenant's per-region
-``vpc.ipv4-address.public.count`` allowance. Everything here is best-effort: an
-unresolved region or unreadable quota is a no-op so a healthy deploy is never
-blocked, while an actually-exhausted quota fails fast (before any Terraform
-side effect) instead of surfacing as a deep ``terraform apply`` rollback.
+``vpc.ipv4-address.public.count`` allowance. A project-scoped administrator may
+not be allowed to inspect the tenant aggregate, so the whole-path check falls
+back to the same quota catalog under the exact deployment project. A real finite
+project allowance remains a hard gate, and every required project quota must be
+present and readable before a mutation can proceed. Only a fully verified
+project-scoped fallback makes the unavailable tenant-wide view advisory. The
+provider remains authoritative for the tenant aggregate during apply.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from npa.provisioning_preflight import (
+    PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+    read_project_quota_observations,
+)
+
+_QUOTA_SCOPE_CHECK = "quota_evidence_scope"
 
 if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa.workflows.sim2real_health import CheckResult
@@ -59,15 +69,21 @@ def _agent_check_whole_path_capacity(
 ):
     """Apply the shared VM+disk+public-IP plan before agent mutation."""
 
-    from npa.clients.nebius import get_project_region
+    from npa.clients import nebius as nebius_client
     from npa.provisioning_preflight import (
         ExistingCapacity,
+        PreflightBlockedError,
+        PreflightCheck,
+        QuotaObservation,
         build_whole_path_plan,
         discover_existing_capacity,
+        read_provider_quotas,
         resolve_topology,
     )
 
-    region = (get_project_region(project_id) or str(fallback_region or "")).strip()
+    region = (
+        nebius_client.get_project_region(project_id) or str(fallback_region or "")
+    ).strip()
     requested = resolve_topology(
         agent_requested=True,
         agent_exists=agent_exists,
@@ -91,6 +107,66 @@ def _agent_check_whole_path_capacity(
         )
     else:
         existing = ExistingCapacity()
+    topology = resolve_topology(
+        agent_requested=True,
+        agent_exists=agent_exists,
+        cpu_nodes=requested.cpu_nodes,
+        existing_cpu_nodes=min(requested.cpu_nodes, existing.cpu_nodes),
+        cpu_platform=requested.cpu_platform,
+        cpu_preset=requested.cpu_preset,
+        cpu_disk_gib=requested.cpu_disk_gib,
+        gpu_nodes=requested.gpu_nodes,
+        existing_gpu_nodes=min(requested.gpu_nodes, existing.gpu_nodes),
+        gpu_platform=requested.gpu_platform,
+        gpu_preset=requested.gpu_preset,
+        gpu_disk_gib=requested.gpu_disk_gib,
+    )
+    quota_names = tuple(topology.quota_requirements())
+    quota_scope = PreflightCheck(
+        name=_QUOTA_SCOPE_CHECK,
+        status="ready",
+        reason="tenant-wide quota allowances verified",
+    )
+    try:
+        observations = read_provider_quotas(tenant_id, region, quota_names)
+    except Exception as exc:  # noqa: BLE001 - classify before choosing fallback
+        if nebius_client.is_permission_denied(str(exc)):
+            try:
+                observations = read_project_quota_observations(
+                    project_id, region, quota_names
+                )
+            except Exception as project_exc:  # noqa: BLE001 - fail closed, sanitized
+                observations = {
+                    name: QuotaObservation(
+                        name=name,
+                        state="unknown",
+                        reason=(
+                            "tenant-wide quota query is unavailable due to RBAC and "
+                            "the project-scoped quota query failed "
+                            f"({type(project_exc).__name__})"
+                        ),
+                    )
+                    for name in quota_names
+                }
+            else:
+                quota_scope = PreflightCheck(
+                    name=_QUOTA_SCOPE_CHECK,
+                    status="ready",
+                    reason=PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+                )
+        else:
+            observations = {
+                name: QuotaObservation(
+                    name=name,
+                    state="unknown",
+                    reason=(
+                        "tenant-wide quota query failed for a reason other than "
+                        f"an RBAC scope limitation ({type(exc).__name__})"
+                    ),
+                )
+                for name in quota_names
+            }
+
     plan = build_whole_path_plan(
         project_alias="",
         project_id=project_id,
@@ -101,24 +177,23 @@ def _agent_check_whole_path_capacity(
         # not left with a paid VM that makes the immediately-following cluster
         # impossible. Existing resources are deducted by the shared planner at
         # the provisioning entrypoint; an already-present agent is deducted here.
-        topology=resolve_topology(
-            agent_requested=True,
-            agent_exists=agent_exists,
-            cpu_nodes=requested.cpu_nodes,
-            existing_cpu_nodes=min(requested.cpu_nodes, existing.cpu_nodes),
-            cpu_platform=requested.cpu_platform,
-            cpu_preset=requested.cpu_preset,
-            cpu_disk_gib=requested.cpu_disk_gib,
-            gpu_nodes=requested.gpu_nodes,
-            existing_gpu_nodes=min(requested.gpu_nodes, existing.gpu_nodes),
-            gpu_platform=requested.gpu_platform,
-            gpu_preset=requested.gpu_preset,
-            gpu_disk_gib=requested.gpu_disk_gib,
-        ),
-        checks=[existing.check],
+        topology=topology,
+        quota_reader=lambda _parent, _region, _names: observations,
+        checks=[existing.check, quota_scope],
         mutation=True,
     )
-    plan.assert_mutation_ready()
+    try:
+        plan.assert_mutation_ready()
+    except PreflightBlockedError as exc:
+        if quota_scope.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON:
+            blocked = any(item.status == "blocked" for item in plan.quotas)
+            description = (
+                "Project-scoped quota evidence denies the requested capacity"
+                if blocked
+                else "Project-scoped quota evidence could not verify the requested capacity"
+            )
+            raise PreflightBlockedError(f"{description}: {exc}") from exc
+        raise
     return plan
 
 
@@ -132,7 +207,7 @@ def _agent_whole_path_capacity_result(
 ) -> "CheckResult":
     """Render the deploy gate through the health/preflight result contract."""
 
-    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
+    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS, WARN
 
     try:
         plan = _agent_check_whole_path_capacity(
@@ -153,6 +228,27 @@ def _agent_whole_path_capacity_result(
             ),
         )
     topology = plan.topology
+    quota_scope = next(
+        (item for item in plan.checks if item.name == _QUOTA_SCOPE_CHECK), None
+    )
+    if quota_scope and quota_scope.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON:
+        return CheckResult(
+            name="whole_path_capacity",
+            status=WARN,
+            summary=(
+                "Project-scoped whole-path capacity is ready; tenant-wide quota "
+                "visibility is unavailable due to RBAC."
+            ),
+            remedy=(
+                "No tenant-wide read grant is required for agent deploy. If apply "
+                "reports a tenant capacity denial, ask a tenant administrator to "
+                "review the named quota."
+            ),
+            details=(
+                "Project allowances were verified. The provider will still enforce "
+                "the tenant aggregate during apply.",
+            ),
+        )
     return CheckResult(
         name="whole_path_capacity",
         status=PASS,

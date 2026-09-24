@@ -1,43 +1,56 @@
-# Nebius Physical AI Documentation
+# Nebius Physical AI documentation
 
-This directory contains platform documentation and solution-specific docs for
-Nebius Physical AI.
+`npa` runs robotics and physical-AI tools on Nebius. Start with a workload,
+prepare its project and compute, then inspect the result.
 
-## Index
+## Start here
 
-| Path | Purpose |
+| Task | Read |
 | --- | --- |
-| [hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) | **Hackathon quickstart** — copy-paste path to the serverless Cosmos3 reasoner (Token Factory), no GPU/VM |
-| [hackathon-isaac-token-factory.md](hackathon-isaac-token-factory.md) | **Hackathon combo** — Isaac Lab Franka sim frames + Token Factory reasoner (workflow + SDK example) |
-| [workbench/guides/physical-ai-data-factory-deploy.md](workbench/guides/physical-ai-data-factory-deploy.md) | **Physical AI Data Factory** — copy-paste quickstart to stage input frames and run the annotate → Cosmos augment → curate → visualize blueprint |
-| [workbench/](workbench/) | Workbench solution docs, including getting started, cookbooks, and troubleshooting |
-| [workbench/kubernetes.md](workbench/kubernetes.md) | User setup and operational guide for running Workbench on managed Kubernetes |
-| [workbench/cosmos3-generate.md](workbench/cosmos3-generate.md) | Cosmos 3 generation (`npa-cosmos3`) — build, run via CLI/SDK/workflow, and the runtime-credential posture that keeps weights out of the image |
-| [workbench/cosmos3-b200-checkpoint-evaluation-20260814.md](workbench/cosmos3-b200-checkpoint-evaluation-20260814.md) | Reserved-B200 Cosmos3 still-image checkpoint benchmark, blind three-seed review, and recommendation |
-| [workbench/cosmos3-super-serving.md](workbench/cosmos3-super-serving.md) | Cosmos3-Super serving (`npa-cosmos3-serving`), an 8-GPU single-node endpoint: build, run, readiness window, and guardrail posture |
-| [../npa/workflows/workbench/npa-workflows/README.md](../npa/workflows/workbench/npa-workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
-| [architecture/solutions-model.md](architecture/solutions-model.md) | Platform model for adding and maintaining solutions |
-| [architecture/cli-namespaces.md](architecture/cli-namespaces.md) | CLI namespace conventions |
-| [cluster-backends.md](cluster-backends.md) | Shared Managed Kubernetes and soperator backend architecture, fleet specs, state ownership, and safe teardown |
-| [quickstart.md](quickstart.md) | Full `npa` CLI quickstart (macOS, Linux, WSL2 install blocks) |
-| [run-lifecycle.md](run-lifecycle.md) | What `workflow submit` checks before it spends a GPU-hour: gates, run identity, restart safety, and status semantics |
-| [agent.md](agent.md) | The self-hosted `npa agent` browser workbench VM — deploy, what it can see, and its artifact paging contract |
-| [teardown.md](teardown.md) | Stop spend safely: the ordered teardown sequence, what each phase guards, and receipt-based recovery |
-| [cli/README.md](cli/README.md) | CLI command reference index |
-| [cli-errors.md](cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |
-| [sdk/errors.md](sdk/errors.md) | Typed exceptions for programmatic SDK consumers and agents |
-| [testing/e2e-serverless.md](testing/e2e-serverless.md) | E2E test conventions for serverless workloads |
-| [testing/e2e.md](testing/e2e.md) | General E2E test conventions |
-| [testing/dev-vm-daily.md](testing/dev-vm-daily.md) | Daily tests run on the dev VM over SSH from GitHub Actions |
+| Run a first GPU workload | [Quickstart](quickstart.md) → [workload guides](workbench/guides/README.md) |
+| Work with a coding agent | [First-run prompts](workbench/agent-first-run.md) |
+| Install host tools | [Installation](install.md) |
+| Connect a project and credentials | [Configuration](configuration.md) |
+| Prepare Kubernetes and SkyPilot | [Workbench setup](workbench/getting-started.md) |
+| Find a tool or pipeline | [Workbench docs](workbench/README.md) · [workflow catalog](../workflows/README.md) |
 
-## Audience
+## Run, integrate, and inspect
 
-| Reader | Start with |
+| Task | Read |
 | --- | --- |
-| Salesperson or evaluator | [Workflow catalog](../npa/workflows/workbench/npa-workflows/README.md) to see what the platform runs |
-| Customer running a first Workbench workload | [workbench/getting-started.md](workbench/getting-started.md) |
-| Operator connecting Workbench to Kubernetes | [workbench/kubernetes.md](workbench/kubernetes.md) |
-| Developer adding a solution | [architecture/solutions-model.md](architecture/solutions-model.md) |
-| SDK integrator or agent author | [sdk/errors.md](sdk/errors.md) |
-| Internal engineer triaging a failure | [cli-errors.md](cli-errors.md) |
-| Operator running e2e tests | [testing/e2e-serverless.md](testing/e2e-serverless.md) |
+| Author and submit YAML | [Workflow guide](workbench/npa-workflow-guide.md) · [toolRef catalog](workbench/npa-workflow-tool-catalog.md) |
+| Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
+| Choose a direct deployment mode | [Runtime modes](workbench/runtime-modes.md) |
+| Understand status and resume | [Run lifecycle](run-lifecycle.md) |
+| View results in a browser | [Agent workbench](agent.md) · [Rerun shares](workbench/rerun-sharing.md) · [Foxglove export](workbench/foxglove-export.md) |
+| Diagnose failures | [Troubleshooting](workbench/troubleshooting/known-footguns.md) · [CLI errors](cli-errors.md) |
+| Remove owned resources | [Teardown](teardown.md) |
+
+## Operate infrastructure
+
+| Task | Read |
+| --- | --- |
+| Manage Kubernetes | [Kubernetes](workbench/kubernetes.md) · [GPU driver strategy](workbench/mk8s-gpu-driver-strategy.md) |
+| Configure workflow scheduling | [SkyPilot setup](orchestration/skypilot-setup.md) |
+| Manage fleets or Slurm | [Cluster backends](cluster-backends.md) · [Fleet storage verification](fleet-storage-verification.md) · [RTX MIG](fleet-rtx-pro-6000-mig.md) |
+| Choose an image and GPU | [Public image catalog](workbench/container-image-catalog.md) · [compatibility matrix](workbench/image-gpu-compatibility-matrix.md) |
+| Reuse model downloads | [Model-weight cache](workbench/model-weight-cache.md) |
+| Use preemptible VMs | [Preemptible capacity](workbench/preemptible-vms.md) |
+| Reproduce a workload | [Cookbooks](workbench/cookbooks/README.md) |
+
+## Contribute and verify
+
+| Task | Read |
+| --- | --- |
+| Add a tool or integration | [Contributing](../CONTRIBUTING.md) · [OSS onboarding ladder](architecture/oss-onboarding-ladder.md) |
+| Understand the platform | [Contributor context](architecture/contributor-context.md) · [solutions model](architecture/solutions-model.md) · [CLI namespaces](architecture/cli-namespaces.md) |
+| Use Jev model routing | [Configuration and live cache evidence](workbench/jev-routing.md) · [integration assessment](architecture/jev-workbench-evaluation.md) |
+| Generate synthetic training data | [Automatically routed Token Factory SDG](workbench/token-factory-sdg.md) |
+| Generate robot demonstrations | [Token Factory → MuJoCo → LeRobot SDG](workbench/token-factory-robot-sdg.md) |
+| Plan a Cosmos 3 model factory | [Architecture and implementation plan](architecture/cosmos3-model-factory.md) |
+| Package a container | [Container contract](workbench/container-packaging.md) · [image reproducibility](security/image-reproducibility.md) |
+| Run local and live checks | [Package test commands](../npa/README.md#developing-and-testing-npa) · [E2E](testing/e2e.md) · [serverless E2E](testing/e2e-serverless.md) · [daily dev VM](testing/dev-vm-daily.md) |
+| Verify release quality | [Golden evals](security/container-golden-evals.md) · [merge security gate](security/merge-security-gate.md) · [releasing](releasing.md) |
+
+Dated benchmark and audit pages record the stated image, GPU, and test scope.
+Use the current tool guide and compatibility matrix when preparing a new run.

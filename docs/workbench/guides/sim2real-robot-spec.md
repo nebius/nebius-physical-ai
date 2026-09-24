@@ -1,5 +1,7 @@
 # Canonical Sim2Real RobotSpec input
 
+[Guides](README.md)
+
 The canonical 14-stage workflow accepts one optional `config.robot_spec_uri`.
 Leave it empty for the unchanged stock Franka path. Set it to an exact `s3://`
 object containing `npa.sim2real.robot_spec.v1` to run a custom articulated robot.
@@ -19,7 +21,7 @@ git -C moveit_resources checkout c55b102711fc0aebe80c6952d2ce97c38110abba
 ```
 
 The complete example is
-[`robot-spec-panda-urdf.json`](../../../npa/workflows/workbench/npa-workflows/examples/robot-spec-panda-urdf.json).
+[`robot-spec-panda-urdf.json`](../../../docs/workbench/examples/robot-spec-panda-urdf.json).
 It pins the public MoveIt resources commit and records the package's bundled
 Apache-2.0 license (and the legacy BSD declaration in `package.xml`). Both source
 license records are preserved in the private consumed contract.
@@ -36,7 +38,7 @@ before GPU work begins.
 Use the standard runtime path and the same RobotSpec URI in each command:
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
+SPEC=workflows/main/sim2real.yaml
 ROBOT_SPEC_URI=s3://YOUR_BUCKET/robots/panda/robot-spec.json
 RUN_ID=robot-spec-proof
 
@@ -61,7 +63,7 @@ npa workbench workflow submit "$SPEC" --runtime \
   --secret-env HF_TOKEN
 ```
 
-Run `npa workbench health preflight` and `npa workbench health access sim2real`
+Run `npa workbench health preflight` and `npa workbench health sim2real`
 before submit. Image values must be registry-qualified immutable digests.
 
 ## Integrity and observability

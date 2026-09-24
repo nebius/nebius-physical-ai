@@ -5,6 +5,7 @@ entrypoint that drives the real component:
 
 * ``check``       - NGC container pullability, HF dataset download rights, RT-core GPU
 * ``fetch``       - download + unpack real NCore V4 shards from a PhysicalAI dataset
+* ``convert-colmap`` - Apache-2.0 NVIDIA NCore ingestion of S3 COLMAP captures
 * ``reconstruct`` - NRE 3DGUT training -> renderable ``usd-out/last.usdz`` + metrics
 * ``render``      - ``nre render`` novel views (rig-offset, NOT training views)
 * ``visualize``   - build ``reports/sim2real.rrd`` via the tested viz module
@@ -23,6 +24,12 @@ from pathlib import Path
 from typing import Any
 
 import typer
+
+from npa.lifecycle_intent import json_stdout_contract
+from npa.workbench.ncore_staging import (
+    DEFAULT_COLMAP_CACHE_DIR,
+    DEFAULT_COLMAP_SCRATCH_DIR,
+)
 
 from npa.workbench.nurec.nurec import (
     DEFAULT_CONFIG_NAME,
@@ -54,8 +61,9 @@ app = typer.Typer(
     help=(
         "NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings "
         "-> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. "
-        "Requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the "
-        "render path at H100/H200."
+        "COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE "
+        "reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 "
+        "Blackwell); never route the render path at H100/H200."
     ),
     no_args_is_help=True,
 )
@@ -69,6 +77,9 @@ VIZ_APP_ID = "neural-reconstruction"
 class OutputFormat(str, Enum):
     text = "text"
     json = "json"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 def _output(data: dict[str, Any], output: OutputFormat) -> None:
@@ -134,7 +145,10 @@ def check_cmd(
         help=f"Hugging Face dataset id. Defaults to NPA_NUREC_DATASET or {DEFAULT_DATASET_ID}.",
     ),
     scene: str = typer.Option(
-        "", "--scene", envvar="NPA_NUREC_SCENE", help=f"Scene name (default {DEFAULT_SCENE})."
+        "",
+        "--scene",
+        envvar="NPA_NUREC_SCENE",
+        help=f"Scene name (default {DEFAULT_SCENE}).",
     ),
     variant: str = typer.Option(
         "",
@@ -155,10 +169,15 @@ def check_cmd(
         help="Run NRE through this docker binary instead of in-container.",
     ),
     cache_dir: Path | None = typer.Option(
-        None, "--cache-dir", envvar="NPA_NUREC_CACHE", help="Ephemeral runtime cache directory."
+        None,
+        "--cache-dir",
+        envvar="NPA_NUREC_CACHE",
+        help="Ephemeral runtime cache directory.",
     ),
     hf_token_env: str = typer.Option(
-        "", "--hf-token-env", help="Environment variable holding the Hugging Face token."
+        "",
+        "--hf-token-env",
+        help="Environment variable holding the Hugging Face token.",
     ),
     ngc_api_key_env: str = typer.Option(
         "", "--ngc-api-key-env", help="Environment variable holding the NGC API key."
@@ -173,7 +192,9 @@ def check_cmd(
         "--require-gpu/--no-require-gpu",
         help="Fail when no NVIDIA GPU is visible.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Check NRE container access, dataset download rights, and GPU suitability."""
     config = _config(
@@ -187,8 +208,102 @@ def check_cmd(
         hf_token_env=hf_token_env,
         ngc_api_key_env=ngc_api_key_env,
     )
-    result = check_nurec_access(config, require_ngc=require_ngc, require_gpu=require_gpu)
+    result = check_nurec_access(
+        config, require_ngc=require_ngc, require_gpu=require_gpu
+    )
     _finish_nurec_result(result.as_dict(), output)
+
+
+@app.command("convert-colmap")
+@json_stdout_contract
+def convert_colmap_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 COLMAP ZIP object or dataset prefix."
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Exact S3 destination for the self-contained NCore V4 sequence.",
+    ),
+    cache_dir: Path = typer.Option(
+        DEFAULT_COLMAP_CACHE_DIR,
+        "--cache-dir",
+        help="Private source staging parent (current user, mode 0700, no symlinks); tilde expands at runtime.",
+    ),
+    scratch_dir: Path = typer.Option(
+        DEFAULT_COLMAP_SCRATCH_DIR,
+        "--scratch-dir",
+        help="Private converter scratch parent (current user, mode 0700, no symlinks); each invocation gets fresh space.",
+    ),
+    dataset_root: str = typer.Option(
+        ".",
+        "--dataset-root",
+        help="Relative dataset directory; dot discovers exactly one reconstruction.",
+    ),
+    colmap_dir: str = typer.Option(
+        "sparse/0", "--colmap-dir", help="Relative COLMAP model directory."
+    ),
+    images_dir: str = typer.Option(
+        "images", "--images-dir", help="Relative images directory."
+    ),
+    masks_dir: str = typer.Option(
+        "",
+        "--masks-dir",
+        help="Relative masks directory; empty uses upstream discovery.",
+    ),
+    rig_mode: str = typer.Option(
+        "derive",
+        "--rig-mode",
+        help="derive adds the NRE rig edge; preserve keeps upstream poses.",
+    ),
+    reference_camera: str = typer.Option(
+        "",
+        "--reference-camera",
+        help="Reference camera for rig derivation; empty selects the longest trajectory.",
+    ),
+    include_downsampled_images: bool = typer.Option(
+        True,
+        "--include-downsampled-images/--no-include-downsampled-images",
+        help="Include available images_2/4/8 cameras, matching the official converter default.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Convert COLMAP using Apache-2.0 NVIDIA NCore; NRE is a separate downstream engine."""
+    from pydantic import ValidationError
+    from npa.workbench.nurec.colmap import (
+        ColmapConversionRequest,
+        NcoreConversionError,
+        convert_colmap,
+    )
+
+    output = output_format
+    try:
+        request = ColmapConversionRequest(
+            input_path=input_path,
+            output_path=output_path,
+            cache_dir=cache_dir,
+            scratch_dir=scratch_dir,
+            dataset_root=dataset_root,
+            colmap_dir=colmap_dir,
+            images_dir=images_dir,
+            masks_dir=masks_dir,
+            rig_mode=rig_mode,
+            reference_camera=reference_camera,
+            include_downsampled_images=include_downsampled_images,
+        )
+        result = convert_colmap(request)
+    except ValidationError as exc:
+        # Pydantic's default str(exc) embeds input values; report field names only.
+        fields = sorted({str(error["loc"][0]) for error in exc.errors()})
+        result = {
+            "status": "failed",
+            "error": "Invalid conversion options: " + ", ".join(fields),
+        }
+    except NcoreConversionError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    _finish_nurec_result(result, output)
 
 
 @app.command("fetch")
@@ -196,15 +311,22 @@ def fetch_cmd(
     dataset: str = typer.Option(
         "", "--dataset", envvar="NPA_NUREC_DATASET", help="Hugging Face dataset id."
     ),
-    scene: str = typer.Option("", "--scene", envvar="NPA_NUREC_SCENE", help="Scene name."),
+    scene: str = typer.Option(
+        "", "--scene", envvar="NPA_NUREC_SCENE", help="Scene name."
+    ),
     variant: str = typer.Option(
         "", "--variant", envvar="NPA_NUREC_VARIANT", help="Scene variant sub-directory."
     ),
     cache_dir: Path | None = typer.Option(
-        None, "--cache-dir", envvar="NPA_NUREC_CACHE", help="Ephemeral runtime cache directory."
+        None,
+        "--cache-dir",
+        envvar="NPA_NUREC_CACHE",
+        help="Ephemeral runtime cache directory.",
     ),
     hf_token_env: str = typer.Option(
-        "", "--hf-token-env", help="Environment variable holding the Hugging Face token."
+        "",
+        "--hf-token-env",
+        help="Environment variable holding the Hugging Face token.",
     ),
     with_colmap: bool = typer.Option(
         False,
@@ -226,7 +348,9 @@ def fetch_cmd(
         help="Camera whose trajectory becomes the rig trajectory. Default: the longest.",
     ),
     force: bool = typer.Option(
-        False, "--force", help="Re-download and re-extract even when the cache is populated."
+        False,
+        "--force",
+        help="Re-download and re-extract even when the cache is populated.",
     ),
     output_uri: str = typer.Option(
         "",
@@ -244,7 +368,9 @@ def fetch_cmd(
             "where each stage is its own pod and /tmp is not shared."
         ),
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Download and unpack the real NCore V4 shards for a scene."""
     config = _config(
@@ -260,7 +386,10 @@ def fetch_cmd(
     )
     payload = result.as_dict()
     if result.ok and output_uri and publish_sequence:
-        from npa.workbench.nurec.nurec import NurecError as _NurecError, publish_ncore_sequence
+        from npa.workbench.nurec.nurec import (
+            NurecError as _NurecError,
+            publish_ncore_sequence,
+        )
 
         try:
             published = publish_ncore_sequence(
@@ -278,8 +407,12 @@ def fetch_cmd(
     if result.ok and output_uri:
         manifest = config.resolved_cache_dir / "manifest.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
-        manifest.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        payload["output_uri"] = _publish(manifest, _join_uri(output_uri, "manifest.json"))
+        manifest.write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        payload["output_uri"] = _publish(
+            manifest, _join_uri(output_uri, "manifest.json")
+        )
     _finish_nurec_result(payload, output)
 
 
@@ -304,7 +437,9 @@ def reconstruct_cmd(
     dataset: str = typer.Option(
         "", "--dataset", envvar="NPA_NUREC_DATASET", help="Hugging Face dataset id."
     ),
-    scene: str = typer.Option("", "--scene", envvar="NPA_NUREC_SCENE", help="Scene name."),
+    scene: str = typer.Option(
+        "", "--scene", envvar="NPA_NUREC_SCENE", help="Scene name."
+    ),
     variant: str = typer.Option(
         "", "--variant", envvar="NPA_NUREC_VARIANT", help="Scene variant sub-directory."
     ),
@@ -318,7 +453,10 @@ def reconstruct_cmd(
         ),
     ),
     mode: str = typer.Option(
-        "", "--mode", envvar="NPA_NUREC_MODE", help=f"train, val, or trainval (default {DEFAULT_MODE})."
+        "",
+        "--mode",
+        envvar="NPA_NUREC_MODE",
+        help=f"train, val, or trainval (default {DEFAULT_MODE}).",
     ),
     poses_component_group: str = typer.Option(
         "",
@@ -330,7 +468,10 @@ def reconstruct_cmd(
         None, "--out-dir", envvar="NPA_NUREC_OUT", help="NRE output root."
     ),
     cache_dir: Path | None = typer.Option(
-        None, "--cache-dir", envvar="NPA_NUREC_CACHE", help="Ephemeral runtime cache directory."
+        None,
+        "--cache-dir",
+        envvar="NPA_NUREC_CACHE",
+        help="Ephemeral runtime cache directory.",
     ),
     max_epochs: int = typer.Option(
         0,
@@ -339,10 +480,16 @@ def reconstruct_cmd(
         help="Override trainer.max_epochs. 0 keeps the recipe's own budget.",
     ),
     world_size: int = typer.Option(
-        1, "--world-size", envvar="NPA_NUREC_WORLD_SIZE", help="GPUs per node (trainer.world_size)."
+        1,
+        "--world-size",
+        envvar="NPA_NUREC_WORLD_SIZE",
+        help="GPUs per node (trainer.world_size).",
     ),
     precision: str = typer.Option(
-        "", "--precision", envvar="NPA_NUREC_PRECISION", help="trainer.precision, e.g. 16-mixed."
+        "",
+        "--precision",
+        envvar="NPA_NUREC_PRECISION",
+        help="trainer.precision, e.g. 16-mixed.",
     ),
     camera_id: list[str] = typer.Option(
         [], "--camera-id", help="Restrict dataset.camera_ids; repeatable."
@@ -359,14 +506,24 @@ def reconstruct_cmd(
         help="Use the auxiliary NCore shards (seg/depth). Off for camera-only captures.",
     ),
     override: list[str] = typer.Option(
-        [], "--override", help="Extra raw Hydra override, e.g. trainer.precision=32; repeatable."
+        [],
+        "--override",
+        help="Extra raw Hydra override, e.g. trainer.precision=32; repeatable.",
     ),
-    image: str = typer.Option("", "--image", envvar="NPA_NUREC_IMAGE", help="NRE container reference."),
+    image: str = typer.Option(
+        "", "--image", envvar="NPA_NUREC_IMAGE", help="NRE container reference."
+    ),
     entrypoint: str = typer.Option(
-        "", "--entrypoint", envvar="NPA_NUREC_ENTRYPOINT", help="In-container NRE entrypoint."
+        "",
+        "--entrypoint",
+        envvar="NPA_NUREC_ENTRYPOINT",
+        help="In-container NRE entrypoint.",
     ),
     docker_bin: str = typer.Option(
-        "", "--docker-bin", envvar="NPA_NUREC_DOCKER", help="Run NRE through this docker binary."
+        "",
+        "--docker-bin",
+        envvar="NPA_NUREC_DOCKER",
+        help="Run NRE through this docker binary.",
     ),
     export_gt: bool = typer.Option(
         True,
@@ -393,7 +550,9 @@ def reconstruct_cmd(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print the resolved NRE command without running it."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Train a 3DGUT Gaussian reconstruction and publish the renderable USDZ."""
     config = _config(
@@ -416,61 +575,19 @@ def reconstruct_cmd(
         aux_data=aux_data,
         extra_overrides=override,
     )
-    resolved_json = ncore_json or _materialize_ncore(config, ncore_uri) or _discover_ncore_json(config)
-    if resolved_json and not (lidar_id and camera_id):
-        # The shipped recipes carry PLACEHOLDER sensor ids that only match
-        # NVIDIA-internal data, so on a real capture NRE aborts with
-        # "Requested lidars not present in the data: dummy_lidar" or
-        # "Requested cameras not present in the data: camera_front_wide_120fov"
-        # (both observed live). Adopt whatever the sequence actually declares --
-        # and explicitly blank the LiDAR list for a camera-only capture -- so the
-        # recipe works on real input without the caller having to know the ids.
-        from npa.workbench.nurec.nurec import NO_LIDAR_SENTINEL, ncore_sensor_ids
+    resolved_json = (
+        ncore_json
+        or _materialize_ncore(config, ncore_uri)
+        or _discover_ncore_json(config)
+    )
+    if resolved_json:
+        from npa.workbench.nurec.nurec import verify_ncore_input
 
-        from npa.workbench.nurec.nurec import read_rig_sidecar
-
-        discovered_cameras, discovered = ncore_sensor_ids(resolved_json)
-        # A derived-rig sequence is an object-centric capture, and the recipe's
-        # SfM point-cloud initialization asserts "Only one camera sensor is
-        # currently supported" (observed live). The rig IS the reference camera, so
-        # training on exactly that camera is both required and geometrically
-        # coherent. AV sequences ship their own rig and no sidecar, so they keep
-        # full multi-camera behaviour.
-        reference = str(read_rig_sidecar(resolved_json).get("reference_camera") or "")
-        default_cameras = [reference] if reference else list(discovered_cameras)
-        if not camera_id and reference and len(discovered_cameras) > 1:
-            # Silently dropping real training data would be worse than being noisy.
-            typer.echo(
-                f"note: restricting training to the rig reference camera "
-                f"{reference!r}; the capture also has "
-                f"{sorted(set(discovered_cameras) - {reference})}. The recipe's SfM "
-                "point-cloud initialization supports only one camera. Pass "
-                "--camera-id explicitly to override.",
-                err=True,
-            )
-        camera_id = list(camera_id) or default_cameras
-        # Rebuild through _config() so a bad value still produces the CLI's
-        # `error: ...` / exit 2 contract rather than an uncaught traceback.
-        config = _config(
-            image=image,
-            entrypoint=entrypoint,
-            docker_bin=docker_bin,
-            dataset_id=dataset,
-            scene=scene,
-            variant=variant,
-            cache_dir=cache_dir,
-            out_dir=out_dir,
-            config_name=config_name,
-            mode=mode,
-            poses_component_group=poses_component_group,
-            max_epochs=max_epochs,
-            world_size=world_size,
-            precision=precision,
-            camera_ids=camera_id,
-            lidar_ids=list(lidar_id) or list(discovered) or [NO_LIDAR_SENTINEL],
-            aux_data=aux_data,
-            extra_overrides=override,
-        )
+        try:
+            verify_ncore_input(resolved_json)
+        except NurecError as exc:
+            _finish_nurec_result({"status": "failed", "errors": [str(exc)]}, output)
+            return
     if not resolved_json:
         _finish_nurec_result(
             {
@@ -483,12 +600,16 @@ def reconstruct_cmd(
             output,
         )
         return
-    result = reconstruct_scene(
-        config,
-        ncore_json=resolved_json,
-        dry_run=dry_run,
-        export_gt=export_gt,
-    )
+    try:
+        result = reconstruct_scene(
+            config,
+            ncore_json=resolved_json,
+            dry_run=dry_run,
+            export_gt=export_gt,
+        )
+    except (NurecError, OSError) as exc:
+        _finish_nurec_result({"status": "failed", "errors": [str(exc)]}, output)
+        return
     payload = result.as_dict()
     payload["ncore_json"] = resolved_json
     if result.ok and not dry_run and output_uri:
@@ -517,16 +638,24 @@ def render_cmd(
         ),
     ),
     output_dir: Path | None = typer.Option(
-        None, "--output-dir", envvar="NPA_NUREC_RENDER_DIR", help="Local render output directory."
+        None,
+        "--output-dir",
+        envvar="NPA_NUREC_RENDER_DIR",
+        help="Local render output directory.",
     ),
     out_dir: Path | None = typer.Option(
-        None, "--out-dir", envvar="NPA_NUREC_OUT", help="NRE output root (to locate the USDZ)."
+        None,
+        "--out-dir",
+        envvar="NPA_NUREC_OUT",
+        help="NRE output root (to locate the USDZ).",
     ),
     camera_id: list[str] = typer.Option(
         [], "--camera-id", help="Camera to render from; repeatable. Required by NRE."
     ),
     image_scale: float = typer.Option(
-        DEFAULT_IMAGE_SCALE, "--image-scale", help="Output resolution as a fraction of the camera's."
+        DEFAULT_IMAGE_SCALE,
+        "--image-scale",
+        help="Output resolution as a fraction of the camera's.",
     ),
     image_format: str = typer.Option(
         DEFAULT_IMAGE_FORMAT, "--image-format", help="png, jpg, or jpeg."
@@ -544,7 +673,9 @@ def render_cmd(
             "needs the nrend model dict embedded in the USDZ."
         ),
     ),
-    frame_step: int = typer.Option(DEFAULT_FRAME_STEP, "--frame-step", help="Frame step size."),
+    frame_step: int = typer.Option(
+        DEFAULT_FRAME_STEP, "--frame-step", help="Frame step size."
+    ),
     rig_translation_offset: str = typer.Option(
         "",
         "--rig-translation-offset",
@@ -558,7 +689,9 @@ def render_cmd(
         help="Rig rotation offset 'yaw,-roll,-pitch' in degrees.",
     ),
     custom_rig_trajectory: str = typer.Option(
-        "", "--custom-rig-trajectory", help="Custom rig trajectory JSON to render along."
+        "",
+        "--custom-rig-trajectory",
+        help="Custom rig trajectory JSON to render along.",
     ),
     replicate_training_views: bool = typer.Option(
         False,
@@ -568,9 +701,13 @@ def render_cmd(
     export_video: bool = typer.Option(
         True, "--export-video/--no-export-video", help="Also encode an MP4 per camera."
     ),
-    video_fps: float = typer.Option(DEFAULT_VIDEO_FPS, "--video-fps", help="Exported video FPS."),
+    video_fps: float = typer.Option(
+        DEFAULT_VIDEO_FPS, "--video-fps", help="Exported video FPS."
+    ),
     video_crf: int = typer.Option(
-        DEFAULT_VIDEO_CRF, "--video-crf", help="Exported video CRF (0-51; lower is better)."
+        DEFAULT_VIDEO_CRF,
+        "--video-crf",
+        help="Exported video CRF (0-51; lower is better).",
     ),
     ffmpeg_exe: str = typer.Option(
         "",
@@ -578,20 +715,33 @@ def render_cmd(
         envvar="NPA_NUREC_FFMPEG_EXE",
         help="ffmpeg binary NRE should use for --export-video.",
     ),
-    image: str = typer.Option("", "--image", envvar="NPA_NUREC_IMAGE", help="NRE container reference."),
+    image: str = typer.Option(
+        "", "--image", envvar="NPA_NUREC_IMAGE", help="NRE container reference."
+    ),
     entrypoint: str = typer.Option(
-        "", "--entrypoint", envvar="NPA_NUREC_ENTRYPOINT", help="In-container NRE entrypoint."
+        "",
+        "--entrypoint",
+        envvar="NPA_NUREC_ENTRYPOINT",
+        help="In-container NRE entrypoint.",
     ),
     docker_bin: str = typer.Option(
-        "", "--docker-bin", envvar="NPA_NUREC_DOCKER", help="Run NRE through this docker binary."
+        "",
+        "--docker-bin",
+        envvar="NPA_NUREC_DOCKER",
+        help="Run NRE through this docker binary.",
     ),
     output_uri: str = typer.Option(
-        "", "--output-uri", "--output-path", help="S3/local prefix for the rendered novel views."
+        "",
+        "--output-uri",
+        "--output-path",
+        help="S3/local prefix for the rendered novel views.",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print the resolved NRE command without running it."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Render novel views from a trained reconstruction with ``nre render``."""
     config = _config(
@@ -602,7 +752,9 @@ def render_cmd(
         ffmpeg_exe=ffmpeg_exe,
     )
     resolved_artifact = (
-        artifact_path or _materialize_artifact(config, artifact_uri) or _discover_usdz(config)
+        artifact_path
+        or _materialize_artifact(config, artifact_uri)
+        or _discover_usdz(config)
     )
     if not resolved_artifact:
         _finish_nurec_result(
@@ -616,7 +768,9 @@ def render_cmd(
             output,
         )
         return
-    target_dir = Path(output_dir) if output_dir else config.resolved_out_dir / "novel_views"
+    target_dir = (
+        Path(output_dir) if output_dir else config.resolved_out_dir / "novel_views"
+    )
     result = render_novel_views(
         config,
         artifact_path=resolved_artifact,
@@ -659,7 +813,9 @@ def visualize_cmd(
     app_id: str = typer.Option(
         VIZ_APP_ID, "--app-id", help="Rerun application id recorded in the .rrd."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Build the run's Rerun recording so it renders in the NPA agent viewer."""
     from npa.workflows.data_factory_viz import DataFactoryVizError, build_run_rrd
@@ -686,8 +842,12 @@ def finalize_cmd(
         "--output-path",
         help="Destination report. Defaults to <input-uri>/reports/final.json.",
     ),
-    run_id: str = typer.Option("", "--run-id", envvar="NPA_NUREC_RUN_ID", help="Run id to record."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    run_id: str = typer.Option(
+        "", "--run-id", envvar="NPA_NUREC_RUN_ID", help="Run id to record."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Aggregate the run tree into a real final report."""
     status_result = nurec_run_status(input_uri)
@@ -709,7 +869,9 @@ def finalize_cmd(
 
         with tempfile.TemporaryDirectory(prefix="npa-nurec-final-") as tmp:
             local = Path(tmp) / "final.json"
-            local.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+            local.write_text(
+                json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+            )
             report["output_uri"] = _publish(local, target)
     _finish_nurec_result(report, output)
 
@@ -719,7 +881,9 @@ def status_cmd(
     run_uri: str = typer.Option(
         ..., "--run-uri", "--input-path", help="Run prefix to summarize (S3 or local)."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Summarize what a NuRec run prefix currently holds, stage by stage."""
     _finish_nurec_result(nurec_run_status(run_uri).as_dict(), output)
@@ -760,7 +924,9 @@ def _materialize_ncore(config: NurecConfig, ncore_uri: str) -> str:
     source = ncore_uri if ncore_uri.endswith("/") else f"{ncore_uri}/"
     local = materialize_uri(source, target)
     found = find_ncore_json(Path(local))
-    return str(found) if found else ""
+    if found is None:
+        raise NurecError("explicit NCore source has no usable sequence metadata")
+    return str(found)
 
 
 def _materialize_artifact(config: NurecConfig, artifact_uri: str) -> str:
@@ -802,4 +968,10 @@ def _publish_reconstruction(result: Any, output_uri: str) -> str:
     val_dir = Path(result.run_dir) / "val"
     if val_dir.is_dir():
         published.append(_publish(val_dir, _join_uri(output_uri, "val")))
+    initialization = getattr(result, "initialization", {})
+    if initialization.get("status") == "exported":
+        points = Path(initialization["point_cloud_path"])
+        for local in (points, points.with_suffix(".json")):
+            target = _join_uri(output_uri, f"initialization/{local.name}")
+            published.append(_publish(local, target))
     return published[0] if published else ""

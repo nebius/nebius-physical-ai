@@ -43,6 +43,7 @@ class TransitionSpec:
 class ArtifactSpec:
     uri: str
     schema: str = ""
+    kind: str = ""
 
 
 @dataclass
@@ -62,6 +63,11 @@ class TriggerSpec:
     poll_seconds: int = 30
     max_polls: int = 0  # 0 == unbounded (bounded by the runtime deadline)
     min_objects: int = 1
+    # Parse provenance for reapplying config overrides; resolved fields above remain
+    # the runtime contract. Exclude this metadata from durable workflow identity.
+    config_expressions: dict[str, str] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
 
 @dataclass
@@ -220,6 +226,18 @@ def _parse_state(
             min_objects=_positive_int(
                 name, "trigger.minObjects", trigger_raw, 1, config=config
             ),
+            config_expressions={
+                key: value
+                for key, snake in (
+                    ("pollSeconds", "poll_seconds"),
+                    ("maxPolls", "max_polls"),
+                    ("minObjects", "min_objects"),
+                )
+                if isinstance(
+                    value := trigger_raw.get(key, trigger_raw.get(snake)), str
+                )
+                and "{{" in value
+            },
         )
 
     params_raw = entry.get("params") or {}
@@ -261,11 +279,15 @@ def _parse_state(
     ]
     outputs = [
         ArtifactSpec(
-            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or "")
+            uri=str(item.get("uri") or ""),
+            schema=str(item.get("schema") or ""),
+            kind=str(item.get("kind") or ""),
         )
         for item in (entry.get("outputs") or [])
         if isinstance(item, dict)
     ]
+    if any(output.kind not in {"", "file", "directory"} for output in outputs):
+        raise NpaWorkflowError(f"state {name}: output kind must be file or directory")
 
     return StateSpec(
         name=name,
@@ -314,7 +336,7 @@ def _positive_int(
     if isinstance(raw, str) and "{{" in raw:
         # Config-driven knob (e.g. pollSeconds: "{{config.inbox_poll_seconds}}"); the
         # value is resolved against config, like loop.max.
-        return resolve_config_int(raw, config or {})
+        raw = resolve_config_int(raw, config or {})
     try:
         value = int(raw)
     except (TypeError, ValueError) as exc:
@@ -327,6 +349,32 @@ def _positive_int(
             f"state {state_name}: {field_name} must be >= {floor}, got {value}"
         )
     return value
+
+
+def resolve_trigger_config(
+    state_name: str, trigger: TriggerSpec, config: dict[str, Any]
+) -> TriggerSpec:
+    """Rebind a parsed trigger's expressions without changing its source instance."""
+
+    values = {
+        "pollSeconds": trigger.poll_seconds,
+        "maxPolls": trigger.max_polls,
+        "minObjects": trigger.min_objects,
+        **trigger.config_expressions,
+    }
+    return TriggerSpec(
+        uri=trigger.uri,
+        poll_seconds=_positive_int(
+            state_name, "trigger.pollSeconds", values, 30, config=config
+        ),
+        max_polls=_positive_int(
+            state_name, "trigger.maxPolls", values, 0, allow_zero=True, config=config
+        ),
+        min_objects=_positive_int(
+            state_name, "trigger.minObjects", values, 1, config=config
+        ),
+        config_expressions=dict(trigger.config_expressions),
+    )
 
 
 def validate_spec(spec: NpaWorkflowSpec) -> None:
@@ -401,19 +449,86 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _validate_resource_profiles(spec)
     _validate_executable_resource_contracts(spec)
     _validate_optional_sam2_config(spec)
+    _validate_appearance_profiles(spec)
+    _validate_transfer_rgb_weight(spec)
+    _validate_transfer_first_chunk_frames(spec)
+    _validate_transfer_cfg_normalization(spec)
+    if "transfer_edge_threshold" in spec.config:
+        from npa.workbench.cosmos.structural_transfer import edge_thresholds
+
+        try:
+            edge_thresholds(spec.config["transfer_edge_threshold"])
+        except ValueError as exc:
+            raise NpaWorkflowError(str(exc)) from exc
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
     _validate_resolvable(spec)
 
 
+def _validate_transfer_cfg_normalization(spec: NpaWorkflowSpec) -> None:
+    key = "transfer_cfg_normalization"
+    if key not in spec.config:
+        return
+    from npa.workbench.cosmos.structural_transfer import cfg_normalization_enabled
+
+    try:
+        enabled = cfg_normalization_enabled(spec.config[key])
+    except ValueError as exc:
+        raise NpaWorkflowError(str(exc)) from exc
+    if enabled and spec.config.get("structural_control") != "edge":
+        raise NpaWorkflowError(f"{key} requires structural_control=edge")
+
+
+def _validate_transfer_first_chunk_frames(spec: NpaWorkflowSpec) -> None:
+    key = "transfer_first_chunk_conditional_frames"
+    if key not in spec.config:
+        return
+    value = spec.config[key]
+    if type(value) not in (int, str) or str(value) not in ("0", "1"):
+        raise NpaWorkflowError(f"{key} must be 0 or 1")
+    if str(value) == "0" and spec.config.get("structural_control") != "edge":
+        raise NpaWorkflowError(f"{key} requires structural_control=edge")
+
+
+def _validate_transfer_rgb_weight(spec: NpaWorkflowSpec) -> None:
+    if "transfer_rgb_weight" not in spec.config:
+        return
+    from npa.workbench.cosmos.structural_transfer import TransferSettings
+
+    value = spec.config["transfer_rgb_weight"]
+    try:
+        if isinstance(value, bool):
+            raise ValueError("transfer_rgb_weight must be numeric, not boolean")
+        weight = float(value)
+        TransferSettings(rgb_weight=weight).validate()
+        if weight and spec.config.get("structural_control") != "edge":
+            raise ValueError("transfer_rgb_weight requires structural_control=edge")
+    except (TypeError, ValueError) as exc:
+        raise NpaWorkflowError(f"invalid transfer_rgb_weight: {exc}") from exc
+
+
+def _validate_appearance_profiles(spec: NpaWorkflowSpec) -> None:
+    if "appearance_profiles_json" not in spec.config:
+        return
+    from npa.workflows.data_factory_appearance import parse_appearance_profiles
+
+    try:
+        parse_appearance_profiles(spec.config["appearance_profiles_json"])
+    except ValueError as exc:
+        raise NpaWorkflowError(str(exc)) from exc
+
+
 def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
     """Fail before provisioning when a workflow opts into the SAM2 contract."""
 
-    if not any(
-        state.tool_ref == "workbench.cosmos2.transfer_execute"
-        for state in spec.states.values()
-    ) or "segmentation_mode" not in spec.config:
+    if (
+        not any(
+            state.tool_ref == "workbench.cosmos2.transfer_execute"
+            for state in spec.states.values()
+        )
+        or "segmentation_mode" not in spec.config
+    ):
         return
     mode = str(spec.config.get("segmentation_mode") or "off").strip().lower()
     if mode == "off":
@@ -429,15 +544,9 @@ def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
             predicted_iou_threshold=float(
                 spec.config.get("sam2_predicted_iou_threshold") or 0
             ),
-            stability_threshold=float(
-                spec.config.get("sam2_stability_threshold") or 0
-            ),
-            min_area_fraction=float(
-                spec.config.get("sam2_min_area_fraction") or 0
-            ),
-            max_area_fraction=float(
-                spec.config.get("sam2_max_area_fraction") or 0
-            ),
+            stability_threshold=float(spec.config.get("sam2_stability_threshold") or 0),
+            min_area_fraction=float(spec.config.get("sam2_min_area_fraction") or 0),
+            max_area_fraction=float(spec.config.get("sam2_max_area_fraction") or 0),
             max_objects=int(spec.config.get("sam2_max_objects") or 0),
         )
     except (TypeError, ValueError) as exc:
@@ -629,8 +738,12 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
             )
         except TokenError as exc:
             raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
-        if not isinstance(resolved_params, Mapping):  # defensive: params is typed mapping
-            raise NpaWorkflowError(f"state {state.name}: params must resolve to a mapping")
+        if not isinstance(
+            resolved_params, Mapping
+        ):  # defensive: params is typed mapping
+            raise NpaWorkflowError(
+                f"state {state.name}: params must resolve to a mapping"
+            )
         effective_config.update(resolved_params)
         if nodes > 1 and entry.shard_activation_config:
             activation = str(
@@ -652,7 +765,27 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
                     f"{entry.shard_output_config!r} to be a durable s3:// URI; "
                     "without it workers cannot publish and join fenced shards"
                 )
-        if entry.semantic_contract == "cosmos_transfer_control":
+        if entry.semantic_contract == "paidf_direct_translation":
+            from npa.workflows.paidf_upstream import (
+                validate_direct_generation_model,
+                validate_token_factory_endpoint,
+            )
+
+            try:
+                validate_token_factory_endpoint(
+                    str(effective_config.get("vlm_url") or ""), "VLM"
+                )
+                validate_token_factory_endpoint(
+                    str(effective_config.get("llm_url") or ""), "LLM"
+                )
+                validate_direct_generation_model(
+                    str(effective_config.get("paidf_workflow") or ""),
+                    str(effective_config.get("generation_model") or ""),
+                    str(effective_config.get("generation_revision") or ""),
+                )
+            except ValueError as exc:
+                raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+        elif entry.semantic_contract == "cosmos_transfer_control":
             from npa.workbench.cosmos.control_contract import (
                 ControlContractError,
                 validate_control_request,

@@ -1,0 +1,25 @@
+# Retain the evaluator closure while resolving the patched Torch CUDA dependencies.
+absl-py==2.5.0
+boto3==1.43.62
+botocore==1.43.72
+etils==1.14.0
+filelock==3.32.3
+fsspec==2026.7.0
+glfw==2.10.2
+jinja2==3.1.6
+jmespath==1.1.0
+markupsafe==3.0.3
+mpmath==1.3.0
+mujoco==3.11.0
+networkx==3.6.1
+numpy==1.26.4
+pyopengl==3.1.10
+python-dateutil==2.9.0.post0
+pyyaml==6.0.3
+s3transfer==0.19.2
+six==1.17.0
+sympy==1.14.0
+typing-extensions==4.16.0
+urllib3==2.7.0
+zipp==4.1.0
+torch==2.13.0

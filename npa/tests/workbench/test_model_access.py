@@ -6,6 +6,8 @@ import pytest
 
 from npa.workbench.model_access import (
     HF_GATING_LAST_VERIFIED,
+    NGC,
+    UnknownAccessCapabilityError,
     WORKBENCH_ASSETS,
     access_note,
     all_capabilities,
@@ -37,7 +39,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-25"
+    assert HF_GATING_LAST_VERIFIED == "2026-09-04"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -74,10 +76,225 @@ def test_assets_for_filters_by_capability() -> None:
     assert assets_for([]) == WORKBENCH_ASSETS
 
 
-def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+def test_super_benchmark_access_matches_disabled_guardrails() -> None:
+    from npa.workbench.cosmos import super_benchmark as benchmark
+
+    assets = assets_for(["cosmos3-super-benchmark"])
+    assert len(assets) == 1
+    assert assets[0].repo == benchmark.MODEL_ID
+    assert assets[0].revision == benchmark.MODEL_REVISION
+    assert assets[0].probe_path.endswith(".safetensors")
+    assert "--no-guardrails" in benchmark.service_command(
+        benchmark.TOPOLOGIES["1x1"], port=8100
+    )
+    assert gated_hf_assets(["cosmos3-serving"])
+
+
+def test_assets_for_unknown_capability_fails_closed() -> None:
+    with pytest.raises(UnknownAccessCapabilityError, match="unknown access capability"):
+        assets_for(["paidf-dig", "catalog-drift"])
+
+
+def test_every_catalog_access_capability_has_an_asset_contract() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    capabilities = {
+        capability
+        for entry in TOOL_CATALOG.values()
+        for capability in entry.access_capabilities
+    }
+    assert capabilities
+    for capability in sorted(capabilities):
+        assert assets_for([capability]), capability
+
+
+def test_paidf_capability_combinations_are_stable_and_deduplicated() -> None:
+    capabilities = (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    )
+    combined = assets_for((*capabilities, "paidf-dig", "paidf-iaa"))
+    identities = [
+        (asset.provider, asset.repo, asset.repo_type, asset.revision)
+        for asset in combined
+    ]
+    assert len(identities) == len(set(identities))
+    assert {
+        capability
+        for asset in combined
+        for capability in asset.capabilities
+        if capability in capabilities
+    } == set(capabilities)
+    assert {asset.repo for asset in combined if asset.provider == NGC} == {
+        asset.repo
+        for asset in WORKBENCH_ASSETS
+        if asset.provider == NGC and set(asset.capabilities).intersection(capabilities)
+    }
+
+
+@pytest.mark.parametrize(
+    ("capability", "expected_repos"),
+    [
+        (
+            "paidf-dig",
+            {
+                "nvidia/Cosmos3-Nano",
+                "nvidia/Cosmos3-Edge",
+                "nvidia/Cosmos-Guardrail1",
+                "facebook/dinov2-large",
+                "nvidia/C-RADIOv3-B",
+                "Wan-AI/Wan2.2-TI2V-5B",
+                "facebook/sam2.1-hiera-large",
+                "Qwen/Qwen3Guard-Gen-0.6B",
+                "Qwen/Qwen3-VL-8B-Instruct",
+            },
+        ),
+        ("paidf-iaa", {"Qwen/Qwen-Image-Edit-2511"}),
+        (
+            "paidf-evg",
+            {
+                "nvidia/Cosmos3-Super-Image2Video",
+                "Qwen/Qwen3Guard-Gen-0.6B",
+                "nvidia/Cosmos-1.0-Guardrail",
+            },
+        ),
+        (
+            "paidf-label-detection",
+            {
+                "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e"
+            },
+        ),
+        (
+            "paidf-label-captioning",
+            {
+                "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804"
+            },
+        ),
+        (
+            "paidf-label-visual-qa",
+            {
+                "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c"
+            },
+        ),
+        (
+            "paidf-label-attribute-search",
+            {
+                "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a"
+            },
+        ),
+    ],
+)
+def test_paidf_specific_capability_resolves_exact_runtime_assets(
+    capability: str, expected_repos: set[str]
+) -> None:
+    assert {asset.repo for asset in assets_for([capability])} == expected_repos
+
+
+def test_paidf_umbrella_alias_contains_every_specific_capability_asset() -> None:
+    umbrella = set(assets_for(["paidf"]))
+    specific_capabilities = (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    )
+    assert umbrella
+    for capability in specific_capabilities:
+        assert set(assets_for([capability])).issubset(umbrella), capability
+
+
+def test_paidf_umbrella_probes_every_ngc_artifact() -> None:
+    observed: list[str] = []
+
+    results = check_workbench_access(
+        hf_token="hf_x",
+        ngc_key="nvapi-x",
+        hf_validator=lambda *args: _HFResult(ok=True),
+        ngc_validator=lambda _key, *, image: observed.append(image) or "reachable",
+        capabilities=["paidf"],
+        gated_only=True,
+    )
+
+    expected = {asset.repo for asset in assets_for(["paidf"]) if asset.provider == NGC}
+    assert expected
+    assert set(observed) == expected
+    assert len(observed) == len(expected)
+    ngc = next(result for result in results if result.name == "ngc")
+    assert ngc.status == PASS
+    assert f"all {len(expected)} selected NGC artifact(s)" in ngc.summary
+
+
+def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> None:
+    from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
+
     assets = assets_for(["paidf"])
-    assert [asset.repo for asset in assets] == ["nvidia/Cosmos-Transfer2.5-2B"]
-    assert all(asset.gated for asset in assets)
+    transfer_assets = [
+        asset for asset in assets if asset.repo == "nvidia/Cosmos-Transfer2.5-2B"
+    ]
+    assert {asset.revision for asset in transfer_assets} == {
+        checkpoint.revision for checkpoint in COSMOS_TRANSFER_CHECKPOINTS.values()
+    }
+    by_repo = {asset.repo: asset for asset in assets}
+    assert by_repo["Qwen/Qwen-Image-Edit-2511"].revision == (
+        "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+    )
+    assert by_repo["nvidia/Cosmos3-Super-Image2Video"].revision == (
+        "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
+    )
+    assert by_repo["nvidia/Cosmos-Guardrail1"].gated
+
+
+def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None:
+    assets = {asset.repo: asset for asset in assets_for(["sim2real"])}
+
+    guardrail = assets["nvidia/Cosmos-Guardrail1"]
+    assert guardrail.revision == "d6d4bfa899a71454a700907664f3e88f503950cf"
+    assert guardrail.probe_path == "video_content_safety_filter/safety_filter.pt"
+
+    tokenizer = assets["nvidia/Cosmos-Predict2.5-2B"]
+    assert tokenizer.revision == "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b"
+    assert tokenizer.probe_path == "tokenizer.pth"
+
+    assert guardrail.gated and tokenizer.gated
+
+
+@pytest.mark.parametrize(
+    "denied_repo", ["nvidia/Cosmos-Guardrail1", "nvidia/Cosmos-Predict2.5-2B"]
+)
+def test_cosmos2_access_checks_auxiliary_runtime_dependencies(denied_repo: str) -> None:
+    observed = {}
+
+    def validate(_token, repo, _repo_type, revision, probe_path):
+        observed[repo] = (revision, probe_path)
+        return _HFResult(
+            ok=repo != denied_repo, status_code=403 if repo == denied_repo else 200
+        )
+
+    results = check_workbench_access(
+        hf_token="synthetic-token",
+        ngc_key="",
+        hf_validator=validate,
+        capabilities=["cosmos2"],
+        gated_only=True,
+    )
+
+    assert observed["nvidia/Cosmos-Guardrail1"] == (
+        "d6d4bfa899a71454a700907664f3e88f503950cf",
+        "video_content_safety_filter/safety_filter.pt",
+    )
+    assert observed["nvidia/Cosmos-Predict2.5-2B"] == (
+        "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b",
+        "tokenizer.pth",
+    )
+    assert {result.name for result in results if result.status == FAIL} == {denied_repo}
 
 
 def test_hf_gated_warns_without_token() -> None:
@@ -94,7 +311,7 @@ def test_hf_present_unverified_offline() -> None:
 
 def test_hf_pass_when_validator_ok() -> None:
     result = check_hf_asset(
-        _gated_asset(), "hf_x", hf_validator=lambda t, r, k: _HFResult(ok=True)
+        _gated_asset(), "hf_x", hf_validator=lambda *args: _HFResult(ok=True)
     )
     assert result.status == PASS
     assert "access ok" in result.summary.lower()
@@ -105,7 +322,7 @@ def test_hf_gated_fail_points_at_acceptance_url() -> None:
     result = check_hf_asset(
         asset,
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=403, error="no access"
         ),
     )
@@ -118,7 +335,7 @@ def test_hf_public_401_is_token_problem_not_gating() -> None:
     result = check_hf_asset(
         _public_asset(),
         "hf_bad",
-        hf_validator=lambda t, r, k: _HFResult(ok=False, status_code=401, error="bad"),
+        hf_validator=lambda *args: _HFResult(ok=False, status_code=401, error="bad"),
     )
     assert result.status == FAIL
     assert "settings/tokens" in result.remedy
@@ -128,7 +345,7 @@ def test_hf_transient_error_warns() -> None:
     result = check_hf_asset(
         _gated_asset(),
         "hf_x",
-        hf_validator=lambda t, r, k: _HFResult(
+        hf_validator=lambda *args: _HFResult(
             ok=False, status_code=None, error="timeout"
         ),
     )
@@ -140,8 +357,8 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
     result = check_hf_asset(
         _gated_asset(),
         token,
-        hf_validator=lambda t, r, k: _HFResult(
-            ok=False, status_code=403, error=f"upstream echoed {t}"
+        hf_validator=lambda token, *_args: _HFResult(
+            ok=False, status_code=403, error=f"upstream echoed {token}"
         ),
     )
 
@@ -152,8 +369,8 @@ def test_hf_validator_diagnostic_redacts_token() -> None:
 def test_hf_validator_exception_is_sanitized() -> None:
     token = "hf_synthetic_exception_secret"
 
-    def _raise(t, r, k):
-        raise RuntimeError(f"upstream echoed {t}")
+    def _raise(token, *_args):
+        raise RuntimeError(f"upstream echoed {token}")
 
     result = check_hf_asset(_gated_asset(), token, hf_validator=_raise)
 
@@ -172,20 +389,24 @@ def test_ngc_skipped_when_not_needed() -> None:
     assert "not required" in result.summary
 
 
-def test_ngc_pass_with_valid_prefix() -> None:
+@pytest.mark.parametrize("credential", ["nvapi-abc", "registry-credential"])
+def test_ngc_online_accepts_provider_validated_credential_shapes(
+    credential: str,
+) -> None:
+    observed: list[str] = []
+
     def validator(key: str) -> str:
+        observed.append(key)
         return "reachable"
 
-    assert (
-        check_ngc_key("nvapi-abc", needed=True, ngc_validator=validator).status == PASS
-    )
-    assert (
-        check_ngc_key("nvapi_abc", needed=True, ngc_validator=validator).status == PASS
-    )
+    result = check_ngc_key(credential, needed=True, ngc_validator=validator)
+    assert result.status == PASS
+    assert observed == [credential]
+    assert credential not in " ".join((result.summary, result.remedy, *result.details))
 
 
-def test_ngc_well_formed_key_is_unverified_offline() -> None:
-    result = check_ngc_key("nvapi-abc", needed=True)
+def test_ngc_nonempty_credential_is_unverified_offline() -> None:
+    result = check_ngc_key("registry-credential", needed=True)
 
     assert result.status == WARN
     assert "not probed in offline mode" in result.summary
@@ -217,7 +438,16 @@ def test_ngc_definitive_auth_rejection_fails(outcome: str) -> None:
     assert "health access" in result.remedy
 
 
-@pytest.mark.parametrize("outcome", ["entitlement-required", "tags-401", "tags-403"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "entitlement-required",
+        "manifest-401",
+        "manifest-403",
+        "tags-401",
+        "tags-403",
+    ],
+)
 def test_ngc_definitive_entitlement_rejection_fails(outcome: str) -> None:
     result = check_ngc_key(
         "nvapi-synthetic",
@@ -254,8 +484,10 @@ def test_ngc_validator_exception_is_sanitized() -> None:
     assert result.details == ("probe failed (RuntimeError)",)
 
 
-def test_ngc_warns_on_bad_prefix() -> None:
-    assert check_ngc_key("bogus", needed=True).status == WARN
+def test_ngc_offline_does_not_infer_validity_from_format() -> None:
+    result = check_ngc_key("bogus", needed=True)
+    assert result.status == WARN
+    assert "not probed" in result.summary
 
 
 def test_check_workbench_access_ngc_first_then_hf() -> None:
@@ -283,9 +515,7 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(
-            ok=False, status_code=403, error="denied"
-        ),
+        hf_validator=lambda *args: _HFResult(ok=False, status_code=403, error="denied"),
         capabilities=["groot"],
     )
     assert has_failure(results) is True
@@ -326,8 +556,8 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
-        ngc_validator=lambda key: "reachable",
+        hf_validator=lambda *args: _HFResult(ok=True),
+        ngc_validator=lambda key, *, image: "reachable",
         gated_only=True,
     )
     note = access_note(results)
@@ -339,7 +569,8 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
 def test_access_note_lists_hf_failures_on_one_line() -> None:
     denied = {"nvidia/Cosmos-Reason2-2B"}
 
-    def _validator(token, repo, repo_type):
+    def _validator(token, repo, repo_type, revision, probe_path):
+        del token, repo_type, revision, probe_path
         return _HFResult(
             ok=repo not in denied, status_code=403 if repo in denied else 200
         )
@@ -358,7 +589,7 @@ def test_access_note_ngc_missing_names_capabilities() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
+        hf_validator=lambda *args: _HFResult(ok=True),
         gated_only=True,
     )
     note = access_note(results)
@@ -372,8 +603,8 @@ def test_access_note_distinguishes_ngc_credential_rejection() -> None:
     results = check_workbench_access(
         hf_token="hf_synthetic",
         ngc_key="nvapi-synthetic",
-        hf_validator=lambda t, r, k: _HFResult(ok=True),
-        ngc_validator=lambda key: "auth-401",
+        hf_validator=lambda *args: _HFResult(ok=True),
+        ngc_validator=lambda key, *, image: "auth-401",
         gated_only=True,
     )
 

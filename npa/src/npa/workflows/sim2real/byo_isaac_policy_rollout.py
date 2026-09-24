@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from npa.clients.storage import safe_s3_download_target
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import (
@@ -363,12 +364,15 @@ try:
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
     from isaaclab.sensors import CameraCfg, TiledCameraCfg
+    from npa.workflows.sim2real.camera_views import camera_rotation_for_isaac_lab
     try:
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
     except Exception:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device=SIM_DEVICE, num_envs=N)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("ROLLOUT_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     if SIM_DEVICE == "cpu":
         if N != 1:
             raise RuntimeError("CPU physics camera fallback requires ROLLOUT_COUNT=1")
@@ -392,7 +396,7 @@ try:
                 prim_path="{ENV_REGEX_NS}/rollout_cam_" + view["name"],
                 offset=CameraType.OffsetCfg(
                     pos=tuple(view["position"]),
-                    rot=tuple(view["rotation"]),
+                    rot=camera_rotation_for_isaac_lab(view["rotation"]),
                     convention="world",
                 ),
                 data_types=["rgb"],
@@ -440,6 +444,8 @@ try:
             print("cfg loader", loader, "failed:", repr(e), flush=True)
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     runner = OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)
     trained = False
@@ -544,9 +550,11 @@ try:
     gripper_start = sum(action_dims[:gripper_term_index])
     previous_goal_distance = np.full(N, np.nan)
     previous_ee_distance = np.full(N, np.nan)
-    initial_object_z = None
+    initial_object_z = uenv.scene["object"].data.root_pos_w[:, 2].detach().cpu().numpy().copy()
     stable_grasp_steps = np.zeros(N, dtype=np.int64)
     stable_place_steps = np.zeros(N, dtype=np.int64)
+    from npa.workflows.sim2real.episode_boundaries import EpisodeBoundaries
+    episode_boundaries = EpisodeBoundaries(N)
     def capture(step):
         if step % CAPTURE_STRIDE != 0 and step != HORIZON_STEPS:
             return
@@ -596,8 +604,9 @@ try:
                         "view_name": view_name,
                         "frame_index": index,
                         "sim_step": int(step),
-                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        **simulation_clock.sample(),
                         "episode_id": rollout_ids[i],
+                        "simulator_episode_id": episode_boundaries.frame_episode(i),
                         "isaac_env_index": i,
                         "width": CAPTURE_WIDTH,
                         "height": CAPTURE_HEIGHT,
@@ -605,6 +614,8 @@ try:
                     })
             except Exception as e:
                 print("capture_err", view_name, repr(e), flush=True)
+    from npa.workflows.sim2real.isaac_simulation_clock import SimulationClock
+    simulation_clock = SimulationClock(env.unwrapped.step_dt)
     for _step in range(HORIZON_STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
@@ -614,21 +625,29 @@ try:
             actions = actions.reshape(N, -1)
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
+        simulation_clock.advance()
+        done_np = dones.detach().cpu().numpy().astype(bool)
+        episode_boundaries.advance(done_np.tolist(), _step)
+        # Isaac has already reset completed environments. Their returned state
+        # cannot describe the terminal action or extend the prior episode.
+        previous_goal_distance[done_np] = np.nan
+        previous_ee_distance[done_np] = np.nan
+        stable_grasp_steps[done_np] = 0
+        stable_place_steps[done_np] = 0
         # TiledCamera annotators need the first rendered simulation step before
         # their initial read. Capture the post-action state, which also aligns
         # each image with the simulator ground truth recorded below.
         if _step in SAMPLE_INDEX:
             capture(_step)
-        done_np = dones.detach().cpu().numpy().astype(bool)
         obj = uenv.scene["object"].data.root_pos_w[:, :3]
         cmd = uenv.command_manager.get_command("object_pose")
         goal = cmd[:, :3] + uenv.scene.env_origins[:, :3]
         goal_distance = torch.linalg.norm(obj - goal, dim=1).detach().cpu().numpy()
         ee = uenv.scene["ee_frame"].data.target_pos_w[..., 0, :]
         ee_distance = torch.linalg.norm(obj - ee, dim=1).detach().cpu().numpy()
-        if initial_object_z is None:
-            initial_object_z = obj[:, 2].detach().cpu().numpy().copy()
-        lift_m = obj[:, 2].detach().cpu().numpy() - initial_object_z
+        object_z = obj[:, 2].detach().cpu().numpy()
+        initial_object_z[done_np] = object_z[done_np]
+        lift_m = object_z - initial_object_z
         obj_velocity = torch.linalg.norm(
             uenv.scene["object"].data.root_lin_vel_w, dim=1
         ).detach().cpu().numpy()
@@ -642,10 +661,10 @@ try:
         except Exception as e:
             print("ROLLOUT_CONTACT_SENSOR_FALLBACK", repr(e), flush=True)
         gripper_closed = a_np[:, gripper_start] < 0.0
-        stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01)
+        stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01) & ~done_np
         stable_grasp_steps = np.where(stable_grasp_now, stable_grasp_steps + 1, 0)
         stable_grasp_now = stable_grasp_steps >= 3
-        stable_place_now = (goal_distance < 0.05) & (obj_velocity < 0.03)
+        stable_place_now = (goal_distance < 0.05) & (obj_velocity < 0.03) & ~done_np
         stable_place_steps = np.where(stable_place_now, stable_place_steps + 1, 0)
         stable_place_now = stable_place_steps >= 3
         scenario_rows = getattr(uenv, "npa_scenario_rows", [])
@@ -660,6 +679,7 @@ try:
         decision_step = SAMPLE_INDEX[_step]
         for i in range(min(N, a_np.shape[0])):
             scenario = scenario_rows[int(scenario_cpu[i])] if scenario_rows else {}
+            boundary = episode_boundaries.sample(i)
             goal_change = (
                 0.0
                 if np.isnan(previous_goal_distance[i])
@@ -673,7 +693,9 @@ try:
             actions_log[i].append({
                 "step": decision_step,
                 "sim_step": _step,
+                **simulation_clock.sample(),
                 "action": [round(float(x), 5) for x in a_np[i].tolist()],
+                "episode_boundary": boundary,
                 "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
                 "simulator_ground_truth": {
                     "object_goal_distance_m": round(float(goal_distance[i]), 6),
@@ -686,15 +708,18 @@ try:
                     "object_height_m": round(float(obj[i, 2].item()), 6),
                     "object_lift_m": round(float(lift_m[i]), 6),
                     "placement_stable": bool(stable_place_now[i]),
-                    "terminated": bool(done_np[i]),
-                    "termination_reason": "success" if stable_place_now[i] else (
-                        "task_or_timeout" if done_np[i] else "running"
+                    "terminated": bool(boundary["reset_events"]),
+                    "termination_reason": (
+                        "task_or_timeout" if boundary["reset_events"] else (
+                            "success" if stable_place_now[i] else "running"
+                        )
                     ),
                     "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
                 },
             })
         previous_goal_distance = goal_distance.copy()
         previous_ee_distance = ee_distance.copy()
+        episode_boundaries.sampled()
     capture(HORIZON_STEPS)
     scenario_rows = getattr(uenv, "npa_scenario_rows", [])
     scenario_indices = getattr(uenv, "npa_scenario_indices", None)
@@ -975,6 +1000,7 @@ def materialize_rollout_dirs(
 
     import boto3
     from urllib.parse import urlparse
+    from npa.workflows.sim2real.episode_boundaries import validate_episode_sequence
 
     s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
     u = urlparse(out_s3_prefix)
@@ -1009,6 +1035,7 @@ def materialize_rollout_dirs(
     dirs: list[str] = []
     for roll in meta.get("rollouts", []) or []:
         action_rows = list(roll.get("actions") or [])
+        validate_episode_sequence(action_rows)
         expected_points = int(capture.get("decision_points") or 0)
         if expected_points and len(action_rows) != expected_points:
             raise RuntimeError(
@@ -1021,7 +1048,7 @@ def materialize_rollout_dirs(
         ):
             raise RuntimeError("rollout lacks per-decision simulator ground truth")
         rid = roll["rollout_id"]
-        rdir = output_dir / rid
+        rdir = safe_s3_download_target(output_dir, rid, "")
         rdir.mkdir(parents=True, exist_ok=True)
         view_frames = {
             str(name): [str(frame) for frame in frames]
@@ -1052,8 +1079,10 @@ def materialize_rollout_dirs(
             dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
         )
         for name in all_frames:
+            target = safe_s3_download_target(rdir, name, "")
+            target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(rdir / name))
+                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(target))
             except Exception as exc:  # pragma: no cover - network
                 print(
                     f"byo_isaac_policy_rollout: frame download failed {rid}/{name}: {exc!r}",

@@ -28,11 +28,13 @@ DEFAULT_TASK = (
     "lifting a cube on a table. Describe the robot, objects, and workspace, then "
     "give a step-by-step manipulation plan."
 )
-DEFAULT_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+DEFAULT_MODEL = "MiniMaxAI/MiniMax-M3"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Reason over Isaac Franka frames via Token Factory.")
+    parser = argparse.ArgumentParser(
+        description="Reason over Isaac Franka frames via Token Factory."
+    )
     parser.add_argument(
         "--input-path",
         type=Path,

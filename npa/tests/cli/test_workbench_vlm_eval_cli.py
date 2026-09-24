@@ -5,7 +5,11 @@ import json
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workbench.vlm_eval import DEFAULT_MODEL, DEFAULT_SAMPLE_BENCHMARK_PATH, VlmEvalResult
+from npa.workbench.vlm_eval import (
+    DEFAULT_MODEL,
+    DEFAULT_SAMPLE_BENCHMARK_PATH,
+    VlmEvalResult,
+)
 
 
 runner = CliRunner()
@@ -179,12 +183,14 @@ def test_workbench_vlm_eval_run_maps_backend_flags(mocker, tmp_path) -> None:
 
 
 def test_workbench_vlm_eval_workflow_path() -> None:
-    result = runner.invoke(app, ["workbench", "vlm-eval", "workflow", "--output", "json"])
+    result = runner.invoke(
+        app, ["workbench", "vlm-eval", "workflow", "--output", "json"]
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
     # The advertised path is the npa.workflow spec, not the SkyPilot template.
-    assert payload["workflow"] == "npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml"
+    assert payload["workflow"] == "workflows/testing/vlm-eval-single.yaml"
 
 
 def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:

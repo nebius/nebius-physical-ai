@@ -70,10 +70,9 @@ CONFIGURATION_REASON_CODES = frozenset(
         "CHECKPOINT_INCOMPATIBLE",
     }
 )
-TRANSIENT_REASON_CODES = frozenset(
+CAPACITY_REASON_CODES = frozenset({"CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"})
+TRANSIENT_REASON_CODES = CAPACITY_REASON_CODES | frozenset(
     {
-        "CAPACITY_OR_QUOTA",
-        "GANG_CAPACITY_UNAVAILABLE",
         "NODE_NOT_READY",
         "PREEMPTED",
         "PROVIDER_INTERRUPTION",
@@ -196,6 +195,7 @@ class CheckpointValidation:
 class PreflightEvidence:
     checks: Mapping[str, str] = field(default_factory=dict)
     observed_at: str = ""
+    scope: Mapping[str, Any] = field(default_factory=dict)
 
     REQUIRED_RELAUNCH_CHECKS = frozenset(
         {
@@ -219,6 +219,7 @@ class PreflightEvidence:
             "checks": dict(sorted(self.checks.items())),
             "observed_at": self.observed_at,
             "relaunch_ready": self.relaunch_ready,
+            "scope": dict(self.scope),
         }
 
 
@@ -363,6 +364,16 @@ def decide_recovery(
             "IMMUTABLE_IDENTITY_MISMATCH",
             "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
         )
+    if (
+        observation.state in {BackendState.QUEUED, BackendState.RUNNING}
+        and code in CAPACITY_REASON_CODES
+    ):
+        return RecoveryDecision(
+            RecoveryAction.ADOPT_EXACT_ATTEMPT,
+            failure_class,
+            code,
+            "Keep the exact provider attempt while its scheduler waits for capacity.",
+        )
     if context.infrastructure_recoveries >= context.max_infrastructure_recoveries:
         action = (
             RecoveryAction.CANCEL_AND_TERMINALIZE
@@ -435,10 +446,14 @@ class SupervisorLedger:
             "schema_version": SUPERVISOR_SCHEMA_VERSION,
             **_sanitized_mapping(payload),
         }
-        body = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        body = (
+            json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
         digest = hashlib.sha256(body).hexdigest()
         identity = document.get("attempt_identity") or {}
-        logical_id = _safe_component(str(identity.get("logical_attempt_id") or "attempt"))
+        logical_id = _safe_component(
+            str(identity.get("logical_attempt_id") or "attempt")
+        )
         phase = _safe_component(str(document.get("phase") or "observation"))
         key = f"npa-workflow/supervisor/attempts/{logical_id}/{phase}-{digest}.json"
         return self.store.write_immutable_artifact(
@@ -452,7 +467,10 @@ class SupervisorLedger:
                 payload = json.loads(self.store.read_artifact(key))
             except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
                 continue
-            if isinstance(payload, dict) and payload.get("schema_version") == SUPERVISOR_SCHEMA_VERSION:
+            if (
+                isinstance(payload, dict)
+                and payload.get("schema_version") == SUPERVISOR_SCHEMA_VERSION
+            ):
                 result.append(payload)
         phase_order = {
             "decision": 0,
@@ -537,9 +555,7 @@ class WorkflowRunSupervisor:
             return result
         if decision.relaunch_allowed:
             if observation.state in {BackendState.QUEUED, BackendState.RUNNING}:
-                cancellation = _sanitized_mapping(
-                    self.adapter.cancel_exact(identity)
-                )
+                cancellation = _sanitized_mapping(self.adapter.cancel_exact(identity))
                 cancel_status = str(cancellation.get("status") or "").lower()
                 cancel_exact = bool(cancellation.get("exact"))
                 cancellation_event = {
@@ -548,9 +564,7 @@ class WorkflowRunSupervisor:
                     "phase": "cancellation",
                     "cancellation": cancellation,
                 }
-                cancellation_event["event_uri"] = self.ledger.record(
-                    cancellation_event
-                )
+                cancellation_event["event_uri"] = self.ledger.record(cancellation_event)
                 if not cancel_exact or cancel_status not in {
                     "cancelled",
                     "canceled",
@@ -581,6 +595,19 @@ class WorkflowRunSupervisor:
         return base
 
 
+def _primary_blocker(blockers: list[dict[str, Any]]) -> dict[str, Any]:
+    # A capacity wait must not hide a fatal error from another pod in the job.
+    for codes in (
+        CONFIGURATION_REASON_CODES,
+        PAYLOAD_REASON_CODES,
+        TRANSIENT_REASON_CODES,
+    ):
+        for blocker in blockers:
+            if blocker["reason_code"] in codes:
+                return blocker
+    return blockers[0]
+
+
 class SkyPilotSupervisorAdapter:
     runtime = "skypilot"
     # SkyPilot provider creation remains inside the runtime's existing
@@ -594,7 +621,8 @@ class SkyPilotSupervisorAdapter:
         lookup: Callable[..., Any] | None = None,
         blocker_inspector: Callable[..., Any] | None = None,
         canceller: Callable[[AttemptIdentity], Mapping[str, Any]] | None = None,
-        launcher: Callable[[AttemptIdentity, CheckpointValidation], AttemptIdentity] | None = None,
+        launcher: Callable[[AttemptIdentity, CheckpointValidation], AttemptIdentity]
+        | None = None,
         context: str = "",
     ) -> None:
         self._lookup = lookup
@@ -634,7 +662,9 @@ class SkyPilotSupervisorAdapter:
                 exact_identity=False,
             )
         observed_id = str(getattr(evidence, "job_id", "") or "")
-        exact = bool(identity.provider_job_id and observed_id == identity.provider_job_id)
+        exact = bool(
+            identity.provider_job_id and observed_id == identity.provider_job_id
+        )
         observable = bool(getattr(evidence, "workload_observable", True))
         status = str(getattr(evidence, "status", "") or "UNKNOWN").upper()
         state = _skypilot_state(status)
@@ -655,19 +685,7 @@ class SkyPilotSupervisorAdapter:
                     }
                 )
             if blocker_payload:
-                typed_codes = (
-                    CONFIGURATION_REASON_CODES
-                    | TRANSIENT_REASON_CODES
-                    | PAYLOAD_REASON_CODES
-                )
-                selected = next(
-                    (
-                        blocker
-                        for blocker in blocker_payload
-                        if blocker["reason_code"] in typed_codes
-                    ),
-                    blocker_payload[0],
-                )
+                selected = _primary_blocker(blocker_payload)
                 reason = selected["reason_code"]
                 message = selected["message"]
             elif getattr(report, "unready_nodes", None):
@@ -700,7 +718,9 @@ class SkyPilotSupervisorAdapter:
         checkpoint: CheckpointValidation,
     ) -> AttemptIdentity:
         if self._launcher is None:
-            raise RuntimeError("SkyPilot recovery must use the runtime launch transaction")
+            raise RuntimeError(
+                "SkyPilot recovery must use the runtime launch transaction"
+            )
         return self._launcher(identity, checkpoint)
 
 
@@ -722,16 +742,29 @@ class ServerlessRecoverySpec:
 class ServerlessSupervisorAdapter:
     runtime = "serverless"
 
-    def __init__(self, spec: ServerlessRecoverySpec, *, client: Any | None = None) -> None:
+    def __init__(
+        self,
+        spec: ServerlessRecoverySpec,
+        *,
+        client: Any | None = None,
+        launch_preflight: Callable[[], Any] | None = None,
+    ) -> None:
         if client is None:
             from npa.clients.serverless import ServerlessClient
 
             client = ServerlessClient()
         self.spec = spec
         self.client = client
+        self.launch_preflight = launch_preflight
 
     def observe(self, identity: AttemptIdentity) -> BackendObservation:
-        from npa.clients.serverless import EndpointNotFoundError, ServerlessClientError
+        from npa.clients.serverless import (
+            AuthError,
+            EndpointNotFoundError,
+            JobIdentityError,
+            ServerlessClientError,
+            TransientServerlessError,
+        )
 
         if not identity.provider_job_id:
             return BackendObservation(
@@ -747,21 +780,52 @@ class ServerlessSupervisorAdapter:
                 reason_code="PROVIDER_INTERRUPTION",
                 evidence={"lookup": "exact_absence"},
             )
-        except ServerlessClientError as exc:
+        except AuthError as exc:
             return BackendObservation(
-                BackendState.AMBIGUOUS,
-                reason_code="SERVERLESS_TRANSPORT",
+                BackendState.UNKNOWN,
+                reason_code="AUTHORIZATION",
                 message=sanitize_reason(exc),
                 exact_identity=False,
             )
-        exact = str(job.id or "") == identity.provider_job_id
+        except TransientServerlessError as exc:
+            return BackendObservation(
+                BackendState.UNKNOWN,
+                reason_code="SERVERLESS_TRANSPORT",
+                message=sanitize_reason(exc),
+                exact_identity=False,
+                evidence={"lookup": "transient_observation_failure"},
+            )
+        except JobIdentityError as exc:
+            return BackendObservation(
+                BackendState.AMBIGUOUS,
+                reason_code="AMBIGUOUS_ATTEMPT_IDENTITY",
+                message=sanitize_reason(exc),
+                exact_identity=False,
+            )
+        except ServerlessClientError as exc:
+            return BackendObservation(
+                BackendState.AMBIGUOUS,
+                reason_code="SERVERLESS_PROVIDER_ERROR",
+                message=sanitize_reason(exc),
+                exact_identity=False,
+            )
+        exact = (
+            str(job.id or "") == identity.provider_job_id
+            and str(job.project_id or "") == self.spec.project_id
+            and str(job.name or "") == identity.provider_job_name
+        )
         state = _serverless_state(str(job.status or ""))
         reason = ""
-        detail = (
-            f"{job.scheduling_state} {job.pending_reason} {job.log_tail}"
-        ).lower()
+        detail = (f"{job.scheduling_state} {job.pending_reason} {job.log_tail}").lower()
         if state is BackendState.QUEUED and any(
-            marker in detail for marker in ("capacity", "quota", "resource", "no gpu")
+            marker in detail
+            for marker in (
+                "capacity",
+                "quota",
+                "insufficient resources",
+                "not enough resources",
+                "no gpu",
+            )
         ):
             reason = "SERVERLESS_CAPACITY"
         elif state is BackendState.FAILED:
@@ -778,6 +842,8 @@ class ServerlessSupervisorAdapter:
                 reason = "IMAGE_REFERENCE_INVALID"
             elif "preempt" in detail or "interrupted" in detail:
                 reason = "PROVIDER_INTERRUPTION"
+            elif str(getattr(job, "provider_state", "")).upper() == "ERROR":
+                reason = "SERVERLESS_PROVIDER_ERROR"
             else:
                 reason = "PAYLOAD_EXIT_NONZERO"
         return BackendObservation(
@@ -787,6 +853,7 @@ class ServerlessSupervisorAdapter:
             exact_identity=exact,
             evidence={
                 "status": job.status,
+                "provider_state": str(getattr(job, "provider_state", "")),
                 "scheduling_state": job.scheduling_state,
                 "queued_for_seconds": job.queued_for_seconds,
             },
@@ -794,7 +861,11 @@ class ServerlessSupervisorAdapter:
 
     def cancel_exact(self, identity: AttemptIdentity) -> Mapping[str, Any]:
         job = self.client.cancel_job(identity.provider_job_id, self.spec.project_id)
-        return {"provider_job_id": job.id, "status": job.status, "exact": job.id == identity.provider_job_id}
+        return {
+            "provider_job_id": job.id,
+            "status": job.status,
+            "exact": job.id == identity.provider_job_id,
+        }
 
     def launch_recovery(
         self,
@@ -811,6 +882,8 @@ class ServerlessSupervisorAdapter:
         try:
             job = self.client.get_job(name, self.spec.project_id)
         except EndpointNotFoundError:
+            if self.launch_preflight is not None:
+                self.launch_preflight()
             env = dict(self.spec.env)
             if checkpoint.requested:
                 env["NPA_CHECKPOINT_URI"] = checkpoint.uri
@@ -828,6 +901,7 @@ class ServerlessSupervisorAdapter:
                 preset=self.spec.preset,
                 timeout=self.spec.timeout,
                 subnet_id=self.spec.subnet_id,
+                durable=True,
             )
         return AttemptIdentity(
             runtime=self.runtime,
@@ -862,17 +936,23 @@ def validate_declared_outputs(
             missing=tuple(missing),
             error=sanitize_reason(exc),
         )
-    status = "valid" if len(valid) == len(declared) else "absent" if not valid else "partial"
+    status = (
+        "valid" if len(valid) == len(declared) else "absent" if not valid else "partial"
+    )
     return ArtifactValidation(status, declared, tuple(valid), tuple(missing))
 
 
-def _immutable_identity_matches(identity: AttemptIdentity, context: RecoveryContext) -> bool:
+def _immutable_identity_matches(
+    identity: AttemptIdentity, context: RecoveryContext
+) -> bool:
     pairs = (
         (identity.workflow_sha256, context.expected_workflow_sha256),
         (identity.source_sha256, context.expected_source_sha256),
         (identity.image_digest, context.expected_image_digest),
     )
-    return all(recorded and expected and recorded == expected for recorded, expected in pairs)
+    return all(
+        recorded and expected and recorded == expected for recorded, expected in pairs
+    )
 
 
 def _configuration_remediation(code: str) -> str:
@@ -900,14 +980,16 @@ def _skypilot_state(status: str) -> BackendState:
 
 
 def _serverless_state(status: str) -> BackendState:
-    normalized = status.strip().lower()
+    from npa.clients.serverless import _job_status
+
+    normalized = _job_status(status)
     if normalized == "succeeded":
         return BackendState.SUCCEEDED
     if normalized == "failed":
         return BackendState.FAILED
     if normalized == "cancelled":
         return BackendState.CANCELLED
-    if normalized == "running":
+    if normalized in {"running", "cancelling"}:
         return BackendState.RUNNING
     if normalized == "queued":
         return BackendState.QUEUED
@@ -922,7 +1004,10 @@ def _safe_component(value: str) -> str:
 def _sanitized_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
     def clean(item: Any, key: str = "") -> Any:
         lowered = key.lower()
-        if any(marker in lowered for marker in ("secret", "password", "token", "credential")):
+        if any(
+            marker in lowered
+            for marker in ("secret", "password", "token", "credential")
+        ):
             return "<redacted>"
         if isinstance(item, Mapping):
             return {str(k): clean(v, str(k)) for k, v in item.items()}

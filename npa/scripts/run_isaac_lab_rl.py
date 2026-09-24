@@ -15,7 +15,11 @@ from typing import Any
 
 import yaml
 
-from npa.workflows.byof.live import resolve_byof_profile_path
+from npa.workflows.byof.live import (
+    resolve_byof_kubernetes_target,
+    resolve_byof_profile_path,
+    resolve_byof_project,
+)
 from npa.orchestration.skypilot import (
     WorkflowResult,  # noqa: F401 - kept for tests and downstream wrapper imports.
     cleanup_all_for_run,
@@ -65,6 +69,7 @@ def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
     names = list(explicit or DEFAULT_SECRET_ENVS)
     return [name for name in dict.fromkeys(names) if _os.environ.get(name)]
 
+
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
 DEFAULT_OUTPUT_ROOT = f"s3://{DEFAULT_BUCKET}/isaac-lab-rl"
 TERMINAL_STATUSES = {
@@ -82,9 +87,15 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         return _submit_and_wait(args)
-    except (SkyPilotNotInstalledError, SkyPilotConfigError, SkyPilotVersionError) as exc:
+    except (
+        SkyPilotNotInstalledError,
+        SkyPilotConfigError,
+        SkyPilotVersionError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        print("For a no-infrastructure check, rerun with --render-only.", file=sys.stderr)
+        print(
+            "For a no-infrastructure check, rerun with --render-only.", file=sys.stderr
+        )
         return 2
 
 
@@ -136,20 +147,32 @@ def render_workflow(
         envs["NEBIUS_S3_ENDPOINT"] = endpoint
         if not envs.get("NPA_CHECKPOINT_S3_ENDPOINT_URL"):
             envs["NPA_CHECKPOINT_S3_ENDPOINT_URL"] = endpoint
-        envs["ISAAC_LAB_HYDRA_OVERRIDES"] = " ".join(["agent.save_interval=1", *rendered_overrides]).strip()
+        envs["ISAAC_LAB_HYDRA_OVERRIDES"] = " ".join(
+            ["agent.save_interval=1", *rendered_overrides]
+        ).strip()
         variant = str(envs.get("RUN_VARIANT") or doc.get("name") or "").strip()
         prefix = output_root.rstrip("/") + f"/{run_id}/"
         if multiple and variant:
             prefix += f"{variant}/"
         envs["S3_OUTPUT_PREFIX"] = prefix
+        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+            [{"uri": prefix, "kind": "directory"}]
+        )
         if image:
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
-                resources["image_id"] = f"docker:{image}" if not image.startswith("docker:") else image
+                resources["image_id"] = (
+                    f"docker:{image}" if not image.startswith("docker:") else image
+                )
     return docs
 
 
-def output_paths(run_id: str, *, output_root: str = DEFAULT_OUTPUT_ROOT, variants: list[str] | None = None) -> dict[str, Any]:
+def output_paths(
+    run_id: str,
+    *,
+    output_root: str = DEFAULT_OUTPUT_ROOT,
+    variants: list[str] | None = None,
+) -> dict[str, Any]:
     root = output_root.rstrip("/") + f"/{run_id}/"
     if not variants:
         return {
@@ -198,13 +221,25 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         render_dir = Path(tempfile.mkdtemp(prefix=f"npa-isaac-lab-rl-{run_id}-"))
         rendered_yaml = render_dir / "isaac-lab-rl.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
-        print(json.dumps({"run_id": run_id, "rendered_yaml": str(rendered_yaml), "outputs": outputs}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "rendered_yaml": str(rendered_yaml),
+                    "outputs": outputs,
+                },
+                indent=2,
+            )
+        )
         return 0
 
+    project, context = _execution_scope(args)
     with tempfile.TemporaryDirectory(prefix=f"npa-isaac-lab-rl-{run_id}-") as tmp:
         rendered_yaml = Path(tmp) / "isaac-lab-rl.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
-        sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
+        sky_bin = str(
+            resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
+        )
         teardown_guard = SignalTeardown(
             run_id=run_id,
             isolated_config_dir=args.isolated_config_dir,
@@ -220,13 +255,19 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             result = submit_workflow(
                 rendered_yaml,
                 run_id,
+                project=project,
+                infra=f"k8s/{context}",
                 isolated_config_dir=args.isolated_config_dir,
                 config_path=args.config_path,
                 sky_bin=sky_bin,
                 secret_envs=resolve_secret_envs(args.secret_env),
                 timeout=args.submit_timeout,
             )
-            config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
+            config_path = (
+                Path(result.log_paths["config"])
+                if result.log_paths.get("config")
+                else None
+            )
             teardown_guard.mark_launched(config_path=config_path)
             summary = {
                 "run_id": run_id,
@@ -276,6 +317,23 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         return 1 if teardown.errors else return_code
 
 
+def _execution_scope(args: argparse.Namespace) -> tuple[str, str]:
+    """Resolve the explicit project and Kubernetes context for live submission."""
+
+    project = args.project.strip() or resolve_byof_project()
+    target = resolve_byof_kubernetes_target(project or None)
+    context = args.context.strip() or target.context
+    if not project:
+        raise ValueError(
+            "live submission requires --project or a configured NPA project"
+        )
+    if not context:
+        raise ValueError(
+            "live submission requires --context, KUBECONTEXT, or a configured Kubernetes context"
+        )
+    return project, context
+
+
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as handle:
         docs = [doc for doc in yaml.safe_load_all(handle) if doc is not None]
@@ -303,19 +361,46 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=resolve_byof_profile_path,
         default=DEFAULT_YAML,
     )
-    parser.add_argument("--task", default=os.environ.get("ISAAC_LAB_TASK", "Isaac-Cartpole-v0"))
-    parser.add_argument("--iterations", type=int, default=int(os.environ.get("ISAAC_LAB_ITERATIONS", "10")))
+    parser.add_argument(
+        "--task", default=os.environ.get("ISAAC_LAB_TASK", "Isaac-Cartpole-v0")
+    )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=int(os.environ.get("ISAAC_LAB_ITERATIONS", "10")),
+    )
     parser.add_argument("--run-id", default="")
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--image", default="", help="Container image override, e.g. cr.../npa-isaac-lab:tag.")
-    parser.add_argument("--data-path", default="", help="Canonical custom training data path.")
-    parser.add_argument("--override", action="append", default=[], help="Canonical training override KEY=VALUE.")
+    parser.add_argument(
+        "--image",
+        default="",
+        help="Container image override, e.g. cr.../npa-isaac-lab:tag.",
+    )
+    parser.add_argument(
+        "--data-path", default="", help="Canonical custom training data path."
+    )
+    parser.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        help="Canonical training override KEY=VALUE.",
+    )
     parser.add_argument("--wandb", action="store_true", help="Enable W&B logging.")
     parser.add_argument("--wandb-project", default="")
     parser.add_argument("--wandb-run-name", default="")
     parser.add_argument("--wandb-mode", default="offline")
     parser.add_argument("--checkpoint-s3-uri", default="")
     parser.add_argument("--checkpoint-s3-endpoint-url", default="")
+    parser.add_argument(
+        "--project",
+        default="",
+        help="Configured NPA project alias. Defaults to the selected BYOF project.",
+    )
+    parser.add_argument(
+        "--context",
+        default="",
+        help="Exact Kubernetes context. Defaults to BYOF project configuration or KUBECONTEXT.",
+    )
     parser.add_argument("--sky-bin", default="")
     parser.add_argument(
         "--secret-env",
@@ -326,7 +411,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "Defaults to the S3 credentials the profile needs for its uploads."
         ),
     )
-    parser.add_argument("--config-path", type=Path, default=None, help="SkyPilot global config YAML (e.g. kubernetes pod_config).")
+    parser.add_argument(
+        "--config-path",
+        type=Path,
+        default=None,
+        help="SkyPilot global config YAML (e.g. kubernetes pod_config).",
+    )
     parser.add_argument("--isolated-config-dir", type=Path, default=None)
     parser.add_argument("--submit-timeout", type=int, default=1800)
     parser.add_argument(

@@ -104,7 +104,9 @@ class FeedbackSource(Protocol):
 
     name: str
 
-    def collect(self, request: FeedbackRequest) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
+    def collect(
+        self, request: FeedbackRequest
+    ) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
         """Collect typed feedback."""
 
 
@@ -115,7 +117,9 @@ _FEEDBACK_SOURCES: dict[str, FeedbackSource] = {}
 _ADAPTERS: dict[FeedbackType, Callable[[FeedbackPayload], TrainingSignal]] = {}
 
 
-def register_feedback_source(source: FeedbackSource, *, aliases: tuple[str, ...] = ()) -> None:
+def register_feedback_source(
+    source: FeedbackSource, *, aliases: tuple[str, ...] = ()
+) -> None:
     """Register a feedback source by primary name and optional aliases."""
 
     for name in (source.name, *aliases):
@@ -133,7 +137,9 @@ def get_feedback_source(name: str) -> FeedbackSource:
         return _FEEDBACK_SOURCES[normalized]
     except KeyError as exc:
         allowed = ", ".join(registered_feedback_sources())
-        raise FeedbackSourceError(f"unsupported feedback source '{name}'. Supported: {allowed}") from exc
+        raise FeedbackSourceError(
+            f"unsupported feedback source '{name}'. Supported: {allowed}"
+        ) from exc
 
 
 def registered_feedback_sources() -> tuple[str, ...]:
@@ -152,7 +158,9 @@ def parse_feedback_type(value: str | FeedbackType) -> FeedbackType:
         if candidate.value == normalized:
             return candidate
     allowed = ", ".join(item.value for item in FeedbackType)
-    raise FeedbackSourceError(f"unsupported feedback type '{value}'. Supported: {allowed}")
+    raise FeedbackSourceError(
+        f"unsupported feedback type '{value}'. Supported: {allowed}"
+    )
 
 
 def collect_feedback(
@@ -179,7 +187,9 @@ def adapt_feedback_to_training_signal(payload: FeedbackPayload) -> dict[str, Any
     try:
         adapter = _ADAPTERS[payload.feedback_type]
     except KeyError as exc:
-        raise FeedbackSourceError(f"no adapter registered for feedback type '{payload.feedback_type.value}'") from exc
+        raise FeedbackSourceError(
+            f"no adapter registered for feedback type '{payload.feedback_type.value}'"
+        ) from exc
     return adapter(payload).to_dict()
 
 
@@ -230,7 +240,9 @@ class NoneFeedbackSource:
 
     name = "none"
 
-    def collect(self, request: FeedbackRequest) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
+    def collect(
+        self, request: FeedbackRequest
+    ) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
         payload = FeedbackPayload(
             source=self.name,
             feedback_type=FeedbackType.SCALAR,
@@ -251,7 +263,9 @@ class SimEnvFeedbackSource:
 
     name = "sim-env"
 
-    def collect(self, request: FeedbackRequest) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
+    def collect(
+        self, request: FeedbackRequest
+    ) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
         metric = request.eval_metric
         if metric is None:
             payload = FeedbackPayload(
@@ -271,11 +285,15 @@ class SimEnvFeedbackSource:
             source=self.name,
             feedback_type=request.feedback_type,
             score=metric.score,
-            success=metric.passed if metric.passed is not None else metric.score >= request.threshold,
+            success=metric.passed
+            if metric.passed is not None
+            else metric.score >= request.threshold,
             rationale=f"{metric.name} score={metric.score:.6f}",
             metadata=metric.metadata,
         )
-        tier = "WORKS" if metric.metadata.get("adapter") == "lerobot-eval" else "PARTIAL"
+        tier = (
+            "WORKS" if metric.metadata.get("adapter") == "lerobot-eval" else "PARTIAL"
+        )
         return payload, FeedbackSourceStatus(
             name="sim_env_feedback",
             tier=tier,
@@ -288,7 +306,9 @@ class VlmFeedbackSource:
 
     name = "vlm"
 
-    def collect(self, request: FeedbackRequest) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
+    def collect(
+        self, request: FeedbackRequest
+    ) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
         try:
             from npa.workbench.vlm_eval import VlmEvalError, evaluate_vlm, write_result
         except ImportError as exc:
@@ -360,7 +380,9 @@ class ByoContainerFeedbackSource:
         self._http_post = http_post or _default_http_post
         self._command_runner = command_runner or _default_command_runner
 
-    def collect(self, request: FeedbackRequest) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
+    def collect(
+        self, request: FeedbackRequest
+    ) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
         mode = _normalize_mode(request.byo_mode)
         invocation = {
             "mode": mode,
@@ -396,7 +418,9 @@ class ByoContainerFeedbackSource:
                 feedback_type=request.feedback_type,
                 evidence="BYO feedback source requires BYO_FEEDBACK_ENDPOINT_URL or BYO_FEEDBACK_COMMAND.",
             )
-        payload = parse_source_payload(raw, source=self.name, feedback_type=request.feedback_type)
+        payload = parse_source_payload(
+            raw, source=self.name, feedback_type=request.feedback_type
+        )
         return payload, FeedbackSourceStatus(
             name="byo_container_feedback",
             tier="PARTIAL",
@@ -412,7 +436,9 @@ def parse_source_payload(
 ) -> FeedbackPayload:
     """Interpret a source response using its declared feedback type."""
 
-    declared_type = parse_feedback_type(str(payload.get("feedback_type") or feedback_type.value))
+    declared_type = parse_feedback_type(
+        str(payload.get("feedback_type") or feedback_type.value)
+    )
     if declared_type != feedback_type:
         raise FeedbackSourceError(
             f"feedback source declared '{declared_type.value}', expected '{feedback_type.value}'"
@@ -483,7 +509,9 @@ def _blocked_payload(
         success=False,
         rationale=evidence,
     )
-    return payload, FeedbackSourceStatus(name=f"{source.replace('-', '_')}_feedback", tier="BLOCKED", evidence=evidence)
+    return payload, FeedbackSourceStatus(
+        name=f"{source.replace('-', '_')}_feedback", tier="BLOCKED", evidence=evidence
+    )
 
 
 def _adapt_scalar(payload: FeedbackPayload) -> TrainingSignal:
@@ -548,7 +576,10 @@ def _fallback_value(payload: dict[str, Any], feedback_type: FeedbackType) -> Any
     if feedback_type == FeedbackType.PASS_FAIL:
         return payload.get("success", False)
     if feedback_type == FeedbackType.CRITIQUE:
-        return {"score": payload.get("score", 0.0), "critique": payload.get("critique") or payload.get("rationale", "")}
+        return {
+            "score": payload.get("score", 0.0),
+            "critique": payload.get("critique") or payload.get("rationale", ""),
+        }
     return {
         "chosen": payload.get("chosen", "candidate"),
         "rejected": payload.get("rejected", "baseline"),
@@ -556,7 +587,9 @@ def _fallback_value(payload: dict[str, Any], feedback_type: FeedbackType) -> Any
     }
 
 
-def _score_from_payload(payload: dict[str, Any], value: Any, feedback_type: FeedbackType) -> float:
+def _score_from_payload(
+    payload: dict[str, Any], value: Any, feedback_type: FeedbackType
+) -> float:
     explicit = payload.get("score")
     if explicit is not None:
         return _bounded(float(explicit))
@@ -574,7 +607,9 @@ def _score_from_payload(payload: dict[str, Any], value: Any, feedback_type: Feed
 
 def _default_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
-    req = urllib_request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    req = urllib_request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
     try:
         with urllib_request.urlopen(req, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -582,7 +617,9 @@ def _default_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise FeedbackSourceError(str(exc)) from exc
 
 
-def _default_command_runner(command: list[str], payload: dict[str, Any]) -> dict[str, Any]:
+def _default_command_runner(
+    command: list[str], payload: dict[str, Any]
+) -> dict[str, Any]:
     if not command:
         raise FeedbackSourceError("BYO feedback command must not be empty")
     result = subprocess.run(
@@ -594,7 +631,9 @@ def _default_command_runner(command: list[str], payload: dict[str, Any]) -> dict
         check=False,
     )
     if result.returncode != 0:
-        raise FeedbackSourceError(result.stderr.strip() or f"command exited {result.returncode}")
+        raise FeedbackSourceError(
+            result.stderr.strip() or f"command exited {result.returncode}"
+        )
     return json.loads(result.stdout)
 
 
@@ -605,7 +644,9 @@ def _normalize_name(value: str) -> str:
 def _normalize_mode(value: str) -> str:
     normalized = _normalize_name(value or "provided-rollout")
     if normalized not in {"provided-rollout", "self-rollout"}:
-        raise FeedbackSourceError("BYO feedback mode must be 'provided-rollout' or 'self-rollout'")
+        raise FeedbackSourceError(
+            "BYO feedback mode must be 'provided-rollout' or 'self-rollout'"
+        )
     return normalized
 
 

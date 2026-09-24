@@ -9,6 +9,8 @@ The PAIDF worker image remains contract-attested and non-root for SkyPilot
 0.12.2, with passwordless sudo, SSH/rsync/service prerequisites, writable paths,
 and a forwarding entrypoint. Submit the verified immutable digest; never use a
 `runAsUser: 0` workflow override.
+Verify the actual bootstrap behavior for each replacement digest; the OCI label
+alone does not prove that setup, SSH and command forwarding work.
 
 FiftyOne is the dataset curation and visualization tool. It is CPU-only and does not require a GPU.
 
@@ -26,17 +28,24 @@ CLI:
 npa workbench fiftyone deploy
 npa workbench fiftyone launch
 npa workbench fiftyone load-dataset
+npa workbench fiftyone export-lerobot-subtasks
 npa workbench fiftyone curate-augmented   # real FiftyOne Brain curation of a paidf run
 npa workbench fiftyone status
 npa workbench fiftyone system-info
 npa workbench fiftyone list
 ```
 
-`npa workbench fiftyone open` wraps `kubectl port-forward`; callers should not need raw `kubectl`.
+`npa workbench fiftyone open` maintains a verified SSH tunnel for a VM or
+`kubectl port-forward` for Kubernetes; callers should not need raw tunnel commands.
 
 ## Deployment And Access
 
-The deploy `--public-ip` flag creates a LoadBalancer Service for external access, intended for partner demos. `npa workbench fiftyone status` shows the Public URL when deployed with `--public-ip`.
+The App is an operator interface with access to service-readable files. Bind it
+to `127.0.0.1` and access it through authenticated SSH or Kubernetes port-forward.
+`--public-ip`, non-loopback `--address`, and application ingress are rejected.
+Kubernetes uses a ClusterIP Service only as a port-forward target; the pod's App
+and its exec readiness check use loopback. Keep Kubernetes port-forward RBAC
+limited to authorized operators. CORS does not provide authentication.
 
 Stock FiftyOne App has no `/health` endpoint: `GET /` returns 200 and `GET /health` returns 307.
 
@@ -44,10 +53,17 @@ Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
 plans that would destroy or replace critical infrastructure are blocked unless
 the operator passes `--replace` and confirms with `--yes` for automation.
 
-BYOVM deploys record `endpoint_strategy: public` or `endpoint_strategy:
-ssh_fallback` in `~/.npa/config.yaml`. Live `status`, `launch`, and
-`load-dataset` commands honor that strategy and self-heal blocked public
-endpoints through a transient SSH-local route.
+VM and BYOVM deploys record `endpoint_strategy: ssh_fallback`. Live status and
+GraphQL requests always create a fresh SSH forward with verified host keys,
+including for older aliases that recorded a public endpoint. Launch and dataset
+loading run over SSH. Use `open` to keep a browser tunnel alive. Unknown or
+changed SSH host keys fail closed; provide an independently verified
+`NPA_SSH_KNOWN_HOSTS` file for a BYOVM host without a provider pin.
+
+Redeploy old Kubernetes and container deployments to replace public listeners;
+native VM launch also migrates its service environment to loopback. Redeploy
+older versions to use the current validated image; existing tags retain their
+original bytes.
 
 ## Real Curation (Brain)
 
@@ -71,9 +87,22 @@ always means both real stages ran. The container functional smoke
 
 The `npa-fiftyone` image bundles `mongod` (the prebuilt `fiftyone_db` wheel ships
 no mongod for trixie) into `fiftyone/db/bin/` so FiftyOne launches its own
-metadata DB with no external MongoDB — required for any Brain method. To run
-curation against an *un-rebuilt* image, supply an external DB instead
-(`-e FIFTYONE_DATABASE_URI=mongodb://<host>:27017`).
+metadata DB. The CPU golden evaluation runs the standalone functional smoke:
+version, dataset creation and query, Brain curation, and App launch on loopback.
+Qualify the bundled database and repeat the dependency check after the actual
+initial NPA source install in the selected FiftyOne interpreter.
+
+MongoDB Community Server uses SSPL v1, not an OSI-approved license. Its notices,
+matching corresponding source and recipient access need verification before
+public image redistribution; service-use obligations remain a separate review.
+The supported FiftyOne 1.21 release includes a verified source annex and
+passes the actual initial NPA install, dependency and functional gates. Repeat
+these checks for each replacement digest. Follow the
+[release requirements and validator command](../../../npa/docker/workbench/fiftyone/RELEASE.md)
+to bind the exact local image ID and committed source revision, check real
+bootstrap and functional behavior, and retain raw evidence in a private
+directory. Only the allowlisted public summary belongs in the CI artifact.
+Do not infer publication readiness from the Dockerfile or license labels.
 
 ## Data Patterns
 
@@ -83,4 +112,27 @@ paidf `curate-augmented` path runs uniqueness/similarity/visualization CPU-only.
 
 FiftyOne supports custom field schemas. Do not assume generic auto-extracted fields are required.
 
-BDD100K demo dataset: `bdd100k-real-data-demo`, live at the public IP.
+FiftyOne 1.22 loads LeRobot v3 datasets as synchronized multimodal episodes.
+For manual subtask labeling, Shift-drag a timeline interval in the App and name
+the temporal tag `subtask:<label>`. Export only after every frame is covered:
+
+```bash
+npa workbench fiftyone export-lerobot-subtasks \
+  --dataset-name <dataset> \
+  --output-path s3://<bucket>/<derived-dataset>/
+```
+
+The export writes a new self-contained LeRobot dataset with per-frame
+`subtask_index`, `meta/subtasks.parquet`, and resumable
+`meta/lerobot_annotations.json`. It rejects overlaps, gaps, non-duration tags,
+unknown samples, and nonempty output prefixes. The original LeRobot dataset is
+not modified. Existing LeRobot subtask indexes are seeded back into FiftyOne
+temporal tags when the dataset is loaded.
+
+After review, use `workflows/testing/lerobot-subtask-proof.yaml` as the
+repeatable gate. It reads the derived LeRobot Parquet, requires complete catalog
+resolution, and publishes a concrete frame/subtask proof bound to the source
+Parquet digest. YAML verifies the reviewed result; it does not replace the human
+timeline edit.
+
+Open the selected BDD100K demo dataset through the same authenticated local route.

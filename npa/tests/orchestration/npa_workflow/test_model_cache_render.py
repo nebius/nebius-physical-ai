@@ -21,7 +21,7 @@ from npa.workbench.model_cache import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 
 OPTIONS = SkypilotRenderOptions(
     registry="registry.example", materialize_registry_secrets=False
@@ -225,7 +225,14 @@ def test_a_pinned_cache_dir_is_still_passed_through(tmp_path: Path) -> None:
 
     from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
 
-    argv = ["npa", "workbench", "cosmos3", "text-to-image", "--cache-dir", "/mnt/pinned"]
+    argv = [
+        "npa",
+        "workbench",
+        "cosmos3",
+        "text-to-image",
+        "--cache-dir",
+        "/mnt/pinned",
+    ]
 
     assert drop_empty_optional_flags("workbench.cosmos3.text_to_image", argv) == argv
 

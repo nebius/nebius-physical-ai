@@ -1,8 +1,14 @@
 # Workbench Container Packaging
 
+[Workbench docs](README.md)
+
 Canonical contract for packaging workbench containers correctly, securely, and
 with the right runtime features exposed. Machine-readable rules live in
 `npa/docker/workbench/packaging-contract.yaml` (enforced by unit tests).
+
+NCore development images use the [attested OCI publication path](ncore-oci-publication.md)
+to preserve the exact buildx index through local gates and anonymous readback.
+NCore remains quarantined pending its independent RTX acceptance.
 
 ## SkyPilot worker bootstrap contract
 
@@ -13,7 +19,7 @@ entrypoint that forwards orchestrator arguments. Compliant first-party images
 record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
 config, with Dockerfile behavior covered by build tests.
 
-The canonical `npa-groot:0.1.0` is not in that attested publication set. It has
+The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
 passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and
 an argument-forwarding entrypoint. `groot/Dockerfile.k8s-prereqs` is the exact
@@ -22,13 +28,22 @@ from `packaging-contract.yaml`, but its OCI label is only a declaration: because
 the canonical and repaired artifacts share the `npa-groot` repository, submit
 ignores label-backed (including cached) evidence and requires a capability probe
 against the selected immutable digest. Public-image verification continues to
-check only canonical Dockerfiles that independently satisfy the declared
-publication contract; GR00T is deliberately absent from that set.
+check canonical Dockerfiles that independently satisfy the declared
+publication contract. The current canonical GR00T source now includes that
+contract and is in the attested-tool inventory; this does not retroactively
+attest the historical release bytes.
 
 Submit resolves the selected tag to an immutable digest and validates metadata
 on that digest. Missing/mismatched first-party evidence fails before launch.
-Arbitrary unattested images get one bounded exact-context capability pod; probe
-cleanup failure also fails closed. Cache keys use digest plus contract version,
+Arbitrary unattested vendor images get an exact-context capability pod that
+reproduces SkyPilot's Kubernetes shell override and installs missing SSH, rsync,
+and service packages through the image's package manager. This supports vendor
+entrypoints such as NuRec's `/app/run` without invoking that application with
+shell arguments. Root or passwordless sudo, successful package installation,
+and all worker capabilities must still be verified. Runtime-prepared evidence
+is not cached as proof of baked image contents; first-party image probes and
+attestation requirements remain unchanged. Probe cleanup failure also fails
+closed. Cache keys use digest plus contract version,
 never a tag. Image-byte licensing scans remain mandatory before registry push.
 For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
 tool's artifact independently; the preflight and renderer share that same map.
@@ -47,13 +62,127 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-cosmos` | `cosmos/Dockerfile` | job shell; server built but not default CMD |
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
-| `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686` |
+| `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
+| `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
+| `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
+| `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
 | Base CUDA 13 | `base/cuda13-b300/Dockerfile` | build base only |
+| PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
+| PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
+| PAIDF Cosmos3 Super Image2Video Sky compatibility (restricted) | `paidf-event-video-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
+| PAIDF RF-DETR detection Sky compatibility (restricted) | `paidf-detection-sky/Dockerfile` | operator-built worker shell; retains the upstream GPU detection CLI |
+| PAIDF captioning Sky compatibility (restricted) | `paidf-captioning-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
+| PAIDF Visual QA Sky compatibility (restricted) | `paidf-visual-qa-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
+| PAIDF attribute-search Sky compatibility (restricted) | `paidf-attribute-search-sky/Dockerfile` | operator-built worker shell; remote-LLM attribute-search client |
+
+The attribute-search, captioning, and Visual QA compatibility workers have
+verified operator-private publications from source
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e`. Their exact runnable
+digests and scoped acceptance evidence are recorded in the
+[external PAIDF image catalog](container-image-catalog.md#external-paidf-runtime-images).
+They remain excluded from the public release inventory. Image/bootstrap
+acceptance does not establish native workflow or GPU acceptance.
+
+The IAA generation wrapper also has a verified operator-private publication from
+`a04508698d3813785263831741f02b8bb8040d6d`. Its exact digest,
+bootstrap proof, SPDX package count and residual vulnerability counts are in
+the same catalog. The repository security gate rejects fixed CRITICAL findings;
+the full inventory separately records six unfixed CRITICAL findings, with no
+new ignore entries. The complete nine-state IAA workflow subsequently passed
+on B200; the catalog links its sanitized acceptance evidence.
+
+The EVG generation wrapper is also privately published from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e`, with independently
+verified registry bytes, bootstrap, complete scans and SPDX evidence in the
+catalog. Its full inventory retains six unfixed CRITICAL findings; the
+repository's fixed-CRITICAL policy passed without new ignore entries. Native
+GPU/workflow acceptance subsequently passed on B200, with the qualified
+Visual QA results recorded in the catalog.
+
+The AnomalyGen recipe keeps NPA installation in its own writable Python
+environment and selects the compiled upstream environment for DIG subprocesses.
+It applies the same hash-pinned NLTK security update as EVG after installing
+upstream requirements. It also pins W&B 0.28.2 to fix the embedded
+`wandb-core` dependency affected by
+[CVE-2026-56854](https://pkg.go.dev/vuln/GO-2026-6303).
+Upstream AnomalyGen holds W&B at 0.28.1 because 0.28.2 removes
+`wandb.util.generate_id`. The build verifies the exact Cosmos framework
+revision and source hash, then redirects its two calls to the byte-identical
+`wandb.sdk.lib.runid.generate_id` implementation. This preserves fresh-run,
+retry and persisted run-ID behavior, keeps the NVIDIA OpenMDW-1.1 header,
+checks the installed dependency requirements, and records original, patched,
+generator, patcher and wheel hashes in the image's
+`/usr/local/share/npa/paidf-wandb-compatibility.json`.
+The recipe removes SSH host keys in the same layer that installs SSH.
+The operator-private image built from
+`743d87df3a19fc0571d95c1d98b2bc53a2b438e9` has runnable child digest
+`sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf`.
+Its generic exact-layer/rootfs inventory covered 22 ordered diff IDs, 21 unique
+layer blobs, 67,908 files, and 10,673,751,967 bytes. All 1,924 weight-shaped
+candidates were reviewed; no gated runtime model weights, credential paths, or
+populated model-cache paths were accepted as image payload. The byte-audit
+record is 757,547 bytes with SHA-256
+`ce049048587669de54ec20f02c3b9832c76cfdb2cad5ba7854c9baef062d4d7e`.
+
+The 1,683-package SPDX SBOM is 4,282,800 bytes with SHA-256
+`296731803937d2d20392da5671e53979c61099868c15f45ad47ace04dc5eb5dc`.
+The complete vulnerability inventory remains nonempty: 5 CRITICAL, 186 HIGH,
+2,173 MEDIUM, 268 LOW, and 3 UNKNOWN findings; 0, 13, 90, 43, and 2 of those
+respective severities report a fixed version. The existing fixed-CRITICAL policy
+passed without a new ignore, which is not a zero-vulnerability claim. One
+JWT-shaped scanner match is an inert string in exact published scikit-image
+source, and six PEM blocks match public GnuTLS fixtures; those classifications
+do not establish equality of the containing binary or erase the original
+scanner findings.
+
+The exact image separately passed B200 CUDA, FlashAttention, Triton, and four
+native causal/full attention cases. It measured Python 3.13.15, Torch
+2.13.0+cu132, and CUDA 13.2. FlashAttention maximum absolute error was
+`0.000273943`, Triton maximum absolute error was `0`, and the largest attention
+relative L2 error was `0.00305612 < 0.015`. Training exercised NATTEN
+`blackwell-fmha` with Q/K/V gradients; inference exercised cuDNN. This diagnostic
+loaded no model weights and did not run a full model forward, so it remains
+separate from the full-workload acceptance.
+
+The same accepted child completed native DIG run `paidf-dig-15395d41fe18` on
+B200. Resume retained only the valid attempt-1 `record-upstream` state; attempt 8
+completed checkpoint preparation, all 15,000 training iterations with early
+stopping disabled, and generation. The evaluator selected checkpoint 13,000,
+and all 30 requests were accounted as 24 generated RGB images plus six enforcing
+text-guardrail blocks. The image preset performs face blurring but has no
+image-content classifier, so the terminal record correctly reports image
+guardrail enforcement as false.
+
+The resolved dependency closure remains restricted pending separate
+redistribution approval. A successful private build, authenticated pull, or
+workload does not grant public redistribution rights; the image remains outside
+NPA public GHCR. The CUDA wheel build is unchanged.
+
+The RF-DETR compatibility worker supports inference. It removes inherited
+W&B/torchtitan training tools and their unused system development toolchain
+through package-manager dependency handling, while retaining the vendor service
+code and CUDA runtime libraries. The actual service CLI and a CPU forward using
+the pinned RF-DETR checkpoint passed after removal, with no native compiler
+invocations. The exact rebuilt image is privately published from
+`ce010547321e8fee7b8783f684349a311ace63b2`, with verified
+registry identity, complete scans and an 894-package SPDX SBOM recorded in the
+catalog. Its inventory has zero CRITICAL findings; all inherited public TLS
+fixture-key findings have exact source evidence. Detection/tracking subsequently
+passed in the complete B200 EVG workflow; the earlier CPU check establishes
+dependency compatibility only.
+
+The AnomalyGen image keeps the exact CUDA 13.2 base image's
+`cuda-compat-13-2` libraries first on `LD_LIBRARY_PATH` while retaining the
+base search path. This supports runtime PTX/JIT users on supported older CUDA
+13 driver branches; NVIDIA documents both the compatibility-package matrix and
+the container-runtime loading behavior in the
+[CUDA Compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/latest/forward-compatibility.html)
+and [container compatibility FAQ](https://docs.nvidia.com/deploy/cuda-compatibility/frequently-asked-questions.html).
 
 BYOF images (`npa-byof:<run-id>`) are **ad-hoc** and are not registered in
 `CONTAINER_IMAGE_NAMES` until promoted to Tier 2 (see
@@ -69,7 +198,7 @@ Every Dockerfile must declare one of:
 
 | Tier | `kind` | ENTRYPOINT expectation | Examples |
 | --- | --- | --- | --- |
-| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | lerobot, lancedb, detection-training, lerobot-policy, leisaac |
+| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | antioch, lerobot, lancedb, detection-training, lerobot-policy, leisaac |
 | **Job** | `job` | Runs a workflow/CLI module with explicit CMD or an exec-only command-passthrough entrypoint | sonic, fiftyone, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
 | **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, cosmos, groot, retargeting |
 
@@ -105,13 +234,42 @@ has a license boundary that the contract encodes in a `redistribution` field per
 image (`public` | `restricted`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
-- **`public`** — OSS-redistributable. Code is under OSI-approved licenses
-  (Apache-2.0 / BSD-3 / MIT / MPL-2.0), the CUDA/PyTorch base images
-  (`nvidia/cuda`, `pytorch/pytorch` on Docker Hub) are freely redistributable,
-  and model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
+- **`public`** — Every shipped component has reviewed permission for public
+  redistribution, and the image must satisfy the applicable license conditions,
+  including notices and corresponding-source delivery. This classification does
+  not mean every component has an OSI-approved license. Check exact base and wheel
+  payloads individually; model weights are pulled at runtime. Public GR00T N1.7, GEAR-SONIC,
   Cosmos Reason1, and Cosmos3 Nano assets work anonymously; gated Cosmos assets require a token at
   **runtime** by the operator, never baked into the image. These may be published
   to a public/anonymous registry.
+
+  Public registry availability alone is not a grant for every component. For
+  example, the current cuDNN supplement identifies runtime `.so` and `.dll`
+  files as distributable; an inspected wheel's older embedded supplement also
+  names `.h` files. Preserve and compare these exact terms rather than treating
+  them as identical. cuRobo uses runtime-only cuDNN bytes, satisfying both grants.
+  Check inherited layers and installed wheels separately. Removing restricted bytes
+  in a later layer leaves them distributed in an ancestor; select a suitable
+  base and filter any non-distributable install payload before that layer is
+  committed. Keep the applicable licenses and verify the final image's layers.
+
+  FiftyOne bundles MongoDB Community Server under SSPL v1, which is
+  [not OSI-approved](https://www.mongodb.com/legal/licensing/server-side-public-license/faq).
+  The supported FiftyOne 1.21 image contains verified matching source,
+  provenance and delivery directions alongside the retained notices. Repeat
+  the exact-image checks for each replacement digest. See the
+  [FiftyOne release requirements](../../npa/docker/workbench/fiftyone/RELEASE.md).
+  Before any public push, run `npa/.venv/bin/python
+  npa/docker/workbench/fiftyone/validate_image.py` from the repository root with
+  `--image-id` set to the exact loaded local image ID, `--revision` set to its
+  full committed source revision, `--source-root` set to that checkout and
+  `--output-path` set to a new child of a private directory. The release guide
+  supplies the complete command and its bootstrap, source-delivery and functional
+  coverage. Keep raw receipts private; the trusted CI workflow publishes only
+  the validator's allowlisted `public-summary.json`.
+  Review the [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
+  separately; an image's redistribution classification does not decide whether
+  an operator's service use meets its obligations.
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
@@ -139,11 +297,12 @@ Neither mechanism grants redistribution rights or enables privacy/telemetry.
 
 | Audited surface | Assets/images covered | Outcome |
 | --- | --- | --- |
-| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac/Kit bytes are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
+| Isaac runtime images and routes | `isaac-lab`, `sonic`, `groot`, Isaac-backed `sim2real` builders and raw-shell sweep states | No Isaac Sim/Lab wheels or restricted Kit runtime payloads are baked. Resolved-image routing injects canonical `ACCEPT_EULA=Y` by default; empty/negative values opt out, affirmative legacy values normalize, and invalid values fail before pull/provision/scheduling. No second public EULA variable exists. |
 | GR00T deployment | `nvidia/GR00T-N1.7-3B`, `nvidia/Cosmos-Reason2-2B` | Both runtime dependencies are probed before every deploy/update path. Gated access is determined only by the operator's HF token and actual upstream permission; there is no skip or NPA terms flag. |
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
 | OpenPI / Gemma | `pi05_droid_jointpos_polaris` | The exact operator-confirmed `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value is forwarded only to accepted runtime jobs; refusal is attempt-scoped, and acceptance, weights, and credentials are never baked or persisted. |
+| Antioch | proprietary `antioch-sim==0.4.289` CLI and Antioch Service | The exact operator-confirmed `NPA_ANTIOCH_ACCEPT_TERMS=YES` value is injected from a dedicated runtime Secret and checked before fetch or use. Durable state records only the public terms identity and scoped accepted boolean; the image and cache contain no acceptance. |
 | Other non-NVIDIA comparison surfaces | `Wan-AI/Wan2.2-TI2V-5B`, LeRobot, Qwen, self-hosted Llama | No local terms boolean or interactive confirmation duplicates upstream entitlement; external vendor terms still apply at the source. |
 | Separate controls retained | privacy/telemetry, image redistribution classification, third-party dataset delivery | Privacy and telemetry remain independently off by default. Packaging contracts and built-image scans still control redistribution. The public PAIDF starter asset remains `acceptance_required: false`; its generic third-party dataset-license mechanism is separate from NVIDIA image/model access. |
 
@@ -152,20 +311,26 @@ Isaac examples now state `Y`; non-Isaac tasks do not receive the variable.
 
 ## Runtime-fetched Isaac Sim (why the Isaac images are publishable)
 
-The four Isaac images used to bake **NVIDIA Omniverse Kit (Isaac Sim)**. The Isaac Sim
-*source* is Apache-2.0, but the shipped binary bundles the Kit SDK and NVIDIA assets,
-and — this is the part that is easy to get wrong — **both** the `isaacsim` *and*
-`isaaclab` PyPI packages declare `License: NVIDIA Proprietary Software`, with
-`isaaclab/__init__.py` carrying an explicit no-redistribution header. The
-`isaac-sim/IsaacLab` **GitHub repo** is BSD-3-Clause; the wheel is a
-differently-licensed repackaging of it. So "Isaac Lab is BSD-3, we can bake that half"
-is wrong, and read-the-metadata beats read-the-badge.
+The Isaac runtime images previously baked **NVIDIA Omniverse Kit (Isaac Sim)**.
+Isaac Sim's Apache-2.0 source license does not cover its proprietary Kit SDK and
+runtime dependencies. Classify each exact wheel and its bundled components:
+the `isaaclab==3.0.0b2.post1` wheel selected by Arena declares **BSD-3-Clause**,
+in its structured `METADATA` License field. The exact wheel and metadata hashes
+are recorded in Arena's `license-evidence.json`; the wheel has no standalone
+license member. Isaac Sim 6.0.1.0 and its proprietary runtime dependencies
+retain their separate NVIDIA terms. Do not apply a license finding from another wheel or
+version to this Lab wheel, or extend its BSD license to the complete runtime.
+The [Arena third-party notices](../../npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md)
+record these component boundaries.
 
 A runtime token could not have rescued a baked image: a token gates a *download*, and
 Kit was already in the layers. So the images were changed to make the statement true.
 
-**How it works.** The images contain **no NVIDIA Isaac bytes**. On first use of
-`/isaac-sim/python.sh`, `npa/docker/workbench/common/isaac_bootstrap.sh`:
+**How it works.** The public images omit the Isaac Sim/Lab wheels and restricted
+Kit runtime payloads. Arena separately bakes its Apache-2.0 application source
+and redistributable client dependencies; that source is not the simulator
+runtime. On first use of `/isaac-sim/python.sh`,
+`npa/docker/workbench/common/isaac_bootstrap.sh`:
 
 1. Applies NPA's non-interactive Isaac default when `ACCEPT_EULA` is unset, then
    validates the value before download. `Y`, `YES`, `1`, and `TRUE` normalize to
@@ -190,10 +355,12 @@ wrapper but deletes its wheel-bundled static executable and resolves video work
 through Ubuntu's dynamically packaged `/usr/bin/ffmpeg`. The built-image payload
 scanner fails if that bundled executable returns.
 
-`pypi.nvidia.com` serves these wheels **anonymously**, so the credential was never the
-gate — acceptance is. NVIDIA delivers Isaac to each operator under that operator's own
-acceptance, and we redistribute nothing. This is the same pattern already used for gated
-model weights (Cosmos, GR00T N1, Cosmos-Reason).
+`pypi.nvidia.com` serves these wheels **anonymously**. The shared bootstrap checks
+the operator's acceptance before fetching the runtime closure; this does not
+change the Lab wheel's BSD license or the separate Sim/runtime terms. NVIDIA
+delivers the fetched wheels directly to the operator's cache, and NPA keeps
+those wheels out of published image layers. Gated model weights use a similar
+runtime-delivery boundary, with provider access checked separately.
 
 **What it costs.** Runtime size and cold-bootstrap cost are version-specific.
 Do not apply the old Isaac Lab 2 / Isaac Sim 5 cache measurements to the Isaac
@@ -217,7 +384,7 @@ reading the Dockerfile:
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-    <your-registry>/<namespace>/npa-isaac-lab:3.0.0b2.post1
+    "<your-registry>/<namespace>/npa-isaac-lab:3.0.0b2.post1"
 ```
 
 The scanner streams the image's flattened filesystem and its layer history, matching Kit
@@ -238,9 +405,9 @@ reports must finish with `VERDICT: clean`.
 is nothing credentialed left to pull:
 
 ```bash
-npa/docker/workbench/isaac-lab/build.sh --registry <your-registry>/<namespace> --push
-npa/docker/workbench/sonic/build.sh    --registry <your-registry>/<namespace> --push --variant k8s
-npa/docker/workbench/groot/build.sh    --registry <your-registry>/<namespace> --push
+npa/docker/workbench/isaac-lab/build.sh --registry "<your-registry>/<namespace>" --push
+npa/docker/workbench/sonic/build.sh    --registry "<your-registry>/<namespace>" --push --variant k8s
+npa/docker/workbench/groot/build.sh    --registry "<your-registry>/<namespace>" --push
 ```
 
 ### Public development and release — mind the order
@@ -263,10 +430,10 @@ Promote only the validated digest to its supported release tag:
 ```bash
 npa/.venv/bin/python -m npa.deploy.publish_public \
   --target ghcr.io/nebius/nebius-physical-ai \
-  --development-sha <full-git-sha> --dry-run
+  --development-sha "<full-git-sha>" --dry-run
 npa/.venv/bin/python -m npa.deploy.publish_public \
   --target ghcr.io/nebius/nebius-physical-ai \
-  --development-sha <full-git-sha>
+  --development-sha "<full-git-sha>"
 ```
 
 The publisher resolves each development tag once and copies only by immutable
@@ -308,24 +475,51 @@ Prove the development image anonymously with an empty Docker config:
 
 ```bash
 export DOCKER_CONFIG="$(mktemp -d)"
-crane manifest ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha> >/dev/null
+crane manifest "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:dev-<full-git-sha>" >/dev/null
 ```
 
-### The plan is what we build, not what is pushed
+### Publication intent and registry state
 
-The publish plan is derived from the packaging contract, which records what this repo
-**builds**. The registry holds what someone actually **pushed**. Those two diverge every
-time a new tool lands — Dockerfile, contract entry and version pin merge together, while
-building and pushing the image is a separate manual step (there is no build-and-push
-automation). A brand-new tool is therefore *expected* to be absent from the registry for a
-while, and the preflight reports it as `NAME_UNKNOWN`.
+The packaging contract records build sources and redistribution eligibility.
+The public plan selects `publicly_publishable_tools()` and each resolved public
+release pin; restricted tools and validation candidates are excluded. A
+Dockerfile or `redistribution: public` alone does not put an image in that plan.
+The manually dispatched `publish-public-images.yml` workflow builds selected
+development images and separately promotes validated digests. Registry state
+must still be checked: source availability is not proof of publication.
 
-By default that blocks the publish, which is the right default: silently mirroring a subset
+Main-branch pushes touching `npa/docker/workbench/` select development builds by
+changed recipe directories, individual packaging/catalog entries, and Dockerfile
+`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+source and staged workflow changes in the same push rebuild their consumers.
+Unchanged images retain their previously validated versions; no new development
+tag is fabricated for them. The existing weekly refresh still builds every
+eligible public image, including shared-source-only updates that do not trigger
+the workbench push filter. Explicit manual build selections remain available.
+
+Missing history, unknown shared workbench files, ambiguous metadata, and
+unsupported build-input syntax conservatively restore the full public build set.
+An empty automatic selection performs no build or release preflight. Every
+selected image retains all pre-publication and exact-digest security checks;
+release promotion remains a separate manual operation. Selection lives in
+`npa.deploy.image_build_scope` and is tested using real Git histories.
+
+The public-plan inventory retains all 34 published release tags. The current
+Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate
+after image security, B200 state, and successful RTX task/visual gates. The
+historical r2 tag remains recorded, but its RTX visual acceptance is rejected:
+render grain satisfied the old pixel-delta test despite a zero-success task
+result and 170 held-action steps.
+
+See the [public image catalog](container-image-catalog.md) for retained aliases,
+exclusions, and the distinction between current source and released bytes.
+
+A missing planned source blocks publication by default: silently mirroring a subset
 would make a pin regression that dropped an image look exactly like success. When the gap is
 known and intended, publish the ready images anyway:
 
 ```bash
-python -m npa.deploy.publish_public --skip-missing            # or the workflow's skip_missing input
+npa/.venv/bin/python -m npa.deploy.publish_public --skip-missing
 ```
 
 It drops only the images the registry has no copy of, prints each one with the reason, and
@@ -343,14 +537,14 @@ bootstrap attestation, and licensing gates,
 the publisher compares each source and target manifest digest. An exact match prints
 ``Already current; skipping copy`` and performs no registry write; only a missing or changed
 target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new
-image lands without republishing every existing image. Consumers then pull by
-pointing the resolver at the public release channel:
+image lands without republishing every existing image. Repository-owned runtime
+defaults select the public release channel directly:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai   # OSS images, any tenant
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1
 ```
 
-Both development and release tags must pass the unauthenticated check:
+Check accepted release tags without relying on retained development tags:
 
 ```bash
 npa/.venv/bin/python -m npa.deploy.publish_public --verify-accepted-releases
@@ -365,8 +559,9 @@ release-byte verdict.
 Never add a `restricted` image to official GHCR.
 `publish_public` and `development_image_for_tool` refuse every member of the
 general restricted-image inventory. Separately, license-eligible candidates
-remain in `UNVALIDATED_PUBLICATION_TOOLS` until exact-digest GPU evidence is
-recorded, so a classification change alone cannot create a supported release.
+remain in `UNVALIDATED_PUBLICATION_TOOLS` or `VALIDATION_CANDIDATE_TOOLS`
+until their required exact-digest evidence is recorded, so a classification
+change alone cannot create a supported release.
 
 > **Publishing is a business decision.** The engineering makes publication defensible —
 > the images contain no NVIDIA-proprietary bytes, and NVIDIA delivers Isaac to each
@@ -388,13 +583,36 @@ direct service-to-service file coupling.
 
 ## Build and tag
 
-1. Resolve registry with `npa.clients.config.resolve_container_registry`.
+For a Docker build whose context is `npa/`, stage the supported workflow catalog
+from the repository root before building:
+
+```bash
+npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
+```
+
+This copies `workflows/main/*.yaml`, `workflows/testing/*.yaml`, and
+`workflows/partners/*/*.yaml` into ignored package data under
+`npa/src/npa/workflows/`, preserving their relative directories. Existing Docker
+`COPY src` instructions include them. Repeat staging after catalog edits; it
+also removes stale generated YAMLs. Edit the top-level catalog source files.
+Wheel and source-distribution builds stage the same catalog through the package
+build hook.
+
+1. Select the immutable public GHCR development namespace for an official build;
+   use `npa.clients.config.resolve_container_registry` only for an explicit
+   operator build/BYOF destination.
 2. Build from the checked-in Dockerfile (`skills/atomic/build-and-push-image`).
 3. Tag from `npa/pyproject.toml` `[tool.npa.supported-tools]` and
    `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-b300`).
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
+
+## Platform scope
+
+All workbench images are linux/amd64 only. The publish buildx step passes no platform flag.
+
+This is intentional: the workbench targets NVIDIA GPU workloads which are amd64-only.
 
 ## Operator checklist (new or changed image)
 
@@ -408,6 +626,9 @@ direct service-to-service file coupling.
 - [ ] Skill + `skills/index.yaml` smoke updated
 
 ## Related docs
+
+- [Complete-byte image checks](image-byte-scanning.md) — cuRobo's additional
+  pre-push and exact-digest archive scan, policy configuration, and coverage limits.
 
 - Cosmos Transfer 2.5 has an artifact-by-artifact redistribution record at
   `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`; its `public`

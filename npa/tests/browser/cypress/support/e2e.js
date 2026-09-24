@@ -1183,12 +1183,31 @@ function installAgentApiMocks() {
       ],
     },
   })).as("workflowPlan");
-  cy.intercept("POST", "/api/workflows/submit", json({
-    ok: true,
-    run_id: "workflow-run",
-    submit_mode: "mock",
-    validation: WORKFLOW_VALIDATION,
-  })).as("workflowSubmitYaml");
+  cy.intercept("POST", "/api/workflows/submit", (req) => {
+    if (req.body && req.body.prepare_execution) {
+      req.reply(json({
+        ok: true,
+        run_id: "workflow-run",
+        submit_mode: "agent-live-infra-confirm-required",
+        validation: WORKFLOW_VALIDATION,
+        needs_confirmation: true,
+        confirm_token: "mock-confirm-token",
+        proposed_action: { action: "execute_workflow" },
+      }));
+      return;
+    }
+    if (req.body && req.body.execute) {
+      req.reply(json({
+        ok: true,
+        run_id: "workflow-run",
+        submit_mode: "agent-live-infra-executed",
+        validation: WORKFLOW_VALIDATION,
+        execution: { run_id: "workflow-run", status: "SUCCEEDED" },
+      }));
+      return;
+    }
+    req.reply(json({ ok: false, error: "missing execution intent" }));
+  }).as("workflowSubmitYaml");
   cy.intercept("POST", "/api/workflows/sim2real/submit", json({
     ok: true,
     run_id: "submitted-run",
@@ -1350,9 +1369,45 @@ function decodePngStats(base64Payload) {
 }
 
 Cypress.Commands.add("installAgentApiMocks", installAgentApiMocks);
-Cypress.Commands.add("visitMockAgent", () => {
+Cypress.Commands.add("selectRunSource", (selectSelector, source, options = {}) => {
+  const has = (name) => Object.prototype.hasOwnProperty.call(source || {}, name);
+  const expected = [];
+  if (has("runId") || has("run_id")) expected.push(["runId", String(source.runId ?? source.run_id ?? "")]);
+  if (has("runRef") || has("run_ref")) expected.push(["runRef", String(source.runRef ?? source.run_ref ?? "")]);
+  if (has("projectId") || has("project_id")) expected.push(["projectId", String(source.projectId ?? source.project_id ?? "")]);
+  if (has("bucket") || has("resourceBucket") || has("resource_bucket")) {
+    expected.push(["bucket", String(source.bucket ?? source.resourceBucket ?? source.resource_bucket ?? "")]);
+  }
+  if (has("resolvedPrefix") || has("resolved_prefix")) {
+    expected.push(["resolvedPrefix", String(source.resolvedPrefix ?? source.resolved_prefix ?? "")]);
+  }
+  if (has("sourceType") || has("source_type")) {
+    expected.push(["sourceType", String(source.sourceType ?? source.source_type ?? "")]);
+  }
+  expect(expected, "run source selector has an identity field").not.to.be.empty;
+
+  let selectedValue = "";
+  return cy.get(`${selectSelector} option`).should(($options) => {
+    const matches = [...$options].filter((option) => expected.every(
+      ([datasetKey, value]) => String(option.dataset[datasetKey] || "") === value
+    ));
+    const readable = expected.map(([key, value]) => `${key}=${value || "<empty>"}`).join(", ");
+    expect(matches, `one option matches the exact run source tuple (${readable})`).to.have.length(1);
+    expect(matches[0].value, "source-qualified option value").not.to.eq("");
+    selectedValue = matches[0].value;
+  }).then(() => {
+    cy.get(selectSelector).select(selectedValue, { force: options.force !== false });
+    return cy.get(`${selectSelector} option:checked`).should(($selected) => {
+      expect($selected, "one exact run source remains selected").to.have.length(1);
+      for (const [datasetKey, value] of expected) {
+        expect(String($selected[0].dataset[datasetKey] || ""), `selected ${datasetKey}`).to.eq(value);
+      }
+    });
+  });
+});
+Cypress.Commands.add("visitMockAgent", (options = {}) => {
   installAgentApiMocks();
-  cy.visit("/");
+  cy.visit(options.enableLeIsaac ? "/ui-leisaac-enabled.html" : "/");
   cy.get("meta[name='npa-ui-version']").should("have.attr", "content").and("match", /^(\d+|dev)$/);
   cy.get("#statusBar").should("exist");
 });
@@ -1422,5 +1477,6 @@ export {
   resolveLiveAgentConfig,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
+  WORKFLOW_VALIDATION,
   WORKFLOW_YAML,
 };

@@ -12,6 +12,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Callable, TextIO
@@ -66,6 +67,37 @@ def terraform_plugin_cache_lock(env: dict[str, str]) -> Iterator[None]:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
     finally:
         os.close(descriptor)
+
+
+def isolate_terraform_providers(workdir: Path, env: dict[str, str]) -> None:
+    """Detach initialized providers from a mutable shared download cache.
+
+    Call while holding ``terraform_plugin_cache_lock``, after successful init.
+    Terraform symlinks cached packages into its data directory. Serializing init
+    alone therefore still lets the next init rewrite binaries used by an active
+    apply or destroy. Copy the selected packages before releasing the lock;
+    Terraform continues to verify their dependency-lock checksums normally.
+    """
+
+    data_dir = Path(env.get("TF_DATA_DIR") or ".terraform").expanduser()
+    if not data_dir.is_absolute():
+        data_dir = workdir / data_dir
+    providers = data_dir / "providers"
+    if not providers.is_dir() or not any(p.is_symlink() for p in providers.rglob("*")):
+        return
+    with tempfile.TemporaryDirectory(
+        prefix=".npa-providers-", dir=data_dir
+    ) as temporary:
+        staging = Path(temporary)
+        snapshot = staging / "snapshot"
+        shutil.copytree(providers, snapshot, symlinks=False)
+        previous = staging / "previous"
+        providers.rename(previous)
+        try:
+            snapshot.rename(providers)
+        except BaseException:
+            previous.rename(providers)
+            raise
 
 
 def _sensitive_values(env: dict[str, str] | None) -> tuple[str, ...]:
@@ -377,8 +409,19 @@ def run_stream(
         raise BackendCommandError(f"Cancelled `{' '.join(args[:2])}`: {reason}")
     returncode = process.returncode or 0
     if returncode != 0:
+        # The cancellable path is used for Terraform applies watched by the
+        # provider node-group observer.  Its captured output has already been
+        # line-redacted, so retain the bounded tail just like the ordinary
+        # streaming path; otherwise a provider rejection degrades into a
+        # content-free exit code and cannot be classified or repaired.
+        detail = "\n".join(
+            part
+            for part in ("".join(captured_stderr), "".join(captured_stdout))
+            if part
+        ).strip()
+        suffix = f": {detail[-3000:]}" if detail else ""
         raise BackendCommandError(
-            f"Command failed ({returncode}): {_command_text(args)}"
+            f"Command failed ({returncode}): {_command_text(args)}{suffix}"
         )
     return subprocess.CompletedProcess(
         args,
@@ -406,6 +449,7 @@ def terraform_env(
         return env
     env.pop("TF_VAR_iam_token", None)
     env.pop("NEBIUS_IAM_TOKEN", None)
+    env.pop("NPA_NEBIUS_IAM_TOKEN", None)
     argv = [nebius_bin, *(["--profile", profile] if profile else [])]
     capture_kwargs: dict[str, object] = {"env": env}
     if timeout is not None:

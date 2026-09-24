@@ -1,5 +1,7 @@
 # SONIC Whole-Body Control
 
+[Cookbooks](README.md)
+
 SONIC / GEAR-SONIC is NVIDIA GEAR's humanoid whole-body-control stack. It is a
 standalone Workbench tool for low-level motor control, motion tracking,
 teleoperation, sim2sim validation, and deployment of full-body humanoid
@@ -38,8 +40,8 @@ RTX PRO 6000 Blackwell Kubernetes. Legacy L40S and MuJoCo variants are quarantin
 Verify the pushed image before launch with:
 
 ```bash
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-docker manifest inspect "${NPA_REGISTRY}/npa-sonic:<active-runtime-fetch-tag>"
+docker manifest inspect \
+  "ghcr.io/nebius/nebius-physical-ai/npa-sonic:<active-runtime-fetch-tag>"
 ```
 
 The default embodiment is Unitree G1. The serverless command also needs an
@@ -49,7 +51,7 @@ Kubernetes with GPU Operator driver mounts:
 
 ```bash
 npa workbench sonic train --runtime serverless --embodiment unitree-g1 \
-  --image <validated-compute-only-image>
+  --image "<validated-compute-only-image>"
 ```
 
 Internally this maps to the SONIC embodiment tag `UNITREE_G1_SONIC`.
@@ -136,7 +138,7 @@ ordering, shapes, units when supplied, normalization stats when not baked,
 opset, axis mode, and control dt when available.
 
 The matching workflow is the `npa.workflow` spec
-`npa/workflows/workbench/npa-workflows/sonic-export.yaml` (`metadata.name:
+`workflows/testing/sonic-export.yaml` (`metadata.name:
 sonic-export`). It passes `--checkpoint {{config.checkpoint_uri}}` and
 `--output {{config.onnx_uri}}` to the same CLI, and both accept `s3://` URIs
 directly. The exporter's remaining knobs (`--opset`, `--axes`, `--normalize`,
@@ -147,7 +149,7 @@ until the toolRef argv carries them.
 
 ## Export Then Eval
 
-`npa/workflows/workbench/npa-workflows/sonic-export-eval.yaml` chains export and
+`workflows/testing/sonic-export-eval.yaml` chains export and
 eval as two stages of one spec. Its `config` block carries `checkpoint_uri`,
 `onnx_uri`, `eval_uri`, `episodes` and `env`; override any of them at submit time
 with `--var key=value`.

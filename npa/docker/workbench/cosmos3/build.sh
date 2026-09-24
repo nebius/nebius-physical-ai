@@ -59,6 +59,7 @@ if [[ -n "${COSMOS3_REF}" ]]; then
 fi
 
 echo "=== build ${LOCAL_REF} (base=${BASE_IMAGE}) ==="
+"${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
 docker build --platform linux/amd64 \
   -f "${SCRIPT_DIR}/Dockerfile" \
   "${BUILD_ARGS[@]}" \

@@ -368,9 +368,7 @@ def test_stage_skips_existing_artifact_with_title_case_sha_metadata(
 def test_verify_uses_project_scoped_credentials(tmp_path: Path, mocker) -> None:
     manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
     s3 = DemoStageFakeS3()
-    mock_resolve = mocker.patch(
-        "npa.cli.demo.s3_client_for_project", return_value=s3
-    )
+    mock_resolve = mocker.patch("npa.cli.demo.s3_client_for_project", return_value=s3)
 
     result = runner.invoke(
         app,
@@ -418,9 +416,7 @@ def test_verify_rejects_default_project_when_unset_and_default_misconfigured(
 def test_verify_respects_allow_host_creds_flag(tmp_path: Path, mocker) -> None:
     manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
     s3 = DemoStageFakeS3()
-    mock_resolve = mocker.patch(
-        "npa.cli.demo.s3_client_for_project", return_value=s3
-    )
+    mock_resolve = mocker.patch("npa.cli.demo.s3_client_for_project", return_value=s3)
 
     result = runner.invoke(
         app,
@@ -480,8 +476,7 @@ def test_verify_reports_actual_mismatch_with_title_case_sha_metadata(
     )
 
     assert issues == [
-        f"file-one: sha256 metadata mismatch "
-        f"(expected {HELLO_SHA256}, found different)"
+        f"file-one: sha256 metadata mismatch (expected {HELLO_SHA256}, found different)"
     ]
 
 
@@ -495,8 +490,7 @@ def test_verify_reports_missing_sha256_metadata(tmp_path: Path) -> None:
     )
 
     assert issues == [
-        f"file-one: sha256 metadata mismatch "
-        f"(expected {HELLO_SHA256}, found missing)"
+        f"file-one: sha256 metadata mismatch (expected {HELLO_SHA256}, found missing)"
     ]
 
 

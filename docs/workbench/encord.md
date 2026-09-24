@@ -5,6 +5,11 @@ Encord is remote SaaS. NPA runs a stateless CPU API and transfer client locally
 or in the default workflow pod. This integration does not deploy an Encord
 service or container.
 
+The integration originated in Jonathan Lwowski's
+[PR #339](https://github.com/nebius/nebius-physical-ai/pull/339).
+Stew Tong authored the fail-closed transport, CLI, SDK, and workflows in
+[PR #363](https://github.com/nebius/nebius-physical-ai/pull/363).
+
 ## Choose the transfer contract explicitly
 
 `register` is the default. Encord receives object URLs and exact NPA identity
@@ -27,7 +32,8 @@ key outside the repository. NPA accepts these credential references:
 
 - `ENCORD_SSH_KEY` for the PEM value
 - `ENCORD_SSH_KEY_B64` for a base64-encoded PEM, including workflow forwarding
-- `ENCORD_SSH_KEY_FILE` for a local key path
+- `ENCORD_SSH_KEY_FILE` for a local key path; `npa configure --save-env-credentials`
+  persists this path without copying the key contents
 - `ENCORD_DOMAIN` for a regional API domain override
 
 Do not place credential values in workflow specs or examples. A local key file
@@ -55,6 +61,12 @@ objects. Exact source URI, complete object key or URL, namespaced client
 metadata, stable item UUID, or an explicit identity sidecar establishes
 lineage. A basename never establishes identity. Conflicting exact assertions
 remain unresolved and fail the completed receipt contract.
+
+Exact `npa.source_uri` metadata identifies the object even when its HTTP host
+changes between pushes. URL-only views of the same UUID do not override that
+metadata. Contradictory source URIs or record IDs, or multiple matching UUIDs,
+still fail closed. Without matching source metadata, conflicting URLs remain
+an error, including when a sidecar supplies the UUID.
 
 Use `--identity-sidecar s3://<bucket>/<key>.json` when existing Encord rows
 cannot expose enough exact metadata for reconciliation.
@@ -91,7 +103,7 @@ and passes exact item identity, destination existence, size, and compatible
 checksum checks.
 
 Three reference specs are available under
-`npa/workflows/workbench/npa-workflows/`: `encord-push.yaml`,
+`workflows/testing/`: `encord-push.yaml`,
 `encord-pull.yaml`, and `encord-roundtrip-smoke.yaml`. Each spec writes artifacts
 to S3. Push and roundtrip may also create or update Encord media records. Select
 the operation explicitly and confirm the target integration, folder, dataset or

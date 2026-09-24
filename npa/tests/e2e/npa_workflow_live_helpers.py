@@ -1,8 +1,26 @@
-"""Shared helpers for live npa.workflow infra tests."""
+"""Shared helpers for live npa.workflow infra tests.
+
+``NPA_E2E_S3_PREFIX`` optionally selects the exact E2E root within the live
+bucket, replacing ``npa-workflow-e2e/{run_id}``. It is a key prefix, not a bucket
+URI. The workflow name is appended; no run ID is appended to an explicit root.
+Choose a fresh root for each invocation and keep it unchanged through readback.
+Only ASCII letters, digits, ``_``, ``-``, ``.`` and separating ``/`` are accepted;
+empty, ``.`` and ``..`` segments (including leading/trailing slashes) are rejected.
+Explicit values are never stripped, decoded, normalized or template-expanded.
+
+This scopes ``config.prefix``, its input seeds and COLMAP output verification.
+It does not rebase independent fixture/source URIs: Sim2Real trigger roots,
+dataset raw-sensor fixtures, insights fixture/run roots, operator-supplied SONIC
+or LeRobot sources, and the exported shared SONIC motion fixture constant are
+unchanged and may be outside this root. Other live-test modules may also use
+independent roots.
+Those paths require separate authorization; this is not a suite-wide S3 sandbox.
+"""
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -10,6 +28,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+import httpx
 import pytest
 from typer.testing import Result
 
@@ -21,9 +40,30 @@ from npa.orchestration.npa_workflow.submit_matrix import (
     selected_submit_cases,
 )
 
+# Legacy shared fixture API; intentionally not rebased by NPA_E2E_S3_PREFIX.
 SONIC_MOTION_FIXTURE_PREFIX = "npa-workflow-e2e/fixtures/sonic-motion-soma-g1/"
+NUREC_COLMAP_DATASET = "nvidia/PhysicalAI-NuRec-PPISP"
+NUREC_COLMAP_REVISION = "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
+NUREC_COLMAP_MEMBER = "colmap/struktur28_colmap.zip"
+NUREC_COLMAP_SHA256 = "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
+ISAAC_ARENA_REPLAY_REVISION = "ed0fd12be862078be316c73eb7cf423ba9b1c5cd"
+ISAAC_ARENA_REPLAY_SHA256 = (
+    "154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50"
+)
+ISAAC_ARENA_REPLAY_MEMBER = (
+    "isaaclab_arena/tests/test_data/test_demo_gr1_open_microwave.hdf5"
+)
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS_DIR = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS_DIR = REPO_ROOT / "workflows"
+# CC0 photograph by Lav Varshney; see skills/NOTICE-PAIDF-STARTER-MEDIA.
+_PAIDF_CAMERA_REVISION = "e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae"
+_PAIDF_CAMERA_URL = (
+    "https://raw.githubusercontent.com/scikit-image/scikit-image/"
+    f"{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
+)
+_PAIDF_CAMERA_SHA256 = (
+    "b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a"
+)
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
 # testsrc2 source. Keeping the bytes in the test harness makes input seeding
 # independent of an operator host's ffmpeg installation while the live worker
@@ -117,6 +157,33 @@ _CONDITIONED_COSMOS_MP4_B64 = (
 )
 
 
+def _fetch_paidf_camera_fixture() -> bytes:
+    """Fetch only the reviewed, revision-pinned public HTTPS fixture."""
+
+    parsed = urlparse(_PAIDF_CAMERA_URL)
+    expected_path = (
+        f"/scikit-image/scikit-image/{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "raw.githubusercontent.com"
+        or parsed.path != expected_path
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        pytest.fail("PAIDF EVG camera fixture is not the pinned HTTPS source")
+    source_url = httpx.URL(_PAIDF_CAMERA_URL)
+    try:
+        response = httpx.get(source_url, timeout=30.0, follow_redirects=False)
+        response.raise_for_status()
+    except httpx.HTTPError:
+        pytest.fail("PAIDF EVG camera fixture could not be fetched")
+    if response.url != source_url:
+        pytest.fail("PAIDF EVG camera fixture source identity changed")
+    return response.content
+
+
 def resolve_spec_path(name: str) -> Path:
     """Resolve a live-submit spec by name across every blueprint root."""
 
@@ -146,6 +213,7 @@ DYNAMIC_SPECS = frozenset(
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
+        "nvidia-paidf-vda-cosmos-transfer25.yaml",
         "paidf-cosmos3.yaml",
         "token-factory-gate-loop.yaml",
     }
@@ -205,6 +273,23 @@ def live_bucket(e2e_project: str | None) -> str:
     return bucket
 
 
+def _live_s3_root(run_id: str) -> str:
+    """Resolve the root before any client creation, file write or seed timer."""
+    explicit = os.environ.get("NPA_E2E_S3_PREFIX")
+    if explicit is None:
+        return f"npa-workflow-e2e/{run_id}"
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", explicit) or any(
+        segment in {"", ".", ".."} for segment in explicit.split("/")
+    ):
+        # Do not echo the operator's potentially private selector in failures.
+        raise ValueError(
+            "NPA_E2E_S3_PREFIX must be a nonempty relative key prefix using "
+            "ASCII letters, digits, '.', '_', '-' and separating '/'; "
+            "empty or dot segments and bucket URIs are not allowed"
+        )
+    return explicit
+
+
 def seed_live_workflow_inputs(
     *,
     spec_name: str,
@@ -212,13 +297,19 @@ def seed_live_workflow_inputs(
     run_id: str,
     e2e_project: str | None = None,
 ) -> None:
-    """Upload minimal S3 fixtures so Token Factory twins have real inputs."""
+    """Stage actual inputs; independent shared-root exceptions are listed above."""
 
     from io import BytesIO
 
     from npa.clients.project_credentials import s3_client_for_project
 
-    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+    if spec_name == "xr1-antioch-finetune.yaml":
+        pytest.skip(
+            "XR1 requires an operator-collected, sealed Antioch dataset, pinned model assets, "
+            "and a verified SM120 runtime. Follow docs/workbench/cookbooks/xr1-antioch.md."
+        )
+
+    marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
 
     if spec_name == "encord-roundtrip-smoke.yaml":
@@ -230,6 +321,143 @@ def seed_live_workflow_inputs(
                 validate=True,
             ),
             ContentType="image/png",
+        )
+        return
+
+    if spec_name == "lerobot-subtask-proof.yaml":
+        _seed_lerobot_subtask_dataset(client, bucket=bucket, marker=marker)
+        return
+
+    if spec_name == "isaac-arena-evaluation-rtxpro.yaml":
+        _seed_isaac_arena_replay(client, bucket=bucket, prefix=marker)
+        return
+
+    if spec_name == "nurec-colmap-reconstruct.yaml":
+        _seed_nurec_colmap_source(client, bucket=bucket, prefix=marker)
+        return
+
+    if spec_name == "paidf-event-video-generation.yaml":
+        # Fetch public source bytes without model/registry credentials. A real
+        # photograph exercises the detector and per-person label stages.
+        image_bytes = _fetch_paidf_camera_fixture()
+        if hashlib.sha256(image_bytes).hexdigest() != _PAIDF_CAMERA_SHA256:
+            pytest.fail("PAIDF EVG camera fixture SHA-256 mismatch")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/seed.png",
+            Body=image_bytes,
+            ContentType="image/png",
+        )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture-source.json",
+            Body=json.dumps(
+                {
+                    "schema": "npa.paidf.fixture-source.v1",
+                    "source_url": _PAIDF_CAMERA_URL,
+                    "source_revision": _PAIDF_CAMERA_REVISION,
+                    "sha256": _PAIDF_CAMERA_SHA256,
+                    "bytes": len(image_bytes),
+                    "license": "CC0-1.0",
+                    "author": "Lav Varshney",
+                },
+                sort_keys=True,
+            ).encode(),
+            ContentType="application/json",
+        )
+        return
+
+    if spec_name == "paidf-image-attribute-augmentation.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed PAIDF fixtures: {exc}")
+        size = (768, 1024)
+        image = Image.new("RGB", size, (106, 113, 120))
+        draw = ImageDraw.Draw(image)
+        # Repository-authored, non-customer silhouette: enough structure for the
+        # real IAA conditioning and verifier paths without redistributing data.
+        cx, cy = size[0] // 2, size[1] // 2
+        draw.ellipse((cx - 45, cy - 220, cx + 45, cy - 130), fill=(196, 155, 116))
+        draw.rectangle((cx - 75, cy - 130, cx + 75, cy + 80), fill=(30, 75, 145))
+        draw.rectangle((cx - 70, cy + 80, cx - 10, cy + 260), fill=(35, 35, 40))
+        draw.rectangle((cx + 10, cy + 80, cx + 70, cy + 260), fill=(35, 35, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/seed.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+        return
+
+    if spec_name == "paidf-defect-image-generation.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed PAIDF DIG fixtures: {exc}")
+
+        defect_types = ("MT_Blowhole", "MT_Break", "MT_Crack", "MT_Fray", "MT_Uneven")
+        root = f"{marker}/fixture/dataset"
+
+        def put_image(key: str, image: Image.Image, fmt: str) -> None:
+            buf = BytesIO()
+            image.save(buf, format=fmt)
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=buf.getvalue(),
+                ContentType="image/jpeg" if fmt == "JPEG" else "image/png",
+            )
+
+        for index in range(20):
+            clean = Image.new("RGB", (512, 512), (118 + index % 9, 122, 126))
+            draw = ImageDraw.Draw(clean)
+            for x in range(0, 512, 32):
+                draw.line((x, 0, x + 60, 512), fill=(128, 132, 136), width=2)
+            put_image(
+                f"{root}/metal_surface/clean_image/clean_{index:03d}.jpg", clean, "JPEG"
+            )
+
+        specs = []
+        for defect_index, defect in enumerate(defect_types):
+            specs.append(
+                json.dumps(
+                    {
+                        "defect_type": f"metal_surface+{defect}",
+                        "spatial_dependency": "free",
+                        "roi_prompt_defect_location": "",
+                    },
+                    sort_keys=True,
+                )
+            )
+            slug = defect.lower()
+            for index in range(5):
+                base = Image.new("RGB", (512, 512), (120, 124, 128))
+                mask = Image.new("L", (512, 512), 0)
+                defect_draw = ImageDraw.Draw(base)
+                mask_draw = ImageDraw.Draw(mask)
+                left = 80 + 47 * index
+                top = 90 + 39 * defect_index
+                box = (left, top, left + 72, top + 38)
+                defect_draw.ellipse(box, fill=(55, 38, 30))
+                mask_draw.ellipse(box, fill=255)
+                put_image(
+                    f"{root}/metal_surface/anomaly_image/{defect}/{slug}_{index:03d}.png",
+                    base,
+                    "PNG",
+                )
+                put_image(
+                    f"{root}/metal_surface/mask/{defect}/{slug}_{index:03d}_mask.png",
+                    mask,
+                    "PNG",
+                )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{root}/defect_spec.jsonl",
+            Body=("\n".join(specs) + "\n").encode(),
+            ContentType="application/x-ndjson",
         )
         return
 
@@ -280,6 +508,26 @@ def seed_live_workflow_inputs(
     if spec_name == "token-factory-gate-loop.yaml":
         # The loop captions and scores the same small batch every iteration.
         _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
+        return
+
+    if spec_name == "token-factory-robot-sdg.yaml":
+        body = b'{"id":"robot-e2e","prompt":"Extract these scene values: red cube at (-0.10,-0.08), green target at (0.10,0.08), lighting=1.0."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
+        return
+
+    if spec_name == "token-factory-sdg.yaml":
+        body = b'{"id":"e2e-sdg","prompt":"Create a training example asking for a concise paraphrase of: put the red cube in the blue tray."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
         return
 
     if spec_name == "token-factory-generate.yaml":
@@ -541,6 +789,133 @@ def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
         )
 
 
+def _parquet_bytes(table: Any) -> bytes:
+    """Serialize one deterministic Arrow table for a live S3 fixture."""
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    sink = pa.BufferOutputStream()
+    pq.write_table(table, sink, compression="snappy")
+    return sink.getvalue().to_pybytes()
+
+
+def _lerobot_subtask_fixture_objects() -> dict[str, bytes]:
+    """Build synthetic LeRobot v3 Parquet data with known subtask rows."""
+
+    import pyarrow as pa
+
+    rows = pa.table(
+        {
+            "episode_index": [0, 0, 0, 0],
+            "frame_index": [0, 1, 2, 3],
+            "timestamp": [0.0, 0.1, 0.2, 0.3],
+            "subtask_index": [0, 0, 1, 1],
+            "action": [[0.0], [0.1], [0.2], [0.3]],
+            "task_index": [0, 0, 0, 0],
+        }
+    )
+    catalog = pa.table({"subtask": ["approach", "grasp"], "subtask_index": [0, 1]})
+    tasks = pa.table({"task_index": [0], "task": ["Pick up the object"]})
+    episodes = pa.table(
+        {"episode_index": [0], "length": [4], "tasks": [["Pick up the object"]]}
+    )
+    info = {
+        "codebase_version": "v3.0",
+        "fps": 10,
+        "total_episodes": 1,
+        "total_frames": 4,
+        "features": {"subtask_index": {"dtype": "int64", "shape": [1], "names": None}},
+    }
+    return {
+        "data/chunk-000/file-000.parquet": _parquet_bytes(rows),
+        "meta/subtasks.parquet": _parquet_bytes(catalog),
+        "meta/tasks.parquet": _parquet_bytes(tasks),
+        "meta/episodes/chunk-000/file-000.parquet": _parquet_bytes(episodes),
+        "meta/info.json": json.dumps(info, sort_keys=True).encode(),
+    }
+
+
+def _seed_lerobot_subtask_dataset(client, *, bucket: str, marker: str) -> None:
+    """Upload the reviewed LeRobot subtask fixture under one run prefix."""
+
+    prefix = f"{marker}/reviewed-dataset/"
+    objects = _lerobot_subtask_fixture_objects()
+    for relative, body in objects.items():
+        client.put_object(Bucket=bucket, Key=f"{prefix}{relative}", Body=body)
+
+
+def _assert_lerobot_subtask_proof(client: Any, bucket: str, marker: str) -> None:
+    import hashlib
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    with client.get_object(Bucket=bucket, Key=f"{marker}/proof/subtask-proof.json")[
+        "Body"
+    ] as body:
+        payload = json.loads(body.read())
+    proof = payload["proof"]
+    assert payload["status"] == "verified"
+    assert payload["summary"] == {
+        "episode_count": 1,
+        "frame_count": 4,
+        "labeled_frame_count": 4,
+        "unlabeled_frame_count": 0,
+        "subtask_count": 2,
+        "segment_count": 2,
+    }
+    prefix = f"{marker}/reviewed-dataset/"
+    with client.get_object(
+        Bucket=bucket, Key=f"{prefix}data/chunk-000/file-000.parquet"
+    )["Body"] as body:
+        data = body.read()
+    with client.get_object(Bucket=bucket, Key=f"{prefix}meta/subtasks.parquet")[
+        "Body"
+    ] as body:
+        catalog = body.read()
+    assert proof["source_parquet_sha256"] == hashlib.sha256(data).hexdigest()
+    assert payload["source_catalog_sha256"] == hashlib.sha256(catalog).hexdigest()
+    row = pq.read_table(pa.BufferReader(data)).to_pylist()[2]
+    labels = {
+        item["subtask_index"]: item["subtask"]
+        for item in pq.read_table(pa.BufferReader(catalog)).to_pylist()
+    }
+    for field in ("episode_index", "frame_index", "timestamp", "subtask_index"):
+        assert proof[field] == row[field]
+    assert proof["subtask"] == labels[row["subtask_index"]] == "grasp"
+    recorded_hash = proof.pop("row_sha256")
+    assert (
+        recorded_hash
+        == hashlib.sha256(
+            json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+
+
+def assert_lerobot_subtask_live_outputs(
+    *, bucket: str, run_id: str, e2e_project: str | None = None
+) -> None:
+    """Read the published proof and independently resolve its source Parquet row.
+
+    Args:
+        bucket: Selected test bucket.
+        run_id: Workflow run identifier used to resolve the seeded prefix.
+        e2e_project: Optional selected project for S3 credentials.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: The proof disagrees with the actual dataset objects.
+    """
+    from npa.clients.project_credentials import s3_client_for_project
+
+    marker = f"{_live_s3_root(run_id)}/lerobot-subtask-proof"
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    _assert_lerobot_subtask_proof(client, bucket, marker)
+
+
 def _seed_input_video(client, *, bucket: str, prefix: str) -> None:
     """Upload a small real MP4 for conditioned Cosmos transfer."""
 
@@ -577,7 +952,7 @@ def seed_trigger_inbox_later(
 
     from npa.clients.project_credentials import s3_client_for_project
 
-    marker = f"npa-workflow-e2e/{run_id}/{spec_name.replace('.yaml', '')}"
+    marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
 
     def _seed() -> None:
         client = s3_client_for_project(e2e_project, allow_host_creds=True)
@@ -892,6 +1267,533 @@ def _seed_vlm_benchmark_dataset(client, *, bucket: str, marker: str) -> None:
     )
 
 
+def _download_isaac_arena_replay(destination: Path) -> None:
+    """Fetch the unchanged pinned public replay without operator credentials."""
+    from npa._public_https import download_public_https
+
+    url = (
+        "https://media.githubusercontent.com/media/isaac-sim/IsaacLab-Arena/"
+        f"{ISAAC_ARENA_REPLAY_REVISION}/{ISAAC_ARENA_REPLAY_MEMBER}"
+    )
+    with destination.open("wb") as output:
+        download_public_https(
+            url,
+            output,
+            allowed_hosts=frozenset({"media.githubusercontent.com"}),
+        )
+
+
+def _verify_isaac_arena_replay(path: Path) -> None:
+    """Reject changed or incomplete replay bytes before any storage write."""
+    import hashlib
+
+    import h5py
+    import numpy as np
+
+    if hashlib.sha256(path.read_bytes()).hexdigest() != ISAAC_ARENA_REPLAY_SHA256:
+        pytest.fail("Arena replay differs from the pinned upstream fixture")
+    with h5py.File(path, "r") as dataset:
+        episodes = dataset.get("data")
+        if not isinstance(episodes, h5py.Group) or len(episodes) != 1:
+            pytest.fail("Arena replay must contain exactly one recorded episode")
+        episode = episodes[next(iter(episodes))]
+        if "actions" not in episode or "initial_state" not in episode:
+            pytest.fail("Arena replay is missing actions or its recorded initial state")
+        actions = np.asarray(episode["actions"])
+        if actions.ndim != 2 or actions.shape[0] < 2 or not np.isfinite(actions).all():
+            pytest.fail("Arena replay actions must be a finite multi-step tensor")
+
+
+def _seed_isaac_arena_replay(client: Any, *, bucket: str, prefix: str) -> None:
+    """Stage the verified replay in this invocation's prefix and verify readback."""
+    import hashlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="npa-arena-replay-source-") as directory:
+        replay = Path(directory) / "gr1-open-microwave.hdf5"
+        replay.touch(mode=0o600)
+        _download_isaac_arena_replay(replay)
+        _verify_isaac_arena_replay(replay)
+        key = f"{prefix}/input/gr1-open-microwave.hdf5"
+        client.upload_file(str(replay), bucket, key)
+        with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
+            stored_sha256 = hashlib.sha256(body.read()).hexdigest()
+        if stored_sha256 != ISAAC_ARENA_REPLAY_SHA256:
+            pytest.fail(
+                "Arena replay readback differs from the pinned upstream fixture"
+            )
+
+
+def _download_nurec_colmap_archive(destination: Path) -> None:
+    """Fetch the complete public source at an immutable dataset revision."""
+    from npa._public_https import download_public_https
+
+    url = (
+        f"https://huggingface.co/datasets/{NUREC_COLMAP_DATASET}/resolve/"
+        f"{NUREC_COLMAP_REVISION}/{NUREC_COLMAP_MEMBER}"
+    )
+    # This dataset is public; no operator token is forwarded to the download.
+    with destination.open("wb") as output:
+        download_public_https(
+            url,
+            output,
+            allowed_hosts=frozenset({"huggingface.co"}),
+            # Explicit public LFS/Xet bridge and CDN download endpoints:
+            # https://huggingface.co/docs/hub/models-downloading
+            # https://huggingface.co/blog/migrating-the-hub-to-xet
+            redirect_hosts=frozenset(
+                {
+                    "cdn-lfs.huggingface.co",
+                    "cdn-lfs-us-1.hf.co",
+                    "cdn-lfs-eu-1.hf.co",
+                    "cas-bridge.xethub.hf.co",
+                    "us.aws.cdn.hf.co",
+                    "us.gcp.cdn.hf.co",
+                }
+            ),
+        )
+
+
+def _seed_nurec_colmap_source(client: Any, *, bucket: str, prefix: str) -> None:
+    """Upload the unchanged full ZIP and retain dataset attribution beside it."""
+    import hashlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="npa-colmap-source-") as directory:
+        archive = Path(directory) / "struktur28_colmap.zip"
+        supplied = os.environ.get("NPA_E2E_NUREC_COLMAP_ARCHIVE", "").strip()
+        if supplied:
+            archive = Path(supplied)
+        else:
+            _download_nurec_colmap_archive(archive)
+        digest = hashlib.sha256()
+        with archive.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != NUREC_COLMAP_SHA256:
+            pytest.fail(
+                "COLMAP source archive differs from the pinned complete dataset"
+            )
+        client.upload_file(
+            str(archive), bucket, f"{prefix}/source/struktur28_colmap.zip"
+        )
+        attribution = {
+            "dataset": NUREC_COLMAP_DATASET,
+            "revision": NUREC_COLMAP_REVISION,
+            "member": NUREC_COLMAP_MEMBER,
+            "sha256": NUREC_COLMAP_SHA256,
+            "creator": "NVIDIA",
+            "license": "CC-BY-4.0",
+            "license_url": "https://creativecommons.org/licenses/by/4.0/",
+            "source_url": (
+                f"https://huggingface.co/datasets/{NUREC_COLMAP_DATASET}/tree/"
+                f"{NUREC_COLMAP_REVISION}"
+            ),
+            "changes": "Unmodified source archive; workflow converts the full struktur28 capture to NCore V4 and derives the NRE rig edge.",
+            "selected_capture": "struktur28",
+            "source_counts": {"images": 518, "cameras": 3, "points": 163453},
+        }
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{prefix}/source/attribution.json",
+            Body=(json.dumps(attribution, indent=2) + "\n").encode(),
+            ContentType="application/json",
+        )
+
+
+def _nurec_s3_json(client: Any, bucket: str, key: str) -> dict:
+    with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
+        return json.load(body)
+
+
+def _download_nurec_proof(client: Any, bucket: str, root: str, local: Path) -> None:
+    """Fetch the published outputs, including every novel-view image and video."""
+    from npa.clients.storage import safe_s3_download_target
+    from npa.workflows.data_factory_viz import IMAGE_SUFFIXES
+
+    keys = [
+        root + relative
+        for relative in (
+            "reconstruction/last.usdz",
+            "reconstruction/metrics.yaml",
+            "reconstruction/parsed.yaml",
+            "reports/sim2real.rrd",
+            "reports/final.json",
+            "source/attribution.json",
+            "ncore/sequence/conversion.json",
+            "ncore/sequence/npa-rig.json",
+        )
+    ]
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix=root + "novel_views/"
+    ):
+        keys.extend(
+            item["Key"]
+            for item in page.get("Contents", [])
+            if Path(item["Key"]).suffix.lower() in IMAGE_SUFFIXES | {".mp4"}
+        )
+    for key in keys:
+        target = safe_s3_download_target(local, key, root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        client.download_file(bucket, key, str(target))
+        assert target.stat().st_size > 0, "empty NuRec proof artifact"
+
+
+def _assert_nurec_usdz(path: Path) -> None:
+    """Check package bytes and reopen the USD stage without requiring NRE/GPU."""
+    import zipfile
+
+    try:
+        from pxr import Usd
+    except ImportError:
+        pytest.fail(
+            "NuRec live output readback requires usd-core in the test environment"
+        )
+    with zipfile.ZipFile(path) as package:
+        members = package.infolist()
+        assert members, "USDZ has no members"
+        assert package.testzip() is None, "USDZ member CRC differs"
+        assert Path(members[0].filename).suffix.lower() in {".usd", ".usda", ".usdc"}
+        assert all(m.compress_type == zipfile.ZIP_STORED for m in members), (
+            "compressed USDZ"
+        )
+        assert members[0].file_size > 0, "empty USD root layer"
+    stage = Usd.Stage.Open(str(path))
+    assert stage, "USDZ root layer cannot be opened"
+    assert any(stage.Traverse()), "USDZ has no scene prims"
+
+
+def _assert_nurec_quality_metrics(path: Path) -> dict[str, float]:
+    """Require finite validation measurements using NRE's actual YAML formats."""
+    import math
+
+    import yaml
+
+    from npa.workbench.nurec.nurec import parse_metrics_yaml
+
+    assert isinstance(yaml.safe_load(path.read_text()), dict), (
+        "invalid NRE metrics document"
+    )
+    metrics = parse_metrics_yaml(path)
+    required = {
+        name: metrics.get(name) for name in ("test/psnr", "test/ssim", "test/lpips")
+    }
+    assert all(
+        value is not None and math.isfinite(value) for value in required.values()
+    ), "NRE quality metrics are missing or nonfinite"
+    assert required["test/psnr"] > 0, "NRE PSNR must be positive"
+    assert 0 < required["test/ssim"] <= 1, "NRE SSIM is outside its meaningful range"
+    assert required["test/lpips"] >= 0, "NRE LPIPS is negative"
+    return required
+
+
+def _assert_nurec_novel_media(local: Path) -> dict[str, set[int]]:
+    """Fully decode every published novel-view frame and video."""
+    import av
+    from PIL import Image
+
+    from npa.workflows.data_factory_viz import _frame_index, _grouped_images
+
+    groups = _grouped_images(local / "novel_views")
+    assert groups, "NuRec published no novel-view image frames"
+    for paths in groups.values():
+        for path in paths:
+            with Image.open(path) as image:
+                image.load()
+                assert min(image.size) > 0, "empty novel-view image"
+    for path in sorted((local / "novel_views").rglob("*.mp4")):
+        count = 0
+        with av.open(str(path)) as video:
+            assert video.streams.video, "novel-view MP4 has no video stream"
+            for frame in video.decode(video=0):
+                pixels = frame.to_ndarray(format="rgb24")
+                assert pixels.size > 0, "empty novel-view video frame"
+                count += 1
+        assert count > 0, "novel-view MP4 has no decoded frames"
+    return {
+        name: {_frame_index(path.stem) for path in paths}
+        for name, paths in groups.items()
+    }
+
+
+def _nurec_rrd_document(chunks: list, entity: str) -> dict:
+    texts = []
+    for chunk in chunks:
+        if str(chunk.entity_path) != entity:
+            continue
+        batch = chunk.to_record_batch()
+        if "TextDocument:text" in batch.schema.names:
+            texts.extend(
+                row[0] for row in batch.column("TextDocument:text").to_pylist() if row
+            )
+    assert len(texts) == 1, "RRD lacks a unique required provenance/metrics document"
+    match = re.search(r"```json\s*\n(.*?)\n```", texts[0], re.DOTALL)
+    assert match, "RRD document has no JSON payload"
+    return json.loads(match.group(1))
+
+
+def _assert_nurec_rrd_lineage(local: Path, chunks: list) -> None:
+    import hashlib
+
+    for entity, relative, required in (
+        ("source", "source/attribution.json", {"revision", "sha256", "license"}),
+        (
+            "conversion",
+            "ncore/sequence/conversion.json",
+            {"engine", "counts", "source", "converter"},
+        ),
+        (
+            "rig",
+            "ncore/sequence/npa-rig.json",
+            {"reference_camera", "pose_count", "poses_component_group"},
+        ),
+    ):
+        path = local / relative
+        source = json.loads(path.read_text())
+        decoded = _nurec_rrd_document(chunks, f"/provenance/{entity}")
+        assert required <= decoded.keys(), (
+            "RRD lineage document omits required capture facts"
+        )
+        assert (
+            decoded["artifact_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        ), "RRD lineage is not bound to this run's source artifact bytes"
+        for key, value in decoded.items():
+            if key == "artifact_sha256":
+                continue
+            if isinstance(value, dict):
+                assert all(source[key][name] == item for name, item in value.items())
+            else:
+                assert source[key] == value, "RRD lineage differs from source artifact"
+    assert {"/pipeline/1_ncore", "/pipeline/3_novel_views"} <= {
+        str(chunk.entity_path) for chunk in chunks
+    }, "RRD lacks the capture/render summaries"
+
+
+def _nurec_rrd_review_settings(chunks: list) -> dict:
+    """Read the producer's effective settings without using the reader's env."""
+    settings = _nurec_rrd_document(chunks, "/provenance/rrd_review")
+    assert isinstance(settings, dict), "invalid RRD review settings"
+    assert settings.get("schema") == "npa.nurec.rrd-review.v1", (
+        "unsupported RRD review settings schema"
+    )
+    for name in ("max_frames_per_entity", "max_frame_dim", "jpeg_quality"):
+        assert type(settings.get(name)) is int, "invalid RRD review setting"
+    return settings
+
+
+def _nurec_selected_frame_identities(
+    local: Path, settings: dict
+) -> set[tuple[str, int]]:
+    """Derive the intended review identities from ordered source render paths."""
+    from npa.workflows.data_factory_viz import _frame_index, _grouped_images, _subsample
+
+    selected = set()
+    for camera, paths in _grouped_images(local / "novel_views").items():
+        for path in _subsample(paths, settings["max_frames_per_entity"]):
+            selected.add((camera, _frame_index(path.stem)))
+    return selected
+
+
+def _nurec_review_image_bytes(
+    local: Path, settings: dict
+) -> dict[tuple[str, int], bytes]:
+    """Independently derive this workflow's JPEG review bytes from its renders."""
+    import io
+
+    from PIL import Image
+
+    from npa.workflows.data_factory_viz import _frame_index, _grouped_images
+
+    images = {}
+    max_dim = settings["max_frame_dim"]
+    for camera, paths in _grouped_images(local / "novel_views").items():
+        for path in paths:
+            key = (camera, _frame_index(path.stem))
+            assert key not in images, "duplicate rendered camera/frame identity"
+            with Image.open(path) as source:
+                rgb = source.convert("RGB")
+                if max_dim > 0 and max(rgb.size) > max_dim:
+                    rgb.thumbnail((max_dim, max_dim))
+                encoded = io.BytesIO()
+                rgb.save(encoded, format="JPEG", quality=settings["jpeg_quality"])
+            images[key] = encoded.getvalue()
+    return images
+
+
+def _nurec_rrd_frame_rows(chunks: list) -> Iterable[tuple[str, int, bytes]]:
+    """Decode each image row without collapsing repeated camera/frame identities."""
+    for chunk in chunks:
+        entity = str(chunk.entity_path)
+        if not entity.startswith("/novel_view/"):
+            continue
+        camera = entity.removeprefix("/novel_view/")
+        batch = chunk.to_record_batch()
+        assert "EncodedImage:blob" in batch.schema.names, (
+            "RRD novel view has no image data"
+        )
+        assert "frame" in batch.schema.names, "RRD novel view has no frame timeline"
+        for row, index in zip(
+            batch.column("EncodedImage:blob").to_pylist(),
+            batch.column("frame").to_pylist(),
+            strict=True,
+        ):
+            assert row and len(row) == 1, "RRD frame requires exactly one image"
+            yield camera, index, bytes(row[0])
+
+
+def _assert_nurec_rrd_frames(
+    local: Path, chunks: list, expected: dict[str, set[int]]
+) -> None:
+    """Require every selected source image exactly once with matching JPEG bytes."""
+    import io
+
+    from PIL import Image
+
+    settings = _nurec_rrd_review_settings(chunks)
+    selected = _nurec_selected_frame_identities(local, settings)
+    source_images = _nurec_review_image_bytes(local, settings)
+    observed = set()
+    for camera, index, encoded in _nurec_rrd_frame_rows(chunks):
+        identity = (camera, index)
+        assert index in expected.get(camera, set()), "RRD frame absent from source"
+        assert identity not in observed, "duplicate RRD camera/frame identity"
+        assert encoded == source_images[identity], (
+            "RRD image bytes differ from this run's rendered frame"
+        )
+        with Image.open(io.BytesIO(encoded)) as image:
+            image.load()
+            assert min(image.size) > 0
+        observed.add(identity)
+    assert observed == selected, (
+        "RRD camera/frame identities differ from the selected rendered frames"
+    )
+
+
+def _assert_nurec_rrd(
+    local: Path, recording_id: str, frames: dict[str, set[int]]
+) -> None:
+    import subprocess
+    import sys
+
+    import yaml
+    from npa.viz.recordings import load_recording
+
+    path = local / "reports/sim2real.rrd"
+    verified = subprocess.run(
+        [str(Path(sys.executable).with_name("rerun")), "rrd", "verify", str(path)],
+        capture_output=True,
+        check=False,
+    )
+    assert verified.returncode == 0, "Rerun rejected the published recording"
+    recording = load_recording(path)
+    assert recording.application_id() == "neural-reconstruction", (
+        "wrong RRD application"
+    )
+    assert recording.recording_id() == recording_id, "wrong RRD run identity"
+    chunks = list(recording.chunks())
+    _assert_nurec_rrd_lineage(local, chunks)
+    _assert_nurec_rrd_frames(local, chunks, frames)
+    assert _nurec_rrd_document(chunks, "/gaussians/summary") == yaml.safe_load(
+        (local / "reconstruction/metrics.yaml").read_text()
+    ), "RRD Gaussian metrics differ from the published NRE metrics"
+
+
+def _assert_nurec_downstream_proof(local: Path, *, recording_id: str) -> None:
+    import yaml
+
+    attribution = json.loads((local / "source/attribution.json").read_text())
+    assert attribution["revision"] == NUREC_COLMAP_REVISION
+    assert attribution["sha256"] == NUREC_COLMAP_SHA256
+    assert attribution["license"] == "CC-BY-4.0"
+    final = json.loads((local / "reports/final.json").read_text())
+    assert final["has_usdz"] and final["has_novel_views"] and final["has_rrd"]
+    _assert_nurec_usdz(local / "reconstruction/last.usdz")
+    _assert_nurec_quality_metrics(local / "reconstruction/metrics.yaml")
+    recipe = yaml.safe_load((local / "reconstruction/parsed.yaml").read_text())
+    assert isinstance(recipe, dict) and recipe.get("dataset"), (
+        "missing resolved NRE dataset recipe"
+    )
+    frames = _assert_nurec_novel_media(local)
+    _assert_nurec_rrd(local, recording_id, frames)
+
+
+def _assert_nurec_conversion_report(report: dict) -> None:
+    """Keep the full source-count and immutable converter checks independent."""
+    assert report["status"] == "ok"
+    assert report["engine"] == "nvidia-ncore-colmap"
+    assert report["converter"]["revision"] == "59c698d206da92b406a4f72619fce3b3a2c64bfd"
+    assert report["source"]["archive_sha256"] == NUREC_COLMAP_SHA256
+    assert report["options"]["dataset_root"] == "struktur28"
+    assert report["poses_component_group"] == "npa_rig"
+    assert report["counts"] == report["source"]["counts"]
+    counts = report["counts"]
+    assert counts["images"] == counts["poses"] == 518
+    assert counts["cameras"] == 3
+    assert counts["points"] > 0
+    assert counts["points"] + report["source"]["origin_points_filtered"] == 163453
+
+
+def _assert_nurec_conversion_members(
+    client: Any, bucket: str, sequence: str, report: dict, meta: dict
+) -> None:
+    """Hash every declared sequence member after publication."""
+    import hashlib
+
+    members = {item["path"]: item for item in report["members"]}
+    assert len(members) == len(report["members"]), "duplicate provenance members"
+    required = {"sequence.json", "npa-rig.json"}
+    required.update(store["path"] for store in meta["component_stores"])
+    assert required <= members.keys(), "incomplete sequence provenance"
+    for name, item in members.items():
+        assert name not in {"", ".", ".."} and "/" not in name and "\\" not in name
+        digest = hashlib.sha256()
+        size = 0
+        with client.get_object(Bucket=bucket, Key=sequence + name)["Body"] as body:
+            for chunk in iter(lambda: body.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+                size += len(chunk)
+        assert size == item["bytes"], "published sequence member size differs"
+        assert digest.hexdigest() == item["sha256"], (
+            "published sequence member hash differs"
+        )
+
+
+def assert_nurec_colmap_live_outputs(
+    *, bucket: str, run_id: str, e2e_project: str | None = None
+) -> None:
+    """Read back conversion and independently decode the downstream artifacts.
+
+    Args:
+        bucket: Private run artifact bucket.
+        run_id: Live matrix run identifier.
+        e2e_project: Optional credential scope.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: Artifact bytes or decoded evidence are incomplete/invalid.
+    """
+    import tempfile
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    root = f"{_live_s3_root(run_id)}/nurec-colmap-reconstruct/"
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    sequence = f"{root}ncore/sequence/"
+    report = _nurec_s3_json(client, bucket, sequence + "conversion.json")
+    _assert_nurec_conversion_report(report)
+    meta = _nurec_s3_json(client, bucket, sequence + "sequence.json")
+    assert meta["version"] == "v4"
+    _assert_nurec_conversion_members(client, bucket, sequence, report, meta)
+    with tempfile.TemporaryDirectory(prefix="npa-colmap-readback-") as directory:
+        local = Path(directory)
+        _download_nurec_proof(client, bucket, root, local)
+        _assert_nurec_downstream_proof(
+            local, recording_id=root.rstrip("/").split("/")[-1]
+        )
+
+
 def materialize_live_spec(
     tmp_path: Path,
     name: str,
@@ -899,11 +1801,23 @@ def materialize_live_spec(
     bucket: str,
     run_id: str,
 ) -> Path:
-    """Copy a golden spec with the live bucket and a unique e2e prefix."""
+    """Copy a golden spec with the live bucket and chosen E2E root."""
 
+    marker = _live_s3_root(run_id)
     text = resolve_spec_path(name).read_text(encoding="utf-8")
+    if name == "nurec-colmap-reconstruct.yaml":
+        # This case proves CPU conversion followed by RTX reconstruction. Generic
+        # rotation overrides must not quietly turn it into a different workload.
+        for variable in (
+            "NPA_E2E_FORCE_ACCELERATORS",
+            "NPA_E2E_ACCELERATOR_REMAP",
+            "NPA_WORKFLOW_GPU_ACCELERATOR",
+        ):
+            if os.environ.get(variable, "").strip():
+                pytest.fail(
+                    f"unset {variable} for the explicit CPU/RTX COLMAP workflow"
+                )
     text = text.replace("bucket: example-bucket", f"bucket: {bucket}")
-    marker = f"npa-workflow-e2e/{run_id}"
     # Keep per-spec prefix tokens but anchor runs under a shared e2e root.
     text = re.sub(
         r'(prefix:\s*")([^"]*)(")',
@@ -911,6 +1825,86 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    paidf_stem = name.replace(".yaml", "")
+    if name in {
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
+    }:
+        text = re.sub(
+            r'input_uri:\s*"[^"]+"',
+            f'input_uri: "s3://{bucket}/{marker}/{paidf_stem}/fixture/"',
+            text,
+            count=1,
+        )
+        image_variable = (
+            "NPA_E2E_PAIDF_IAA_IMAGE"
+            if "attribute" in name
+            else "NPA_E2E_PAIDF_EVG_IMAGE"
+        )
+        generation_image = os.environ.get(image_variable, "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", generation_image):
+            pytest.fail(
+                f"{image_variable} must name the scanned operator-built "
+                "generation compatibility image by exact digest"
+            )
+        text = re.sub(
+            r'generation_image:\s*"[^"]+"',
+            f'generation_image: "{generation_image}"',
+            text,
+            count=1,
+        )
+        labeling_images = {
+            "attribute_search_image": "NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE",
+        }
+        if name == "paidf-event-video-generation.yaml":
+            labeling_images.update(
+                detection_image="NPA_E2E_PAIDF_DETECTION_IMAGE",
+                captioning_image="NPA_E2E_PAIDF_CAPTIONING_IMAGE",
+                visual_qa_image="NPA_E2E_PAIDF_VISUAL_QA_IMAGE",
+            )
+        for config_key, environment_key in labeling_images.items():
+            image = os.environ.get(environment_key, "").strip()
+            if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+                pytest.fail(
+                    f"{environment_key} must name the scanned operator-built "
+                    "labeling compatibility image by exact digest"
+                )
+            text = re.sub(
+                rf'{config_key}:\s*"[^"]+"',
+                f'{config_key}: "{image}"',
+                text,
+                count=1,
+            )
+    elif name == "paidf-defect-image-generation.yaml":
+        text = re.sub(
+            r'dataset_uri:\s*"[^"]+"',
+            f'dataset_uri: "s3://{bucket}/{marker}/{paidf_stem}/fixture/dataset/"',
+            text,
+            count=1,
+        )
+        text = text.replace("usecase: pcb", "usecase: metal_surface", 1)
+        anomalygen_image = os.environ.get("NPA_E2E_PAIDF_ANOMALYGEN_IMAGE", "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", anomalygen_image):
+            pytest.fail(
+                "NPA_E2E_PAIDF_ANOMALYGEN_IMAGE must name the operator-built "
+                "restricted compatibility image by exact digest"
+            )
+        text = re.sub(
+            r'anomalygen_image:\s*"[^"]+"',
+            f'anomalygen_image: "{anomalygen_image}"',
+            text,
+            count=1,
+        )
+    if name == "isaac-arena-evaluation-rtxpro.yaml":
+        text = re.sub(
+            r'(input_uri:\s*")[^"]*(")',
+            lambda match: (
+                f"{match.group(1)}s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/"
+                f"input/gr1-open-microwave.hdf5{match.group(2)}"
+            ),
+            text,
+            count=1,
+        )
     # Optional bdd100k smoke knobs: synthesize rows so the pipeline runs without
     # a real BDD100K dataset, and shrink training epochs to keep the live run
     # bounded. Both are pure config toggles (synthetic_rows=0 -> real source).

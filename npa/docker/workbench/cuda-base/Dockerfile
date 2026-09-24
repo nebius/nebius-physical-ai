@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir \
     "lancedb==0.30.2" \
     "pyarrow==23.0.1" \
     "pydantic==2.13.4" \
-    "pillow==12.2.0" \
+    "pillow==12.3.0" \
     "boto3==1.42.9" \
     "numpy==2.4.6"
 

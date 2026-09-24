@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+from contextlib import redirect_stdout
+import sys
 
 import typer
+from npa.cli.path_contract import validate_read_path, validate_write_path
 
 from npa.workbench.alpamayo2_super.runtime import (
     DEFAULT_DATASET_REVISION,
@@ -21,6 +24,53 @@ app = typer.Typer(
     help="NVIDIA Alpamayo 2 Super trajectory-inference workbench.",
     no_args_is_help=True,
 )
+
+
+@app.command("sweep")
+def sweep_cmd(
+    output_path: str = typer.Option(..., "--output-path"),
+    run_id: str = typer.Option(..., "--run-id"),
+    sample_indices: str = typer.Option("0,1", "--sample-indices"),
+    seeds: str = typer.Option("42,43", "--seeds"),
+    diffusion_steps: str = typer.Option("10,20", "--diffusion-steps"),
+    workers: int = typer.Option(1, "--workers", min=1),
+    input_path: str = typer.Option("", "--input-path"),
+    minimum_ade: float = typer.Option(2.0, "--minimum-ade", min=0),
+) -> None:
+    """Sweep scenarios with Ray; optionally refine a baseline report's hard cases.
+
+    Args:
+        output_path: S3 report destination.
+        run_id: Experiment identity.
+        sample_indices: Comma-separated manifest indices for a baseline.
+        seeds: Comma-separated seeds; refinement inherits baseline seeds.
+        diffusion_steps: Comma-separated integration-step counts.
+        workers: GPU actor count on this allocated node.
+        input_path: Optional S3 baseline report.json.
+        minimum_ade: Refine baseline scenarios above this mean ADE in meters.
+    Returns:
+        None; writes a JSON report to stdout.
+    Raises:
+        typer.Exit: Input validation or inference fails.
+    """
+    _sweep_command(locals())
+
+
+def _sweep_command(values: dict) -> None:
+    from npa.workbench.alpamayo2_super.ray_sweep import AlpamayoSweepRequest, run_sweep
+
+    try:
+        validate_write_path(values["output_path"], tool="alpamayo2-super")
+        if values["input_path"]:
+            validate_read_path(values["input_path"], tool="alpamayo2-super")
+        for name in ("sample_indices", "seeds", "diffusion_steps"):
+            values[name] = [int(value.strip()) for value in values[name].split(",")]
+        with redirect_stdout(sys.stderr):
+            result = run_sweep(AlpamayoSweepRequest(**values))
+    except (ValueError, Alpamayo2SuperError) as exc:
+        typer.echo(f"Alpamayo sweep failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
 
 
 @app.command("infer")

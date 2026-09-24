@@ -10,6 +10,14 @@ Cosmos3 omni-model generation and reasoning workflow contracts.
 Options
 --help  Show this message and exit.
 Commands
+policy-train  Run native LIBERO-10 action-policy SFT and publish its complete DCP.
+policy-eval  Measure the trained policy in native LIBERO closed-loop simulation.
+policy-feedback  Qualify complete evaluation evidence and derive failed-task video targets.
+failure-candidates  Generate guarded video candidates from measured failed-task feedback.
+nano-video-augment  Augment every source interval with Cosmos3-Nano structural edge control.
+nano-video-augment-recover  Recover existing generation or retry publication without generating again.
+nano-video-batch  Run measured chunked video requests through the Nano vLLM-Omni Ray service.
+super-benchmark  Run a fixed Cosmos3-Super node benchmark or single-GPU validation.
 ray-batch  Submit a durable SDG batch through Cosmos Framework's native Ray Serve path.
 ray-health  Check authenticated model readiness, not merely process liveness.
 ray-serve  Launch the persistent native Ray Serve model inside its GPU image.
@@ -31,6 +39,14 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 | Command | Description |
 | --- | --- |
+| `policy-train` | Run native LIBERO-10 action-policy SFT and publish its complete DCP. |
+| `policy-eval` | Measure the trained policy in native LIBERO closed-loop simulation. |
+| `policy-feedback` | Qualify complete evaluation evidence and derive failed-task video targets. |
+| `failure-candidates` | Generate guarded video candidates from measured failed-task feedback. |
+| `nano-video-augment` | Augment every source interval with Cosmos3-Nano structural edge control. |
+| `nano-video-augment-recover` | Recover existing generation or retry publication without generating again. |
+| `nano-video-batch` | Run measured chunked video requests through the Nano vLLM-Omni Ray service. |
+| `super-benchmark` | Run a fixed Cosmos3-Super node benchmark or single-GPU validation. |
 | `ray-batch` | Submit a durable SDG batch through Cosmos Framework's native Ray Serve path. |
 | `ray-health` | Check authenticated model readiness, not merely process liveness. |
 | `ray-serve` | Launch the persistent native Ray Serve model inside its GPU image. |
@@ -45,7 +61,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 ```bash
 npa workbench cosmos3 --help
-npa workbench cosmos3 ray-batch --help
+npa workbench cosmos3 policy-train --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos3`.

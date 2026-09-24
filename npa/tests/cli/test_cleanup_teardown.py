@@ -34,6 +34,108 @@ def _completed(
 # ── npa storage bucket delete ────────────────────────────────────────────────
 
 
+def _scoped_credentials_document(
+    *,
+    project_id: str = "project-a",
+    storage: dict | None = None,
+    storage_iam: dict | None = None,
+    extra_projects: dict | None = None,
+    include_top_level_storage: bool = True,
+    include_top_level_storage_iam: bool = False,
+) -> dict:
+    """Build a `project_credentials`-scoped credentials.yaml fixture body.
+
+    Shared by the scoped-record retirement regressions below so each test
+    states only the fields it actually varies.
+    """
+    record: dict = {"project_id": project_id, "storage_selected": True}
+    if storage is not None:
+        record["storage"] = storage
+    if storage_iam is not None:
+        record["storage_iam"] = storage_iam
+    document: dict = {
+        "project_credentials": {
+            "schema_version": "npa.project-credentials.v2",
+            "current_project_id": project_id,
+            "projects": {project_id: record, **(extra_projects or {})},
+        }
+    }
+    if include_top_level_storage and storage is not None:
+        document["storage"] = storage
+    if include_top_level_storage_iam and storage_iam is not None:
+        document["storage_iam"] = storage_iam
+    return document
+
+
+def _write_credentials(path: Path, document: dict) -> None:
+    path.write_text(yaml.safe_dump(document))
+    path.chmod(0o600)
+
+
+def _mock_bucket_provider(monkeypatch, *, bucket_id: str = "bucket-a", delete=None):
+    """Stub the two Nebius calls `storage bucket delete` needs to run."""
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        nebius_module,
+        "get_bucket_by_name",
+        lambda project_id, name: {"metadata": {"id": bucket_id, "name": name}},
+    )
+    monkeypatch.setattr(
+        nebius_module, "delete_bucket", delete or (lambda bucket_id, *, ttl="": None)
+    )
+
+
+def _invoke_bucket_delete(name: str, *, project_id: str = "project-a", extra=()):
+    return runner.invoke(
+        app,
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            name,
+            "--project-id",
+            project_id,
+            "--yes",
+            *extra,
+        ],
+    )
+
+
+def _write_config_alias(
+    path: Path, *, alias: str = "alias-a", project_id: str = "project-a"
+) -> None:
+    path.write_text(yaml.safe_dump({"projects": {alias: {"project_id": project_id}}}))
+
+
+@pytest.fixture
+def scoped_bucket_credentials(monkeypatch, tmp_path: Path) -> Path:
+    """Configure one scoped bucket with IAM evidence and a mocked provider."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    path = tmp_path / "credentials.yaml"
+    document = _scoped_credentials_document(
+        storage={
+            "bucket": "s3://npa-bucket-a/",
+            "aws_access_key_id": "AKA",
+            "aws_secret_access_key": "SKA",
+        },
+        storage_iam={
+            "service_account_id": "serviceaccount-storage",
+            "service_account_managed_by": "npa",
+        },
+    )
+    _write_credentials(path, document)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
+    config_path = tmp_path / "config.yaml"
+    _write_config_alias(config_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    _mock_bucket_provider(monkeypatch)
+    return path
+
+
 def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -97,6 +199,281 @@ def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
     # Unrelated secrets are untouched.
     assert saved["tokens"]["HF_TOKEN"] == "hf_keep"
     assert creds_path.stat().st_mode & 0o077 == 0
+
+
+def test_bucket_delete_retires_the_scoped_project_credential_record(
+    scoped_bucket_credentials: Path,
+) -> None:
+    """Project selection must not recreate a deleted bucket's credentials."""
+    from npa.clients.config import resolve_project_storage
+    from npa.clients.project_credential_store import (
+        project_credential_record,
+        select_project_credentials,
+    )
+
+    result = _invoke_bucket_delete("npa-bucket-a")
+
+    assert result.exit_code == 0, result.output
+    record = project_credential_record("project-a", path=scoped_bucket_credentials)
+    assert "storage" not in record
+    assert record["storage_iam"]["service_account_id"] == "serviceaccount-storage"
+    select_project_credentials(
+        "project-a", path=scoped_bucket_credentials, select_storage=True
+    )
+    saved = yaml.safe_load(scoped_bucket_credentials.read_text())
+    assert "storage" not in saved
+    resolved = resolve_project_storage("alias-a", include_shared_credentials=False)
+    assert resolved.checkpoint_bucket == ""
+
+
+def test_bucket_delete_leaves_a_sibling_projects_scoped_storage_untouched(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import credentials as credentials_module
+    from npa.clients.project_credential_store import project_credential_record
+
+    creds_path = tmp_path / "credentials.yaml"
+    sibling = {
+        "project_id": "project-b",
+        "storage_selected": True,
+        "storage": {
+            "bucket": "s3://npa-bucket-b/",
+            "aws_access_key_id": "AKB",
+            "aws_secret_access_key": "SKB",
+        },
+    }
+    _write_credentials(
+        creds_path,
+        _scoped_credentials_document(
+            storage={
+                "bucket": "s3://npa-bucket-a/",
+                "aws_access_key_id": "AKA",
+                "aws_secret_access_key": "SKA",
+            },
+            extra_projects={"project-b": sibling},
+            include_top_level_storage=False,
+        ),
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    _mock_bucket_provider(monkeypatch)
+
+    result = _invoke_bucket_delete("npa-bucket-a")
+
+    assert result.exit_code == 0, result.output
+    saved_sibling = project_credential_record("project-b", path=creds_path)
+    assert saved_sibling["storage"]["bucket"] == "s3://npa-bucket-b/"
+    assert saved_sibling["storage"]["aws_access_key_id"] == "AKB"
+
+
+def test_bucket_delete_failure_preserves_the_scoped_storage_record(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A rejected delete must leave both the top-level and scoped record intact."""
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+    from npa.clients.project_credential_store import project_credential_record
+
+    creds_path = tmp_path / "credentials.yaml"
+    _write_credentials(
+        creds_path,
+        _scoped_credentials_document(
+            storage={
+                "bucket": "s3://npa-bucket-a/",
+                "aws_access_key_id": "AKA",
+                "aws_secret_access_key": "SKA",
+            }
+        ),
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+
+    def _reject(bucket_id, *, ttl=""):
+        raise nebius_module.NebiusError("PermissionDenied")
+
+    _mock_bucket_provider(monkeypatch, delete=_reject)
+
+    result = _invoke_bucket_delete("npa-bucket-a")
+
+    assert result.exit_code != 0
+    record = project_credential_record("project-a", path=creds_path)
+    assert record["storage"]["bucket"] == "s3://npa-bucket-a/"
+    saved = yaml.safe_load(creds_path.read_text())
+    assert saved["storage"]["bucket"] == "s3://npa-bucket-a/"
+
+
+def test_bucket_delete_reports_a_malformed_credential_store_without_a_traceback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A malformed `project_credentials` schema must fail closed, not crash.
+
+    It must surface the existing actionable partial-cleanup message (exit 2),
+    never an unhandled `ProjectCredentialStoreError` traceback, and never
+    touch the on-disk file.
+    """
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    _write_credentials(
+        creds_path,
+        {
+            "project_credentials": {
+                "schema_version": "npa.project-credentials.v99",
+                "projects": {},
+            },
+            "storage": {"bucket": "s3://npa-bucket-a/", "aws_access_key_id": "AKA"},
+        },
+    )
+    original_bytes = creds_path.read_bytes()
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    _mock_bucket_provider(monkeypatch)
+
+    result = _invoke_bucket_delete("npa-bucket-a")
+
+    assert result.exit_code == 2, result.output
+    assert "Partial cleanup" in result.output
+    assert "Traceback" not in result.output
+    assert creds_path.read_bytes() == original_bytes
+
+
+def test_bucket_delete_retires_the_scoped_terraform_state_record(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Terraform resolution must not restore a deleted bucket’s backend keys."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients.config import resolve_terraform_state
+    from npa.clients.project_credential_store import project_credential_record
+
+    creds_path = tmp_path / "credentials.yaml"
+    document = _scoped_credentials_document(
+        storage={
+            "bucket": "s3://npa-bucket-tf/",
+            "aws_access_key_id": "AKA",
+            "aws_secret_access_key": "SKA",
+        },
+    )
+    document["project_credentials"]["projects"]["project-a"]["terraform_state"] = {
+        "bucket": "s3://npa-bucket-tf/",
+        "access_key": "TFAK",
+        "secret_key": "TFSK",
+    }
+    _write_credentials(creds_path, document)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    config_path = tmp_path / "config.yaml"
+    _write_config_alias(config_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    _mock_bucket_provider(monkeypatch, bucket_id="bucket-tf")
+
+    result = _invoke_bucket_delete("npa-bucket-tf")
+
+    assert result.exit_code == 0, result.output
+    record = project_credential_record("project-a", path=creds_path)
+    assert "terraform_state" not in record
+    resolved = resolve_terraform_state("alias-a")
+    assert resolved.bucket == ""
+    assert resolved.access_key == ""
+
+
+def test_bucket_delete_wait_timeout_preserves_the_scoped_storage_record(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A `--wait` that times out without provider-verified absence must not prune."""
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+    from npa.clients.project_credential_store import project_credential_record
+
+    creds_path = tmp_path / "credentials.yaml"
+    _write_credentials(
+        creds_path,
+        _scoped_credentials_document(
+            storage={
+                "bucket": "s3://npa-bucket-a/",
+                "aws_access_key_id": "AKA",
+                "aws_secret_access_key": "SKA",
+            },
+            include_top_level_storage=False,
+        ),
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    _mock_bucket_provider(monkeypatch)
+    monkeypatch.setattr(
+        storage_cli, "_wait_for_bucket_gone", lambda *args, **kwargs: False
+    )
+
+    result = _invoke_bucket_delete("npa-bucket-a", extra=("--wait",))
+
+    assert result.exit_code == 2, result.output
+    record = project_credential_record("project-a", path=creds_path)
+    assert record["storage"]["bucket"] == "s3://npa-bucket-a/"
+
+
+def test_service_account_delete_retires_the_scoped_iam_record_too(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Project selection must not restore a deleted account’s IAM record."""
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+    from npa.clients.project_credential_store import (
+        project_credential_record,
+        select_project_credentials,
+    )
+
+    creds_path = tmp_path / "credentials.yaml"
+    storage_iam = {
+        "service_account_id": "serviceaccount-storage",
+        "service_account_managed_by": "npa",
+        "generations": [
+            {"service_account_id": "serviceaccount-storage", "ownership": "npa"}
+        ],
+    }
+    _write_credentials(
+        creds_path,
+        _scoped_credentials_document(
+            storage_iam=storage_iam,
+            include_top_level_storage_iam=True,
+        ),
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+
+    assert storage_cli._remove_storage_service_account_record("serviceaccount-storage")
+    record = project_credential_record("project-a", path=creds_path)
+    assert "storage_iam" not in record
+
+    select_project_credentials("project-a", path=creds_path, select_storage=True)
+    saved = yaml.safe_load(creds_path.read_text())
+    assert "storage_iam" not in saved
+
+
+def test_bucket_prune_survives_a_concurrent_unrelated_project_write(
+    scoped_bucket_credentials: Path,
+) -> None:
+    """The shared credential lock must preserve an unrelated racing write."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from npa.cli import storage as storage_cli
+    from npa.clients.project_credential_store import (
+        project_credential_record,
+        write_project_credentials,
+    )
+
+    def prune() -> None:
+        storage_cli._prune_storage_credentials("npa-bucket-a", "project-a")
+
+    def write_unrelated() -> None:
+        write_project_credentials(
+            "project-b",
+            {"storage": {"bucket": "s3://npa-bucket-b/", "access_key": "AKB"}},
+            path=scoped_bucket_credentials,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(prune), pool.submit(write_unrelated)]
+        for future in futures:
+            future.result()
+
+    retired = project_credential_record("project-a", path=scoped_bucket_credentials)
+    assert "storage" not in retired
+    unrelated = project_credential_record("project-b", path=scoped_bucket_credentials)
+    assert unrelated["storage"]["bucket"] == "s3://npa-bucket-b/"
 
 
 def test_bucket_delete_wait_polls_until_the_bucket_is_gone(
@@ -770,9 +1147,28 @@ def _iam_stubs(
             for key in keys
         ],
     )
-    monkeypatch.setattr(
-        nebius_module, "_run_json", lambda *args, **kwargs: {"items": []}
-    )
+
+    def provider_query(args, **kwargs):
+        if args[:3] == ["compute", "instance", "list"]:
+            return {"items": []}
+        if args[:3] == ["iam", "project", "get"]:
+            return {"metadata": {"id": "project-a", "parent_id": "tenant-test"}}
+        if args[:3] == ["iam", "service-account", "get"]:
+            if args[-1] in deleted:
+                raise nebius_module.NebiusError("NotFound")
+            return {
+                "metadata": {"id": sa_id, "parent_id": "project-a", "name": "npa-agent"}
+            }
+        raise AssertionError("unexpected provider call")
+
+    monkeypatch.setattr(nebius_module, "_run_json", provider_query)
+
+    def key_scalar(key_id, *args, **kwargs):
+        if key_id in deleted:
+            raise nebius_module.NebiusError("NotFound")
+        return key_id
+
+    monkeypatch.setattr(nebius_module, "_access_key_metadata_scalar", key_scalar)
     monkeypatch.setattr(
         nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
     )
@@ -854,7 +1250,11 @@ def test_agent_iam_purge_protects_same_project_peer_missing_from_local_config(
         lambda *args, **kwargs: {
             "items": [
                 {
-                    "metadata": {"id": "instance-peer", "name": "agent-peer"},
+                    "metadata": {
+                        "id": "instance-peer",
+                        "name": "agent-peer",
+                        "parent_id": "project-a",
+                    },
                     "spec": {
                         "account": {"service_account": {"id": "serviceaccount-agent"}}
                     },
@@ -910,7 +1310,16 @@ def test_agent_iam_schema_invalid_inventory_uses_exact_terminal_graph_receipt(
     deleted = _iam_stubs(monkeypatch)
     monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
-    monkeypatch.setattr(nebius_module, "_run_json", lambda *_a, **_k: {"items": {}})
+    provider_query = nebius_module._run_json
+    monkeypatch.setattr(
+        nebius_module,
+        "_run_json",
+        lambda args, **kwargs: (
+            {"items": {}}
+            if args[:3] == ["compute", "instance", "list"]
+            else provider_query(args, **kwargs)
+        ),
+    )
     record_teardown_event(
         phase="agent",
         resource="agent",

@@ -1,14 +1,24 @@
-# Tear it all down
+# Tear down owned resources
 
-Stopping spend is an **ordered sequence**, and skipping a step leaves a hung
-job, a credential, or a cache behind:
+[Docs](README.md)
 
-> cancel managed jobs → destroy the agent → remove the shared controller →
-> destroy the cluster → delete the bucket → remove NPA-owned storage IAM →
-> drop the project entry → clear local state
+Preview the cleanup plan for the project you intend to retire:
 
-`npa cleanup` prints a report plus the exact runbook for your machine. Start
-there if you are not sure what is still running.
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The preview is read-only. Review its targets before adding `--yes`; the combined
+command retains the Nebius project unless you also request `--delete-project`.
+Save outputs you need before deleting their bucket. Shared resources require
+their owner's coordination.
+
+Cleanup follows this order: cancel jobs → agent → controller → cluster → bucket
+→ owned storage IAM → project entry → local state. Keep recovery identity until
+cloud cleanup is verified. `npa cleanup` reports local residue and recovery
+instructions; it never deletes cloud resources.
+For a dedicated workflow API, also finish the [owned local API stop](#owned-local-workflow-api)
+after its controller cleanup and before retiring the operator environment.
 
 ## Two ways in
 
@@ -22,31 +32,44 @@ than guessing. It **retains the Nebius project by default**.
 combined run stopped partway.
 
 ```bash
-npa workflow cancel <run-id> --project <alias> --json
-npa agent destroy --project <alias> --name <name> --yes
-npa skypilot cleanup-controller --project <alias> --context <context> --yes
-npa cluster down --project <alias> --force
-npa storage bucket delete --project <alias> --yes --wait
-npa storage service-account delete --project <alias> --dry-run
+npa workflow cancel "<run-id>" --project "<alias>" --json
+npa agent destroy --project "<alias>" --name "<name>" --yes
+npa skypilot cleanup-controller --project "<alias>" --context "<context>" --yes
+npa cluster down --project "<alias>" --force
+npa storage bucket delete --project "<alias>" --yes --wait
+npa storage service-account delete --project "<alias>" --dry-run
 # Only when the previous command reports missing ownership provenance:
-npa storage service-account reconcile --project <alias> --id <exact-id> --dry-run
-npa storage service-account reconcile --project <alias> --id <exact-id> \
+npa storage service-account reconcile --project "<alias>" --id "<exact-id>" --dry-run
+npa storage service-account reconcile --project "<alias>" --id "<exact-id>" \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
-npa storage service-account delete --project <alias> --dry-run
-npa storage service-account delete --project <alias> --yes
-# If validation created a project-local registry, delete its exact artifact DAG
-# and registry using the immutable ID/name recorded at creation:
-npa registry delete --project <alias> --project-id <project-id> \
-  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
+npa storage service-account delete --project "<alias>" --dry-run
+npa storage service-account delete --project "<alias>" --yes
+# Retire any separately created private registry through its provider before
+# deleting the project. NPA has no top-level registry command.
+
 # NPA-created disposable projects may contain one provider-created default
 # topology. This command refuses any extra, shared, or non-default topology:
-npa network delete-project-default --project <alias> --project-id <project-id> \
-  --tenant-id <tenant-id> --yes
+npa network delete-project-default --project "<alias>" --project-id "<project-id>" \
+  --tenant-id "<tenant-id>" --yes
 # Optional and ownership-gated; omit to retain the project (the safe default):
-npa destroy --project <alias> --all --delete-project --yes --json
-npa cleanup --full --yes --project <alias>
-npa configure --forget-project <alias>
+npa destroy --project "<alias>" --all --delete-project --yes --json
+npa cleanup --full --yes --project "<alias>"
+npa configure --forget-project "<alias>"
 ```
+
+`storage bucket delete` retires the deleted bucket's saved credentials from
+**both** the legacy top-level `storage` section and the exact project's scoped
+credential-store record in the same atomic rewrite, so a later `npa configure
+--project <alias>` cannot rebuild the bucket/access-key view from a stale
+scoped record. The scoped `terraform_state` record (the Terraform S3 backend
+keys, independent from the object-storage access key) is retired in that same
+rewrite when it names the same bucket, so `resolve_terraform_state` cannot
+resurrect it either. IAM ownership evidence (`storage_iam`) is untouched by
+the bucket delete; it survives until the ownership-gated `storage
+service-account delete` retires it too.
+
+Without `--wait`, local retirement follows an accepted purge request while the
+bucket may still be pending deletion. Use `--wait` to confirm provider absence.
 
 ## Cloud spend vs local clutter
 
@@ -65,12 +88,12 @@ id** before it rewrites configuration. If teardown must continue past that
 point, stay inside NPA and select the same immutable identity explicitly:
 
 ```bash
-RECEIPT=<id printed by npa configure --forget-project>
-npa agent destroy --receipt "$RECEIPT" --name <name> --yes
-npa skypilot cleanup-controller --receipt "$RECEIPT" --context <context> --yes
-npa cluster down --receipt "$RECEIPT" --context <context> --force
-npa storage service-account delete --receipt "$RECEIPT" --id <exact-id> --dry-run
-npa workflow cancel <run-id> --receipt "$RECEIPT" --json
+RECEIPT="<id printed by npa configure --forget-project>"
+npa agent destroy --receipt "$RECEIPT" --name "<name>" --yes
+npa skypilot cleanup-controller --receipt "$RECEIPT" --context "<context>" --yes
+npa cluster down --receipt "$RECEIPT" --context "<context>" --force
+npa storage service-account delete --receipt "$RECEIPT" --id "<exact-id>" --dry-run
+npa workflow cancel "<run-id>" --receipt "$RECEIPT" --json
 # Optional, after every exact child cleanup has converged:
 npa destroy --receipt "$RECEIPT" --all --delete-project --yes --json
 ```
@@ -167,6 +190,29 @@ replaced clusters. Cross-project use is refused. `--rebind` is allowed only afte
 the managed-job queue is proven terminal; changing an alias for the same
 project/cluster ids is not a rebind.
 
+### Owned local workflow API
+
+Controller cleanup stops its temporary transaction API, but leaves the original
+workflow API running. After the submit driver and every other client of that
+unique API have finished, preserve successful exact-run cancellation and
+controller-cleanup receipts before calling
+`npa.orchestration.skypilot.local_api.stop_isolated_api(Path(owned_run_directory))`.
+Controller cleanup must report `overall_verified`, `remote_absence_verified`,
+and `local_metadata_cleared` as true. A controller result for one context is not
+permission to stop an API shared by other workflows.
+
+The [PAIDF receipt-checked cleanup example](../workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup)
+validates its original per-run directory and API identity before cloud cleanup,
+then provides an independent local-stop block for recovery from those receipts.
+Do not repeat controller deletion merely to finish the local stop: unrelated
+controllers can remain after the owned metadata has been removed.
+
+The helper stops only its recorded local process tree; it does not cancel jobs,
+delete cloud resources, or remove run state and artifacts. Verify its retained
+daemon record reports `state: stopped` with null `pid` and `start_ticks`.
+Preserve records on any failure. Never substitute `sky api stop`, which is not
+scoped to the owned API, or remove state while processes are still alive.
+
 ### Cluster teardown
 
 `npa cluster down` uses the kubeconfig saved for the selected NPA cluster and
@@ -218,7 +264,7 @@ reverting to `unknown` on an idempotent retry.
 
 ```bash
 npa cleanup --list-receipts
-npa cleanup --prune-receipts --receipt-retention-days <days> --yes
+npa cleanup --prune-receipts --receipt-retention-days "<days>" --yes
 ```
 
 Prune only old, fully terminal receipts, and only explicitly.
@@ -243,3 +289,30 @@ unrelated caches stay outside the plan.
 - [Physical AI Data Factory deploy runbook §8](workbench/guides/physical-ai-data-factory-deploy.md) — teardown in the context of one full run
 - [teardown-and-cost skill](../skills/atomic/teardown-and-cost/SKILL.md) — the operator/agent version of this page
 - [Run lifecycle](run-lifecycle.md) — run identity and status semantics that cancellation depends on
+
+## Repository-local environment removal and recovery
+
+Preview and remove a supported checkout environment with the
+[uninstall commands](install.md#safely-uninstall-the-repository-local-environment).
+
+NPA refuses system, conda, pipx, user-wide, externally managed, symlinked,
+arbitrary, dirty-overlapping, active, and identity-mismatched environments. The
+command writes a mode-0600 one-time receipt, prints and flushes the status path,
+then launches a base-Python helper outside the target. The helper waits for the
+parent process to exit and revalidates the exact realpath, device/inode,
+`pyvenv.cfg` digest, repository markers, nonce, and other-process use before
+descriptor-relative removal. Source, `.git`, credentials, user data, and
+unrelated caches are never in the plan.
+
+If deferred deletion fails, the target and failure receipt remain. While the
+environment still exists, inspect or retry with the exact commands printed in
+the receipt:
+
+```bash
+npa uninstall --status "<receipt-id>"
+npa uninstall --remove-environment --yes --retry "<receipt-id>"
+```
+
+Successful removal naturally removes that environment's `npa` executable; the
+receipt remains under `~/.npa/uninstall-receipts/` for direct inspection or for
+`npa uninstall --status` after reinstalling NPA.

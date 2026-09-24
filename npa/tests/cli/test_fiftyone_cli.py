@@ -15,11 +15,13 @@ from npa.cli.fiftyone import (
     DEFAULT_CPU_IMAGE_FAMILY,
     DEFAULT_CPU_PLATFORM,
     DEFAULT_CPU_PRESET,
-    FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
+    FIFTYONE_HEALTH_RETRIES,
     FIFTYONE_HEALTH_BACKOFF_SEC,
     FIFTYONE_VERSION,
+    _lerobot_importer_source,
     _run_fiftyone_command,
 )
+from npa.cli.fiftyone.subtasks import _subtask_export_python_script
 from npa.cli.main import app
 from npa.clients.ssh import SSHError
 from npa.clients import config as config_module
@@ -70,6 +72,7 @@ def _active_endpoint(url: str):
         "launch",
         "curate",
         "eval",
+        "export-lerobot-subtasks",
         "load-dataset",
         "restart",
         "open",
@@ -103,6 +106,73 @@ def test_fiftyone_load_dataset_help_includes_format_flag() -> None:
     assert "lerobot" in output
 
 
+def test_fiftyone_export_lerobot_subtasks_requires_s3_output(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            str(tmp_path / "derived"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--output-path must be an s3:// URI" in result.output
+
+
+def test_fiftyone_export_lerobot_subtasks_returns_remote_report(mocker) -> None:
+    ssh = mocker.Mock()
+    ssh.run.return_value = (
+        0,
+        json.dumps(
+            {
+                "status": "exported",
+                "dataset_name": "review",
+                "segment_count": 3,
+                "output_path": "s3://bucket/derived/",
+            }
+        ),
+        "",
+    )
+    mocker.patch("npa.cli.fiftyone._get_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            "s3://bucket/derived/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["segment_count"] == 3
+    remote_command = ssh.run.call_args.args[0]
+    assert "export_fiftyone_subtasks_to_s3" in remote_command
+    assert "subtask:" in remote_command
+
+
+def test_fiftyone_subtask_export_embedded_python_compiles() -> None:
+    script = _subtask_export_python_script("review", "s3://bucket/derived/")
+
+    compile(script, "<fiftyone-subtask-export>", "exec")
+
+
+def test_fiftyone_bundled_lerobot_importer_compiles() -> None:
+    compile(_lerobot_importer_source(), "<fiftyone-lerobot-importer>", "exec")
+
+
 def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(
     tmp_path: Path, mocker
 ) -> None:
@@ -132,7 +202,7 @@ def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(
             "curate",
             "deploy",
             "--address",
-            "0.0.0.0",
+            "127.0.0.1",
             "--project-id",
             "project",
             "--tenant-id",
@@ -441,7 +511,7 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     mocker.patch("npa.cli.fiftyone.write_config")
     update_status = mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
     mocker.patch("npa.cli.fiftyone.write_manifest")
-    health = mocker.patch("npa.cli.fiftyone._app_health_check", return_value=True)
+    health = mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
 
     result = runner.invoke(
         app,
@@ -482,10 +552,18 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
         f'/opt/fiftyone/venv/bin/python -m pip install "fiftyone=={FIFTYONE_VERSION}"'
         in install_cmd
     )
-    assert "pyarrow pillow" in install_cmd
-    assert "FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0" in install_cmd
+    assert 'pyarrow "pillow>=12.3.0"' in install_cmd
+    assert '"datasets>=5.0.1"' in install_cmd
+    assert '"paramiko>=5.0.0"' in install_cmd
+    assert 'Version(metadata.version("datasets")) >= Version("5.0.1")' in install_cmd
+    assert 'Version(metadata.version("pillow")) >= Version("12.3.0")' in install_cmd
+    assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in install_cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=5151" in install_cmd
-    assert 'sudo chown "$USER:$USER" /etc/npa-fiftyone/env' in install_cmd
+    assert 'service_group="$(id -gn "$service_user")"' in install_cmd
+    assert (
+        'sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"'
+        in install_cmd
+    )
     assert "lerobot[pusht" not in install_cmd
     assert "Installing LeRobot" not in install_cmd
     assert "TimeoutStopSec=15" in install_cmd
@@ -493,7 +571,13 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     assert update_status.call_args_list[0].args == ("proj", "curate-gpu", "installing")
     assert update_status.call_args_list[1].args == ("proj", "curate-gpu", "provisioned")
     assert update_status.call_args_list[-1].args == ("proj", "curate-gpu", "healthy")
-    health.assert_called_once_with("http://10.0.0.21:5151")
+    health.assert_called_once_with(
+        ssh,
+        5151,
+        path="/",
+        retries=FIFTYONE_HEALTH_RETRIES,
+        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+    )
 
 
 def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
@@ -517,7 +601,7 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     write_config = mocker.patch("npa.cli.fiftyone.write_config")
     update_status = mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
     mocker.patch("npa.cli.fiftyone.write_manifest")
-    mocker.patch("npa.cli.fiftyone._app_health_check", return_value=True)
+    mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
     deploy_container = mocker.patch(
         "npa.deploy.configurator.deploy_workbench_container"
     )
@@ -610,7 +694,7 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     )
 
 
-def test_fiftyone_byovm_auto_health_uses_short_public_retry_budget(mocker) -> None:
+def test_fiftyone_byovm_health_uses_ssh_without_public_probe(mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")
     ssh.run_or_raise.side_effect = [
@@ -660,11 +744,7 @@ def test_fiftyone_byovm_auto_health_uses_short_public_retry_budget(mocker) -> No
     )
 
     assert result.exit_code == 0
-    public_health.assert_called_once_with(
-        "http://203.0.113.20:5151",
-        retries=FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
-        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
-    )
+    public_health.assert_not_called()
     ssh_health.assert_called_once()
 
 
@@ -780,8 +860,10 @@ def test_fiftyone_deploy_writes_config_before_readiness_and_warns_on_timeout(
     )
     mocker.patch("npa.cli.fiftyone.write_manifest")
     mocker.patch(
-        "npa.cli.fiftyone._app_health_check",
-        side_effect=lambda _endpoint: events.append(("health", "timeout")) or False,
+        "npa.cli.fiftyone.health_check_ssh",
+        side_effect=lambda *_args, **_kwargs: (
+            events.append(("health", "timeout")) or False
+        ),
     )
 
     result = runner.invoke(
@@ -842,7 +924,7 @@ def test_fiftyone_deploy_accepts_ready_marker_when_ssh_exits_nonzero(
     mocker.patch("npa.cli.fiftyone.write_config")
     update_status = mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
     mocker.patch("npa.cli.fiftyone.write_manifest")
-    mocker.patch("npa.cli.fiftyone._app_health_check", return_value=True)
+    mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
 
     result = runner.invoke(
         app,
@@ -958,14 +1040,14 @@ def test_fiftyone_launch_builds_remote_command_and_url(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["workbench", "fiftyone", "launch", "--port", "6161", "--address", "0.0.0.0"],
+        ["workbench", "fiftyone", "launch", "--port", "6161", "--address", "127.0.0.1"],
     )
 
     assert result.exit_code == 0
-    assert "http://fiftyone.example:6161" in result.output
+    assert "http://127.0.0.1:6161?polling=true" in result.output
     cmd = ssh.run.call_args.args[0]
     assert "test -x /opt/fiftyone/venv/bin/python" in cmd
-    assert "FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0" in cmd
+    assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=6161" in cmd
     assert "sudo systemctl enable npa-fiftyone-app" in cmd
     assert "http://127.0.0.1:6161/" in cmd
@@ -981,7 +1063,7 @@ def test_fiftyone_launch_accepts_ready_marker_when_ssh_exits_nonzero(mocker) -> 
     result = runner.invoke(app, ["workbench", "fiftyone", "launch"])
 
     assert result.exit_code == 0
-    assert "http://fiftyone.example:5151" in result.output
+    assert "http://127.0.0.1:5151?polling=true" in result.output
 
 
 def test_fiftyone_launch_adds_polling_for_ssh_endpoint_strategy(mocker) -> None:
@@ -1052,7 +1134,11 @@ def test_fiftyone_load_dataset_builds_source_specific_command(
     assert f'SOURCE = "{source}"' in cmd
     assert 'FORMAT = "auto"' in cmd
     assert "FIFTYONE_DATASET_NAME=curated" in cmd
-    assert 'sudo chown "$USER:$USER" /etc/npa-fiftyone/env' in cmd
+    assert 'npa_fiftyone_env_group="$(id -gn "$npa_fiftyone_env_user")"' in cmd
+    assert (
+        'sudo chown "$npa_fiftyone_env_user:$npa_fiftyone_env_group" '
+        "/etc/npa-fiftyone/env"
+    ) in cmd
     assert "sudo systemctl restart npa-fiftyone-app" in cmd
     assert "NPA_FIFTYONE_APP_READY" in cmd
     for snippet in expected:
@@ -1072,9 +1158,6 @@ def _mock_fiftyone_serverless_env(mocker):
             aws_access_key_id="AKIA",
             aws_secret_access_key="SECRET",
         ),
-    )
-    mocker.patch(
-        "npa.cli.fiftyone.resolve_container_registry", return_value="registry.example"
     )
     mocker.patch(
         "npa.cli.fiftyone.container_image_for_tool",
@@ -1380,7 +1463,9 @@ def test_fiftyone_load_dataset_lerobot_format_uses_remote_importer(
     assert f'SOURCE = "{source}"' in cmd
     assert 'FORMAT = "lerobot"' in cmd
     assert "npa_fiftyone_lerobot_importer.py" in cmd
+    assert "_npa_fiftyone_lerobot_subtasks" in cmd
     assert "def import_lerobot_dataset(" in cmd
+    assert "def existing_subtask_segments(" in cmd
     assert "stale estimatedDocumentCount" in cmd
     assert "import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)" in cmd
 
@@ -1555,6 +1640,11 @@ def test_fiftyone_datasets_list_queries_graphql(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     post = mocker.patch("npa.cli.fiftyone.httpx.post", return_value=response)
 
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
+
     result = runner.invoke(
         app,
         ["workbench", "fiftyone", "datasets", "list", "--output", "json"],
@@ -1566,7 +1656,7 @@ def test_fiftyone_datasets_list_queries_graphql(mocker) -> None:
     assert payload["datasets"][0]["name"] == "demo_cosmos_ranked"
     assert payload["datasets"][0]["samples"] == 5
     post.assert_called_once()
-    assert post.call_args.args[0] == "http://fiftyone.example:5151/graphql"
+    assert post.call_args.args[0] == "http://127.0.0.1:15151/graphql"
     assert post.call_args.kwargs["json"]["variables"] == {"first": 100, "search": ""}
 
 
@@ -1575,6 +1665,11 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     get = mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
+
     result = runner.invoke(
         app,
         ["workbench", "fiftyone", "status", "--port", "6161"],
@@ -1582,8 +1677,8 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
 
     assert result.exit_code == 0
     assert "server: up" in result.output
-    assert "http://fiftyone.example:6161" in result.output
-    get.assert_called_once_with("http://fiftyone.example:6161", timeout=5.0)
+    assert "http://127.0.0.1:15151" in result.output
+    get.assert_called_once_with("http://127.0.0.1:15151", timeout=5.0)
 
 
 def _service_type_from_manifest(output: str) -> str:
@@ -1592,7 +1687,7 @@ def _service_type_from_manifest(output: str) -> str:
     return service["spec"]["type"]
 
 
-def test_fiftyone_kubernetes_deploy_public_ip_manifest_is_loadbalancer() -> None:
+def test_fiftyone_kubernetes_deploy_public_ip_is_rejected() -> None:
     result = runner.invoke(
         app,
         [
@@ -1610,8 +1705,8 @@ def test_fiftyone_kubernetes_deploy_public_ip_manifest_is_loadbalancer() -> None
         ],
     )
 
-    assert result.exit_code == 0
-    assert _service_type_from_manifest(result.output) == "LoadBalancer"
+    assert result.exit_code == 1
+    assert "does not permit unauthenticated public exposure" in result.output
 
 
 def test_fiftyone_kubernetes_deploy_default_manifest_is_clusterip() -> None:
@@ -1635,7 +1730,7 @@ def test_fiftyone_kubernetes_deploy_default_manifest_is_clusterip() -> None:
     assert _service_type_from_manifest(result.output) == "ClusterIP"
 
 
-def test_fiftyone_status_shows_public_url_for_loadbalancer(mocker) -> None:
+def test_fiftyone_status_requires_legacy_loadbalancer_redeploy(mocker) -> None:
     mocker.patch("npa.cli.fiftyone._try_get_ssh_config", return_value=None)
     mocker.patch(
         "npa.cli.fiftyone._k8s_status_payload",
@@ -1650,7 +1745,8 @@ def test_fiftyone_status_shows_public_url_for_loadbalancer(mocker) -> None:
 
     assert result.exit_code == 0
     assert "Service type:  LoadBalancer" in result.output
-    assert "Public URL:    http://203.0.113.42:5151" in result.output
+    assert "Redeploy required" in result.output
+    assert "Public URL:" not in result.output
     assert "Status:        RUNNING" in result.output
 
 
@@ -1674,6 +1770,8 @@ def test_fiftyone_status_suggests_open_for_clusterip(mocker) -> None:
 
 
 def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone._try_get_ssh_config", return_value=None)
+    mocker.patch("npa.cli.fiftyone._wait_for_kubernetes_forward")
     mocker.patch(
         "npa.cli.fiftyone._resolve_required_kubeconfig", return_value="/tmp/kubeconfig"
     )
@@ -1697,11 +1795,15 @@ def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
             "--kubeconfig",
             "/tmp/kubeconfig",
             "port-forward",
+            "--address",
+            "127.0.0.1",
             "-n",
             "workbench",
             "svc/npa-fiftyone",
             "6161:5151",
-        ]
+        ],
+        stdout=-1,
+        stderr=-2,
     )
     process.terminate.assert_called_once()
     process.wait.assert_called()
@@ -1727,6 +1829,7 @@ def test_fiftyone_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:
         default_port=5151,
         endpoint="http://fiftyone.example:5151",
         service_port=5151,
+        require_ssh=True,
     )
     get.assert_called_once_with("http://127.0.0.1:15151", timeout=5.0)
 
@@ -1780,7 +1883,7 @@ def test_fiftyone_status_self_heals_legacy_byovm_alias(
     mocker.patch("npa.clients.endpoint.subprocess.Popen", return_value=process)
     mocker.patch("npa.clients.endpoint._tcp_open", return_value=False)
     mocker.patch("npa.clients.endpoint._free_local_port", side_effect=[15151, 15152])
-    mocker.patch("npa.clients.endpoint._wait_for_local_port")
+    mocker.patch("npa.clients.endpoint._wait_for_ssh_forward")
 
     first = runner.invoke(
         app, ["workbench", "fiftyone", "-p", "proj", "-n", "curate", "status"]
@@ -1811,6 +1914,11 @@ def test_fiftyone_status_reports_http_error(mocker) -> None:
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
+
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 
     assert result.exit_code == 1
@@ -1824,6 +1932,11 @@ def test_fiftyone_status_reports_provisioning_when_unreachable(mocker) -> None:
         return_value=_cfg(app_status="provisioning"),
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", side_effect=httpx.ConnectError("down"))
+
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 

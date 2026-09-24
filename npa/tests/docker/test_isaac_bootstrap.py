@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,7 @@ ISAAC3_OSS_DEPS = COMMON / "isaac3-oss-deps.txt"
 
 EX_CONFIG = 78
 EX_UNAVAILABLE = 69
+EX_SOFTWARE = 70
 
 pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None, reason="bash is required to exercise the bootstrap"
@@ -135,6 +137,9 @@ case "${{1:-}}" in
             mkdir -p "$dist"
             printf 'Metadata-Version: 2.1\\nName: %s\\nVersion: %s\\n' "$name" "$version" \\
               > "$dist/METADATA"
+            if [ "$name" = "isaaclab" ]; then
+              printf 'License: BSD-3-Clause\\n' >> "$dist/METADATA"
+            fi
             printf 'Wheel-Version: 1.0\\n' > "$dist/WHEEL"
           done < "$reqfile"
         fi
@@ -155,6 +160,51 @@ esac
 extra=""
 [ -f "$purelib/_npa_image_site.pth" ] && extra="$(cat "$purelib/_npa_image_site.pth")"
 PYTHONPATH="$purelib${{extra:+:$extra}}${{PYTHONPATH:+:$PYTHONPATH}}" exec "$real" "$@"
+""",
+        )
+        self._write(
+            self.bin / "flock",
+            """#!/usr/bin/env python3
+import fcntl
+import sys
+import time
+
+arguments = sys.argv[1:]
+if arguments[0] == "-u":
+    fcntl.flock(int(arguments[1]), fcntl.LOCK_UN)
+    raise SystemExit(0)
+
+timeout = float(arguments[1])
+file_descriptor = int(arguments[2])
+deadline = time.monotonic() + timeout
+while True:
+    try:
+        fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        raise SystemExit(0)
+    except BlockingIOError:
+        if time.monotonic() >= deadline:
+            raise SystemExit(1)
+        time.sleep(0.01)
+""",
+        )
+        self._write(
+            self.bin / "du",
+            """#!/usr/bin/env bash
+if [ "$1" = "-sb" ]; then
+  printf '0\\t%s\\n' "$2"
+  exit 0
+fi
+exec /usr/bin/du "$@"
+""",
+        )
+        self._write(
+            self.bin / "mv",
+            """#!/usr/bin/env bash
+if [ "$1" = "-T" ]; then
+  shift
+  rm -f "$2"
+fi
+exec /bin/mv "$@"
 """,
         )
         # A fake git that fabricates the Isaac Lab source layout at the pinned commit.
@@ -251,16 +301,66 @@ def test_bootstrap_accepts_and_downloads_when_eula_is_unset(tmp_path: Path) -> N
     assert result.stdout.strip()
 
 
+def test_isaac3_bootstrap_verifies_the_reviewed_lab_wheel_license(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run(
+        "ensure",
+        ISAAC_SIM_VERSION="6.0.1.0",
+        ISAAC_LAB_VERSION="3.0.0b2.post1",
+        NPA_ISAAC_WHEELS_FILE=str(ISAAC3_WHEELS),
+        NPA_ISAAC_OSS_DEPS_FILE=str(ISAAC3_OSS_DEPS),
+        NPA_ISAAC_LAB_METADATA_LICENSE="BSD-3-Clause",
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_isaac3_bootstrap_rejects_changed_lab_wheel_license(tmp_path: Path) -> None:
+    result = Harness(tmp_path).run(
+        "ensure",
+        ISAAC_SIM_VERSION="6.0.1.0",
+        ISAAC_LAB_VERSION="3.0.0b2.post1",
+        NPA_ISAAC_WHEELS_FILE=str(ISAAC3_WHEELS),
+        NPA_ISAAC_OSS_DEPS_FILE=str(ISAAC3_OSS_DEPS),
+        NPA_ISAAC_LAB_METADATA_LICENSE="unexpected-license",
+    )
+    assert result.returncode == EX_SOFTWARE
+    assert "isaaclab wheel license" in result.stderr
+
+
 def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> None:
     result = Harness(tmp_path).run("ensure", ACCEPT_EULA="")
     assert "nvidia.com" in result.stderr
     assert "Omniverse" in result.stderr and "Isaac Sim" in result.stderr
 
 
+def test_bootstrap_refuses_a_cold_cache_without_flock(tmp_path: Path) -> None:
+    """A missing lock primitive must not enter the long contention-retry loop."""
+
+    harness = Harness(tmp_path)
+    (harness.bin / "flock").unlink()
+
+    bash_env = harness.root / "no-flock.bash"
+    bash_env.write_text(
+        """command() {
+  if [ \"${1-}\" = -v ] && [ \"${2-}\" = flock ]; then
+    return 1
+  fi
+  builtin command \"$@\"
+}
+""",
+        encoding="utf-8",
+    )
+    result = harness.run("ensure", BASH_ENV=str(bash_env))
+
+    assert result.returncode == EX_SOFTWARE
+    assert "flock is required" in result.stderr
+    assert not harness.downloaded_anything()
+
+
 @pytest.mark.parametrize("value", ["Y", "YES", "yes", "y", "1", "true"])
-def test_bootstrap_migrates_affirmative_values(
-    tmp_path: Path, value: str
-) -> None:
+def test_bootstrap_migrates_affirmative_values(tmp_path: Path, value: str) -> None:
     harness = Harness(tmp_path)
     result = harness.run("ensure", ACCEPT_EULA=value)
     assert result.returncode == 0, result.stderr
@@ -486,6 +586,39 @@ def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> No
     assert before != stamp()
 
 
+def test_image_site_hook_recursively_processes_image_pth_files(tmp_path: Path) -> None:
+    """The cache interpreter must see packages exposed by image-side .pth hooks."""
+
+    harness = Harness(tmp_path)
+    image_site = harness.base_site
+    nested_site = image_site / "nested-site"
+    nested_module = nested_site / "image_nested_dependency.py"
+    nested_site.mkdir(parents=True)
+    nested_module.write_text("VALUE = 'visible'\n", encoding="utf-8")
+    (image_site / "nested-dependency.pth").write_text("nested-site\n", encoding="utf-8")
+    result = harness.run("ensure")
+    assert result.returncode == 0, result.stderr
+    cache_site = harness.stamp_dir() / "venv/lib/python3.11/site-packages"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import site; "
+                f"site.addsitedir({str(cache_site)!r}); "
+                "import image_nested_dependency as dependency; "
+                "print(dependency.VALUE)"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "visible"
+
+
 # --------------------------------------------------------------------------------------
 # Concurrency: up to 8 pods per GPU node race one cache volume
 # --------------------------------------------------------------------------------------
@@ -573,10 +706,12 @@ def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
 
 def test_baked_imageio_uses_snapshot_ffmpeg_without_nested_executable() -> None:
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
     assert "  ffmpeg \\" in installer
     assert "--no-binary imageio-ffmpeg" in installer
-    assert "test -z \"$(find \"$ISAAC_VENV\" -type f" in installer
+    assert 'test -z "$(find "$ISAAC_VENV" -type f' in installer
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
 
 
@@ -653,14 +788,21 @@ def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> Non
 
 
 def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
-    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
     assert "ARG ISAAC_LAB_VERSION=3.0.0b2.post1" in dockerfile
     assert "ARG ISAAC_SIM_VERSION=6.0.1.0" in dockerfile
-    assert "ARG ISAAC_LAB_SRC_COMMIT=ffff603eafc6b74264a5261cc0183d6a65390d78" in dockerfile
+    assert (
+        "ARG ISAAC_LAB_SRC_COMMIT=ffff603eafc6b74264a5261cc0183d6a65390d78"
+        in dockerfile
+    )
     assert "NPA_ISAAC_PYTHON_MINOR=3.12" in dockerfile
     assert "isaac3-nvidia-wheels.txt" in dockerfile
     assert "isaac3-oss-deps.txt" in dockerfile
-    build_script = (COMMON.parent / "isaac-lab" / "build.sh").read_text(encoding="utf-8")
+    build_script = (COMMON.parent / "isaac-lab" / "build.sh").read_text(
+        encoding="utf-8"
+    )
     assert "sed -n 's/^ARG ISAAC_LAB_VERSION=//p'" in build_script
     assert "read_pin isaac-lab" not in build_script
 
@@ -669,9 +811,9 @@ def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:
     """Isaac 3 must not silently install the legacy Isaac dependency closure."""
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert 'sed -E \'/^imageio-ffmpeg==/d\' "${OSS_DEPS_FILE}"' in installer
+    assert "sed -E '/^imageio-ffmpeg==/d' \"${OSS_DEPS_FILE}\"" in installer
     assert (
-        'sed -E \'/^imageio-ffmpeg==/d\' "${COMMON_DIR}/isaac-oss-deps.txt"'
+        "sed -E '/^imageio-ffmpeg==/d' \"${COMMON_DIR}/isaac-oss-deps.txt\""
         not in installer
     )
 
@@ -694,8 +836,8 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in installer
     assert "linux-libc-dev=5.15.0-186.196" in installer
     assert "linux-libc-dev=6.8.0-138.138" in installer
-    assert 'NPA_UBUNTU_SUITE:-jammy' in installer
-    assert 'NPA_ISAAC_PYTHON_MINOR:-3.11' in installer
+    assert "NPA_UBUNTU_SUITE:-jammy" in installer
+    assert "NPA_ISAAC_PYTHON_MINOR:-3.11" in installer
     assert '"$ISAAC_PYTHON_MINOR" = 3.12' in installer
 
 
@@ -710,7 +852,9 @@ def test_isaac3_image_uses_fixed_noble_snapshot_and_removes_optional_nsight() ->
     assert "NPA_UBUNTU_SNAPSHOT=20260825T000000Z" in dockerfile
     assert "NPA_LINUX_LIBC_DEV_VERSION=6.8.0-138.138" in dockerfile
     assert "linux-libc-dev=6.8.0-138.138" in installer
-    assert "apt-get purge -y nsight-compute-2025.1.1 cuda-nsight-compute-12-8" in installer
+    assert "NCOMPUTE_PKGS=$(dpkg-query" in installer
+    assert "nsight-compute-*' 'cuda-nsight-compute-*'" in installer
+    assert "apt-get purge -y $NCOMPUTE_PKGS" in installer
     assert "test ! -e /opt/nvidia/nsight-compute" in installer
     assert "command -v nvcc >/dev/null" in installer
 
@@ -733,7 +877,10 @@ def test_isaac_image_installs_a_cli_for_skypilot_setup() -> None:
 
     assert "npa_cli.sh /usr/local/bin/npa" in dockerfile
     assert "env -u PYTHONPATH python3 -c 'import npa'" in dockerfile
-    assert 'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"' in launcher
+    assert (
+        'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"'
+        in launcher
+    )
 
 
 def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
@@ -766,7 +913,9 @@ def test_shim_derives_internal_kit_acceptance_only_after_shared_parser() -> None
     assert "PRIVACY_CONSENT" not in shim
 
 
-def test_shim_defaults_internal_kit_acceptance_without_manual_env(tmp_path: Path) -> None:
+def test_shim_defaults_internal_kit_acceptance_without_manual_env(
+    tmp_path: Path,
+) -> None:
     harness = Harness(tmp_path)
     result = subprocess.run(
         [
@@ -783,6 +932,118 @@ def test_shim_defaults_internal_kit_acceptance_without_manual_env(tmp_path: Path
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "YES"
+
+
+@pytest.mark.parametrize("entrypoint", ["shim", "verify"])
+@pytest.mark.parametrize("caller_enables_uploads", [False, True])
+def test_isaac_startup_disables_remote_diagnostics_before_import(
+    tmp_path: Path, entrypoint: str, caller_enables_uploads: bool
+) -> None:
+    """Observe the real launch boundary; no Kit runtime or network is needed."""
+    harness = Harness(tmp_path)
+    harness.fake_ready_tree()
+    probe = tmp_path / "probe"
+    package = probe / "isaaclab"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    observations = tmp_path / "startup.jsonl"
+    (package / "app.py").write_text(
+        """import json
+import os
+import shlex
+from pathlib import Path
+
+output = Path(os.environ["NPA_TEST_STARTUP_OBSERVATIONS"])
+def record(event, **values):
+    with output.open("a") as stream:
+        stream.write(json.dumps({"event": event, **values}) + "\\n")
+
+record("import", environment={key: os.environ.get(key) for key in (
+    "OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA", "OMNI_CRASHREPORTER_URL",
+    "OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD", "OMNI_KIT_ACCEPT_EULA",
+    "PRIVACY_CONSENT",
+)}, kit_args=os.environ.get("NPA_ISAAC_KIT_ARGS"))
+
+class AppLauncher:
+    def __init__(self, **kwargs):
+        record("launch", argv=shlex.split(kwargs["kit_args"]))
+        self.app = self
+    def update(self):
+        record("update")
+    def close(self):
+        record("close")
+""",
+        encoding="utf-8",
+    )
+    environment = harness.env(
+        NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP),
+        NPA_ISAAC_CACHE_READONLY="1",
+        PYTHONPATH=str(probe),
+        NPA_TEST_STARTUP_OBSERVATIONS=str(observations),
+    )
+    custom_kit_root = tmp_path / "custom-kit"
+    if caller_enables_uploads:
+        environment.update(
+            OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA="0",
+            OMNI_CRASHREPORTER_URL="https://diagnostics.invalid/submit",
+            OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD="0",
+            NPA_ISAAC_KIT_ARGS=(
+                f"--portable-root {shlex.quote(str(custom_kit_root))} --/app/window/enabled=false "
+                "--/telemetry/enableAnonymousData=true --/structuredLog/enable=true "
+                "--/crashreporter/url=https://diagnostics.invalid/submit "
+                "--/crashreporter/skipOldDumpUpload=false --/app/uploadDumpsOnStartup=true"
+            ),
+        )
+    command = ["bash", str(BOOTSTRAP), "verify"]
+    if entrypoint == "shim":
+        command = [
+            "bash",
+            str(SHIM),
+            "-c",
+            "import os; from isaaclab.app import AppLauncher; "
+            "AppLauncher(kit_args=os.environ['NPA_ISAAC_KIT_ARGS']).app.close()",
+        ]
+
+    result = subprocess.run(
+        command,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    events = [json.loads(line) for line in observations.read_text().splitlines()]
+    assert [event["event"] for event in events[:2]] == ["import", "launch"]
+    assert events[-1]["event"] == "close"
+    assert events[0]["environment"] == {
+        "OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA": "1",
+        "OMNI_CRASHREPORTER_URL": "",
+        "OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD": "1",
+        "OMNI_KIT_ACCEPT_EULA": "YES",
+        "PRIVACY_CONSENT": None,
+    }
+    arguments = events[1]["argv"]
+    assert shlex.split(events[0]["kit_args"]) == arguments
+    # Kit consumes the final command-line value for each setting. Caller flags
+    # remain intact, with the no-upload settings applied after them.
+    settings = dict(arg[2:].split("=", 1) for arg in arguments if arg.startswith("--/"))
+    assert settings["/telemetry/enableAnonymousData"] == "false"
+    assert settings["/structuredLog/enable"] == "false"
+    assert settings["/crashreporter/url"] == ""
+    assert settings["/crashreporter/skipOldDumpUpload"] == "true"
+    assert settings["/app/uploadDumpsOnStartup"] == "false"
+    # Local diagnostics remain available.
+    assert "/crashreporter/enabled" not in settings
+    if caller_enables_uploads:
+        assert arguments[:2] == ["--portable-root", str(custom_kit_root)]
+        assert settings["/app/window/enabled"] == "false"
+    else:
+        assert arguments[0] == "--portable-root"
+        portable_root = Path(arguments[1])
+        assert portable_root.is_absolute() and portable_root.name == "npa-isaac-kit"
+    assert not harness.downloaded_anything()
 
 
 def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:

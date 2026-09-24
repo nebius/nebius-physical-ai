@@ -1,6 +1,25 @@
 # PAIDF with Cosmos 3 video conditioning
 
-`npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml` is an independent
+[Guides](README.md)
+
+For a complete manual setup and run, start with the
+[PAIDF Cosmos 3 setup and run guide](../../../workflows/guides/paidf-cosmos3.md). It covers
+project setup, new or existing Kubernetes clusters, credential-file formats,
+Token Factory key creation, Python and CLI installation checks, submission, and
+artifact inspection.
+Use this page for the workflow's input, generation, and acceptance contracts.
+For the configuration keys and timing contract, see the setup guide's
+[generation and evaluation settings](../../../workflows/guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
+For rejected runs, see its
+[quality-rejection diagnostics](../../../workflows/guides/paidf-cosmos3.md#r6-diagnose-quality-rejection-and-prepare-the-next-run).
+For an older installation, see
+[upgrading an existing installation](../../../workflows/guides/paidf-cosmos3.md#upgrading-an-existing-installation):
+new submissions stage the current NPA source automatically unless explicitly
+overridden, unchanged datasets need no bucket resync, and executing submits
+must omit `--assume-decision promote_checkpoint`. Check the Git SHA and import
+path because the package version remains `0.1.0`.
+
+`workflows/main/paidf-cosmos3.yaml` is an independent
 Physical AI Data Factory composition. It does not replace or change
 `physical-ai-data-factory.yaml`, whose augmentation engine remains Cosmos
 Transfer 2.5.
@@ -8,9 +27,9 @@ Transfer 2.5.
 The pipeline is:
 
 1. select one generic MP4 or one camera from one LeRobot v2/v3 episode;
-2. decode caption frames and understand the original with Token Factory;
-3. run one real NVIDIA `cosmos-framework` `video2video` inference per variant;
-4. grade every variant with real Cosmos Evaluator checks;
+2. retain the original, prepare a constant-rate letterboxed reference, and caption it with Token Factory;
+3. run native NVIDIA `cosmos-framework` edge transfer across the complete source for each variant;
+4. verify corresponding timestamps and hashes, then grade every variant with real Cosmos Evaluator checks;
 5. promote on a complete passing report, or retry with changed seed, guidance,
    and steps up to the configured bound;
 6. caption accepted variants, then run real Cosmos Curator and FiftyOne Brain;
@@ -18,43 +37,143 @@ The pipeline is:
 
 Rejected runs skip labeling, Cosmos Curator, FiftyOne, and finalization. They
 first write the available input, generated-video, evaluator, decision, and
-quality-disposition evidence to `reports/sim2real.rrd`, then terminate with a
+quality-disposition evidence to `reports/quality-evidence.rrd`, then terminate with a
 failure. Missing or incomplete evaluator reports also reject.
+
+This workflow declares `metadata.executionMode: runtime`. The generic submit
+command therefore selects the runtime orchestrator even when `--runtime` is
+omitted, so every failed evaluation reaches the next bounded refinement pass and
+the terminal disposition controls the final branch. An explicit `--no-runtime`
+is rejected before staging or submission. `--assume-decision` is allowed only
+for planning previews; execution requires actual evaluator decisions.
 
 ## Inputs and configuration
 
-Choose `input_kind: video` and set `input_video_uri` to one MP4, or choose
+For `workflow submit`, use `--input-video` / `--input-uri` for MP4, or
+`--lerobot-uri` with `--lerobot-camera`, `--lerobot-episode`, and
+`--require-explicit-lerobot-selection`. The setup guide includes a complete
+[LeRobot submission and pinned public example](../../../workflows/guides/paidf-cosmos3.md#r3a-augment-one-lerobot-episode-and-camera).
+The LeRobot CLI selector takes an S3 dataset prefix; upload local files while
+preserving the dataset directory layout first.
+
+For direct stage configuration, choose `input_kind: video` and set
+`input_video_uri` to one MP4, or choose
 `input_kind: lerobot` and set `lerobot_dataset_uri`, `input_episode`, and
 `input_camera`. Dataset URIs may point to generic LeRobot v2.x or v3.x directory
-trees. A full feature name such as `observation.images.front`, or an unambiguous
-camera suffix such as `front`, is accepted. Shared v3 video files are trimmed
+trees. Use a full feature name such as `observation.images.front` for submission.
+The local direct-stage selector also accepts an unambiguous camera suffix.
+The S3 worker reads metadata and fetches only the selected video. Metadata
+shards are searched independently of episode numbering. Shared v3 video files are trimmed
 using the episode metadata timestamps; per-episode v2 video layouts are also
 supported.
 
+The result is augmented video and review artifacts for one episode/camera, not
+a reconstructed LeRobot dataset containing action/state records.
+
+For extending this data pipeline into training and policy evaluation, see the
+[Cosmos 3 model factory assessment](../../architecture/cosmos3-model-factory.md).
+It maps current NPA capabilities and defines the
+dataset, checkpoint, and simulation evidence needed for each proposed addition.
+
 The committed `example-bucket` and run-scoped fixture path are placeholders.
-They fail closed unless an operator stages input or the live harness seeds its
-repository-owned synthetic MP4. No customer dataset, episode, camera, bucket, or
-infrastructure identifier is embedded.
+The generic workflow submit command stages a verified, pinned starter video
+when no input is supplied; use `--input-video` or `--input-uri` for your own
+source as shown in the setup guide. Direct stage execution still requires a
+staged input. Both starter variants passed the exploratory default quality gate
+in the recorded live run. Training-data suitability requires separate assessment,
+and another run can still be rejected. No customer dataset, episode, camera,
+bucket, or infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
-`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` optionally
-decouples appearance-profile sampling from the run ID for reproducible quality
-comparisons. Quality and retries use
-`grade_threshold`, `refinement_iterations`, `retry_seed_stride`,
-`retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` controls
-the source-motion-preserving composite used for publication (the workflow uses
-`0.8`, retaining 20% of the real Cosmos appearance treatment). The unmodified
-Cosmos video is preserved beside the composite, so model output and post-process
-provenance remain independently auditable. The composition requires
+`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` defaults to
+`30`, keeping appearance profiles consistent across fresh run IDs; change it for
+new appearance experiments. Quality and retries use
+`grade_threshold`, `attribute_threshold`, `refinement_iterations`, `retry_seed_stride`,
+`retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` is a
+compatibility setting that must be `0.0` (the default). Nonzero values fail
+before generation. Publication copies the model output bytes without blending,
+resizing, or changing the frame rate, and records their SHA-256 digest.
+The check lives in the shared generation implementation, so custom workflows
+using `workbench.cosmos3.generate_variants` and direct CLI callers receive the
+same protection for any dataset. Existing deployed images need the updated code;
+setting the workflow value to zero also disables blending in the older publisher.
+The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
+
+`caption_model` defaults to `MiniMaxAI/MiniMax-M3` for the original
+and accepted-variant captions and for Cosmos Evaluator's visual questions.
+Token Factory availability is key-scoped and can change, so run
+`npa workbench token-factory models` before execution and override
+`caption_model` with another reachable vision model when needed.
+
+The canonical workflow enables `structural_control: edge`. The optional
+`transfer_edge_threshold` selects a native Canny preset from `very_low`, `low`,
+`medium` (default), `high`, and `very_high`; the native control receipt records
+the actual preset and verified pixel hash. Lower thresholds retain weaker
+edges, which can help expose small or dark features, but also admit noise.
+Inspect the controls and qualify the generated output independently.
+`transfer_rgb_weight` optionally adds native RGB conditioning to retain source
+color and surface cues that edges omit. Zero (the default) disables it; a
+positive weight is relative to edge weight 1. This uses the framework's `blur`
+hint with its `none` preset and verified lossless RGB controls. It changes model
+conditioning, never output-pixel blending, and can suppress the requested edit.
+`transfer_first_chunk_conditional_frames` separately controls whether the original
+RGB first frame anchors generation. Its compatibility default is 1; set 0 with
+edge transfer to test a changed appearance from the first frame. Complete source
+edges remain active, and later windows retain five generated overlap frames.
+Releasing the first-frame anchor may reduce object-identity preservation; review
+paired clips before adopting it. Native receipts record both conditioning counts.
+`conditioning_fps`
+defaults to 24; preparation letterboxes to 832×480 and preserves duration within
+one prepared frame. `transfer_chunk_frames` defaults to 93 and `control_guidance`
+to 1.5. Native chunks cover every prepared source frame, including a final
+partial interval. The adapter verifies lossless edge-control readback, checks
+every effective prompt, and saves the video guardrail's postprocessed output.
+`alignment_mode: required` independently verifies complete decoding, frame
+counts, timestamps and the generated/source hashes before quality scoring.
+The workflow's exploratory `grade_threshold` and `attribute_threshold`
+default to `0.2` and `0.25`; reports retain individual failed attribute checks. For
+stricter acceptance, explicitly set `0.75` and `1.0` respectively. These quality
+settings do not weaken complete decoding, alignment or model guardrails.
+These controls apply to this workflow's prepare/generate-variants commands;
+the generic `cosmos3 generate` command retains its existing mode behavior.
 
 Guardrails are enabled and enforced for this composition. The image contains the
 pinned OpenMDW-1.1 framework source but no weights. The operator supplies
 `HF_TOKEN` at runtime after accepting the checkpoint, Wan VAE, and
 `nvidia/Cosmos-Guardrail1` terms. Tokens and model weights are never serialized
 into artifacts or Git.
+
+### Double exposure in older runs
+
+Older workflow defaults blended 80% source pixels with 20% generated pixels.
+Because the model can move the camera, cloth, or grippers, this superimposed
+different scenes and produced translucent duplicate objects. Alpha blending
+does not align motion. Existing run artifacts and their rejection reports stay
+unchanged; retrieve each variant's `raw_cosmos_video.mp4` into a fresh output
+location to inspect the unblended result without repeating GPU generation.
+Those bytes require their own evaluation before acceptance.
+
+Earlier prefix-conditioned generation could also produce a fixed-length segment
+with timing unrelated to the full source. The canonical workflow now uses
+native structural controls across the complete prepared video. Inspect visual
+identity, motion and contacts independently of successful timeline validation;
+lowering a quality threshold changes acceptance criteria without improving pixels.
+
+### Task-specific appearance profiles
+
+`appearance_profiles_json` defaults to an empty string (the starter profiles).
+Supply a JSON array with `lighting`, `background`, `color_grade`, and
+`surface_finish` in every profile to select plausible edits for the chosen
+camera and task. The manifest retains those profiles and evaluator choices.
+Source captions sampled across the episode are separated from the requested
+appearance edit in the effective prompt. `caption_instruction` supplies task
+context from `augment_subject` and asks for uncertainty when features are unclear;
+override it for the selected camera and inspect the resulting captions. See the
+[realistic manipulation guide](paidf-realistic-augmentation.md) for battery
+insertion, controlled sampling experiments and review criteria.
 
 ## Artifact contract
 
@@ -65,18 +184,38 @@ cosmos_augmented/
   manifest.json
   variant-0000/
     augmented_video.mp4
-    raw_cosmos_video.mp4
     frame-00001.png
     metadata.json
+    source_edges.mkv
+    transfer.json
 ```
+
+Each successful variant is published as soon as generation and alignment checks
+finish. `cosmos_augmented/generation-progress.json` records the requested,
+published and failed counts, with clip IDs and failure phases. A blocked or
+failed variant still fails the stage; the batch does not write a new successful
+`manifest.json`. Other completed variants remain available as review evidence.
+Consumers must use the committed manifest, never infer a complete batch by
+listing the prefix. Progress evidence is not a training-data promotion signal.
+Recovery remains at workflow-stage granularity; retaining variants does not
+skip them automatically when a failed stage is retried.
+
+Concurrent generations lease distinct available GPUs. A faster variant can
+release its GPU to the next waiting variant without assigning that work to a GPU
+still occupied by another generation.
 
 Each metadata file records the real engine (`nvidia-cosmos/cosmos-framework`),
 `video2video` mode, source-video conditioning, checkpoint, seed, guidance,
 steps, attempt number, guardrail posture, non-baked weights, and input lineage.
-When motion preservation is enabled, it also records source/Cosmos weights and
-SHA-256 digests for both the raw model output and published composite.
+It records `motion_preservation: null` and the published model video's SHA-256
+digest. Older blended runs additionally contain `raw_cosmos_video.mp4` and
+compositing metadata; those are retained historical evidence.
 The run manifest records non-empty video bytes, variant count, actual GPU
 parallelism, and the same conditioning contract.
+`input/timeline.json` records original and prepared media measurements.
+`labeled_augmented/captions.json` records separate caption coverage and the
+evaluated video hash for each variant. Annotation verifies the current video
+bytes and extracts fresh frames; finalization rejects stale or missing coverage.
 
 `generate-variants` publishes this distributed stage contract to S3 only. Its
 `output_uri` must use `s3://`; local paths are rejected before generation so the
@@ -85,15 +224,20 @@ supported.
 
 ## Validate, plan, and render
 
+From the repository root, activate the virtual environment created during
+[installation](../../install.md). These examples check the spec and render plans
+with placeholder inputs; they do not launch the workflow. For execution, use the
+[coding-agent workflow prompt](../agent-first-run.md#run-paidf-with-cosmos-3),
+which covers real inputs, resource planning, image checks, submission, and output
+inspection.
+
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/paidf-cosmos3.yaml
-npa/.venv/bin/npa workbench workflow validate-spec "$SPEC" --json
-npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" --run-id demo \
+SPEC=workflows/main/paidf-cosmos3.yaml
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id demo \
   --assume-decision promote_checkpoint --var bucket=example-bucket --json
-npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" --run-id demo \
+npa workbench workflow plan-spec "$SPEC" --run-id demo \
   --assume-decision loop_back --var bucket=example-bucket --json
-npa/.venv/bin/npa workbench workflow submit "$SPEC" --run-id demo --runtime \
-  --assume-decision promote_checkpoint --var bucket=example-bucket --plan-only
 ```
 
 For execution, pass only secret names to the generic workflow submit surface:
@@ -101,16 +245,40 @@ For execution, pass only secret names to the generic workflow submit surface:
 `AWS_SECRET_ACCESS_KEY`. Use an available supported `H100:1` or RTX PRO 6000
 accelerator through the normal workflow resource override; do not put cluster
 names into the spec.
+Submit with `--runtime` and omit `--assume-decision`. The YAML requires actual
+runtime decisions and automatically enables the submitted NPA source overlay.
 
 ## Live validation scope
 
-The complete synthetic workflow has succeeded on reserved RTX PRO 6000, and
-real source-conditioned Cosmos 3 inference plus refinement semantics have
-succeeded on reserved B200. The preserved reserved topology exposes one
-requestable GPU per node on both paths. Because SkyPilot requires a two-GPU task
-to fit on one node, `variant_count=2` with `variant_parallelism=2` remains
-unit-tested rather than live-proven concurrently. No on-demand capacity was used;
-a sequential two-variant run must not be described as concurrent evidence.
+See the setup guide's [validation record](../../../workflows/guides/paidf-cosmos3.md#validation)
+for the current implementation's measured checks and limitations, and its
+[full-pipeline checks](../../../workflows/guides/paidf-cosmos3.md#check-every-stage-and-full-pipeline-completion)
+to validate a new run. The recorded starter run completed all 15 stages,
+including accepted captioning, real Cosmos Curator and FiftyOne curation, and
+final recording/report verification. The guide retains the measured quality
+diagnostics, curation fallback, and limits; execution success does not certify
+training-data suitability.
+
+The publication regression can separately reuse retained real GPU output.
+Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
+`NPA_INTEGRATION_E2E=1`, `NPA_PAIDF_RAW_EVIDENCE_DIR` pointing to downloaded
+variant directories, `NPA_PAIDF_REPAIR_URI` set to a fresh S3 augment prefix,
+and `NPA_PAIDF_REPAIR_DIR` set to a private local readback directory. It requires
+saved raw-output hashes, uploads through the real publisher, and verifies exact
+bytes after S3 readback. This proves publication fidelity only.
+
+The B200 validation also ran against the pinned RoboPro physical capture. Its
+initial and refined Cosmos passes retained 27,090,575-byte and 25,931,172-byte
+raw model videos with upstream guardrails enabled and weights fetched at runtime.
+The then-current publisher evaluated source/model composites rather than those
+raw bytes: at a validation-only `0.40` threshold, the composites scored
+`0.154068` and `0.256552`; the second pass cleared hallucination and appearance
+checks but not temporal consistency or the required 4/4 attributes. The workflow
+therefore failed closed after the bounded refinement, retaining 98 artifacts and
+a 316,545-byte Rerun quality-evidence recording. This is historical pre-fix
+rejection-path evidence, not validation of the current full-video structural
+transfer path or an accepted-quality claim. It does not change the workflow's
+current exploratory thresholds or the stricter values operators may select.
 
 ## Optional Cosmos 3 versus Transfer 2.5 comparison
 
@@ -120,7 +288,7 @@ variant count and seeds, and the same Cosmos Evaluator threshold/check modes:
 
 1. stage the fixture once under a private run prefix;
 2. run `paidf-cosmos3.yaml` with one configured variant;
-3. run `physical-ai-data-factory.yaml` with `n_augmentations=1`, the same fixture,
+3. run `nvidia-paidf-vda-cosmos-transfer25.yaml` with `n_augmentations=1`, the same fixture,
    sampled appearance combination, and evaluator configuration;
 4. retain each engine's unmodified `cosmos_augmented/manifest.json` and
    `grade/cosmos_evaluator.json`;

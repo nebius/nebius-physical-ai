@@ -157,7 +157,9 @@ RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
     && chown -R "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" /opt/npa/docker/workbench/isaac-lab \
     && /opt/npa/sim/venv/bin/python -m py_compile \
       /opt/npa/docker/workbench/isaac-lab/smoke_env.py \
-      /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
+      /opt/npa/docker/workbench/isaac-lab/smoke_functional.py \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && test ! -e /opt/nvidia/nsight-compute
 
 # SkyPilot's Kubernetes bootstrap must find the SYSTEM interpreter (Python 3.12 here), not
 # the Isaac venv's Python 3.12, which cannot import its own site-packages when invoked

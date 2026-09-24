@@ -67,7 +67,7 @@ class RunConfig:
     s3_bucket: str = ""
     s3_prefix: str = ""
     # Remote execution
-    sim_workbench: str = ""    # Workbench name for sim stages (genesis env)
+    sim_workbench: str = ""  # Workbench name for sim stages (genesis env)
     train_workbench: str = ""  # Workbench name for training stages (lerobot)
 
 
@@ -197,9 +197,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage train_teacher failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage train_teacher failed: {exc}") from exc
 
     # ── Stage 2: Generate demos ─────────────────────────────────────
     logger.info("[2/5] Generating demonstrations...")
@@ -234,9 +232,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage generate_demos failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage generate_demos failed: {exc}") from exc
 
     # ── Stage 3: Convert to LeRobotDataset ──────────────────────────
     logger.info("[3/5] Converting demos to LeRobotDataset v3...")
@@ -261,9 +257,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage convert failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage convert failed: {exc}") from exc
 
     # ── Stage 4: Train student ──────────────────────────────────────
     logger.info("[4/5] Training student policy...")
@@ -289,9 +283,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage train_student failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage train_student failed: {exc}") from exc
 
     # ── Teacher eval (held-out baseline) ──────────────────────────────
     logger.info("Evaluating teacher under held-out conditions...")
@@ -310,7 +302,9 @@ def _run_local(
             "teacher_success_rate": round(teacher_success_rate, 4),
         }
     except Exception as exc:
-        logger.warning("Teacher eval failed: %s — distillation gap will not be computed.", exc)
+        logger.warning(
+            "Teacher eval failed: %s — distillation gap will not be computed.", exc
+        )
         result["stages"]["eval_teacher"] = {
             "status": "failed",
             "error": str(exc),
@@ -341,9 +335,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage eval_student failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage eval_student failed: {exc}") from exc
 
     # ── Upload to S3 (if configured) ────────────────────────────────
     if cfg.s3_bucket:
@@ -375,9 +367,7 @@ def _run_remote(
             name=cfg.sim_workbench or None,
         )
     except ConfigError as exc:
-        raise DistillationError(
-            f"Cannot resolve sim VM config: {exc}"
-        ) from exc
+        raise DistillationError(f"Cannot resolve sim VM config: {exc}") from exc
 
     try:
         train_cfg = resolve_config(
@@ -385,9 +375,7 @@ def _run_remote(
             name=cfg.train_workbench or None,
         )
     except ConfigError as exc:
-        raise DistillationError(
-            f"Cannot resolve train VM config: {exc}"
-        ) from exc
+        raise DistillationError(f"Cannot resolve train VM config: {exc}") from exc
 
     sim_ssh = SSHClient(sim_cfg.ssh)
     train_ssh = SSHClient(train_cfg.ssh)
@@ -396,8 +384,8 @@ def _run_remote(
     s3_base = f"{cfg.s3_bucket.rstrip('/')}/{cfg.s3_prefix}"
 
     # Conda env activation prefixes
-    genesis_activate = "eval \"$(conda shell.bash hook)\" && conda activate genesis && "
-    lerobot_activate = "eval \"$(conda shell.bash hook)\" && conda activate lerobot && "
+    genesis_activate = 'eval "$(conda shell.bash hook)" && conda activate genesis && '
+    lerobot_activate = 'eval "$(conda shell.bash hook)" && conda activate lerobot && '
 
     # Map stage → (ssh_client, conda_prefix, command)
     stage_plan: dict[str, tuple[SSHClient, str, str]] = {
@@ -459,16 +447,20 @@ def _run_remote(
         if stage_name == "train_student" and train_cfg.ssh.host != sim_cfg.ssh.host:
             logger.info("[%s] Downloading dataset from S3 to train VM...", stage_name)
             _s3_sync_dir(
-                train_ssh, lerobot_activate,
+                train_ssh,
+                lerobot_activate,
                 direction="download",
                 s3_uri=f"{s3_base}/dataset/",
                 local_path=f"{remote_base}/dataset/",
             )
 
         if stage_name == "eval_student" and train_cfg.ssh.host != sim_cfg.ssh.host:
-            logger.info("[%s] Downloading student checkpoint from S3 to sim VM...", stage_name)
+            logger.info(
+                "[%s] Downloading student checkpoint from S3 to sim VM...", stage_name
+            )
             _s3_sync_dir(
-                sim_ssh, genesis_activate,
+                sim_ssh,
+                genesis_activate,
                 direction="download",
                 s3_uri=f"{s3_base}/student/",
                 local_path=f"{remote_base}/student/",
@@ -476,11 +468,7 @@ def _run_remote(
 
         logger.info("[%s] Running on %s: %s", stage_name, ssh._config.host, cmd)
 
-        full_cmd = (
-            f"mkdir -p {remote_base} && "
-            f"{conda_prefix}"
-            f"{cmd}"
-        )
+        full_cmd = f"mkdir -p {remote_base} && {conda_prefix}{cmd}"
 
         try:
             exit_code, stdout, stderr = ssh.run(full_cmd, stream=True)
@@ -490,9 +478,7 @@ def _run_remote(
                 "error": f"SSH error: {exc}",
             }
             _save_result(base_dir, result)
-            raise DistillationError(
-                f"Stage {stage_name} failed (SSH): {exc}"
-            ) from exc
+            raise DistillationError(f"Stage {stage_name} failed (SSH): {exc}") from exc
 
         if exit_code != 0:
             result["stages"][stage_name] = {
@@ -501,9 +487,7 @@ def _run_remote(
                 "stderr": stderr.strip()[-500:] if stderr else "",
             }
             _save_result(base_dir, result)
-            raise DistillationError(
-                f"Stage {stage_name} failed (exit {exit_code})"
-            )
+            raise DistillationError(f"Stage {stage_name} failed (exit {exit_code})")
 
         result["stages"][stage_name] = {
             "status": "success",
@@ -514,7 +498,8 @@ def _run_remote(
         if stage_name == "convert" and train_cfg.ssh.host != sim_cfg.ssh.host:
             logger.info("[%s] Uploading dataset to S3...", stage_name)
             _s3_sync_dir(
-                sim_ssh, genesis_activate,
+                sim_ssh,
+                genesis_activate,
                 direction="upload",
                 s3_uri=f"{s3_base}/dataset/",
                 local_path=f"{remote_base}/dataset/",
@@ -523,7 +508,8 @@ def _run_remote(
         if stage_name == "train_student" and train_cfg.ssh.host != sim_cfg.ssh.host:
             logger.info("[%s] Uploading student checkpoint to S3...", stage_name)
             _s3_sync_dir(
-                train_ssh, lerobot_activate,
+                train_ssh,
+                lerobot_activate,
                 direction="upload",
                 s3_uri=f"{s3_base}/student/",
                 local_path=f"{remote_base}/student/",
@@ -543,6 +529,7 @@ def _s3_sync_dir(
     local_path: str,
 ) -> None:
     """Upload or download a directory via S3 on a remote VM."""
+    import shlex
     from npa.clients.ssh import SSHError
     from urllib.parse import urlparse
 
@@ -557,8 +544,8 @@ def _s3_sync_dir(
             f"endpoint_url=os.environ.get('NEBIUS_S3_ENDPOINT', ''), "
             f"aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID', ''), "
             f"aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY', '')); "
-            f"base = pathlib.Path('{local_path}'); "
-            f"[s3.upload_file(str(f), '{bucket}', '{prefix}' + str(f.relative_to(base))) "
+            f"base = pathlib.Path({local_path!r}); "
+            f"[s3.upload_file(str(f), {bucket!r}, {prefix!r} + str(f.relative_to(base))) "
             f"for f in base.rglob('*') if f.is_file()]; "
             f"print('s3_sync_upload_done')"
         )
@@ -570,21 +557,29 @@ def _s3_sync_dir(
             f"aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID', ''), "
             f"aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY', '')); "
             f"pag = s3.get_paginator('list_objects_v2'); "
-            f"dest = pathlib.Path('{local_path}'); "
-            f"[("
-            f"os.makedirs(str((dest / o['Key'][len('{prefix}'):]).parent), exist_ok=True), "
-            f"s3.download_file('{bucket}', o['Key'], str(dest / o['Key'][len('{prefix}'):]))) "
-            f"for page in pag.paginate(Bucket='{bucket}', Prefix='{prefix}') "
-            f"for o in page.get('Contents', []) "
-            f"if o['Key'][len('{prefix}'):]"
-            f"]; "
+            f"dest = pathlib.Path({local_path!r}).resolve(); "
+            f"prefix = {prefix!r}\n"
+            f"for page in pag.paginate(Bucket={bucket!r}, Prefix=prefix):\n"
+            "    for obj in page.get('Contents', []):\n"
+            "        key = obj['Key']\n"
+            "        rel = key[len(prefix):]\n"
+            "        if not rel or key.endswith('/'):\n"
+            "            continue\n"
+            "        relative = pathlib.PurePosixPath(rel)\n"
+            "        if not key.startswith(prefix) or relative.is_absolute() or '..' in relative.parts or '\\\\' in rel:\n"
+            "            raise ValueError('Unsafe object key in download prefix')\n"
+            "        target = (dest / relative).resolve()\n"
+            "        if not target.is_relative_to(dest):\n"
+            "            raise ValueError('Object escapes its destination')\n"
+            "        target.parent.mkdir(parents=True, exist_ok=True)\n"
+            f"        s3.download_file({bucket!r}, key, str(target))\n"
             f"print('s3_sync_download_done')"
         )
 
     cmd = (
-        f"mkdir -p {local_path} && "
+        f"mkdir -p {shlex.quote(local_path)} && "
         f"{conda_prefix}"
-        f"python3 -c \"{script}\""
+        f"python3 -c {shlex.quote(script)}"
     )
 
     try:
@@ -593,9 +588,7 @@ def _s3_sync_dir(
         raise DistillationError(f"S3 sync ({direction}) failed: {exc}") from exc
 
     if exit_code != 0:
-        raise DistillationError(
-            f"S3 sync ({direction}) failed (exit {exit_code})"
-        )
+        raise DistillationError(f"S3 sync ({direction}) failed (exit {exit_code})")
 
 
 def _upload_artifacts(
@@ -687,6 +680,4 @@ def get_stage_logs(run_id: str, stage: str) -> str:
         if stage_info:
             return json.dumps(stage_info, indent=2)
 
-    raise DistillationError(
-        f"No logs found for stage '{stage}' in run {run_id}"
-    )
+    raise DistillationError(f"No logs found for stage '{stage}' in run {run_id}")

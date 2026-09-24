@@ -9,6 +9,52 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "antioch": [
+        "FastAPI service authentication boundary",
+        "CPU-only system-info contract",
+        "proprietary antioch-sim distribution absent",
+    ],
+    "diffusers": [
+        "hash-locked CUDA runtime and pinned CogVideoX-2B checkpoint load",
+        "native GPU text-to-video pipeline generates and fully decodes an MP4",
+        "output hashes and runtime provenance accompany the capability artifact",
+        "separate workflow qualification covers Mochi, Wan and relative depth",
+    ],
+    "lingbot-world": [
+        "pinned upstream model and operator-supplied source image load",
+        "native camera-conditioned generation runs on four CUDA ranks",
+        "each rank records positive attention and all-to-all execution",
+        "generated MP4 fully decodes with camera and checkpoint provenance",
+    ],
+    "sam3": [
+        "exact SAM 3.1 checkpoint access and pinned source/runtime fetch",
+        "text-prompted masks propagate across the real source video on CUDA",
+        "nonempty masks and decoded overlay match the source frame count",
+        "source, checkpoint, compatibility-patch and output hashes are retained",
+    ],
+    "sam2": [
+        "pinned SAM 2.1 Small checkpoint loads on CUDA",
+        "native video predictor propagates a first-frame box through the input",
+        "raw predicted masks and a fully decoded overlay MP4 are retained",
+        "unchanged source pixels are checked after video encoding",
+    ],
+    "ncore": [
+        "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
+        "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
+        "source inventory hashes match; no functional capture validation claimed",
+    ],
+    "curobo": [
+        "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
+        "finite interpolated joint trajectories and actual FK tool path",
+        "factual RRD artifact passes decoder verification",
+    ],
+    "openpi": [
+        "pinned upstream full-DROID config remains batch 256 and 100,000 steps",
+        "eight JAX processes form one global (1, 8) FSDP mesh",
+        "each distinct node exposes exactly one RTX PRO 6000 SM120 GPU",
+        "DROID 1.0.1 byte/object inventory and ten-million-frame normalization pass",
+        "upstream trainer writes final step 99999 and an immutable checkpoint manifest",
+    ],
     "base-cuda13-b300": [
         "torch import + CUDA device available",
         "flash_attn import (Blackwell/CUDA13 stack)",
@@ -58,6 +104,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "manipulation env create",
         "env step loop",
     ],
+    "isaac-arena": [
+        "pinned official Isaac Lab-Arena 0.3.0 policy_runner starts through runtime-fetched Isaac",
+        "hash-pinned Apache-2.0 GR1 open-microwave replay drives nonzero upstream actions on CUDA",
+        "episode JSONL and the upstream static HTML evaluation report are non-empty",
+        "RTX qualification requires current-run task success and simulator-ground-truth progress bound to denoised coherent visual motion; historical r2 visual evidence is rejected",
+        "NPA result manifest binds artifact hashes, task metrics, input hash, and video to the exact run",
+    ],
     "leisaac": [
         "real LeIsaac-SO101-PickOrange-v0 environment starts",
         "upstream SO101Keyboard teleoperation device active",
@@ -80,6 +133,15 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "decodable image artifact produced (capability, not a CUDA probe)",
         "no baked weights: checkpoint fetched with the operator's HF token",
     ],
+    "cosmos3-nano-video": [
+        "pinned BF16 Cosmos3-Nano weights prestaged once and their immutable manifest verified",
+        "real Cosmos3OmniDiffusersPipeline initializes on one B200 with TP=1 and init-timeout=1800",
+        "three real 297/297/137-frame chunks reuse the generated tail as clean V2V conditioning",
+        "all three chunks and the stitched 720-frame 832x480 video fully decode at 24 fps",
+        "positive finite chunk latency, engine peak memory and sampled device VRAM are required",
+        "run reports and video hashes are retained; each rerun has a separate output directory",
+        "separate deployment acceptance requires 16 Ray replicas and eight concurrent complete requests",
+    ],
     "cosmos3-ray-serve": [
         "native cosmos-framework OmniModelDeployment loads Cosmos3-Nano once",
         "two requests coalesce through upstream @ray.serve.batch",
@@ -93,6 +155,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "real entrypoint assembles the pinned 8-GPU serve command",
         "no model checkpoint files are baked into image-owned trees",
         "separate live evidence: real Cosmos3-Super video generation on 8xH200",
+    ],
+    "cosmos3-super-benchmark": [
+        "exact model snapshot loads in the digest-pinned vLLM-Omni runtime",
+        "real single-GPU BF16 text-to-video request uses the fixed benchmark workload",
+        "non-empty MP4 fully decodes at 1280x720, 189 frames, and 24 fps",
+        "sampled-frame blank and frozen/basic-motion checks pass",
+        "output size, SHA-256, stream metadata, model revision, and seed are recorded",
+        "separate live evidence covers all four topologies and 96 requests on 8xB200",
     ],
     "cosmos3-reason": [
         "real Cosmos-Reason VLM inference on synthetic frames (run_cosmos_reason_vlm)",
@@ -125,9 +195,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "motion-lib validate_motion_lib on synthetic payload",
     ],
     "fiftyone": [
-        "fiftyone import + version pin",
-        "CLI --help",
-        "app config (DB-free env smoke)",
+        "FiftyOne installed version pin",
+        "create a real dataset using bundled MongoDB",
+        "query the dataset and verify sample fields",
+        "CPU Brain uniqueness, similarity and PCA visualization",
+        "launch the App on loopback, read its response and stop it",
     ],
     "lancedb": [
         "FastAPI server start",
@@ -139,6 +211,23 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "FastAPI server start",
         "/health",
         "/system-info",
+    ],
+    "robocasa": [
+        "FastAPI server start",
+        "/health",
+        "/system-info",
+        "Gymnasium robocasa/PickPlaceCounterToCabinet task registration",
+        "kitchen asset availability check",
+        "headless EGL environment reset",
+        "random rollout with video artifact",
+    ],
+    "openarm": [
+        "pinned upstream OpenArm v2 bimanual MJCF loads through openarm_mujoco",
+        "500 real MuJoCo position-control steps advance finite robot state",
+        "compressed joint, actuator-command, and velocity-energy trajectory artifact",
+        "exact-digest RTX gate launches runtime-fetched Isaac Sim/Isaac Lab",
+        "upstream Isaac-Reach-OpenArm-v0 vectorized environment steps on CUDA",
+        "upstream RSL-RL trainer writes a real checkpoint",
     ],
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",
@@ -153,8 +242,8 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
     "sim2real-control": [
-        "canonical compositional stage-adapter module imports",
-        "stage CLI exposes the complete 1-through-14 contract",
+        "canonical 14-stage compositional workflow loads and validates",
+        "real controller expands promote and loop-back execution plans",
         "exact baked source and immutable-image checks run before stage work",
     ],
     "envgen": [
@@ -169,7 +258,9 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "FrankaPickPlace rollout step",
     ],
     "rerun-viewer": [
-        "rerun SDK import + __version__",
+        "robotics joint trace conversion to a non-empty RRD recording",
+        "Rerun CLI verify and entity readback",
+        "Rerun web viewer serves the recording over HTTP",
     ],
     "foxglove-embed": [
         "/healthz reports the service and the pinned @foxglove/embed version",

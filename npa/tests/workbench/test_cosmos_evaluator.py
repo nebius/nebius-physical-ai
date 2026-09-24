@@ -559,8 +559,7 @@ def test_appearance_fidelity_rejects_chroma_shift_instability(
     result = _run_appearance_with_frames(tmp_path, monkeypatch, source, augmented)
     assert result.passed is False
     assert any(
-        region.chroma_instability_p95
-        > result.chroma_instability_tolerance
+        region.chroma_instability_p95 > result.chroma_instability_tolerance
         for region in result.regions
     )
 
@@ -576,9 +575,7 @@ def test_appearance_fidelity_rejects_frame_count_mismatch(
 
 
 def test_appearance_regions_accept_labels_and_validate_bounds() -> None:
-    parsed = appearance.parse_regions(
-        '[{"id":"protected","bounds":[0.1,0.2,0.8,0.9]}]'
-    )
+    parsed = appearance.parse_regions('[{"id":"protected","bounds":[0.1,0.2,0.8,0.9]}]')
     assert parsed == [("protected", (0.1, 0.2, 0.8, 0.9))]
     assert appearance.parse_regions("") == list(appearance.DEFAULT_REGIONS)
     with pytest.raises(CosmosEvaluatorError, match="bounds"):
@@ -658,6 +655,45 @@ def test_attribute_verifier_builds_begin_middle_end_contact_sheet(
 
     with Image.open(sheet) as image:
         assert image.size == (192, 48)
+
+
+def test_source_relative_change_crop_excludes_source_restored_foreground() -> None:
+    from PIL import Image
+
+    size = (160, 120)
+    source_surface = (190, 190, 190)
+    changed_surface = (225, 45, 20)
+    source_foreground = (35, 125, 65)
+    protected_foreground = (52, 30, 108, 90)
+    reference = Image.new("RGB", size, color=source_surface)
+    reference.paste(source_foreground, protected_foreground)
+    generated = Image.new("RGB", size, color=changed_surface)
+    generated.paste(source_foreground, protected_foreground)
+
+    crop = av._source_relative_change_crop(
+        generated=generated,
+        reference=reference,
+        np=np,
+    )
+    pixels = np.asarray(crop)
+
+    # The largest verified rectangle may sit on any side of the protected
+    # source-derived foreground, but it must contain only the changed surface.
+    assert crop.width < generated.width or crop.height < generated.height
+    assert crop.width * crop.height < generated.width * generated.height
+    assert np.all(pixels == np.asarray(changed_surface))
+
+
+def test_source_relative_change_crop_fails_when_no_material_change_exists() -> None:
+    from PIL import Image
+
+    reference = Image.new("RGB", (128, 96), color=(190, 190, 190))
+    with pytest.raises(CosmosEvaluatorError, match="too small"):
+        av._source_relative_change_crop(
+            generated=reference.copy(),
+            reference=reference,
+            np=np,
+        )
 
 
 class FakeTokenFactory:
@@ -824,7 +860,10 @@ def test_generate_question_retries_without_structured_output() -> None:
     assert len(client.requests) == 2
 
 
-def test_verify_attributes_scores_a_matching_answer(tmp_path: Path) -> None:
+@pytest.mark.parametrize("threshold,passed", [(1.0, False), (0.5, True)])
+def test_verify_attributes_scores_a_matching_answer(
+    tmp_path: Path, threshold: float, passed: bool
+) -> None:
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nfake")
     client = FakeTokenFactory(
@@ -841,12 +880,61 @@ def test_verify_attributes_scores_a_matching_answer(tmp_path: Path) -> None:
         selected_variables={"cloth_color": "blue", "lighting": "warm lamp light"},
         variable_options=APPEARANCE_OPTIONS,
         client=client,
+        threshold=threshold,
     )
     assert result.total_checks == 2
     assert result.passed_checks == 1
     assert result.score == 0.5
-    assert result.passed is False
+    assert result.passed is passed
+    assert result.to_dict()["threshold"] == threshold
     assert [check.variable for check in result.checks] == ["cloth_color", "lighting"]
+
+
+def test_verify_attributes_requires_reference_for_source_relative_change(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "generated.mp4"
+    video.write_bytes(b"not-decoded-before-validation")
+
+    with pytest.raises(CosmosEvaluatorError, match="reference videos"):
+        av.verify_attributes(
+            clip_id="clip-0",
+            video=video,
+            selected_variables={"background": "terracotta"},
+            evidence_mode="source-relative-change",
+        )
+
+
+def test_verify_attributes_records_a_per_variable_vlm_override(tmp_path: Path) -> None:
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    client = FakeTokenFactory(
+        [
+            _question_json("cloth_color", "blue", "red"),
+            "A",
+            _question_json("lighting", "warm lamp light", "bright daylight"),
+            "A",
+        ]
+    )
+
+    result = av.verify_attributes(
+        clip_id="clip-0",
+        frame=frame,
+        selected_variables={"cloth_color": "blue", "lighting": "warm lamp light"},
+        variable_options=APPEARANCE_OPTIONS,
+        client=client,
+        vlm_model="surface-vlm",
+        variable_vlm_models={"lighting": "lighting-vlm"},
+    )
+
+    assert result.passed is True
+    assert result.variable_vlm_models == {"lighting": "lighting-vlm"}
+    assert [check.vlm_model for check in result.checks] == [
+        "surface-vlm",
+        "lighting-vlm",
+    ]
+    assert client.requests[1]["model"] == "surface-vlm"
+    assert client.requests[3]["model"] == "lighting-vlm"
 
 
 def test_verify_attributes_records_a_failing_check_without_dropping_the_batch(
@@ -871,11 +959,13 @@ def test_verify_attributes_records_a_failing_check_without_dropping_the_batch(
         selected_variables={"cloth_color": "blue", "lighting": "warm lamp light"},
         variable_options=APPEARANCE_OPTIONS,
         client=client,
+        threshold=0.25,
     )
     assert result.total_checks == 2
     assert result.checks[0].error
     assert result.checks[1].passed
     assert result.score == 0.5
+    assert result.passed is False
 
 
 class _RefusesGuidedJson(FakeTokenFactory):
@@ -971,7 +1061,11 @@ def test_evaluate_run_grades_every_local_variant(tmp_path: Path) -> None:
     _write_variant(
         augment,
         "clip-a",
-        {"cloth_color": "blue", "prompt": "ignored"},
+        {
+            "cloth_color": "blue",
+            "prompt": "ignored",
+            "negative_prompt": "also an instruction, not a requested attribute",
+        },
         conditioned=False,
     )
     _write_variant(augment, "clip-b", {"cloth_color": "red"}, conditioned=False)
@@ -1000,8 +1094,9 @@ def test_evaluate_run_grades_every_local_variant(tmp_path: Path) -> None:
     assert result.score == 1.0
     assert result.passed is True
     assert [clip.clip_id for clip in result.clips] == ["clip-a", "clip-b"]
-    # `prompt` is an instruction, not a visual attribute, so it is never asked about.
+    # Prompt instructions are not visual attributes, so they are never asked about.
     assert "prompt" not in result.clips[0].variables
+    assert "negative_prompt" not in result.clips[0].variables
     # Without a source clip the hallucination check is skipped, and says so.
     assert any("hallucination" in reason for reason in result.clips[0].skipped)
 
@@ -1357,6 +1452,9 @@ def test_empty_independent_selection_is_a_truthful_quality_rejection(
 
     selection = tmp_path / "selection"
     selection.mkdir()
+    attempt = selection / "_attempts" / "fence-1"
+    attempt.mkdir(parents=True)
+    (attempt / "selection.json").write_text("{}", encoding="utf-8")
     (selection / "manifest.json").write_text(
         json.dumps(
             {
@@ -1444,6 +1542,43 @@ def test_input_conditioned_variant_without_a_source_fails_closed(
     assert result.passed is False
     assert result.clips[0].score == 0.0
     assert any("source clip" in reason for reason in result.clips[0].skipped)
+
+
+def test_evaluate_run_routes_the_lighting_vlm_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import npa.workbench.cosmos_evaluator.evaluate as evaluator
+
+    augment = tmp_path / "cosmos_augmented"
+    _write_variant(augment, "clip-a", {"lighting": "bright"}, conditioned=False)
+    attribute = av.AttributeVerificationResult(
+        clip_id="clip-a",
+        passed=True,
+        total_checks=1,
+        passed_checks=1,
+        failed_checks=0,
+        score=1.0,
+        question_model="llm",
+        vlm_model="surface-vlm",
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_verify_attributes(**kwargs: Any) -> av.AttributeVerificationResult:
+        captured.update(kwargs)
+        return attribute
+
+    monkeypatch.setattr(evaluator, "verify_attributes", fake_verify_attributes)
+    result = evaluator.evaluate_run(
+        augment_uri=str(augment),
+        output_uri=str(tmp_path / "grade"),
+        vlm_model="surface-vlm",
+        attribute_lighting_vlm_model="lighting-vlm",
+        storage=object(),
+    )
+
+    assert result.attribute_lighting_vlm_model == "lighting-vlm"
+    assert captured["vlm_model"] == "surface-vlm"
+    assert captured["variable_vlm_models"] == {"lighting": "lighting-vlm"}
 
 
 def test_required_appearance_failure_rejects_an_input_conditioned_variant(
@@ -1646,7 +1781,10 @@ def test_transient_attribute_endpoint_failure_marks_run_degraded(
 
 @pytest.mark.parametrize(
     ("metadata_payload", "warning"),
-    [([], "metadata is not an object"), ({"variables": []}, "variables are not an object")],
+    [
+        ([], "metadata is not an object"),
+        ({"variables": []}, "variables are not an object"),
+    ],
 )
 def test_malformed_variant_metadata_does_not_crash_and_degrades_run(
     tmp_path: Path, metadata_payload: Any, warning: str
@@ -1720,7 +1858,9 @@ def test_evaluator_refuses_attempt_layout_without_canonical_manifest(
 
     root = tmp_path / "cosmos_augmented"
     (root / "_attempts" / "orphan" / "clip").mkdir(parents=True)
-    with pytest.raises(evaluator.CosmosEvaluatorError, match="without a valid canonical"):
+    with pytest.raises(
+        evaluator.CosmosEvaluatorError, match="without a valid canonical"
+    ):
         evaluator._list_clip_targets(str(root), store=object())
 
 

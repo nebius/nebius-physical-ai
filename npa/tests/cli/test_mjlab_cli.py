@@ -90,4 +90,4 @@ def test_mjlab_workflow_path() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     # The advertised path is the npa.workflow spec, not the retired SkyPilot template.
-    assert payload["workflow"] == "npa/workflows/workbench/npa-workflows/mjlab-eval.yaml"
+    assert payload["workflow"] == "workflows/testing/mjlab-eval.yaml"

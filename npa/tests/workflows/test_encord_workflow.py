@@ -7,7 +7,7 @@ from pathlib import Path
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+WORKFLOWS = ROOT / "workflows" / "testing"
 
 
 def _plan(name: str):

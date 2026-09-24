@@ -17,12 +17,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+from npa.workflows.data_factory_review import _PaidfReview
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
@@ -35,8 +38,10 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 #: Run sub-directories materialized from S3 before building a recording. Covers
 #: both producers: the data-factory blueprint (input/cosmos_augmented/
 #: cosmos_control/labeled_*/configs/grade/curation) and the NuRec
-#: neural-reconstruction workflow (ncore/reconstruction/novel_views). Missing
-#: subtrees are skipped.
+#: neural-reconstruction workflow (source/ncore/reconstruction/novel_views).
+#: Only source attribution is fetched; the original capture archive is not
+#: needed to visualize the converted run. Missing subtrees are skipped unless
+#: a COLMAP marker makes its three lineage documents mandatory.
 RUN_SUBDIRS = (
     "input",
     "cosmos_augmented",
@@ -46,11 +51,37 @@ RUN_SUBDIRS = (
     "configs",
     "grade",
     "curation",
+    "source",
     "ncore",
     "reconstruction",
     "novel_views",
     "reports",
 )
+
+_COLMAP_LINEAGE_ARTIFACTS = (
+    (
+        "source",
+        "source/attribution.json",
+        "COLMAP source attribution",
+        "dataset revision sha256 creator license selected_capture source_counts",
+    ),
+    (
+        "conversion",
+        "ncore/sequence/conversion.json",
+        "COLMAP to NCore conversion",
+        "",
+    ),
+    (
+        "rig",
+        "ncore/sequence/npa-rig.json",
+        "NCore rig derivation",
+        "status reference_camera pose_count cameras already_present poses_component_group "
+        "copied_dynamic_edges copied_static_edges",
+    ),
+)
+_COLMAP_LINEAGE_PATHS = tuple(row[1] for row in _COLMAP_LINEAGE_ARTIFACTS)
+# Rig sidecars also belong to preconverted NCore; they alone do not identify COLMAP.
+_COLMAP_LINEAGE_MARKERS = _COLMAP_LINEAGE_PATHS[:2]
 
 
 def _int_env(name: str, default: int) -> int:
@@ -139,7 +170,11 @@ def _log_frame(rr: Any, rec: Any, entity: str, arr: Any) -> None:
 
         buf = io.BytesIO()
         _PILImage.fromarray(arr).save(buf, format="JPEG", quality=RRD_JPEG_QUALITY)
-        rr.log(entity, rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"), recording=rec)
+        rr.log(
+            entity,
+            rr.EncodedImage(contents=buf.getvalue(), media_type="image/jpeg"),
+            recording=rec,
+        )
     except Exception:  # noqa: BLE001 - fall back to raw image if EncodedImage/PIL unavailable
         rr.log(entity, _image(rr, arr), recording=rec)
 
@@ -151,11 +186,203 @@ def _set_frame(rr: Any, rec: Any, idx: int) -> None:
         rr.set_time_sequence("frame", idx, recording=rec)
 
 
+def _log_video_asset(
+    rr: Any,
+    rec: Any,
+    entity: str,
+    path: Path,
+    *,
+    temporal_alignment: dict[str, Any] | None = None,
+) -> int:
+    """Log one video and its real decoded timestamps on the duration timeline."""
+
+    asset = rr.AssetVideo(path=path)
+    rr.log(entity, asset, static=True, recording=rec)
+    timestamps = asset.read_frame_timestamps_nanos()
+    if not len(timestamps):
+        raise DataFactoryVizError(f"video has no decoded frame timestamps: {path.name}")
+    timeline_timestamps = timestamps
+    reference_timestamps = timestamps
+    if temporal_alignment is not None:
+        frame_map = temporal_alignment.get("frame_map")
+        if not isinstance(frame_map, list) or not frame_map:
+            raise DataFactoryVizError(
+                "source video temporal alignment has no frame-reference map"
+            )
+        try:
+            source_indices = [int(item["source_index"]) for item in frame_map]
+            timeline_timestamps = [
+                round(float(item["output_timestamp_seconds"]) * 1_000_000_000)
+                for item in frame_map
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DataFactoryVizError(
+                "source video temporal alignment is malformed"
+            ) from exc
+        if any(index < 0 or index >= len(timestamps) for index in source_indices):
+            raise DataFactoryVizError(
+                "source video temporal alignment references an absent frame"
+            )
+        if any(
+            right <= left
+            for left, right in zip(timeline_timestamps, timeline_timestamps[1:])
+        ):
+            raise DataFactoryVizError(
+                "source video temporal alignment is not strictly increasing"
+            )
+        reference_timestamps = [timestamps[index] for index in source_indices]
+    references = rr.VideoFrameReference.columns_nanos(reference_timestamps)
+    rr.send_columns(
+        entity,
+        indexes=[
+            rr.TimeColumn(
+                "video_time",
+                duration=[1e-9 * value for value in timeline_timestamps],
+            )
+        ],
+        columns=references,
+        recording=rec,
+    )
+    # Keep ordinal navigation as an explicitly secondary timeline. The default
+    # viewer uses ``video_time`` and therefore never invents playback speed.
+    rr.send_columns(
+        entity,
+        indexes=[rr.TimeColumn("frame", sequence=range(len(reference_timestamps)))],
+        columns=references,
+        recording=rec,
+    )
+    return len(reference_timestamps)
+
+
+def _source_video_temporal_alignment(
+    media_evidence: dict[str, Any], entity: str
+) -> dict[str, Any] | None:
+    """Use only the decoded-PTS v3 map for exact source-frame remapping."""
+
+    if (
+        media_evidence.get("conditioning_policy") == "source-fidelity-v3"
+        and entity == "source/original"
+    ):
+        value = media_evidence.get("temporal_alignment")
+        return value if isinstance(value, dict) else None
+    return None
+
+
 def _image(rr: Any, arr: Any):
     try:
         return rr.Image(arr, color_model="RGB")
     except TypeError:
         return rr.Image(arr)
+
+
+def _build_data_factory_blueprint(
+    rrb: Any,
+    *,
+    source_entities: list[str],
+    candidate_entities: list[str],
+    has_controls: bool,
+    has_captions: bool,
+    has_pipeline_evidence: bool,
+    default_timeline: str,
+    foreground_controls: bool = False,
+) -> Any:
+    """Foreground media comparison while keeping factual evidence in another tab."""
+
+    def media_group(entities: list[str], name: str) -> Any:
+        views = [
+            rrb.Spatial2DView(
+                origin=entity,
+                contents=f"{entity}/**",
+                name=entity.rsplit("/", 1)[-1].replace("_", " "),
+            )
+            for entity in entities
+        ]
+        if len(views) == 1:
+            return views[0]
+        return rrb.Tabs(*views, active_tab=0, name=name)
+
+    media_columns: list[Any] = []
+    if source_entities:
+        media_columns.append(media_group(source_entities, "Original source"))
+    if has_controls and foreground_controls:
+        media_columns.append(
+            rrb.Spatial2DView(
+                origin="control",
+                contents="control/**",
+                name="Conditioning controls",
+            )
+        )
+    if candidate_entities:
+        media_columns.append(media_group(candidate_entities, "Generated candidates"))
+    media_tab: Any = (
+        media_columns[0]
+        if len(media_columns) == 1
+        else rrb.Horizontal(
+            *media_columns,
+            column_shares=[1.0] * len(media_columns),
+            name="Original versus generated",
+        )
+    )
+
+    context_views: list[Any] = []
+    if has_controls and not foreground_controls:
+        context_views.append(
+            rrb.Spatial2DView(
+                origin="control",
+                contents="control/**",
+                name="Conditioning controls and masks",
+            )
+        )
+    if has_captions:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="captions", contents="captions/**", name="Prompt and captions"
+            )
+        )
+    if has_pipeline_evidence:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="pipeline",
+                contents="pipeline/**",
+                name="Evaluator scores and disposition",
+            )
+        )
+    if candidate_entities:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="augmented",
+                contents="augmented/**/disposition",
+                name="Per-candidate accept/reject disposition",
+            )
+        )
+    foreground_rows: list[Any] = [media_tab]
+    if context_views:
+        foreground_rows.append(
+            context_views[0]
+            if len(context_views) == 1
+            else rrb.Horizontal(
+                *context_views,
+                column_shares=[1.0] * len(context_views),
+                name="Conditioning, evaluator scores, and disposition",
+            )
+        )
+    layout: Any = (
+        foreground_rows[0]
+        if len(foreground_rows) == 1
+        else rrb.Vertical(
+            *foreground_rows,
+            row_shares=[3.0, 1.0],
+            name="Media-first quality review",
+        )
+    )
+    return rrb.Blueprint(
+        layout,
+        rrb.BlueprintPanel(state=rrb.PanelState.Hidden),
+        rrb.SelectionPanel(state=rrb.PanelState.Hidden),
+        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=default_timeline),
+        auto_layout=False,
+        collapse_panels=True,
+    )
 
 
 def build_run_rrd(
@@ -179,12 +406,16 @@ def build_run_rrd(
 
     try:
         import rerun as rr
+        import rerun.blueprint as rrb
     except ImportError as exc:  # pragma: no cover - rerun is a repo dependency
-        raise DataFactoryVizError(f"rerun-sdk is required to build the recording: {exc}") from exc
+        raise DataFactoryVizError(
+            f"rerun-sdk is required to build the recording: {exc}"
+        ) from exc
 
     run_id = _run_id_from_uri(input_uri)
     active_storage = storage_client
     source_inventory: list[dict[str, Any]] = []
+    require_colmap_lineage = False
     output_object_key = ""
     output_exists = False
     if input_uri.startswith("s3://"):
@@ -194,41 +425,146 @@ def build_run_rrd(
             active_storage = StorageClient.from_environment()
         source_bucket, source_prefix = _split_s3_prefix(input_uri)
         output_bucket, output_object_key = _split_s3_object(output_uri)
-        if (
-            output_bucket != source_bucket
-            or not output_object_key.startswith(source_prefix)
+        if output_bucket != source_bucket or not output_object_key.startswith(
+            source_prefix
         ):
             raise DataFactoryVizError(
                 "remote RRD publication must remain inside the canonical run prefix"
             )
         source_inventory = _s3_inventory(active_storage, input_uri)
-        output_exists = any(
-            row["key"] == output_object_key for row in source_inventory
+        require_colmap_lineage = _inventory_has_colmap_lineage(
+            source_inventory, source_prefix
         )
+        output_exists = any(row["key"] == output_object_key for row in source_inventory)
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
         local = _materialize_run(
-            input_uri, Path(tmp) / "run", storage_client=active_storage
+            input_uri,
+            Path(tmp) / "run",
+            storage_client=active_storage,
+            require_colmap_lineage=require_colmap_lineage,
         )
-        captions = _load_captions(local)
-
-        out_path = Path(tmp) / "sim2real.rrd"
-        rec = rr.RecordingStream(app_id, recording_id=run_id)
-        # A file sink must be attached before the first log call. Attaching it
-        # afterwards happens to replay buffered rows, but leaves a streaming RRD
-        # without its footer/manifest when the temporary directory is published.
-        # Rerun can often read that stream, while `rerun rrd verify` correctly
-        # rejects it as incomplete.
-        rec.save(str(out_path))
-        logged = 0
-
+        review = _PaidfReview(local, input_uri)
+        captions = _load_captions(local, review=review)
         input_root = local / "input"
-        input_provenance = _read_json(input_root / "provenance.json")
+        raw_input_provenance = _read_json(input_root / "provenance.json")
+        input_provenance = review.read(input_root / "provenance.json", "input")
         source_kind = (
             str(input_provenance.get("source_kind") or "")
             if isinstance(input_provenance, dict)
             else ""
         )
+        source_entities: set[str] = set()
+        for frame in _image_files(input_root):
+            if frame.name.startswith("conditioning-frame-"):
+                source_entities.add("conditioning/derived")
+            elif source_kind == "synthetic_fixture":
+                source_entities.add("fixture/synthetic_seeded")
+            else:
+                source_entities.add(f"source/{_input_entity(frame, input_root)}")
+        source_video_records: list[dict[str, Any]] = []
+        for name, entity in (
+            ("source.mp4", "source/original"),
+            ("conditioning.mp4", "conditioning/derived"),
+        ):
+            video = input_root / name
+            if video.is_file():
+                source_entities.add(entity)
+                source_video_records.append({"entity": entity, "video": video})
+        variant_records = _committed_variant_records(local)
+        # ``workbench.nurec.visualize`` is intentionally shared by NuRec and
+        # PAIDF workflow stages. Its CLI default is the NuRec application id,
+        # but committed PAIDF candidates are authoritative run-shape evidence:
+        # they must always receive the media-first PAIDF blueprint and
+        # presentation metadata, regardless of that shared entrypoint default.
+        effective_app_id = APPLICATION_ID if variant_records else app_id
+        candidate_entities = [
+            f"augmented/{record['candidate_id']}" for record in variant_records
+        ]
+        stage_docs = _load_stage_docs(local, review=review)
+        media_evidence = _source_fidelity_media_evidence(
+            local,
+            # Internal synchronization checks need the source-derived policy and
+            # temporal map. The portable review projection intentionally omits
+            # those nested runtime details, so using it here silently disabled
+            # the evidence panel for real source-fidelity runs.
+            input_provenance=raw_input_provenance,
+            variant_records=variant_records,
+        )
+        if media_evidence:
+            stage_docs["pipeline/2_media_metadata"] = _json_block(
+                "Synchronized source, conditioning, control, and generated media",
+                media_evidence,
+            )
+        has_controls = bool(_image_files(local / "cosmos_control")) or bool(
+            media_evidence.get("controls") if media_evidence else False
+        )
+        if (
+            effective_app_id == APPLICATION_ID
+            and variant_records
+            and not source_entities
+        ):
+            raise DataFactoryVizError(
+                "committed augmented candidates require source media for comparison"
+            )
+        has_video_timing = bool(source_video_records) and any(
+            isinstance(record.get("video"), Path) and record["video"].is_file()
+            for record in variant_records
+        )
+        default_timeline = "video_time" if has_video_timing else "frame"
+        blueprint_source_entities = sorted(source_entities)
+        if media_evidence:
+            source_priority = {
+                "source/original": 0,
+                "conditioning/derived": 1,
+            }
+            blueprint_source_entities.sort(
+                key=lambda entity: (source_priority.get(entity, 2), entity)
+            )
+
+        out_path = Path(tmp) / "sim2real.rrd"
+        rec = rr.RecordingStream(effective_app_id, recording_id=run_id)
+        # A file sink must be attached before the first log call. Attaching it
+        # afterwards happens to replay buffered rows, but leaves a streaming RRD
+        # without its footer/manifest when the temporary directory is published.
+        # Rerun can often read that stream, while `rerun rrd verify` correctly
+        # rejects it as incomplete.
+        if effective_app_id == APPLICATION_ID and (
+            source_entities or candidate_entities
+        ):
+            rec.save(
+                str(out_path),
+                default_blueprint=_build_data_factory_blueprint(
+                    rrb,
+                    source_entities=blueprint_source_entities,
+                    candidate_entities=candidate_entities,
+                    has_controls=has_controls,
+                    has_captions=bool(captions),
+                    has_pipeline_evidence=bool(stage_docs),
+                    default_timeline=default_timeline,
+                    foreground_controls=bool(media_evidence),
+                ),
+            )
+        else:
+            rec.save(str(out_path))
+        logged = 0
+
+        source_video_count = 0
+        for source_video in source_video_records:
+            temporal_alignment = (
+                _source_video_temporal_alignment(media_evidence, source_video["entity"])
+                if media_evidence
+                else None
+            )
+            _log_video_asset(
+                rr,
+                rec,
+                f"{source_video['entity']}/video",
+                source_video["video"],
+                temporal_alignment=temporal_alignment,
+            )
+            source_video_count += 1
+
         for frame in _subsample(_image_files(input_root), RRD_MAX_FRAMES_PER_ENTITY):
             _set_frame(rr, rec, _frame_index(frame.stem))
             if frame.name.startswith("conditioning-frame-"):
@@ -257,51 +593,45 @@ def build_run_rrd(
         augmented_entities: set[str] = set()
         augmented_frame_count = 0
         augmented_video_count = 0
-        variant_records = _committed_variant_records(local)
         if variant_records:
-            disposition = _read_json(local / "grade" / "quality_disposition.json")
-            quality_status = str(
-                disposition.get("quality_status") or "UNKNOWN"
-            ).upper() if isinstance(disposition, dict) else "UNKNOWN"
+            disposition = review.read(
+                local / "grade" / "quality_disposition.json", "quality"
+            )
+            quality_status = (
+                str(disposition.get("quality_status") or "UNKNOWN").upper()
+                if isinstance(disposition, dict)
+                else "UNKNOWN"
+            )
             for record in variant_records:
                 d = record["directory"]
-                label = _augmentation_label(d)
+                label = _augmentation_label(d, review)
                 candidate = str(record["candidate_id"])
                 entity = f"augmented/{candidate}"
                 augmented_entities.add(entity)
-                for png in _subsample(sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY):
+                for png in _subsample(
+                    sorted(d.glob("*.png")), RRD_MAX_FRAMES_PER_ENTITY
+                ):
                     _set_frame(rr, rec, _frame_index(png.stem))
                     _log_frame(rr, rec, entity, _load_rgb(png))
                     logged += 1
                     augmented_frame_count += 1
                 video = record.get("video")
                 if isinstance(video, Path) and video.is_file():
-                    asset = rr.AssetVideo(path=video)
-                    rr.log(f"{entity}/video", asset, static=True, recording=rec)
                     try:
-                        timestamps = asset.read_frame_timestamps_nanos()
-                        if len(timestamps):
-                            rr.send_columns(
-                                f"{entity}/video",
-                                indexes=[
-                                    rr.TimeColumn(
-                                        "video_time", duration=1e-9 * timestamps
-                                    )
-                                ],
-                                columns=rr.VideoFrameReference.columns_nanos(
-                                    timestamps
-                                ),
-                                recording=rec,
-                            )
+                        _log_video_asset(rr, rec, f"{entity}/video", video)
                     except Exception as exc:  # noqa: BLE001 - asset remains reviewable
-                        _log.debug(
-                            "could not attach video frame references for %s: %s",
-                            video,
-                            exc,
-                        )
+                        rec.disconnect()
+                        raise DataFactoryVizError(
+                            "generated video timing could not be decoded"
+                        ) from exc
                     augmented_video_count += 1
                 if label:
-                    rr.log(entity, rr.TextDocument(f"{d.name}: {label}"), static=True, recording=rec)
+                    rr.log(
+                        entity,
+                        rr.TextDocument(f"{review.identity(d.name)}: {label}"),
+                        static=True,
+                        recording=rec,
+                    )
                 rr.log(
                     f"{entity}/disposition",
                     rr.TextDocument(
@@ -312,6 +642,7 @@ def build_run_rrd(
                             candidate_id=candidate,
                             quality_status=quality_status,
                             disposition=disposition,
+                            review=review,
                         ),
                         media_type="text/markdown",
                     ),
@@ -361,7 +692,7 @@ def build_run_rrd(
         # curation report, the finalize aggregate, and a stage log/timeline — is
         # inspectable inside the embedded Rerun viewer alongside the input/output
         # images, not just the frames.
-        for entity, body in _load_stage_docs(local).items():
+        for entity, body in stage_docs.items():
             rr.log(
                 entity,
                 rr.TextDocument(body, media_type="text/markdown"),
@@ -387,6 +718,7 @@ def build_run_rrd(
                 existing_path,
                 variant_records=variant_records,
                 quality_status=quality_status if variant_records else "UNKNOWN",
+                source_video_records=source_video_records,
             )
             written_uri = output_uri
         else:
@@ -415,6 +747,27 @@ def build_run_rrd(
         "augmented_media_entities": len(augmented_entities),
         "augmented_frame_components": augmented_frame_count,
         "augmented_video_components": augmented_video_count,
+        "source_video_components": source_video_count,
+        "presentation": {
+            "default_timeline": default_timeline,
+            "default_view": (
+                "source-control-generated"
+                if media_evidence
+                else "original-versus-generated"
+            ),
+            "source_entities": sorted(source_entities),
+            "source_video_entities": [
+                str(record["entity"]) for record in source_video_records
+            ],
+            "candidate_entities": candidate_entities,
+            "conditioning_context": has_controls,
+            "evaluator_disposition_context": bool(stage_docs),
+            "timing_basis": (
+                "decoded-video-timestamps" if has_video_timing else "frame-sequence"
+            ),
+        }
+        if effective_app_id == APPLICATION_ID
+        else {},
         **inventory_proof,
     }
 
@@ -451,6 +804,13 @@ def _s3_inventory(storage_client: Any, uri: str) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: row["key"])
 
 
+def _inventory_has_colmap_lineage(
+    inventory: list[dict[str, Any]], run_prefix: str
+) -> bool:
+    lineage_keys = {run_prefix + relative for relative in _COLMAP_LINEAGE_MARKERS}
+    return any(str(row.get("key") or "") in lineage_keys for row in inventory)
+
+
 def _inventory_sha256(rows: list[dict[str, Any]]) -> str:
     wire = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(wire).hexdigest()
@@ -480,9 +840,7 @@ def _verify_additive_publication(
         raise DataFactoryVizError(
             "RRD publication changed the canonical source object inventory"
         )
-    workflow_before = {
-        key for key in before_by_key if key.startswith(workflow_prefix)
-    }
+    workflow_before = {key for key in before_by_key if key.startswith(workflow_prefix)}
     if not workflow_before.issubset(after_by_key):
         raise DataFactoryVizError("RRD publication removed workflow evidence")
     unexpected = {
@@ -494,7 +852,9 @@ def _verify_additive_publication(
         raise DataFactoryVizError("RRD publication added undeclared run artifacts")
     output = after_by_key.get(output_key)
     if output is None or int(output.get("size") or 0) <= 0:
-        raise DataFactoryVizError("RRD publication did not produce a non-empty artifact")
+        raise DataFactoryVizError(
+            "RRD publication did not produce a non-empty artifact"
+        )
     if output_key in before_by_key and output != before_by_key[output_key]:
         raise DataFactoryVizError("RRD publication changed an existing recording")
     return source_before
@@ -505,11 +865,12 @@ def _verify_terminal_rrd_media(
     *,
     variant_records: list[dict[str, Any]],
     quality_status: str,
+    source_video_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """Prove a preserved RRD contains each candidate's exact video and disposition."""
 
     try:
-        from rerun.recording import load_recording
+        from npa.viz.recordings import load_recording
     except ImportError as exc:  # pragma: no cover - rerun is a runtime dependency
         raise DataFactoryVizError(
             "rerun recording loader is required to verify an existing RRD"
@@ -523,11 +884,38 @@ def _verify_terminal_rrd_media(
 
     verified_videos = 0
     verified_dispositions = 0
+    verified_source_videos = 0
+    for record in source_video_records or []:
+        entity = str(record.get("entity") or "")
+        video_path = record.get("video")
+        if not entity or not isinstance(video_path, Path) or not video_path.is_file():
+            raise DataFactoryVizError(
+                "existing RRD verification requires every source video"
+            )
+        embedded: list[bytes] = []
+        for chunk in by_entity.get(f"/{entity}/video", []):
+            batch = chunk.to_record_batch()
+            if "AssetVideo:blob" not in batch.schema.names:
+                continue
+            for row in batch.column("AssetVideo:blob").to_pylist():
+                if row:
+                    embedded.append(bytes(row[0]))
+        if len(embedded) != 1 or hashlib.sha256(
+            embedded[0]
+        ).hexdigest() != _sha256_path(video_path):
+            raise DataFactoryVizError(
+                "existing RRD source video differs from its canonical input"
+            )
+        verified_source_videos += 1
     expected_status = str(quality_status or "UNKNOWN").upper()
     for record in variant_records:
         candidate = str(record.get("candidate_id") or "")
         video_path = record.get("video")
-        if not candidate or not isinstance(video_path, Path) or not video_path.is_file():
+        if (
+            not candidate
+            or not isinstance(video_path, Path)
+            or not video_path.is_file()
+        ):
             raise DataFactoryVizError(
                 "existing RRD verification requires every committed candidate video"
             )
@@ -541,9 +929,9 @@ def _verify_terminal_rrd_media(
             for row in batch.column("AssetVideo:blob").to_pylist():
                 if row:
                     embedded.append(bytes(row[0]))
-        if len(embedded) != 1 or hashlib.sha256(embedded[0]).hexdigest() != _sha256_path(
-            video_path
-        ):
+        if len(embedded) != 1 or hashlib.sha256(
+            embedded[0]
+        ).hexdigest() != _sha256_path(video_path):
             raise DataFactoryVizError(
                 "existing RRD augmented video differs from its canonical candidate"
             )
@@ -555,8 +943,12 @@ def _verify_terminal_rrd_media(
             for name in batch.schema.names:
                 if "text" not in name.lower() and "body" not in name.lower():
                     continue
-                text_values.extend(str(value) for value in batch.column(name).to_pylist())
-        if not text_values or not any(expected_status in value.upper() for value in text_values):
+                text_values.extend(
+                    str(value) for value in batch.column(name).to_pylist()
+                )
+        if not text_values or not any(
+            expected_status in value.upper() for value in text_values
+        ):
             raise DataFactoryVizError(
                 "existing RRD candidate disposition is missing or inconsistent"
             )
@@ -564,6 +956,7 @@ def _verify_terminal_rrd_media(
     if not variant_records:
         raise DataFactoryVizError("existing RRD has no committed candidates to verify")
     return {
+        "source_video_entities": verified_source_videos,
         "augmented_video_entities": verified_videos,
         "augmented_disposition_entities": verified_dispositions,
     }
@@ -575,6 +968,167 @@ def _sha256_path(path: Path) -> str:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _source_fidelity_media_evidence(
+    local: Path,
+    *,
+    input_provenance: Any,
+    variant_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Probe the exact VDA media bytes that the synchronized RRD embeds.
+
+    This is intentionally opt-in to the NVIDIA VDA source-fidelity policy so
+    existing DIG/IAA/EVG recordings and their defaults remain byte-for-byte
+    behaviorally unchanged.
+    """
+
+    if not isinstance(input_provenance, dict):
+        return {}
+    derivation = input_provenance.get("derivation")
+    if not isinstance(derivation, dict) or derivation.get("policy") not in {
+        "source-fidelity-v2",
+        "source-fidelity-v3",
+    }:
+        return {}
+    conditioning_policy = str(derivation["policy"])
+
+    from npa.workflows.data_factory_input import PaidfInputError, probe_video
+
+    def probe(path: Path) -> dict[str, Any]:
+        try:
+            return {
+                **probe_video(path),
+                "sha256": _sha256_path(path),
+                "byte_size": path.stat().st_size,
+            }
+        except PaidfInputError as exc:
+            raise DataFactoryVizError(
+                f"source-fidelity RRD media probe failed for {path.name}"
+            ) from exc
+
+    source = local / "input" / "source.mp4"
+    conditioning = local / "input" / "conditioning.mp4"
+    if not source.is_file() or not conditioning.is_file():
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires source.mp4 and conditioning.mp4"
+        )
+    source_media = probe(source)
+    conditioning_media = probe(conditioning)
+    candidates = [
+        {
+            "candidate_id": str(record["candidate_id"]),
+            "media": probe(record["video"]),
+        }
+        for record in variant_records
+        if isinstance(record.get("video"), Path)
+    ]
+    if len(candidates) != len(variant_records):
+        raise DataFactoryVizError(
+            "source-fidelity RRD could not probe every committed candidate"
+        )
+    candidate_ids = {str(record["candidate_id"]) for record in variant_records}
+    control_root = local / "cosmos_control"
+    selected_control_videos: dict[Path, str] = {}
+    controls_by_candidate = {candidate_id: 0 for candidate_id in candidate_ids}
+    for iteration, augment_root in _augment_roots(local):
+        manifest = _read_json(augment_root / "manifest.json")
+        if not isinstance(manifest, dict):
+            continue
+        for variant in _validated_viz_manifest(manifest):
+            clip = str(variant.get("clip") or "").strip()
+            candidate_id = f"iteration-{iteration}/{clip}" if iteration else clip
+            if candidate_id not in candidate_ids:
+                continue
+            control_uris = variant.get("control_uris") or {}
+            if not isinstance(control_uris, dict) or not control_uris:
+                raise DataFactoryVizError(
+                    f"source-fidelity RRD candidate {candidate_id} has no committed control video"
+                )
+            for uri in control_uris.values():
+                value = str(uri or "")
+                marker = "/cosmos_control/"
+                if marker not in value or not value.lower().endswith(".mp4"):
+                    raise DataFactoryVizError(
+                        f"source-fidelity RRD candidate {candidate_id} has an invalid control URI"
+                    )
+                path = control_root / value.split(marker, 1)[1]
+                selected_control_videos[path] = candidate_id
+                controls_by_candidate[candidate_id] += 1
+    missing_candidate_controls = sorted(
+        candidate_id
+        for candidate_id, count in controls_by_candidate.items()
+        if count == 0
+    )
+    if missing_candidate_controls:
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires a committed control video for every candidate"
+        )
+    missing_controls = [
+        path for path in sorted(selected_control_videos) if not path.is_file()
+    ]
+    if missing_controls:
+        raise DataFactoryVizError(
+            "source-fidelity RRD is missing a manifest-referenced control video"
+        )
+    controls = [
+        {
+            "candidate_id": selected_control_videos[path],
+            "signal": path.relative_to(control_root).as_posix(),
+            "media": probe(path),
+        }
+        for path in sorted(selected_control_videos)
+    ]
+    return {
+        "schema": "npa.paidf.vda.media-evidence.v1",
+        "conditioning_policy": conditioning_policy,
+        "synchronization_timeline": "video_time",
+        "source": source_media,
+        "conditioning": conditioning_media,
+        "controls": controls,
+        "generated_candidates": candidates,
+        "temporal_alignment": _validated_source_fidelity_alignment(
+            derivation.get("temporal_alignment"),
+            source_frame_count=int(source_media["frame_count"]),
+            conditioning_frame_count=int(conditioning_media["frame_count"]),
+        ),
+    }
+
+
+def _validated_source_fidelity_alignment(
+    value: Any,
+    *,
+    source_frame_count: int,
+    conditioning_frame_count: int,
+) -> dict[str, Any]:
+    """Validate the exact source-reference map before using it as RRD timing."""
+
+    if not isinstance(value, dict) or not isinstance(value.get("frame_map"), list):
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires a complete temporal-alignment map"
+        )
+    frame_map = value["frame_map"]
+    if len(frame_map) != conditioning_frame_count:
+        raise DataFactoryVizError(
+            "source-fidelity temporal alignment does not match conditioning frames"
+        )
+    for expected_index, item in enumerate(frame_map):
+        if not isinstance(item, dict):
+            raise DataFactoryVizError("source-fidelity temporal alignment is malformed")
+        source_index = item.get("source_index")
+        output_index = item.get("output_index")
+        output_timestamp = item.get("output_timestamp_seconds")
+        if (
+            output_index != expected_index
+            or not isinstance(source_index, int)
+            or not 0 <= source_index < source_frame_count
+            or not isinstance(output_timestamp, (int, float))
+            or not math.isclose(
+                float(output_timestamp), expected_index / 16, rel_tol=0, abs_tol=1e-9
+            )
+        ):
+            raise DataFactoryVizError("source-fidelity temporal alignment is malformed")
+    return value
 
 
 def _image_files(root: Path) -> list[Path]:
@@ -623,7 +1177,10 @@ def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
     recording as real run data.
     """
     logged = 0
-    for directory, prefix in (("novel_views", "novel_view"), ("reconstruction", "reconstruction")):
+    for directory, prefix in (
+        ("novel_views", "novel_view"),
+        ("reconstruction", "reconstruction"),
+    ):
         root = local / directory
         if not root.is_dir():
             continue
@@ -684,11 +1241,14 @@ def _log_control_entities(rr: Any, rec: Any, local: Path) -> int:
                 for signal_dir in sorted(p for p in clip_dir.iterdir() if p.is_dir())
             ]
     for clip, signal_dir in selected:
-        if signal_dir.is_dir():
+        control_video = signal_dir.with_suffix(".mp4")
+        if signal_dir.is_dir() or control_video.is_file():
             frames = _subsample(
                 sorted(_image_files(signal_dir)), RRD_MAX_FRAMES_PER_ENTITY
             )
             entity = f"control/{clip}/{signal_dir.name}"
+            if control_video.is_file():
+                _log_video_asset(rr, rec, f"{entity}/video", control_video)
             for frame in frames:
                 _set_frame(rr, rec, _frame_index(frame.stem))
                 _log_frame(rr, rec, entity, _load_rgb(frame))
@@ -784,28 +1344,39 @@ def _committed_variant_dirs(local: Path) -> list[Path]:
     return [record["directory"] for record in _committed_variant_records(local)]
 
 
-def _candidate_evaluation(local: Path, iteration: int, clip: str) -> dict[str, Any]:
+def _candidate_evaluation(
+    local: Path, iteration: int, clip: str, review: _PaidfReview
+) -> dict[str, Any]:
     grade_root = local / "grade"
     grade_dir = (
-        grade_root / f"iteration-{iteration}" / "ranking"
-        if iteration
-        else grade_root
+        grade_root / f"iteration-{iteration}" / "ranking" if iteration else grade_root
     )
     try:
         from npa.workbench.cosmos_evaluator import RESULT_FILENAME as result_name
     except Exception:  # noqa: BLE001
         result_name = "cosmos_evaluator.json"
-    report = _read_json(grade_dir / result_name)
-    if not isinstance(report, dict):
-        return {}
-    return next(
-        (
-            item
-            for item in report.get("clips", [])
-            if isinstance(item, dict) and str(item.get("clip_id") or "") == clip
-        ),
-        {},
-    )
+    return review.candidate_evaluation(grade_dir / result_name, clip)
+
+
+def _candidate_quality_fields(evaluation: dict[str, Any]) -> dict[str, Any]:
+    attributes = evaluation.get("attribute_verification") or {}
+    hallucination = evaluation.get("hallucination") or {}
+    return {
+        "candidate_passed": evaluation.get("passed") is True,
+        "score": evaluation.get("score"),
+        "failed_attributes": [
+            str(check.get("variable") or "unknown")
+            for check in attributes.get("checks", [])
+            if check.get("passed") is not True
+        ],
+        "attribute_results": attributes.get("checks", []),
+        "hallucination_status": "passed"
+        if hallucination.get("passed") is True
+        else "failed",
+        "hallucination": hallucination,
+        "temporal_consistency": evaluation.get("temporal_consistency"),
+        "appearance_fidelity": evaluation.get("appearance_fidelity"),
+    }
 
 
 def _candidate_disposition_document(
@@ -816,49 +1387,39 @@ def _candidate_disposition_document(
     candidate_id: str,
     quality_status: str,
     disposition: Any,
+    review: _PaidfReview,
 ) -> str:
     """Truthful per-candidate disposition shown beside its actual media."""
-
-    evaluation = _candidate_evaluation(local, iteration, clip)
-    attributes = (
-        evaluation.get("attribute_verification", {})
-        if isinstance(evaluation.get("attribute_verification"), dict)
-        else {}
+    evaluation = _candidate_evaluation(local, iteration, clip, review)
+    candidate_status = (
+        "ACCEPTED"
+        if quality_status == "ACCEPTED" and evaluation.get("passed") is True
+        else "REJECTED"
     )
-    failed_attributes = [
-        str(check.get("variable") or "unknown")
-        for check in attributes.get("checks", [])
-        if isinstance(check, dict) and check.get("passed") is not True
+    summary = review.payload(
+        {
+            "candidate_id": candidate_id,
+            "iteration": iteration,
+            "clip_id": clip,
+            "run_disposition": quality_status,
+            "promotion_eligible": quality_status == "ACCEPTED"
+            and evaluation.get("passed") is True,
+            "candidate_disposition": candidate_status.lower(),
+            **_candidate_quality_fields(evaluation),
+            "source_comparison_entity": "source/* or conditioning/derived",
+            "output_media_entity": f"augmented/{candidate_id}",
+            "final_disposition": disposition if isinstance(disposition, dict) else {},
+        },
+        "candidate",
+    )
+    summary["source_reports"] = [
+        source["source_report"]
+        for source in (evaluation, disposition)
+        if isinstance(source, dict) and "source_report" in source
     ]
-    hallucination = (
-        evaluation.get("hallucination", {})
-        if isinstance(evaluation.get("hallucination"), dict)
-        else {}
-    )
-    summary = {
-        "candidate_id": candidate_id,
-        "iteration": iteration,
-        "clip_id": clip,
-        "run_disposition": quality_status,
-        "candidate_passed": evaluation.get("passed") is True,
-        "promotion_eligible": quality_status == "ACCEPTED"
-        and evaluation.get("passed") is True,
-        "score": evaluation.get("score"),
-        "failed_attributes": failed_attributes,
-        "attribute_results": attributes.get("checks", []),
-        "hallucination_status": (
-            "passed" if hallucination.get("passed") is True else "failed"
-        ),
-        "hallucination": hallucination,
-        "temporal_consistency": evaluation.get("temporal_consistency"),
-        "appearance_fidelity": evaluation.get("appearance_fidelity"),
-        "source_comparison_entity": "source/* or conditioning/derived",
-        "output_media_entity": f"augmented/{candidate_id}",
-        "final_disposition": disposition if isinstance(disposition, dict) else {},
-    }
     return (
-        f"# {quality_status} — candidate `{candidate_id}`\n\n"
-        "This panel is review evidence only. Rejected media is never relabeled, "
+        f"# {candidate_status} — candidate `{review.identity(candidate_id)}`\n\n"
+        + "This panel is review evidence only. Rejected media is never relabeled, "
         "curated, finalized, or promoted. Compare it directly with the source or "
         "conditioning entities on the shared timeline.\n\n"
         + _json_block("Candidate quality evidence", summary)
@@ -874,16 +1435,16 @@ def _validated_viz_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         raise DataFactoryVizError(str(exc)) from exc
 
 
-def _augmentation_label(clip_dir: Path) -> str:
+def _augmentation_label(clip_dir: Path, review: _PaidfReview) -> str:
     meta_path = clip_dir / "metadata.json"
     if not meta_path.is_file():
         return ""
-    try:
-        meta = json.loads(meta_path.read_text())
-    except (ValueError, OSError):
-        return ""
+    meta = review.read(meta_path, "metadata")
     variables = meta.get("variables", {}) if isinstance(meta, dict) else {}
-    return ", ".join(f"{k}={v}" for k, v in variables.items())
+    label = ", ".join(f"{k}={v}" for k, v in variables.items())
+    if label:
+        label += "\n\n" + _json_block("Metadata source", meta["source_report"])
+    return label
 
 
 def _read_json(path: Path) -> Any:
@@ -898,7 +1459,9 @@ def _json_block(title: str, payload: Any) -> str:
     return f"## {title}\n\n```json\n{body}\n```\n"
 
 
-def _load_stage_docs(local: Path) -> dict[str, str]:
+def _load_stage_docs(
+    local: Path, *, review: _PaidfReview | None = None
+) -> dict[str, str]:
     """Build per-stage markdown docs (scenarios, hallucination/grade, curation,
     finalize, and a stage log) so the full pipeline is viewable in the Rerun panel.
 
@@ -907,16 +1470,21 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     """
     docs: dict[str, str] = {}
     stage_log: list[str] = []
+    review = review or _PaidfReview(local)
 
     # --- Neural-reconstruction stages (no-ops for a data-factory run) -------------
     docs.update(_load_nurec_docs(local, stage_log))
 
     # Stage 1 — sampled scenarios (Config Generation). This is the "various
     # scenarios" the augment stage multiplies over.
-    cfg = _read_json(local / "configs" / "manifest.json")
+    cfg = review.read(local / "configs" / "manifest.json", "config")
     if isinstance(cfg, dict):
         combos = cfg.get("augmentations") or []
-        lines = [f"**Scene:** {cfg.get('scene', 'n/a')}", f"**Scenarios sampled:** {len(combos)}", ""]
+        lines = [
+            f"**Scene:** {cfg.get('scene', 'n/a')}",
+            f"**Scenarios sampled:** {len(combos)}",
+            "",
+        ]
         for i, combo in enumerate(combos):
             if isinstance(combo, dict):
                 prompt = str(combo.get("prompt") or "")
@@ -924,10 +1492,15 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
                 lines.append(f"- **scenario {i}** — {attrs}")
                 if prompt:
                     lines.append(f"    - prompt: _{prompt}_")
-        docs["pipeline/1_scenarios"] = "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
+        docs["pipeline/1_scenarios"] = (
+            "## Config generation — sampled scenarios\n\n" + "\n".join(lines) + "\n"
+        )
+        docs["pipeline/1_scenarios"] += _json_block(
+            "Scenario source", cfg["source_report"]
+        )
         stage_log.append(f"configs: {len(combos)} scenario(s) sampled")
 
-    input_provenance = _read_json(local / "input" / "provenance.json")
+    input_provenance = review.read(local / "input" / "provenance.json", "input")
     if isinstance(input_provenance, dict):
         label = str(input_provenance.get("input_origin_label") or "Run input")
         docs["pipeline/0_input_provenance"] = _json_block(label, input_provenance)
@@ -939,10 +1512,10 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
 
     # Augment fan-out — how many Cosmos Transfer 2.5 variants were produced.
     aug_dir = _latest_iteration_dir(local / "cosmos_augmented")
-    aug = _read_json(aug_dir / "manifest.json")
+    aug = review.read(aug_dir / "manifest.json", "augment")
     if isinstance(aug, dict):
         variants = aug.get("variants") or aug.get("clips") or []
-        docs["pipeline/2_augment"] = _json_block("Augment — Cosmos Transfer 2.5 (multiply)", aug)
+        docs["pipeline/2_augment"] = _json_block("Augment — generated variants", aug)
         conditioning = f"control={aug.get('control') or 'n/a'}"
         if aug.get("control_prompt"):
             conditioning += f" on '{aug['control_prompt']}'"
@@ -973,7 +1546,7 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         _vlm_result_filename,
         "vlm_eval.json",
     ):
-        ev = _read_json(grade_dir / name)
+        ev = review.read(grade_dir / name, "evaluator")
         if isinstance(ev, dict):
             grade_docs.append(
                 _json_block("Evaluator — integrity and appearance checks", ev)
@@ -982,11 +1555,11 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
                 f"grade: score={ev.get('score')}, status={ev.get('status', 'n/a')}"
             )
             break
-    dec = _read_json(grade_dir / "decision.json")
+    dec = review.read(grade_dir / "decision.json", "quality")
     if isinstance(dec, dict):
         grade_docs.append(_json_block("Quality gate decision", dec))
         stage_log.append(f"grade: decision={dec.get('decision', 'n/a')}")
-    disposition = _read_json(grade_root / "quality_disposition.json")
+    disposition = review.read(grade_root / "quality_disposition.json", "quality")
     if isinstance(disposition, dict):
         grade_docs.append(_json_block("Final quality disposition", disposition))
         stage_log.append(
@@ -997,8 +1570,14 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
     if grade_docs:
         docs["pipeline/3_grade"] = "\n".join(grade_docs)
 
-    # Curation report.
-    cur = _read_json(local / "curation" / "report.json")
+    # Curation reports from both real components, when available.
+    curator = review.read(local / "curation" / "cosmos_curator.json", "curation")
+    if isinstance(curator, dict):
+        docs["pipeline/4_cosmos_curator"] = _json_block(
+            "Cosmos Curator report", curator
+        )
+        stage_log.append(f"cosmos-curator: {curator.get('clip_count', 0)} clip(s)")
+    cur = review.read(local / "curation" / "report.json", "curation")
     if isinstance(cur, dict):
         docs["pipeline/4_curation"] = _json_block("Curation report", cur)
         stage_log.append(
@@ -1007,7 +1586,7 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
         )
 
     # Finalize aggregate report.
-    fin = _read_json(local / "reports" / "final.json")
+    fin = review.read(local / "reports" / "final.json", "final")
     if isinstance(fin, dict):
         docs["pipeline/5_finalize"] = _json_block("Finalize — aggregate report", fin)
         stage_log.append(
@@ -1017,7 +1596,9 @@ def _load_stage_docs(local: Path) -> dict[str, str]:
 
     if stage_log:
         docs["pipeline/0_log"] = (
-            "## Pipeline stage log\n\n" + "\n".join(f"- {line}" for line in stage_log) + "\n"
+            "## Pipeline stage log\n\n"
+            + "\n".join(f"- {line}" for line in stage_log)
+            + "\n"
         )
     return docs
 
@@ -1031,12 +1612,84 @@ def _read_yaml(path: Path) -> Any:
         return None
 
 
-def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
-    """Build the neural-reconstruction stage docs for the Rerun panel.
+def _lineage_fields(payload: dict, names: str) -> dict:
+    return {name: payload[name] for name in names.split() if name in payload}
 
-    Every entry is optional, so a data-factory run (which has none of these
-    artifacts) gets an empty dict and is completely unaffected.
-    """
+
+def _read_lineage(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    payload = _read_json(path)
+    if not isinstance(payload, dict) or not payload:
+        raise DataFactoryVizError(f"NuRec lineage is unreadable: {path.name}")
+    return payload
+
+
+def _colmap_conversion_lineage(report: dict) -> dict:
+    """Keep conversion facts without embedding source filenames or private paths."""
+    payload = _lineage_fields(
+        report,
+        "schema_version status engine counts poses_component_group time_mapping point_filter",
+    )
+    payload["source"] = _lineage_fields(
+        report.get("source", {}), "archive_sha256 counts origin_points_filtered"
+    )
+    payload["converter"] = _lineage_fields(
+        report.get("converter", {}), "revision target runtime_sha256 license"
+    )
+    return payload
+
+
+def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Bind COLMAP capture, conversion and derived rig facts to their source bytes."""
+    if not any((local / relative).exists() for relative in _COLMAP_LINEAGE_MARKERS):
+        return {}
+    docs: dict[str, str] = {}
+    for entity, relative, title, fields in _COLMAP_LINEAGE_ARTIFACTS:
+        path = local / relative
+        report = _read_lineage(path)
+        if report is None:
+            raise DataFactoryVizError(f"NuRec lineage artifact is missing: {relative}")
+        payload = (
+            _colmap_conversion_lineage(report)
+            if entity == "conversion"
+            else _lineage_fields(report, fields)
+        )
+        payload["artifact_sha256"] = _sha256_path(path)
+        docs[f"provenance/{entity}"] = _json_block(title, payload)
+    if docs:
+        docs["pipeline/1_ncore"] = (
+            "## NCore input capture\n\n"
+            "_Capture counts describe conversion input/output, not NRE training coverage. "
+            "Photographic ordering is not synchronized capture time; sparse SfM points "
+            "are not physical LiDAR._\n\n" + "\n".join(docs.values())
+        )
+        stage_log.append("ncore: COLMAP capture lineage recorded from run artifacts")
+    return docs
+
+
+def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe actual NuRec artifacts, including either input capture format."""
+    docs = _load_colmap_docs(local, stage_log)
+    if not docs:
+        docs = _load_ncore_manifest_docs(local, stage_log)
+    docs.update(_load_nurec_metrics_docs(local, stage_log))
+    docs.update(_load_novel_view_docs(local, stage_log))
+    if (local / "novel_views").is_dir():
+        docs["provenance/rrd_review"] = _json_block(
+            "Novel-view review settings",
+            {
+                "schema": "npa.nurec.rrd-review.v1",
+                "max_frames_per_entity": RRD_MAX_FRAMES_PER_ENTITY,
+                "max_frame_dim": RRD_MAX_FRAME_DIM,
+                "jpeg_quality": RRD_JPEG_QUALITY,
+            },
+        )
+    return docs
+
+
+def _load_ncore_manifest_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the preconverted-NCore fetch manifest when present."""
     docs: dict[str, str] = {}
 
     # Stage 1 — the real capture that was reconstructed, plus how the rig frame
@@ -1061,13 +1714,21 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
                 f"({rig.get('pose_count', 0)} poses)",
                 f"**Poses component group:** `{rig.get('poses_component_group', 'n/a')}`",
             ]
-        docs["pipeline/1_ncore"] = "## NCore input capture\n\n" + "\n".join(lines) + "\n"
+        docs["pipeline/1_ncore"] = (
+            "## NCore input capture\n\n" + "\n".join(lines) + "\n"
+        )
         stage_log.append(
             f"ncore: {manifest.get('scene', 'n/a')} "
             f"({manifest.get('shard_count', 0)} shard(s), "
             f"{len(manifest.get('camera_ids') or [])} camera(s))"
         )
 
+    return docs
+
+
+def _load_nurec_metrics_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the metrics emitted by NRE validation."""
+    docs: dict[str, str] = {}
     # Stage 2 — the trained Gaussian reconstruction and its real quality metrics.
     metrics = _read_yaml(local / "reconstruction" / "metrics.yaml")
     if isinstance(metrics, dict):
@@ -1092,6 +1753,12 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
         else:
             stage_log.append("reconstruct: metrics recorded")
 
+    return docs
+
+
+def _load_novel_view_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
+    """Describe the rendered novel-view frames and videos."""
+    docs: dict[str, str] = {}
     # Stage 3 — novel views rendered from the trained scene.
     novel_root = local / "novel_views"
     if novel_root.is_dir():
@@ -1134,35 +1801,50 @@ _CAPTION_HEADERS = {
     ),
     "labeled_augmented": (
         "## Augmented-clip captions — Token Factory VLM\n\n"
-        "_Descriptive per-frame labels of the Cosmos Transfer 2.5 OUTPUT. This is "
+        "_Descriptive per-frame labels of the generated video output. This is "
         "captioning, not the quality gate — see `pipeline/3_grade` for the "
         "attribute-verify / hallucination check (score + promote/loop_back decision)._\n\n"
     ),
 }
 
 
-def _load_captions(local: Path) -> dict[str, str]:
+def _load_captions(
+    local: Path, *, review: _PaidfReview | None = None
+) -> dict[str, str]:
     out: dict[str, str] = {}
+    review = review or _PaidfReview(local)
     for name in ("labeled_original", "labeled_augmented"):
         cj = local / name / "captions.json"
         if not cj.is_file():
             continue
-        try:
-            payload = json.loads(cj.read_text())
-        except (ValueError, OSError):
-            continue
+        payload = review.read(cj, "captions")
         items = payload.get("captions", []) if isinstance(payload, dict) else []
         body = "\n\n".join(
-            f"- {c.get('image')}: {c.get('caption')}" for c in items[:12] if isinstance(c, dict)
+            f"- {c.get('image')}: {c.get('caption')}"
+            for c in items[:12]
+            if isinstance(c, dict)
         )
         if body:
             # Prefix a self-identifying header so a caption panel is never confused
             # with the VLM eval / hallucination grade panel in the Rerun grid.
             out[name] = _CAPTION_HEADERS.get(name, "") + body
+            out[name] += "\n\n" + _json_block(
+                "Caption source",
+                {
+                    "model": payload.get("model"),
+                    **payload["source_report"],
+                },
+            )
     return out
 
 
-def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClient | None") -> Path:
+def _materialize_run(
+    input_uri: str,
+    dest: Path,
+    *,
+    storage_client: "StorageClient | None",
+    require_colmap_lineage: bool = False,
+) -> Path:
     if not input_uri.startswith("s3://"):
         return Path(input_uri)
     from npa.clients.storage import StorageClient
@@ -1171,15 +1853,31 @@ def _materialize_run(input_uri: str, dest: Path, *, storage_client: "StorageClie
     dest.mkdir(parents=True, exist_ok=True)
     root = input_uri.rstrip("/")
     for sub in RUN_SUBDIRS:
+        if sub == "source":
+            continue
         try:
             client.download_path(f"{root}/{sub}/", str(dest / sub))
         except Exception:
             # Optional subtrees (labeled_*) may not exist; input/augmented drive the recording.
             continue
+    _download_colmap_lineage(client, root, dest, required=require_colmap_lineage)
     return dest
 
 
-def _publish(local_path: str, output_uri: str, *, storage_client: "StorageClient | None") -> str:
+def _download_colmap_lineage(client, root: str, dest: Path, *, required: bool) -> None:
+    lineage_paths = _COLMAP_LINEAGE_PATHS if required else ("source/attribution.json",)
+    for relative in lineage_paths:
+        local_path = dest / relative
+        try:
+            client.download_file(f"{root}/{relative}", str(local_path))
+        except Exception:
+            if required:
+                raise
+
+
+def _publish(
+    local_path: str, output_uri: str, *, storage_client: "StorageClient | None"
+) -> str:
     if not output_uri.startswith("s3://"):
         out = Path(output_uri)
         out.parent.mkdir(parents=True, exist_ok=True)

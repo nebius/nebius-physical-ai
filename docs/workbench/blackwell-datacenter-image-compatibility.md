@@ -1,5 +1,7 @@
 # Blackwell datacenter image compatibility (B200 `sm_100` / B300 `sm_103`)
 
+[Workbench docs](README.md)
+
 How to make a Workbench container image deployable on datacenter Blackwell, and how to prove it.
 
 The per-image verdicts are machine-readable in `npa/docker/workbench/blackwell-dc-images.json` and gated by `npa/tests/docker/test_blackwell_dc_manifest.py`. This page is the human companion: the compatibility model, the build conventions, and the validation bar.

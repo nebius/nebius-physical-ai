@@ -1,5 +1,7 @@
 # Nebius Physical AI Workbench — Pipeline Authoring Guide
 
+[Docs](README.md)
+
 > Living document. Updated as new pipeline patterns are introduced.
 > Last updated: 2026-08-03
 
@@ -14,16 +16,18 @@ SkyPilot remains the execution engine, not the repository authoring surface. The
 old shipped multi-document SkyPilot workflow catalog is retired and guarded from
 returning. `npa workbench workflow submit` still accepts customer-provided raw
 SkyPilot YAML, and a few tool-specific single-task examples or resource profiles
-remain in guarded locations, but new repository pipelines belong under:
+remain in guarded locations. The supported catalog has two workflow directories:
 
 ```text
-npa/workflows/workbench/npa-workflows/
+workflows/main/     # sim2real.yaml, paidf-cosmos3.yaml, nurec-reconstruct.yaml
+workflows/testing/  # All other catalog workflows; add new pipelines here
 ```
 
+Catalog documentation lives in [`workflows/README.md`](../workflows/README.md).
 The concise language reference is
 [`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md). This guide
 uses
-[`bdd100k-pipeline.yaml`](../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+[`bdd100k-pipeline.yaml`](../workflows/testing/bdd100k-pipeline.yaml)
 as the longer service-backed example.
 
 ## Spec Structure
@@ -230,15 +234,28 @@ toolRefs.
 Run these from the repository root:
 
 ```bash
-npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
-npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id preview --json
-npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id preview --plan-only
-npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id <run-id>
+npa/.venv/bin/npa workbench workflow validate-spec "<spec.yaml>" --json
+npa/.venv/bin/npa workbench workflow plan-spec "<spec.yaml>" --run-id preview --json
+npa/.venv/bin/npa workbench workflow submit "<spec.yaml>" --run-id preview --plan-only
+npa/.venv/bin/npa workbench workflow submit "<spec.yaml>" --run-id "<run-id>"
 ```
 
 For a dynamic branch, add `--assume-decision promote_checkpoint` while planning.
 For real parallel fan-out, triggers, or early exit based on an S3 decision
 artifact, submit with `--runtime`. `--plan-only` never launches infrastructure.
+Submission uses the saved `default_project` alias unless you pass
+`--project <alias>`. The selected alias also scopes runtime credentials,
+execution preflight and submission receipts.
+
+The gated `test_runtime_default_project_live.py` verifies this selection with a
+real GPU workflow and S3 output. Set `NPA_INTEGRATION_E2E=1` and point
+`NPA_RUNTIME_DEFAULT_PROJECT_LIVE_CONFIG` at a private JSON file containing
+`spec_path`, `run_id`, `infra`, `isolated_config_dir`, `output_uri`, and optional
+`sky_bin` and `config_path`. The saved default alias must differ from `default`.
+The supplied workflow must write actual CUDA matrix-check results with `cuda`,
+`gpu_count`, `finite` and `max_abs_error` fields. The test omits `--project` and
+verifies both runtime credential provenance and the stored GPU result. Use
+already provisioned infrastructure and retain the exact run identity for cleanup.
 
 The engine renders each planned state as a SkyPilot task. Setup is selected from
 the toolRef, not copied into every spec: package extras, vendor interpreters,
@@ -246,13 +263,19 @@ source staging, image routing, and required run preambles are renderer concerns.
 
 ## Durable State
 
+For runtime submission, API readiness and every wave use the same resolved
+storage bucket, run prefix, endpoint and selected credentials. Prefix templates
+such as `{{run.id}}` are resolved before API startup. An existing isolated API
+with a different executing configuration still rejects the submission; preserve
+its jobs and use a correctly configured isolated scope for recovery.
+
 The spec runtime can persist `npa-workflow/manifest.json`, `status.json`, and the
 runtime wave ledger under the run prefix. Use the generic workflow status/logs
 and artifact commands instead of adding per-spec log upload code:
 
 ```bash
 npa/.venv/bin/npa workbench workflow status "s3://<bucket>/<prefix>/"
-npa/.venv/bin/npa workbench workflow logs "s3://<bucket>/<prefix>/" --stage <state>
+npa/.venv/bin/npa workbench workflow logs "s3://<bucket>/<prefix>/" --stage "<state>"
 npa/.venv/bin/npa workbench workflow artifacts "s3://<bucket>/<prefix>/"
 ```
 
@@ -262,7 +285,7 @@ The parallel sweep is an authored workflow spec:
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml \
+  workflows/testing/isaac-lab-rl-sweep.yaml \
   --run-id isaac-cartpole-sweep --runtime
 ```
 
@@ -277,7 +300,7 @@ H200 do not provide the RT cores used by rendering/simulation.
 ## Adding a Pipeline
 
 1. Start from the closest spec under
-   `npa/workflows/workbench/npa-workflows/`.
+   `workflows/` and save the new pipeline under `workflows/testing/`.
 2. Reuse an existing toolRef. If the needed capability is missing, add it to the
    workbench tool and catalog rather than embedding a second implementation.
 3. Put runtime values and S3 URIs in `config:`; never depend on a repository path
@@ -302,7 +325,7 @@ catalog is retired and its absence is guardrail-enforced.
 - [`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md)
 - [`docs/workbench/npa-workflow-tool-catalog.md`](workbench/npa-workflow-tool-catalog.md)
 - [`docs/workbench/cookbooks/bdd100k-pipeline.md`](workbench/cookbooks/bdd100k-pipeline.md)
-- [`npa/workflows/workbench/npa-workflows/README.md`](../npa/workflows/workbench/npa-workflows/README.md)
+- [`workflows/README.md`](../workflows/README.md)
 
 ## Changelog
 

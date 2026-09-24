@@ -5,7 +5,8 @@
 > [docs/cli/README.md](docs/cli/README.md) and [npa/README.md](npa/README.md);
 > `npa --help` is always authoritative. Kept for historical context only.
 
-Complete reference for the `npa` command-line tool. Use this to generate correct commands.
+Use the generated [CLI reference](docs/cli/README.md) and the installed
+command's `--help` when writing commands. The snapshot below is historical.
 
 ## Command Hierarchy
 

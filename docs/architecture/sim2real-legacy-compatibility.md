@@ -1,7 +1,7 @@
 # Sim2Real legacy compatibility boundary
 
 The only canonical operator surface is
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`, executed by the ordinary
+`workflows/main/sim2real.yaml`, executed by the ordinary
 `npa workbench workflow ... --runtime` planner, renderer, and SkyPilot runtime.
 
 `npa.workflows.sim2real.engine`, its bounded `legacy_*` modules,

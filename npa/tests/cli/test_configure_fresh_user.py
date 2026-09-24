@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import subprocess
 from unittest.mock import Mock
 
 import pytest
@@ -93,9 +94,7 @@ def test_known_project_no_provision_is_provider_free_and_deselects_old_storage(
     monkeypatch.setattr(nebius, "set_profile_project", forbidden)
     monkeypatch.setattr(nebius, "get_project_name", forbidden)
     monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
-    monkeypatch.setattr(
-        "npa.clients.storage_validation.probe_storage_write", forbidden
-    )
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", forbidden)
     monkeypatch.setattr(
         cli_main,
         "_saved_model_access_note",
@@ -159,9 +158,7 @@ def test_known_project_no_provision_disables_retained_exact_project_storage(
     monkeypatch.setattr(nebius, "set_profile_project", forbidden)
     monkeypatch.setattr(nebius, "get_project_name", forbidden)
     monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
-    monkeypatch.setattr(
-        "npa.clients.storage_validation.probe_storage_write", forbidden
-    )
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", forbidden)
 
     result = runner.invoke(app, _known_project_args(provision=False))
 
@@ -213,6 +210,77 @@ def test_known_project_provision_is_explicit_and_summarized(
     assert "Intent: provision object storage explicitly" in result.output
     assert "Summary:" in result.output
     assert "storage=created" in result.output
+
+
+@pytest.mark.parametrize(
+    ("version_result", "expected_error"),
+    [
+        (
+            subprocess.CompletedProcess([], 0, "0.12.211\nprivate-sentinel", ""),
+            "Unsupported Nebius CLI 0.12.211",
+        ),
+        (
+            subprocess.CompletedProcess([], 0, "private-sentinel", ""),
+            "Could not parse the Nebius CLI version",
+        ),
+        (
+            subprocess.CompletedProcess([], 1, "", "private-sentinel"),
+            "Could not check the Nebius CLI version (exit 1)",
+        ),
+        (OSError("private-sentinel"), "Could not check the Nebius CLI version"),
+    ],
+)
+def test_known_project_configure_preserves_safe_cli_compatibility_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version_result, expected_error: str
+) -> None:
+    config, credentials = _point_configure_at_tmp(monkeypatch, tmp_path)
+    monkeypatch.setattr(nebius, "_NEBIUS_VERSION_CHECKED", False)
+    monkeypatch.setattr(nebius.shutil, "which", lambda _name: "/synthetic/nebius")
+    version_probe = Mock(return_value=version_result)
+    if isinstance(version_result, Exception):
+        version_probe.side_effect = version_result
+    monkeypatch.setattr(nebius.subprocess, "run", version_probe)
+    monkeypatch.setattr(nebius, "_env_iam_token", lambda: "")
+    monkeypatch.setattr(nebius, "_candidate_iam_token_files", lambda: [])
+    monkeypatch.setattr(nebius, "_metadata_iam_token", lambda: "")
+    provision = Mock()
+    monkeypatch.setattr(cli_main, "_provision_object_storage", provision)
+
+    result = runner.invoke(app, _known_project_args(provision=True))
+
+    assert result.exit_code == 2, result.output
+    output = " ".join(result.output.split())
+    assert expected_error in output
+    assert "NEBIUS_CLI_VERSION=0.12.254 bash" in output
+    assert "private-sentinel" not in output
+    assert "profile cannot authenticate" not in output
+    assert version_probe.call_args.args[0] == ["/synthetic/nebius", "version"]
+    version_probe.assert_called_once()
+    provision.assert_not_called()
+    assert not config.exists() and not credentials.exists()
+
+
+def test_known_project_configure_authentication_error_keeps_provider_output_private(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config, credentials = _point_configure_at_tmp(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        nebius,
+        "get_iam_token",
+        Mock(side_effect=nebius.NebiusError("token=private-sentinel")),
+    )
+    provision = Mock()
+    monkeypatch.setattr(cli_main, "_provision_object_storage", provision)
+
+    result = runner.invoke(app, _known_project_args(provision=True))
+
+    assert result.exit_code == 2, result.output
+    output = " ".join(result.output.split())
+    assert "profile cannot authenticate non-interactively" in output
+    assert "Activate or refresh it, then retry" in output
+    assert "private-sentinel" not in output
+    provision.assert_not_called()
+    assert not config.exists() and not credentials.exists()
 
 
 @pytest.mark.parametrize("failure_phase", ["authentication", "storage-probe"])
@@ -290,7 +358,9 @@ def test_failed_known_project_provision_preserves_prior_credential_selection(
             "npa.clients.storage_validation.probe_storage_write",
             lambda **_kwargs: type("Probe", (), {"ok": False})(),
         )
-        monkeypatch.setattr(cli_main, "_provision_object_storage", lambda *_a, **_k: None)
+        monkeypatch.setattr(
+            cli_main, "_provision_object_storage", lambda *_a, **_k: None
+        )
 
     result = runner.invoke(app, _known_project_args(provision=True))
 
@@ -315,9 +385,7 @@ def test_interactive_no_provision_has_clear_provider_free_summary(
     monkeypatch.setattr(nebius, "get_iam_token", forbidden)
     monkeypatch.setattr(nebius, "set_profile_project", forbidden)
     monkeypatch.setattr(cli_main, "_provision_object_storage", forbidden)
-    monkeypatch.setattr(
-        "npa.clients.storage_validation.probe_storage_write", forbidden
-    )
+    monkeypatch.setattr("npa.clients.storage_validation.probe_storage_write", forbidden)
     access_probe_calls: list[tuple[str, str]] = []
 
     def access_note(hf_token: str, ngc_key: str) -> str:
@@ -325,9 +393,9 @@ def test_interactive_no_provision_has_clear_provider_free_summary(
         return "[NOTE] HF token missing; NGC key missing (informational)."
 
     monkeypatch.setattr(cli_main, "_model_access_note", access_note)
-    answers = "\n".join(
-        ["tenant-synthetic", "project-synthetic", "", "", "", ""]
-    ) + "\n"
+    answers = (
+        "\n".join(["tenant-synthetic", "project-synthetic", "", "", "", ""]) + "\n"
+    )
 
     result = runner.invoke(
         app,
@@ -393,7 +461,12 @@ def test_access_advisory_reports_each_outcome_without_gating_or_secret_leak(
 
     def probe(_validator, _token, assets, **_kwargs):
         return {
-            (asset.repo, asset.repo_type): HFAccessResult(
+            (
+                asset.repo,
+                asset.repo_type,
+                asset.revision,
+                asset.probe_path,
+            ): HFAccessResult(
                 repo=asset.repo,
                 ok=hf_asset_status == 200,
                 status_code=hf_asset_status,
@@ -424,16 +497,10 @@ def test_access_probe_exceptions_are_informative_and_never_gate(
     def unavailable(*_args, **_kwargs):
         raise RuntimeError("provider failed with hf_synthetic_secret")
 
-    monkeypatch.setattr(
-        "npa.clients.huggingface.validate_hf_identity", unavailable
-    )
-    monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access", unavailable
-    )
+    monkeypatch.setattr("npa.clients.huggingface.validate_hf_identity", unavailable)
+    monkeypatch.setattr("npa.workbench.nurec.nurec.check_ngc_image_access", unavailable)
 
-    note = cli_main._model_access_note(
-        "hf_synthetic_secret", "nvapi-synthetic-secret"
-    )
+    note = cli_main._model_access_note("hf_synthetic_secret", "nvapi-synthetic-secret")
 
     assert "HF provider/network unavailable" in note
     assert "NGC provider/network unavailable" in note
@@ -504,7 +571,9 @@ def test_environment_credential_import_saves_then_reports_advisory(
     monkeypatch.setattr(
         cli_main,
         "_saved_model_access_note",
-        lambda: "[NOTE] Access checks are informational; HF token rejected; NGC key rejected.",
+        lambda: (
+            "[NOTE] Access checks are informational; HF token rejected; NGC key rejected."
+        ),
         raising=False,
     )
 
@@ -538,7 +607,9 @@ def test_prompt_free_project_and_environment_import_are_one_provider_free_intent
         access_probe_calls.append("called")
         return "[NOTE] Access checks are informational; HF token valid."
 
-    monkeypatch.setattr(cli_main, "_saved_model_access_note", access_note, raising=False)
+    monkeypatch.setattr(
+        cli_main, "_saved_model_access_note", access_note, raising=False
+    )
 
     result = runner.invoke(
         app, [*_known_project_args(provision=False), "--save-env-credentials"]
@@ -669,8 +740,7 @@ def test_configure_help_describes_provider_free_and_explicit_provision_intent() 
 
 def test_generated_configure_bucket_names_are_utc_and_collision_safe() -> None:
     names = {
-        cli_main._generated_configure_bucket_name("tenant", "project")
-        for _ in range(3)
+        cli_main._generated_configure_bucket_name("tenant", "project") for _ in range(3)
     }
 
     assert len(names) == 3

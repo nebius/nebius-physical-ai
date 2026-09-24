@@ -1,6 +1,8 @@
 # BDD100K SkyPilot Pipeline
 
-**Workflow:** [bdd100k-pipeline.yaml](../../../npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml)
+[Cookbooks](README.md)
+
+**Workflow:** [bdd100k-pipeline.yaml](../../../workflows/testing/bdd100k-pipeline.yaml)
 (`npa.workflow/v0.0.1`) — a readable stage graph of `toolRef`s. See
 [npa-workflow-guide.md](../npa-workflow-guide.md). `run_bdd100k_pipeline.py` renders that
 spec and submits it through SkyPilot. The raw `skypilot/bdd100k-pipeline.yaml` template it
@@ -10,9 +12,9 @@ Two in-cluster services must be reachable before a live run, because three stage
 
 ```bash
 npa workbench lancedb deploy --runtime kubernetes --namespace workbench \
-  --storage-path s3://<your-bucket>/lancedb/
-npa workbench detection-training deploy --namespace workbench --gpu-type <h100|l40s|rtxpro6000> \
-  --output-path s3://<your-bucket>/detection-training/
+  --storage-path "s3://<your-bucket>/lancedb/"
+npa workbench detection-training deploy --namespace workbench --gpu-type "<h100|l40s|rtxpro6000>" \
+  --output-path "s3://<your-bucket>/detection-training/"
 ```
 
 > This pipeline reproduces LanceDB's autonomous-vehicle perception walkthrough on
@@ -29,7 +31,7 @@ The workflow composes the BDD100K reproduction stages:
 4. Create the three failure-mode materialized views with `POST /create-mv`.
 5. Train one detector per failure-mode view with `POST /train`.
 6. Evaluate each trained detector with `POST /eval`.
-7. Launch a FiftyOne App on `--address 0.0.0.0 --port 5151` with the SkyPilot port exposed for public review.
+7. Launch a FiftyOne App on loopback and review it through authenticated SSH or Kubernetes port-forwarding.
 
 SkyPilot 0.12.2 supports serial pipelines and all-parallel job groups, but not
 mixed dependency graphs in one YAML. This pipeline therefore serializes the
@@ -60,7 +62,7 @@ Terraform/AWS-CLI tooling, and the SkyPilot runtime bootstrap.
 Export the non-secret identifiers used throughout this cookbook:
 
 ```bash
-export NPA_S3_BUCKET=<your-bucket>            # bucket name only, no s3:// prefix
+export NPA_S3_BUCKET="<your-bucket>"            # bucket name only, no s3:// prefix
 export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
@@ -124,7 +126,7 @@ secret exists in the namespace SkyPilot uses (normally `default`):
 export KUBECONFIG=~/.npa/clusters/npa-cluster/kubeconfig
 kubectl auth can-i create pods -n default
 # Private images only: verify the operator-managed secret named by your workload.
-kubectl get secret <your-ghcr-pull-secret> -n default
+kubectl get secret "<your-ghcr-pull-secret>" -n default
 ```
 
 ### 3. In-cluster workbench services
@@ -155,10 +157,10 @@ submission time:
 
 ```bash
 python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
-  --lancedb-endpoint http://<your-lancedb-endpoint>:8686 \
-  --run-id <your-run-id>
+  --lancedb-endpoint "http://<your-lancedb-endpoint>:8686" \
+  --run-id "<your-run-id>"
 ```
 
 See [lancedb-deploy-runbook.md](lancedb-deploy-runbook.md) for deploy runtimes,
@@ -170,7 +172,7 @@ table, query, and import usage.
 After the demo, remove the GPU node group and the cluster to stop GPU spend:
 
 ```bash
-npa cluster node-group remove --cluster-name npa-cluster --name <node-group-name>
+npa cluster node-group remove --cluster-name npa-cluster --name "<node-group-name>"
 npa cluster down --terraform-dir deploy/cluster
 ```
 
@@ -196,7 +198,7 @@ summary in addition to stdout:
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --mock-endpoints \
   --run-id demo-validate \
@@ -227,7 +229,7 @@ suite) run it under `script(1)`:
 script -q -e -c '
   npa/.venv/bin/python -m pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q
   npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
-    --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+    --spec workflows/testing/bdd100k-pipeline.yaml \
     --synthetic 5000 --mock-endpoints --run-id demo-recording
 ' /tmp/bdd100k-demo-recording.log
 ```
@@ -253,7 +255,7 @@ Full submission requires a working SkyPilot 0.12.2 binary:
 ```bash
 export NPA_SKYPILOT_BIN=/opt/npa/skypilot/bin/sky
 python npa/scripts/run_bdd100k_pipeline.py \
-  --spec npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml \
+  --spec workflows/testing/bdd100k-pipeline.yaml \
   --synthetic 5000 \
   --run-id bdd100k-pipeline-$(date -u +%Y%m%dT%H%M%SZ) \
   --cleanup
@@ -279,16 +281,17 @@ configured S3 credentials to list and read this prefix.
 
 ## Images
 
-The committed YAML pins the first-party LanceDB and detection-training images:
+The workflow's tool references resolve these first-party image pins; an explicit
+registry override selects the equivalent images in your namespace:
 
-- `<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
-- `<your-registry>/<namespace>/npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z`
+- `ghcr.io/nebius/nebius-physical-ai/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
+- `ghcr.io/nebius/nebius-physical-ai/npa-detection-training:runtime-v1-20260905`
 
 The optional final FiftyOne app can still be replaced with a BYO registry image:
 
 - `<your-registry>/<namespace>/npa-fiftyone:<fiftyone-image-tag>`
 
-The final FiftyOne task exposes port `5151` through SkyPilot. The app does not add authentication; restrict the run inputs to datasets that are safe to show publicly and use `sky status --endpoint 5151 <cluster>` to resolve the public URL.
+The final FiftyOne toolRef is a review hook, not an App deployment. Deploy or register the review workbench separately and run `npa workbench fiftyone open` to access its loopback listener through verified SSH or Kubernetes port-forwarding. Keep that command running while reviewing. The App has access to service-readable files and must not have unauthenticated public ingress.
 
 ## Output Layout
 

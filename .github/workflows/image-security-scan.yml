@@ -1,19 +1,11 @@
 name: Image Security Scan
 
 on:
-  pull_request:
-    paths:
-      - "npa/docker/workbench/**"
-      - "npa/scripts/scan_image_omniverse_payload.py"
-      - "**/Dockerfile*"
-      - ".trivyignore"
-      - "trivy.yaml"
-      - ".github/workflows/image-security-scan.yml"
-  push:
-    branches:
-      - main
+  # The required parent gate invokes this for PRs, merge candidates, and main.
+  # Scope is decided inside its always-reporting jobs so a required workflow is
+  # never left pending by a top-level path filter.
+  workflow_call:
   schedule:
-    # Weekly scan catches newly-disclosed CVEs in existing pinned bases.
     - cron: "0 3 * * 1"
   workflow_dispatch:
     inputs:
@@ -31,98 +23,85 @@ permissions:
   security-events: write
 
 concurrency:
-  # Keep workflows independent, but let a newer commit supersede older work for
-  # the same PR. Scheduled and manual scans use run_id so they run to completion.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # The caller owns candidate/main cancellation. Direct scheduled and manual
+  # audits use unique run IDs and cannot cancel their required parent workflow.
+  group: image-security-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  tag-strategy-check:
-    name: Two-tag strategy consistency
-    runs-on: ubuntu-latest
+  image-policy:
+    name: Image policy and complete-byte security
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: "3.11"
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Install PyYAML
-        run: python -m pip install PyYAML
-
-      - name: Run tag consistency check
-        run: python npa/docker/workbench/check_tag_consistency.py
-
-  # The four Isaac images are publicly redistributable only because they contain no
-  # NVIDIA Omniverse Kit payload. That claim is about bytes in layers, so the classifier
-  # is unit-tested on every PR (below) and the live scan can be dispatched against a
-  # pushed image, which needs registry credentials and multi-GB pulls.
-  omniverse-payload-classifier:
-    name: Omniverse payload classifier (offline)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: npa/pyproject.toml
 
-      # npa/tests/conftest.py imports httpx and several npa modules, so the
-      # package itself has to be installed -- pytest + PyYAML alone abort
-      # collection. Mirrors the install in test.yml.
-      - name: Install npa with test deps
-        run: cd npa && pip install -e ".[dev]"
+      - name: Create validation environment
+        run: python -m venv npa/.venv
 
-      - name: Payload-scanner classifier and packaging-guard mutation tests
+      - name: Classify image-security scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          python -m pytest \
+          set -euo pipefail
+          deep=true
+          if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
+            deep="$(npa/.venv/bin/python scripts/ci_image_security_scope.py \
+              --repo-root . --base "$BASE_SHA" --head "$GITHUB_SHA")"
+          fi
+          test "$deep" = true || test "$deep" = false
+          echo "deep=$deep" >> "$GITHUB_OUTPUT"
+          echo "deep image security: $deep"
+
+      - name: Install image-policy test dependencies
+        if: steps.scope.outputs.deep == 'true'
+        run: npa/.venv/bin/python -m pip install -e "npa[dev]"
+
+      - name: Check tag strategy and offline packaging policies
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          npa/.venv/bin/python npa/docker/workbench/check_tag_consistency.py
+          npa/.venv/bin/python -m pytest \
             npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_antioch_image_payload_scan.py \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \
+            npa/tests/guardrails/test_workbench_image_k8s_prereqs.py \
             -q
 
-  omniverse-payload-scan:
-    name: Omniverse payload scan (built image)
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
-
-      - name: Scan the public development image for a baked Omniverse Kit payload
+      - name: Exercise exact native complete-byte scanner dependencies
+        if: steps.scope.outputs.deep == 'true'
         run: |
-          python npa/scripts/scan_image_omniverse_payload.py \
-            "${{ inputs.omniverse_payload_scan_image }}" \
-            --json omniverse-payload-report.json
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/image-byte-native.XXXXXXXX")"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" \
+            --output-dir "$scan_root/integration-checks"
 
-      - name: Upload the report
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: omniverse-payload-report
-          path: omniverse-payload-report.json
-
-  dockerfile-static-scan:
-    name: Static Dockerfile scan (Trivy config)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Trivy config scan
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Trivy configuration scan
+        if: steps.scope.outputs.deep == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: "."
@@ -131,9 +110,12 @@ jobs:
           ignore-unfixed: true
           format: table
 
-      - name: Trivy config scan (SARIF)
-        if: always()
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Trivy configuration scan (SARIF)
+        if: >-
+          always() && steps.scope.outputs.deep == 'true' &&
+          (github.event_name == 'push' || github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: "."
@@ -143,85 +125,176 @@ jobs:
           format: sarif
           output: trivy-config.sarif
 
-      - name: Upload config SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload configuration SARIF
+        if: >-
+          always() && steps.scope.outputs.deep == 'true' &&
+          (github.event_name == 'push' || github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch')
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
 
-  base-image-cve-scan:
-    name: Base image CVE scan
-    runs-on: ubuntu-latest
+  base-image-plan:
+    name: Plan base image CVE inventory
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
+    outputs:
+      deep: ${{ steps.scope.outputs.deep }}
+      matrix: ${{ steps.inventory.outputs.matrix }}
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Create validation environment
+        run: python -m venv npa/.venv
+
+      - name: Classify image-security scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          deep=true
+          if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
+            deep="$(npa/.venv/bin/python scripts/ci_image_security_scope.py \
+              --repo-root . --base "$BASE_SHA" --head "$GITHUB_SHA")"
+          fi
+          test "$deep" = true || test "$deep" = false
+          echo "deep=$deep" >> "$GITHUB_OUTPUT"
+          echo "deep base-image security: $deep"
+
+      - name: Enumerate every validated base
+        id: inventory
+        run: |
+          set -euo pipefail
+          matrix="$(npa/.venv/bin/python npa/scripts/scan_base_images.py \
+            --inventory npa/docker/workbench/base-image-security.json \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" --matrix)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  base-image-entry:
+    name: Base image CVE / ${{ matrix.entry }}
+    needs: base-image-plan
+    if: needs.base-image-plan.outputs.deep == 'true'
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: nvidia-cuda-12-4-1-devel-ubuntu22-04
-            image: nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-12-6-3-devel-ubuntu22-04
-            image: nvidia/cuda:12.6.3-devel-ubuntu22.04@sha256:d49bb8a4ff97fb5fe477947a3f02aa8c0a53eae77e11f00ec28618a0bcaa2ad1
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04
-            image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04
-            image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed
-            purge_linux_libc_dev: true
-          - name: nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04
-            image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01
-            purge_linux_libc_dev: true
-          - name: python-3-11-slim-trixie
-            image: python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
-            purge_linux_libc_dev: false
+      matrix: ${{ fromJSON(needs.base-image-plan.outputs.matrix) }}
     steps:
-      - name: Resolve scan target
-        id: scan-target
-        shell: bash
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Create validation environment
+        run: python -m venv npa/.venv
+
+      - name: Record available scan storage
+        run: df -B1 "$RUNNER_TEMP" /var/lib/docker
+
+      - name: Install checksum-verified Trivy
         run: |
-          if [ "${{ matrix.purge_linux_libc_dev }}" = "true" ]; then
-            patched_image="npa-base-scan:${{ matrix.name }}"
-            docker build \
-              --build-arg BASE_IMAGE="${{ matrix.image }}" \
-              -t "${patched_image}" \
-              -f - . <<'DOCKERFILE'
-          ARG BASE_IMAGE
-          FROM ${BASE_IMAGE}
-          USER root
-          RUN dpkg --purge --force-depends linux-libc-dev \
-              && rm -rf /var/lib/apt/lists/*
-          DOCKERFILE
-            echo "image=${patched_image}" >> "${GITHUB_OUTPUT}"
-          else
-            echo "image=${{ matrix.image }}" >> "${GITHUB_OUTPUT}"
+          bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
+          echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
+
+      - name: Reclaim unused hosted-runner SDK space
+        run: |
+          # CUDA images and Trivy's exports must coexist on this disposable runner.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc
+          df -h /
+
+      - name: Scan the exact inventory entry
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCAN_ENTRY: ${{ matrix.entry }}
+        run: |
+          set -euo pipefail
+          report_args=()
+          if [ "$EVENT_NAME" = push ] || [ "$EVENT_NAME" = schedule ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
+            report_args=(--sarif-directory "$RUNNER_TEMP/base-image-sarif")
           fi
+          npa/.venv/bin/python npa/scripts/scan_base_images.py \
+            --inventory npa/docker/workbench/base-image-security.json \
+            --entry-name "$SCAN_ENTRY" --workers 1 \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" "${report_args[@]}"
 
-      - name: Trivy image scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scan-target.outputs.image }}
-          severity: CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os
-          format: table
-
-      - name: Trivy image scan (SARIF)
+      - name: Record remaining scan storage
         if: always()
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scan-target.outputs.image }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          vuln-type: os
-          limit-severities-for-sarif: true
-          format: sarif
-          output: trivy-${{ matrix.name }}.sarif
+        run: df -B1 "$RUNNER_TEMP" /var/lib/docker
 
-      - name: Upload image SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload base SARIF
+        if: always() && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
-          sarif_file: trivy-${{ matrix.name }}.sarif
-          category: trivy-image-${{ matrix.name }}
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-${{ matrix.entry }}.sarif
+          category: trivy-image-${{ matrix.entry }}
+
+  base-image-cve-scan:
+    name: Base image CVE inventory
+    needs: [base-image-plan, base-image-entry]
+    # Report scan failures, but release superseded runs without waiting for a runner.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
+    steps:
+      - name: Require complete scoped inventory
+        env:
+          PLAN_RESULT: ${{ needs.base-image-plan.result }}
+          DEEP: ${{ needs.base-image-plan.outputs.deep }}
+          SCAN_RESULT: ${{ needs.base-image-entry.result }}
+        run: |
+          set -euo pipefail
+          test "$PLAN_RESULT" = success
+          case "$DEEP:$SCAN_RESULT" in
+            true:success|false:skipped) ;;
+            *) echo "Base-image inventory did not complete successfully" >&2; exit 1 ;;
+          esac
+
+  omniverse-payload-scan:
+    name: Omniverse payload scan (built image)
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
+    if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
+
+      - name: Scan the public development image for a baked Omniverse Kit payload
+        env:
+          SCAN_IMAGE: ${{ inputs.omniverse_payload_scan_image }}
+        run: |
+          python npa/scripts/scan_image_omniverse_payload.py \
+            "$SCAN_IMAGE" \
+            --json omniverse-payload-report.json
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omniverse-payload-report
+          path: omniverse-payload-report.json

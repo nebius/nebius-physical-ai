@@ -1,4 +1,8 @@
+import json
 import os
+import stat
+from collections import defaultdict
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -36,6 +40,7 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
     "AWS_ENDPOINT_URL",
+    "AWS_ENDPOINT_URL_S3",
     "AWS_PROFILE",
     "AWS_DEFAULT_REGION",
     "AWS_REGION",
@@ -43,8 +48,19 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "NEBIUS_S3_BUCKET",
     "NPA_STORAGE_ENDPOINT",
     "NPA_CHECKPOINT_BUCKET",
+    "NPA_S3_BUCKET",
+    "NPA_S3_PREFIX",
+    "NPA_INPUT_PATH",
+    "NPA_OUTPUT_PATH",
+    "DETECTION_TRAINING_STATE_DIR",
+    "DETECTION_TRAINING_AUTH_MODE",
+    "DETECTION_TRAINING_TOKEN",
     "NEBIUS_PROJECT_ID",
     "NEBIUS_TENANT_ID",
+    "NPA_AGENT_DATASET_TENANT_ID",
+    "NPA_AGENT_DATASET_URI",
+    "NPA_AGENT_DATASET_OUTBOX",
+    "NPA_AGENT_DATASET_REDACTION_FILE",
     "NPA_REGISTRY",
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
@@ -53,7 +69,10 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "ENCORD_SSH_KEY_B64",
     "ENCORD_SSH_KEY_FILE",
     "ENCORD_DOMAIN",
+    "ANTIOCH_TOKEN",
     "NEBIUS_TOKEN_FACTORY_KEY",
+    "TYPESAFE_API_KEY",
+    "NPA_AGENT_MODEL_ROUTER",
     "NEBIUS_TOKEN_FACTORY_BASE_URL",
     "NEBIUS_BASE_URL",
     "NGC_API_KEY",
@@ -79,6 +98,9 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "NPA_SRC_S3_URI",
     "NPA_SRC_OVERLAY",
     "NPA_WORKFLOW_GPU_ACCELERATOR",
+    "NPA_WORKFLOW_RUN_ID",
+    "NPA_WORKFLOW_STATE",
+    "NPA_TASK_IMAGE",
     "NPA_COSMOS_CONDITION_ON_INPUT",
     "NPA_COSMOS_VARIANT_PARALLELISM",
     "NPA_COSMOS_CONTROL",
@@ -104,6 +126,11 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
 # they are unset. Non-live tests that need a value set them via monkeypatch after
 # this scrub runs; live-marked tests are exempt and keep the real context.
 _AMBIENT_INFRA_TARGET_ENV_VARS = (
+    # Operator configuration can select private runtime roots. Non-live tests must
+    # resolve their temporary HOME, never the operator's config or journals.
+    "NPA_CONFIG_DIR",
+    "NPA_OPERATION_JOURNAL_DIR",
+    "NPA_SKYPILOT_ISOLATED_CONFIG_DIR",
     "KUBECONFIG",
     "KUBECONTEXT",
     "NPA_K8S_CONTEXT",
@@ -119,13 +146,281 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
     # a profile (the normal state on a machine that actually runs npa) shifts
     # every argv assertion by two elements. Tests of the profile behavior itself
     # set these via monkeypatch after this scrub.
+    "NPA_ISAAC_ARENA_VIDEO_PROFILE",
     "NPA_NEBIUS_PROFILE",
     "NEBIUS_PROFILE",
 )
 
+_CI_TIMING_MANIFEST = Path(__file__).with_name("ci_test_durations.json")
+_CI_RECORDED_DURATIONS: dict[str, float] = defaultdict(float)
+
+
+def _ci_shard_coordinates() -> tuple[int, int] | None:
+    """Return the zero-based CI shard index and total.
+
+    Args:
+        None.
+    Returns:
+        The shard coordinates, or ``None`` outside sharded CI.
+    Raises:
+        pytest.UsageError: Shard environment variables are incomplete or invalid.
+    """
+
+    raw_index = os.environ.get("NPA_CI_SHARD_INDEX")
+    raw_total = os.environ.get("NPA_CI_TOTAL_SHARDS")
+    if raw_index is None and raw_total is None:
+        return None
+    if raw_index is None or raw_total is None:
+        raise pytest.UsageError(
+            "NPA_CI_SHARD_INDEX and NPA_CI_TOTAL_SHARDS must be set together"
+        )
+
+    try:
+        index = int(raw_index)
+        total = int(raw_total)
+    except ValueError as error:
+        raise pytest.UsageError("CI shard coordinates must be integers") from error
+    if total < 1 or index < 1 or index > total:
+        raise pytest.UsageError("CI shard index must be between 1 and the shard total")
+    return index - 1, total
+
+
+def _ci_timing_weights() -> dict[str, float]:
+    """Load positive module-duration weights for CI partitioning.
+
+    Args:
+        None.
+    Returns:
+        Duration in seconds by test module.
+    Raises:
+        pytest.UsageError: The committed timing manifest is invalid.
+    """
+
+    try:
+        raw_weights = json.loads(_CI_TIMING_MANIFEST.read_text(encoding="utf-8"))
+        weights = {path: float(seconds) for path, seconds in raw_weights.items()}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise pytest.UsageError("CI timing manifest is unreadable") from error
+    if any(seconds <= 0 for seconds in weights.values()):
+        raise pytest.UsageError("CI timing weights must be positive")
+    return weights
+
+
+def _items_for_ci_shard(
+    items: list[pytest.Item], shard_index: int, shard_total: int
+) -> list[pytest.Item]:
+    """Select a deterministic shard balanced by recorded module durations.
+
+    Args:
+        items: Collected pytest items.
+        shard_index: Zero-based shard index.
+        shard_total: Number of shards.
+    Returns:
+        Items assigned to this shard in stable node-id order.
+    Raises:
+        None.
+    """
+
+    weights = _ci_timing_weights()
+    module_counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        module_counts[item.nodeid.split("::", 1)[0]] += 1
+    ranked_items = sorted(
+        items,
+        key=lambda item: (
+            -weights.get(item.nodeid.split("::", 1)[0], 1.0)
+            / module_counts[item.nodeid.split("::", 1)[0]],
+            item.nodeid,
+        ),
+    )
+    shards: list[list[pytest.Item]] = [[] for _ in range(shard_total)]
+    totals = [0.0] * shard_total
+    for item in ranked_items:
+        module = item.nodeid.split("::", 1)[0]
+        item_weight = weights.get(module, 1.0) / module_counts[module]
+        destination = min(range(shard_total), key=lambda index: (totals[index], index))
+        shards[destination].append(item)
+        totals[destination] += item_weight
+    return sorted(shards[shard_index], key=lambda item: item.nodeid)
+
+
+_CHECKOUT = Path(__file__).resolve().parents[2]
+_GROUP_OR_OTHER_WRITABLE = stat.S_IWGRP | stat.S_IWOTH
+
+_WRITABLE_CHECKOUT_REMEDY = f"""\
+image_byte_scan cannot run: this checkout is group- or other-writable.
+
+{{offenders}}
+
+`authorized_roots` refuses a writable scan root and `private_path` refuses a
+writable input file, because those bytes could change between the scan and the
+use of its result. The refusal is correct and the code under test is fine, but
+the scanner reports it as a bare error code, so a checkout created under
+`umask 002` turns into hundreds of `root_permissions` and `input_permissions`
+failures with nothing naming the cause.
+
+Fix the checkout, then rerun:
+
+    chmod -R g-w,o-w {_CHECKOUT}
+
+Files created afterwards are group-writable again under `umask 002`, so run
+validation with `umask 022` if this keeps coming back.\
+"""
+
+
+def _scan_inputs() -> list[Path]:
+    """Return exactly the paths whose mode ``image_byte_scan`` rejects.
+
+    Only two kinds qualify, and the distinction matters because getting it wrong
+    turns a diagnostic into a stricter gate. ``authorized_roots`` stats the
+    trusted root itself, and ``private_path`` stats each source file; both walk
+    the intervening directories for symlinks only and never look at their modes.
+    So a group-writable `npa/` or `npa/scripts/image_byte_scan/` is a checkout
+    the production scanner accepts, and listing those here would abort
+    collection for a state that binds successfully.
+
+    Directory modes alone would also be insufficient in the other direction: one
+    `0664` file inside the scanner package raises `input_permissions`, and that
+    is where a new file lands under `umask 002` after the directories are fixed.
+
+    This mirrors ``core.source_bindings``; keep it in step with that function,
+    including its suffix filter, which is what keeps `__pycache__` out of the
+    result. ``test_scan_input_closure_matches_production`` fails when it drifts.
+
+    Returns:
+        The trusted root and every source file whose mode the scanner checks.
+    """
+
+    folder = _CHECKOUT / "npa/scripts/image_byte_scan"
+    suffixes = {".py", ".go", ".mod", ".sum", ".json", ".md"}
+    inputs = [
+        _CHECKOUT,
+        _CHECKOUT / ".gitleaks.toml",
+        _CHECKOUT / "npa/scripts/scan_image_bytes.py",
+        _CHECKOUT / "npa/tests/docker/test_image_byte_go_build.py",
+    ]
+    inputs.extend(
+        path
+        for path in folder.rglob("*")
+        if path.is_file()
+        and (path.suffix in suffixes or path.name.startswith("LICENSE"))
+    )
+    return inputs
+
+
+def _writable_scan_inputs() -> list[str]:
+    """Describe the scan inputs the scanner will reject, most useful first.
+
+    Returns:
+        Readable ``path is mode`` lines, truncated after six entries.
+    """
+
+    offenders = []
+    for path in _scan_inputs():
+        try:
+            mode = path.stat().st_mode
+        except OSError:
+            continue
+        if mode & _GROUP_OR_OTHER_WRITABLE:
+            offenders.append(
+                f"  {path.relative_to(_CHECKOUT.parent)} is mode {oct(mode & 0o777)}"
+            )
+    if len(offenders) > 6:
+        return [*offenders[:6], f"  ...and {len(offenders) - 6} more"]
+    return offenders
+
+
+def _needs_scan_inputs(item: pytest.Item) -> bool:
+    """Report whether a test reaches the scanner and therefore needs clean modes.
+
+    Args:
+        item: One collected test.
+    Returns:
+        True when the test's module imported ``image_byte_scan``.
+    """
+
+    module = getattr(item, "module", None)
+    if module is None:
+        return False
+    return any(
+        getattr(value, "__name__", "").split(".")[0] == "image_byte_scan"
+        for value in vars(module).values()
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Partition the full suite and reject a checkout the scanner cannot trust.
+
+    Args:
+        config: Active pytest configuration.
+        items: Mutable collection of discovered tests.
+    Returns:
+        None.
+    Raises:
+        pytest.UsageError: CI shard coordinates are invalid, or a selected scan
+            test cannot run because the checkout is group- or other-writable.
+    """
+
+    coordinates = _ci_shard_coordinates()
+    if coordinates is not None:
+        selected_items = _items_for_ci_shard(items, *coordinates)
+        selected_node_ids = {item.nodeid for item in selected_items}
+        deselected_items = [
+            item for item in items if item.nodeid not in selected_node_ids
+        ]
+        config.hook.pytest_deselected(items=deselected_items)
+        items[:] = selected_items
+    if not any(_needs_scan_inputs(item) for item in items):
+        return
+    offenders = _writable_scan_inputs()
+    if offenders:
+        raise pytest.UsageError(
+            _WRITABLE_CHECKOUT_REMEDY.format(offenders="\n".join(offenders))
+        )
+
 
 def pytest_collection_finish(session: pytest.Session) -> None:
     assert_nonzero_collection(len(session.items))
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Accumulate module timings for a trusted main-run artifact.
+
+    Args:
+        report: One setup, call, or teardown timing report.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+    if os.environ.get("NPA_CI_TIMING_OUTPUT"):
+        module = report.nodeid.split("::", 1)[0]
+        _CI_RECORDED_DURATIONS[module] += report.duration
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Write measured module durations from the xdist controller.
+
+    Args:
+        session: Completed pytest session.
+        exitstatus: Pytest process status, retained for the hook contract.
+    Returns:
+        None.
+    Raises:
+        OSError: The requested CI timing artifact cannot be written.
+    """
+
+    del exitstatus
+    output = os.environ.get("NPA_CI_TIMING_OUTPUT")
+    if not output or hasattr(session.config, "workerinput"):
+        return
+    Path(output).write_text(
+        json.dumps(dict(sorted(_CI_RECORDED_DURATIONS.items())), indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -135,6 +430,23 @@ def scrub_ambient_credential_env(monkeypatch, request):
         return
     for env_var in (*_AMBIENT_CREDENTIAL_ENV_VARS, *_AMBIENT_INFRA_TARGET_ENV_VARS):
         monkeypatch.delenv(env_var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_instance_metadata(monkeypatch, request):
+    """Unit tests must not stat the host's mounted credential filesystem."""
+    if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+        return
+    original_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda path: (
+            False
+            if str(path) == "/mnt/cloud-metadata/token"
+            else original_is_file(path)
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -157,6 +469,7 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     # tests must not make one (tests of the probe itself inject a connector).
     monkeypatch.setenv("NPA_SSH_EGRESS_PROBE", "off")
 
+    import npa.cli.agent_env_files
     import npa.cli.cluster.terraform_lifecycle
     import npa.cli.skypilot
     import npa.clients.config
@@ -164,9 +477,18 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     import npa.cluster.state
     import npa.controller_ownership
     import npa.deploy.provisioner
+    import npa.deploy.ssh_trust
+    import npa.orchestration.npa_workflow.first_run_state
     import npa.orchestration.skypilot._bin
+    import npa.workbench.access_approval
 
     npa_dir = home / ".npa"
+    # The bases matter as much as the paths derived from them: cleanup.py reads
+    # `NPA_CONFIG_DIR` directly and seeds it into a subprocess environment, so
+    # leaving it unpatched hands the operator's real directory to a child
+    # process during a unit test.
+    monkeypatch.setattr(npa.clients.config, "NPA_CONFIG_DIR", npa_dir)
+    monkeypatch.setattr(npa.clients.credentials, "NPA_CONFIG_DIR", npa_dir)
     monkeypatch.setattr(npa.clients.config, "CONFIG_PATH", npa_dir / "config.yaml")
     monkeypatch.setattr(
         npa.clients.credentials, "CREDENTIALS_PATH", npa_dir / "credentials.yaml"
@@ -174,6 +496,8 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     monkeypatch.setattr(
         npa.controller_ownership, "CONFIG_PATH", npa_dir / "config.yaml"
     )
+    monkeypatch.setattr(npa.cli.agent_env_files, "CONFIG_PATH", npa_dir / "config.yaml")
+    monkeypatch.setattr(npa.deploy.provisioner, "_NPA_CONFIG_DIR", npa_dir)
     monkeypatch.setattr(
         npa.orchestration.skypilot._bin, "CONFIG_PATH", npa_dir / "config.yaml"
     )
@@ -194,6 +518,20 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
         "_DEFAULT_SKYPILOT_BIN",
         npa_dir / "skypilot-venv" / "bin" / "sky",
     )
+    monkeypatch.setattr(npa.deploy.ssh_trust, "NPA_CONFIG_DIR", npa_dir)
+    monkeypatch.setattr(
+        npa.workbench.access_approval,
+        "DEFAULT_STATE_PATH",
+        npa_dir / "access-approvals.json",
+    )
+    # first_run_state writes a ledger entry per workflow run. Before these were
+    # repointed the unit suite created real entries under the operator's
+    # ~/.npa/workflow-runs; test_home_config_isolation.py keeps that from
+    # regressing.
+    first_run_state = npa.orchestration.npa_workflow.first_run_state
+    monkeypatch.setattr(first_run_state, "_NPA_CONFIG_DIR", npa_dir)
+    monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", npa_dir / "workflow-runs")
+    monkeypatch.setattr(first_run_state, "LEGACY_PATH", npa_dir / "paidf-first-run-id")
 
 
 def _is_huggingface_url(url: object) -> bool:

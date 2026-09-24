@@ -12,9 +12,19 @@ from typing import Any, Iterable
 import pyarrow as pa
 
 try:
-    from .bdd100k_import import DEFAULT_LANCE_URI, DEFAULT_TABLE, validate_lance_uri, validate_table
+    from .bdd100k_import import (
+        DEFAULT_LANCE_URI,
+        DEFAULT_TABLE,
+        validate_lance_uri,
+        validate_table,
+    )
 except ImportError:  # pragma: no cover - used by the copied Docker module.
-    from npa_lancedb_bdd100k_import import DEFAULT_LANCE_URI, DEFAULT_TABLE, validate_lance_uri, validate_table
+    from npa_lancedb_bdd100k_import import (
+        DEFAULT_LANCE_URI,
+        DEFAULT_TABLE,
+        validate_lance_uri,
+        validate_table,
+    )
 
 
 MV_REGISTRY_TABLE = "_mv_registry"
@@ -128,10 +138,18 @@ def create_mv(
     definition_hash = compute_definition_hash(resolved_source, resolved_filter)
 
     if existing is None and view_name in _list_tables(db):
-        raise MVConflictError(f"LanceDB table already exists and is not registered as an MV: {view_name}")
+        raise MVConflictError(
+            f"LanceDB table already exists and is not registered as an MV: {view_name}"
+        )
 
-    if existing is not None and str(existing["definition_hash"]) != definition_hash and not force:
-        raise MVConflictError("materialized view already exists with a different source_table or filter_sql")
+    if (
+        existing is not None
+        and str(existing["definition_hash"]) != definition_hash
+        and not force
+    ):
+        raise MVConflictError(
+            "materialized view already exists with a different source_table or filter_sql"
+        )
 
     view_exists = view_name in _list_tables(db)
     if existing is not None and not force and view_exists:
@@ -144,11 +162,17 @@ def create_mv(
             row_count=row_count,
             view_table_version=_table_version(view_obj),
             created_at=_format_timestamp(existing.get("created_at")),
-            manifest_sha256=_manifest_sha256(view_obj, str(existing["source_table"]), str(existing["filter_sql"])),
+            manifest_sha256=_manifest_sha256(
+                view_obj, str(existing["source_table"]), str(existing["filter_sql"])
+            ),
         )
 
     now = _utc_now()
-    created_at = now if existing is None or force else _timestamp_value(existing.get("created_at")) or now
+    created_at = (
+        now
+        if existing is None or force
+        else _timestamp_value(existing.get("created_at")) or now
+    )
     materialized = _filtered_arrow(source_obj, resolved_filter)
     view_obj = _write_view_table(db, view_name, materialized)
     row_count = int(materialized.num_rows)
@@ -242,7 +266,11 @@ def query_table(
     table_obj = _open_table(db, table_name)
     selected = _resolve_select(table_obj, select)
     try:
-        total_rows = table_obj.count_rows(resolved_filter) if resolved_filter else table_obj.count_rows()
+        total_rows = (
+            table_obj.count_rows(resolved_filter)
+            if resolved_filter
+            else table_obj.count_rows()
+        )
         query = table_obj.search()
         if resolved_filter:
             query = query.where(resolved_filter)
@@ -252,7 +280,9 @@ def query_table(
     except MVError:
         raise
     except Exception as exc:
-        raise MVWriteError(f"failed to query LanceDB table {table_name}: {exc}") from exc
+        raise MVWriteError(
+            f"failed to query LanceDB table {table_name}: {exc}"
+        ) from exc
     rows = [_jsonable_row(row) for row in arrow_table.to_pylist()]
     return QueryResult(
         rows=rows,
@@ -274,14 +304,22 @@ def create_bdd100k_failure_mode_views(
     threshold = _format_threshold(distant_person_threshold)
     specs = [
         ("bdd100k_rider_train", "has_rider = true AND split = 'train'"),
-        ("bdd100k_nighttime_person_train", "timeofday = 'night' AND has_person = true AND split = 'train'"),
+        (
+            "bdd100k_nighttime_person_train",
+            "timeofday = 'night' AND has_person = true AND split = 'train'",
+        ),
         (
             "bdd100k_distant_person_train",
             f"has_person = true AND person_bbox_area_pct < {threshold} AND split = 'train'",
         ),
     ]
     return [
-        create_mv(name=view_name, source_table=source_table, filter_sql=filter_sql, lance_uri=lance_uri)
+        create_mv(
+            name=view_name,
+            source_table=source_table,
+            filter_sql=filter_sql,
+            lance_uri=lance_uri,
+        )
         for view_name, filter_sql in specs
     ]
 
@@ -308,21 +346,29 @@ def _connect_lancedb(lance_uri: str):
     try:
         return lancedb.connect(lance_uri)
     except Exception as exc:
-        raise MVWriteError(f"failed to connect to LanceDB URI {lance_uri}: {exc}") from exc
+        raise MVWriteError(
+            f"failed to connect to LanceDB URI {lance_uri}: {exc}"
+        ) from exc
 
 
 def _ensure_registry(db: Any):
     try:
         if MV_REGISTRY_TABLE not in _list_tables(db):
-            return db.create_table(MV_REGISTRY_TABLE, schema=_registry_schema(), mode="create")
+            return db.create_table(
+                MV_REGISTRY_TABLE, schema=_registry_schema(), mode="create"
+            )
         table_obj = db.open_table(MV_REGISTRY_TABLE)
     except Exception as exc:
-        raise MVWriteError(f"failed to open or create {MV_REGISTRY_TABLE}: {exc}") from exc
+        raise MVWriteError(
+            f"failed to open or create {MV_REGISTRY_TABLE}: {exc}"
+        ) from exc
     schema = _schema(table_obj)
     missing = [name for name in _registry_schema().names if name not in schema.names]
     if missing:
         joined = ", ".join(missing)
-        raise MVWriteError(f"{MV_REGISTRY_TABLE} is missing required column(s): {joined}")
+        raise MVWriteError(
+            f"{MV_REGISTRY_TABLE} is missing required column(s): {joined}"
+        )
     return table_obj
 
 
@@ -355,7 +401,9 @@ def _list_tables(db: Any) -> list[str]:
 
 def _normalize_table_names(values: Any) -> list[str]:
     names: list[str] = []
-    raw_values = getattr(values, "names", None) or getattr(values, "tables", None) or values
+    raw_values = (
+        getattr(values, "names", None) or getattr(values, "tables", None) or values
+    )
     for value in raw_values:
         if isinstance(value, str):
             names.append(value)
@@ -401,14 +449,18 @@ def _filtered_arrow(source_obj: Any, filter_sql: str) -> pa.Table:
     try:
         return source_obj.search().where(filter_sql).to_arrow()
     except Exception as exc:
-        raise MVWriteError(f"failed to scan source table with filter {filter_sql!r}: {exc}") from exc
+        raise MVWriteError(
+            f"failed to scan source table with filter {filter_sql!r}: {exc}"
+        ) from exc
 
 
 def _write_view_table(db: Any, view_name: str, arrow_table: pa.Table) -> Any:
     try:
         return db.create_table(view_name, data=arrow_table, mode="overwrite")
     except Exception as exc:
-        raise MVWriteError(f"failed to write materialized view {view_name}: {exc}") from exc
+        raise MVWriteError(
+            f"failed to write materialized view {view_name}: {exc}"
+        ) from exc
 
 
 def _registry_rows(registry: Any) -> list[dict[str, Any]]:
@@ -418,14 +470,18 @@ def _registry_rows(registry: Any) -> list[dict[str, Any]]:
         raise MVWriteError(f"failed to read {MV_REGISTRY_TABLE}: {exc}") from exc
 
 
-def _registry_row_for(rows: Iterable[dict[str, Any]], name: str) -> dict[str, Any] | None:
+def _registry_row_for(
+    rows: Iterable[dict[str, Any]], name: str
+) -> dict[str, Any] | None:
     for row in rows:
         if str(row.get("name")) == name:
             return row
     return None
 
 
-def _replace_registry_row(rows: Iterable[dict[str, Any]], replacement: dict[str, Any]) -> list[dict[str, Any]]:
+def _replace_registry_row(
+    rows: Iterable[dict[str, Any]], replacement: dict[str, Any]
+) -> list[dict[str, Any]]:
     name = str(replacement["name"])
     updated = [dict(row) for row in rows if str(row.get("name")) != name]
     updated.append(replacement)
@@ -487,16 +543,26 @@ def _manifest_sha256(table_obj: Any, source_table: str, filter_sql: str) -> str:
     try:
         arrow_table = table_obj.to_arrow()
     except Exception as exc:
-        raise MVWriteError(f"failed to read materialized view manifest rows: {exc}") from exc
+        raise MVWriteError(
+            f"failed to read materialized view manifest rows: {exc}"
+        ) from exc
     digest = hashlib.sha256()
     digest.update(_canonical_source(source_table).encode("utf-8"))
     digest.update(b"\n")
     digest.update(_canonical_filter(filter_sql).encode("utf-8"))
     digest.update(b"\n")
-    digest.update(json.dumps(_schema_summary(arrow_table.schema), sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    digest.update(
+        json.dumps(
+            _schema_summary(arrow_table.schema), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    )
     digest.update(b"\n")
     for row in sorted(arrow_table.to_pylist(), key=_row_sort_key):
-        digest.update(json.dumps(_manifest_jsonable(row), sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        digest.update(
+            json.dumps(
+                _manifest_jsonable(row), sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        )
         digest.update(b"\n")
     return digest.hexdigest()
 
@@ -509,7 +575,10 @@ def _row_sort_key(row: dict[str, Any]) -> tuple[str, str]:
     image_id = row.get("image_id")
     if image_id is not None:
         return ("image_id", str(image_id))
-    return ("row", json.dumps(_manifest_jsonable(row), sort_keys=True, separators=(",", ":")))
+    return (
+        "row",
+        json.dumps(_manifest_jsonable(row), sort_keys=True, separators=(",", ":")),
+    )
 
 
 def _manifest_jsonable(value: Any) -> Any:
@@ -519,7 +588,10 @@ def _manifest_jsonable(value: Any) -> Any:
         return [_manifest_jsonable(item) for item in value]
     if isinstance(value, bytes | bytearray | memoryview):
         raw = bytes(value)
-        return {"__bytes_sha256__": hashlib.sha256(raw).hexdigest(), "__bytes_len__": len(raw)}
+        return {
+            "__bytes_sha256__": hashlib.sha256(raw).hexdigest(),
+            "__bytes_len__": len(raw),
+        }
     if isinstance(value, datetime):
         return _format_timestamp(value)
     if hasattr(value, "as_py"):
@@ -551,7 +623,11 @@ def _utc_now() -> datetime:
 
 def _timestamp_value(value: Any) -> datetime | None:
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+        return (
+            value.astimezone(timezone.utc).replace(tzinfo=None)
+            if value.tzinfo
+            else value
+        )
     return None
 
 

@@ -24,12 +24,82 @@ still accepted for customer-provided tasks and guarded tool-specific examples.
 
 ## Invocation
 
+External schedulers may queue existing-cluster submissions when `workflow submit`
+returns exit code **75**: a supported per-node shape is temporarily unavailable,
+or active GPU pods still await placement, and no provider launch was attempted.
+Retry with the same run identity and pinned inputs after capacity changes. NPA
+does not create a queue or reserve capacity from this observation. Other failures,
+including ambiguous launch outcomes, require diagnosis/reconciliation before retry.
+Exact fit includes GPU, CPU, memory, ephemeral storage, pod slots and placement
+constraints. Integer GPU counts such as six are supported within the node maximum;
+free GPUs on different nodes cannot be combined to satisfy one rank.
+
+Run isolated workflow setup, submission, monitoring, recovery, and cleanup on
+one Linux operator host with `/proc` mounted. The owned local API verifies
+process and socket identity through Linux procfs; macOS supports local
+validation/planning but cannot execute this isolated runtime. An unsupported
+host fails before creating API state or processes. Use the Linux operator path
+in `docs/orchestration/skypilot-setup.md`; do not remove isolation as a workaround.
+
 SkyPilot lives in an isolated virtualenv outside NPA's main Python environment. Invoke it through `NPA_SKYPILOT_BIN`; never rely on `sky` from `PATH`.
 
 Use `npa skypilot bootstrap` to create or reuse the pinned SkyPilot `0.12.2`
 venv, then set `NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"`.
 
+The cluster GPU smoke uses an owned validation API session across its credential
+check, discovery, launch, and cleanup. Selecting a CLI executable alone does not
+select a different shared SkyPilot API. Let NPA manage the validation session;
+preserve its state and original environment if workload removal is unverified.
+Workflow submission still uses its separate run-scoped API directory.
+
+Standalone Kubernetes `npa skypilot verify --cluster ... --kubeconfig ...` and
+targeted `npa workbench workflow gpus --context ...` also use owned check-only
+sessions by default. Keep one exact kubeconfig file selected. The existing GPU
+discovery `--isolated-config-dir` selects the session parent root with explicit
+precedence; optional `--project` verifies local project/context identity. These
+commands refuse a prior pending smoke before checks and stop only their own API
+before reporting success. Preserve original pending-smoke settings for the
+cluster/provision recovery path. Bare legacy verification, native Nebius checks,
+and untargeted all-context discovery retain their existing semantics.
+
+After a workflow finishes, `cleanup-controller` removes only its verified
+controller and temporary transaction API; the original owned workflow API
+remains. For a unique per-run API, finish the receipt-checked local shutdown in
+`workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup` after its driver and
+other API clients exit. Preserve the successful cancellation/controller receipts
+and exact API identity so the final `stop_isolated_api` step can recover without
+repeating cloud deletion. It stops local processes only and retains run state.
+See `docs/teardown.md#owned-local-workflow-api`; never use unscoped `sky api stop`.
+
+Nebius CLI `0.12.254` selects profiles with `--config`, `--profile`, and
+`NEBIUS_PROFILE`; it ignores `NEBIUS_CONFIG_DIR` and keeps its renewable cache
+under `HOME/.nebius/credentials.yaml` even with `--config`. Do not infer a private
+CLI cache from that environment variable. The owned API binds supported RSA
+service-account refreshes to the actual profile and key, while explicit bearer
+files, mixed auth, and durable credential changes remain strictly checked.
+Keep legacy ownership records unchanged when resolving an identity mismatch.
+
 The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). The VM controller exists only as a fallback.
+
+For workflows that write S3 state or artifacts, supply `config.bucket` and a
+run-scoped `config.prefix`, even when their declared output URIs are absolute.
+`NPA_CONFIG_DIR` selects NPA configuration; set `KUBECONFIG` separately to the
+verified file containing the selected cluster context. An isolated configuration
+must also resolve the authorized S3 endpoint and credentials through supported
+private sources or the child process environment. Keep credential values out of
+arguments and logs. A successful structural render or `--plan-only` does not
+prove these live submission prerequisites.
+Preserve a failed submission intent and inspect the exact run state before
+recovering from a preflight failure; do not delete the intent or assume a failed
+CLI exit means no launch occurred.
+
+Runtime submission binds the resolved project storage credentials, endpoint
+aliases, bucket and run prefix before its first accelerator discovery. The
+initial isolated API and every runtime wave therefore use the same identity;
+operator-side credential exports are unnecessary when the selected project
+already resolves them. The CLI restores the caller's environment afterward.
+An isolated API still rejects any later credential or configuration change;
+finish source staging before starting that API.
 
 ## Known SkyPilot 0.12.2 Limits
 
@@ -45,6 +115,11 @@ The Kubernetes controller is the default path (`W9-skypilot-k8s-controller`). Th
   Official public GHCR development and release tags need no registry secret.
   Operator-controlled private registries require explicit exact-host SkyPilot
   Docker credentials; NPA forwards them but never mints a provider token.
+- The standard Kubernetes template derives the provider namespace from the
+  selected kubeconfig context. In 0.12.2, native pod creation overwrites
+  `pod_config.metadata.namespace` with that provider namespace. Before using
+  existing PVCs or Secrets, configure a workload-specific context with their
+  namespace and verify the resulting pod namespace after submission.
 
 ## What the Renderer Emits
 
@@ -54,7 +129,8 @@ into SkyPilot documents:
 - A `parallel:` wave becomes a SkyPilot JobGroup; `maxConcurrency` splits a
   larger group into batches.
 - `num_nodes` is emitted at the SkyPilot task level. SkyPilot gang-schedules the
-  pods and exports `SKYPILOT_NODE_RANK` and `SKYPILOT_NODE_IPS`.
+  pods and exports `SKYPILOT_NODE_RANK` and `SKYPILOT_NODE_IPS` to `run`
+  commands. Do not assume rank is available during `setup`.
 - Package extras, third-party requirements, source staging, and vendor
   interpreters are selected from the toolRef.
 - A self-hosted service that must survive into the task command belongs in the
@@ -67,6 +143,60 @@ into SkyPilot documents:
 
 ## Live Debugging Traps
 
+### Native Ray development
+
+Do not infer SkyPilot compatibility from image pullability or local Docker
+success. The non-root LanceDB image lacks the `sudo` needed by SkyPilot's SSH
+bootstrap. The guarded CLIP development example therefore reuses an immutable
+public PyTorch image and prepares a separately pinned Ray application environment.
+The target policy must permit that image's root user inside an unprivileged pod;
+this does not grant host-root or privileged-container access.
+Record the image digest and prepared dependency freeze separately: the digest
+does not attest later pip installations. Its Python 3.12 has pip but no ensurepip;
+use the tested `venv --system-site-packages --without-pip` preparation. This
+qualifies the canonical Workbench CLIP UDF and LanceDB library, not the published
+LanceDB service image or HTTP backfill API.
+
+The tool-specific development cluster is
+`npa/workflows/workbench/ray-clip-development/cluster.yaml`; the complete customer
+journey is [Run and edit a GPU Ray application](../../../docs/testing/fast-source-iteration.md).
+This is a customer development task, not a second workflow catalog. SkyPilot
+owns the named cluster and its application service task. Ray Jobs owns application
+submission, logs, status and cancellation, using its public CLI/SDK. Ray
+`runtime_env.working_dir` transfers ordinary application Python and the exact
+Workbench UDF; no NPA source overlay or custom submit/finalize protocol is used.
+Persist and verify application outputs before cancelling the exact service task
+and removing the named development cluster with SkyPilot. Shared SkyPilot API
+services and the underlying configured Kubernetes cluster remain operator-owned.
+The guide includes a separately owned upstream API Compose contract for hosts
+without a suitable API: it mounts explicit backend credentials read-only, keeps
+its own state volume and fixed namespace, and verifies a completed dry run.
+Do not copy another API's state, patch its backend or stop its processes to make
+a development submit work. Remove an owned API only after all its development
+clusters are gone; preserve a platform supplied by another operator.
+
+Keep application Ray in its own environment with explicit addresses and separate
+ports. Never connect through ambient management-Ray discovery or use `ray stop`.
+Jobs/Dashboard binds to loopback behind an authenticated SSH tunnel. The startup
+script runs `ray start --block`; SkyPilot owns that task's process lifetime.
+SkyPilot 0.12.2 uses management Ray 2.9.3 with a head worker range of
+11002–65535. Keep application service and worker ports below 11002, avoid fixed
+management ports, and verify the OS ephemeral range starts above the application's
+highest port. The example worker range is 10010–10999. Keep Jobs drivers on the
+head when application checkpoints and aggregation outputs use its local disk.
+Verify Jobs readiness and the expected GPU/node resources before submission.
+
+New Ray source submissions create new actors and reload model weights; this is
+source redeployment, not hot reload. Python edits within the prepared dependency
+boundary require no image rebuild. Native/ABI changes require a compatible image.
+Report cold environment preparation and model loading separately from source
+iteration. For distributed checks match the GPU actor count to available GPUs
+and report actual node/GPU placement; several GPUs on one node are not multi-node
+validation. Review imported source hashes, persisted vectors and retrieval
+results after each source edit.
+
+### Existing NPA runtime
+
 - A vendor image may put a stale npa tree on `PYTHONPATH`; the renderer stages
   the selected source first and runs the recorded interpreter.
 - Operator wrappers must set `NPA_LIVE_WT` to an existing, durable worktree and
@@ -76,10 +206,15 @@ into SkyPilot documents:
 - The `NPA_SRC_S3_URI` overlay has no embedded provenance. Re-stage it after a
   source change before diagnosing a renamed flag in a live pod.
 - An unresolved placeholder in rendered setup is rejected before submission.
+- With a remote SkyPilot API server, inspect its effective kubeconfig and selected
+  context namespace. A correct client-side context or rendered pod metadata does
+  not establish the server's namespace. Keep API health, namespace selection and
+  actual pod placement as separate checks; see the upstream
+  [API server configuration guide](https://docs.skypilot.ai/en/stable/reference/api-server/api-server-admin-deploy.html).
 
 ## Reference Pattern
 
-- Canonical spec: `npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml`.
+- Canonical spec: `workflows/testing/bdd100k-pipeline.yaml`.
 - Runner script pattern: `npa/scripts/run_bdd100k_pipeline.py`, a thin wrapper around `npa.orchestration.skypilot.submit_workflow`.
 - Isaac Lab runners follow the same shape through `npa/scripts/run_isaac_lab_rl.py`.
 
@@ -95,6 +230,15 @@ remote deletion against a clone of SkyPilot state, independently proves remote
 absence, checkpoints that evidence, and only then converges the matching local
 metadata. Authentication/RBAC/connectivity/identity uncertainty preserves local
 state; never fall back to an ambient context or unrelated SkyPilot profile.
+
+Status verifies recorded managed jobs separately from workflow completion.
+An inter-wave or finalization snapshot may have only succeeded jobs and retain
+the durable `RUNNING` lifecycle. Its `workflow_lifecycle` reports completion as
+not recorded, preserves the original lifecycle timestamp/source, and leaves
+driver liveness unknown. A successful poll is not a new progress heartbeat or
+permission to resume a still-owned driver. `--watch` continues; live-query
+failures, conflicting outcomes, and failure/cancellation remain distinct.
+Conflicting terminal evidence exits nonzero and stops the watch.
 
 Runtime-orchestrated workflows persist one immutable managed-job identity per
 wave and attempt. Status and cancellation use that identity for only the wave's
@@ -125,6 +269,18 @@ Cancellation is polled by exact provider ID until terminal under a finite
 verification policy; a merely requested cancellation blocks relaunch.
 Completed-wave reuse validates declared S3 outputs;
 mid-stage resume additionally requires a real compatible tool checkpoint loader.
+
+For a typed pre-payload transport failure, an unobservable reserved queue row
+remains a failed attempt. Automatic replacement requires exact cancellation and
+a fresh terminal reread, unchanged workflow/source/image/rendered-task identity,
+all declared outputs absent before cancellation and again afterward, and the
+real shared SDK gate refreshed before reservation. Preserve the original failed
+files and the content-addressed parent/successor reservation; consume its identity
+and recovery count once across crashes. Never infer permission to relaunch from
+an arbitrary CANCELLED status, an empty queue, stale preflight evidence, or a
+custom submitter's exception. A success racing cancellation requires validated
+outputs; a reserved successor found observable must be adopted regardless of the
+driver record's failed/running label.
 
 The shared supervisor is also active in Genesis' existing production Serverless
 Jobs command. This does not route individual `npa.workflow/v0.0.1` stages to

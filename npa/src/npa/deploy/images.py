@@ -8,14 +8,18 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 from typing import Any
+
+from npa.workbench.gpu_classes import DATACENTER_HEADLESS, classify_gpu_target
 
 # Official NPA images use one public GHCR namespace. Immutable
 # ``dev-<full-git-sha>`` tags and supported release tags share each image package;
 # guarded promotion applies the release tag only to an already validated dev digest.
-# ``NPA_REGISTRY`` remains the generic operator execution override. Restricted and
-# build-your-own images must use an operator-controlled registry and are refused from
-# official GHCR.
+# ``NPA_REGISTRY`` remains the generic operator build/BYOF registry. Repository-owned
+# runtime defaults never consult it: a stale ambient or saved private registry must not
+# redirect supported public releases away from GHCR. Callers that intentionally select
+# custom bytes pass ``registry=`` (or a complete image reference) explicitly.
 PUBLIC_CONTAINER_REGISTRY_ENV = "NPA_PUBLIC_REGISTRY"
 DEFAULT_PUBLIC_CONTAINER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
@@ -29,19 +33,27 @@ SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
 WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
 CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
+NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
+    "antioch": "npa-antioch",
+    "openpi": "npa-openpi",
     "lerobot": "npa-lerobot",
+    "sim2real-control": "npa-sim2real-control",
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
+    "isaac-arena": "npa-isaac-arena",
+    "openarm": "npa-openarm",
     "leisaac": "npa-leisaac",
     "cosmos": "npa-cosmos",
     "cosmos2-transfer": "npa-cosmos2-transfer",
     "cosmos3": "npa-cosmos3",
     "cosmos3-ray-serve": "npa-cosmos3-ray-serve",
     "cosmos3-serving": "npa-cosmos3-serving",
+    "cosmos3-super-benchmark": "npa-cosmos3-super-benchmark",
+    "cosmos3-nano-video": "npa-cosmos3-nano-video",
     "cosmos3-reason": "npa-cosmos3-reason",
     "cosmos-curate": "npa-cosmos-curate",
     "cosmos-evaluator": "npa-cosmos-evaluator",
@@ -50,6 +62,7 @@ CONTAINER_IMAGE_NAMES = {
     "sonic": "npa-sonic",
     "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
+    "robocasa": "npa-robocasa",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
@@ -60,9 +73,15 @@ CONTAINER_IMAGE_NAMES = {
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
     "wan2-2": "npa-wan2-2",
+    "diffusers": "npa-diffusers",
+    "lingbot-world": "npa-lingbot-world",
+    "sam2": "npa-sam2",
+    "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
+    "curobo": "npa-curobo",
     "content-agents": "npa-content-agents",
+    "ncore": "npa-ncore",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -72,16 +91,29 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-anomalygen-sky",
+        "paidf-attribute-search-sky",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
+        "cosmos3-super-benchmark",
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
+        "ncore",
         "fiftyone",
         "groot",
         "isaac-lab",
+        "isaac-arena",
+        "openarm",
         "rerun-viewer",
+        "sim2real-control",
+        "envgen",
     }
 )
 
@@ -106,18 +138,31 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. Both are empty now:
-# Cosmos3 serving is a zero-payload runtime bootstrap on a public Python base,
-# and sonic-mujoco is rebuilt independently without its quarantined parent.
-RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
+# redistribution decision, not a particular vendor payload. Operator-built
+# PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
+RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "cosmos3-nano-video",
+        "cosmos3-super-benchmark",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-attribute-search-sky",
+        "paidf-anomalygen-sky",
+        "paidf-image-edit-sky",
+        "paidf-event-video-sky",
+    }
+)
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no accepted
-# built/GPU-validated artifact yet.
+# Tools that are licence-eligible for public redistribution but have not earned
+# every publication claim yet. Antioch is CPU-only and has a built-image payload
+# scan and local capability
+# smoke, but has not been published or anonymously pulled from the public mirror.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -128,8 +173,10 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset()
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "ncore", "sam3"}
+)
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -141,15 +188,42 @@ PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
 # anonymous channel. Public execution stays on the last accepted release while
 # an explicit custom registry resolves the newer supported-tool pin.
 PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
-    "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
-    "fiftyone": "1.15.0.post1",
-    "rerun-viewer": "0.31.4",
+    # 0.31.4 (plain) predates the bootstrap contract and cannot host a SkyPilot
+    # task: the container exits immediately, the provisioner's exec finds no
+    # ray-node container, and the stage retries forever. The 20260903 build is
+    # attested (org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1)
+    # and anonymously pullable from GHCR.
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
 }
 
 # Release promotion for the rebuilt surfaces is bound to the exact manifests
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "isaac-arena": {
+        "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5",
+        "oci_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+    },
+    "alpamayo2-super": {
+        "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
+        "oci_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
+    },
+    "diffusers": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+    },
+    "lingbot-world": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+    },
+    "sam2": {
+        "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+        "oci_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+    },
+    "cosmos3": {
+        "development_sha": "1925834f29983dd9a16659eb3dd350a7f5d13d99",
+        "oci_digest": "sha256:d8e1fe370f75e5433455a221b70ae6211c30369255a3bb111d03e5c07240e010",
+    },
     "cosmos3-ray-serve": {
         "development_sha": "56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da",
         "oci_digest": "sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d",
@@ -161,6 +235,14 @@ GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "sonic-mujoco": {
         "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b",
         "oci_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+    },
+    "detection-training": {
+        "development_sha": "408700158b2e9cc9e9f6aad499e9d9c810bebeb1",
+        "oci_digest": "sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d",
+    },
+    "openarm": {
+        "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda",
+        "oci_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
     },
 }
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
@@ -184,47 +266,63 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "antioch": "0.1.0-cli0.4.289",
+    "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "sim2real-control": "0.1.2-sim2real-coherent-20260904",
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "isaac-lab": "3.0.0b2.post1",
+    "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
+    "isaac-arena": "0.3.0-isaaclab3-20260917-r4",
+    "openarm": "2.2.0-isaac0.1.0-rtfetch",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
-    "cosmos2-transfer": "2.5.1-sam2-multigpu-20260817-r2",
-    # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
+    "cosmos2-transfer": "2.5.1-sim2real-coherent-20260904",
+    # Additive r7 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
     # torch cu130. The immutable predecessor remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
-    "cosmos3": "1.2.2-cu130-r6",
+    "cosmos3": "1.2.2-cu130-r7",
     "cosmos3-ray-serve": "ray1-cu130",
     "cosmos3-serving": "0.2.0-oss",
+    "cosmos3-super-benchmark": "0.1.0",
+    "cosmos3-nano-video": "0.1.0",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2-skypilot-v1-20260813T164700Z",
     "cosmos-evaluator": "0.1.2-skypilot-v1-20260813T164700Z-r2",
     "groot": "0.1.0",
-    "fiftyone": "1.15.0-post1-skypilot-v1-20260815-review5",
+    "fiftyone": "1.21.0-skypilot-v1-20260915",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
-    "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "envgen": "0.1.2-sim2real-coherent-20260904",
+    "robocasa": "0.1.0",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-    "rerun-viewer": "0.31.4-skypilot-v1-20260815-review5-r2",
+    "rerun-viewer": "0.31.4-sim2real-coherent-20260904",
     # Tracks the pinned @foxglove/embed SDK release (npa.workbench.foxglove).
     "foxglove-embed": "0.58.0",
     # Lichtblick (MPL-2.0): OSS, Foxglove-compatible static web viewer bundle.
     "lichtblick": "1.26.0",
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
-    "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
+    "detection-training": "runtime-v1-20260905",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
     "wan2-2": "2.2-ti2v5b-rtfetch-cu130-20260817",
+    "diffusers": "0.38.0-rtfetch-20260916",
+    "lingbot-world": "a43bec7-rtfetch-20260916",
+    "sam2": "2.1-rtfetch-20260916",
+    # Candidate only; excluded from the supported public release plan.
+    "sam3": "3.1-unbuilt",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
-    "alpamayo2-super": "0.1.0-cu128",
+    "alpamayo2-super": "0.1.0-cu128-r3",
+    "curobo": "0.8.0-cuda13-b300-unbuilt",
     "content-agents": "0.5.2-npa2",
+    # Source packaging inventory only; no accepted public NCore release exists.
+    "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -298,7 +396,9 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+        raise RuntimeError(
+            "Content Agents accepted image manifest must be a JSON object"
+        )
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -306,6 +406,184 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
             "Content Agents accepted image manifest tag drifted from the supported tag"
         )
     return payload
+
+
+def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
+    """Validate the reviewed NCore image/full-COLMAP/NRE acceptance tuple offline.
+
+    Hashes identify access-controlled evidence; this does not manufacture or run
+    that evidence. ``byte_scan.complete`` means the entire OCI graph, including
+    index, attestations, configs, history and every ancestor layer, was covered.
+    Publication additionally rechecks the exact registry artifact.
+    Keep the template unaccepted and quarantine intact until real results exist.
+    """
+
+    def require(ok: bool, field: str) -> None:
+        if not ok:
+            raise RuntimeError(f"NCore acceptance requires valid {field}")
+
+    def record(parent: dict[str, Any], key: str) -> dict[str, Any]:
+        value = parent.get(key)
+        require(isinstance(value, dict), key)
+        return value
+
+    def match(parent: dict[str, Any], key: str, pattern: str) -> None:
+        value = parent.get(key)
+        require(
+            isinstance(value, str) and re.fullmatch(pattern, value) is not None, key
+        )
+
+    def count(parent: dict[str, Any], key: str, minimum: int = 0) -> int:
+        value = parent.get(key)
+        require(type(value) is int and value >= minimum, key)
+        return value
+
+    def equal(parent: dict[str, Any], key: str, expected: Any) -> None:
+        value = parent.get(key)
+        require(type(value) is type(expected) and value == expected, key)
+
+    require(isinstance(payload, dict), "manifest object")
+    equal(payload, "format", "npa_ncore_accepted_image_manifest_v1")
+    equal(payload, "status", "accepted")
+    equal(payload, "tag", public_release_tag_for_tool("ncore"))
+    match(payload, "development_sha", r"[0-9a-f]{40}")
+    for field in ("oci_digest", "amd64_manifest", "config_digest"):
+        match(payload, field, r"sha256:[0-9a-f]{64}")
+    require(
+        len({payload[k] for k in ("oci_digest", "amd64_manifest", "config_digest")})
+        == 3,
+        "distinct index, platform and config digests",
+    )
+    source = record(payload, "source")
+    equal(source, "ncore_revision", "59c698d206da92b406a4f72619fce3b3a2c64bfd")
+    for field in ("lock_sha256", "post_patch_inventory_sha256"):
+        match(source, field, r"[0-9a-f]{64}")
+    for name in ("byte_scan", "payload_scan", "vulnerability_scan", "license_scan"):
+        scan = record(payload, name)
+        equal(scan, "status", "pass")
+        match(scan, "report_sha256", r"[0-9a-f]{64}")
+        equal(scan, "image_digest", payload["oci_digest"])
+    byte_scan = payload["byte_scan"]
+    equal(byte_scan, "complete", True)
+    equal(byte_scan, "config_digest", payload["config_digest"])
+    equal(byte_scan, "unresolved_findings", 0)
+    for field in ("archive_sha256", "policy_sha256"):
+        match(byte_scan, field, r"[0-9a-f]{64}")
+    for field in ("bytes_scanned", "files_scanned"):
+        count(byte_scan, field, 1)
+    equal(payload["license_scan"], "unresolved_findings", 0)
+    count(payload["payload_scan"], "entries_scanned", 1)
+    for field in ("payload_hits", "history_hits"):
+        equal(payload["payload_scan"], field, 0)
+    # The name scanner also reports harmless Python .pth files. Require reviewed
+    # byte evidence and exact count parity, not a filename-based licensing claim.
+    count(payload["payload_scan"], "weight_shaped_paths")
+    match(payload["payload_scan"], "weight_review_sha256", r"[0-9a-f]{64}")
+    vulnerability = payload["vulnerability_scan"]
+    for field in ("critical_with_fix", "secrets"):
+        equal(vulnerability, field, 0)
+    require(
+        count(vulnerability, "critical_total")
+        == count(vulnerability, "critical_unfixed"),
+        "critical vulnerability accounting",
+    )
+
+    conversion = record(payload, "conversion")
+    equal(conversion, "status", "pass")
+    equal(conversion, "exit_code", 0)
+    require(
+        conversion.get("observed_image_digest")
+        in (payload["oci_digest"], payload["amd64_manifest"]),
+        "conversion image digest",
+    )
+    for field in (
+        "report_sha256",
+        "source_archive_sha256",
+        "source_inventory_sha256",
+        "converted_inventory_sha256",
+    ):
+        match(conversion, field, r"[0-9a-f]{64}")
+    equal(conversion, "dataset_repository", "nvidia/PhysicalAI-NuRec-PPISP")
+    equal(conversion, "dataset_revision", "2521064a3af6ab1c1caa2ba1b01ddde7eecded69")
+    equal(conversion, "dataset_root", "struktur28")
+    equal(
+        conversion,
+        "source_archive_sha256",
+        "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d",
+    )
+    source_counts = record(conversion, "source_counts")
+    converted_counts = record(conversion, "converted_counts")
+    for field, expected in (("images", 518), ("cameras", 3), ("points", 163453)):
+        equal(source_counts, field, expected)
+    for field in ("images", "cameras"):
+        equal(converted_counts, field, source_counts[field])
+    # Upstream removes near-origin SfM points; record that loss rather than
+    # requiring a fabricated equality with the unfiltered sparse source count.
+    points = count(converted_counts, "points", 1)
+    require(
+        points + count(conversion, "origin_points_filtered") == source_counts["points"],
+        "complete sparse-point accounting",
+    )
+    for field in (
+        "all_members_reopened",
+        "member_hashes_verified",
+        "calibration_verified",
+        "poses_verified",
+        "finite_geometry",
+    ):
+        equal(conversion, field, True)
+    equal(conversion, "rig_mode", "derive")
+    equal(conversion, "poses_component_group", "npa_rig")
+
+    proof = record(payload, "rtx_proof")
+    equal(proof, "status", "pass")
+    equal(proof, "conversion_report_sha256", conversion["report_sha256"])
+    equal(proof, "converted_inventory_sha256", conversion["converted_inventory_sha256"])
+    match(proof, "nre_image", r"nvcr\.io/nvidia/nre/nre-ga@sha256:[0-9a-f]{64}")
+    equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
+    equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
+    count(proof, "gpu_count", 1)
+    # Zero means NRE's full native recipe, not a zero-epoch training workload.
+    for field in ("max_epochs", "train_exit_code", "render_exit_code"):
+        equal(proof, field, 0)
+    for field in (
+        "training_steps",
+        "gaussian_count",
+        "usdz_bytes",
+        "render_bytes",
+        "decoded_frames",
+    ):
+        count(proof, field, 1)
+    for field in ("report_sha256", "usdz_sha256", "render_sha256"):
+        match(proof, field, r"[0-9a-f]{64}")
+    equal(proof, "rendered_usdz_sha256", proof["usdz_sha256"])
+    for field in ("trained_scene_reopened", "finite_pixels", "novel_view"):
+        equal(proof, field, True)
+    from npa.deploy.ncore_acceptance import (
+        validate_full_input_proof,
+        validate_selected_base_scan,
+    )
+
+    validate_full_input_proof(conversion, proof)
+    validate_selected_base_scan(payload)
+    return payload
+
+
+@lru_cache(maxsize=1)
+def ncore_accepted_image_manifest() -> dict[str, Any]:
+    """Load NCore acceptance only after all required objective evidence exists."""
+
+    try:
+        payload = json.loads(
+            resources.files(__package__)
+            .joinpath(NCORE_IMAGE_MANIFEST_RESOURCE)
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            "NCore accepted image manifest is unavailable or invalid"
+        ) from exc
+    return validate_ncore_accepted_image_manifest(payload)
 
 
 @lru_cache(maxsize=1)
@@ -322,24 +600,43 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+        raise RuntimeError(
+            "Public release manifest registry drifted from official GHCR"
+        )
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
         raise RuntimeError("Public release manifest inventories must be objects")
-    if set(releases) | set(pending) != set(publicly_publishable_tools()):
+    redistribution_eligible = {
+        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+    }
+    expected_releases = redistribution_eligible - PUBLICATION_QUARANTINE_TOOLS
+    if set(releases) != expected_releases:
         raise RuntimeError(
-            "Public release manifest must partition every publishable tool into "
-            "published or publication-pending"
+            "Public release manifest releases must match every currently publishable tool"
+        )
+    pending_tools = set(pending)
+    if (
+        pending_tools & set(releases)
+        or not pending_tools <= redistribution_eligible & PUBLICATION_QUARANTINE_TOOLS
+    ):
+        raise RuntimeError(
+            "Public release manifest pending tools must be distinct, "
+            "redistribution-eligible publication candidates"
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+            raise RuntimeError(
+                f"Public release manifest entry {tool!r} must be an object"
+            )
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if re.fullmatch(
-            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-        ) is None:
+        if (
+            re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+            )
+            is None
+        ):
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -414,25 +711,90 @@ def resolve_lerobot_image_tag(version: str | None = None) -> str:
     return str(entry.get("image_tag") or entry["version"])
 
 
-def sonic_image_variant_for_gpu(gpu_target: str | None = None) -> str:
-    """Return an active SONIC variant or reject unsupported GPU/runtime pairs."""
+def sonic_variant_workloads(variant: str) -> tuple[str, ...]:
+    """Return the SONIC pipeline stages a variant is published to serve."""
+
+    entry = sonic_image_variants().get(variant, {})
+    declared = entry.get("workloads")
+    if not isinstance(declared, list) or not declared:
+        raise ValueError(
+            f"SONIC image variant {variant!r} declares no 'workloads' in "
+            "sonic_image_manifest.json. Declare the stages it can serve so GPU "
+            "resolution cannot hand a caller a variant with the wrong capability."
+        )
+    return tuple(str(item) for item in declared)
+
+
+def sonic_image_variant_for_gpu(
+    gpu_target: str | None = None,
+    *,
+    workload: str | None = None,
+) -> str:
+    """Return an active SONIC variant or reject unsupported GPU/runtime pairs.
+
+    ``gpu_target`` alone is not enough to pick an image. The variants differ in
+    capability, not just in driver provisioning: the only variant that matches a
+    datacenter-Blackwell target serves MuJoCo evaluation and cannot fine-tune. So
+    when the caller states its ``workload`` (a
+    :mod:`npa.workbench.sonic.routing` identifier), the GPU-matched variant must
+    also be published for that workload, and a mismatch fails loud instead of
+    substituting a different capability.
+    """
 
     manifest = sonic_image_manifest()
     default = str(manifest.get("default_variant", "sonic-k8s-host-mounted"))
     normalized = _normalize_gpu_target(gpu_target)
+    requested = (workload or "").strip().lower()
     if not normalized:
+        if requested and requested not in sonic_variant_workloads(default):
+            raise ValueError(
+                f"The default SONIC variant {default!r} does not serve workload "
+                f"{workload!r}; it serves "
+                f"{', '.join(sonic_variant_workloads(default))}. Select a variant "
+                "explicitly with --image-variant or pass a separately validated "
+                "image with --image."
+            )
         return default
     for rule in manifest.get("gpu_selection", []):
         if not isinstance(rule, dict):
             continue
         variant = str(rule.get("variant", ""))
         for match in rule.get("matches", []):
-            if str(match).lower() in normalized:
-                return variant
+            token = _normalize_gpu_target(str(match))
+            # The family name also occurs in datacenter GPU labels. Those must
+            # reach their model-specific rule, never the workstation default.
+            if (
+                token == "blackwell"
+                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
+            ):
+                continue
+            if token in normalized:
+                if not requested:
+                    return variant
+                served = sonic_variant_workloads(variant)
+                if requested in served:
+                    return variant
+                capable = sorted(
+                    other
+                    for other, entry in sonic_image_variants().items()
+                    if entry.get("status", "active") == "active"
+                    and requested in sonic_variant_workloads(other)
+                )
+                raise ValueError(
+                    f"No published SONIC image serves workload {workload!r} on GPU "
+                    f"target {gpu_target!r}. That target selects variant "
+                    f"{variant!r}, which is published for "
+                    f"{', '.join(served)} only. Variants that do serve "
+                    f"{workload!r}: {', '.join(capable) or 'none'}. Choose a GPU "
+                    "target those variants support, or pass a separately validated "
+                    "runtime with --image; npa will not substitute a variant with a "
+                    "different capability."
+                )
     raise ValueError(
-        f"Unsupported SONIC GPU target {gpu_target!r}. The only published active "
-        "variant is sonic-k8s-host-mounted on RTX PRO 6000 Blackwell Kubernetes "
-        "nodes with NVIDIA GPU Operator driver mounts. L40S/H100/H200 compute-only "
+        f"Unsupported SONIC GPU target {gpu_target!r}. Published selection supports "
+        "sonic-k8s-host-mounted on RTX PRO 6000 Blackwell Kubernetes nodes with "
+        "NVIDIA GPU Operator driver mounts, and sonic-mujoco-runtime-fetch for "
+        "B200 MuJoCo evaluation. L40S/H100/H200 compute-only "
         "variants are retired and quarantined; supply a separately validated custom "
         "image explicitly or choose gpu-rtx6000 on Kubernetes."
     )
@@ -442,14 +804,31 @@ def sonic_image_entry(
     *,
     gpu_target: str | None = None,
     image_variant: str | None = None,
+    workload: str | None = None,
 ) -> dict[str, Any]:
-    """Return the SONIC manifest entry selected by variant or GPU target."""
+    """Return the SONIC manifest entry selected by variant or GPU target.
+
+    Pass ``workload`` whenever the caller knows which pipeline stage it is
+    resolving an image for, so a GPU target cannot select a variant published for
+    a different capability. An explicit ``image_variant`` is still honored, but is
+    checked against the workload for the same reason.
+    """
 
     variants = sonic_image_variants()
     if image_variant:
         resolved = _normalize_sonic_variant(image_variant, variants)
+        requested = (workload or "").strip().lower()
+        if requested and resolved in variants:
+            served = sonic_variant_workloads(resolved)
+            if requested not in served:
+                raise ValueError(
+                    f"SONIC image variant {resolved!r} is published for "
+                    f"{', '.join(served)} and cannot serve workload {workload!r}. "
+                    "Pass a separately validated runtime with --image if that is "
+                    "what you intend."
+                )
     else:
-        resolved = sonic_image_variant_for_gpu(gpu_target)
+        resolved = sonic_image_variant_for_gpu(gpu_target, workload=workload)
     try:
         entry = variants[resolved]
     except KeyError as exc:
@@ -475,17 +854,39 @@ def container_image_for_tool(
     tag: str | None = None,
     gpu_target: str | None = None,
     image_variant: str | None = None,
+    workload: str | None = None,
 ) -> str:
-    """Return the fully qualified image ref for a Workbench tool."""
-    resolved_registry = registry or execution_container_registry()
+    """Return a Workbench image, defaulting repository releases to public GHCR.
+
+    ``registry`` is an explicit custom-image choice. The default deliberately does not
+    inherit ``NPA_REGISTRY``: that variable is also used by BYOF/build automation and
+    legacy operator configuration, and allowing it to repoint supported runtime images
+    made otherwise-public workloads depend on private registry credentials.
+    """
+    resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
+    if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+        raise ValueError(
+            "NCore has no accepted release image. Supply the validated immutable "
+            "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
+            "or explicitly select a dev-<full-source-sha> tag for validation."
+        )
     if tool == "sonic":
-        entry = sonic_image_entry(gpu_target=gpu_target, image_variant=image_variant)
+        entry = sonic_image_entry(
+            gpu_target=gpu_target,
+            image_variant=image_variant,
+            workload=workload,
+        )
         image_name = str(entry["name"])
         resolved_tag = tag or str(entry["tag"])
     else:
         if image_variant:
             raise ValueError(
                 f"Image variants are only defined for SONIC, got tool={tool!r}"
+            )
+        if workload:
+            raise ValueError(
+                f"Workload-specific image selection is only defined for SONIC, "
+                f"got tool={tool!r}"
             )
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or (
@@ -501,6 +902,12 @@ def container_image_for_tool(
             f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
             f"docs/workbench/container-packaging.md."
         )
+    if (
+        tool == "ncore"
+        and is_public_registry(resolved_registry)
+        and resolved_tag == public_release_tag_for_tool("ncore")
+    ):
+        ncore_accepted_image_manifest()
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
 
 
@@ -532,6 +939,16 @@ def build_and_push_command(image: str) -> str:
     tool = tool_for_image_name(image_name)
     if not tool:
         return ""
+    if tool == "ncore":
+        # The generic recipe omits the mandatory source revision and would build
+        # an unsupported release tag. This helper deliberately never publishes.
+        requested_tag = repository.partition(":")[2]
+        if not re.fullmatch(r"dev-[0-9a-f]{40}", requested_tag):
+            return ""
+        return (
+            "bash npa/docker/workbench/ncore/build.sh "
+            f"--source-sha {requested_tag.removeprefix('dev-')} --image {shlex.quote(ref)}"
+        )
     dockerfile = _workbench_dockerfile(tool)
     if not dockerfile:
         # Not every tool builds from npa/docker/workbench/<tool>/Dockerfile
@@ -541,6 +958,8 @@ def build_and_push_command(image: str) -> str:
     registry = ref.rsplit("/", 1)[0]
     tag = supported_tool_version(tool)
     return (
+        "npa/.venv/bin/python npa/src/npa/workflow_build.py "
+        "--stage-catalog --package-root npa && "
         f"docker buildx build --push -f {dockerfile} "
         f"-t {registry}/{image_name}:{tag} npa"
     )
@@ -567,7 +986,11 @@ def registry_from_env() -> str:
 
 
 def execution_container_registry() -> str:
-    """Resolve an operator override, otherwise the public GHCR release channel."""
+    """Resolve an operator build/BYOF registry, otherwise public GHCR.
+
+    Repository-owned runtime image defaults use :func:`container_image_for_tool`,
+    which intentionally does not call this compatibility helper.
+    """
     return registry_from_env() or DEFAULT_CONTAINER_REGISTRY
 
 
@@ -683,6 +1106,19 @@ def is_official_container_registry(registry: str) -> bool:
     }
 
 
+def is_official_public_image(image: str) -> bool:
+    """Whether ``image`` belongs to an official anonymous NPA GHCR namespace."""
+
+    candidate = str(image or "").strip().removeprefix("docker:").lower()
+    return any(
+        candidate.startswith(f"{registry}/")
+        for registry in {
+            DEFAULT_PUBLIC_CONTAINER_REGISTRY.lower(),
+            public_container_registry().rstrip("/").lower(),
+        }
+    )
+
+
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
@@ -720,9 +1156,34 @@ def publicly_publishable_tools() -> list[str]:
 
 
 def accepted_publication_development_sha(tool: str) -> str | None:
-    """Return a tool's exact accepted development SHA when one is recorded."""
+    """Return the recorded development SHA, requiring complete NCore acceptance.
+
+    NCore's first promotion requires acceptance before a release record exists.
+    Missing or inconsistent evidence therefore raises instead of allowing the
+    publisher to fall back to an arbitrary development SHA.
+
+    Args:
+        tool: Canonical workbench tool name.
+    Returns:
+        The accepted source SHA, or None for other tools without a record.
+    Raises:
+        RuntimeError: Required acceptance is missing or disagrees with release evidence.
+        ValueError: A recorded development SHA is malformed.
+    """
 
     entry = (public_release_manifest().get("releases") or {}).get(tool) or {}
+    if tool == "ncore":
+        accepted = ncore_accepted_image_manifest()
+        for release_key, accepted_key in (
+            ("development_sha", "development_sha"),
+            ("published_digest", "oci_digest"),
+        ):
+            if entry and entry.get(release_key) != accepted[accepted_key]:
+                raise RuntimeError(
+                    f"NCore release and accepted-image {release_key} disagree"
+                )
+        # The first promotion has acceptance evidence before a published record.
+        return accepted["development_sha"]
     value = entry.get("development_sha")
     if value is None:
         return None

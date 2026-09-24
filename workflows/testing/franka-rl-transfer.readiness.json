@@ -1,0 +1,65 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "0cab0738eea75c7a10f5f6b25ed9d10b617de445a1ff938c991dfefc0124f312",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec pass with five ordinary runtime stages.",
+      "evidence": [
+        "npa workbench workflow validate-spec",
+        "npa workbench workflow plan-spec --waves"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The bounded-exploration recipe configures learned servo targets, motion-aware observations, stable-hold rewards and an outcome curriculum. New recipes reject measured-state violations before reward and keep hosted visual judgments independent.",
+      "evidence": [
+        "npa/tests/workflows/test_franka_rl_learning.py",
+        "docs/workbench/guides/franka-rl-transfer.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Dedicated project storage passed S3 credential preflight.",
+      "evidence": [
+        "Private operator preflight"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The native UR compatibility diagnostic ended FAILED. Retained candidate arrays still violate physical constraints, and all four original case-summary receipts are missing. Passing CPU checks and verified artifact hashes do not qualify native physics; the frozen bounded policies achieved zero strict placements.",
+      "evidence": [
+        "docs/workbench/evidence/manipulation-physics-counterexamples.json",
+        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json",
+        "docs/workbench/evidence/manipulation-native-conformance.json",
+        "docs/workbench/evidence/manipulation-integrated-cpu-validation.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius identity, project storage, and Token Factory authentication passed; the requested vision model is available to the account.",
+      "evidence": [
+        "Private operator preflight"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Both digest-pinned images are pullable; Isaac image carries compatible bootstrap attestation. Branch source must be staged.",
+      "evidence": [
+        "npa workbench workflow preflight-images"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The native UR compatibility diagnostic ended FAILED. Retained candidate arrays still violate physical constraints, and all four original case-summary receipts are missing. Passing CPU checks and verified artifact hashes do not qualify native physics; the frozen bounded policies achieved zero strict placements.",
+      "evidence": [
+        "docs/workbench/evidence/manipulation-physics-counterexamples.json",
+        "docs/workbench/evidence/manipulation-bounded-exploration-rtx.json",
+        "docs/workbench/evidence/manipulation-native-conformance.json",
+        "docs/workbench/evidence/manipulation-integrated-cpu-validation.json"
+      ]
+    }
+  }
+}

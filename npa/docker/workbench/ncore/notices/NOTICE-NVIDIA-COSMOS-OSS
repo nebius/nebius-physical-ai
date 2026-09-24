@@ -1,0 +1,85 @@
+NVIDIA Cosmos open-source components used by the NPA workbench
+
+Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+
+Two NVIDIA Cosmos projects are wrapped as NPA workbench tools and invoked by the
+`physical-ai-data-factory` blueprint. Both are Apache-2.0.
+
+## Cosmos Evaluator
+
+  https://github.com/nvidia-cosmos/cosmos-evaluator            (Apache-2.0)
+
+Wrapped by `npa/src/npa/workbench/cosmos_evaluator/` and exposed as
+`npa workbench cosmos-evaluator`. Two of upstream's checks are used:
+
+  - Hallucination check (`checks/hallucination`). NPA runs upstream's own
+    `HallucinationProcessor` when an upstream checkout is importable
+    (`NPA_COSMOS_EVALUATOR_SRC`, else `/opt/cosmos-evaluator`), and otherwise runs
+    an implementation of the same published algorithm in
+    `cosmos_evaluator/hallucination.py`. Every result records which engine ran.
+    Upstream's algorithm — dynamic-mask differencing, distance-transform tolerance,
+    and the resulting hallucinated-pixel ratio — is described in that module's
+    docstring, and the two engines agree to ~1e-3 on the same clip pair.
+
+  - Attribute verification check (`checks/attribute_verification`). NPA reuses
+    upstream's system prompts, per-variable user prompt, guided-JSON response
+    schema, and answer parsing verbatim in
+    `cosmos_evaluator/attribute_verification.py`. Upstream drives both the
+    question-generation LLM and the answering VLM through a configurable
+    OpenAI-compatible endpoint; NPA configures Nebius Token Factory instead of
+    build.nvidia.com.
+
+Upstream resolves its bundled `cosmos_evaluator.yaml` through Bazel runfiles.
+NPA aliases the published `bazel-runfiles` wheel under the Bazel module path so
+the checkers import from a plain source checkout; see
+`cosmos_evaluator/upstream.py`.
+
+## Cosmos Curator
+
+  https://github.com/nvidia-cosmos/cosmos-curate                (Apache-2.0)
+  https://github.com/nvidia-cosmos/cosmos-xenna                 (Apache-2.0)
+
+Wrapped by `npa/src/npa/workbench/cosmos_curate/` and exposed as
+`npa workbench cosmos-curate`. Upstream's curation pipelines ship inside its own
+pixi-managed container and publish no wheel, so NPA bakes a pinned source checkout
+into the `npa-cosmos-curate` image and drives upstream's real stage classes
+directly — no Ray scheduler, no GPU:
+
+  VideoDownloader -> FixedStrideExtractorStage -> ClipTranscodingStage
+  -> MotionVectorDecodeStage -> MotionFilterStage -> ClipWriterStage
+
+The curation work and the output layout (`clips/`, `metas/v0/`,
+`processed_videos/`) are upstream's own; NPA only stages artifacts in and out and
+summarizes the result. `split_pipeline_argv` builds upstream's documented
+`video-pipeline split` command for operators who run the full curator container
+with its GPU stages.
+
+## Containers and model weights
+
+Both tools ship as workbench images (`npa-cosmos-evaluator`, `npa-cosmos-curate`)
+that bake a pinned upstream *source* checkout. Upstream's source is Apache-2.0 and
+redistributable; its model weights are not, so **no image contains model weights**.
+
+  - Both checkouts are fetched with `GIT_LFS_SKIP_SMUDGE=1`, so upstream's
+    Git-LFS payloads never enter a layer. For Cosmos Evaluator those payloads are
+    the objects/obstacle check's SegFormer ONNX and CWIP checkpoint, which upstream
+    ships behind a EULA (`checks/utils/models/segformer/EULA.pdf`). That check is
+    not wired into NPA; using it means accepting upstream's EULA and obtaining the
+    weights directly.
+  - Each Dockerfile ends with a build-time check that fails if any weight file is
+    present in the image, and `npa/tests/docker/test_cosmos_oss_images.py` fails if
+    a Dockerfile grows a build-time model download or copies a weight file.
+  - Cosmos Evaluator's wired checks need no weights at all: the hallucination check
+    is classical computer vision, and attribute verification calls a hosted VLM.
+  - Cosmos Curator's GPU stages do need weights (TransNetV2, InternVideo2 + BERT,
+    Cosmos-Embed1, CLIP + an aesthetic head, Qwen2.5-VL, T5). Those are downloaded
+    at run time by `npa workbench cosmos-curate fetch-models` using the operator's
+    own Hugging Face token, into a volume-mounted weights directory. The model ids
+    and their pinned revisions are read from upstream's own registry
+    (`cosmos_curator/configs/all_models.json`) and the download is upstream's own
+    `huggingface_hub` call, so those models are obtained from their publishers under
+    their own licenses rather than redistributed by NPA.
+
+## Trademarks
+
+NVIDIA, Cosmos, Omniverse, NuRec, and Isaac are trademarks of NVIDIA.

@@ -30,7 +30,7 @@ from npa.guardrails.three_tier import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = Path("npa/workflows/workbench/npa-workflows")
+SPECS = Path("workflows/testing")
 SIM2REAL_DEMO = Path("npa/tests/fixtures/npa-workflows/sim2real-vlm-rl-demo.yaml")
 
 
@@ -61,12 +61,20 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "cosmos3/super-benchmark": {
+        "dry_run": "boolean",
+    },
     "cosmos3/ray-batch": {
         "dry_run": "boolean",
     },
     "alpamayo2-super/infer": {
         "manifest": "knob",
         "require_camera_projection": "boolean",
+        "runtime_image": "infra",
+        "dry_run": "boolean",
+    },
+    "isaac-arena/evaluate": {
+        "record_video": "boolean",
         "runtime_image": "infra",
         "dry_run": "boolean",
     },
@@ -126,7 +134,6 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
     },
     "vlm-eval/run": {
         "task": "knob",
-        "model": "knob",
         "endpoint_url": "knob",
         "frame_selection": "knob",
         "max_frames": "knob",
@@ -141,12 +148,130 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "image": "infra",
         "prompt": "knob",
     },
+    "robocasa/run": {
+        "download_assets": "boolean",
+        "seed": "knob",
+    },
+    "newton/train_teacher": {
+        "config_name": "knob",
+        "train_steps": "knob",
+        "seed": "knob",
+    },
+    "openvla/train": {
+        "dataset_name": "knob",
+        "batch_size": "knob",
+        "max_steps": "knob",
+        "learning_rate": "knob",
+        "lora_rank": "knob",
+        "lora_dropout": "knob",
+        "image_aug": "boolean",
+        "seed": "knob",
+        "dry_run": "boolean",
+    },
+    "molmoact/finetune": {
+        "max_steps": "knob",
+        "batch_size": "knob",
+        "learning_rate": "knob",
+        "num_gpus": "knob",
+        "run_name": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="newton/train_teacher",
+        cli_module="npa.cli.workbench.newton",
+        cli_callback="train_teacher_cmd",
+        sdk_module="npa.sdk.workbench.newton",
+        sdk_attr="train_teacher",
+        spec_path=SPECS / "newton-train-teacher.yaml",
+        tool_ref="workbench.newton.train_teacher",
+        spec_gap=("config_name", "train_steps", "seed"),
+        params=(
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("config_name", "config_name", "--config-name"),
+            _p("train_steps", "train_steps", "--train-steps"),
+            _p("seed", "seed", "--seed"),
+        ),
+    ),
+    CapabilityContract(
+        name="openvla/train",
+        cli_module="npa.cli.workbench.openvla",
+        cli_callback="train_cmd",
+        sdk_module="npa.sdk.workbench.openvla",
+        sdk_attr="train",
+        spec_path=SPECS / "openvla-train.yaml",
+        tool_ref="workbench.openvla.train",
+        spec_gap=(
+            "dataset_name",
+            "batch_size",
+            "max_steps",
+            "learning_rate",
+            "lora_rank",
+            "lora_dropout",
+            "image_aug",
+            "seed",
+            "dry_run",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("dataset_name", "dataset_name", "--dataset-name"),
+            _p("output_dir", "output_dir", "--output-dir"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("lora_rank", "lora_rank", "--lora-rank"),
+            _p("lora_dropout", "lora_dropout", "--lora-dropout"),
+            _p("image_aug", "image_aug", "--image-aug"),
+            _p("seed", "seed", "--seed"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="molmoact/finetune",
+        cli_module="npa.cli.workbench.molmoact",
+        cli_callback="finetune_cmd",
+        sdk_module="npa.sdk.workbench.molmoact",
+        sdk_attr="finetune",
+        spec_path=SPECS / "molmoact-finetune.yaml",
+        tool_ref="workbench.molmoact.finetune",
+        spec_gap=(
+            "max_steps",
+            "batch_size",
+            "learning_rate",
+            "num_gpus",
+            "run_name",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_s3_uri", "output_s3_uri", "--output-s3-uri"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("num_gpus", "num_gpus", "--num-gpus"),
+            _p("run_name", "run_name", "--run-name"),
+        ),
+    ),
+    CapabilityContract(
+        name="curobo/benchmark",
+        cli_module="npa.cli.workbench.curobo",
+        cli_callback="benchmark_cmd",
+        sdk_module="npa.sdk.workbench.curobo",
+        sdk_attr="benchmark",
+        spec_path=SPECS / "curobo-benchmark.yaml",
+        tool_ref="workbench.curobo.benchmark",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
     CapabilityContract(
         name="alpamayo2-super/infer",
         cli_module="npa.cli.workbench.alpamayo2_super",
@@ -176,6 +301,32 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
                 "require_camera_projection",
                 "--require-camera-projection",
             ),
+            _p("run_id", "run_id", "--run-id"),
+            _p("runtime_image", "runtime_image", "--runtime-image"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="isaac-arena/evaluate",
+        cli_module="npa.cli.workbench.isaac_arena",
+        cli_callback="evaluate_cmd",
+        sdk_module="npa.sdk.workbench.isaac_arena",
+        sdk_attr="evaluate",
+        spec_path=SPECS / "isaac-arena-evaluation-b200.yaml",
+        tool_ref="workbench.isaac_arena.evaluate",
+        spec_gap=("record_video", "runtime_image", "dry_run"),
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("environment", "environment", "--environment"),
+            _p("policy_type", "policy_type", "--policy-type"),
+            _p("input_path", "input_path", "--input-path"),
+            _p("execution_device", "execution_device", "--execution-device"),
+            _p("num_episodes", "num_episodes", "--num-episodes"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("seed", "seed", "--seed"),
+            _p("embodiment", "embodiment", "--embodiment"),
+            _p("object_name", "object_name", "--object"),
+            _p("record_video", "record_video", "--record-video"),
             _p("run_id", "run_id", "--run-id"),
             _p("runtime_image", "runtime_image", "--runtime-image"),
             _p("dry_run", "dry_run", "--dry-run"),
@@ -282,7 +433,6 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         tool_ref="workbench.vlm_eval.run",
         spec_gap=(
             "task",
-            "model",
             "endpoint_url",
             "frame_selection",
             "max_frames",
@@ -356,6 +506,24 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
+        name="cosmos3/super-benchmark",
+        cli_module="npa.cli.workbench.cosmos3",
+        cli_callback="super_benchmark_cmd",
+        sdk_module="npa.sdk.workbench.cosmos3",
+        sdk_attr="super_benchmark",
+        spec_path=SPECS / "cosmos3-super-b200-benchmark.yaml",
+        tool_ref="workbench.cosmos3.super_benchmark",
+        spec_gap=("dry_run",),
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("topologies", "topologies", "--topologies"),
+            _p("attempts", "attempts", "--attempts"),
+            _p("base_port", "base_port", "--base-port"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
         name="detection-training/train",
         cli_module="npa.cli.workbench.detection_training",
         cli_callback="train_cmd",
@@ -384,6 +552,94 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("eval_view", "eval_view", "--eval-view"),
             _p("output_uri", "output_uri", "--output-uri"),
             _p("lance_uri", "lance_uri", "--lance-uri"),
+        ),
+    ),
+    CapabilityContract(
+        name="robocasa/run",
+        cli_module="npa.cli.workbench.robocasa.run",
+        cli_callback="run_cmd",
+        sdk_module="npa.sdk.workbench.robocasa",
+        sdk_attr="run",
+        spec_path=SPECS / "robocasa-smoke.yaml",
+        tool_ref="workbench.robocasa.random_rollout",
+        spec_gap=(
+            "download_assets",
+            "seed",
+        ),
+        params=(
+            _p("capability", "capability", "--capability"),
+            _p("env_id", "env_id", "--env-id"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("iterations", "iterations", "--iterations"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("timeout_seconds", "timeout_seconds", "--timeout-seconds"),
+            _p("download_assets", "download_assets", "--download-assets"),
+            _p("seed", "seed", "--seed"),
+        ),
+    ),
+    CapabilityContract(
+        name="openarm/mujoco-rollout",
+        cli_module="npa.cli.workbench.openarm",
+        cli_callback="run_cmd",
+        sdk_module="npa.sdk.workbench.openarm",
+        sdk_attr="run",
+        spec_path=SPECS / "openarm-simulators.yaml",
+        tool_ref="workbench.openarm.mujoco_rollout",
+        params=(
+            _p("simulator", "simulator", "--simulator"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("steps", "steps", "--steps"),
+            _p("seed", "seed", "--seed"),
+            _p("render", "render", "--render"),
+        ),
+    ),
+    CapabilityContract(
+        name="openarm/isaac-rollout",
+        cli_module="npa.cli.workbench.openarm",
+        cli_callback="run_cmd",
+        sdk_module="npa.sdk.workbench.openarm",
+        sdk_attr="run",
+        spec_path=SPECS / "openarm-simulators.yaml",
+        tool_ref="workbench.openarm.isaac_rollout",
+        params=(
+            _p("simulator", "simulator", "--simulator"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("steps", "steps", "--steps"),
+            _p("seed", "seed", "--seed"),
+            _p("task", "task", "--task"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("isaac_mode", "isaac_mode", "--isaac-mode"),
+        ),
+    ),
+    CapabilityContract(
+        name="openarm/isaac-train",
+        cli_module="npa.cli.workbench.openarm",
+        cli_callback="run_cmd",
+        sdk_module="npa.sdk.workbench.openarm",
+        sdk_attr="run",
+        spec_path=SPECS / "openarm-simulators.yaml",
+        tool_ref="workbench.openarm.isaac_train",
+        params=(
+            _p("simulator", "simulator", "--simulator"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("seed", "seed", "--seed"),
+            _p("task", "task", "--task"),
+            _p("num_envs", "num_envs", "--num-envs"),
+            _p("isaac_mode", "isaac_mode", "--isaac-mode"),
+            _p("max_iterations", "max_iterations", "--max-iterations"),
+        ),
+    ),
+    CapabilityContract(
+        name="openarm/qualify",
+        cli_module="npa.cli.workbench.openarm",
+        cli_callback="qualify_cmd",
+        sdk_module="npa.sdk.workbench.openarm",
+        sdk_attr="qualify",
+        spec_path=SPECS / "openarm-simulators.yaml",
+        tool_ref="workbench.openarm.qualify",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
         ),
     ),
     # --- the watcher: a DRIVER, so its third tier is the spec it submits --------
@@ -579,6 +835,10 @@ def test_sim2real_headline_workflow_is_three_tier_coherent() -> None:
 def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
     contracted = {contract.name.split("/", 1)[0] for contract in CONTRACTS}
     seam = {
+        # Antioch's CLI, SDK, and FastAPI service all consume the same strict
+        # Pydantic request models; toolRef argv reachability and the executable
+        # workflow are checked by test_tool_catalog_argv and test_antioch.
+        "antioch",
         # Tier-0 BYOF onboarding CLI (script-backed; not a FastAPI service).
         "byof",
         "cosmos",
@@ -596,6 +856,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # SkyPilot task surface (the viewer runs in the browser / static image).
         "foxglove",
         "genesis",
+        # S3 artifact GC is a CLI-only maintenance verb (dry-run/apply against
+        # manifests); it has no FastAPI service tier and no npa.workflow stage
+        # surface to stay coherent with. Part of #525 (PR #576).
+        "gc-artifacts",
         "golden-eval",
         "groot",
         "health",
@@ -622,6 +886,11 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # npa/tests/workbench/test_nurec_access.py::
         # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
         # argv flag against the real Typer options.
+        # OpenVLA toolRefs emit upstream argv plans and raise (train/serve/eval
+        # not yet wired), so there is no service tier to keep coherent with a
+        # YAML env block. CLI <-> catalog argv coherence is enforced by
+        # test_module_toolref_argv.py instead.
+        "openvla",
         "nurec",
         "scenario-gen",
         "sim2real",
@@ -725,3 +994,25 @@ def test_every_contract_names_a_real_file(contract: CapabilityContract) -> None:
     target = contract.spec_path or contract.yaml_path
     assert target is not None
     assert (REPO_ROOT / target).is_file(), target
+
+
+def test_sim2real_sdk_run_exposes_all_byo_seams() -> None:
+    # The SDK is the seam surface #513 fixed: every config field in
+    # SIM2REAL_SEAMS must be an explicit keyword parameter on
+    # npa.sdk.workbench.sim2real.run so SDK callers get a stable,
+    # discoverable signature instead of **overrides. The sync is
+    # directional — the signature must cover the seams; extra
+    # parameters (run_id, output_dir, upload_artifacts, **overrides)
+    # are fine.
+    import inspect
+
+    from npa.sdk.workbench.sim2real import run as sim2real_sdk_run
+    from npa.workflows.sim2real_health import SIM2REAL_SEAMS
+
+    signature_params = set(inspect.signature(sim2real_sdk_run).parameters)
+    seam_fields = {seam.config_field for seam in SIM2REAL_SEAMS}
+    missing = seam_fields - signature_params
+    assert not missing, (
+        f"npa.sdk.workbench.sim2real.run is missing explicit parameters "
+        f"for BYO seams: {sorted(missing)}"
+    )

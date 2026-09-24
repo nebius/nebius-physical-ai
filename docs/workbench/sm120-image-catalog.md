@@ -1,5 +1,7 @@
 # sm_120 Image Catalog
 
+[Workbench docs](README.md)
+
 This catalog records the first-party images used for RTX PRO 6000 Blackwell
 (`sm_120`) validation. Published redistributable releases use the public GHCR
 channel; rebuilds may target an operator-controlled registry via `NPA_REGISTRY`.
@@ -26,7 +28,7 @@ Build the base image:
 ```bash
 npa/docker/workbench/base/cuda13-b300/build.sh \
   --registry "${NPA_REGISTRY}" \
-  --tag sm80-sm90-sm100-sm103-sm120-<timestamp> \
+  --tag "sm80-sm90-sm100-sm103-sm120-<timestamp>" \
   --push
 ```
 
@@ -36,7 +38,7 @@ Build the Genesis sm_120 image:
 npa/docker/workbench/genesis/build_sm120.sh \
   --base-image "${NPA_REGISTRY}/npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest" \
   --registry "${NPA_REGISTRY}" \
-  --tag 0.4.6-sm80-sm90-sm100-sm103-sm120-<timestamp> \
+  --tag "0.4.6-sm80-sm90-sm100-sm103-sm120-<timestamp>" \
   --push
 ```
 

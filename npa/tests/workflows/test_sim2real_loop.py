@@ -52,14 +52,10 @@ SIM2REAL_ENVGEN_SPLIT = (
 )
 # The raw cosmos2-transfer template is retired; its spec is the surface, and unlike the
 # template it runs the real model (EVIDENCE.md §R38).
-COSMOS2_TRANSFER = (
-    ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "cosmos2-transfer.yaml"
-)
+COSMOS2_TRANSFER = ROOT / "workflows" / "testing" / "cosmos2-transfer.yaml"
 # The raw cosmos3-reason template is retired; its npa.workflow spec is the surface
 # (both run the same manifest builder — EVIDENCE §R2).
-COSMOS3_REASON = (
-    ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "cosmos3-reason.yaml"
-)
+COSMOS3_REASON = ROOT / "workflows" / "testing" / "cosmos3-reason.yaml"
 
 
 def _component_command(tmp_path: Path) -> str:
@@ -128,7 +124,7 @@ print(json.dumps({"component": component, "output": str(out)}))
     return f"{sys.executable} {script}"
 
 
-def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
+def test_legacy_unbound_vlm_signal_does_not_update_policy(
     tmp_path: Path,
 ) -> None:
     marker = tmp_path / "component-marker.log"
@@ -164,7 +160,13 @@ def test_vlm_eval_signal_converter_and_trainer_update_close_loop(
     assert "vlm_eval" in marker.read_text(encoding="utf-8")
     assert signal["schema"] == SCHEMA_RL_SIGNAL
     assert signal["per_step"][0]["target"]["nl_correction"]
-    assert update.policy_delta_l2 > control.policy_delta_l2
+    # This archived fixture has no simulator times or verified frame bindings.
+    # Its visual labels must not become corrective targets for the optimizer.
+    assert signal["calibration"]["vlm_unobserved_visual_steps"] == 3
+    for step in signal["per_step"]:
+        assert step["confidence"] == step["reward_components"]["vlm_auxiliary"] == 0
+        assert not any(step["target"]["action_delta"])
+    assert update.policy_delta_l2 == control.policy_delta_l2 == 0
     assert Path(update.checkpoint_path).exists()
 
 
@@ -220,7 +222,8 @@ def test_full_loop_writes_stage_artifacts_and_candidate(tmp_path: Path) -> None:
     assert augment["status"] in {"executed_reference", "executed", "contract_ready"}
     assert (
         augment.get("image")
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-sim2real-coherent-20260904"
     )
     assert (
         trigger["trigger_dataset_uri"] == "s3://bucket/sim2real-triggers/lerobot-pusht/"
@@ -1222,15 +1225,11 @@ def test_kubernetes_component_env_uses_secret_refs_for_storage_credentials(
     )
     assert "ACCEPT_EULA" not in non_isaac_safe
 
-    opted_out = package_component_env(
-        {"ACCEPT_EULA": "no"}, config, isaac_backed=True
-    )
+    opted_out = package_component_env({"ACCEPT_EULA": "no"}, config, isaac_backed=True)
     assert opted_out["ACCEPT_EULA"] == ""
 
     with pytest.raises(ValueError, match="Invalid ACCEPT_EULA"):
-        package_component_env(
-            {"ACCEPT_EULA": "maybe"}, config, isaac_backed=True
-        )
+        package_component_env({"ACCEPT_EULA": "maybe"}, config, isaac_backed=True)
 
 
 def test_compatibility_surface_has_no_legacy_kubectl_controller() -> None:
@@ -1263,38 +1262,54 @@ def test_sdk_exposes_sim2real_run(tmp_path: Path, monkeypatch) -> None:
 
 def test_default_augment_image_uses_cosmos2_transfer_contract(monkeypatch) -> None:
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY", raising=False)
     monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
 
     assert (
         default_augment_image()
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-sim2real-coherent-20260904"
     )
 
     config = build_config_from_env(run_id="sim2real-images")
 
     assert (
         config.augment_image
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-sim2real-coherent-20260904"
     )
     assert config.vlm_image == (
-        "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
+        "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert "cosmos3" not in config.augment_image
 
 
-def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) -> None:
+def test_default_images_ignore_generic_build_registry(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.example/workbench")
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY", raising=False)
     monkeypatch.delenv("AUGMENT_IMAGE", raising=False)
 
     config = build_config_from_env(run_id="sim2real-images")
 
     assert (
         config.augment_image
-        == "registry.example/workbench/npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:"
+        "2.5.1-sim2real-coherent-20260904"
     )
     assert (
-        config.vlm_image
-        == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        config.vlm_image == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
+        "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
+
+
+def test_sim2real_custom_registry_requires_dedicated_override(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example/workbench")
+
+    config = build_config_from_env(run_id="sim2real-custom-images")
+
+    assert config.augment_image.startswith(
+        "registry.example/workbench/npa-cosmos2-transfer:"
     )
 
 
@@ -2485,14 +2500,7 @@ def test_action_conditioning_is_a_stage_of_the_envgen_spec_and_is_cpu() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    spec = load_spec(
-        ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real-envgen-shards.yaml"
-    )
+    spec = load_spec(ROOT / "workflows" / "testing" / "sim2real-envgen-shards.yaml")
     plan = build_plan(spec, run_id="envgen-actions-test")
 
     actions = next(step for step in plan.steps if step.state == "actions")
@@ -2521,14 +2529,7 @@ def test_envgen_shard_fan_out_is_cpu_and_declares_its_shards() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    spec = load_spec(
-        ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real-envgen-shards.yaml"
-    )
+    spec = load_spec(ROOT / "workflows" / "testing" / "sim2real-envgen-shards.yaml")
     plan = build_plan(spec, run_id="envgen-shards-test")
 
     for profile in spec.resources.values():
@@ -2565,10 +2566,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
 
     assert transfer["schema"] == "npa.cosmos2.transfer.v1"
     assert reason["schema"] == "npa.cosmos3.reason.v1"
-    assert (
-        transfer["image"]
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
-    )
+    assert transfer["image"] == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     assert reason["image"] == "npa-cosmos3-reason:3.0.0"
     assert transfer["image"] != reason["image"]
     assert "cosmos3" not in transfer["image"]
@@ -2588,17 +2586,21 @@ def test_parallel_vlm_eval_caps_sibling_job_concurrency(
     active = 0
     peak = 0
     lock = threading.Lock()
+    first_pair = threading.Barrier(2)
     calls: list[str] = []
 
     def fake_evaluate(rollout, **kwargs):
         nonlocal active, peak
         manifest = json.loads((Path(rollout) / "manifest.json").read_text())
         rollout_id = str(manifest["rollout_id"])
-        calls.append(rollout_id)
         try:
             with lock:
+                calls.append(rollout_id)
+                call_number = len(calls)
                 active += 1
                 peak = max(peak, active)
+            if call_number <= 2:
+                first_pair.wait(timeout=5)
             time.sleep(0.02)
             return {
                 "schema": SCHEMA_VLM_EVAL,

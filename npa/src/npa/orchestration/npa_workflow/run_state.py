@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -12,8 +12,13 @@ RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
 PAIDF_COSMOS3_WORKFLOW_NAME = "paidf-cosmos3"
+NVIDIA_PAIDF_VDA_WORKFLOW_NAME = "nvidia-paidf-vda-cosmos-transfer25"
 PAIDF_INPUT_WORKFLOW_NAMES = frozenset(
-    {PAIDF_WORKFLOW_NAME, PAIDF_COSMOS3_WORKFLOW_NAME}
+    {
+        PAIDF_WORKFLOW_NAME,
+        PAIDF_COSMOS3_WORKFLOW_NAME,
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    }
 )
 
 
@@ -116,6 +121,10 @@ class RuntimeRunState:
     #: by key, and keys only line up when the traversal is identical, so a resumed run
     #: whose spec/config changed must not silently reuse them.
     plan_fingerprint: str = ""
+    #: Append-only audit records for an explicitly authorized migration from one
+    #: terminal-failed plan to another under the same run identity. Prior waves
+    #: remain byte-for-byte represented below; a migration never rewrites them.
+    plan_migrations: list[dict[str, Any]] = field(default_factory=list)
     waves: list[dict[str, Any]] = field(default_factory=list)
     # Additive, per-stage projection of the wave ledger.  This is deliberately
     # kept in runtime.json so status/logs/cancel all consume one state store.
@@ -134,6 +143,7 @@ class RuntimeRunState:
             "status": self.status,
             "run_prefix_uri": self.run_prefix_uri,
             "plan_fingerprint": self.plan_fingerprint,
+            "plan_migrations": list(self.plan_migrations),
             "updated_at": self.updated_at,
             "waves": list(self.waves),
             "stages": list(self.stages),
@@ -150,6 +160,11 @@ class RuntimeRunState:
             status=str(payload.get("status") or "running"),
             run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
             plan_fingerprint=str(payload.get("plan_fingerprint") or ""),
+            plan_migrations=[
+                dict(item)
+                for item in payload.get("plan_migrations") or []
+                if isinstance(item, dict)
+            ],
             waves=[
                 dict(item)
                 for item in payload.get("waves") or []
@@ -202,6 +217,7 @@ class RuntimeRunState:
                 "resume_block_terminal_or_legacy_absence",
                 "resume_block_output_present",
                 "resume_block_output_indeterminate",
+                "verified_absent_no_retry",
             }
             return dict(record) if status == "running" or unresolved else None
         return None
@@ -340,6 +356,39 @@ def _wave_members(wave: Mapping[str, Any]) -> list[tuple[str, int | None]]:
     if members:
         return members
     return [(str(item), None) for item in wave.get("states") or []]
+
+
+def runtime_manifest_view(
+    manifest: RunManifest,
+    runtime_waves: Sequence[Mapping[str, Any]],
+) -> RunManifest:
+    """Include observed runtime stages omitted from an early manifest.
+
+    Args:
+        manifest: Durable manifest, possibly written before any stage ran.
+        runtime_waves: Recorded wave attempts with exact stage identities.
+
+    Returns:
+        An independent manifest view with each missing stage/iteration added.
+        Existing planned stages and their metadata retain their order.
+
+    Raises:
+        None.
+    """
+    steps = [dict(step) for step in manifest.steps]
+    known = {(str(step.get("state") or ""), step.get("iteration")) for step in steps}
+    for wave in runtime_waves:
+        for name, iteration in _wave_members(wave):
+            identity = (name, iteration)
+            if not name or identity in known:
+                continue
+            known.add(identity)
+            # Attempt outcomes come from attribution, which retains retries.
+            # Copying a historical failure into the stage would make it final.
+            steps.append(
+                {"state": name, "iteration": iteration, "status": SUBMITTED_STATUS}
+            )
+    return replace(manifest, steps=steps)
 
 
 def reconstruct_stage_job_attribution(
@@ -521,6 +570,41 @@ class RunStateStore:
     @property
     def run_prefix_uri(self) -> str:
         return f"s3://{self.bucket}/{self.prefix}"
+
+    def artifact_exists(self, uri: str) -> bool:
+        """Check an output with this run store's exact endpoint and credentials."""
+
+        from urllib.parse import urlparse
+
+        from botocore.exceptions import ClientError
+
+        from npa.clients.storage import StorageClient
+
+        parsed = urlparse(uri)
+        key = parsed.path.lstrip("/")
+        if parsed.scheme != "s3" or not parsed.netloc or not key:
+            raise ValueError(f"run output must be an explicit s3:// URI: {uri!r}")
+        client = StorageClient.from_environment(
+            endpoint_url=self._endpoint_url,
+            aws_access_key_id=self._aws_access_key_id,
+            aws_secret_access_key=self._aws_secret_access_key,
+        )._s3
+        try:
+            if uri.endswith("/"):
+                response = client.list_objects_v2(
+                    Bucket=parsed.netloc, Prefix=key, MaxKeys=1
+                )
+                return any(
+                    int(item.get("Size") or 0) > 0
+                    for item in response.get("Contents", [])
+                )
+            response = client.head_object(Bucket=parsed.netloc, Key=key)
+            return int(response.get("ContentLength") or 0) > 0
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
 
     def read_manifest(self) -> RunManifest | None:
         key = manifest_key(self.prefix)
@@ -866,6 +950,31 @@ def normalize_startup_failure(controller_output: str) -> tuple[str, int]:
     return (NORMALIZED_DELETED_RAY_NODE, matches) if matches else ("", 0)
 
 
+def _job_task_outcomes_conflict(
+    job_state: str,
+    task_rows: Sequence[Mapping[str, Any]],
+) -> bool:
+    if job_state.startswith("FAILED"):
+        job_state = "FAILED"
+    if job_state not in {"SUCCEEDED", "FAILED", "CANCELLED"} or not task_rows:
+        return False
+    task_states = [_normalized_stage_state(row.get("status")) for row in task_rows]
+    # The queue aggregate uses the first failed/cancelled row, while task rows
+    # are sorted by task ID. Either represented outcome is compatible in a
+    # mixed parallel job; the sorted task order cannot select its aggregate.
+    unsuccessful_outcomes = set()
+    for state in task_states:
+        if state.startswith("FAILED"):
+            unsuccessful_outcomes.add("FAILED")
+        elif state == "CANCELLED":
+            unsuccessful_outcomes.add(state)
+    if unsuccessful_outcomes:
+        return job_state not in unsuccessful_outcomes
+    return (
+        all(state == "SUCCEEDED" for state in task_states) and job_state != "SUCCEEDED"
+    )
+
+
 def build_actionable_run_status(
     manifest: RunManifest,
     *,
@@ -966,7 +1075,14 @@ def build_actionable_run_status(
                 and attempt_state != scheduler_state
             )
         )
-        if outcome_conflict:
+        job_task_conflict = _job_task_outcomes_conflict(
+            scheduler_job_state, observed_rows
+        )
+        if job_task_conflict:
+            outcome_conflict = True
+            state = "UNKNOWN"
+            outcome_provenance = "conflicting_scheduler_job_and_tasks"
+        elif outcome_conflict:
             state = "UNKNOWN"
             outcome_provenance = "conflicting_durable_and_scheduler_evidence"
         elif step_terminal:
@@ -1062,6 +1178,8 @@ def build_actionable_run_status(
             "task_id": row.get("task_id", index),
             "scheduler_state": raw_scheduler or state,
             "raw_scheduler_state": raw_scheduler,
+            "raw_job_scheduler_state": scheduler_job_state,
+            "raw_task_scheduler_state": str(row.get("status") or "").upper(),
             "outcome_provenance": outcome_provenance,
             "outcome_conflict": outcome_conflict,
             "retry_count": retry_count,
@@ -1165,6 +1283,90 @@ def build_actionable_run_status(
             or max(0, int((current - newest_progress).total_seconds())) > 300
         ),
         "stages": stages,
+    }
+
+
+_WORKFLOW_NONTERMINAL_STATES = frozenset({"PLANNED", "SUBMITTED", "RUNNING"})
+_WORKFLOW_TERMINAL_STATES = frozenset(
+    {"SUCCEEDED", "FAILED", "FAILED_STARTUP", "CANCELLED", "BLOCKED"}
+)
+
+
+def _workflow_lifecycle_state(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Workflow lifecycle status is missing or malformed")
+    status = value.upper()
+    if status not in _WORKFLOW_NONTERMINAL_STATES | _WORKFLOW_TERMINAL_STATES:
+        raise ValueError("Workflow lifecycle status is missing or unsupported")
+    return status
+
+
+def manifest_workflow_lifecycle_state(value: object) -> str:
+    """Normalize the interpreter's completion marker at the manifest boundary.
+
+    Args:
+        value: Lifecycle status read from the authoritative workflow manifest.
+
+    Returns:
+        Validated lifecycle state, with manifest completion represented as success.
+
+    Raises:
+        ValueError: The manifest lifecycle status is missing or unsupported.
+    """
+    if isinstance(value, str) and value.upper() == "COMPLETED":
+        return "SUCCEEDED"
+    return _workflow_lifecycle_state(value)
+
+
+def _manifest_lifecycle_evidence(manifest: RunManifest) -> dict[str, str]:
+    return {
+        "status": manifest.status,
+        "updated_at": manifest.updated_at,
+        "source": "authoritative_manifest",
+    }
+
+
+def runtime_workflow_lifecycle(
+    manifest: RunManifest,
+    runtime_state: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Separate durable workflow lifecycle from the observed jobs' outcomes.
+
+    Args:
+        manifest: Original durable manifest, before scheduler projection.
+        runtime_state: Exact run's runtime ledger, including its update time.
+
+    Returns:
+        Lifecycle state and evidence; neither proves the submit driver is alive.
+
+    Raises:
+        ValueError: A workflow lifecycle status is missing or unsupported.
+    """
+    manifest_status = manifest_workflow_lifecycle_state(manifest.status)
+    runtime_status = _workflow_lifecycle_state(runtime_state.get("status"))
+    terminal = {
+        state
+        for state in (manifest_status, runtime_status)
+        if state in _WORKFLOW_TERMINAL_STATES
+    }
+    from_manifest = manifest_status in terminal and runtime_status not in terminal
+    status = manifest_status if from_manifest else runtime_status
+    if len(terminal) > 1:
+        status = "EVIDENCE_INCONSISTENT"
+    return status, {
+        "manifest_status": manifest_status,
+        "manifest_evidence": _manifest_lifecycle_evidence(manifest),
+        "runtime_status": runtime_status,
+        "completion_recorded": "SUCCEEDED" in terminal and len(terminal) == 1,
+        "driver_liveness": "unknown",
+        "source": "authoritative_manifest"
+        if from_manifest
+        else "durable_runtime_ledger",
+        "updated_at": (
+            manifest.updated_at
+            if from_manifest
+            else str(runtime_state.get("updated_at") or "")
+        ),
     }
 
 

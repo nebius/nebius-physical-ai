@@ -43,6 +43,8 @@ def test_byof_run_help() -> None:
     assert "--repo-url" in result.output
     assert "--workload" in result.output
     assert "--base-profile" in result.output
+    assert "--repo-auth" in result.output
+    assert "--repo-token-env" in result.output
 
 
 def test_byof_run_dry_run_json() -> None:
@@ -96,7 +98,23 @@ def test_build_byof_argv_and_sdk_plan() -> None:
     assert (
         byof_sdk.plan_argv(
             repo_url="https://github.com/example/repo.git",
+            repo_ref="main",
+            workload="container-verify",
             skip_run=True,
         )
         == argv
     )
+
+
+def test_private_byof_sdk_plan_carries_only_token_variable_name() -> None:
+    argv = byof_sdk.plan_argv(
+        repo_url="https://github.com/example/private.git",
+        repo_ref="main",
+        repo_auth="github",
+        repo_token_env="NPA_BYOF_GITHUB_TOKEN",
+        skip_run=True,
+    )
+
+    assert argv[argv.index("--repo-auth") + 1] == "github"
+    assert argv[argv.index("--repo-token-env") + 1] == "NPA_BYOF_GITHUB_TOKEN"
+    assert "secret-canary" not in " ".join(argv)

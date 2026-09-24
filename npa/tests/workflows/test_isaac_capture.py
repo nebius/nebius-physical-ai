@@ -14,12 +14,39 @@ import pytest
 from npa.workflows import isaac_capture
 
 
+def test_simulation_app_close_cannot_swallow_capture_failure() -> None:
+    closed: list[bool] = []
+
+    class FakeApp:
+        def close(self) -> None:
+            closed.append(True)
+
+    with pytest.raises(RuntimeError, match="render failed"):
+        with isaac_capture._simulation_app_lifecycle(FakeApp()):
+            raise RuntimeError("render failed")
+
+    assert closed == []
+
+
+def test_simulation_app_closes_after_success() -> None:
+    closed: list[bool] = []
+
+    class FakeApp:
+        def close(self) -> None:
+            closed.append(True)
+
+    with isaac_capture._simulation_app_lifecycle(FakeApp()):
+        pass
+
+    assert closed == [True]
+
+
 def test_publish_runs_before_the_simulator_closes(monkeypatch, tmp_path: Path) -> None:
     """Live job 278: six frames, exit 0, nothing uploaded.
 
-    `simulation_app.close()` tears the process down rather than returning, so the upload that
-    used to live in `main()` after `_capture_frames()` never happened — and the next stage
-    failed with "No scene images found". The publish callback must fire first.
+    Isaac environment or app teardown can terminate the process rather than returning, so the
+    upload that used to run after teardown never happened — and the next stage failed with
+    "No scene images found". The publish callback must fire first.
     """
 
     order: list[str] = []
@@ -43,19 +70,27 @@ def test_publish_runs_before_the_simulator_closes(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(
         isaac_capture,
         "_upload_tree",
-        lambda local, uri: uploaded.setdefault("uri", uri) and {} or {"frame_00.png": uri},
+        lambda local, uri: (
+            uploaded.setdefault("uri", uri) and {} or {"frame_00.png": uri}
+        ),
     )
 
     assert isaac_capture.main(["--output-path", "s3://bucket/scene/"]) == 0
-    assert order == ["publish", "close"], "publish must happen before the app tears down"
+    assert order == ["publish", "close"], (
+        "publish must happen before the app tears down"
+    )
     assert uploaded["uri"] == "s3://bucket/scene/"
 
 
-def test_upload_carries_the_summary_next_to_the_frames(monkeypatch, tmp_path: Path) -> None:
+def test_upload_carries_the_summary_next_to_the_frames(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Uploading only *.png stranded isaac_capture_summary.json in the pod."""
 
     (tmp_path / "frame_00.png").write_bytes(b"png")
-    (tmp_path / "isaac_capture_summary.json").write_text(json.dumps({"status": "success"}))
+    (tmp_path / "isaac_capture_summary.json").write_text(
+        json.dumps({"status": "success"})
+    )
 
     sent: list[str] = []
 
@@ -79,7 +114,10 @@ def test_upload_carries_the_summary_next_to_the_frames(monkeypatch, tmp_path: Pa
 
 
 def test_render_only_reports_the_resolved_settings_without_a_simulator(capsys) -> None:
-    assert isaac_capture.main(["--output-path", "s3://bucket/scene/", "--render-only"]) == 0
+    assert (
+        isaac_capture.main(["--output-path", "s3://bucket/scene/", "--render-only"])
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["task"] == "Isaac-Lift-Cube-Franka-v0"
     assert payload["output_path"] == "s3://bucket/scene/"
@@ -123,10 +161,15 @@ def test_look_at_quaternion_actually_points_at_the_target() -> None:
         (isaac_capture.DEFAULT_CAMERA_EYE, isaac_capture.DEFAULT_CAMERA_TARGET),
         ((2.0, 0.0, 0.5), (0.0, 0.0, 0.5)),
         ((0.0, -1.5, 1.5), (0.0, 0.0, 0.0)),
-        ((0.0, 0.0, 2.0), (0.0, 0.0, 0.0)),  # straight down: the degenerate up-vector case
+        (
+            (0.0, 0.0, 2.0),
+            (0.0, 0.0, 0.0),
+        ),  # straight down: the degenerate up-vector case
     ):
         quat = isaac_capture.look_at_quaternion(eye, target)
-        assert math.isclose(sum(c * c for c in quat), 1.0, rel_tol=1e-6), "not a unit quaternion"
+        assert math.isclose(sum(c * c for c in quat), 1.0, rel_tol=1e-6), (
+            "not a unit quaternion"
+        )
 
         # Isaac Lab's world convention is REP-103: the camera looks along its own +X.
         forward = rotate(quat, (1.0, 0.0, 0.0))
@@ -134,7 +177,9 @@ def test_look_at_quaternion_actually_points_at_the_target() -> None:
         length = math.sqrt(sum(c * c for c in wanted))
         wanted = [c / length for c in wanted]
         dot = sum(forward[i] * wanted[i] for i in range(3))
-        assert dot > 0.999, f"camera looks {dot:.4f} away from {target} when placed at {eye}"
+        assert dot > 0.999, (
+            f"camera looks {dot:.4f} away from {target} when placed at {eye}"
+        )
 
 
 def test_the_camera_name_matches_what_the_frame_extractor_looks_up() -> None:

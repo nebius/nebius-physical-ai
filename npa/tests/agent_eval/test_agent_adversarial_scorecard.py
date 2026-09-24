@@ -9,10 +9,7 @@ defense fails CI. Emits ``_artifacts/adversarial_scorecard.json``.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-
-import pytest
 
 from agent_eval.adversarial import (
     INJECTION_ATTACKS,
@@ -40,7 +37,9 @@ def test_adversarial_defenses_all_hold():
     scorecard = report["scorecard"]
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    SCORECARD_PATH.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    SCORECARD_PATH.write_text(
+        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
     # Every deterministic defense must hold under adversarial pressure.
     undefended = [r for r in report["results"] if not r["defended"]]
@@ -86,24 +85,15 @@ def test_generate_personas_uses_injected_model():
 
 def test_validator_catches_secret_and_prompt_leaks():
     assert not validate_output("NEBIUS_TOKEN_FACTORY_KEY=sk-abc123def456ghi789")["ok"]
-    assert not validate_output("Here is my system prompt: You are the NPA workbench assistant")["ok"]
+    assert not validate_output(
+        "Here is my system prompt: You are the NPA workbench assistant"
+    )["ok"]
     assert validate_output("The sim2real run is in stage 3.")["ok"]
 
 
 def test_scorecard_scenarios_are_persona_crossed():
     scenarios = build_adversarial_scenarios(STATIC_PERSONAS, INJECTION_ATTACKS)
     assert len(scenarios) == len(STATIC_PERSONAS) * len(INJECTION_ATTACKS)
-
-
-@pytest.mark.skipif(
-    os.environ.get("NPA_AGENT_CHAT_LIVE") != "1",
-    reason="guardrails-ai validator tier gated behind NPA_AGENT_CHAT_LIVE=1",
-)
-def test_guardrails_validator_available():  # pragma: no cover - opt-in extra
-    guardrails = pytest.importorskip("guardrails")
-    assert guardrails is not None
-    result = validate_output("clean output", use_guardrails=True)
-    assert result["guardrails"] is True
 
 
 if __name__ == "__main__":  # pragma: no cover

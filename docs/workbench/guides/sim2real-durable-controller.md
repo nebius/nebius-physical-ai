@@ -1,5 +1,7 @@
 # Sim2Real durability: standard workflow runtime
 
+[Guides](README.md)
+
 The former Sim2Real-specific controller is retired from the canonical path.
 Durability now belongs to the standard `npa.workflow` runtime, not to a driver
 pod that creates and watches child Jobs.

@@ -13,9 +13,10 @@ import time.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 import yaml
 
@@ -29,7 +30,7 @@ SKIP = "SKIP"
 
 CLI_MODULE = "npa.cli.workbench.sim2real"
 CLI_CALLBACK = "run_command"
-RUNBOOK_YAML = Path("npa/workflows/workbench/npa-workflows/sim2real.yaml")
+RUNBOOK_YAML = Path("workflows/main/sim2real.yaml")
 
 
 @dataclass(frozen=True)
@@ -189,8 +190,6 @@ def coherence_failures(repo_root: Path) -> list[str]:
         "isaac_image",
         "viewer_image",
         "isaac_cache_pvc",
-        "gpu_queue",
-        "gpu_priority_class",
     }
     missing_config = sorted(required_config - set(config))
     if missing_config:
@@ -382,7 +381,7 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
             status=WARN,
             summary="Some images are not fully qualified for a pull check.",
             remedy=(
-                "Set NPA_REGISTRY or pass fully-qualified "
+                "Set NPA_SIM2REAL_REGISTRY or pass fully-qualified "
                 "<registry>/<image>:<tag> values so the agent-sa pull path can be verified."
             ),
             details=tuple(sorted(set(not_actionable))),
@@ -511,15 +510,15 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             details=(_short(can_i.stderr or can_i.stdout),),
         )
 
-    service_account = config.k8s_service_account or "agent-sa"
-    service_account_user = f"system:serviceaccount:{namespace}:{service_account}"
+    # The canonical SkyPilot workflow uses the selected Kubernetes credentials.
+    # agent-sa belonged to the retired sibling-Job controller; impersonating it
+    # rejects valid Fleet clusters and checks a principal that never submits work.
     controller_patch = runner(
         [
             "auth",
             "can-i",
             "patch",
             "jobs.batch",
-            f"--as={service_account_user}",
             "-n",
             namespace,
         ]
@@ -532,42 +531,15 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             name="cluster",
             status=FAIL,
             summary=(
-                f"Service account {service_account!r} cannot patch Jobs in "
+                "The selected Kubernetes identity cannot patch Jobs in "
                 f"namespace {namespace!r}."
             ),
             remedy=(
-                "Grant the Sim2Real controller Role the 'patch' verb on "
-                "batch/jobs. Durable reconciliation records structured heartbeats "
-                "and adopts exact-identity Jobs through the Kubernetes API."
+                "Grant the selected workflow identity the 'patch' verb on "
+                "batch/jobs in this namespace, then rerun preflight with the "
+                "same kubeconfig and context used by workflow submit --runtime."
             ),
             details=(_short(controller_patch.stderr or controller_patch.stdout),),
-        )
-
-    kueue_observe = runner(
-        [
-            "auth",
-            "can-i",
-            "list",
-            "workloads.kueue.x-k8s.io",
-            f"--as={service_account_user}",
-            "-n",
-            namespace,
-        ]
-    )
-    if kueue_observe.returncode != 0 or kueue_observe.stdout.strip().lower() != "yes":
-        return CheckResult(
-            name="cluster",
-            status=FAIL,
-            summary=(
-                f"Service account {service_account!r} cannot list Kueue Workloads "
-                f"in namespace {namespace!r}."
-            ),
-            remedy=(
-                "Grant the Sim2Real controller Role the 'list' verb on "
-                "kueue.x-k8s.io/workloads. Durable reconciliation must observe "
-                "the generated Workload admission, flavor, and terminal state."
-            ),
-            details=(_short(kueue_observe.stderr or kueue_observe.stdout),),
         )
 
     cache_pvc = config.k8s_isaac_cache_pvc.strip()
@@ -627,7 +599,9 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             remedy="Confirm RBAC allows listing nodes to verify schedulable GPU capacity.",
             details=(_short(nodes.stderr or nodes.stdout),),
         )
-    node_count, gpu_total = _count_schedulable_gpus(nodes.stdout, gpu_resource)
+    node_count, gpu_total, gpu_products = _count_schedulable_gpus(
+        nodes.stdout, gpu_resource
+    )
     if gpu_total <= 0:
         return CheckResult(
             name="cluster",
@@ -641,6 +615,51 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
                 "for some accelerators is zero by default."
             ),
         )
+    # The workflow itself falls back through k8s_gpu_candidates when the
+    # primary k8s_gpu_product is unavailable (see gpu_fallback.py), so the
+    # preflight must accept any of them instead of false-failing valid
+    # multi-product configs.
+    requested_products = [
+        product
+        for product in (
+            config.k8s_gpu_product,
+            *getattr(config, "k8s_gpu_candidates", ()),
+        )
+        if product
+    ]
+    if requested_products:
+        wanted = ", ".join(repr(product) for product in requested_products)
+        if not gpu_products:
+            return CheckResult(
+                name="cluster",
+                status=WARN,
+                summary=(
+                    f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
+                    "but no nvidia.com/gpu.product labels were detected, so the "
+                    f"requested product(s) {wanted} could not be verified."
+                ),
+                remedy=(
+                    "Ensure the NVIDIA k8s-device-plugin labels GPU nodes with "
+                    "nvidia.com/gpu.product, or clear k8s_gpu_product in the "
+                    "sim2real config to skip product matching."
+                ),
+            )
+        matched = [product for product in requested_products if product in gpu_products]
+        if not matched:
+            available = ", ".join(sorted(gpu_products))
+            return CheckResult(
+                name="cluster",
+                status=FAIL,
+                summary=(
+                    f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
+                    f"but none match the requested product(s) {wanted}."
+                ),
+                remedy=(
+                    f"Available GPU products: {available}. Update k8s_gpu_product "
+                    "or k8s_gpu_candidates in the sim2real config to match, or "
+                    "provision nodes with a requested accelerator."
+                ),
+            )
     return CheckResult(
         name="cluster",
         status=PASS,
@@ -651,16 +670,25 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
     )
 
 
-def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, int]:
+def _count_schedulable_gpus(
+    nodes_json: str, gpu_resource: str
+) -> tuple[int, int, set[str]]:
     import json
 
     try:
         payload = json.loads(nodes_json)
     except (json.JSONDecodeError, TypeError):
-        return (0, 0)
+        return (0, 0, set())
     items = payload.get("items") or []
     total = 0
+    products: set[str] = set()
+    cordoned = 0
     for node in items:
+        # Cordoned nodes accept no new pods: their GPUs are not schedulable
+        # capacity and must not satisfy the preflight.
+        if (node.get("spec") or {}).get("unschedulable"):
+            cordoned += 1
+            continue
         allocatable = (node.get("status") or {}).get("allocatable") or {}
         raw = allocatable.get(gpu_resource)
         if raw is None:
@@ -669,7 +697,11 @@ def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, in
             total += int(raw)
         except (TypeError, ValueError):
             continue
-    return (len(items), total)
+        labels = (node.get("metadata") or {}).get("labels") or {}
+        product = labels.get("nvidia.com/gpu.product")
+        if product:
+            products.add(product)
+    return (len(items) - cordoned, total, products)
 
 
 # Orchestration -------------------------------------------------------------
@@ -684,6 +716,59 @@ ALL_CHECKS: tuple[str, ...] = (
 )
 
 
+def run_checks_concurrently(
+    thunks: Sequence[Callable[[], CheckResult]], *, max_workers: int
+) -> list[CheckResult]:
+    """Run zero-argument check callables with a bounded thread pool.
+
+    Shared by both preflight runners in this package (``run_preflight`` here
+    and ``credential_preflight.run_credential_preflight``): each check is an
+    independent probe, so running them concurrently pays roughly the slowest
+    check's latency instead of their sum, while still returning results in
+    ``thunks`` order regardless of completion order.
+
+    Args:
+        thunks: Zero-argument callables, each producing one ``CheckResult``.
+        max_workers: Upper bound on concurrently running thunks.
+
+    Returns:
+        One result per thunk, in the same order as ``thunks``.
+
+    Raises:
+        Exception: Whatever the first thunk (by ``thunks`` order) raised.
+            Only this exception *selection* matches a plain serial list
+            comprehension; unlike serial execution, every thunk still runs
+            to completion (the executor joins all of them before this
+            propagates), even the ones after the one whose exception wins.
+    """
+
+    if len(thunks) <= 1:
+        return [thunk() for thunk in thunks]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(thunk) for thunk in thunks]
+        return [future.result() for future in futures]
+
+
+def _preflight_thunks(
+    config: Sim2RealLoopConfig,
+    *,
+    repo_root: Path,
+    probes: DoctorProbes,
+    selected: Sequence[str],
+) -> list[Callable[[], CheckResult]]:
+    """Build the zero-argument callable for each selected check, in order."""
+
+    candidates: list[tuple[str, Callable[[], CheckResult]]] = [
+        ("config", lambda: check_config(config)),
+        ("coherence", lambda: check_coherence(repo_root)),
+        ("s3", lambda: check_s3(config, probes=probes)),
+        ("registry", lambda: check_registry(config, probes=probes)),
+        ("tokens", lambda: check_tokens(config, probes=probes)),
+        ("cluster", lambda: check_cluster(config, probes=probes)),
+    ]
+    return [thunk for name, thunk in candidates if name in selected]
+
+
 def run_preflight(
     config: Sim2RealLoopConfig,
     *,
@@ -691,23 +776,36 @@ def run_preflight(
     probes: DoctorProbes,
     checks: Iterable[str] | None = None,
 ) -> list[CheckResult]:
-    """Run the selected checks and return their results in display order."""
+    """Run the selected checks and return their results in display order.
+
+    Each check is independent (a local repo check, or one network/subprocess
+    probe against S3, the registry, tokens, or the cluster). ``ALL_CHECKS``
+    has only 6 entries and each appears in a selection at most once, so
+    (unlike credential preflight's caller-supplied, possibly-duplicated check
+    list) the worker count here needs no separate cap.
+
+    Args:
+        config: Resolved Sim2Real loop configuration each check reads from.
+        repo_root: Repository root for the local ``coherence`` check.
+        probes: Injectable side-effecting probes for the network/subprocess
+            checks (S3, registry, tokens, cluster).
+        checks: Check names to run. Defaults to :data:`ALL_CHECKS`, in that
+            display order.
+
+    Returns:
+        One :class:`CheckResult` per selected check, in ``ALL_CHECKS`` order.
+
+    Raises:
+        None. Individual checks report failure as a ``CheckResult`` rather
+        than raising, so callers should not expect this to raise for probe
+        failures; an unexpected exception from a check would still propagate.
+    """
 
     selected = tuple(checks) if checks is not None else ALL_CHECKS
-    results: list[CheckResult] = []
-    if "config" in selected:
-        results.append(check_config(config))
-    if "coherence" in selected:
-        results.append(check_coherence(repo_root))
-    if "s3" in selected:
-        results.append(check_s3(config, probes=probes))
-    if "registry" in selected:
-        results.append(check_registry(config, probes=probes))
-    if "tokens" in selected:
-        results.append(check_tokens(config, probes=probes))
-    if "cluster" in selected:
-        results.append(check_cluster(config, probes=probes))
-    return results
+    thunks = _preflight_thunks(
+        config, repo_root=repo_root, probes=probes, selected=selected
+    )
+    return run_checks_concurrently(thunks, max_workers=len(thunks))
 
 
 def has_failure(results: list[CheckResult]) -> bool:
@@ -779,5 +877,6 @@ __all__ = [
     "coherence_failures",
     "format_check_report",
     "has_failure",
+    "run_checks_concurrently",
     "run_preflight",
 ]

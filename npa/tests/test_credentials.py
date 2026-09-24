@@ -336,6 +336,18 @@ def test_persist_partial_s3_credentials_reports_names_not_values(
     assert secret not in repr(report)
 
 
+@pytest.mark.parametrize("name", ["ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64", "ENCORD_SSH_KEY_FILE"])
+def test_all_encord_transports_persist_and_reload_privately(tmp_path: Path, name: str) -> None:
+    path = tmp_path / "credentials.yaml"
+    value = str(tmp_path / "encord-key") if name.endswith("_FILE") else "synthetic-key"
+    report = persist_supported_env_credentials(path=path, environ={name: value})
+    assert report["detected"] == [name]
+    assert report["persisted"] == [name]
+    assert value not in repr(report)
+    assert load_credentials(path=path, environ={}).tokens[name] == value
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def test_saved_environment_credentials_feed_workflow_and_agent_after_env_clear(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -781,6 +793,7 @@ def test_ssh_forwards_tokens_into_remote_environment(mocker) -> None:
     transport.open_session.return_value = channel
     remote_file = mocker.MagicMock()
     sftp = mocker.MagicMock()
+    sftp.lstat.return_value = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700)
     sftp.open.return_value.__enter__.return_value = remote_file
     paramiko_client = mocker.MagicMock()
     paramiko_client.get_transport.return_value = transport
@@ -805,11 +818,13 @@ def test_ssh_forwards_tokens_into_remote_environment(mocker) -> None:
     remote_command = channel.exec_command.call_args.args[0]
     assert "hf-file" not in remote_command
     assert "ngc-file" not in remote_command
-    assert ". /tmp/.npa-env-abc123" in remote_command
-    assert "rm -f /tmp/.npa-env-abc123" in remote_command
+    assert ". /tmp/.npa-stage-abc123/payload" in remote_command
+    assert "rm -f -- /tmp/.npa-stage-abc123/payload" in remote_command
     assert "echo hello" in remote_command
-    sftp.open.assert_called_once_with("/tmp/.npa-env-abc123", "w")
-    sftp.chmod.assert_called_once_with("/tmp/.npa-env-abc123", 0o600)
+    sftp.mkdir.assert_called_once_with("/tmp/.npa-stage-abc123", mode=0o700)
+    sftp.open.assert_called_once_with("/tmp/.npa-stage-abc123/payload", "wx")
+    assert "rmdir -- /tmp/.npa-stage-abc123" in remote_command
+    sftp.chmod.assert_called_once_with("/tmp/.npa-stage-abc123/payload", 0o600)
     remote_env = remote_file.write.call_args.args[0]
     assert "export HF_TOKEN='hf-file'" in remote_env
     assert "export NGC_API_KEY='ngc-file'" in remote_env

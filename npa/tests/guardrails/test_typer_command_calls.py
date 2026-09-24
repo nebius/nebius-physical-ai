@@ -38,7 +38,9 @@ def _decorator_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
 
 
 def _is_typer_command(names: list[str]) -> bool:
-    return any(name.endswith(".command") or name.endswith(".callback") for name in names)
+    return any(
+        name.endswith(".command") or name.endswith(".callback") for name in names
+    )
 
 
 def _iter_functions(tree: ast.AST):
@@ -70,7 +72,9 @@ def test_typer_commands_called_as_functions_resolve_defaults() -> None:
 
         for func in _iter_functions(tree):
             for node in ast.walk(func):
-                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                if not isinstance(node, ast.Call) or not isinstance(
+                    node.func, ast.Name
+                ):
                     continue
                 callee = node.func.id
                 if callee not in commands or callee == func.name:

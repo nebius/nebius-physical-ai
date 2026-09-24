@@ -1,5 +1,7 @@
 # Sim2Real — Customer asset handoff
 
+[Guides](README.md)
+
 **Audience:** What the customer **uploads** (trigger, scene, robot) vs NPA stock smoke paths.
 
 **Data types (schemas, LeRobot vs NPA JSON):** [sim2real-data-contracts.md](./sim2real-data-contracts.md) — read that first if URIs are confusing.
@@ -18,7 +20,7 @@
 | Task seed/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `npa/isaac-lift-cube-franka-seed-v1`; real mode requires a matching `task-dataset-manifest.json` and fails closed on PushT/Franka mismatch |
 | Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
 
-Trace portable inputs from `npa/workflows/workbench/npa-workflows/sim2real.yaml` `config:` and the stateless `workflow_stage` adapters.
+Trace portable inputs from `workflows/main/sim2real.yaml` `config:` and the stateless `workflow_stage` adapters.
 
 ---
 
@@ -50,7 +52,7 @@ Customer trigger URI and train-env URI definitions: [data contracts § Customer 
 export CUSTOMER_ASSET_PROFILE=industrial
 export CUSTOMER_TASK_ID=my-batch-20260614       # substitutes YOUR-TASK-ID in profile URIs
 export CUSTOMER_ROBOT_PRESET=flexiv             # optional; default ur5e in industrial profile
-<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh
+"<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh"
 ```
 
 Profiles: `<private-operator-pack>/sim2real-rtxpro/customer-asset-profiles/*.profile.example`.
@@ -64,7 +66,7 @@ Copy to `~/.npa/customer-asset.profile` and set `CUSTOMER_ASSET_PROFILE` to that
 Dry-run:
 
 ```bash
-CUSTOMER_ASSET_PROFILE=industrial <private-operator-pack>/sim2real-rtxpro/apply-customer-asset-profile.sh
+CUSTOMER_ASSET_PROFILE=industrial "<private-operator-pack>/sim2real-rtxpro/apply-customer-asset-profile.sh"
 ```
 
 Customer JSON templates (`YOUR-BUCKET` / `YOUR-TASK-ID` placeholders):
@@ -132,7 +134,7 @@ evaluation, and final reports enforce the same embodiment and dimensions without
 silent Franka fallback. See [the RobotSpec guide](./sim2real-robot-spec.md).
 
 Wire all customer asset seams at submit (CLI flag, SDK kwarg, and YAML env are 1:1 —
-see [runbook README](../../../npa/workflows/workbench/sim2real/README.md#one-byo-seam-one-value)):
+see [runbook README](sim2real-data-contracts.md)):
 
 ```bash
 # Trigger only (Monday stock run)
@@ -144,7 +146,7 @@ export SCENE_SPEC_URI="s3://<bucket>/sim2real-assets/<task>/scene-spec.json"
 export CAMERAS_URI="s3://<bucket>/sim2real-assets/<task>/cameras.json"
 export ROBOT_PRESET="ur5e"
 ROBOT_SPEC_URI="s3://<bucket>/sim2real-assets/<task>/robot-spec.json"
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml \
+npa workbench workflow submit workflows/main/sim2real.yaml \
   --runtime --var robot_spec_uri="$ROBOT_SPEC_URI" # plus required runtime vars
 ```
 
@@ -287,7 +289,7 @@ Run prefix: `s3://<bucket>/sim2real-b/<run-id>/`
 Fetch and inspect (replace bucket/run id):
 
 ```bash
-PREFIX=s3://<bucket>/sim2real-b/<run-id>
+PREFIX="s3://<bucket>/sim2real-b/<run-id>"
 aws s3 cp "${PREFIX}/outer_loop/decision.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
   | jq '{decision, success_rate, threshold, checkpoint_uri}'
 aws s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \

@@ -7,6 +7,7 @@ without the ``sonic`` extra) skips instead of failing.
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -133,7 +134,9 @@ class _FakeStorage:
             if item.is_file():
                 self.upload_file(
                     str(item),
-                    bucket_uri.rstrip("/") + "/" + item.relative_to(local_dir).as_posix(),
+                    bucket_uri.rstrip("/")
+                    + "/"
+                    + item.relative_to(local_dir).as_posix(),
                 )
         return bucket_uri
 
@@ -280,7 +283,9 @@ def test_export_bakes_the_normalization_the_trainer_measured(tmp_path: Path) -> 
         expected = policy(normalized).numpy()
         unnormalized = policy(obs).numpy()
 
-    session = ort.InferenceSession(exported.onnx_path, providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(
+        exported.onnx_path, providers=["CPUExecutionProvider"]
+    )
     actual = session.run(["action"], {"obs": obs.numpy().astype("float32")})[0]
 
     assert np.abs(expected - actual).max() < 1e-4
@@ -336,3 +341,71 @@ def test_train_local_warm_starts_from_previous_checkpoint(tmp_path: Path) -> Non
         allow_entrypoint=False,
     )
     assert result["warm_start"] == str(first / CHECKPOINT_FILE_NAME)
+
+
+# ── Vulkan-fallback branch ──────────────────────────────────────────────
+
+
+def test_vulkan_available_returns_bool() -> None:
+    """_vulkan_available always returns a bool (and never raises)."""
+
+    from npa.workbench.sonic.train import _vulkan_available
+
+    assert isinstance(_vulkan_available(), bool)
+
+
+def test_train_local_vulkan_fallback_when_entrypoint_resolves(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """When an executable entrypoint exists but Vulkan is absent, the trainer
+    falls back to the reference locomotion trainer and warns."""
+
+    pytest.importorskip("torch")
+
+    from npa.workbench.sonic.train import train_local
+
+    monkeypatch.setattr("npa.workbench.sonic.train._vulkan_available", lambda: False)
+
+    script = tmp_path / "entrypoint.sh"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = train_local(
+            output_path=str(tmp_path / "training"),
+            entrypoint=str(script),
+            allow_entrypoint=True,
+            max_iterations=1,
+            num_envs=8,
+            device="cpu",
+        )
+
+    assert result["trainer"] == "reference-locomotion"
+    vulkan_warnings = [w for w in caught if "Vulkan is not available" in str(w.message)]
+    assert len(vulkan_warnings) == 1, "Vulkan absent but no fallback warning emitted"
+
+
+def test_train_local_entrypoint_used_when_vulkan_available(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """When Vulkan is monkeypatched True, a real entrypoint is resolved and the
+    trainer rejects a successful no-op entrypoint that produces no checkpoint."""
+
+    pytest.importorskip("torch")
+
+    monkeypatch.setattr("npa.workbench.sonic.train._vulkan_available", lambda: True)
+
+    from npa.workbench.sonic.train import SonicTrainError, train_local
+
+    with pytest.raises(
+        SonicTrainError, match=r"^SONIC trainer /bin/true produced no checkpoint under "
+    ):
+        train_local(
+            output_path=str(tmp_path / "training"),
+            entrypoint="/bin/true",
+            allow_entrypoint=True,
+            max_iterations=1,
+            num_envs=8,
+            device="cpu",
+        )

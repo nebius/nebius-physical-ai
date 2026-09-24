@@ -49,12 +49,14 @@ EXCUSED: dict[str, str] = {
     # downloads weights is pointed at an explicit variable above, so nothing
     # model-sized reaches its fallback here.
     "XDG_CACHE_HOME": "generic cache root, not a weight fallback in practice",
+    "NUMBA_CACHE_DIR": "JIT compilation cache, not model weights",
     # Runtime dependency closures, deliberately a separate volume: they are
     # verified wheel sets warmed once and consumed read-only, not weights that
     # accumulate. See docs/workbench/model-weight-cache.md.
     "NPA_ISAAC_CACHE_DIR": "Isaac wheel closure (warm-isaac-cache.yaml)",
     "NPA_LTX_RUNTIME_CACHE": "CUDA wheel closure",
     "NPA_WAN_RUNTIME_CACHE": "CUDA wheel closure",
+    "NPA_ANTIOCH_RUNTIME_CACHE": "Antioch CLI/simulator closure, not model weights",
     # Per-tool data mounts that the VM deploy already bind-mounts from the host,
     # so they outlive the container by their own mechanism.
     "COSMOS_DATA_HOME": "host-mounted data dir (deploy_cosmos)",
@@ -119,9 +121,15 @@ EXCUSED_EMPTY_DIRS = {
     "fiftyone-data": "dataset app state",
     "openpi-cache": "fallback when no durable cache is configured; redirected when one is",
     "leisaac-cache": "fallback when no durable cache is configured; redirected when one is",
+    "runtime-cache": "Antioch CLI/simulator scratch cache in its CPU service pod",
+    "private": "memory-backed owner-only Antioch credentials copied from Secrets",
+    "state": "sanitized Antioch controller/relay counters and stop signal",
+    "runtime": "ephemeral Antioch project and supported CLI supervisor state",
     "isaac-cache": "Isaac wheel closure; warm-isaac-cache.yaml is its shared volume",
     "tmp": "scratch space",
     "shm": "/dev/shm, sized for the renderer",
+    "npa-sudo-shim": "standard init-container sudo shim (tiny script), never a weights cache",
+    "dshm": "/dev/shm sized for the NRE renderer/reconstruction (medium Memory)",
 }
 
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "npa"
@@ -137,7 +145,9 @@ def test_no_new_pod_local_cache_volume_appears_unnoticed() -> None:
         for name in named.findall(text):
             found[name] = source.relative_to(SRC_ROOT).as_posix()
         if not named.findall(text):
-            found[f"<unnamed in {source.name}>"] = source.relative_to(SRC_ROOT).as_posix()
+            found[f"<unnamed in {source.name}>"] = source.relative_to(
+                SRC_ROOT
+            ).as_posix()
 
     unaccounted = {
         name: where for name, where in found.items() if name not in EXCUSED_EMPTY_DIRS

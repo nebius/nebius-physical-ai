@@ -145,6 +145,8 @@ class TerraformStateConfig:
     session_token: str = ""
     region: str = ""
     addressing_style: str = "path"
+    owner_project_id: str = ""
+    bucket_id: str = ""
 
 
 @dataclass
@@ -398,9 +400,7 @@ def _resolve_workbench_in_project(
         wb = workbenches.get(name, {})
         if not wb:
             available = ", ".join(workbenches.keys()) if workbenches else "(none)"
-            raise ConfigError(
-                f"Workbench '{name}' not found. Available: {available}"
-            )
+            raise ConfigError(f"Workbench '{name}' not found. Available: {available}")
         return wb
 
     # Fall back to default_workbench, then a sole unambiguous entry.
@@ -560,7 +560,9 @@ def persist_workflow_src_s3_uri(uri: str, project: str | None = None) -> Path:
 
     value = str(uri or "").strip()
     if not value.startswith("s3://"):
-        raise ConfigError(f"workflow source URI must use s3://, got {value or '<empty>'}")
+        raise ConfigError(
+            f"workflow source URI must use s3://, got {value or '<empty>'}"
+        )
     yml = _load_yaml()
     projects = yml.get("projects")
     if isinstance(projects, dict) and projects:
@@ -631,9 +633,21 @@ def _validate_strict_config_sections(data: dict[str, Any]) -> None:
 
 
 def update_config_document(
-    updater: Callable[[dict[str, Any]], dict[str, Any]], *, path: Path | None = None
+    updater: Callable[[dict[str, Any]], dict[str, Any]],
+    *,
+    path: Path | None = None,
+    skip_if_unchanged: bool = False,
 ) -> Path:
-    """Atomically mutate config after enforcing all strict section schemas."""
+    """Atomically mutate config after enforcing all strict section schemas.
+
+    ``updater`` is invoked with the document freshly read under the store
+    lock, never a snapshot taken before it. Mutate and return that same
+    ``existing`` mapping (as ``remove_workbench_config`` and
+    ``remove_agent_config`` do) rather than discarding it in favor of a value
+    captured earlier — a pre-lock snapshot can already be stale by the time
+    the lock is acquired, and writing it back verbatim silently reverts
+    whatever a concurrent command committed in between.
+    """
 
     from npa.clients.credentials import update_private_yaml
 
@@ -646,18 +660,26 @@ def update_config_document(
         _validate_strict_config_sections(updated)
         return updated
 
-    update_private_yaml(target, validated)
+    update_private_yaml(target, validated, skip_if_unchanged=skip_if_unchanged)
     return target
 
 
-def _write_config_replace(data: dict[str, Any]) -> Path:
-    """Write *data* to ``config.yaml`` verbatim (replacing), 0600.
+def _no_existing_config_to_clean() -> bool:
+    """True when there is nothing on disk yet for a cleanup helper to touch.
 
-    ``write_config`` deep-merges and so cannot *drop* a key; teardown paths that
-    remove a stanza (a deleted bucket's ``terraform_state``, an uninstalled
-    SkyPilot ``sky_bin``, a forgotten project) rewrite the whole file instead.
+    A cleanup-only helper (one that only ever removes a stanza, never
+    populates a fresh document) must stay a true no-op when ``config.yaml``
+    does not exist: no directory created, no ``{}`` stub written.
+    ``update_private_yaml``'s ``skip_if_unchanged`` cannot express that --
+    it still calls ``write_private_yaml`` the first time a store is created,
+    since a real creator (``write_config``) must be able to do exactly that.
+    Checking existence here, before the store lock is ever taken, is safe
+    for a pure-cleanup caller: either a concurrent creator wins the race and
+    this check observes the file (falls through to the locked path), or this
+    check runs first, which simply means "cleanup, then create" -- a valid
+    ordering, since there was genuinely nothing to clean up at that point.
     """
-    return update_config_document(lambda _existing: data)
+    return not CONFIG_PATH.exists()
 
 
 def _bucket_key(value: str) -> str:
@@ -674,25 +696,28 @@ def clear_terraform_state_for_bucket(bucket_name: str) -> list[str]:
     matches. Returns the aliases whose state was cleared.
     """
     target = _bucket_key(bucket_name)
-    if not target:
-        return []
-    yml = _load_yaml()
-    projects = yml.get("projects")
-    if not isinstance(projects, dict):
+    if not target or _no_existing_config_to_clean():
         return []
     cleared: list[str] = []
-    for alias, proj in projects.items():
-        if not isinstance(proj, dict):
-            continue
-        state = proj.get("terraform_state")
-        if not isinstance(state, dict):
-            continue
-        if _bucket_key(str(state.get("bucket", "") or "")) == target:
-            del proj["terraform_state"]
-            cleared.append(str(alias))
-    if cleared:
-        yml["projects"] = projects
-        _write_config_replace(yml)
+
+    def remove(existing: dict[str, Any]) -> dict[str, Any]:
+        projects = existing.get("projects")
+        if not isinstance(projects, dict):
+            return existing
+        for alias, proj in projects.items():
+            if not isinstance(proj, dict):
+                continue
+            state = proj.get("terraform_state")
+            if not isinstance(state, dict):
+                continue
+            if _bucket_key(str(state.get("bucket", "") or "")) == target:
+                del proj["terraform_state"]
+                cleared.append(str(alias))
+        if cleared:
+            existing["projects"] = projects
+        return existing
+
+    update_config_document(remove, skip_if_unchanged=True)
     return cleared
 
 
@@ -702,17 +727,26 @@ def clear_skypilot_bin() -> bool:
     Paired with removing ``~/.npa/skypilot-venv`` so an uninstalled SkyPilot
     runtime does not leave a dangling persisted binary path behind.
     """
-    yml = _load_yaml()
-    sky = yml.get("skypilot")
-    if not isinstance(sky, dict) or "sky_bin" not in sky:
+    if _no_existing_config_to_clean():
         return False
-    del sky["sky_bin"]
-    if sky:
-        yml["skypilot"] = sky
-    else:
-        yml.pop("skypilot", None)
-    _write_config_replace(yml)
-    return True
+
+    removed = False
+
+    def remove(existing: dict[str, Any]) -> dict[str, Any]:
+        nonlocal removed
+        sky = existing.get("skypilot")
+        if not isinstance(sky, dict) or "sky_bin" not in sky:
+            return existing
+        del sky["sky_bin"]
+        if sky:
+            existing["skypilot"] = sky
+        else:
+            existing.pop("skypilot", None)
+        removed = True
+        return existing
+
+    update_config_document(remove, skip_if_unchanged=True)
+    return removed
 
 
 def storage_iam_residue(alias: str) -> dict[str, Any]:
@@ -735,7 +769,9 @@ def storage_iam_residues() -> dict[str, dict[str, Any]]:
         return {}
     result: dict[str, dict[str, Any]] = {}
     for alias, project in projects.items():
-        marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+        marker = (
+            project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+        )
         if isinstance(marker, dict) and marker:
             result[str(alias)] = _normalize_storage_iam_residue(marker)
     return result
@@ -759,6 +795,45 @@ def project_alias_for_id(project_id: str) -> str:
     return aliases[0] if len(aliases) == 1 else ""
 
 
+_STORAGE_IAM_RESIDUE_STATUS_RANK = {
+    "verification_failed": 0,
+    "present_unverified_ownership": 1,
+    "present_owned": 2,
+    "reconciled_pending_delete": 3,
+}
+
+
+def _merge_storage_iam_residue(
+    current: dict[str, Any] | None, evidence: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge fresh, allowlisted IAM evidence into a residue marker.
+
+    Pure function of its inputs so the locked update in
+    ``mark_storage_iam_residue`` stays a thin read/merge/write shell. Never
+    deletes a field: a later provider/auth failure must not overwrite a prior
+    positive presence observation, so a lower-ranked incoming ``status`` is
+    ignored rather than applied.
+    """
+    merged = (
+        _normalize_storage_iam_residue(current) if isinstance(current, dict) else {}
+    )
+    current_status = str(merged.get("status", "") or "")
+    incoming_status = str(evidence.get("status", "") or "")
+    incoming = dict(evidence)
+    if any(key in evidence for key in ("status", "ownership", "ownership_state")):
+        incoming["ownership_state"] = _normalize_storage_iam_residue(evidence)[
+            "ownership_state"
+        ]
+    for key, value in incoming.items():
+        if value not in (None, "", [], {}):
+            if key == "status" and _STORAGE_IAM_RESIDUE_STATUS_RANK.get(
+                incoming_status, -1
+            ) < _STORAGE_IAM_RESIDUE_STATUS_RANK.get(current_status, -1):
+                continue
+            merged[str(key)] = value
+    return _normalize_storage_iam_residue(merged)
+
+
 def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, Any]:
     """Persist non-secret unresolved IAM evidence, preserving prior facts.
 
@@ -770,75 +845,97 @@ def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, 
     cleaned = str(alias or "").strip()
     if not cleaned:
         raise ConfigError("A configured project alias is required to save IAM residue.")
-    yml = _load_yaml()
-    projects = yml.get("projects")
-    if not isinstance(projects, dict) or cleaned not in projects:
-        raise ConfigError(
-            f"Project '{cleaned}' must remain configured while storage IAM is unresolved."
+
+    result: dict[str, Any] = {}
+
+    def merge(existing: dict[str, Any]) -> dict[str, Any]:
+        nonlocal result
+        projects = existing.get("projects")
+        if not isinstance(projects, dict) or cleaned not in projects:
+            raise ConfigError(
+                f"Project '{cleaned}' must remain configured while storage IAM "
+                "is unresolved."
+            )
+        project = projects[cleaned]
+        if not isinstance(project, dict):
+            raise ConfigError(
+                f"Project '{cleaned}' has an invalid configuration stanza."
+            )
+        result = _merge_storage_iam_residue(
+            project.get(STORAGE_IAM_RESIDUE_KEY), evidence
         )
-    project = projects[cleaned]
-    if not isinstance(project, dict):
-        raise ConfigError(f"Project '{cleaned}' has an invalid configuration stanza.")
-    current = project.get(STORAGE_IAM_RESIDUE_KEY)
-    merged = (
-        _normalize_storage_iam_residue(current) if isinstance(current, dict) else {}
-    )
-    status_rank = {
-        "verification_failed": 0,
-        "present_unverified_ownership": 1,
-        "present_owned": 2,
-        "reconciled_pending_delete": 3,
-    }
-    current_status = str(merged.get("status", "") or "")
-    incoming_status = str(evidence.get("status", "") or "")
-    incoming = dict(evidence)
-    if any(key in evidence for key in ("status", "ownership", "ownership_state")):
-        incoming["ownership_state"] = _normalize_storage_iam_residue(evidence)[
-            "ownership_state"
-        ]
-    for key, value in incoming.items():
-        if value not in (None, "", [], {}):
-            if (
-                key == "status"
-                and status_rank.get(incoming_status, -1)
-                < status_rank.get(current_status, -1)
-            ):
-                continue
-            merged[str(key)] = value
-    merged = _normalize_storage_iam_residue(merged)
-    project[STORAGE_IAM_RESIDUE_KEY] = merged
-    projects[cleaned] = project
-    yml["projects"] = projects
-    _write_config_replace(yml)
-    return merged
+        project[STORAGE_IAM_RESIDUE_KEY] = result
+        projects[cleaned] = project
+        existing["projects"] = projects
+        return existing
+
+    update_config_document(merge)
+    return result
 
 
 def clear_storage_iam_residue(alias: str, *, account_id: str = "") -> bool:
     """Clear a residue marker after provider-verified absence/deletion only."""
 
     cleaned = str(alias or "").strip()
-    if not cleaned:
+    if not cleaned or _no_existing_config_to_clean():
         return False
-    yml = _load_yaml()
-    projects = yml.get("projects")
-    project_map: dict[str, Any] = projects if isinstance(projects, dict) else {}
-    project = project_map.get(cleaned)
-    if not isinstance(project, dict):
-        return False
+
+    cleared = False
+
+    def remove(existing: dict[str, Any]) -> dict[str, Any]:
+        nonlocal cleared
+        projects = existing.get("projects")
+        project_map: dict[str, Any] = projects if isinstance(projects, dict) else {}
+        project = project_map.get(cleaned)
+        if not isinstance(project, dict):
+            return existing
+        marker = project.get(STORAGE_IAM_RESIDUE_KEY)
+        if not isinstance(marker, dict):
+            return existing
+        expected = str(account_id or "").strip()
+        recorded = str(marker.get("service_account_id", "") or "").strip()
+        if expected and recorded and recorded != expected:
+            raise ConfigError(
+                "Refusing to clear storage-IAM residue for a different service account."
+            )
+        project.pop(STORAGE_IAM_RESIDUE_KEY, None)
+        project_map[cleaned] = project
+        existing["projects"] = project_map
+        cleared = True
+        return existing
+
+    update_config_document(remove, skip_if_unchanged=True)
+    return cleared
+
+
+def _require_no_iam_residue(project: dict[str, Any], alias: str) -> None:
+    """Raise if *project* still carries unresolved storage-IAM evidence."""
     marker = project.get(STORAGE_IAM_RESIDUE_KEY)
-    if not isinstance(marker, dict):
+    if not (isinstance(marker, dict) and marker):
+        return
+    account_id = str(marker.get("service_account_id", "") or "").strip()
+    suffix = f" ({account_id})" if account_id else ""
+    raise ConfigError(
+        f"Project '{alias}' has unresolved storage IAM{suffix}. Reconcile it "
+        "with `npa storage service-account reconcile --project "
+        f"{alias} --dry-run`, complete guarded deletion/verification, then "
+        "retry forgetting the project."
+    )
+
+
+def _skypilot_owns_project(
+    skypilot_map: dict[str, Any], *, project_id: str, alias: str
+) -> bool:
+    """Return True when ``skypilot.controller_owner`` refers to this project."""
+    owner = skypilot_map.get("controller_owner")
+    if not isinstance(owner, dict):
         return False
-    expected = str(account_id or "").strip()
-    recorded = str(marker.get("service_account_id", "") or "").strip()
-    if expected and recorded and recorded != expected:
-        raise ConfigError(
-            "Refusing to clear storage-IAM residue for a different service account."
-        )
-    project.pop(STORAGE_IAM_RESIDUE_KEY, None)
-    project_map[cleaned] = project
-    yml["projects"] = project_map
-    _write_config_replace(yml)
-    return True
+    owner_project_id = str(owner.get("project_id", "") or "")
+    owner_alias = str(owner.get("project_alias", "") or "")
+    return bool(
+        (project_id and owner_project_id == project_id)
+        or (not owner_project_id and owner_alias == alias)
+    )
 
 
 def forget_project(alias: str) -> bool:
@@ -849,51 +946,46 @@ def forget_project(alias: str) -> bool:
     a stanza was removed.
     """
     cleaned = str(alias or "").strip()
-    if not cleaned:
+    if not cleaned or _no_existing_config_to_clean():
         return False
-    yml = _load_yaml()
-    projects = yml.get("projects")
-    if not isinstance(projects, dict) or cleaned not in projects:
-        return False
-    project = projects.get(cleaned)
-    marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
-    if isinstance(marker, dict) and marker:
-        account_id = str(marker.get("service_account_id", "") or "").strip()
-        suffix = f" ({account_id})" if account_id else ""
-        raise ConfigError(
-            f"Project '{cleaned}' has unresolved storage IAM{suffix}. Reconcile it "
-            "with `npa storage service-account reconcile --project "
-            f"{cleaned} --dry-run`, complete guarded deletion/verification, then "
-            "retry forgetting the project."
+
+    removed = False
+
+    def remove(existing: dict[str, Any]) -> dict[str, Any]:
+        nonlocal removed
+        projects = existing.get("projects")
+        if not isinstance(projects, dict) or cleaned not in projects:
+            return existing
+        project = projects.get(cleaned)
+        if isinstance(project, dict):
+            _require_no_iam_residue(project, cleaned)
+        project_id = (
+            str(project.get("project_id", "") or "")
+            if isinstance(project, dict)
+            else ""
         )
-    project_id = (
-        str(project.get("project_id", "") or "")
-        if isinstance(project, dict)
-        else ""
-    )
-    skypilot = yml.get("skypilot")
-    skypilot_map: dict[str, Any] = skypilot if isinstance(skypilot, dict) else {}
-    owner = skypilot_map.get("controller_owner")
-    if isinstance(owner, dict):
-        owner_project_id = str(owner.get("project_id", "") or "")
-        owner_alias = str(owner.get("project_alias", "") or "")
-        if (project_id and owner_project_id == project_id) or (
-            not owner_project_id and owner_alias == cleaned
-        ):
+
+        skypilot = existing.get("skypilot")
+        skypilot_map: dict[str, Any] = skypilot if isinstance(skypilot, dict) else {}
+        if _skypilot_owns_project(skypilot_map, project_id=project_id, alias=cleaned):
             skypilot_map.pop("controller_owner", None)
-    del projects[cleaned]
-    yml["projects"] = projects
-    if yml.get("default_project") == cleaned:
-        remaining = list(projects.keys())
-        if remaining:
-            yml["default_project"] = remaining[0]
-        else:
-            # Pointing `default_project` at the literal "default" once the last
-            # project is gone leaves a dangling alias that resolves to nothing;
-            # an absent key is the honest "no project configured".
-            yml.pop("default_project", None)
-    _write_config_replace(yml)
-    return True
+
+        del projects[cleaned]
+        existing["projects"] = projects
+        if existing.get("default_project") == cleaned:
+            remaining = list(projects.keys())
+            if remaining:
+                existing["default_project"] = remaining[0]
+            else:
+                # Pointing `default_project` at the literal "default" once the
+                # last project is gone leaves a dangling alias that resolves to
+                # nothing; an absent key is the honest "no project configured".
+                existing.pop("default_project", None)
+        removed = True
+        return existing
+
+    update_config_document(remove, skip_if_unchanged=True)
+    return removed
 
 
 def remove_workbench_config(
@@ -901,6 +993,7 @@ def remove_workbench_config(
     name: str,
 ) -> None:
     """Remove ``projects.<project>.workbenches.<name>``."""
+
     def remove(existing: dict[str, Any]) -> dict[str, Any]:
         projects = existing.get("projects", {})
         proj = projects.get(project, {}) if isinstance(projects, dict) else {}
@@ -995,17 +1088,19 @@ def alias_has_terraform_state(project: str | None, name: str | None) -> bool:
 
 def update_workbench_app_status(project: str, name: str, app_status: str) -> Path:
     """Set ``projects.<project>.workbenches.<name>.app_status``."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "app_status": app_status,
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "app_status": app_status,
+                        },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def update_workbench_endpoint_strategy(
@@ -1015,18 +1110,22 @@ def update_workbench_endpoint_strategy(
     service_port: int,
 ) -> Path:
     """Persist live-command endpoint routing for a workbench alias."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "endpoint_strategy": _normalize_endpoint_strategy(endpoint_strategy),
-                        "service_port": int(service_port),
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "endpoint_strategy": _normalize_endpoint_strategy(
+                                endpoint_strategy
+                            ),
+                            "service_port": int(service_port),
+                        },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def update_workbench_serverless_endpoint(
@@ -1044,33 +1143,35 @@ def update_workbench_serverless_endpoint(
     auth: str = "none",
 ) -> Path:
     """Persist Nebius Serverless AI endpoint metadata for a workbench alias."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "endpoint": url,
-                        "endpoint_strategy": "public",
-                        "service_port": int(container_port),
-                        "runtime": "serverless",
-                        "app_status": APP_STATUS_PROVISIONED,
-                        "serverless": {
-                            "resource_type": "endpoint",
-                            "endpoint_id": endpoint_id,
-                            "endpoint_name": endpoint_name,
-                            "project_id": project_id,
-                            "url": url,
-                            "image": image,
-                            "platform": platform,
-                            "preset": preset,
-                            "container_port": int(container_port),
-                            "auth": auth,
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "endpoint": url,
+                            "endpoint_strategy": "public",
+                            "service_port": int(container_port),
+                            "runtime": "serverless",
+                            "app_status": APP_STATUS_PROVISIONED,
+                            "serverless": {
+                                "resource_type": "endpoint",
+                                "endpoint_id": endpoint_id,
+                                "endpoint_name": endpoint_name,
+                                "project_id": project_id,
+                                "url": url,
+                                "image": image,
+                                "platform": platform,
+                                "preset": preset,
+                                "container_port": int(container_port),
+                                "auth": auth,
+                            },
                         },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def update_workbench_serverless_job(
@@ -1089,31 +1190,33 @@ def update_workbench_serverless_job(
     last_submitted_at: str,
 ) -> Path:
     """Persist Nebius Serverless AI Job metadata for a workbench alias."""
-    return write_config({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "runtime": "serverless",
-                        "app_status": APP_STATUS_PROVISIONED,
-                        "serverless_job": {
-                            "resource_type": "job",
-                            "job_id": job_id,
-                            "job_name": job_name,
-                            "project_id": project_id,
-                            "image": image,
-                            "gpu_type": gpu_type,
-                            "gpu_count": int(gpu_count),
-                            "subnet_id": subnet_id,
-                            "output_path": output_path,
-                            "last_status": last_status,
-                            "last_submitted_at": last_submitted_at,
+    return write_config(
+        {
+            "projects": {
+                project: {
+                    "workbenches": {
+                        name: {
+                            "runtime": "serverless",
+                            "app_status": APP_STATUS_PROVISIONED,
+                            "serverless_job": {
+                                "resource_type": "job",
+                                "job_id": job_id,
+                                "job_name": job_name,
+                                "project_id": project_id,
+                                "image": image,
+                                "gpu_type": gpu_type,
+                                "gpu_count": int(gpu_count),
+                                "subnet_id": subnet_id,
+                                "output_path": output_path,
+                                "last_status": last_status,
+                                "last_submitted_at": last_submitted_at,
+                            },
                         },
                     },
                 },
             },
-        },
-    })
+        }
+    )
 
 
 def _serverless_config(wb: dict[str, Any]) -> ServerlessConfig:
@@ -1211,14 +1314,13 @@ def resolve_config(
     runtime = pick(None, "", "runtime") or "vm"
     serverless = _serverless_config(wb)
     serverless_job = _serverless_job_config(wb)
-    ep = (
-        pick(endpoint, "NPA_WORKBENCH_ENDPOINT", "endpoint")
-        or serverless.url
-    )
+    ep = pick(endpoint, "NPA_WORKBENCH_ENDPOINT", "endpoint") or serverless.url
     s_host = pick(ssh_host, "NPA_SSH_HOST", "ssh", "host")
     s_user = pick(ssh_user, "NPA_SSH_USER", "ssh", "user")
     s_key = pick(ssh_key, "NPA_SSH_KEY", "ssh", "key_path")
-    cb = pick(checkpoint_bucket, "NPA_CHECKPOINT_BUCKET", "storage", "checkpoint_bucket")
+    cb = pick(
+        checkpoint_bucket, "NPA_CHECKPOINT_BUCKET", "storage", "checkpoint_bucket"
+    )
     se = (
         pick(storage_endpoint_url, "AWS_ENDPOINT_URL", "storage", "endpoint_url")
         or os.environ.get("NEBIUS_S3_ENDPOINT", "")
@@ -1231,18 +1333,16 @@ def resolve_config(
     tin = pick(None, "", "tf_instance_name")
     app_status = pick(None, "", "app_status")
     endpoint_strategy = pick(None, "NPA_ENDPOINT_STRATEGY", "endpoint_strategy")
-    endpoint_strategy_configured = (
-        "NPA_ENDPOINT_STRATEGY" in os.environ
-        or _has_path(wb, "endpoint_strategy")
+    endpoint_strategy_configured = "NPA_ENDPOINT_STRATEGY" in os.environ or _has_path(
+        wb, "endpoint_strategy"
     )
     service_port_raw = (
         pick(None, "NPA_SERVICE_PORT", "service_port")
         or pick(None, "", "app_port")
         or str(_endpoint_port(ep) or "")
     )
-    service_port_configured = (
-        "NPA_SERVICE_PORT" in os.environ
-        or _has_path(wb, "service_port")
+    service_port_configured = "NPA_SERVICE_PORT" in os.environ or _has_path(
+        wb, "service_port"
     )
     container_registry = resolve_container_registry(project)
     instance_id = pick(None, "", "instance_id")
@@ -1263,7 +1363,9 @@ def resolve_config(
 
     return WorkbenchConfig(
         endpoint=ep,
-        ssh=SSHConfig(host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens),
+        ssh=SSHConfig(
+            host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens
+        ),
         storage=StorageConfig(
             checkpoint_bucket=cb,
             endpoint_url=se,
@@ -1286,7 +1388,9 @@ def resolve_config(
         security_group_id=security_group_id,
         gpu_platform=gpu_platform,
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
-        detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
+        detected_gpu_count=int(detected_gpu_count_raw)
+        if str(detected_gpu_count_raw).isdigit()
+        else 0,
         cuda_visible_devices=cuda_visible_devices,
         workbench_type=workbench_type,
         serverless=serverless,
@@ -1343,18 +1447,16 @@ def resolve_ssh_config(
     app_status = pick(None, "", "app_status")
     runtime = pick(None, "", "runtime") or "vm"
     endpoint_strategy = pick(None, "NPA_ENDPOINT_STRATEGY", "endpoint_strategy")
-    endpoint_strategy_configured = (
-        "NPA_ENDPOINT_STRATEGY" in os.environ
-        or _has_path(wb, "endpoint_strategy")
+    endpoint_strategy_configured = "NPA_ENDPOINT_STRATEGY" in os.environ or _has_path(
+        wb, "endpoint_strategy"
     )
     service_port_raw = (
         pick(None, "NPA_SERVICE_PORT", "service_port")
         or pick(None, "", "app_port")
         or str(_endpoint_port(ep) or "")
     )
-    service_port_configured = (
-        "NPA_SERVICE_PORT" in os.environ
-        or _has_path(wb, "service_port")
+    service_port_configured = "NPA_SERVICE_PORT" in os.environ or _has_path(
+        wb, "service_port"
     )
     container_registry = resolve_container_registry(project)
     instance_id = pick(None, "", "instance_id")
@@ -1372,7 +1474,9 @@ def resolve_ssh_config(
 
     return WorkbenchConfig(
         endpoint=ep,
-        ssh=SSHConfig(host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens),
+        ssh=SSHConfig(
+            host=s_host, user=s_user, key_path=s_key, tokens=credentials.tokens
+        ),
         storage=StorageConfig(
             checkpoint_bucket=cb,
             endpoint_url=se,
@@ -1395,7 +1499,9 @@ def resolve_ssh_config(
         security_group_id=security_group_id,
         gpu_platform=gpu_platform,
         gpu_count=int(gpu_count_raw) if str(gpu_count_raw).isdigit() else 0,
-        detected_gpu_count=int(detected_gpu_count_raw) if str(detected_gpu_count_raw).isdigit() else 0,
+        detected_gpu_count=int(detected_gpu_count_raw)
+        if str(detected_gpu_count_raw).isdigit()
+        else 0,
         cuda_visible_devices=cuda_visible_devices,
         workbench_type=workbench_type,
     )
@@ -1445,6 +1551,8 @@ def resolve_terraform_state(project: str | None = None) -> TerraformStateConfig:
         session_token=str(state.get("session_token", "") or ""),
         region=str(state.get("region", "") or ""),
         addressing_style=str(state.get("addressing_style", "path") or "path"),
+        owner_project_id=str(state.get("owner_project_id", "") or ""),
+        bucket_id=str(state.get("bucket_id", "") or ""),
     )
 
 
@@ -1452,6 +1560,7 @@ def resolve_project_storage(
     project: str | None = None,
     *,
     include_shared_credentials: bool = True,
+    include_environment: bool = True,
 ) -> StorageConfig:
     """Resolve project-level object storage settings.
 
@@ -1462,6 +1571,19 @@ def resolve_project_storage(
     workflows that only need a writable default bucket. Exact-project
     credential-store records are selected atomically: a partial record is
     ignored rather than mixed with routing or key fields from another source.
+
+    Args:
+        project: Configured project alias, or the saved default when omitted.
+        include_shared_credentials: Allow fallback to host credential files.
+        include_environment: Allow fallback to process S3 settings. Disable with
+            include_shared_credentials for readiness of saved project storage.
+
+    Returns:
+        Storage settings resolved from the permitted sources.
+
+    Raises:
+        ConfigError: The saved configuration cannot be read.
+        ProjectCredentialStoreError: The project credential store is invalid.
     """
     yml = _load_yaml()
     try:
@@ -1568,16 +1690,17 @@ def resolve_project_storage(
             return value
         return default
 
-    env_bucket = os.environ.get("NPA_CHECKPOINT_BUCKET", "") or os.environ.get(
+    environment = os.environ if include_environment else {}
+    env_bucket = environment.get("NPA_CHECKPOINT_BUCKET", "") or environment.get(
         "NEBIUS_S3_BUCKET", ""
     )
     env_endpoint = (
-        os.environ.get("AWS_ENDPOINT_URL", "")
-        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
-        or os.environ.get("NPA_STORAGE_ENDPOINT", "")
+        environment.get("AWS_ENDPOINT_URL", "")
+        or environment.get("NEBIUS_S3_ENDPOINT", "")
+        or environment.get("NPA_STORAGE_ENDPOINT", "")
     )
-    env_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
-    env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    env_access_key = environment.get("AWS_ACCESS_KEY_ID", "")
+    env_secret_key = environment.get("AWS_SECRET_ACCESS_KEY", "")
 
     # Shared credentials are host-scoped. The scoped config stanza remains
     # primary; shared values are only a fallback for projects without an exact

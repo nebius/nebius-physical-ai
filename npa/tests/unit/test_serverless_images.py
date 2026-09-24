@@ -12,8 +12,8 @@ _mod = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_mod)
 
 
-def test_resolve_image_rewrites_placeholder_registry(monkeypatch) -> None:
-    monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
+def test_resolve_image_ignores_generic_registry(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/operator/private")
     monkeypatch.delenv("NPA_E2E_REGISTRY", raising=False)
     assert (
         _mod.resolve_image(

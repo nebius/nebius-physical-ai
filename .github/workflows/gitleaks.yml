@@ -1,37 +1,44 @@
 name: gitleaks
 
 on:
-  pull_request:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
-  # Keep workflows independent, but let a newer commit supersede older work for
-  # the same PR. Non-PR runs use run_id and are never cancelled by this policy.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Install gitleaks
         env:
           GITLEAKS_VERSION: 8.28.0
+          # Official SHA256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz from
+          # https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_checksums.txt
+          GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
         run: |
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          curl -sSfL --retry 5 "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           gitleaks version
       - name: Run gitleaks
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             scan_range="${{ github.event.pull_request.base.sha }}..HEAD"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            scan_range="${MERGE_BASE}..HEAD"
           elif [ "${{ github.event_name }}" = "push" ]; then
             scan_range="${{ github.event.before }}..HEAD"
           else

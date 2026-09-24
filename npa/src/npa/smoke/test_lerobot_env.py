@@ -7,6 +7,7 @@ Run with:
 from __future__ import annotations
 
 import importlib
+import os
 import shutil
 import subprocess
 import sys
@@ -67,6 +68,64 @@ def check_act_config() -> CheckResult:
         return CheckResult("instantiate ACTConfig", False, _format_exception(exc))
 
 
+def check_diffusion_policy() -> CheckResult:
+    """Construct a small real DiffusionPolicy, including its extras gate."""
+
+    try:
+        from lerobot.configs.types import FeatureType, PolicyFeature
+        from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+        from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+
+        config = DiffusionConfig(
+            input_features={
+                "observation.state": PolicyFeature(FeatureType.STATE, (4,)),
+                "observation.environment_state": PolicyFeature(FeatureType.ENV, (4,)),
+            },
+            output_features={"action": PolicyFeature(FeatureType.ACTION, (4,))},
+            n_obs_steps=2,
+            horizon=8,
+            n_action_steps=4,
+            down_dims=(32, 64),
+            diffusion_step_embed_dim=32,
+            num_train_timesteps=4,
+            pretrained_backbone_weights=None,
+        )
+        policy = DiffusionPolicy(config)
+        detail = f"parameters: {sum(item.numel() for item in policy.parameters())}"
+        if os.environ.get("NPA_LEROBOT_SMOKE_REQUIRE_CUDA") == "1":
+            import torch
+
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA was required but is unavailable")
+            policy.to("cuda")
+            device = next(policy.parameters()).device
+            if device.type != "cuda":
+                raise RuntimeError(f"policy parameters remained on {device}")
+            detail += f"; cuda capability: {torch.cuda.get_device_capability()}"
+        return CheckResult("construct DiffusionPolicy", True, detail)
+    except Exception as exc:
+        return CheckResult("construct DiffusionPolicy", False, _format_exception(exc))
+
+
+def check_imageio_uses_system_ffmpeg() -> CheckResult:
+    """Prove video helpers use the distro FFmpeg, not a wheel-bundled binary."""
+
+    try:
+        import imageio_ffmpeg
+
+        executable = imageio_ffmpeg.get_ffmpeg_exe()
+        if executable != "/usr/bin/ffmpeg":
+            return CheckResult(
+                "imageio system FFmpeg",
+                False,
+                f"expected /usr/bin/ffmpeg; found: {executable}",
+            )
+        version = imageio_ffmpeg.get_ffmpeg_version()
+        return CheckResult("imageio system FFmpeg", True, f"version: {version}")
+    except Exception as exc:
+        return CheckResult("imageio system FFmpeg", False, _format_exception(exc))
+
+
 def _check_command_help(command: str) -> CheckResult:
     path = shutil.which(command)
     if path is None:
@@ -116,6 +175,8 @@ def main() -> int:
     checks: list[Callable[[], CheckResult]] = [
         check_import_lerobot,
         check_act_config,
+        check_diffusion_policy,
+        check_imageio_uses_system_ffmpeg,
         check_lerobot_train_help,
         check_lerobot_eval_help,
     ]

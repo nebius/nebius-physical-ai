@@ -8,8 +8,8 @@ description: Use when packaging, running, reviewing, or extending the Alibaba Wa
 Use this skill for the public Wan 2.2 registry candidate and its verified video
 evidence. Read these files before changing behavior:
 
-- `npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml`
-- `npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml`
+- `workflows/testing/byof-wan2.2.yaml`
+- `workflows/testing/byof-wan2.2-multigpu.yaml`
 - `npa/src/npa/workflows/wan_rerun.py`
 - `docs/workbench/wan2.2.md`
 
@@ -49,6 +49,13 @@ Use `workbench.byof.repo`; do not add a fake Wan toolRef. Keep the repo and all
 model inputs immutable. The image may contain pinned source and dependencies but
 no checkpoint weights, credentials, private code, or user data. The runtime
 must remain non-root, with `/opt/byof` and its venv readable and executable.
+
+Both workflows pin `config.base_image` to the accepted public digest recorded in
+`npa/src/npa/deploy/wan2_2_image_manifest.json`. Keep the resource image and BYOF
+verification argument on that same immutable reference. A mirror override must
+include the accepted digest; changing only the allocated image fails the worker
+identity check before generation. Update the spec readiness hashes when the
+accepted default changes.
 
 The single-GPU baseline requests one RTX PRO 6000 Blackwell (`sm_120`), uses the
 security-fixed PyTorch 2.13.0 CUDA 13.0 wheel line, and binds pinned Wan
@@ -148,13 +155,13 @@ Use the repository venv, never bare Python:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
+  workflows/testing/byof-wan2.2.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml --run-id wan22-plan
+  workflows/testing/byof-wan2.2.yaml --run-id wan22-plan
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+  workflows/testing/byof-wan2.2-multigpu.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml \
+  workflows/testing/byof-wan2.2-multigpu.yaml \
   --run-id wan22-multigpu-plan
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_wan_rerun.py -q
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py -q
@@ -165,3 +172,11 @@ npa/.venv/bin/python -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q
 The gated live tests are `npa/tests/e2e/test_byof_wan22_live_e2e.py` and
 `npa/tests/e2e/test_byof_wan22_multigpu_live_e2e.py`. Future compatibility
 changes require fresh live evidence rather than inference from an older run.
+
+
+For an already completed standard-workflow run, use the read-only
+`npa/tests/e2e/test_byof_wan22_workflow_worker_live_e2e.py` gate documented in
+`docs/workbench/wan2.2.md`. It requires an explicit project, run ID, artifact
+prefix and expected generation controls, then verifies worker execution identity,
+source hashes, the full Wan output contract and exact embedded MP4 bytes in the
+existing published RRD. It submits no new GPU work and creates no S3 artifacts.

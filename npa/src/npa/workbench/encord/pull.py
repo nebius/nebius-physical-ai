@@ -530,7 +530,14 @@ def _same_endpoint_source(signed_url: str, endpoint_url: str) -> tuple[str, str]
     endpoint = urlparse(endpoint_url)
     signed_host = (signed.hostname or "").lower()
     endpoint_host = (endpoint.hostname or "").lower()
-    if not signed_host or not endpoint_host or signed.port != endpoint.port:
+    if not signed_host or not endpoint_host or signed.scheme != endpoint.scheme:
+        return None
+    default_port = {"http": 80, "https": 443}.get(endpoint.scheme)
+    if default_port is None:
+        return None
+    signed_port = signed.port if signed.port is not None else default_port
+    endpoint_port = endpoint.port if endpoint.port is not None else default_port
+    if signed_port != endpoint_port:
         return None
     path = _decode_signed_path_once(signed.path.lstrip("/"))
     if signed_host == endpoint_host:

@@ -9,8 +9,10 @@ second evaluation script.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module, metadata
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -288,6 +290,21 @@ def _goal_distance(env: Any, torch: Any) -> tuple[float | None, str]:
         )
     except Exception as exc:
         _LOGGER.debug("ee_pose goal distance is unavailable", exc_info=exc)
+    try:
+        # Reach tasks do not necessarily have an ee_frame sensor. Isaac Lab's
+        # pose command already measures the commanded body's world-position
+        # error in metres, including the robot's root transform.
+        command = unwrapped.command_manager.get_term("ee_pose")
+        distance = float(
+            torch.as_tensor(command.metrics["position_error"]).min().item()
+        )
+        if not math.isfinite(distance) or distance < 0:
+            raise ValueError(
+                "pose command position error must be finite and nonnegative"
+            )
+        return distance, "ee_pose.position_error"
+    except Exception as exc:
+        _LOGGER.debug("ee_pose command distance is unavailable", exc_info=exc)
         return None, ""
 
 
@@ -301,18 +318,16 @@ def load_rsl_rl_policy(
     """Wrap an Isaac environment and load a real RSL-RL inference policy."""
 
     try:
-        from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
-    except Exception:
-        from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
+        integration = import_module("isaaclab_rl.rsl_rl")
+    except ImportError:
+        integration = import_module("omni.isaac.lab_rl.rsl_rl")
     from rsl_rl.runners import OnPolicyRunner
 
     agent_config = None
     for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
         try:
             module = __import__(loader, fromlist=["load_cfg_from_registry"])
-            agent_config = module.load_cfg_from_registry(
-                task, "rsl_rl_cfg_entry_point"
-            )
+            agent_config = module.load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
             break
         except Exception as exc:
             _LOGGER.debug(
@@ -323,12 +338,23 @@ def load_rsl_rl_policy(
             )
     if agent_config is None:
         raise RuntimeError(f"no rsl_rl_cfg_entry_point registered for task {task}")
+    # Match Isaac Lab's trainer and our trajectory exporter. In RSL-RL 5,
+    # legacy stochastic model options must become distribution_cfg before
+    # OnPolicyRunner constructs the checkpoint's actor and critic.
+    migrate = getattr(integration, "handle_deprecated_rsl_rl_cfg", None)
+    if migrate is not None:
+        agent_config = migrate(agent_config, metadata.version("rsl-rl-lib"))
     runner_config = (
         agent_config.to_dict()
         if hasattr(agent_config, "to_dict")
         else dict(agent_config)
     )
-    wrapped = RslRlVecEnvWrapper(env)
+    wrapped = integration.RslRlVecEnvWrapper(
+        env,
+        clip_actions=runner_config.get("clip_actions")
+        if isinstance(agent_config, dict)
+        else getattr(agent_config, "clip_actions", None),
+    )
     runner = OnPolicyRunner(wrapped, runner_config, log_dir=None, device=device)
     runner.load(str(checkpoint_file))
     return wrapped, runner.get_inference_policy(device=device)

@@ -33,7 +33,13 @@ _GIB = 1024**3
 _CPU_DISK_GIB = 128
 _FILESYSTEM_SIZE_QUOTA = "compute.filesystem.size.network-ssd"
 _FILESYSTEM_SIZE_UNIT = "byte"
-_BYTE_QUOTAS = {_FILESYSTEM_SIZE_QUOTA, "compute.disk.size.network-ssd"}
+_BYTE_QUOTAS = {
+    _FILESYSTEM_SIZE_QUOTA,
+    "compute.disk.size.network-ssd",
+    "storage.bucket.size.standard",
+    "storage.bucket.size.enhanced-throughput",
+    "storage.bucket.size.intelligent",
+}
 _VCPU_QUOTAS = {"compute.instance.non-gpu.vcpu"}
 _OPTIONAL_UNADVERTISED_QUOTAS = frozenset(
     {
@@ -81,11 +87,28 @@ class QuotaShortfall:
     unit: str = ""
 
     def describe(self) -> str:
+        """Describe exact demand, remaining allowance, and the capacity deficit.
+
+        Args:
+            None.
+        Returns:
+            Operator-readable quantities, with binary units for byte quotas.
+        Raises:
+            None.
+        """
         available = self.limit if self.available is None else self.available
-        return (
+        description = (
             f"{self.name} [{self.region}]: needs {self.required}{f' {self.unit}' if self.unit else ''}, "
             f"{available} available from tenant limit {self.limit}"
         )
+        deficit = max(0, self.required - available)
+        if self.unit == "byte":
+            return (
+                f"{description} (requires {self.required / _GIB:,.2f} GiB; "
+                f"available {available / _GIB:,.2f} GiB; "
+                f"shortfall {deficit / _GIB:,.2f} GiB)"
+            )
+        return f"{description}; shortfall {deficit}"
 
 
 @dataclass(frozen=True)
@@ -298,7 +321,10 @@ def reservation_shortfall_message(shortfalls: list[ReservationShortfall]) -> str
 
 
 def required_quotas(
-    clusters: Iterable[Any], *, new_projects: int = 0
+    clusters: Iterable[Any],
+    *,
+    new_projects: int = 0,
+    object_storage: Iterable[Any] = (),
 ) -> dict[str, int]:
     """Aggregate the tenant quota amounts *clusters* need in one region.
 
@@ -346,6 +372,15 @@ def required_quotas(
         if cluster.enable_filestore and not cluster.existing_filestore:
             add("compute.filesystem.count", 1)
             add(_FILESYSTEM_SIZE_QUOTA, cluster.filestore_disk_size_gibibytes * _GIB)
+    # Bucket caps are not reserved bytes. Budget each new declaration's full
+    # capacity against remaining storage-class quota, independently of the
+    # cluster filesystem. Provider-verified existing buckets are excluded by
+    # the Fleet caller, just like unchanged existing cluster resources.
+    for storage in object_storage:
+        if storage.enabled:
+            storage_class = storage.normalized_storage_class().replace("_", "-")
+            add("storage.bucket.count", 1)
+            add(f"storage.bucket.size.{storage_class}", storage.size_gibibytes * _GIB)
     # A create-on-demand project needs one default/owned topology before the
     # recipe can run. Live inventory contains private and public project pools,
     # plus the network's default route table and egress route.
@@ -610,14 +645,31 @@ def find_shortfalls(
 
 
 def shortfall_message(shortfalls: list[QuotaShortfall], tenant_id: str) -> str:
+    """Explain a blocked quota preflight and how to resolve its constraints.
+
+    Args:
+        shortfalls: Verified regional quota deficits.
+        tenant_id: Selected tenant identifier for private operator output.
+    Returns:
+        An actionable error retaining the exact quota quantities.
+    Raises:
+        None.
+    """
     lines = [
         f"tenant {tenant_id} quota is too low for this fleet:",
         *(f"  - {s.describe()}" for s in shortfalls),
         "Project-level allowances only subdivide the tenant allowance, so raising "
-        "these is a tenant (root) operation -- ask the Nebius account team. Deploy "
-        "with --no-preflight to attempt it anyway (node groups will stay "
-        "PROVISIONING while the compute API rejects each instance).",
+        "these is a tenant (root) operation -- ask the Nebius account team. "
+        "Increase the affected tenant allowance, release resources you own, or "
+        "reduce the declared resource requirements, then rerun the same deploy "
+        "with preflight enabled. Skipping preflight cannot resolve a provider "
+        "quota deficit.",
     ]
+    if any(s.name == "compute.disk.size.network-ssd" for s in shortfalls):
+        lines.append(
+            "Reserved GPUs still require worker boot-disk quota. Object-storage "
+            "capacity and preemptible GPU placement do not increase that quota."
+        )
     return "\n".join(lines)
 
 
@@ -629,6 +681,7 @@ def preflight_region(
     clusters: Iterable[Any],
     env: dict[str, str],
     new_projects: int = 0,
+    object_storage: Iterable[Any] = (),
     profile: str = "",
     run_capture: Callable[..., Any],
     nebius_argv: Callable[[str, str], list[str]],
@@ -682,7 +735,9 @@ def preflight_region(
                 "capacity block group(s); ordinary GPU quota excluded"
             )
 
-    needed = required_quotas(clusters, new_projects=new_projects)
+    needed = required_quotas(
+        clusters, new_projects=new_projects, object_storage=object_storage
+    )
     if not needed:
         return []
     result = run_capture(

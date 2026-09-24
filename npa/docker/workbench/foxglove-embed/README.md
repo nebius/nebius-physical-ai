@@ -1,5 +1,7 @@
 # npa-foxglove-embed
 
+[Foxglove guide](../../../../docs/workbench/foxglove-export.md) · [Workbench docs](../../../../docs/workbench/README.md)
+
 Static host for the [Foxglove embedding SDK](https://docs.foxglove.dev/docs/embed/typescript-sdk)
 (`@foxglove/embed`), the shared NPA glue module, and MCAP/bag recordings.
 
@@ -11,10 +13,10 @@ Static host for the [Foxglove embedding SDK](https://docs.foxglove.dev/docs/embe
 | `/data/` | Operator-mounted recordings, served with CORS + byte ranges (no directory listing; `FOXGLOVE_DATA_BROWSE=browse` opts in) |
 | `/healthz` | `{"ok":true,...}` liveness/readiness probe |
 
-## What this image is *not*
+## Prerequisites
 
-It does not contain the Foxglove application. The SDK creates an iframe pointing at
-a Foxglove deployment you control:
+The SDK embeds a separately hosted Foxglove application. Before starting the
+container, choose a deployment that your users can access:
 
 - `https://embed.foxglove.dev/` — Foxglove-hosted; requires a Foxglove organization
   on a plan that allows embedding (Pro / Enterprise / Academic), and users sign in there.
@@ -25,6 +27,8 @@ it is not configured instead of rendering an empty viewer.
 
 ## Build
 
+From the repository root with Docker installed:
+
 ```bash
 docker build -t npa-foxglove-embed:0.58.0 \
   -f npa/docker/workbench/foxglove-embed/Dockerfile npa
@@ -34,16 +38,25 @@ Build args: `FOXGLOVE_EMBED_VERSION`, `FOXGLOVE_EMBED_INTEGRITY` (npm `dist.inte
 `FOXGLOVE_EMBED_REGISTRY` (mirror / air-gapped cache). Version and integrity defaults are
 kept in sync with `npa.workbench.foxglove` by `npa/tests/docker/test_foxglove_image.py`.
 
-## Run
+## Run locally
+
+Replace `/path/to/recordings` with a directory containing your MCAP recording.
+Keep the terminal open while viewing; Ctrl-C stops and removes the container.
 
 ```bash
-docker run --rm -p 8099:8099 \
+docker run --rm -p 127.0.0.1:8099:8099 \
   -v /path/to/recordings:/srv/data:ro \
   npa-foxglove-embed:0.58.0
 
 # then open, e.g.
 # http://localhost:8099/?src=https://embed.foxglove.dev/&org=my-org&mcap=/data/run.mcap
 ```
+
+Check `http://localhost:8099/healthz` for `ok: true`, then open the example
+viewer URL with your organization and recording filename. A healthy static host
+does not establish that Foxglove sign-in or recording access works. If the host
+reports an unconfigured viewer, supply `src`; if playback fails, verify that
+`/data/run.mcap` resolves and the selected Foxglove deployment can reach it.
 
 Foxglove requires a [secure context](https://developer.mozilla.org/docs/Web/Security/Secure_Contexts):
 `localhost` works for local runs; serve it over HTTPS (or behind an HTTPS ingress) anywhere else.

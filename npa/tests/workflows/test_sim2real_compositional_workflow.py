@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import json
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from npa.workflows.sim2real.workflow_io import (
     declared_loop_uri,
     write_loop_output,
 )
+from npa.workflows.sim2real.capture import DEFAULT_PPO_ITERATIONS
 from npa.workflows.sim2real.workflow_stage import _authoritative_scene_args
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
 from npa.workflows.sim2real.workflow_stage import (
@@ -37,7 +39,7 @@ from npa.workflows.sim2real.workflow_stage import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+SPEC = ROOT / "workflows" / "main" / "sim2real.yaml"
 
 
 def test_canonical_is_one_standard_compositional_workflow() -> None:
@@ -46,14 +48,7 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     assert payload["kind"] == "Workflow"
     assert detect_submit_format(SPEC) == "npa.workflow"
     assert not (ROOT / "npa" / "workflows" / "sim2real.yaml").exists()
-    assert not (
-        ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real-vlm-rl.yaml"
-    ).exists()
+    assert not (ROOT / "workflows" / "testing" / "sim2real-vlm-rl.yaml").exists()
 
     leaf_states = [state for state in payload["states"].values() if state.get("run")]
     assert len(leaf_states) >= 14
@@ -88,9 +83,11 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     cosmos3 = payload["states"]["stage-08-cosmos3"]
     assert cosmos3["resources"] == "stage8-cpu"
     assert "accelerators" not in payload["resources"]["stage8-cpu"]
-    assert payload["config"]["cosmos3_model"] == "nvidia/Cosmos3-Super-Reasoner"
+    assert payload["config"]["cosmos3_model"] == "MiniMaxAI/MiniMax-M3"
     assert "--reason-lane" not in cosmos3["run"]["argv"]
     assert "--reason-backend" not in cosmos3["run"]["argv"]
+    assert int(payload["config"]["ppo_iterations"]) == DEFAULT_PPO_ITERATIONS
+    assert DEFAULT_PPO_ITERATIONS >= 2_000
 
 
 def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
@@ -103,8 +100,15 @@ def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
         assert tool_ref not in TOOL_CATALOG
 
 
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [
+        ("nvidia/Cosmos3-Super-Reasoner", "cosmos3"),
+        ("MiniMaxAI/MiniMax-M3", "minimax_m3"),
+    ],
+)
 def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model: str, family: str
 ) -> None:
     from npa.workbench.cosmos import reason
     from npa.workflows.sim2real import stage8_cosmos3
@@ -125,7 +129,25 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
                             "rollout_id": f"rollout-{index:04d}",
                             "task_description": "strict cube grasp",
                             "camera_observations": ["camera-000.png"],
-                            "actions": [{"step": 0, "action": [0.0]}],
+                            "actions": [
+                                {
+                                    "step": 0,
+                                    "sim_step": 0,
+                                    "action": [0.0],
+                                    "episode_boundary": _no_reset_boundary(),
+                                }
+                            ],
+                            "camera_frame_metadata": {
+                                "primary": [
+                                    {
+                                        "path": "camera-000.png",
+                                        "sim_step": 0,
+                                        "view_name": "primary",
+                                        "episode_id": f"rollout-{index:04d}",
+                                        "simulator_episode_id": 0,
+                                    }
+                                ]
+                            },
                         }
                     )
                 )
@@ -134,8 +156,9 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
 
     def evaluate(**kwargs):
         calls.append(kwargs["rollout_id"])
+        assert kwargs["frame_metadata"][0]["episode_id"] == kwargs["rollout_id"]
         return {
-            "schema": "npa.sim2real.vlm_eval.v3",
+            "schema": "npa.sim2real.vlm_eval.v5",
             "rollout_id": kwargs["rollout_id"],
             "model": kwargs["model_id"],
             "provider": "nebius",
@@ -155,9 +178,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
 
     writes = []
     records = []
-    monkeypatch.setattr(
-        stage8_cosmos3.tempfile, "mkdtemp", lambda **_kwargs: str(work)
-    )
+    monkeypatch.setattr(stage8_cosmos3.tempfile, "mkdtemp", lambda **_kwargs: str(work))
     monkeypatch.setattr(stage8_cosmos3, "storage", lambda: Store())
     monkeypatch.setattr(reason, "run_token_factory_rollout_vlm", evaluate)
     monkeypatch.setattr(
@@ -181,7 +202,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
             root_uri="s3://unit/run",
             outer_iteration=1,
             inner_iteration=1,
-            reason_model="nvidia/Cosmos3-Super-Reasoner",
+            reason_model=model,
             threshold=0.5,
         )
     )
@@ -190,6 +211,10 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
     payload = writes[0][1]
     assert payload["schema"] == "npa.sim2real.cosmos3_evaluator.v1"
     assert payload["source_rollout_ids"] == calls
+    assert payload["model"] == model
+    assert payload["reason_family"] == family
+    assert records[0]["artifacts"]["reason_family"] == family
+    assert model in records[0]["evidence"]
     assert payload["evaluator_usage"]["request_count"] == 2
     assert payload["evaluator_usage"]["total_tokens"] == 30
     assert payload["evaluator_usage"]["cost_usd"] is None
@@ -475,7 +500,7 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
         "validation_report": validation,
     }
     sample_eval = {
-        "schema": "npa.sim2real.vlm_eval.v3",
+        "schema": "npa.sim2real.vlm_eval.v5",
         "rollout_id": "rollout-1",
         "score": 0.8,
         "threshold": 0.5,
@@ -492,7 +517,38 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
             "cost_usd": None,
         },
         "action_count": 1,
-        "per_step": [{"step": 0}],
+        "frame_count": 1,
+        "selected_frames": ["camera-000.png"],
+        "selected_frame_metadata": [
+            {
+                "path": "camera-000.png",
+                "sim_step": 0,
+                "view_name": "primary",
+                "episode_id": "rollout-1",
+                "simulator_episode_id": 0,
+            }
+        ],
+        "per_step": [
+            {
+                "step": 0,
+                "sim_step": 0,
+                "camera_observation": "camera-000.png",
+                "episode_boundary": _no_reset_boundary(),
+                "confidence": 0.8,
+                "error_tags": ["ok"],
+                "critique_text": "Cube held stably.",
+                "visual_grounding": {
+                    "schema": "npa.sim2real.visual_grounding.v2",
+                    "action_step": 0,
+                    "action_sim_step": 0,
+                    "frame_sim_step": 0,
+                    "camera_observation": "camera-000.png",
+                    "supported": True,
+                    "episode_boundary": _no_reset_boundary(),
+                    "frame_simulator_episode_id": 0,
+                },
+            }
+        ],
     }
     sample_signal = {"rollout_id": "rollout-1", "weight": 1.0}
     iteration = {
@@ -553,14 +609,77 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [
+        ("nvidia/Cosmos3-Super-Reasoner", "cosmos3"),
+        ("MiniMaxAI/MiniMax-M3", "minimax_m3"),
+    ],
+)
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        None,
+        "envelope_model",
+        "envelope_family",
+        "item_family",
+        "record_model",
+        "record_family",
+        "usage_model",
+        "configured_model",
+        "legacy_family",
+        "legacy_request",
+        "usage_total",
+        "malformed_iteration",
+        "extra_rollout",
+        "null_request_id",
+        "zero_tokens",
+        "negative_retries",
+        "nan_latency",
+        "wrong_latency_list",
+        "wrong_latency_sum",
+        "wrong_usage_request_ids",
+        "wrong_usage_retries",
+        "false_cost",
+        "wrong_cost_sum",
+        "priced_usage",
+        "truthy_provenance",
+        "record_image",
+        "record_job",
+        "wrong_source",
+        "record_digest",
+        "wrong_step_index",
+        "boolean_step_index",
+        "record_usage",
+        "record_rollout_count",
+        "duplicate_request_ids",
+        "inconsistent_token_total",
+        "negative_cost",
+    ],
+)
 def test_stage9_retry_republishes_exact_evidence_without_training(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    model: str,
+    family: str,
+    corruption: str | None,
 ) -> None:
     from npa.workflows.sim2real import byo_isaac_trainer, temporal_credit
     from npa.workflows.sim2real import workflow_stage
+    from npa.workflows.sim2real.stage8_cosmos3 import _aggregate_usage
 
     root = "s3://unit/run"
     evidence, _candidate, sample_eval, sample_signal = _stage9_replay_fixture()
+    sample_eval.update(model=model, reason_family=family)
+    if corruption in {"priced_usage", "wrong_cost_sum"}:
+        sample_eval["request"]["cost_usd"] = 0.00025
+    provenance = {
+        "image": "ghcr.io/example/test-evaluator@sha256:" + "a" * 64,
+        "image_digest": "sha256:" + "a" * 64,
+        "source_sha": "a" * 40,
+        "workflow_job": "synthetic-workflow-task",
+        "execution_mode": "standard_npa_workflow_skypilot",
+    }
     iteration = evidence["iterations"][0]
     iteration.update(
         {
@@ -576,11 +695,19 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             "rollout_dirs": ["/tmp/actions/rollout-1"],
         },
         f"{root}/components/stage_08.json": {
+            "schema": "npa.sim2real.component_record.v1",
+            "tier": "WORKS",
             "stage": 8,
             "name": "stage_08_vlm_eval_train",
             "artifacts": {
+                **provenance,
                 "result": lane_base + "cosmos3.json",
+                "model": model,
+                "reason_family": family,
+                "provider": "nebius",
                 "backend": "token_factory",
+                "evaluator_usage": _aggregate_usage([sample_eval], model=model),
+                "rollout_count": 1,
                 "outer_iteration": 1,
                 "inner_iteration": 1,
             },
@@ -588,17 +715,12 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         lane_base + "cosmos3.json": {
             "schema": "npa.sim2real.cosmos3_evaluator.v1",
             "evaluator": "cosmos3",
-            "model": "nvidia/Cosmos3-Super-Reasoner",
+            "model": model,
+            "reason_family": family,
             "provider": "nebius",
             "backend": "token_factory",
-            "provenance": {"image": "cosmos3"},
-            "evaluator_usage": {
-                "request_count": 1,
-                "input_tokens": 10,
-                "output_tokens": 5,
-                "total_tokens": 15,
-                "per_request_latency_seconds": [0.25],
-            },
+            "provenance": provenance,
+            "evaluator_usage": _aggregate_usage([sample_eval], model=model),
             "source_rollout_ids": ["rollout-1"],
             "evaluations": [sample_eval],
         },
@@ -607,6 +729,7 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
     work = tmp_path / "stage9"
     work.mkdir()
     monkeypatch.setattr(workflow_stage, "_work", lambda _stage: work)
+    monkeypatch.setattr(workflow_stage, "source_sha", lambda: "a" * 40)
     monkeypatch.setattr(workflow_stage, "list_prefix", lambda _uri: [{"Size": 1}])
     monkeypatch.setattr(
         workflow_stage,
@@ -636,15 +759,126 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         lambda **kwargs: records.append(kwargs),
     )
 
-    _stage9(
-        Namespace(
-            root_uri=root,
-            outer_iteration=1,
-            inner_iteration=1,
-            threshold=0.5,
-            ppo_iterations=2,
-        )
+    envelope = lanes[lane_base + "cosmos3.json"]
+    record = lanes[f"{root}/components/stage_08.json"]["artifacts"]
+    wrong_model = (
+        "MiniMaxAI/MiniMax-M3"
+        if family == "cosmos3"
+        else "nvidia/Cosmos3-Super-Reasoner"
     )
+    if corruption == "envelope_model":
+        envelope["model"] = wrong_model
+    elif corruption == "envelope_family":
+        envelope["reason_family"] = "wrong-family"
+    elif corruption == "item_family":
+        sample_eval["reason_family"] = "wrong-family"
+    elif corruption == "record_model":
+        record["model"] = wrong_model
+    elif corruption == "record_family":
+        record["reason_family"] = "wrong-family"
+    elif corruption == "usage_model":
+        envelope["evaluator_usage"]["model"] = wrong_model
+    elif corruption == "legacy_family":
+        envelope.pop("reason_family")
+        record.pop("reason_family")
+    elif corruption == "legacy_request":
+        sample_eval.pop("request")
+    elif corruption == "usage_total":
+        envelope["evaluator_usage"]["total_tokens"] += 1
+    elif corruption == "malformed_iteration":
+        record["inner_iteration"] = "invalid"
+    elif corruption == "extra_rollout":
+        envelope["source_rollout_ids"].append("rollout-unexpected")
+    elif corruption == "null_request_id":
+        sample_eval["request"]["request_id"] = None
+    elif corruption == "zero_tokens":
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            sample_eval["request"][key] = envelope["evaluator_usage"][key] = 0
+    elif corruption == "negative_retries":
+        sample_eval["request"]["retries"] = envelope["evaluator_usage"]["retries"] = -1
+    elif corruption == "nan_latency":
+        sample_eval["request"]["latency_seconds"] = float("nan")
+    elif corruption == "wrong_latency_list":
+        envelope["evaluator_usage"]["per_request_latency_seconds"] = [2.5]
+    elif corruption == "wrong_latency_sum":
+        envelope["evaluator_usage"]["aggregate_latency_seconds"] = 2.5
+    elif corruption == "wrong_usage_request_ids":
+        envelope["evaluator_usage"]["request_ids"] = ["unrelated-request"]
+    elif corruption == "wrong_usage_retries":
+        envelope["evaluator_usage"]["retries"] = 1
+    elif corruption == "false_cost":
+        envelope["evaluator_usage"]["cost_usd"] = 0.0
+    elif corruption == "wrong_cost_sum":
+        envelope["evaluator_usage"]["cost_usd"] = 0.001
+    elif corruption == "truthy_provenance":
+        envelope["provenance"] = {"unrelated": True}
+    elif corruption == "record_image":
+        record["image"] = "ghcr.io/example/test-evaluator@sha256:" + "b" * 64
+    elif corruption == "record_job":
+        record["workflow_job"] = "different-synthetic-task"
+    elif corruption == "record_usage":
+        record["evaluator_usage"]["input_tokens"] = 99
+    elif corruption == "record_rollout_count":
+        record["rollout_count"] = 2
+    elif corruption == "wrong_source":
+        envelope["provenance"]["source_sha"] = record["source_sha"] = "b" * 40
+    elif corruption == "wrong_step_index":
+        sample_eval["per_step"][0]["step"] = 999
+    elif corruption == "boolean_step_index":
+        sample_eval["per_step"][0]["step"] = False
+    elif corruption == "duplicate_request_ids":
+        second = json.loads(json.dumps(sample_eval))
+        second["rollout_id"] = "rollout-2"
+        envelope["evaluations"].append(second)
+        envelope["source_rollout_ids"].append("rollout-2")
+        lanes[f"{root}/actions/train/outer-01/iter-01/rollouts-result.json"][
+            "rollout_dirs"
+        ].append("/tmp/actions/rollout-2")
+        envelope["evaluator_usage"] = _aggregate_usage(
+            envelope["evaluations"], model=model
+        )
+        record["rollout_count"] = 2
+    elif corruption == "inconsistent_token_total":
+        sample_eval["request"]["total_tokens"] = envelope["evaluator_usage"][
+            "total_tokens"
+        ] = 99
+    elif corruption == "negative_cost":
+        sample_eval["request"]["cost_usd"] = -0.25
+        envelope["evaluator_usage"] = _aggregate_usage([sample_eval], model=model)
+    if corruption != "record_usage":
+        # Keep duplicated component accounting consistent so accounting mutations
+        # exercise their own semantic gate rather than failing only the copy check.
+        record["evaluator_usage"] = json.loads(json.dumps(envelope["evaluator_usage"]))
+    component = lanes[f"{root}/components/stage_08.json"]
+    component["content_sha256"] = hashlib.sha256(
+        json.dumps(component, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if corruption == "record_digest":
+        component["content_sha256"] = "b" * 64
+    args = Namespace(
+        root_uri=root,
+        outer_iteration=1,
+        inner_iteration=1,
+        threshold=0.5,
+        ppo_iterations=2,
+        reason_model=wrong_model if corruption == "configured_model" else model,
+    )
+    if corruption not in {None, "priced_usage"}:
+        unchanged = json.dumps(lanes, sort_keys=True)
+        with pytest.raises(RuntimeError, match="Stage 8") as failure:
+            _stage9(args)
+        assert "Stage 9 has not started PPO or checkpoint selection" in str(
+            failure.value
+        )
+        assert "start a new run ID and output root" in str(failure.value)
+        assert "Do not relabel or rewrite old evaluator artifacts in place" in str(
+            failure.value
+        )
+        assert json.dumps(lanes, sort_keys=True) == unchanged
+        assert not writes
+        assert not records
+        return
+    _stage9(args)
 
     assert writes == [(f"{root}/inner_loop/outer-01/evidence.json", evidence, 1)]
     assert len(evidence["iterations"]) == len(evidence["checkpoint_candidates"]) == 1
@@ -799,10 +1033,23 @@ def test_baked_raw_module_setup_probes_the_executed_module() -> None:
         command=["python3", "-m", "npa.workflows.sim2real.workflow_stage"],
     )
 
-    assert (
-        "importlib.import_module('npa.workflows.sim2real.workflow_stage')" in setup
-    )
+    assert "importlib.import_module('npa.workflows.sim2real.workflow_stage')" in setup
     assert "npa.cli.main" not in setup
+    assert "baked Sim2Real evaluator verified" in setup
+
+
+@pytest.mark.parametrize(
+    "model", ["MiniMaxAI/MiniMax-M3", "nvidia/Cosmos3-Super-Reasoner"]
+)
+def test_baked_sim2real_setup_keeps_the_selected_evaluator(model):
+    setup = render_setup_for_tool(
+        "",
+        config={"require_baked_npa": "1", "cosmos3_model": model},
+        options=SkypilotRenderOptions(),
+        command=["python3", "-m", "npa.workflows.sim2real.workflow_stage"],
+    )
+    assert f"hosted_rollout_model_family({model!r})" in setup
+    assert "validate_hosted_evaluator(" in setup
 
 
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:
@@ -839,6 +1086,7 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == source_sha
         assert task["envs"]["NPA_TASK_IMAGE"] == image
         assert "immutable baked NPA runtime verified" in task["setup"]
+        assert "baked Sim2Real evaluator verified" in task["setup"]
         assert (
             "importlib.import_module('npa.workflows.sim2real.workflow_stage')"
             in task["setup"]
@@ -868,17 +1116,14 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
     assert gpu_tasks
     for task in gpu_tasks:
         pod_config = task["config"]["kubernetes"]["pod_config"]
-        assert pod_config["metadata"]["labels"] == {
-            "kueue.x-k8s.io/queue-name": "sim2real-gpu"
-        }
-        assert pod_config["spec"]["priorityClassName"] == "sim2real-production"
+        assert "kueue.x-k8s.io/queue-name" not in pod_config.get("metadata", {}).get(
+            "labels", {}
+        )
+        assert "priorityClassName" not in pod_config["spec"]
 
-    transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"][
-        "spec"
-    ]
+    transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"]["spec"]
     transfer_env = {
-        item["name"]: item["value"]
-        for item in transfer_pod["containers"][0]["env"]
+        item["name"]: item["value"] for item in transfer_pod["containers"][0]["env"]
     }
     assert transfer_env == {
         "UV_CACHE_DIR": "/tmp/npa-skypilot-uv-cache",
@@ -918,3 +1163,30 @@ def test_canonical_isaac_eula_acceptance_is_operator_supplied_and_fail_closed() 
     ][0]["env"]
     by_name = {item["name"]: item["value"] for item in env}
     assert "ACCEPT_EULA" not in by_name
+
+
+def test_sim2real_hosted_defaults_and_stage9_model_contract_agree():
+    from npa.clients.token_factory import DEFAULT_REASONER_MODEL
+    from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+
+    payload = yaml.safe_load(SPEC.read_text())
+    assert (
+        DEFAULT_COSMOS3_MODEL
+        == DEFAULT_REASONER_MODEL
+        == payload["config"]["cosmos3_model"]
+    )
+    for stage in ("stage-08-cosmos3", "stage-09-ppo"):
+        argv = payload["states"][stage]["run"]["argv"]
+        assert argv[argv.index("--reason-model") + 1] == "{{config.cosmos3_model}}"
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }

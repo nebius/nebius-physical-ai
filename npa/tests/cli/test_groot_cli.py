@@ -207,7 +207,9 @@ def test_groot_deploy_checks_cosmos_reason_access_before_provisioning(mocker) ->
 
     def validate(_token, repo):
         if repo == COSMOS_REASON_MODEL:
-            return SimpleNamespace(ok=False, error="HF token lacks Cosmos-Reason access")
+            return SimpleNamespace(
+                ok=False, error="HF token lacks Cosmos-Reason access"
+            )
         return SimpleNamespace(ok=True, error="")
 
     mocker.patch("npa.cli.groot.validate_hf_access", side_effect=validate)
@@ -2263,9 +2265,6 @@ def _mock_groot_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch(
-        "npa.cli.groot.resolve_container_registry", return_value="registry.example"
-    )
     image_for_tool = mocker.patch(
         "npa.cli.groot.container_image_for_tool",
         return_value="registry.example/npa-groot:smoke",
@@ -2287,9 +2286,6 @@ def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
             aws_access_key_id="AKIA",
             aws_secret_access_key="SECRET",
         ),
-    )
-    mocker.patch(
-        "npa.cli.groot.resolve_container_registry", return_value="registry.example"
     )
     mocker.patch(
         "npa.cli.groot.container_image_for_tool",
@@ -2406,9 +2402,7 @@ def test_groot_serverless_uses_shared_env_builder(mocker) -> None:
     assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
-    image_for_tool.assert_called_once_with(
-        "groot", registry="registry.example", tag=GROOT_RUNTIME_VERSION
-    )
+    image_for_tool.assert_called_once_with("groot", tag=GROOT_RUNTIME_VERSION)
     assert kwargs["image"] == "registry.example/npa-groot:smoke"
 
 

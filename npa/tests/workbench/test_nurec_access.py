@@ -27,14 +27,7 @@ WORKFLOW = (
     / "examples"
     / "nurec-reconstruct.yaml"
 )
-SPEC = (
-    REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "nurec-reconstruct.yaml"
-)
+SPEC = REPO_ROOT / "workflows" / "main" / "nurec-reconstruct.yaml"
 
 #: GPUs with no RT cores. Reconstruction and rasterization are RT-core work, so a
 #: reference to any of these in the workflow is a routing bug.
@@ -455,7 +448,10 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
     from npa.sdk.workbench import nurec as sdk
 
     node = typer.main.get_command(main_app)
-    cli_verbs = set(node.commands["workbench"].commands["nurec"].commands)
+    cli_verbs = {
+        verb.replace("-", "_")
+        for verb in node.commands["workbench"].commands["nurec"].commands
+    }
 
     assert set(sdk.__all__) == cli_verbs, (
         f"SDK/CLI drift: only-CLI={sorted(cli_verbs - set(sdk.__all__))}, "
@@ -463,6 +459,12 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
     )
     for verb in sorted(cli_verbs):
         wrapper = getattr(sdk, verb)
+        if verb == "convert_colmap":
+            # New capabilities use the shared workbench module directly; their
+            # behavior is covered by test_nurec_colmap_cli.test_sdk_calls_module_directly.
+            assert callable(wrapper)
+            assert not hasattr(wrapper, "__npa_cli_module__")
+            continue
         assert wrapper.__npa_cli_module__ == "npa.cli.nurec", verb
         assert wrapper.__npa_cli_callback__ == f"{verb}_cmd", verb
 
@@ -688,6 +690,7 @@ def test_renderer_installs_the_nurec_runtime_deps_the_vendor_image_lacks() -> No
     assert "nvidia-ncore" in setup
     assert "rerun-sdk==" in setup
     assert "ffmpeg" in setup
+    assert "export NPA_LIGHT_WORKBENCH_TOOL=nurec" in setup
     # Installed into the interpreter npa itself went into, so a second npa-less
     # python winning on PATH cannot silently break the stage.
     assert "/tmp/npa-python" in setup
@@ -832,7 +835,8 @@ def test_guide_only_documents_commands_that_exist() -> None:
         for part in parts:
             get_sub = getattr(cmd, "get_command", None)
             if get_sub is None:
-                return False
+                # A leaf command may take positional values, including a run ID.
+                return True
             cmd = get_sub(None, part)  # type: ignore[arg-type]
             if cmd is None:
                 return False

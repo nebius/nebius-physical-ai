@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -117,11 +118,11 @@ def test_health_rejects_unknown_check() -> None:
 def test_health_help_lists_preflight_not_deprecated_sim2real() -> None:
     result = runner.invoke(app, ["workbench", "health", "--help"])
     assert result.exit_code == 0
-    # The generic credential preflight is the advertised command; the sim2real
-    # one is hidden/deprecated in favor of `workbench workflow submit`. Assert on
-    # the command *rows* (Typer renders each listed command as "│ <name> ...")
-    # rather than a broad substring, so help copy mentioning "sim2real" elsewhere
-    # can't silently break this.
+    # Both the generic credential preflight and the sim2real preflight are
+    # advertised, supported commands (see #510). Assert on the command *rows*
+    # (Typer renders each listed command as "│ <name> ...") rather than a
+    # broad substring, so help copy mentioning "sim2real" elsewhere can't
+    # silently break this.
     assert "preflight" in result.output
     command_rows = [
         line for line in result.output.splitlines() if line.strip().startswith("│ ")
@@ -130,13 +131,17 @@ def test_health_help_lists_preflight_not_deprecated_sim2real() -> None:
         line.split()[1] for line in command_rows if len(line.split()) > 1
     }
     assert "preflight" in listed_commands
-    assert "sim2real" not in listed_commands
+    assert "sim2real" in listed_commands
+    # The sim2real command itself must not be marked deprecated.
+    sim2real_help = runner.invoke(app, ["workbench", "health", "sim2real", "--help"])
+    assert sim2real_help.exit_code == 0
+    assert "deprecat" not in sim2real_help.output.lower()
 
 
 def test_health_help_describes_encord_preflight() -> None:
-    result = runner.invoke(app, ["workbench", "health", "--help"])
+    result = runner.invoke(app, ["workbench", "health", "preflight", "--help"])
     assert result.exit_code == 0
-    assert "Token Factory, and Encord credentials" in result.output
+    assert "encord" in result.output
 
 
 class _EmptyCreds:
@@ -163,7 +168,7 @@ def test_preflight_offline_all_warn_exit_zero(monkeypatch) -> None:
     )
     result = runner.invoke(app, ["workbench", "health", "preflight", "--offline"])
     assert result.exit_code == 0
-    for name in ("hf", "ngc", "s3", "token_factory", "encord"):
+    for name in ("hf", "ngc", "s3", "token_factory"):
         assert name in result.output
     assert "0 fail" in result.output
 
@@ -185,8 +190,192 @@ def test_preflight_json_offline(monkeypatch) -> None:
         "ngc",
         "s3",
         "token_factory",
-        "encord",
     }
+
+
+def test_preflight_offline_all_includes_nebius_as_skip(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(
+        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+    )
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: (_ for _ in ()).throw(AssertionError("offline must not invoke CLI")),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--offline",
+            "--checks",
+            "all",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    nebius = next(check for check in payload["checks"] if check["name"] == "nebius")
+    assert nebius["status"] == "SKIP"
+    assert "not verified" in nebius["summary"]
+
+
+def test_preflight_live_nebius_uses_secret_free_profile_verifier(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: ProfileVerification("operator", True, True),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            "nebius",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["checks"] == [
+        {
+            "details": [],
+            "name": "nebius",
+            "remedy": "",
+            "status": "PASS",
+            "summary": "Configured Nebius CLI profile is authenticated.",
+        }
+    ]
+    assert "operator" not in result.output
+
+
+def test_preflight_live_nebius_failure_exits_nonzero_without_provider_output(
+    monkeypatch,
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: ProfileVerification("synthetic-secret-profile", True, False),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            "nebius",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["checks"][0]["status"] == "FAIL"
+    assert "could not mint" in payload["checks"][0]["summary"]
+    assert "synthetic-secret-profile" not in result.output
+
+
+@pytest.mark.parametrize("checks", ["all", "nebius,all,nebius", "all,all"])
+def test_preflight_live_all_runs_nebius_and_preserves_service_checks(
+    monkeypatch,
+    checks: str,
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    calls: list[str] = []
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: calls.append("nebius") or ProfileVerification("", True, True),
+    )
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "preflight", "--checks", checks, "--json"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [check["name"] for check in payload["checks"]] == [
+        "hf",
+        "ngc",
+        "s3",
+        "token_factory",
+        "encord",
+        "nebius",
+    ]
+    assert calls == ["nebius"]
+
+
+def test_preflight_live_token_factory_only_does_not_run_nebius(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: (_ for _ in ()).throw(AssertionError("Nebius check was not selected")),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            "token_factory",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [check["name"] for check in payload["checks"]] == ["token_factory"]
+
+
+@pytest.mark.parametrize(
+    ("failure_reason", "expected_summary"),
+    [
+        ("cli_unavailable", "Nebius CLI is not available."),
+        ("timeout", "Nebius CLI authentication check timed out."),
+    ],
+)
+def test_preflight_live_nebius_renders_execution_failure_without_profile_name(
+    monkeypatch, failure_reason: str, expected_summary: str
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: ProfileVerification(
+            "synthetic-secret-profile", False, False, failure_reason
+        ),
+    )
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "preflight", "--checks", "nebius", "--json"],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["checks"][0]["summary"] == expected_summary
+    assert "synthetic-secret-profile" not in result.output
 
 
 def test_preflight_selected_check(monkeypatch) -> None:
@@ -243,17 +432,129 @@ def test_preflight_live_ngc_uses_token_exchange_probe(monkeypatch) -> None:
     assert observed == ["nvapi-from-environment"]
 
 
-def test_preflight_rejects_unknown_check(monkeypatch) -> None:
+@pytest.mark.parametrize("checks", ["bogus", "all,bogus", "bogus,all", "nebius,bogus"])
+@pytest.mark.parametrize("output_json", [False, True])
+def test_preflight_rejects_unknown_check(
+    monkeypatch, checks: str, output_json: bool
+) -> None:
     from npa.cli.workbench import health as health_module
 
     monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+        health_module,
+        "load_credentials",
+        lambda: pytest.fail(
+            "invalid selection must not load credentials or run probes"
+        ),
     )
     result = runner.invoke(
-        app, ["workbench", "health", "preflight", "--checks", "bogus"]
+        app,
+        ["workbench", "health", "preflight", "--checks", checks]
+        + (["--json"] if output_json else []),
     )
-    assert result.exit_code != 0
+    assert result.exit_code == 2
     assert "unknown check" in result.output.lower()
+    if output_json:
+        assert json.loads(result.stdout)["error_type"] == "BadParameter"
+
+
+@pytest.mark.parametrize("checks", ["", " ", ",", " , , "])
+def test_preflight_rejects_empty_selection_even_with_warn_only(
+    monkeypatch, checks: str
+) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(
+        health_module,
+        "load_credentials",
+        lambda: pytest.fail("empty selection must not load credentials or run probes"),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            checks,
+            "--warn-only",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "select at least one check" in result.stderr
+    assert json.loads(result.stdout)["error_type"] == "BadParameter"
+
+
+def test_preflight_deduplicates_checks_without_repeating_probes(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import ProfileVerification
+
+    calls: list[str] = []
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: calls.append("nebius") or ProfileVerification("", True, True),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            " nebius , hf,nebius,hf,token_factory ",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    assert [check["name"] for check in json.loads(result.stdout)["checks"]] == [
+        "nebius",
+        "hf",
+        "token_factory",
+    ]
+    assert calls == ["nebius"]
+
+
+@pytest.mark.parametrize("output_json", [False, True])
+def test_preflight_token_probe_timeout_keeps_public_report_secret_free(
+    monkeypatch, output_json: bool
+) -> None:
+    import subprocess
+
+    from npa.cli.workbench import health as health_module
+    from npa.clients.nebius_auth import verify_profile
+
+    def probe_runner(command, **kwargs):
+        if command[-1] == "whoami":
+            return subprocess.CompletedProcess(
+                command, 0, stdout="synthetic-private-identity"
+            )
+        raise subprocess.TimeoutExpired(
+            command,
+            30,
+            output="synthetic-private-token",
+            stderr="synthetic-private-identity",
+        )
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _EmptyCreds())
+    monkeypatch.setattr(
+        health_module,
+        "_nebius_profile_verifier",
+        lambda: verify_profile("synthetic-private-profile", runner=probe_runner),
+    )
+    result = runner.invoke(
+        app,
+        ["workbench", "health", "preflight", "--checks", "nebius"]
+        + (["--json"] if output_json else []),
+    )
+    assert result.exit_code == 1
+    assert "timed out" in result.output
+    assert "synthetic-private" not in result.output
+    if output_json:
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is False
+        assert payload["checks"][0]["status"] == "FAIL"
 
 
 def test_preflight_fails_on_bad_s3(monkeypatch) -> None:
@@ -266,7 +567,7 @@ def test_preflight_fails_on_bad_s3(monkeypatch) -> None:
         s3_bucket = "s3://bkt/"
 
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403 Forbidden")
 
     captured_kwargs: dict = {}
@@ -299,7 +600,7 @@ def test_preflight_warn_only_suppresses_exit(monkeypatch) -> None:
         s3_bucket = "s3://bkt/"
 
     class _Client:
-        def list_checkpoints(self, uri):
+        def probe_list_access(self, uri):
             raise RuntimeError("403 Forbidden")
 
     monkeypatch.setattr(health_module, "load_credentials", lambda *a, **k: _Creds())
@@ -353,7 +654,7 @@ def test_access_fails_on_gated_denial(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type: _HFOK(
+        lambda token, repo, repo_type, revision, probe_path: _HFOK(
             ok=False, status_code=403, error="no access"
         ),
     )
@@ -375,7 +676,7 @@ def test_access_warn_only_suppresses_exit(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type: _HFOK(
+        lambda token, repo, repo_type, revision, probe_path: _HFOK(
             ok=False, status_code=403, error="no access"
         ),
     )
@@ -402,11 +703,11 @@ def test_access_pass_when_validator_ok(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type: _HFOK(ok=True),
+        lambda token, repo, repo_type, revision, probe_path: _HFOK(ok=True),
     )
     monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access",
-        lambda key: "reachable",
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda key, *, image: "reachable",
     )
     result = runner.invoke(
         app,
@@ -427,11 +728,11 @@ def test_access_fails_on_ngc_auth_rejection(monkeypatch) -> None:
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type: _HFOK(ok=True),
+        lambda token, repo, repo_type, revision, probe_path: _HFOK(ok=True),
     )
     monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access",
-        lambda key: "auth-401",
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda key, *, image: "auth-401",
     )
 
     result = runner.invoke(
@@ -455,11 +756,11 @@ def test_access_warns_on_transient_ngc_failure_without_rejecting_key(
     monkeypatch.setattr(
         health_module,
         "validate_hf_access",
-        lambda token, repo, repo_type: _HFOK(ok=True),
+        lambda token, repo, repo_type, revision, probe_path: _HFOK(ok=True),
     )
     monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access",
-        lambda key: "unreachable",
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda key, *, image: "unreachable",
     )
 
     result = runner.invoke(
@@ -562,3 +863,120 @@ def test_access_save_env_credentials_json_stays_valid_and_redacted(monkeypatch) 
     payload = json.loads(result.output)
     assert payload["credential_persistence"]["persisted"] == ["HF_TOKEN"]
     assert secret not in result.output
+
+
+@pytest.mark.parametrize("prepare", [False, True])
+@pytest.mark.parametrize("manifest_status", [200, 403, 404])
+def test_paidf_access_probes_each_exact_ngc_manifest(
+    monkeypatch, tmp_path, prepare: bool, manifest_status: int
+) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.orchestration.skypilot import registry_preflight
+    from npa.workbench.model_access import NGC, assets_for
+
+    capabilities = [
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    ]
+    expected = {
+        registry_preflight.parse_image_reference(asset.repo).manifest_url
+        for asset in assets_for(capabilities)
+        if asset.provider == NGC
+    }
+    assert len(expected) == 4
+    assert all("/manifests/sha256:" in url for url in expected)
+    denied_url = sorted(expected)[-1]
+    observed: list[str] = []
+
+    def fetch(url, headers, timeout):
+        observed.append(url)
+        if url.startswith("https://nvcr.io/proxy_auth?"):
+            assert headers.get("Authorization", "").startswith("Basic ")
+            return 200, {}, b'{"token":"synthetic-bearer"}'
+        assert url in expected, (
+            "The selected capability must not probe an unrelated repository."
+        )
+        if "Authorization" not in headers:
+            return (
+                401,
+                {
+                    "www-authenticate": 'Bearer realm="https://nvcr.io/proxy_auth",service="nvcr.io"'
+                },
+                b"",
+            )
+        assert headers["Authorization"] == "Bearer synthetic-bearer"
+        return (manifest_status if url == denied_url else 200), {}, b"{}"
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module, "validate_hf_access", lambda *args: _HFOK(ok=True)
+    )
+    monkeypatch.setattr(registry_preflight, "_fetch", fetch)
+    monkeypatch.setattr(
+        "npa.workbench.nurec.nurec.check_ngc_image_access",
+        lambda *args, **kwargs: pytest.fail(
+            "Legacy NRE tag-list probe must not authorize PAIDF."
+        ),
+    )
+    monkeypatch.setenv(
+        "NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "approval.json")
+    )
+    argv = [
+        "workbench",
+        "health",
+        "access",
+        "--capability",
+        ",".join(capabilities),
+        "--json",
+    ]
+    if prepare:
+        argv.extend(["--prepare", "--recheck"])
+    result = runner.invoke(app, argv)
+    denied = manifest_status != 200
+    assert result.exit_code == int(denied), result.output
+    payload = json.loads(result.output)
+    if prepare:
+        assert (payload["status"] == "ready") is (not denied)
+    else:
+        ngc = next(check for check in payload["checks"] if check["name"] == "ngc")
+        assert ngc["status"] == ("FAIL" if denied else "PASS")
+        assert len(ngc["details"]) == 4
+    assert {url for url in observed if "/manifests/" in url} == expected
+    assert all(observed.count(url) == 2 for url in expected)
+    assert not any("/tags/list" in url or "/nre/" in url for url in observed)
+    assert _AccessCreds.ngc_api_key not in result.output
+    assert "synthetic-bearer" not in result.output
+
+
+def test_paidf_access_without_ngc_dependency_does_not_probe_registry(
+    monkeypatch,
+) -> None:
+    from npa.cli.workbench import health as health_module
+
+    monkeypatch.setattr(health_module, "load_credentials", lambda: _AccessCreds())
+    monkeypatch.setattr(
+        health_module, "validate_hf_access", lambda *args: _HFOK(ok=True)
+    )
+    monkeypatch.setattr(
+        "npa.workbench.model_access.check_ngc_artifact_access",
+        lambda *args, **kwargs: pytest.fail("No selected NGC asset requires a probe."),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "access",
+            "--capability",
+            "paidf-dig,paidf-iaa,paidf-evg",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    ngc = json.loads(result.output)["checks"][0]
+    assert "NGC not required" in ngc["summary"]

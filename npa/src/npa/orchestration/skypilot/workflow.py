@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -43,6 +44,7 @@ from npa.orchestration.skypilot.json_output import (
     is_verified_empty_queue_result,
     parse_single_json_document,
     queue_rows_from_output,
+    verified_structured_queue_rows,
 )
 from npa.orchestration.skypilot.launch_transaction import (
     ControllerState,
@@ -57,6 +59,7 @@ from npa.orchestration.skypilot.launch_transaction import (
     RecoveryPolicy,
     StabilityPolicy,
     classify_failure,
+    is_terminal_failure_job_status,
     logical_launch_identity,
     run_launch_transaction,
     wait_for_api_stability,
@@ -188,16 +191,29 @@ def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
 
 
 class SkyPilotSubmitError(RuntimeError):
-    """Raised when a SkyPilot workflow cannot be submitted."""
+    """A workflow submission failure with optional proof of launch activity.
+
+    Args:
+        message: Submission failure description.
+        transaction: Authoritative launch reconciliation, when available.
+        launch_attempted: False for a verified preflight failure; None is unknown.
+            Transaction evidence takes precedence over this hint.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
 
     def __init__(
         self,
         message: str,
         *,
         transaction: LaunchTransactionResult | None = None,
+        launch_attempted: bool | None = None,
     ) -> None:
         super().__init__(message)
         self.transaction = transaction
+        self.launch_attempted = launch_attempted
 
 
 @dataclass(frozen=True)
@@ -218,6 +234,16 @@ class ApiDaemonCwdProbe:
         }
 
 
+def _api_server_port(command: Sequence[str]) -> str:
+    for index, value in enumerate(command):
+        if value.startswith("--port="):
+            return value.split("=", 1)[1]
+        if value == "--port":
+            if index + 1 < len(command):
+                return command[index + 1]
+    return "46580"
+
+
 def _probe_local_api_daemon_cwd(
     sky_executable: str,
     *,
@@ -225,6 +251,9 @@ def _probe_local_api_daemon_cwd(
     uid: int | None = None,
     expected_home: str = "",
     expected_user_id: str = "",
+    expected_kubeconfig: str = "",
+    expected_endpoint: str = "",
+    expected_runtime_dir: str = "",
 ) -> ApiDaemonCwdProbe:
     """Inspect the actual local API daemon and descendants through procfs.
 
@@ -233,6 +262,18 @@ def _probe_local_api_daemon_cwd(
     deleted.  Those executor processes perform controller provisioning and
     rsync, so every cwd in the local server process tree must remain resolvable.
     """
+
+    try:
+        endpoint = urlsplit(expected_endpoint or "http://127.0.0.1:46580")
+        if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+            raise ValueError("invalid API endpoint")
+        port = endpoint.port or (443 if endpoint.scheme == "https" else 80)
+    except ValueError:
+        return ApiDaemonCwdProbe(False, "invalid_api_endpoint")
+    if endpoint.hostname not in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        # A remote API server has no inspectable local process tree. SkyPilot's
+        # authenticated API and controller checks still run during submission.
+        return ApiDaemonCwdProbe(True, "remote_api_endpoint")
 
     expected_uid = os.getuid() if uid is None else uid
     try:
@@ -245,7 +286,18 @@ def _probe_local_api_daemon_cwd(
     # the system interpreter, while ``bin/sky`` is a script. Resolving both
     # would put them in different parent directories and miss the real daemon.
     sky_bin_dir = Path(sky_executable).expanduser().absolute().parent
+    try:
+        caller_network_namespace = os.readlink(proc_root / "self" / "ns" / "net")
+    except OSError:
+        caller_network_namespace = None
     records: dict[int, tuple[int, tuple[str, ...], Path]] = {}
+    if sys.platform == "darwin" and proc_root == Path("/proc"):
+        # macOS has no procfs, so the deleted-cwd poisoning this probe detects
+        # cannot be inspected here. Treat the daemon as healthy rather than
+        # failing closed on every macOS operator host; the Linux-specific
+        # cwd_deleted recovery below remains unchanged, as do hermetic
+        # non-/proc test fixtures on every platform.
+        return ApiDaemonCwdProbe(True, "procfs_unavailable_darwin")
     try:
         candidates = tuple(proc_root.iterdir())
     except OSError as exc:
@@ -285,20 +337,24 @@ def _probe_local_api_daemon_cwd(
             )
         records[int(candidate.name)] = (ppid, cmdline, candidate)
 
-    roots = {
+    daemon_roots = {
         pid
         for pid, (_ppid, cmdline, _process) in records.items()
-        if cmdline
-        and Path(cmdline[0]).expanduser().absolute().parent == sky_bin_dir
-        and "-m" in cmdline
-        and "sky.server.server" in cmdline
+        if cmdline and "-m" in cmdline and "sky.server.server" in cmdline
     }
-    if caller_mount_namespace is not None:
+    roots = {
+        pid for pid in daemon_roots if _api_server_port(records[pid][1]) == str(port)
+    }
+    if caller_network_namespace is not None or caller_mount_namespace is not None:
+        # Localhost is scoped by network namespace, not the interpreter or
+        # mount namespace. Retain mount fallback for restricted procfs fixtures.
+        namespace_kind = "net" if caller_network_namespace is not None else "mnt"
+        expected_namespace = caller_network_namespace or caller_mount_namespace
         scoped_roots = set()
         for pid in roots:
             try:
                 candidate_mount_namespace = os.readlink(
-                    records[pid][2] / "ns" / "mnt"
+                    records[pid][2] / "ns" / namespace_kind
                 )
             except (FileNotFoundError, ProcessLookupError, PermissionError):
                 continue
@@ -309,13 +365,58 @@ def _probe_local_api_daemon_cwd(
                     process_count=len(scoped_roots),
                     error=redact_text(str(exc)),
                 )
-            if candidate_mount_namespace == caller_mount_namespace:
+            if candidate_mount_namespace == expected_namespace:
                 scoped_roots.add(pid)
         roots = scoped_roots
     if not roots:
         return ApiDaemonCwdProbe(True, "absent")
+    foreign_roots = {
+        pid
+        for pid in roots
+        if Path(records[pid][1][0]).expanduser().absolute().parent != sky_bin_dir
+    }
+    if foreign_roots == roots:
+        return ApiDaemonCwdProbe(
+            False,
+            "foreign_api_daemon",
+            process_count=len(foreign_roots),
+            error=(
+                "the selected SkyPilot API endpoint belongs to another "
+                "executable; use an isolated runtime directory"
+            ),
+        )
+    if foreign_roots:
+        return ApiDaemonCwdProbe(
+            False,
+            "runtime_ownership_conflict",
+            process_count=len(roots),
+            error=(
+                "the selected local SkyPilot API endpoint is served by "
+                "a different SkyPilot executable"
+            ),
+        )
 
-    runtime_roots: set[int] = set()
+    def unhealthy_runtime(
+        outcome: str, *, process_count: int, error: str
+    ) -> ApiDaemonCwdProbe:
+        # SkyPilot 0.12.2's api stop kills the first matching server process,
+        # without filtering its endpoint or executable. A healthy selected
+        # daemon can coexist with peers, but repairing it could stop a peer.
+        if daemon_roots - roots:
+            return ApiDaemonCwdProbe(
+                False,
+                "runtime_ownership_conflict",
+                process_count=process_count,
+                error=(
+                    "another local SkyPilot API server exists outside the "
+                    "selected endpoint/runtime; api stop is not endpoint-scoped"
+                ),
+            )
+        return ApiDaemonCwdProbe(
+            False, outcome, process_count=process_count, error=error
+        )
+
+    environments: dict[int, dict[str, str]] = {}
     for pid in roots:
         try:
             raw_environment = (records[pid][2] / "environ").read_bytes()
@@ -335,19 +436,67 @@ def _probe_local_api_daemon_cwd(
             for item in raw_environment.split(b"\0")
             if b"=" in item
         }
-        daemon_home = environment.get("HOME", "").strip()
-        if expected_home and Path(daemon_home).expanduser().absolute() != Path(
-            expected_home
-        ).expanduser().absolute():
-            continue
-        daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
-        if expected_user_id and daemon_user_id != expected_user_id:
-            continue
-        runtime_roots.add(pid)
-        inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
-        if inherited_config and not Path(inherited_config).is_file():
+        daemon_runtime_dir = environment.get("SKY_RUNTIME_DIR", "").strip()
+        if (
+            expected_runtime_dir
+            and daemon_runtime_dir
+            and Path(daemon_runtime_dir).expanduser().resolve()
+            != Path(expected_runtime_dir).expanduser().resolve()
+        ):
             return ApiDaemonCwdProbe(
                 False,
+                "runtime_ownership_conflict",
+                process_count=len(roots),
+                error=(
+                    "local SkyPilot API server at the selected endpoint declares "
+                    "a different SKY_RUNTIME_DIR than this submission"
+                ),
+            )
+        environments[pid] = environment
+
+    # Check every selected daemon's explicit runtime ownership before any
+    # recoverable staleness. HOME, user ID, and kubeconfig mismatches alone are
+    # legacy local-environment drift, not proof of another runtime's ownership.
+    runtime_roots: set[int] = set()
+    for pid, environment in environments.items():
+        daemon_home = environment.get("HOME", "").strip()
+        if (
+            expected_home
+            and Path(daemon_home).expanduser().absolute()
+            != Path(expected_home).expanduser().absolute()
+        ):
+            return unhealthy_runtime(
+                "stale_runtime_environment",
+                process_count=len(runtime_roots) + 1,
+                error=(
+                    "local SkyPilot API server inherited a different HOME than "
+                    "this submission"
+                ),
+            )
+        daemon_user_id = environment.get("SKYPILOT_USER_ID", "").strip()
+        if expected_user_id and daemon_user_id != expected_user_id:
+            return unhealthy_runtime(
+                "stale_runtime_environment",
+                process_count=len(runtime_roots) + 1,
+                error=(
+                    "local SkyPilot API server inherited a different user identity "
+                    "than this submission"
+                ),
+            )
+        runtime_roots.add(pid)
+        daemon_kubeconfig = environment.get("KUBECONFIG", "").strip()
+        if expected_kubeconfig and daemon_kubeconfig != expected_kubeconfig:
+            return unhealthy_runtime(
+                "stale_runtime_environment",
+                process_count=len(runtime_roots),
+                error=(
+                    "local SkyPilot API server inherited a different Kubernetes "
+                    "configuration than this submission"
+                ),
+            )
+        inherited_config = environment.get("SKYPILOT_GLOBAL_CONFIG", "").strip()
+        if inherited_config and not Path(inherited_config).is_file():
+            return unhealthy_runtime(
                 "stale_global_config",
                 process_count=len(runtime_roots),
                 error=(
@@ -384,8 +533,7 @@ def _probe_local_api_daemon_cwd(
         if cwd.endswith(" (deleted)") or not Path(cwd).is_dir():
             unusable.append(pid)
     if unusable:
-        return ApiDaemonCwdProbe(
-            False,
+        return unhealthy_runtime(
             "cwd_deleted",
             process_count=len(process_tree),
             error=(
@@ -413,11 +561,20 @@ def _ensure_local_api_daemon_cwd(
             sky_executable,
             expected_home=str(env.get("HOME") or ""),
             expected_user_id=str(env.get("SKYPILOT_USER_ID") or ""),
+            expected_kubeconfig=str(env.get("KUBECONFIG") or ""),
+            expected_endpoint=str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or ""),
+            expected_runtime_dir=str(env.get("SKY_RUNTIME_DIR") or ""),
         )
     )
     before = inspect()
     if before.healthy:
         return before
+    if before.outcome == "runtime_ownership_conflict":
+        raise SkyPilotSubmitError(
+            "SkyPilot local API server repair could affect a different endpoint "
+            f"or runtime: {before.error}; "
+            "no API server was stopped and no submission was attempted."
+        )
     if before.outcome not in {
         "cwd_deleted",
         "stale_global_config",
@@ -513,12 +670,43 @@ def _ensure_local_api_daemon_cwd_locked(
 ) -> ApiDaemonCwdProbe:
     """Run the daemon health/repair transaction under its runtime identity lock."""
 
-    with _api_daemon_repair_lock(runtime_dir):
+    isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
+    if isolated_api_dir:
+        return _ensure_isolated_api(
+            isolated_dir=Path(isolated_api_dir),
+            sky_executable=sky_executable,
+            environment=env,
+            cwd=cwd,
+        )
+
+    # SkyPilot 0.12 exposes one local API server on a fixed loopback port per
+    # executable, even when callers isolate HOME/SKY_RUNTIME_DIR.  Serialize
+    # repairs at that real process-global boundary; a per-run lock can race two
+    # submissions into stopping and starting the same daemon concurrently.
+    daemon_lock_root = (
+        Path.home()
+        / ".npa"
+        / "skypilot-api-daemon-locks"
+        / hashlib.sha256(str(Path(sky_executable).absolute()).encode()).hexdigest()[:16]
+    )
+    with _api_daemon_repair_lock(daemon_lock_root):
         return _ensure_local_api_daemon_cwd(
             sky_executable,
             env=env,
             cwd=cwd,
         )
+
+
+def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
+    from npa.orchestration.skypilot.local_api import (
+        IsolatedApiError,
+        ensure_isolated_api,
+    )
+
+    try:
+        return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
+    except IsolatedApiError as exc:
+        raise SkyPilotSubmitError(str(exc)) from None
 
 
 def ensure_local_api_daemon_health(
@@ -539,6 +727,10 @@ def ensure_local_api_daemon_health(
     # daemon; an absent daemon is left for the regular pinned-version path.
     sky_executable = str(runtime_config.sky_bin)
     env = sky_environment(runtime_config.isolated_config_dir)
+    if runtime_config.isolated_config_dir is not None:
+        # Environment preparation validates any owned listener. Startup waits
+        # until the exact workload/project configuration has passed preflight.
+        return ApiDaemonCwdProbe(True, "isolated_api_pending")
     stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
     runtime_dir = runtime_config.isolated_config_dir or Path(stable_cwd)
     return _ensure_local_api_daemon_cwd_locked(
@@ -615,6 +807,146 @@ def _selected_kube_context(
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+@dataclass
+class _PreparedWorkflowSubmission:
+    runtime_config: Any
+    docs: list[dict[str, Any]]
+    submission_dir: Path
+    yaml_path: Path
+    config_path: Path
+    sky_executable: str
+    global_config: dict[str, Any]
+    env: dict[str, str] = field(default_factory=dict)
+
+
+def _submission_global_config(runtime, controller_backend, infra):
+    config = _controller_config_for_execution(
+        _load_base_config(runtime.global_config_path),
+        controller_backend=controller_backend,
+        infra=infra,
+    )
+    context = _controller_region_from_infra(infra, controller_backend)
+    if context:
+        kubernetes = config.setdefault("kubernetes", {})
+        if not isinstance(kubernetes, dict):
+            raise ValueError(
+                "SkyPilot global config kubernetes section must be a mapping"
+            )
+        # The selected workload and controller share this exact context; other
+        # operator settings, including pod configuration, retain their values.
+        kubernetes["allowed_contexts"] = [context]
+        config["allowed_clouds"] = ["kubernetes"]
+    return config
+
+
+def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
+    from npa.execution_preflight import ExecutionPreflightError
+
+    env = sky_environment(prepared.runtime_config.isolated_config_dir)
+    for key, value in (extra_env or {}).items():
+        if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
+            env[key] = value
+    isolated_endpoint = str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
+    if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
+        api_server = prepared.global_config.setdefault("api_server", {})
+        if not isinstance(api_server, dict):
+            raise ValueError(
+                "SkyPilot global config api_server section must be a mapping"
+            )
+        api_server["endpoint"] = isolated_endpoint
+    env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
+    try:
+        selected, _report, injected = _execution_preflight(
+            prepared.docs,
+            project=project,
+            infra=infra,
+            extra_env=env,
+            target=target,
+            global_config=prepared.global_config,
+            sky_bin=prepared.sky_executable,
+            cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
+        )
+    except (ExecutionPreflightError, ValueError) as exc:
+        raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
+    env.update(injected)
+    if selected is not None:
+        env["NPA_SKYPILOT_PROJECT"] = selected.project
+    prepared.env = env
+    prepared.config_path.write_text(
+        yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8"
+    )
+    _chmod_owner_only(prepared.config_path)
+    prepared.yaml_path.write_text(
+        yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8"
+    )
+    _chmod_owner_only(prepared.yaml_path)
+
+
+def _prepare_workflow_submission(
+    yaml_path,
+    run_id,
+    *,
+    isolated_config_dir=None,
+    config_path=None,
+    sky_bin=None,
+    controller_backend=DEFAULT_CONTROLLER_BACKEND,
+    infra="",
+    extra_env=None,
+    project="",
+    execution_target=None,
+):
+    runtime = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    docs = _load_yaml_documents(Path(yaml_path))
+    if not docs:
+        raise ValueError("SkyPilot YAML is empty")
+    directory = _submission_dir(run_id, runtime.isolated_config_dir)
+    try:
+        rendered = directory / "workflow.yaml"
+        shutil.copy2(yaml_path, rendered)
+        _chmod_owner_only(rendered)
+        executable = str(ensure_skypilot_version(runtime.sky_bin))
+        global_config = _submission_global_config(runtime, controller_backend, infra)
+        generated = directory / "skypilot-config.yaml"
+        generated.write_text(
+            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        )
+        _chmod_owner_only(generated)
+        prepared = _PreparedWorkflowSubmission(
+            runtime, docs, directory, rendered, generated, executable, global_config
+        )
+        _preflight_prepared_submission(
+            prepared,
+            project=project,
+            infra=infra,
+            extra_env=extra_env,
+            target=execution_target,
+        )
+        return prepared
+    except BaseException:
+        if runtime.isolated_config_dir is None:
+            _cleanup_owned_submission_dir(directory)
+        raise
+
+
+def _refresh_workflow_preflight(yaml_path, run_id, **kwargs):
+    """Use the normal SDK gate without starting a controller or submitting a job."""
+    from uuid import uuid4
+
+    # Failed-attempt files are immutable evidence. A refresh prepares a separate
+    # local document; its name is never submitted as a provider job.
+    preparation_id = f"{run_id}-recovery-preflight-{uuid4().hex}"
+    prepared = _prepare_workflow_submission(yaml_path, preparation_id, **kwargs)
+    try:
+        return hashlib.sha256(Path(yaml_path).read_bytes()).hexdigest()
+    finally:
+        if prepared.runtime_config.isolated_config_dir is None:
+            _cleanup_owned_submission_dir(prepared.submission_dir)
+
+
 def submit_workflow(
     yaml_path: Path,
     run_id: str,
@@ -641,6 +973,8 @@ def submit_workflow(
     transaction_sleeper: Callable[[float], None] = time.sleep,
     transaction_random: Callable[[], float] | None = None,
     launch_lock_root: Path | None = None,
+    project: str = "",
+    execution_target: Any | None = None,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
 
@@ -650,53 +984,26 @@ def submit_workflow(
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
     try:
-        runtime_config = resolve_config(
-            sky_bin=sky_bin,
-            global_config_path=config_path,
+        prepared = _prepare_workflow_submission(
+            yaml_path,
+            run_id,
             isolated_config_dir=isolated_config_dir,
-        )
-        docs = _load_yaml_documents(yaml_path)
-        if not docs:
-            raise ValueError("SkyPilot YAML is empty")
-        submission_dir = _submission_dir(run_id, runtime_config.isolated_config_dir)
-        if runtime_config.isolated_config_dir is None:
-            owned_submission_dir = submission_dir
-        prepared_yaml = submission_dir / "workflow.yaml"
-        shutil.copy2(yaml_path, prepared_yaml)
-        # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
-        _chmod_owner_only(prepared_yaml)
-        sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
-        controller_context = _controller_region_from_infra(infra, controller_backend)
-        global_config = apply_controller_override(
-            _load_base_config(runtime_config.global_config_path),
+            config_path=config_path,
+            sky_bin=sky_bin,
             controller_backend=controller_backend,
-            controller_region=controller_context,
+            infra=infra,
+            extra_env=extra_env,
+            project=project,
+            execution_target=execution_target,
         )
-        if controller_context:
-            # ``--infra k8s/<context>`` is an exact target, not merely a
-            # controller placement hint.  A pre-existing SkyPilot config may
-            # carry an allowlist from an older cluster; leaving it intact makes
-            # ``sky jobs launch`` reject the requested context even when the
-            # selected kubeconfig contains it.  Bind the generated, owner-only
-            # per-submit config to the same immutable context used by the task
-            # and controller.  Preserve all other Kubernetes settings (notably
-            # pod_config / registry pull secrets).
-            kubernetes = global_config.setdefault("kubernetes", {})
-            if not isinstance(kubernetes, dict):
-                raise ValueError(
-                    "SkyPilot global config kubernetes section must be a mapping"
-                )
-            kubernetes["allowed_contexts"] = [controller_context]
-        generated_config_path = submission_dir / "skypilot-config.yaml"
-        generated_config_path.write_text(
-            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        runtime_config = prepared.runtime_config
+        docs, env = prepared.docs, prepared.env
+        submission_dir, prepared_yaml = prepared.submission_dir, prepared.yaml_path
+        generated_config_path = prepared.config_path
+        sky_executable = prepared.sky_executable
+        owned_submission_dir = (
+            submission_dir if runtime_config.isolated_config_dir is None else None
         )
-        _chmod_owner_only(generated_config_path)
-        env = sky_environment(runtime_config.isolated_config_dir)
-        for key, value in (extra_env or {}).items():
-            if value:
-                env[key] = value
-        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated_config_path)
 
         cmd = [
             sky_executable,
@@ -704,7 +1011,9 @@ def submit_workflow(
             "launch",
             "--name",
             run_id,
-            "--async",
+            # Wait for the API launch result so failed prechecks surface as
+            # errors. --async acknowledges only the request, before a managed
+            # job exists; --detach-run still leaves the workload asynchronous.
             "--detach-run",
             "--yes",
             str(prepared_yaml),
@@ -781,7 +1090,20 @@ def submit_workflow(
                 progress=echo or _default_launch_echo,
             )
 
+        # A verified absent controller proves that this isolated SkyPilot scope
+        # cannot contain a live managed job. Do not issue the initial queue
+        # query in that state: SkyPilot can create an empty INIT controller
+        # record for that query, then reject the launch that should create its
+        # first pod. Later reconciliations still query the exact job name.
+        initial_controller_absent = (
+            getattr(controller_health, "state", None) is ControllerState.ABSENT
+        )
+
         def _reconcile() -> ReconciliationEvidence:
+            nonlocal initial_controller_absent
+            if initial_controller_absent:
+                initial_controller_absent = False
+                return ReconciliationEvidence(ReconciliationState.ABSENT)
             return _reconcile_managed_job_env(
                 run_id,
                 env=env,
@@ -916,7 +1238,8 @@ def submit_workflow(
     ) as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise SkyPilotSubmitError(
-            f"SkyPilot workflow submission failed: {exc}"
+            f"SkyPilot workflow submission failed: {exc}",
+            launch_attempted=False if prepared_yaml is None else None,
         ) from exc
 
 
@@ -999,6 +1322,21 @@ def workflow_status(
     )
 
 
+def _verify_task_queue_result(result: subprocess.CompletedProcess[str]) -> None:
+    from npa.verification import sanitize_reason
+
+    if is_verified_empty_queue_result(result):
+        return
+    detail = sanitize_reason(redact_text(_command_detail(result)))
+    if result.returncode != 0:
+        raise RuntimeError(f"SkyPilot task queue query failed: {detail}")
+    if verified_structured_queue_rows(result) is None:
+        raise RuntimeError(
+            "SkyPilot task queue response is malformed or has conflicting diagnostics: "
+            + detail
+        )
+
+
 def workflow_task_statuses(
     job_id: str,
     *,
@@ -1006,6 +1344,7 @@ def workflow_task_statuses(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     timeout: int = 300,
+    raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Return per-task rows for a managed job (pipeline tasks or JobGroup members).
 
@@ -1013,6 +1352,23 @@ def workflow_task_statuses(
     (``submitted_at`` / ``start_at`` / ``end_at``), which is how a JobGroup can be
     shown to have run its members *concurrently* and how a barrier state can be
     shown to have started only after its predecessors finished.
+
+    Args:
+        job_id: Exact managed-job identity to select from the queue.
+        isolated_config_dir: Optional isolated SkyPilot configuration directory.
+        config_path: Optional global SkyPilot configuration path.
+        sky_bin: Optional SkyPilot executable override.
+        timeout: Queue subprocess timeout in seconds.
+        raise_on_error: Require a verified queue response for authoritative status.
+            The default preserves empty results for optional diagnostics callers.
+
+    Returns:
+        Task rows sorted by task ID, including an empty list for verified empties.
+
+    Raises:
+        RuntimeError: Strict observation encountered a failed or malformed query.
+        subprocess.SubprocessError: The queue subprocess could not complete.
+        OSError: The queue executable could not be started.
     """
 
     runtime_config = resolve_config(
@@ -1040,6 +1396,8 @@ def workflow_task_statuses(
         timeout=timeout,
         check=False,
     )
+    if raise_on_error:
+        _verify_task_queue_result(result)
     if result.returncode != 0:
         return []
     return parse_task_statuses(result.stdout, job_id)
@@ -1310,15 +1668,25 @@ def _reconcile_managed_job_env(
             )
     if not matching:
         return ReconciliationEvidence(ReconciliationState.ABSENT)
-    if len(matching) != 1:
+    # Historical cancelled/failed attempts retain the same deterministic name
+    # in SkyPilot's all-jobs queue.  Once a viable replacement exists, those
+    # terminal rows must not make exact-name reconciliation ambiguous.
+    viable = {
+        job_id
+        for job_id in matching
+        if not is_terminal_failure_job_status(statuses.get(job_id, "UNKNOWN"))
+    }
+    if len(viable) > 1:
         return ReconciliationEvidence(
             ReconciliationState.AMBIGUOUS,
             error=(
                 f"exact managed-job name {job_name!r} maps to multiple immutable IDs: "
-                + ", ".join(sorted(matching, key=int))
+                + ", ".join(sorted(viable, key=int))
             ),
         )
-    selected = next(iter(matching))
+    # Multiple historical failures are all inert. Select their latest immutable
+    # ID so the launch transaction can record what it superseded and retry.
+    selected = next(iter(viable)) if viable else max(matching, key=int)
     markers = sorted(workload_markers.get(selected) or ())
     return ReconciliationEvidence(
         ReconciliationState.FOUND,
@@ -1785,6 +2153,28 @@ def _wait_for_healthy_jobs_controller(
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
     unhealthy: list[tuple[str, str]] = []
+    # An exact zero-pod result is stronger than SkyPilot's cached status. In a
+    # new isolated scope it avoids materializing the no-pod INIT record whose
+    # existence prevents the first managed launch from creating a controller.
+    if execution_probe is not None and not require_existing:
+        user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+        expected_name = (
+            f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+            else ""
+        )
+        if expected_name:
+            initial_probe = execution_probe(expected_name)
+            if (
+                not initial_probe.healthy
+                and initial_probe.outcome == "head_pod_ambiguous"
+                and initial_probe.pod_count == 0
+            ):
+                return ControllerHealthResult(
+                    ControllerState.ABSENT,
+                    expected_name,
+                    ControllerExecutionProbe(True, "controller_absent", pod_count=0),
+                )
     while True:
         # Kubernetes has a stronger source of truth below: the exact controller
         # pod is selected and its readiness/cwd are probed directly.  Avoid a
@@ -1808,9 +2198,7 @@ def _wait_for_healthy_jobs_controller(
         if (
             "--refresh" in status_args
             and result.returncode != 0
-            and _can_ignore_foreign_controller_refresh(
-                result, env
-            )
+            and _can_ignore_foreign_controller_refresh(result, env)
         ):
             # A Kubernetes cloud can expose a controller from another namespace
             # while this process has an explicit, distinct SkyPilot user ID.  A
@@ -1835,6 +2223,35 @@ def _wait_for_healthy_jobs_controller(
                 + _controller_health_remedy(detail)
             )
         controllers = _jobs_controller_statuses(result.stdout)
+        # A prior queue read can create exactly one INIT row before a controller
+        # pod exists. Treat that exact isolated row as absent so its first
+        # launch can create the pod; all other INIT rows remain unhealthy.
+        if execution_probe is not None and len(controllers) == 1:
+            init_name, init_status = controllers[0]
+            user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+            expected_init_name = (
+                f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+                else ""
+            )
+            if (
+                init_status.upper() == "INIT"
+                and expected_init_name
+                and init_name == expected_init_name
+            ):
+                init_probe = execution_probe(init_name)
+                if (
+                    not init_probe.healthy
+                    and init_probe.outcome == "head_pod_ambiguous"
+                    and init_probe.pod_count == 0
+                ):
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT,
+                        init_name,
+                        ControllerExecutionProbe(
+                            True, "controller_absent", pod_count=0
+                        ),
+                    )
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
             unhealthy = []
@@ -1875,6 +2292,17 @@ def _wait_for_healthy_jobs_controller(
                             "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
                         )
                 probe_result = checked_execution_probe(state, expected_name)
+                if (
+                    state in {ControllerState.UP, ControllerState.STOPPED}
+                    and probe_result is not None
+                    and probe_result.outcome == "controller_absent"
+                ):
+                    # A cached UP/STOPPED row with no execution pod is absent
+                    # for the first launch. Returning its cached state would
+                    # issue the queue query that causes the INIT deadlock.
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT, expected_name, probe_result
+                    )
                 if probe_result is None or probe_result.healthy:
                     return ControllerHealthResult(state, expected_name, probe_result)
                 last_summary = (
@@ -2060,11 +2488,37 @@ def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
     return docs
 
 
+def _execution_preflight(*args, **kwargs):
+    """Provider boundary kept explicit for command-shape unit fixtures."""
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    return preflight_skypilot_submission(*args, **kwargs)
+
+
+def _controller_config_for_execution(base_config, *, controller_backend, infra):
+    configured = ((base_config.get("jobs") or {}).get("controller") or {}).get(
+        "resources"
+    ) or {}
+    config = apply_controller_override(
+        base_config,
+        controller_backend=controller_backend,
+        controller_region=_controller_region_from_infra(infra, controller_backend),
+    )
+    if controller_backend == "nebius" and not configured.get("region"):
+        # apply_controller_override's legacy default region is not an explicit
+        # operator target. The native preflight pins the selected NPA project
+        # region; an explicitly configured different region remains an error.
+        config["jobs"]["controller"]["resources"].pop("region", None)
+    return config
+
+
 def _load_base_config(config_path: Path | None) -> dict[str, Any]:
     if config_path is None:
         return {}
     if not config_path.exists():
-        return {}
+        raise SkyPilotConfigError(
+            f"SkyPilot global config does not exist: {config_path}"
+        )
     with config_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):
@@ -2170,6 +2624,19 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
+def _submit_failure_prefix(
+    result: subprocess.CompletedProcess[str], detail: str
+) -> str:
+    state, _category = classify_failure(
+        phase="launch", stdout=result.stdout or "", stderr=result.stderr or ""
+    )
+    if state is EvidenceState.TRANSIENT_UNAVAILABLE:
+        return "SkyPilot transport failure during jobs launch"
+    if _looks_like_auth_error(detail):
+        return "SkyPilot auth failure during jobs launch"
+    return "sky jobs launch failed"
+
+
 def _format_submit_error(
     cmd: Sequence[str],
     result: subprocess.CompletedProcess[str],
@@ -2177,11 +2644,7 @@ def _format_submit_error(
     streamed: Sequence[SkyPilotDiagnosis] = (),
 ) -> str:
     detail = _command_detail(result)
-    prefix = (
-        "SkyPilot auth failure during jobs launch"
-        if _looks_like_auth_error(detail)
-        else "sky jobs launch failed"
-    )
+    prefix = _submit_failure_prefix(result, detail)
     # `sky status --refresh` exits 0 while merely *warning* about clusters it
     # cannot refresh, so a controller cached against a dead kubeconfig gets past
     # the health check and fails here instead (CachedClusterUnavailable). Attach

@@ -1,8 +1,8 @@
 # Public SONIC MuJoCo evaluator. This image is intentionally independent of the
 # historical SONIC container lineage: no NGC/NLC base, private-registry layer,
 # Isaac/Omniverse payload, model weights, driver userspace, terms, or credentials.
-ARG BASE_IMAGE=python:3.11.14-slim-bookworm@sha256:65a93d69fa75478d554f4ad27c85c1e69fa184956261b4301ebaf6dbb0a3543d
-ARG DEBIAN_SNAPSHOT=20260817T000000Z
+ARG BASE_IMAGE=python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84
+ARG DEBIAN_SNAPSHOT=20260906T000000Z
 
 FROM ${BASE_IMAGE} AS sonic-source
 ARG DEBIAN_SNAPSHOT
@@ -36,7 +36,7 @@ ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
 ARG NPA_ISAAC_COMPAT_ROOT=/isaac-sim
-ARG SONIC_MUJOCO_CLOSURE_SHA256=8e9d45902ade1e881545ae6f2ddb5d1d42b420505984aca3479895e5d4002d60
+ARG SONIC_MUJOCO_CLOSURE_SHA256=4172f650d61dccf778a1d000e31b02cfcc8e11cbd87d90646e7397d33798d503
 
 LABEL org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-CUDA-Toolkit" \
       npa.tool="sonic-mujoco" \
@@ -65,16 +65,22 @@ ENV PYTHONUNBUFFERED=1 \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 USER root
+COPY --chmod=0644 docker/workbench/sonic/packaging-requirements.txt /opt/npa/manifest/packaging-requirements.txt
 RUN sed -ri \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
       /etc/apt/sources.list.d/debian.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        ca-certificates curl libegl1 libgl1 libglvnd0 libgnutls30 libssl3 openssl \
     && rm -rf /var/lib/apt/lists/* \
-    && python -m venv /opt/npa/venv
+    && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+       -r /opt/npa/manifest/packaging-requirements.txt \
+    && python -m venv /opt/npa/venv \
+    && /opt/npa/venv/bin/python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+       -r /opt/npa/manifest/packaging-requirements.txt
 
 COPY --chmod=0644 docker/workbench/sonic/mujoco-requirements.lock /opt/npa/manifest/mujoco-requirements.lock
 RUN /opt/npa/venv/bin/python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
@@ -94,7 +100,7 @@ COPY --chmod=0644 docker/workbench/sonic/verify_mujoco_image.py /opt/npa/docker/
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && mkdir -p /isaac-sim /opt/isaac-cache /tmp/npa-sonic-output \
-    && chmod 0755 /opt/npa/manifest /opt/npa/docker \
+    && chmod 0755 /opt/npa /opt/npa/manifest /opt/npa/docker \
        /opt/npa/docker/workbench /opt/npa/docker/workbench/common \
        /opt/npa/docker/workbench/sonic \
     && chmod 0644 /opt/npa/manifest/mujoco-requirements.lock \

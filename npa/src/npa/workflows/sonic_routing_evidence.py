@@ -69,13 +69,19 @@ def _safe_text(value: str, field: str, *, default: str = "not recorded") -> str:
 def _safe_sha(value: str) -> str:
     normalized = str(value or "unknown").strip().lower()
     if normalized != "unknown" and not _SAFE_SHA.fullmatch(normalized):
-        raise SonicRoutingEvidenceError("tested_commit_sha must be a hexadecimal Git SHA")
+        raise SonicRoutingEvidenceError(
+            "tested_commit_sha must be a hexadecimal Git SHA"
+        )
     return normalized
 
 
 def _safe_digest(value: str, field: str) -> str:
     normalized = str(value or "").strip().lower()
-    if normalized and normalized != "unavailable" and not _SAFE_DIGEST.fullmatch(normalized):
+    if (
+        normalized
+        and normalized != "unavailable"
+        and not _SAFE_DIGEST.fullmatch(normalized)
+    ):
         raise SonicRoutingEvidenceError(f"{field} must be an immutable sha256 digest")
     return normalized or "unavailable"
 
@@ -172,12 +178,22 @@ def _write_rrd(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
         "B200:1": 3.0,
         "B300:1": 4.0,
     }
-    positions = [[float(index), accelerator_y.get(row["resolved"], 0.0)] for index, row in enumerate(route_rows)]
-    colors = [[30, 180, 80] if row["status"] == "passed" else [220, 45, 45] for row in route_rows]
-    labels = [f"{row['target']} → {row['resolved']} ({row['status']})" for row in route_rows]
+    positions = [
+        [float(index), accelerator_y.get(row["resolved"], 0.0)]
+        for index, row in enumerate(route_rows)
+    ]
+    colors = [
+        [30, 180, 80] if row["status"] == "passed" else [220, 45, 45]
+        for row in route_rows
+    ]
+    labels = [
+        f"{row['target']} → {row['resolved']} ({row['status']})" for row in route_rows
+    ]
     rr.log(
         "routing_map/target_to_accelerator",
-        rr.Points2D(positions, colors=colors, radii=[0.18] * len(positions), labels=labels),
+        rr.Points2D(
+            positions, colors=colors, radii=[0.18] * len(positions), labels=labels
+        ),
         static=True,
         recording=recording,
     )
@@ -262,27 +278,41 @@ def generate_routing_evidence(
                 "status": "passed" if resolved == expected else "failed",
             }
         )
-    routing_status = "passed" if all(row["status"] == "passed" for row in routes) else "failed"
+    routing_status = (
+        "passed" if all(row["status"] == "passed" for row in routes) else "failed"
+    )
     recognition = _status(provider_recognition_status, "provider_recognition_status")
     scheduling = _status(scheduling_status, "scheduling_status")
     workload = _status(workload_status, "workload_status")
-    output_verification = _status(output_verification_status, "output_verification_status")
+    output_verification = _status(
+        output_verification_status, "output_verification_status"
+    )
     cleanup = _status(cleanup_status, "cleanup_status")
     provider_label = _safe_text(provider_accelerator, "provider_accelerator")
     terminal = _safe_text(terminal_status, "terminal_status")
-    workload_kind_value = _safe_text(workload_kind, "workload_kind", default="not-recorded").lower()
-    output_kind_value = _safe_text(output_kind, "output_kind", default="not-recorded").lower()
+    workload_kind_value = _safe_text(
+        workload_kind, "workload_kind", default="not-recorded"
+    ).lower()
+    output_kind_value = _safe_text(
+        output_kind, "output_kind", default="not-recorded"
+    ).lower()
     if workload_kind_value not in _WORKLOAD_KINDS:
-        raise SonicRoutingEvidenceError(f"workload_kind must be one of {sorted(_WORKLOAD_KINDS)}")
+        raise SonicRoutingEvidenceError(
+            f"workload_kind must be one of {sorted(_WORKLOAD_KINDS)}"
+        )
     if output_kind_value not in _OUTPUT_KINDS:
-        raise SonicRoutingEvidenceError(f"output_kind must be one of {sorted(_OUTPUT_KINDS)}")
+        raise SonicRoutingEvidenceError(
+            f"output_kind must be one of {sorted(_OUTPUT_KINDS)}"
+        )
     output_digest_value = _safe_digest(output_digest, "output_digest")
     job_digest_value = _safe_digest(job_evidence_digest, "job_evidence_digest")
     image_digest_value = _safe_digest(image_digest, "image_digest")
     semantic = _safe_text(semantic_verification, "semantic_verification")
     pool = _safe_text(pool_type, "pool_type")
     if scheduling == "passed" and (provider_label != "B300" or gpu_count != 1):
-        raise SonicRoutingEvidenceError("passed scheduling requires exactly one B300 GPU")
+        raise SonicRoutingEvidenceError(
+            "passed scheduling requires exactly one B300 GPU"
+        )
     if workload == "passed" and (
         terminal != "SUCCEEDED"
         or workload_kind_value not in {"train", "finetune"}
@@ -372,10 +402,16 @@ def generate_routing_evidence(
         rrd_path = root / "sonic-b300-routing.rrd"
         timeline = _write_rrd(rrd_path, manifest)
         manifest["visualization"] = timeline
-        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         published = {
-            "manifest": _publish(manifest_path, manifest_uri, storage_client=storage_client),
+            "manifest": _publish(
+                manifest_path, manifest_uri, storage_client=storage_client
+            ),
             "report": _publish(report_path, report_uri, storage_client=storage_client),
             "rrd": _publish(rrd_path, rrd_uri, storage_client=storage_client),
             "rrd_sha256": hashlib.sha256(rrd_path.read_bytes()).hexdigest(),
@@ -386,7 +422,9 @@ def generate_routing_evidence(
     print(json.dumps(result, sort_keys=True))
     if routing_status != "passed":
         failed = [row for row in routes if row["status"] == "failed"]
-        raise SonicRoutingEvidenceError(f"SONIC routing verification failed closed: {failed}")
+        raise SonicRoutingEvidenceError(
+            f"SONIC routing verification failed closed: {failed}"
+        )
     return result
 
 

@@ -96,3 +96,22 @@ variable "gpu_resources" {
   }
   nullable = false
 }
+
+# Added by NPA: the validated opt-in path does not inherit vendor autoscaling,
+# monitoring or privileged GPU defaults.
+variable "cpu_cluster" {
+  description = "NPA fixed CPU RayCluster policy; null preserves legacy values."
+  type = object({
+    worker_replicas   = number
+    worker_cpus       = number
+    worker_memory_gib = number
+  })
+  default = null
+
+  validation {
+    condition = var.cpu_cluster == null ? true : alltrue([
+      for value in values(var.cpu_cluster) : value > 0 && floor(value) == value
+    ])
+    error_message = "CPU RayCluster replicas, CPUs and memory GiB must be positive integers."
+  }
+}

@@ -23,6 +23,8 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
+    tool_vendor_interpreters,
+    tool_requires_staged_npa_source,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import (
@@ -33,7 +35,7 @@ from npa.orchestration.npa_workflow.submission_state import load_submission_stat
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-NPA_SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 PAIDF = NPA_SPECS / "physical-ai-data-factory.yaml"
 SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
@@ -54,8 +56,14 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
 @pytest.mark.parametrize(
     ("name", "expected_image"),
     [
-        ("byof-openpi.yaml", "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"),
-        ("byof-wan2.2.yaml", "docker:registry.example/npa-wan2-2:"),
+        (
+            "byof-openpi.yaml",
+            "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed",
+        ),
+        (
+            "byof-wan2.2.yaml",
+            "docker:ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:",
+        ),
     ],
 )
 def test_non_isaac_byof_specs_render_their_declared_runtime_image(
@@ -97,7 +105,7 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
 
     # Pinned so a new BYOF spec cannot skip the per-profile image assertion
     # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 10
+    assert len(paths) == 16
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
@@ -210,6 +218,21 @@ def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
     candidate_loop = setup.split("for candidate in ", 1)[1].split("; do", 1)[0]
     assert candidate_loop.index('"${NPA_BAKED_PYTHON:-}"') < candidate_loop.index(
         "sys.executable"
+    )
+
+
+def test_paidf_dig_keeps_npa_out_of_the_vendor_environment() -> None:
+    for tool_ref in (
+        "workflow.paidf.dig_infer",
+        "workflow.paidf.dig_train",
+        "workflow.paidf.dig_prepare_pretrained",
+    ):
+        assert tool_vendor_interpreters(tool_ref) == ()
+
+    # Other tools that require one process to import vendor libraries retain
+    # the established vendor-interpreter setup behavior.
+    assert tool_vendor_interpreters("workbench.lerobot") == (
+        "/opt/lerobot/venv/bin/python",
     )
 
 
@@ -348,16 +371,22 @@ def test_gpu_memory_override_targets_only_accelerator_profiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "384Gi")
-    assert normalize_resources(
-        {
-            "cloud": "kubernetes",
-            "accelerators": "RTXPRO6000:4",
-            "memory": "128Gi",
-        }
-    )["memory"] == "384+"
-    assert normalize_resources(
-        {"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}
-    )["memory"] == "16+"
+    assert (
+        normalize_resources(
+            {
+                "cloud": "kubernetes",
+                "accelerators": "RTXPRO6000:4",
+                "memory": "128Gi",
+            }
+        )["memory"]
+        == "384+"
+    )
+    assert (
+        normalize_resources({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"})[
+            "memory"
+        ]
+        == "16+"
+    )
 
 
 def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
@@ -440,9 +469,7 @@ def test_render_public_image_ignores_unrelated_private_registry_credentials(
         spec,
         plan,
         run_id="demo",
-        options=SkypilotRenderOptions(
-            registry="ghcr.io/nebius/nebius-physical-ai"
-        ),
+        options=SkypilotRenderOptions(registry="ghcr.io/nebius/nebius-physical-ai"),
     )
 
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
@@ -509,7 +536,7 @@ def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
-    spec = load_spec(NPA_SPECS / "nurec-reconstruct.yaml")
+    spec = load_spec(NPA_SPECS.parent / "main" / "nurec-reconstruct.yaml")
     plan = build_plan(spec, run_id="demo")
 
     authorities = plan_image_pull_secrets(
@@ -530,17 +557,22 @@ def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.lancedb.import_bdd100k") == "lancedb"
     assert tool_image_key("workbench.sonic.train") == "sonic"
     assert tool_image_key("unknown.tool") is None
+    assert tool_requires_staged_npa_source("workbench.sonic.train") is True
+    assert tool_requires_staged_npa_source("workbench.cosmos3.generate") is False
 
 
 def test_alpamayo2_super_resolves_configured_image() -> None:
     tool_ref = "workbench.alpamayo2_super.infer"
 
     assert tool_image_key(tool_ref) == "alpamayo2-super"
-    assert resolve_task_image(
-        tool_ref,
-        {},
-        options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
-    ) == "cr.example.invalid/reg/npa-alpamayo2-super:0.1.0-cu128"
+    assert (
+        resolve_task_image(
+            tool_ref,
+            {},
+            options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+        )
+        == "cr.example.invalid/reg/npa-alpamayo2-super:0.1.0-cu128-r3"
+    )
 
 
 def test_cosmos3_generate_and_reason_resolve_to_different_images() -> None:
@@ -591,12 +623,7 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     monkeypatch.setenv("NPA_COSMOS_VALIDATION_DELAY_RANK", "1")
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
     spec = load_spec(
-        REPO_ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "physical-ai-data-factory.yaml"
+        REPO_ROOT / "workflows" / "testing" / "physical-ai-data-factory.yaml"
     )
     rendered = render_skypilot_yaml(
         spec,
@@ -718,9 +745,7 @@ def test_paidf_refinement_iterations_use_append_only_artifact_prefixes() -> None
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "cosmos_augmented/iteration-2/manifest.json",
     ]
-    assert [
-        step.argv[step.argv.index("--output-uri") + 1] for step in evaluates
-    ] == [
+    assert [step.argv[step.argv.index("--output-uri") + 1] for step in evaluates] == [
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
         "grade/iteration-1/ranking/",
         "s3://example-bucket/physical-ai-data-factory/append-only-refinement/"
@@ -753,9 +778,11 @@ def test_paidf_bare_static_plan_previews_promoted_path_with_fail_closed_guard(
     states = [step.state for step in plan.steps]
 
     assert plan.assume_decision == "promote_checkpoint"
-    assert states.index("quality-disposition") < states.index(
-        "require-accepted-quality"
-    ) < states.index("annotate-augmented")
+    assert (
+        states.index("quality-disposition")
+        < states.index("require-accepted-quality")
+        < states.index("annotate-augmented")
+    )
     assert states[-2:] == ["visualize", "finalize"]
     assert "visualize-rejected" not in states
     assert "reject-quality" not in states
@@ -1148,6 +1175,13 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 
 
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
+    # This test replaces the runtime; provider boundary coverage lives in
+    # test_execution_preflight and must not be bypassed by --skip-preflight.
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     captured: dict[str, object] = {}
 
     def fake_submit(path, run_id, **kwargs):
@@ -1289,6 +1323,10 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 
@@ -1330,3 +1368,42 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     assert "/tmp/npa-src-overlay" in setup
     # Installs route through the PEP 668-tolerant helper (see npa_pip_install).
     assert "npa_pip_install -e /tmp/npa-src-overlay --no-deps" in setup
+    assert "using isolated non-root npa overlay environment" in setup
+    assert "python3 -m venv --system-site-packages /tmp/npa-overlay-venv" in setup
+    assert setup.index("PYTHONPATH=/tmp/npa-src-overlay/src") < setup.index(
+        "npa_pip_install -e /tmp/npa-src-overlay --no-deps"
+    )
+
+
+def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:
+    """Runtime-fetch images may carry /opt/npa without a PATH-visible CLI."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+    modern_guard = "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]"
+    assert modern_guard in setup
+    assert "npa_pip_install -e /opt/npa" in setup
+    # The image-local source must win before legacy / external paths, otherwise
+    # a runtime-fetch task can acquire a GPU and then fail solely because no
+    # NPA_SRC_S3_URI was supplied.
+    assert (
+        setup.index("npa_pip_install -e /opt/npa")
+        < setup.index("npa_pip_install -e /opt/nebius-physical-ai/npa")
+        < setup.index("NPA_SRC_S3_URI")
+    )
+
+
+def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:
+    spec = load_spec(NPA_SPECS / "openpi-pi05-full-droid-finetune.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="openpi-prepare-cpu"),
+        run_id="openpi-prepare-cpu",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [doc for doc in yaml.safe_load_all(rendered) if doc]
+    prepare = next(task for task in tasks if "prepare_full_droid" in task["name"])
+    qualification = next(task for task in tasks if "qualify_full_droid" in task["name"])
+    assert prepare["envs"]["JAX_PLATFORMS"] == "cpu"
+    assert "JAX_PLATFORMS" not in qualification.get("envs", {})

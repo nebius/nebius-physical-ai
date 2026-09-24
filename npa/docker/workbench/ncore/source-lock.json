@@ -1,0 +1,20 @@
+{
+  "format": "npa-ncore-source-lock-v1",
+  "ncore": {
+    "repository": "https://github.com/NVIDIA/ncore",
+    "revision": "59c698d206da92b406a4f72619fce3b3a2c64bfd",
+    "url": "https://codeload.github.com/NVIDIA/ncore/tar.gz/59c698d206da92b406a4f72619fce3b3a2c64bfd",
+    "sha256": "a240d22316b7bbdeb7339589321203b3868bc79232f05feb15b3f03c73028000",
+    "license": "Apache-2.0",
+    "target": "//tools/data_converter/colmap:convert",
+    "entrypoint": "tools.data_converter.colmap.converter"
+  },
+  "pycolmap": {
+    "repository": "https://github.com/trueprice/pycolmap",
+    "revision": "fe7a7c45df803b6c391777e349f0d8d65d39d777",
+    "url": "https://codeload.github.com/trueprice/pycolmap/tar.gz/fe7a7c45df803b6c391777e349f0d8d65d39d777",
+    "sha256": "70ebf62ab0bbe52d4006df7375ca0b13e4cfee59cce28e9064cf51c4dd5374f0",
+    "license": "MIT",
+    "patch": "deps/pycolmap/fix-python3-map.patch"
+  }
+}

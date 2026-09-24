@@ -20,12 +20,26 @@ import pytest
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
+    render_run_preamble_for_tool,
     render_setup_for_tool,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 
 ROOT = Path(__file__).resolve().parents[3]
-SPECS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SPECS = ROOT / "workflows" / "testing"
+
+
+def test_robot_sdg_installs_simulator_and_headless_rendering():
+    setup = render_setup_for_tool(
+        "workbench.token_factory.robot_sdg", config={}, options=SkypilotRenderOptions()
+    )
+    assert "robot-sdg" in setup
+    assert "libosmesa6 ffmpeg" in setup
+    preamble = render_run_preamble_for_tool(
+        "workbench.token_factory.robot_sdg", config={}
+    )
+    assert "export MUJOCO_GL=osmesa" in preamble
+    assert "export PYOPENGL_PLATFORM=osmesa" in preamble
 
 
 def _only_step(spec_name: str):
@@ -45,12 +59,28 @@ def _profile(spec, step) -> dict:
         (
             "token-factory-caption.yaml",
             "npa workbench token-factory caption",
-            ("--input-path", "--output-path", "--model", "--max-images", "--max-tokens"),
+            (
+                "--input-path",
+                "--output-path",
+                "--model",
+                "--max-images",
+                "--max-tokens",
+            ),
         ),
         (
             "token-factory-generate.yaml",
             "npa workbench token-factory generate",
             ("--input-path", "--output-path", "--model", "--max-tokens"),
+        ),
+        (
+            "token-factory-sdg.yaml",
+            "npa workbench token-factory sdg",
+            ("--input-path", "--output-path", "--output-format"),
+        ),
+        (
+            "token-factory-robot-sdg.yaml",
+            "npa workbench token-factory robot-sdg",
+            ("--input-path", "--output-path", "--output-format"),
         ),
         (
             "token-factory-cosmos-reason.yaml",
@@ -72,7 +102,9 @@ def test_token_factory_specs_are_cpu_only_and_run_the_real_cli(
     profile = _profile(spec, step)
 
     assert profile["cloud"] == "kubernetes"
-    assert "accelerators" not in profile, f"{spec_name} is hosted inference; it needs no GPU"
+    assert "accelerators" not in profile, (
+        f"{spec_name} is hosted inference; it needs no GPU"
+    )
     assert command in argv
     for flag in flags:
         assert flag in argv, f"{spec_name} argv is missing {flag}"
@@ -86,7 +118,9 @@ def test_token_factory_specs_are_cpu_only_and_run_the_real_cli(
         "token-factory-cosmos-reason.yaml",
     ],
 )
-def test_token_factory_setup_requires_the_api_key_and_serves_nothing(spec_name: str) -> None:
+def test_token_factory_setup_requires_the_api_key_and_serves_nothing(
+    spec_name: str,
+) -> None:
     spec, step = _only_step(spec_name)
 
     setup = render_setup_for_tool(
@@ -101,12 +135,10 @@ def test_token_factory_setup_requires_the_api_key_and_serves_nothing(spec_name: 
 #: tool's own defaults apply. Pinned so the gap is visible and can only shrink; see the
 #: `spec_gap` discussion in npa/src/npa/guardrails/three_tier.py.
 TEMPLATE_ONLY_FLAGS = {
-    "token-factory-caption.yaml": ("--instruction",),
     "token-factory-generate.yaml": ("--system-prompt", "--max-prompts"),
-    "token-factory-cosmos-reason.yaml": ("--model", "--task", "--max-images"),
+    "token-factory-cosmos-reason.yaml": ("--task", "--max-images"),
     "vlm-eval-token-factory.yaml": (
         "--task",
-        "--model",
         "--api-key-env",
         "--frame-selection",
         "--max-frames",
@@ -117,7 +149,9 @@ TEMPLATE_ONLY_FLAGS = {
 
 
 @pytest.mark.parametrize("spec_name", sorted(TEMPLATE_ONLY_FLAGS))
-def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: str) -> None:
+def test_template_only_flags_are_still_absent_from_the_spec_surface(
+    spec_name: str,
+) -> None:
     """Pin the capability delta against the retired templates.
 
     A spec author cannot set these today; the tool's CLI defaults apply instead. When a
@@ -127,7 +161,9 @@ def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: s
     _, step = _only_step(spec_name)
     argv = set(step.argv)
 
-    still_missing = tuple(flag for flag in TEMPLATE_ONLY_FLAGS[spec_name] if flag not in argv)
+    still_missing = tuple(
+        flag for flag in TEMPLATE_ONLY_FLAGS[spec_name] if flag not in argv
+    )
     assert still_missing == TEMPLATE_ONLY_FLAGS[spec_name], (
         f"{spec_name}: the toolRef argv now carries "
         f"{sorted(set(TEMPLATE_ONLY_FLAGS[spec_name]) - set(still_missing))}; "
@@ -135,15 +171,26 @@ def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: s
     )
 
 
-def test_cosmos_reason_spec_reaches_the_hosted_reasoner_by_cli_default() -> None:
-    """`--model` is not in this toolRef's argv, so the CLI default must be the reasoner."""
+@pytest.mark.parametrize(
+    "model", [None, "MiniMaxAI/MiniMax-M3", "vendor/explicit-model"]
+)
+def test_cosmos_reason_spec_preserves_default_and_explicit_model(
+    model: str | None,
+) -> None:
+    """An omitted model uses the new CLI default; an override reaches the command."""
 
     from npa.clients.token_factory import DEFAULT_REASONER_MODEL
 
-    _, step = _only_step("token-factory-cosmos-reason.yaml")
+    spec = load_spec(SPECS / "token-factory-cosmos-reason.yaml")
+    if model is not None:
+        spec.config["reason_model"] = model
+    step = build_plan(spec, run_id="probe").steps[0]
 
-    assert "--model" not in step.argv
-    assert DEFAULT_REASONER_MODEL == "nvidia/Cosmos3-Super-Reasoner"
+    if model is None:
+        assert "--model" not in step.argv
+        assert DEFAULT_REASONER_MODEL == "MiniMaxAI/MiniMax-M3"
+    else:
+        assert step.argv[step.argv.index("--model") + 1] == model
 
 
 def test_vlm_eval_token_factory_spec_uses_the_hosted_api_backend() -> None:

@@ -99,7 +99,7 @@ accessors, follow `skills/atomic/npa-cli-conventions/SKILL.md`.
    and then dies in the pod.
 7. Add a row per toolRef to `docs/workbench/npa-workflow-tool-catalog.md`.
 8. Create at least one reference spec under
-   `npa/workflows/workbench/npa-workflows/`. Every catalog entry must be
+   `workflows/testing/`. Every catalog entry must be
    reachable from a shipped spec unless it is deliberately listed in
    `PUBLIC_REUSABLE_TOOLREFS` in `catalog.py`.
 9. GPU or containerized stages only: map the toolRef prefix to its image in

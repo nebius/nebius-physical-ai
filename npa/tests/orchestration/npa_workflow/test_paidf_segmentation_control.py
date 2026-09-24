@@ -24,10 +24,9 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 BLUEPRINT = (
-    Path(__file__).resolve().parents[3]
+    Path(__file__).resolve().parents[4]
     / "workflows"
-    / "workbench"
-    / "npa-workflows"
+    / "testing"
     / "physical-ai-data-factory.yaml"
 )
 RUNNER = CliRunner()
@@ -125,9 +124,7 @@ def test_submit_can_supply_a_precomputed_segmentation_map() -> None:
 
 def test_depth_requires_precomputed_control_at_validation() -> None:
     with pytest.raises(NpaWorkflowError, match="depth control requires"):
-        merge_config_overrides(
-            load_spec(BLUEPRINT), {"augment_control": "depth"}
-        )
+        merge_config_overrides(load_spec(BLUEPRINT), {"augment_control": "depth"})
     spec = merge_config_overrides(
         load_spec(BLUEPRINT),
         {
@@ -142,7 +139,10 @@ def test_depth_requires_precomputed_control_at_validation() -> None:
     ("overrides", "match"),
     [
         ({"augment_control_weight": "1.1"}, "range 0.0-1.0"),
-        ({"augment_control": "edge", "augment_control_prompt": "arm"}, "not text-driven"),
+        (
+            {"augment_control": "edge", "augment_control_prompt": "arm"},
+            "not text-driven",
+        ),
         (
             {
                 "augment_mask_asset_uri": "s3://bucket/mask.mp4",
@@ -209,7 +209,13 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
     from npa.cli.workbench.workflow import _preflight_submit_gang_capacity
     from npa.orchestration.skypilot import k8s_gpu_catalog as gpu_catalog
 
-    def node(name: str, *, free: int = 1) -> gpu_catalog.KubernetesGpuNode:
+    # SkyPilot renders this profile's memory request as decimal Kubernetes G.
+    # Exact capacity must fit; a binary-Gi estimate would reject both nodes.
+    requested_memory_bytes = 128 * 1000**3
+
+    def node(
+        name: str, *, free: int = 1, memory_bytes: int = requested_memory_bytes
+    ) -> gpu_catalog.KubernetesGpuNode:
         return gpu_catalog.KubernetesGpuNode(
             name=name,
             ready=True,
@@ -222,7 +228,7 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             allocatable_cpu_millis=64_000,
             free_cpu_millis=64_000,
             allocatable_memory_bytes=256 * 1024**3,
-            free_memory_bytes=256 * 1024**3,
+            free_memory_bytes=memory_bytes,
             allocatable_pods=110,
             free_pod_slots=110,
         )
@@ -261,7 +267,8 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             "compatible_free_nodes": 2,
             "selected_nodes": ["gpu-a", "gpu-b"],
             "cpus_per_node": 16.0,
-            "memory_bytes_per_node": 128 * 1024**3,
+            "memory_bytes_per_node": requested_memory_bytes,
+            "ephemeral_storage_bytes_per_node": 0,
             "allowed_nodes": [],
             "state": "augment",
             "profile": "gpu",
@@ -275,6 +282,22 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             **{
                 **inventory.__dict__,
                 "nodes": (node("gpu-a"), node("gpu-b", free=0)),
+            }
+        ),
+    )
+    with pytest.raises(gpu_catalog.UnsatisfiableAcceleratorError, match="requires 2"):
+        _preflight_submit_gang_capacity(spec, context="task-scoped-context")
+
+    monkeypatch.setattr(
+        gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda *, context: gpu_catalog.KubernetesGpuInventory(
+            **{
+                **inventory.__dict__,
+                "nodes": (
+                    node("gpu-a"),
+                    node("gpu-b", memory_bytes=requested_memory_bytes - 1),
+                ),
             }
         ),
     )
@@ -315,24 +338,28 @@ def test_submit_capacity_preflight_does_not_resolve_sky_for_cpu_only_spec(
     import npa.cli.workbench.workflow as workflow_cli
 
     cpu_only = (
-        Path(__file__).resolve().parents[3]
+        Path(__file__).resolve().parents[4]
         / "workflows"
-        / "workbench"
-        / "npa-workflows"
+        / "testing"
         / "token-factory-parallel-fanout.yaml"
     )
     spec = load_spec(cpu_only)
     monkeypatch.setattr(
         workflow_cli,
         "_skypilot_allowed_nodes",
-        lambda **_kwargs: pytest.fail("CPU-only specs must not resolve SkyPilot affinity"),
+        lambda **_kwargs: pytest.fail(
+            "CPU-only specs must not resolve SkyPilot affinity"
+        ),
     )
 
-    assert workflow_cli._preflight_submit_gang_capacity(
-        spec,
-        context="",
-        allowed_nodes=None,
-    ) == []
+    assert (
+        workflow_cli._preflight_submit_gang_capacity(
+            spec,
+            context="",
+            allowed_nodes=None,
+        )
+        == []
+    )
 
 
 def test_checkpoint_preflight_uses_state_local_modality_overlay() -> None:
@@ -363,6 +390,7 @@ def test_validate_and_plan_resolve_state_local_control_tokens() -> None:
     plan = build_plan(spec, run_id="state-local-depth")
     augment = next(step for step in plan.steps if step.state == "augment")
     assert "depth" in augment.argv
+
 
 def test_the_control_prefix_is_a_sibling_of_the_augmented_clips() -> None:
     """Nesting it would make the evaluator read a control map as a variant."""

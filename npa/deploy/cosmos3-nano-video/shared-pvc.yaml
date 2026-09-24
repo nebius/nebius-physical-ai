@@ -1,0 +1,12 @@
+# Requires NPA's shared filesystem attachment and filesystem CSI validation.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cosmos3-nano-video-shared
+  namespace: workbench
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: csi-mounted-fs-path-sc
+  resources:
+    requests:
+      storage: 512Gi

@@ -19,6 +19,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Iterator, Literal, Mapping
 
+from npa.clients import config
+
 
 SCHEMA_VERSION = "npa.workflow.submission.v1"
 _SECRET_KEY = re.compile(
@@ -64,11 +66,18 @@ def _safe_component(value: str, fallback: str) -> str:
 
 
 def submission_state_path(project: str, run_id: str) -> Path:
-    """Return the per-project/run ledger path below the current user's config."""
+    """Return the per-project/run ledger path below the selected NPA config."""
 
+    # Honor an explicitly selected config, including selection before this
+    # module is imported. Otherwise retain dynamic environment/home resolution.
+    if config.CONFIG_PATH != config.NPA_CONFIG_DIR / "config.yaml":
+        root = config.CONFIG_PATH.parent
+    else:
+        root = Path(
+            os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa"
+        )
     return (
-        Path.home()
-        / ".npa"
+        root
         / "workflow-submissions"
         / _safe_component(project, "default")
         / f"{_safe_component(run_id, 'workflow')}.json"
@@ -313,3 +322,38 @@ def update_submission_state(
         return _update(submission_state_path(project, run_id))
     with submission_lock(project, run_id) as path:
         return _update(path)
+
+
+def record_submission_plan(
+    project: str,
+    run_id: str,
+    *,
+    workflow: Mapping[str, Any],
+    planning: Mapping[str, Any],
+    launch_state: str = "planned",
+) -> dict[str, Any]:
+    """Save planning metadata without erasing an earlier run's location or launch.
+
+    Args:
+        project: Selected project alias.
+        run_id: Exact run being prepared or resumed.
+        workflow: Partial workflow identity from the planning phase.
+        planning: Non-secret planning evidence.
+        launch_state: Initial state for a run without launch evidence.
+
+    Returns:
+        The updated submission receipt.
+
+    Raises:
+        ValueError: Metadata contains secrets or changes the workflow identity.
+        OSError: The locked receipt cannot be persisted.
+    """
+    with submission_lock(project, run_id):
+        previous = load_submission_state(project, run_id)
+        recorded = previous.get("workflow") or {}
+        if recorded.get("name") and recorded["name"] != workflow.get("name"):
+            raise ValueError("submission planning cannot change the workflow identity")
+        updates = {"workflow": {**recorded, **workflow}, "planning": dict(planning)}
+        if "launch" not in previous:
+            updates["launch_state"] = launch_state
+        return update_submission_state(project, run_id, updates, locked=True)

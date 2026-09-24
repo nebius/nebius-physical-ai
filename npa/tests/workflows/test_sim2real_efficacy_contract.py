@@ -21,6 +21,10 @@ from npa.workflows.sim2real.checkpoint_selection import (
     select_best_checkpoint,
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
+    GRASP_CLOSURE_REWARD_WEIGHT,
+    GRASP_CLOSURE_STD_M,
+    GRASP_LIFT_ATTEMPT_REWARD_WEIGHT,
+    GRASP_LIFT_ATTEMPT_STD_M,
     PLACEMENT_APPROACH_STD_M,
     PLACEMENT_ARM_SETTLING_SPEED_RADPS,
     PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT,
@@ -44,6 +48,11 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     STABLE_PLACEMENT_REWARD_WEIGHT,
     STABLE_PLACEMENT_SPEED_MPS,
     STABLE_PLACEMENT_STEPS,
+    STOCK_GRIPPER_CLOSED_POSITION,
+    STOCK_GRIPPER_JOINT_NAMES,
+    STOCK_GRIPPER_OPEN_POSITION,
+    STOCK_DENSE_LIFT_REWARD_WEIGHT,
+    STOCK_DENSE_LIFT_STD_M,
     ScenarioContractError,
     _assign,
     _scheduled_drop_penalty_type,
@@ -134,9 +143,13 @@ def test_scenario_assignment_cursor_covers_tail_before_wrapping() -> None:
 
 
 def test_scenario_assignment_cursor_applies_offset_and_validates_bounds() -> None:
-    assert scenario_assignment_indices(
-        count=5, row_count=3, cursor=2, offset=1
-    ) == [0, 1, 2, 0, 1]
+    assert scenario_assignment_indices(count=5, row_count=3, cursor=2, offset=1) == [
+        0,
+        1,
+        2,
+        0,
+        1,
+    ]
     with pytest.raises(ValueError, match="non-negative"):
         scenario_assignment_indices(count=-1, row_count=3)
     with pytest.raises(ValueError, match="at least one"):
@@ -420,6 +433,18 @@ def test_isaac_scenario_split_matches_authoritative_task_contract(
 
 
 def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
+    assert GRASP_CLOSURE_REWARD_WEIGHT == 16.0
+    assert GRASP_CLOSURE_STD_M == 0.06
+    assert GRASP_LIFT_ATTEMPT_REWARD_WEIGHT == 32.0
+    assert GRASP_LIFT_ATTEMPT_STD_M == 0.05
+    assert STOCK_DENSE_LIFT_REWARD_WEIGHT == 32.0
+    assert STOCK_DENSE_LIFT_STD_M == 0.08
+    assert STOCK_GRIPPER_JOINT_NAMES == (
+        "panda_finger_joint1",
+        "panda_finger_joint2",
+    )
+    assert STOCK_GRIPPER_OPEN_POSITION == 0.04
+    assert STOCK_GRIPPER_CLOSED_POSITION == 0.0
     assert STABLE_PLACEMENT_DISTANCE_M == 0.05
     assert STABLE_PLACEMENT_SPEED_MPS == 0.03
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
@@ -444,6 +469,12 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_DWELL_REWARD_EXPONENT == 2.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
+    assert "env_cfg.rewards.grasp_closure_curriculum" in source
+    assert "func=robot_task.grasp_shaping" in source
+    assert "env_cfg.rewards.grasp_lift_attempt_curriculum" in source
+    assert "func=robot_task.grasp_lift_hold" in source
+    assert "env_cfg.rewards.dense_object_lift_curriculum" in source
+    assert "func=robot_task.object_lift_progress" in source
     assert "def stable_placement_curriculum" in source
     assert "lifted * (dense + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source
@@ -638,6 +669,25 @@ def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:
         goal_curriculum_fraction(1, 0)
 
 
+def _recorded_visual_fields(step: int) -> dict:
+    camera = f"camera-{step:03d}.png"
+    return {
+        "sim_step": step,
+        "camera_observation": camera,
+        "episode_boundary": _no_reset_boundary(),
+        "visual_grounding": {
+            "schema": "npa.sim2real.visual_grounding.v2",
+            "action_step": step,
+            "action_sim_step": step,
+            "frame_sim_step": step,
+            "camera_observation": camera,
+            "supported": True,
+            "episode_boundary": _no_reset_boundary(),
+            "frame_simulator_episode_id": 0,
+        },
+    }
+
+
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     evaluation = {
         "rollout_id": "rollout-1",
@@ -645,6 +695,7 @@ def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
             {
                 "step": index,
                 "action": [0.1, -0.1],
+                **_recorded_visual_fields(index),
                 "error_tags": ["minor_alignment"],
                 "confidence": 0.9,
                 "model_disagreement": index == 1,
@@ -724,6 +775,7 @@ def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:
                 "step": index,
                 "action": [0.1],
                 "critique_source": source,
+                **_recorded_visual_fields(index),
                 "confidence": confidence,
                 "model_disagreement": disagreement,
                 "error_tags": tags,
@@ -812,6 +864,140 @@ def test_checkpoint_selection_accepts_component_native_strict_rate() -> None:
     assert selected["rank_key"][0] == pytest.approx(1 / 3)
 
 
+def test_checkpoint_selection_does_not_rank_table_contact_above_reach() -> None:
+    def candidate(name: str, *, reach: float, contact: float) -> dict[str, Any]:
+        return {
+            "evaluation_split": "validation",
+            "training_iteration": 100,
+            "checkpoint_uri": f"s3://bucket/{name}.pt",
+            "validation_report": {
+                "success_rate": 0.0,
+                "per_env": [{"env_id": "validation-0"}],
+                "success_summary": {"mean_object_goal_distance_m": 0.2},
+                "decomposed_metrics": {
+                    "reach": {"rate": reach},
+                    "contact": {"rate": contact},
+                },
+            },
+        }
+
+    selected = select_best_checkpoint(
+        [
+            candidate("table-contact", reach=0.0, contact=1.0),
+            candidate("real-reach", reach=1.0, contact=0.0),
+        ]
+    )
+    assert selected["checkpoint_uri"] == "s3://bucket/real-reach.pt"
+
+
+def _distance_candidate(name: str, distance: Any) -> dict[str, Any]:
+    return {
+        "evaluation_split": "validation",
+        "training_iteration": 100,
+        "checkpoint_uri": f"s3://bucket/{name}.pt",
+        "validation_report": {
+            "success_rate": 0.0,
+            "per_env": [{"env_id": "validation-0"}],
+            "success_summary": {"mean_object_goal_distance_m": distance},
+            "decomposed_metrics": {},
+        },
+    }
+
+
+def test_checkpoint_selection_prefers_exact_zero_mean_distance() -> None:
+    """A perfect (0.0m) mean distance must beat a worse nonzero distance.
+
+    Regression for a bug where ``float(x or 1e9)`` treated the falsy 0.0m
+    distance as missing evidence and substituted the worst-case sentinel,
+    causing a worse checkpoint to win on the distance tie-break.
+    """
+
+    selected = select_best_checkpoint(
+        [
+            _distance_candidate("perfect", 0.0),
+            _distance_candidate("mediocre", 0.5),
+        ]
+    )
+    assert selected["checkpoint_uri"] == "s3://bucket/perfect.pt"
+
+
+def test_checkpoint_selection_treats_absent_distance_as_worst() -> None:
+    """A candidate with no distance evidence must rank behind one that has any."""
+
+    no_evidence = _distance_candidate("no-evidence", None)
+    del no_evidence["validation_report"]["success_summary"][
+        "mean_object_goal_distance_m"
+    ]
+    selected = select_best_checkpoint(
+        [
+            no_evidence,
+            _distance_candidate("has-evidence", 5.0),
+        ]
+    )
+    assert selected["checkpoint_uri"] == "s3://bucket/has-evidence.pt"
+
+
+@pytest.mark.parametrize(
+    "distance",
+    [math.nan, math.inf, -math.inf, -0.01, "not-a-number"],
+)
+def test_checkpoint_selection_rejects_malformed_distance(distance: Any) -> None:
+    with pytest.raises(ValueError):
+        select_best_checkpoint([_distance_candidate("bad", distance)])
+
+
+@pytest.mark.parametrize("rate", [None, math.nan, math.inf, -0.1, 1.1, "half"])
+def test_checkpoint_selection_rejects_malformed_strict_rate(rate: Any) -> None:
+    """A supplied null rate is invalid; an absent metric is handled separately."""
+    candidate = {
+        "evaluation_split": "validation",
+        "training_iteration": 100,
+        "checkpoint_uri": "s3://bucket/bad.pt",
+        "validation_report": {
+            "success_rate": rate,
+            "per_env": [{"env_id": "validation-0"}],
+            "success_summary": {"mean_object_goal_distance_m": 0.1},
+            "decomposed_metrics": {},
+        },
+    }
+    with pytest.raises(ValueError):
+        select_best_checkpoint([candidate])
+
+
+@pytest.mark.parametrize("rate", [None, math.nan, math.inf, -0.1, 1.1, "half"])
+def test_checkpoint_selection_rejects_malformed_decomposed_rate(rate: Any) -> None:
+    """Do not silently turn an explicit unknown rate into a measured zero."""
+    candidate = {
+        "evaluation_split": "validation",
+        "training_iteration": 100,
+        "checkpoint_uri": "s3://bucket/bad.pt",
+        "validation_report": {
+            "success_rate": 0.0,
+            "per_env": [{"env_id": "validation-0"}],
+            "success_summary": {"mean_object_goal_distance_m": 0.1},
+            "decomposed_metrics": {"place": {"rate": rate}},
+        },
+    }
+    with pytest.raises(ValueError):
+        select_best_checkpoint([candidate])
+
+
+def test_checkpoint_selection_ordering_is_input_order_independent() -> None:
+    """Ranking a candidate first or last must not change the outcome.
+
+    Regression for nonfinite metric values previously breaking Python's
+    Timsort comparisons, which can make the selected winner depend on the
+    input order rather than on the metrics themselves.
+    """
+
+    best = _distance_candidate("best", 0.01)
+    worst = _distance_candidate("worst", 5.0)
+    assert (
+        select_best_checkpoint([best, worst])["checkpoint_uri"]
+        == (select_best_checkpoint([worst, best])["checkpoint_uri"])
+    )
+
+
 def test_eval_is_stratified_and_strict_success_requires_stability() -> None:
     rows = [
         {
@@ -865,6 +1051,7 @@ Total timesteps: 24576
 """
     telemetry = parse_ppo_training_log(log)
     assert telemetry["configured_iterations"] == 500
+    assert telemetry["final_iteration"]["action_noise_std"] == 1.0
     assert telemetry["final_iteration"]["value_loss"] == 0.02
     assert telemetry["final_iteration"]["total_timesteps"] == 24576
     assert telemetry["final_iteration"]["stable_placement_termination_rate"] == 0.125
@@ -875,3 +1062,38 @@ Total timesteps: 24576
     assert telemetry["final_iteration"]["stable_placement_departure_reward"] == -0.5
     with pytest.raises(ValueError, match="no Learning iteration"):
         parse_ppo_training_log("no telemetry")
+
+
+def test_parse_ppo_telemetry_accepts_rsl_rl_5_console_format() -> None:
+    # rsl-rl >= 5.0 renamed "Mean value_function loss" to "Mean value loss" and
+    # no longer prints a "Total timesteps" line in the iteration table.
+    log = """
+Learning iteration 199/199
+Mean action std: 0.49
+Mean value loss: 1.4190
+Mean surrogate loss: -0.0027
+Mean entropy loss: 11.9853
+Mean reward: 19.96
+Mean episode length: 248.12
+Episode_Reward/lifting_object: 0.4100
+Metrics/object_pose/position_error: 0.3215
+"""
+    telemetry = parse_ppo_training_log(log)
+    assert telemetry["configured_iterations"] == 199
+    assert telemetry["final_iteration"]["action_noise_std"] == 0.49
+    assert telemetry["final_iteration"]["value_loss"] == 1.419
+    assert telemetry["final_iteration"]["surrogate_loss"] == -0.0027
+    assert telemetry["final_iteration"]["episode_return"] == 19.96
+    assert "total_timesteps" not in telemetry["final_iteration"]
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }
