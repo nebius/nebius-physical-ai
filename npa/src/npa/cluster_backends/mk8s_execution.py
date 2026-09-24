@@ -1050,7 +1050,7 @@ def _node_group_template_fingerprint(template: dict[str, Any]) -> dict[str, Any]
             "policy": reservation.get("policy"),
             "reservation_ids": reservation.get("reservation_ids") or [],
         },
-        "preemptible": bool(template.get("preemptible", False)),
+        "preemptible": template.get("preemptible"),
         "network_interfaces": [
             {"subnet_id": item.get("subnet_id")}
             for item in network_interfaces
@@ -1065,7 +1065,7 @@ def _node_group_template_fingerprint(template: dict[str, Any]) -> dict[str, Any]
             for item in filesystems
             if isinstance(item, dict)
         ],
-        "gpu_cluster": template.get("gpu_cluster") or None,
+        "gpu_cluster": template.get("gpu_cluster"),
         "gpu_settings": {"drivers_preset": gpu_settings.get("drivers_preset")},
     }
 
@@ -1129,7 +1129,8 @@ def _tainted_node_group_matches_desired(
         resources.get("platform") != pool.platform
         or resources.get("preset") != pool.preset
         or boot_disk_size != expected_disk_size
-        or bool(template.get("preemptible", False)) != pool.preemptible
+        or template.get("preemptible") is not pool.preemptible
+        or state_template.get("preemptible") is not pool.preemptible
         or len(interfaces) != 1
         or not isinstance(interfaces[0], dict)
         or interfaces[0].get("subnet_id") != subnet_id
@@ -1153,7 +1154,11 @@ def _tainted_node_group_matches_desired(
             return False
     elif filesystems:
         return False
-    if bool(template.get("gpu_cluster")) != cluster.resolved_enable_gpu_cluster():
+    expected_gpu_cluster = {} if cluster.resolved_enable_gpu_cluster() else None
+    if (
+        template.get("gpu_cluster") != expected_gpu_cluster
+        or state_template.get("gpu_cluster") != expected_gpu_cluster
+    ):
         return False
     if pool.is_gpu():
         driver = resolve_gpu_driver_strategy(
