@@ -1061,6 +1061,28 @@ def _job_task_outcomes_conflict(
     )
 
 
+def _confirmed_runtime_cancellation(
+    step_state: str,
+    attempt_state: str,
+    attempt_provenance: str,
+    scheduler_state: str,
+    scheduler_job_state: str,
+    task_rows: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Recognize cancellation only when every exact outcome source agrees."""
+    if step_state != "FAILED" or attempt_provenance != "runtime_wave":
+        return False
+    expected = {attempt_state, scheduler_state, scheduler_job_state}
+    if expected != {"CANCELLED"}:
+        return False
+    task_states = [
+        _normalized_stage_state(row.get("status"))
+        for row in task_rows
+        if isinstance(row, Mapping)
+    ]
+    return bool(task_states) and all(state == "CANCELLED" for state in task_states)
+
+
 def _task_row_matches(row, stage, member_count, legacy):
     if not isinstance(row, Mapping):
         return False
@@ -1251,12 +1273,24 @@ def build_actionable_run_status(
             "SUCCEEDED",
             "FAILED",
         }
-        outcome_conflict = scheduler_terminal and (
-            (step_terminal and step_state != scheduler_state)
-            or (
-                not step_terminal
-                and attempt_terminal
-                and attempt_state != scheduler_state
+        confirmed_cancellation = _confirmed_runtime_cancellation(
+            step_state,
+            attempt_state,
+            str(final_attempt.get("provenance") or ""),
+            scheduler_state,
+            scheduler_job_state,
+            observed_rows,
+        )
+        outcome_conflict = (
+            not confirmed_cancellation
+            and scheduler_terminal
+            and (
+                (step_terminal and step_state != scheduler_state)
+                or (
+                    not step_terminal
+                    and attempt_terminal
+                    and attempt_state != scheduler_state
+                )
             )
         )
         job_task_conflict = _job_task_outcomes_conflict(
@@ -1266,6 +1300,9 @@ def build_actionable_run_status(
             outcome_conflict = True
             state = "UNKNOWN"
             outcome_provenance = "conflicting_scheduler_job_and_tasks"
+        elif confirmed_cancellation:
+            state = "CANCELLED"
+            outcome_provenance = "confirmed_runtime_scheduler_cancellation"
         elif outcome_conflict:
             state = "UNKNOWN"
             outcome_provenance = "conflicting_durable_and_scheduler_evidence"

@@ -192,6 +192,62 @@ def test_every_task_requires_an_explicit_terminal_observation():
     assert result["stages"]["worker-3"]["outcome_conflict"] is True
 
 
+def _cancelled_runtime_status(*, sky_status="CANCELLED", task_rows=None):
+    job_name = "test-run-01-prepare"
+    manifest = RunManifest(
+        "evaluation",
+        "test-run",
+        "npa.workflow/v0.0.1",
+        status="FAILED",
+        steps=[{"state": "prepare", "status": "FAILED"}],
+    )
+    wave = {
+        "key": "001|serial|:prepare:-",
+        "states": ["prepare"],
+        "kind": "serial",
+        "job_id": "11",
+        "job_name": job_name,
+        "attempt": 1,
+        "status": "failed",
+        "sky_status": sky_status,
+    }
+    rows = (
+        task_rows
+        if task_rows is not None
+        else [{"task_id": 0, "task_name": job_name, "status": "CANCELLED"}]
+    )
+    return build_actionable_run_status(
+        manifest,
+        live_status="CANCELLED",
+        runtime_waves=[wave],
+        job_observations={"11": {"status": "CANCELLED", "task_rows": rows}},
+    )
+
+
+def test_exact_runtime_and_scheduler_cancellation_resolves_generic_failure():
+    result = _cancelled_runtime_status()
+
+    assert result["status"] == "CANCELLED"
+    assert result["scheduler_task_activity"]["all_stage_tasks_terminal"] is True
+    stage = result["stages"]["prepare"]
+    assert stage["state"] == "CANCELLED"
+    assert stage["outcome_conflict"] is False
+    assert stage["outcome_provenance"] == "confirmed_runtime_scheduler_cancellation"
+
+
+@pytest.mark.parametrize(
+    ("sky_status", "task_rows"),
+    [("FAILED", None), ("CANCELLED", [])],
+)
+def test_cancellation_requires_runtime_attempt_and_task_agreement(
+    sky_status, task_rows
+):
+    result = _cancelled_runtime_status(sky_status=sky_status, task_rows=task_rows)
+
+    assert result["status"] == "UNKNOWN"
+    assert result["stages"]["prepare"]["outcome_conflict"] is True
+
+
 def test_unrecognized_task_state_remains_unresolved():
     result = _failed_parallel_status(
         _rows(["FAILED", "new-state", "RUNNING", "FAILED"])
