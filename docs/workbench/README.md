@@ -16,6 +16,7 @@ Python and HTTP access follow each tool's documented contract.
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
+| Curate media with Encord | [S3 registration, pull, and roundtrip verification](encord.md) |
 | Finish | [Teardown](../teardown.md) |
 
 ## Generation and scenes
@@ -74,3 +75,5 @@ Python and HTTP access follow each tool's documented contract.
 Inspect the selected guide's actual output artifacts after the run reaches a
 terminal state. A plan, successful status response, or historical benchmark
 alone does not establish a new run's result.
+
+SAM 3.1 video segmentation is available as a [development container](../../npa/docker/workbench/sam3/README.md); checkpoint access and GPU qualification are required before release acceptance.

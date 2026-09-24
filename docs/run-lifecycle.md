@@ -36,9 +36,11 @@ The [workflow quick start](workbench/npa-workflow-guide.md#quick-start) shows th
 complete sequence.
 
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
-prints the exact build command for anything missing. `submit` runs the same
-check by default, so a missing image surfaces on your machine instead of as an
-`ImagePullBackOff` on the cluster.
+prints the exact build command for anything missing. It unions every declared
+decision outcome, and `--infra k8s/<cluster>` lets the pull check verify that
+exact cluster's declared pull-secret authority. `submit` uses the same complete
+image plan by default, so a branch-specific missing image surfaces before the
+run instead of as an `ImagePullBackOff` on the cluster.
 
 ### Quota is arithmetic, and it is checked first
 

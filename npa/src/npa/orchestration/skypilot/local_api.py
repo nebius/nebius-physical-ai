@@ -1080,8 +1080,13 @@ def _listener_owned(
         raise IsolatedApiError(
             "isolated SkyPilot API belongs to another network namespace"
         )
+    try:
+        rows = Path(f"/proc/{root_pid}/net/tcp").read_text().splitlines()[1:]
+    except (FileNotFoundError, ProcessLookupError):
+        # The owned daemon can exit after the namespace observation above.
+        return False
     inodes = set()
-    for row in Path(f"/proc/{root_pid}/net/tcp").read_text().splitlines()[1:]:
+    for row in rows:
         fields = row.split()
         if fields[1] == f"0100007F:{selected_port:04X}" and fields[3] == "0A":
             inodes.add(fields[9])

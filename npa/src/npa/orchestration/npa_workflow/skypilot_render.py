@@ -85,6 +85,7 @@ IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
     "workflow.paidf.run_evg_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -107,7 +108,6 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.cosmos3.text_to_image": (),
     "workbench.cosmos3.super_benchmark": (
         "HF_TOKEN",
-        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     ),
@@ -137,6 +137,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.encord": "encord",
     "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
@@ -164,7 +165,7 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.transfer_report": (
         ("python:av", "av>=12,<17"),
         ("python:matplotlib", "matplotlib>=3.8,<4"),
-        ("python:rerun", "rerun-sdk>=0.29,<0.32"),
+        ("python:rerun", "rerun-sdk==0.38.1"),
     ),
     "workbench.alpamayo2_super.sweep": (
         ('python:ray;assert(ray.__version__=="2.58.0")', "ray[default]==2.58.0"),
@@ -1503,7 +1504,7 @@ def default_npa_setup() -> str:
 #: two ever diverge. (An earlier version imported a ``_rerun_pin`` symbol that does
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
-NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -1759,6 +1760,13 @@ def render_setup_for_tool(
             'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'
             "  echo 'NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with --secret-env "
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+        )
+    if tool_ref.startswith("workbench.encord"):
+        parts.append(
+            'if [[ -z "$ENCORD_SSH_KEY" && -z "$ENCORD_SSH_KEY_B64" ]]; then\n'
+            "  echo 'ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required for Encord stages' >&2\n"
             "  exit 1\n"
             "fi\n"
         )

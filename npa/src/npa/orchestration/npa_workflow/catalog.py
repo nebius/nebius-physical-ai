@@ -61,6 +61,12 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.insights.record": "public lineage/metrics ingestion primitive",
     "workbench.isaac_lab.byof_repo": "public Isaac Lab BYOF primitive",
     "workbench.lerobot.eval": "public LeRobot evaluation primitive",
+    "workbench.molmoact.serve": "public MolmoAct serving primitive (config validation only; execution not implemented)",
+    "workbench.molmoact.eval": "public MolmoAct evaluation primitive (config validation only; execution not implemented)",
+    "workbench.openvla.serve": "public OpenVLA serving primitive (upstream argv planning; eval plan-only)",
+    "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
+    "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
 }
 
 
@@ -129,6 +135,9 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
+_OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
+_NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -139,6 +148,91 @@ _CONTENT_AGENTS_PIPELINE = [
 _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.encord.push": ToolEntry(
+        name="workbench.encord.push",
+        description="Register S3 media with Encord SaaS or explicitly upload a copy.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "push",
+            "--input-path",
+            "{{config.encord_media_uri}}",
+            "--integration",
+            "{{config.encord_integration}}",
+            "--folder",
+            "{{config.encord_folder}}",
+            "--dataset",
+            "{{config.encord_dataset}}",
+            "--media",
+            "{{config.encord_media_filter}}",
+            "--transfer",
+            "{{config.encord_transfer}}",
+            "--poll-timeout-seconds",
+            "{{config.encord_poll_timeout_seconds}}",
+            "--identity-sidecar",
+            "{{config.encord_identity_sidecar_uri}}",
+            "--output-path",
+            "{{config.encord_receipt_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--json",
+        ],
+        omit_flags_when_empty=(
+            "--integration",
+            "--dataset",
+            "--identity-sidecar",
+        ),
+        config_defaults={
+            "encord_integration": "",
+            "encord_dataset": "",
+            "encord_media_filter": "videos-images",
+            "encord_transfer": "register",
+            "encord_poll_timeout_seconds": "1800",
+            "encord_identity_sidecar_uri": "",
+        },
+    ),
+    "workbench.encord.pull": ToolEntry(
+        name="workbench.encord.pull",
+        description="Materialize an Encord source to S3 with exact lineage.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "pull",
+            "--source",
+            "{{config.encord_source}}",
+            "--source-id",
+            "{{config.encord_source_id}}",
+            "--output-path",
+            "{{config.encord_pull_uri}}",
+            "--label-export",
+            "{{config.encord_label_export}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--json",
+        ],
+        config_defaults={"encord_label_export": "none"},
+    ),
+    "workbench.encord.verify_roundtrip": ToolEntry(
+        name="workbench.encord.verify_roundtrip",
+        description="Verify exact Encord roundtrip identity and object integrity.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "verify-roundtrip",
+            "--receipt-uri",
+            "{{config.encord_receipt_uri}}",
+            "--manifest-uri",
+            "{{config.encord_manifest_uri}}",
+            "--output-path",
+            "{{config.encord_roundtrip_report_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--json",
+        ],
+    ),
     "workflow.paidf.prepare_images": ToolEntry(
         name="workflow.paidf.prepare_images",
         description="Validate and stage canonical real-image inputs for native PAIDF workflows.",
@@ -671,6 +765,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "viewport MP4. Inspect adapter, environment, input, metric, and rendering "
             "status with `npa workbench isaac-arena capabilities`."
         ),
+        # Omit the new option unless requested, preserving existing baked images.
+        config_defaults={"video_profile": ""},
+        omit_flags_when_empty=("--video-profile",),
         argv_template=[
             "npa",
             "workbench",
@@ -697,6 +794,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--object",
             "{{config.object}}",
             "--record-video",
+            "--video-profile",
+            "{{config.video_profile}}",
             "--run-id",
             "{{run.id}}",
         ],
@@ -1921,6 +2020,133 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.expected_compute_capability}}",
         ],
     ),
+    "workbench.molmoact.finetune": ToolEntry(
+        name="workbench.molmoact.finetune",
+        description=(
+            "Validate a MolmoAct fine-tuning config "
+            "(planning only; training not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "finetune",
+            "--model-id",
+            "{{config.model_id}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-s3-uri",
+            "{{config.training_uri}}",
+        ],
+    ),
+    "workbench.molmoact.serve": ToolEntry(
+        name="workbench.molmoact.serve",
+        description=(
+            "Validate a MolmoAct serving config "
+            "(planning only; serving not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "serve",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--port",
+            "{{config.serve_port}}",
+        ],
+    ),
+    "workbench.molmoact.eval": ToolEntry(
+        name="workbench.molmoact.eval",
+        description=(
+            "Validate a MolmoAct eval config "
+            "(planning only; evaluation not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "eval",
+            "--model-id",
+            "{{config.model_id}}",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-s3-uri",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.openvla.train": ToolEntry(
+        name="workbench.openvla.train",
+        description="Fine-tune an OpenVLA policy with OpenVLA-OFT.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "train",
+            "--model-id",
+            "{{config.model_id}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-dir",
+            "{{config.training_uri}}",
+        ],
+    ),
+    "workbench.openvla.serve": ToolEntry(
+        name="workbench.openvla.serve",
+        description="Serve an OpenVLA checkpoint with the upstream deploy script.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "serve",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+        ],
+    ),
+    "workbench.openvla.eval": ToolEntry(
+        name="workbench.openvla.eval",
+        description="Evaluate an OpenVLA policy (plan-only: rollout execution not implemented).",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "eval",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.newton.train_teacher": ToolEntry(
+        name="workbench.newton.train_teacher",
+        description="Train a teacher policy in Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "train-teacher",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+        ],
+    ),
+    "workbench.newton.generate_demos": ToolEntry(
+        name="workbench.newton.generate_demos",
+        description="Generate demonstrations using Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "generate-demos",
+            "--output-uri",
+            "{{config.demos_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+        ],
+    ),
+    "workbench.newton.eval": ToolEntry(
+        name="workbench.newton.eval",
+        description="Evaluate a policy in Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "eval",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
         name="workbench.isaac_lab.byof_repo",
         description="Compatibility alias for workbench.byof.repo.",
@@ -2781,6 +3007,37 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.antioch.run": ToolEntry(
+        name="workbench.antioch.run",
+        description=(
+            "Idempotently run a queued Antioch suite through the deployed CPU adapter, "
+            "collect verified artifacts, and publish a strict offline LeRobotDataset."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "antioch",
+            "run",
+            "--input-path",
+            "{{config.antioch_project_uri}}",
+            "--output-path",
+            "{{config.antioch_run_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--state-id",
+            "{{config.antioch_state_id}}",
+            "--robot-type",
+            "{{config.antioch_robot_type}}",
+            "--task",
+            "{{config.antioch_task}}",
+            "--suite",
+            "{{config.antioch_suite}}",
+            "--endpoint",
+            "{{config.antioch_endpoint}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.lerobot.transfer_prepare": ToolEntry(
         name="workbench.lerobot.transfer_prepare",
         description="Seal pinned PushT data, training-only statistics, and paired evaluation settings.",
@@ -3530,10 +3787,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.super_benchmark": ToolEntry(
         name="workbench.cosmos3.super_benchmark",
-        access_capabilities=("cosmos3-serving",),
+        access_capabilities=("cosmos3-super-benchmark",),
         description=(
             "Run the real fixed Cosmos3-Super eight-GPU benchmark or the isolated "
-            "one-H200 TP-1 validation, validate every MP4, and publish per-attempt "
+            "single-GPU H200/B200 TP-1 validation, validate every MP4, and publish per-attempt "
             "records."
         ),
         argv_template=[

@@ -2257,8 +2257,11 @@ class RuntimeLedger:
             workflow=workflow, run_id=run_id, api_version=api_version
         )
         if store is not None and resume:
-            existing = store.read_runtime_state()
-            if existing is not None and existing.run_id == run_id:
+            existing = store.read_runtime_state(
+                expected_workflow=workflow,
+                expected_run_id=run_id,
+            )
+            if existing is not None:
                 self.state = existing
                 self.state.status = "running"
 

@@ -70,6 +70,8 @@ def _authoring_packet(storyboard, assets, overrides):
             "Preserve input/output/reference distinctions and limitations; separate runs are not one continuous pipeline.",
             "Do not imply task success, measured ROI or deployment readiness without supporting evidence.",
             "Write concise narration that fits each shot; change the script and pacing to fit the requested duration.",
+            "Pair concrete spoken actions with visible actions; captions repeating a claim are not visual evidence.",
+            "Use studio review on the final film to assess each narration cue against actual encoded frames.",
             "Include the complete brief in storyboard.brief and make scene durations sum to duration_seconds.",
             "Review the script and rendered film for brief compliance; hashing a brief does not verify its meaning.",
         ],

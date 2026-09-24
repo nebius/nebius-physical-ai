@@ -15,6 +15,8 @@ artifacts. Start with a runbook that matches the result you want.
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
+| Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |
 | Fine-tune XR1 on Antioch robot demonstrations | [Antioch pipeline](partners/antioch/README.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
 | Package your own repository | [BYOF](../docs/workbench/cookbooks/byof-isaac-lab/README.md) |
 
@@ -102,8 +104,10 @@ workflow YAMLs remain unchanged from `main`.
 
 ### Partner workflows
 
-| Spec | Notes |
+| Entry | Notes |
 | --- | --- |
+| [OpenPI live pickup runbook](partners/antioch/openpi-live-pickup.md) | Operator-managed Antioch simulation ↔ pretrained π0.5 inference on Nebius, with finite physical checks and native recording. Uses the live deployment commands. |
+| [`antioch-offline-policy-train.yaml`](partners/antioch/antioch-offline-policy-train.yaml) | Antioch trajectory collection → completed LeRobotDataset v3 → ACT training. Defaults exercise the cartpole data/checkpoint path with one optimizer step. |
 | [`xr1-antioch-finetune.yaml`](partners/antioch/xr1-antioch-finetune.yaml) | [Antioch pipeline](partners/antioch/README.md): robot demonstrations → Nebius S3 → native XR1 fine-tuning on eight RTX PRO 6000 GPUs → Antioch held-out evaluation → results and recordings in S3. |
 
 ### Testing and reference workflows
@@ -126,6 +130,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos3-super-b200-benchmark.yaml`](testing/cosmos3-super-b200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU B200 node |
 | [`cosmos3-super-h200-benchmark.yaml`](testing/cosmos3-super-h200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU H200 node |
 | [`cosmos3-super-h200-single-gpu.yaml`](testing/cosmos3-super-h200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one H200; distinct from node-throughput benchmarks |
+| [`cosmos3-super-b200-single-gpu.yaml`](testing/cosmos3-super-b200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one B200; distinct from node-throughput benchmarks |
 | [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
 | [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
