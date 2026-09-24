@@ -106,6 +106,62 @@ def test_canary_rejects_unpinned_scenario_transport() -> None:
         )
 
 
+@pytest.mark.parametrize("value", ["false", "true"])
+def test_canary_rejects_mutually_truthy_success_evidence(value: str) -> None:
+    report = _report(stable=True)
+    report["per_env"][0]["success"] = value
+    report["per_env"][0]["details"]["placement_stable"] = value
+    with pytest.raises(ValueError, match="row success must be a literal boolean"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+def test_canary_rejects_non_boolean_placement_stability() -> None:
+    report = _report(stable=True)
+    report["per_env"][0]["details"]["placement_stable"] = "true"
+    with pytest.raises(ValueError, match="placement_stable must be a literal boolean"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    [
+        ("policy_inference_provenance", "loaded_for_inference"),
+        ("policy_inference_provenance", "actor_is_learned"),
+        ("policy_inference_provenance", "scripted_post_actor_controller"),
+        ("scenario_input_provenance", "content_addressed"),
+    ],
+)
+def test_canary_rejects_non_boolean_provenance(section: str, field: str) -> None:
+    report = _report(stable=True)
+    report[section][field] = "false"
+    with pytest.raises(ValueError, match=f"{field} must be a literal boolean"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+@pytest.mark.parametrize("field", ["reach", "contact", "stable_grasp", "lift", "place"])
+def test_canary_rejects_non_boolean_decomposed_stage(field: str) -> None:
+    report = _report(stable=True)
+    report["per_env"][0]["details"][field] = "false"
+    with pytest.raises(ValueError, match=f"decomposed stage {field}"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
 def test_canary_rejects_any_scripted_post_actor_controller() -> None:
     report = _report(stable=True)
     inference = report["policy_inference_provenance"]

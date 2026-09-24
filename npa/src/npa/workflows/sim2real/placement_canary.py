@@ -17,6 +17,12 @@ CANARY_SCHEMA = "npa.sim2real.placement_canary.v1"
 STRICT_DISTANCE_M = 0.05
 
 
+def _require_boolean(value: Any, *, field: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"placement canary {field} must be a literal boolean")
+    return value
+
+
 def assess_placement_report(
     report: dict[str, Any],
     *,
@@ -30,16 +36,26 @@ def assess_placement_report(
     if report.get("policy_checkpoint") != checkpoint_uri:
         raise ValueError("placement canary checkpoint lineage mismatch")
     inference = dict(report.get("policy_inference_provenance") or {})
+    loaded_for_inference = _require_boolean(
+        inference.get("loaded_for_inference"), field="loaded_for_inference"
+    )
+    actor_is_learned = _require_boolean(
+        inference.get("actor_is_learned"), field="actor_is_learned"
+    )
+    scripted_controller = _require_boolean(
+        inference.get("scripted_post_actor_controller"),
+        field="scripted_post_actor_controller",
+    )
     if (
         inference.get("checkpoint_uri") != checkpoint_uri
-        or not inference.get("loaded_for_inference")
+        or not loaded_for_inference
         or not inference.get("checkpoint_sha256")
     ):
         raise ValueError("placement canary lacks loaded checkpoint byte provenance")
     if (
         inference.get("policy_composition") != "learned_actor_only"
-        or inference.get("actor_is_learned") is not True
-        or inference.get("scripted_post_actor_controller") is not False
+        or not actor_is_learned
+        or scripted_controller
         or inference.get("post_actor_controller") is not None
     ):
         raise ValueError("placement canary requires learned-actor-only provenance")
@@ -62,29 +78,37 @@ def assess_placement_report(
             "placement canary scenario digests must be non-empty and unique"
         )
     strict_rows = []
+    stages = {name: 0 for name in ("reach", "contact", "stable_grasp", "lift", "place")}
     for row in rows:
         details = dict(row.get("details") or {})
+        success = _require_boolean(row.get("success"), field="row success")
+        stable = _require_boolean(
+            details.get("placement_stable", details.get("place")),
+            field="placement_stable",
+        )
+        for name in stages:
+            stages[name] += _require_boolean(
+                details.get(name), field=f"decomposed stage {name}"
+            )
         distance = float(details.get("object_goal_distance_m", float("inf")))
-        stable = bool(details.get("placement_stable", details.get("place", False)))
-        if bool(row.get("success")) != (stable and distance < STRICT_DISTANCE_M):
+        if success != (stable and distance < STRICT_DISTANCE_M):
             raise ValueError(
                 "placement canary strict success semantics are inconsistent"
             )
         if stable and distance < STRICT_DISTANCE_M:
             strict_rows.append(row)
-    stages = {
-        name: sum(bool((row.get("details") or {}).get(name)) for row in rows)
-        for name in ("reach", "contact", "stable_grasp", "lift", "place")
-    }
     invocation = dict(report.get("component_invocation") or {})
     provenance = dict(invocation.get("gpu_provenance") or {})
     if not provenance.get("image_digests"):
         raise ValueError("placement canary lacks immutable runtime image provenance")
     scenario_input = dict(report.get("scenario_input_provenance") or {})
     scenario_digest = str(scenario_input.get("sha256") or "")
+    content_addressed = _require_boolean(
+        scenario_input.get("content_addressed"), field="content_addressed"
+    )
     if (
         scenario_input.get("transport") != "s3_sha256"
-        or not scenario_input.get("content_addressed")
+        or not content_addressed
         or int(scenario_input.get("scenario_count") or 0) != expected_scenarios
         or int(scenario_input.get("size_bytes") or 0) <= 0
         or not str(scenario_input.get("uri") or "").endswith(
