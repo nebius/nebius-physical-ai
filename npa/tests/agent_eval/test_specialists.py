@@ -714,7 +714,8 @@ def test_backup_uses_its_own_endpoint_and_credential(configuration, monkeypatch)
         ]
     )
 
-    def client(*, config):
+    def client(*, config, retry_attempts):
+        assert retry_attempts == 1
         configs.append(config)
         return _Client([next(responses)])
 

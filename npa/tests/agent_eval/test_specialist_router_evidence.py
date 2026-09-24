@@ -343,3 +343,29 @@ def test_missing_modern_invocation_records_do_not_become_legacy_complete(
     result = evidence._astra_usage(tmp_path)
     assert result["usage_complete"] is False
     assert result["invocations"]["verification"] == "missing"
+
+
+def test_provider_failure_remains_incomplete_after_successful_fallback(evidence):
+    failure = {
+        "type": "provider_failure",
+        "model": "unavailable-model",
+        "status_code": 404,
+        "usage": {},
+        "usage_missing": True,
+        "request_metrics": {"attempts": 1},
+    }
+    response = {
+        "type": "model",
+        "model": "backup-model",
+        "accepted": True,
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+    }
+    task = {
+        "events": [failure, {"type": "model_fallback"}, response],
+        "status": "completed",
+        "calls": [],
+    }
+    result = evidence._specialist_usage({"task": task})
+    assert result["usage_complete"] is False
+    assert result["failures"] == [{"task_id": "task", **failure}]
+    assert result["responses"] == [{"task_id": "task", **response}]

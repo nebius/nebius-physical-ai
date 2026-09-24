@@ -398,3 +398,35 @@ def test_historical_receipts_do_not_acquire_router_claims(
     report = _summarize(accounting, evidence, execution, prices)
     assert "router" not in report
     assert report["estimated_cost_usd"] == pytest.approx(0.00225)
+
+
+def test_provider_failure_is_unpriced_even_when_fallback_completes(
+    accounting, evidence, execution, prices
+):
+    evidence["specialists"]["responses"] = [_response("specialist", True)]
+    evidence["specialists"]["failures"] = [
+        {
+            "type": "provider_failure",
+            "model": "unavailable",
+            "status_code": 404,
+            "usage_missing": True,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "request_metrics": {"attempts": 1},
+        }
+    ]
+    prices["models"]["unavailable"] = prices["models"]["specialist"]
+    report = _summarize(accounting, evidence, execution, prices)
+    assert report["usage_complete"] is False
+    assert report["estimated_cost_range_usd"] is None
+    assert "provider_failure_usage_unknown" in report["incomplete_reasons"]
+    failed = report["models"]["unavailable"]
+    assert failed["failed_specialist_requests"] == 1
+    assert failed["recorded_api_calls"] is None
+    assert failed["tokens"]["input_tokens"] is None
+    assert failed["priced_recorded_cost_usd"] is None
+    assert failed["accepted_specialist_responses"] == 0
+    assert failed["rejected_specialist_responses"] == 0
+    assert report["models"]["specialist"]["accepted_specialist_responses"] == 1
+    assert report["totals"]["priced_recorded_cost_usd"]["minimum"] == pytest.approx(
+        0.00253
+    )

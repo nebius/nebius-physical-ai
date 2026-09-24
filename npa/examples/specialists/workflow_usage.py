@@ -67,7 +67,17 @@ def _records(usage, coordinator_model):
                 _tokens(response.get("usage")),
             )
         )
-    return records + _router_records(usage)
+    return records + _provider_failures(usage) + _router_records(usage)
+
+
+def _provider_failures(usage):
+    records = []
+    for failure in usage.get("specialists", {}).get("failures", []):
+        model = failure.get("model") or "<unreported-model>"
+        if not isinstance(model, str):
+            raise ValueError("model identifiers must be strings")
+        records.append((model, "specialist-request-failure", "unknown", _tokens(None)))
+    return records
 
 
 def _router_records(usage):
@@ -189,7 +199,7 @@ def _cost_totals(records, prices):
 def _model_summary(records, price):
     kinds = sorted({record[1] for record in records})
     unknown_calls = "coordinator-turn" in kinds or any(
-        record[1] == "router-request" and record[2] == "unknown" for record in records
+        record[2] == "unknown" for record in records
     )
     return {
         "usage_records": len(records),
@@ -197,6 +207,15 @@ def _model_summary(records, price):
         "recorded_api_calls": None if unknown_calls else len(records),
         "accepted_specialist_responses": sum(record[2] is True for record in records),
         "rejected_specialist_responses": sum(record[2] is False for record in records),
+        **(
+            {
+                "failed_specialist_requests": sum(
+                    record[1] == "specialist-request-failure" for record in records
+                )
+            }
+            if "specialist-request-failure" in kinds
+            else {}
+        ),
         "cache_policy": price.get("cache_policy") if price else None,
         "rate_options": len(price["rate_options"]) if price else 0,
         **_token_totals(records),
@@ -206,6 +225,8 @@ def _model_summary(records, price):
 
 def _completeness(usage, execution, records):
     reasons = []
+    if any(record[1] == "specialist-request-failure" for record in records):
+        reasons.append("provider_failure_usage_unknown")
     sections = (
         ("astra", "specialists", "router")
         if "router" in usage

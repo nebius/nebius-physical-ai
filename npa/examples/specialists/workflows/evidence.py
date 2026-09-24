@@ -153,10 +153,13 @@ def _astra_usage(directory, arm="astra-only"):
 
 
 def _specialist_usage(receipts):
-    responses, complete = [], True
+    responses, failures, complete = [], [], True
     for task_id, task in receipts.items():
         previous = {}
         for event in task["events"]:
+            if event["type"] == "provider_failure":
+                failures.append({"task_id": task_id, **event})
+                complete = False
             if event["type"] == "needs_attention" and not (
                 previous.get("type") == "model" and previous.get("accepted") is False
             ):
@@ -173,7 +176,7 @@ def _specialist_usage(receipts):
             call["status"] != "completed" for call in task["calls"]
         ):
             complete = False
-    return {"responses": responses, "usage_complete": complete}
+    return {"responses": responses, "failures": failures, "usage_complete": complete}
 
 
 def _router_attempted(route):

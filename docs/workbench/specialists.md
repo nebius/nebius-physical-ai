@@ -262,12 +262,22 @@ For automatic recovery, configure `fallback_models` as an ordered list of
 explicit endpoints. Each entry accepts only `model`, `base_url`, `key_env` and
 `model_options`, inheriting the endpoint defaults when omitted. It cannot change
 workspace or tool grants. Truncated generations, malformed native calls, empty
-answers or missing completion checks advance to the next configured model at a
+answers, missing completion checks or a confirmed HTTP 404 endpoint response
+advance to the next configured model at a
 durable boundary. That model stays active for the rest of the task, including
 after restart. The monitor records the handoff, reason and all reported usage.
 Exhausted candidates leave the task in `needs_attention`. There are no implicit
 backup models. Identity mismatches, provider refusals, transport failures and
 uncertain tool effects do not trigger this handoff.
+
+Specialists disable automatic client transport retries. A failed provider request
+adds a `provider_failure` activity event with its model, confirmed HTTP status
+and allowlisted request counters/timing. Response bodies, headers and raw
+exception text are excluded. Missing token usage remains explicit even when
+a later backup completes the task; it must not become a zero-cost request.
+Transport failures and unknown outcomes require operator inspection rather
+than an automatic repeat. A 404 handoff uses only an already configured backup
+under the same workspace, tools and conversation.
 
 Backups receive the authorized task's conversation and tool results; configure
 only providers permitted to receive that data. Provider-specific reasoning

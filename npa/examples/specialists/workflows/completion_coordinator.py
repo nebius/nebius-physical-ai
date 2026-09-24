@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 
 from npa.agent_backend.specialists.reports import task_report_for_store
@@ -61,7 +62,48 @@ def _active_tasks(team):
 
 
 def _reports(team):
-    return {task["id"]: team.task_report(task["id"]) for task in team.store._list()}
+    return {
+        task["id"]: _report_times(team.store, team.task_report(task["id"]))
+        for task in team.store._list()
+    }
+
+
+def _report_times(store, report):
+    events = store._events(report["task_id"])
+    edits = [
+        event["at"]
+        for event in events
+        if event.get("type") == "tool"
+        and event.get("name") == "edit_file"
+        and event.get("result", {}).get("ok") is True
+    ]
+    operations = {
+        event["call_id"]: event["at"]
+        for event in events
+        if event.get("type") == "tool" and event.get("name") == "run_operation"
+    }
+    return {
+        **report,
+        "failure_history": _failure_history(events),
+        "latest_edit_epoch": max(edits, default=0),
+        "required_operation_epochs": {
+            name: operations.get(receipt["call_id"]) if receipt else None
+            for name, receipt in report.get("required_operations", {}).items()
+        },
+    }
+
+
+def _failure_history(events):
+    return [
+        {
+            "type": event["type"],
+            "at": event["at"],
+            "error": str(event.get("error", event.get("previous_error", "")))[:512],
+            "previous_status": event.get("previous_status"),
+        }
+        for event in events
+        if event.get("type") in {"needs_attention", "coordinator_takeover_requested"}
+    ]
 
 
 def _coordinator_reports(team, directory):
@@ -70,7 +112,9 @@ def _coordinator_reports(team, directory):
     for profile in team.config.profiles:
         identity = "coordinator-" + profile.name
         if store._calls(identity):
-            reports[profile.name] = task_report_for_store(team.config, store, identity)
+            reports[profile.name] = _report_times(
+                store, task_report_for_store(team.config, store, identity)
+            )
     return reports
 
 
@@ -141,6 +185,147 @@ def _wait(team, directory, events, seen):
             return reports
 
 
+def _checks_pass(report, profile, after=0):
+    checks = report.get("required_operations", {})
+    return (
+        bool(profile.required_operations)
+        and set(checks) == set(profile.required_operations)
+        and report.get("specialist") == profile.name
+        and report.get("required_operations_passed") is True
+        and report.get("policy_matches") is True
+        and report.get("source_matches_last_edit") is True
+        and report.get("source_binding") == "recorded_edits_only"
+        and report.get("uncertain_calls") == []
+        and _checks_after(report, checks, after)
+        and all(
+            receipt
+            and receipt.get("ok") is True
+            and receipt.get("returncode") == 0
+            and receipt.get("receipt_sha256")
+            for receipt in checks.values()
+        )
+    )
+
+
+def _checks_after(report, checks, after):
+    completed = report.get("required_operation_epochs", {})
+    return all(
+        isinstance(completed.get(name), (int, float))
+        and math.isfinite(completed[name])
+        and completed[name] >= after
+        for name in checks
+    )
+
+
+def _recovery_covers(worker, recovery, profile, after):
+    if (
+        worker["status"] != "cancelled"
+        or recovery.get("task_id") != "coordinator-" + profile.name
+        or recovery.get("paused")
+        or not _checks_pass(recovery, profile, after)
+    ):
+        return False
+    repaired = {item["path"]: item for item in recovery.get("changes", [])}
+    return all(
+        change.get("matches_last_edit") is True
+        or (
+            change["path"] in repaired
+            and repaired[change["path"]].get("matches_last_edit") is True
+            and change.get("sha256") == repaired[change["path"]].get("sha256")
+        )
+        for change in worker.get("changes", [])
+    )
+
+
+def _assignment_receipts(profile, workers, recovery):
+    if not workers:
+        return None
+    if recovery and (
+        recovery.get("uncertain_calls") != []
+        or recovery.get("policy_matches") is not True
+        or recovery.get("source_matches_last_edit") is not True
+        or (
+            any(recovery.get("required_operations", {}).values())
+            and not _checks_pass(recovery, profile)
+        )
+    ):
+        return None
+    after = max(
+        report.get("latest_edit_epoch", 0) for report in [*workers.values(), recovery]
+    )
+    accepted = {}
+    for identity, report in workers.items():
+        if (
+            report.get("paused")
+            or report.get("policy_matches") is not True
+            or report.get("uncertain_calls") != []
+        ):
+            return None
+        if report["status"] == "completed" and _checks_pass(report, profile, after):
+            accepted[identity] = "worker"
+        elif _recovery_covers(report, recovery, profile, after):
+            accepted[identity] = "coordinator_recovery"
+        else:
+            return None
+    return accepted
+
+
+def _complete(team, directory, reports, coordinator_reports):
+    profiles = {profile.name: profile for profile in team.config.profiles}
+    if not profiles or any(
+        report.get("specialist") not in profiles for report in reports.values()
+    ):
+        return False
+    assignments = {}
+    for name, profile in profiles.items():
+        workers = {
+            identity: report
+            for identity, report in reports.items()
+            if report.get("specialist") == name
+        }
+        accepted = _assignment_receipts(
+            profile, workers, coordinator_reports.get(name, {})
+        )
+        if not accepted:
+            return False
+        assignments[name] = accepted
+    _write_json(
+        directory / "completion-result.json",
+        {
+            "status": "completed",
+            "acceptance_scope": "configured_required_operations",
+            "source_binding": "recorded_edits_only",
+            "completed_epoch": time.time(),
+            "assignments": assignments,
+            "worker_reports": reports,
+            "coordinator_reports": coordinator_reports,
+        },
+    )
+    return True
+
+
+def _review_loop(team, arguments, common, policies, invoke):
+    directory = arguments[1]
+    events, seen = [], {}
+    while True:
+        reports = _wait(team, directory, events, seen)
+        recovery = _coordinator_reports(team, directory)
+        if _complete(team, directory, reports, recovery):
+            return 0
+        prompt = _review_prompt(common, policies, reports, recovery)
+        code = invoke(*arguments, prompt, phase="review")
+        if code:
+            return code
+        current = _reports(team)
+        if _complete(team, directory, current, _coordinator_reports(team, directory)):
+            return 0
+        seen.update(
+            {identity: _report_identity(report) for identity, report in reports.items()}
+        )
+        if not _active_tasks(team) and not _new_attention(current, seen):
+            return 0
+
+
 def coordinate(team, config, directory, effort, common, policies, invoke):
     """Delegate once, wait without a model, and review compact evidence in fresh turns.
 
@@ -160,17 +345,4 @@ def coordinate(team, config, directory, effort, common, policies, invoke):
     code = invoke(*arguments, prompt, phase="delegate")
     if code or not team.store._list():
         return code or 1
-    events, seen = [], {}
-    while True:
-        reports = _wait(team, directory, events, seen)
-        prompt = _review_prompt(
-            common, policies, reports, _coordinator_reports(team, directory)
-        )
-        code = invoke(*arguments, prompt, phase="review")
-        seen.update(
-            {identity: _report_identity(report) for identity, report in reports.items()}
-        )
-        if code or (
-            not _active_tasks(team) and not _new_attention(_reports(team), seen)
-        ):
-            return code
+    return _review_loop(team, arguments, common, policies, invoke)

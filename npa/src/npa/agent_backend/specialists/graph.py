@@ -15,6 +15,7 @@ from .recovery import _handoff, _RejectedGeneration, _require_operations
 from .waiting import _tool_step
 from .routing import _endpoints
 from .context import model_messages
+from .provider import _request_model
 
 
 class _State(TypedDict, total=False):
@@ -116,7 +117,8 @@ def _client(profile):
     if not key:
         raise ValueError("specialist model credential is unavailable")
     return TokenFactoryClient(
-        config=TokenFactoryConfig(base_url=profile.base_url, api_key=key)
+        config=TokenFactoryConfig(base_url=profile.base_url, api_key=key),
+        retry_attempts=1,
     )
 
 
@@ -127,12 +129,14 @@ def _model(state, profile, tools, client):
         "tools": tools.schemas(),
         "parallel_tool_calls": False,
     }
-    response = (client or _client(endpoint)).chat_completion(
-        model=endpoint.model,
-        messages=_request_messages(state, profile, tools),
-        extra=extra,
-    )
     try:
+        response = _request_model(
+            client or _client(endpoint),
+            endpoint,
+            tools,
+            messages=_request_messages(state, profile, tools),
+            extra=extra,
+        )
         message, pending = _recorded_response(response, endpoint.model, tools, state)
     except _RejectedGeneration as error:
         return _handoff(state, profile, tools, error)

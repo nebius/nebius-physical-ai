@@ -77,8 +77,10 @@ def _recovery_instruction(error):
     return {
         "role": "user",
         "content": (
-            "Workbench runtime recovery: the previous generation was rejected before "
-            "any of its tools executed. Reason: " + str(error) + ". Continue from the "
+            "Workbench runtime recovery: the previous request did not yield an accepted "
+            "response and none of its proposed tools executed. Reason: "
+            + str(error)
+            + ". Continue from the "
             "recorded tool results and current files; preserve completed work. Use native "
             "tool calls, inspect results, and satisfy the configured completion checks."
         ),

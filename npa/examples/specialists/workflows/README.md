@@ -36,11 +36,21 @@ The default `--coordination completion` separates hybrid planning from review.
 Astra delegates complete tasks and exits its planning turn. Python then waits
 for all workers to finish or one to need attention without a running Astra
 process or model calls. Intermediate successful completions accumulate without
-another coordinator call. A fresh Astra turn receives the common requirements, workspace
-policies and compact host-generated task reports. It reviews verification
-receipts or recovers a failed worker; unrelated active workers continue. Full
-worker traces stay in the private journal. A model's completion message alone
-does not establish artifact acceptance.
+another coordinator call. When every configured workspace has an assignment
+whose nonempty required operations passed, the host records
+`completion-result.json` and finishes without a redundant Astra success review.
+The receipts must match the current policy and recorded edits, with no unresolved
+effects. This establishes the configured operation contract; it does not judge
+additional semantic goals or untracked repository files.
+
+Missing assignments, absent or stale checks, and failed workers still enter a
+fresh Astra review with the common requirements, workspace policies and compact
+host-generated reports. Unrelated active workers continue. After takeover, fresh
+checks from that same workspace's coordinator journal can resolve a cancelled
+worker's assignment without another review. The completion result preserves the
+original worker failures alongside recovery evidence. Full worker traces stay
+in the private journal. A model's completion message alone does not establish
+artifact acceptance.
 
 Use `--coordination continuous` to reproduce the original single-conversation
 supervisor. The baseline performs the same task through its direct tools in
@@ -163,6 +173,8 @@ The output directory retains:
   digest and source hashes; `coordinator-config.json` records the executed argv.
 - `codex.jsonl` and `codex.stderr`: every observed Astra event and diagnostic.
 - `coordinator-end-task-receipts.json`: worker state when Astra exits.
+- `completion-result.json`: host-accepted required-operation contracts and the
+  worker/recovery reports supporting them, when the automatic completion gate passes.
 - `task-receipts.json` and `coordinator-receipts.json`: final timestamped model,
   tool, delegation and observation receipts, including failures.
 - `usage.json`: each Astra turn and every specialist response, including rejected
