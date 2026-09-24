@@ -787,6 +787,8 @@ states:
             "unit",
             "--run-id",
             "unit-run",
+            "--isolated-config-dir",
+            str(tmp_path / "isolated-controller"),
             "--infra",
             "k8s/unit-context",
             "--s3-bucket",
@@ -808,6 +810,7 @@ states:
     assert provider.s3.calls[0][1] == "cli-output"
     assert provider.s3.calls[0][2].startswith("cli-prefix/")
     launch.assert_not_called()
+    assert not (tmp_path / "isolated-controller").exists()
     assert "private-provider-text" not in result.output
 
 
