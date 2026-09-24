@@ -57,6 +57,9 @@ def _build_scene(start_x: float, start_y: float):
         position=[start_x, start_y, 0.8],
         orientation=[1.0, 0.0, 0.0, 0.0],
     )
+    # The policy asset uses its own training timestep and decimation. The
+    # standalone example's fixed 200 Hz changes the loaded policy's control rate.
+    SimulationManager.set_physics_dt(controller._dt)
     return controller
 
 

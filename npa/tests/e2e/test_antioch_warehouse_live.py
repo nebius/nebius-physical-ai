@@ -48,6 +48,8 @@ def _verify_motion(evidence, parameters):
     assert metrics["maximum_joint_range_rad"] > 0.2
     assert metrics["displacement_m"] > 1.0
     assert metrics["policy_steps"] > 0
+    assert metrics["physics_dt_s"] == pytest.approx(metrics["policy_physics_dt_s"])
+    assert metrics["policy_decimation"] > 0
     assert metrics["minimum_frame_std"] > 10
     expected = round(parameters["seconds"] * 25)
     assert metrics["frames"] == metrics["expected_frames"] == expected
@@ -60,6 +62,9 @@ def _verify_motion(evidence, parameters):
     clocks = np.asarray(evidence["camera_timestamps"])
     assert clocks.shape == (expected, 2)
     assert (np.diff(clocks, axis=0) > 0).all()
+    assert np.diff(clocks, axis=0) == pytest.approx(
+        np.full((expected - 1, 2), 1 / 25), abs=1e-5
+    )
 
 
 def _verify_video(data, parameters):

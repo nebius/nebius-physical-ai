@@ -55,7 +55,7 @@ class _Camera:
             target = position + np.array([1.0, 0.0, 0.0])
         else:
             angle = -2.2 + 0.045 * seconds
-            eye = position + np.array([3.6 * np.cos(angle), 3.6 * np.sin(angle), 1.6])
+            eye = position + np.array([3.6 * np.cos(angle), 3.6 * np.sin(angle), 1.0])
             target = position + np.array([0.35, 0.0, 0.1])
         _look_at(self.stage, self.path, eye, target)
 

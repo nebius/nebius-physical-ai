@@ -55,11 +55,16 @@ def _publish(
     samples: list[dict],
     recording,
     expected: int,
-    policy_steps: int,
+    stepper,
     moving: bool,
 ) -> None:
+    from isaacsim.core.simulation_manager import SimulationManager
+
     metrics = _summarize(samples, recording.frames, expected)
-    metrics["policy_steps"] = policy_steps
+    metrics["policy_steps"] = stepper.steps
+    metrics["physics_dt_s"] = SimulationManager.get_physics_dt()
+    metrics["policy_physics_dt_s"] = stepper.controller._dt
+    metrics["policy_decimation"] = stepper.controller._decimation
     metrics["minimum_frame_std"] = min(recording.pixel_variances, default=0.0)
     payload = {
         "metrics": metrics,

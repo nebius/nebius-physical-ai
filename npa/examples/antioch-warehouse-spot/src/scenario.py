@@ -78,9 +78,7 @@ def _run_patrol(run, seconds, speed, width, start_x, start_y, view):
     finally:
         recording.close()
         SimulationManager.deregister_callback(callback)
-    _publish(
-        run, folder, samples, recording, round(seconds * 25), stepper.steps, speed > 0
-    )
+    _publish(run, folder, samples, recording, round(seconds * 25), stepper, speed > 0)
 
 
 @antioch.scenario(
@@ -88,7 +86,7 @@ def _run_patrol(run, seconds, speed, width, start_x, start_y, view):
     tags=["warehouse", "quadruped", "film"],
     capture=False,
     config=antioch.SimulationConfig(
-        physics_dt=1 / 200, render_dt=1 / 25, renderer_quality="quality", stream=False
+        physics_dt=1 / 500, render_dt=1 / 25, renderer_quality="quality", stream=False
     ),
 )
 def warehouse_spot_patrol(

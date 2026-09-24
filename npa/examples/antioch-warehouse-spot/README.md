@@ -138,3 +138,9 @@ npa workbench antioch cancel \
 
 The project uses the upstream policy class directly. Robot, environment and
 policy payloads are not included in this repository.
+
+The native simulation loop reads the physics timestep from the loaded policy
+configuration. The current Spot asset uses 0.002-second physics steps and a
+decimation of 10, giving 50 Hz policy updates. The camera records at 25 fps.
+Using a hardcoded 200 Hz physics rate with that asset changes its control rate
+and can destabilize the robot.
