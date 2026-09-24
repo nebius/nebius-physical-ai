@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 
 from pydantic import BaseModel, Field
@@ -56,8 +57,8 @@ def deploy(
         ValueError: No authorized S3 roots were supplied.
     """
     manifest = _manifest(request)
+    command = ["kubectl"] + (["--kubeconfig", kubeconfig] if kubeconfig else [])
     if not dry_run:
-        command = ["kubectl"] + (["--kubeconfig", kubeconfig] if kubeconfig else [])
         result = subprocess.run(
             command + ["apply", "-f", "-"],
             input=json.dumps(manifest),
@@ -71,7 +72,16 @@ def deploy(
     return {
         "status": "planned" if dry_run else "applied",
         "manifest": manifest,
-        "port_forward": f"kubectl -n {request.namespace} port-forward service/{request.name} 8080:8080",
+        "port_forward": shlex.join(
+            command
+            + [
+                "-n",
+                request.namespace,
+                "port-forward",
+                f"service/{request.name}",
+                "8080:8080",
+            ]
+        ),
     }
 
 

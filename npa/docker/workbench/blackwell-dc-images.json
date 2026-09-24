@@ -53,6 +53,15 @@
   },
   "images": [
     {
+      "name": "npa-mjlab",
+      "dockerfile": "mjlab/Dockerfile",
+      "build_script": "mjlab/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "smoke": "npa.smoke.test_mjlab_functional: native CUDA Cartpole PPO update, checkpoint-backed complete episodes and checked ONNX policy export.",
+      "notes": "MJLab 1.6.0 has a locked CUDA 12.8 runtime recipe, but no image has been built or run on a GPU. Public publication remains quarantined. B200/B300 and other GPU families are unvalidated."
+    },
+    {
       "name": "npa-sam3",
       "dockerfile": "sam3/Dockerfile",
       "verdict": "unknown",

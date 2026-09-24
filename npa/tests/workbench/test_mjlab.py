@@ -246,7 +246,8 @@ def test_deploy_renders_private_service_without_credentials(monkeypatch):
         allowed_s3_roots=OUTPUT,
         accelerator="test-gpu",
     )
-    result = deploy(request, dry_run=True)
+    result = deploy(request, kubeconfig="/tmp/test kubeconfig", dry_run=True)
+    assert "--kubeconfig '/tmp/test kubeconfig'" in result["port_forward"]
     deployment, service = result["manifest"]["items"]
     assert service["spec"]["type"] == "ClusterIP"
     container = deployment["spec"]["template"]["spec"]["containers"][0]

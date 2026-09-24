@@ -156,12 +156,7 @@ def test_sonic_workflow_materializer_supports_docker_payload_mode() -> None:
 
 
 def test_sonic_locomotion_spec_runs_native_policy_stages_in_order() -> None:
-    """Replaces the retired template's serial/task-name assertions.
-
-    The template said `execution: serial` over three named tasks. The spec's equivalent is a
-    plan whose steps carry the three toolRefs in the same order, which is a stronger statement:
-    it is what the engine will actually run, not what a document claims.
-    """
+    """Keep SONIC checkpoints on their native export/evaluation path in stage order."""
 
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
