@@ -149,10 +149,13 @@ def training_config_from_mapping(values: Mapping[str, Any] | None) -> TrainingCo
     payload = dict(values or {})
     checkpoint = dict(payload.get("checkpoint_s3") or {})
     wandb = dict(payload.get("wandb") or {})
+    wandb_enabled = wandb.get("enabled", False)
+    if not isinstance(wandb_enabled, bool):
+        raise TrainingConfigError("wandb.enabled must be a boolean")
     return build_training_config(
         data_path=str(payload.get("data_path") or ""),
         overrides=_overrides_from_value(payload.get("overrides")),
-        wandb_enabled=bool(wandb.get("enabled", False)),
+        wandb_enabled=wandb_enabled,
         wandb_project=str(wandb.get("project") or ""),
         wandb_run_name=str(wandb.get("run_name") or ""),
         wandb_mode=str(wandb.get("mode") or "offline"),
