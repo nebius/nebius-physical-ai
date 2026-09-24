@@ -19,6 +19,14 @@ entrypoint that forwards orchestrator arguments. Compliant first-party images
 record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
 config, with Dockerfile behavior covered by build tests.
 
+Isaac-family builds also bake SkyPilot's early APT package set: `curl`, `fuse`,
+`netcat-openbsd`, `rsync`, and `wget`. Worker startup can then use those tools
+when an immutable Ubuntu snapshot is temporarily unavailable. The `fuse`
+package supplies the userspace helper only; it does not grant `/dev/fuse`, Linux
+capabilities, or a workload mount. A source change affects future image builds
+only. Existing image digests retain their original contents until a rebuilt,
+validated digest is explicitly promoted and recorded in the release manifest.
+
 The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
 passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and
