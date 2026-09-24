@@ -1071,7 +1071,7 @@ def _episode_record(
         }
     )
     usage = response.get("usage", {}) if isinstance(response, dict) else {}
-    grounded = bool(response.get("grounded")) if isinstance(response, dict) else False
+    grounded = response.get("grounded") is True if isinstance(response, dict) else False
     routing: dict[str, Any] = {
         "grounded": grounded,
         "tier": str(response.get("tier") or "") if isinstance(response, dict) else "",
