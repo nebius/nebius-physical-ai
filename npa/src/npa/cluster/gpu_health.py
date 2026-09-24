@@ -258,14 +258,14 @@ def _pod_errors(pods: list[dict[str, Any]], namespace: str) -> list[str]:
         if (
             phase != "Running"
             or not container_statuses
-            or not all(bool(item.get("ready")) for item in container_statuses)
+            or not all(item.get("ready") is True for item in container_statuses)
         ):
             waiting = [
                 str(
                     ((item.get("state") or {}).get("waiting") or {}).get("reason") or ""
                 )
                 for item in container_statuses
-                if not item.get("ready")
+                if item.get("ready") is not True
             ]
             detail = ", ".join(filter(None, waiting))
             errors.append(
