@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,43 @@ from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SPECS = REPO_ROOT / "workflows" / "testing"
+SCHEMA = (
+    REPO_ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "orchestration"
+    / "npa_workflow"
+    / "schema"
+    / "npa.workflow.v0.0.1.schema.json"
+)
+
+
+def _write_state_boolean_spec(
+    tmp_path: Path, field: str | None = None, value: str | None = None
+) -> Path:
+    state_field = "" if field is None else f"    {field}: {value}\n"
+    path = tmp_path / "state-boolean.yaml"
+    path.write_text(
+        f"""\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: state-boolean
+initial: work
+states:
+  work:
+    run:
+      shell: echo work
+{state_field}    next: done
+  done:
+    run:
+      shell: echo done
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.mark.parametrize(
@@ -249,6 +287,45 @@ def test_invalid_api_version() -> None:
             load_spec(broken)
     finally:
         broken.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("field", ["terminal", "writesDecision", "writes_decision"])
+@pytest.mark.parametrize("value", ['"false"', "0", "null"])
+def test_state_booleans_reject_non_boolean_values(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    path = _write_state_boolean_spec(tmp_path, field, value)
+
+    with pytest.raises(
+        NpaWorkflowError, match=rf"state work: {field} must be a boolean"
+    ):
+        load_spec(path)
+
+
+@pytest.mark.parametrize("field", ["terminal", "writesDecision", "writes_decision"])
+@pytest.mark.parametrize("value, expected", [("true", True), ("false", False)])
+def test_state_booleans_preserve_literal_values(
+    tmp_path: Path, field: str, value: str, expected: bool
+) -> None:
+    spec = load_spec(_write_state_boolean_spec(tmp_path, field, value))
+
+    attribute = "writes_decision" if field != "terminal" else "terminal"
+    assert getattr(spec.states["work"], attribute) is expected
+
+
+def test_omitted_state_booleans_default_to_false(tmp_path: Path) -> None:
+    spec = load_spec(_write_state_boolean_spec(tmp_path))
+
+    assert spec.states["work"].terminal is False
+    assert spec.states["work"].writes_decision is False
+
+
+def test_state_boolean_schema_contract() -> None:
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    state_properties = schema["$defs"]["state"]["properties"]
+
+    assert state_properties["terminal"] == {"type": "boolean"}
+    assert state_properties["writesDecision"] == {"type": "boolean"}
 
 
 def test_predicate_promote() -> None:

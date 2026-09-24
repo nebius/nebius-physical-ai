@@ -178,6 +178,11 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
 def _parse_state(
     name: str, entry: dict[str, Any], config: dict[str, Any] | None = None
 ) -> StateSpec:
+    terminal = _state_boolean(name, entry, "terminal")
+    writes_decision = _state_boolean(
+        name, entry, "writesDecision", alias="writes_decision"
+    )
+
     loop = None
     loop_raw = entry.get("loop")
     if loop_raw is not None:
@@ -307,14 +312,36 @@ def _parse_state(
         inputs=inputs,
         outputs=outputs,
         resources=str(entry.get("resources") or "default"),
-        terminal=bool(entry.get("terminal")),
-        writes_decision=bool(
-            entry.get("writesDecision") or entry.get("writes_decision")
-        ),
+        terminal=terminal,
+        writes_decision=writes_decision,
         multi_node_mode=str(
             entry.get("multiNodeMode") or entry.get("multi_node_mode") or "forbidden"
         ),
     )
+
+
+def _state_boolean(
+    state_name: str,
+    entry: dict[str, Any],
+    field_name: str,
+    *,
+    alias: str | None = None,
+) -> bool:
+    """Parse a state boolean without coercing malformed scalar values."""
+
+    field_names = (field_name,) if alias is None else (field_name, alias)
+    for candidate in field_names:
+        if candidate in entry and not isinstance(entry[candidate], bool):
+            value = entry[candidate]
+            raise NpaWorkflowError(
+                f"state {state_name}: {candidate} must be a boolean, "
+                f"got {type(value).__name__}"
+            )
+    if field_name in entry:
+        return entry[field_name]
+    if alias is not None and alias in entry:
+        return entry[alias]
+    return False
 
 
 def _positive_int(
