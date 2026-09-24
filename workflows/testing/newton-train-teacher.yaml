@@ -1,0 +1,28 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: newton-train-teacher
+  description: >-
+    Train a Newton teacher policy in physics simulation (stub stage). Exercises
+    the workbench.newton.train_teacher toolRef and anchors the
+    newton/train_teacher three-tier contract (CLI <-> SDK <-> spec).
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/newton-train-teacher"
+  dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/teacher/"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 8
+    memory: 32Gi
+initial: train-teacher
+states:
+  train-teacher:
+    toolRef: workbench.newton.train_teacher
+    resources: gpu
+    outputs:
+      - uri: "{{config.training_uri}}manifest.json"
+        schema: npa.workbench.newton.train-teacher.stub.v1
+    terminal: true

@@ -533,6 +533,9 @@ def cleanup_controller_cmd(
                 if payload.get("remote_absence_verified")
                 else "verification_failed"
             )
+            payload["local_metadata_cleared"] = False
+            payload["verified"] = False
+            payload["overall_verified"] = False
             payload["errors"].append(
                 "controller cleanup succeeded but the exact local ownership record "
                 f"could not be cleared: {exc}"

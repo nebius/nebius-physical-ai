@@ -23,6 +23,16 @@ LanceDB CLI/API/SDK parity reviews.
    npa workbench lancedb query --help
    ```
 
+   `create-table` accepts rows from local Parquet, JSON, JSONL, or directory
+   inputs. Server-side `s3://` import is not implemented. For a zero-row table,
+   pass `--schema`; never seed a placeholder row. The schema is a JSON object
+   containing only a non-empty `fields` list. Each field has `name`, `type`, and
+   optional boolean `nullable` (default `true`). Primitive types use PyArrow
+   aliases. List types use `{"name": "list", "item_type": "string"}`; fixed
+   vectors use `{"name": "fixed_size_list", "item_type": "float32",
+   "list_size": 512}`. Supplied field order, Arrow types, and nullability are
+   the stored schema, and supplied append schemas must match them exactly.
+
 3. Import supported datasets through current commands:
 
    ```bash
@@ -73,6 +83,10 @@ the CLIP path.
 
 ## Gotchas
 
+- Dependency upgrades must exercise `npa/tests/workflows/test_ray_clip_archive.py`
+  on Linux. The archive validator checks exact Lance writer profiles before
+  opening a reader; new hints or storage formats require explicit validation and
+  hostile-metadata tests, plus compatibility with previously supported archives.
 - Do not document stale `launch` or `load-dataset` commands for LanceDB.
 - Inject detection-training label maps through workflow env vars such as
   `BDD100K_LABEL_MAP`; do not hardcode them in tool source.

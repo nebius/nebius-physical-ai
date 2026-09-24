@@ -7,17 +7,31 @@ import sys
 from pathlib import Path
 
 from film_brief import _authoring_packet
+from film_output import _output_arguments, _validate_output
+from film_voice import _voice_settings
 
 _ROOT = Path(__file__).parent
 
 
 def _project(path):
     project = json.loads(path.read_text())
-    allowed = {"storyboard", "assets", "voice_dir", "output_dir", "voice", "music_path"}
+    allowed = {
+        "storyboard",
+        "assets",
+        "voice_dir",
+        "output_dir",
+        "voice",
+        "music_path",
+        "voice_rate",
+        "voice_pitch",
+    }
     if not isinstance(project, dict) or set(project) - allowed:
         raise ValueError(
             "Film projects support only local editing paths and voice; keep cloud configuration external"
         )
+    _voice_settings(
+        project.get("voice_rate", "+0%"), project.get("voice_pitch", "+0Hz")
+    )
     for field in [
         "storyboard",
         "assets",
@@ -55,6 +69,10 @@ def _render_command(args, project):
         command += ["--music-path", str(project["music_path"])]
     if args.plan:
         command.append("--plan")
+    if args.output_path is not None:
+        command += ["--output-path", args.output_path]
+    if args.storage_project is not None:
+        command += ["--storage-project", args.storage_project]
     return command
 
 
@@ -68,6 +86,8 @@ def _narrate_command(args, project):
         str(project["voice_dir"]),
         "--voice",
         project.get("voice", "en-US-AndrewMultilingualNeural"),
+        "--rate=" + project.get("voice_rate", "+0%"),
+        "--pitch=" + project.get("voice_pitch", "+0Hz"),
     ]
     if args.recorded:
         command.append("--recorded")
@@ -152,12 +172,21 @@ def _parser():
         help="With narrate, regenerate every speech clip.",
     )
     _brief_arguments(parser)
+    _output_arguments(parser)
     return parser
 
 
 def _main():
     parser = _parser()
     args = parser.parse_args()
+    if (
+        args.output_path is not None or args.storage_project is not None
+    ) and args.command not in {
+        "preview",
+        "final",
+    }:
+        parser.error("S3 output options apply to preview and final")
+    _validate_output(args, parser)
     if args.command != "brief" and any(
         getattr(args, field) is not None
         for field in ("prompt", "audience", "goal", "tone", "cta", "duration")
