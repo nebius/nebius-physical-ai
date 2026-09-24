@@ -33,7 +33,7 @@ COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN pip install --no-cache-dir --no-deps --no-build-isolation /opt/npa-src \
     && pip check \
-    && python3 -c 'import importlib.metadata as m; assert m.version("mjlab") == "1.6.0"' \
+    && python3 -c 'import importlib.metadata as m; import uvicorn; assert m.version("mjlab") == "1.6.0"' \
     && install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache \
     && rm -rf /root/.cache
 COPY docker/workbench/mjlab/REDISTRIBUTION.md /usr/share/doc/npa-mjlab/REDISTRIBUTION.md
