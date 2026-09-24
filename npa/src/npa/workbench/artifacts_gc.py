@@ -44,7 +44,7 @@ TERMINAL_STATUSES = frozenset({"SUCCEEDED", "FAILED", "CANCELLED", "FAILED_START
 
 #: S3 error codes that mean "this key is simply not there" as opposed to a
 #: real failure. Absence feeds the fail-closed path (keep the run).
-_MISSING_CODES = {"404", "NoSuchKey", "NotFound", "NoSuchBucket"}
+_MISSING_CODES = {"404", "NoSuchKey", "NotFound"}
 
 
 class GcError(Exception):
@@ -342,10 +342,10 @@ def apply_plan(
     decisions: list[GcDecision],
     pin_marker: str = PIN_MARKER,
 ) -> ApplyResult:
-    """Execute delete decisions, re-verifying each run's manifest first.
+    """Execute delete decisions, re-verifying each run's manifest and pin.
 
-    The re-check closes the plan/apply race: a run that left the terminal
-    state after planning is skipped instead of deleted.
+    The re-checks close plan/apply races: a run that left the terminal state
+    or became pinned after planning is skipped instead of deleted.
     """
     result = ApplyResult()
     for decision in decisions:
@@ -364,6 +364,9 @@ def apply_plan(
                 raise
         if not is_terminal_status(status):
             result.skipped_runs.append((prefix, "became-live"))
+            continue
+        if _key_exists(client, bucket, f"{prefix}/{pin_marker}"):
+            result.skipped_runs.append((prefix, "pinned"))
             continue
         result.deleted_objects += delete_run_prefix(client, bucket, prefix)
         result.deleted_runs.append(prefix)
