@@ -11,6 +11,9 @@ The project runs in Antioch's managed GPU infrastructure. `npa` packages the
 source, submits the scenario, reconciles its state, and collects artifacts into
 Nebius S3. No local simulator or GPU is required. Use a private Antioch project
 image; do not publish the derived engine image to the public NPA registry.
+The container runs as UID/GID 1000, with owned project files, a writable home
+cache, and writable Isaac runtime cache and document directories. The capture
+rejects a root runtime and records its effective UID/GID in `measurements.json`.
 
 ## Prerequisites
 

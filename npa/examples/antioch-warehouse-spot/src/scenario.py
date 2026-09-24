@@ -8,7 +8,7 @@ from pathlib import Path
 import antioch
 
 from camera import _Camera, _Recording
-from evidence import _publish
+from evidence import _publish, _runtime_identity
 from scene import _build_scene, _PolicyStepper, _read_state, _Simulation
 
 
@@ -54,6 +54,7 @@ def _capture(world, controller, stepper, camera, recording, seconds, speed, view
 
 
 def _run_patrol(run, seconds, speed, width, start_x, start_y, view):
+    _runtime_identity()
     import numpy as np
     from isaacsim.core.simulation_manager import SimulationManager
     from isaacsim.core.simulation_manager.impl.isaac_events import IsaacEvents

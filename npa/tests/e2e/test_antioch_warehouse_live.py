@@ -42,6 +42,8 @@ def _artifact(storage, manifest, suffix):
 
 def _verify_motion(evidence, parameters):
     metrics = evidence["metrics"]
+    assert metrics["runtime_uid"] == 1000
+    assert metrics["runtime_gid"] == 1000
     assert metrics["finite_state"] is True
     assert metrics["minimum_base_height_m"] > 0.35
     assert metrics["minimum_body_up_z"] > 0.7

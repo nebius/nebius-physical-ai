@@ -34,6 +34,21 @@ def _states():
     ]
 
 
+def test_capture_rejects_provider_override_to_root(monkeypatch):
+    evidence = _module("evidence")
+    monkeypatch.setattr(evidence.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(evidence.os, "getegid", lambda: 0)
+    with pytest.raises(RuntimeError, match="non-root runtime user"):
+        evidence._runtime_identity()
+
+
+def test_capture_reports_effective_runtime_identity(monkeypatch):
+    evidence = _module("evidence")
+    monkeypatch.setattr(evidence.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(evidence.os, "getegid", lambda: 1000)
+    assert evidence._runtime_identity() == {"runtime_uid": 1000, "runtime_gid": 1000}
+
+
 def test_motion_summary_uses_observed_displacement_and_articulation():
     result = _module("evidence")._summarize(_states(), 50, 50)
     assert result["distance_m"] == pytest.approx(1.5)

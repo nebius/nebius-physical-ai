@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
+
+
+def _runtime_identity() -> dict[str, int]:
+    identity = {"runtime_uid": os.geteuid(), "runtime_gid": os.getegid()}
+    if identity["runtime_uid"] == 0:
+        raise RuntimeError("Warehouse capture requires a non-root runtime user")
+    return identity
 
 
 def _summarize(samples: list[dict], frame_count: int, expected_frames: int) -> dict:
@@ -61,6 +69,7 @@ def _publish(
     from isaacsim.core.simulation_manager import SimulationManager
 
     metrics = _summarize(samples, recording.frames, expected)
+    metrics.update(_runtime_identity())
     metrics["policy_steps"] = stepper.steps
     metrics["physics_dt_s"] = SimulationManager.get_physics_dt()
     metrics["policy_physics_dt_s"] = stepper.controller._dt
