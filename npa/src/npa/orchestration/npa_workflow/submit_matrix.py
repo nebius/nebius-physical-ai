@@ -496,7 +496,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -511,7 +510,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -526,12 +524,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
             "Real isolated one-H200 TP-1 validation in the immutable vLLM-Omni "
+            "image: one strict warmup followed by 24 sequential validated requests. "
+            "This is not the paper's eight-replica 8x1 node cell."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos3-super-b200-single-gpu.yaml",
+        "gpu",
+        secret_envs=(
+            "HF_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Real isolated one-B200 TP-1 validation in the immutable vLLM-Omni "
             "image: one strict warmup followed by 24 sequential validated requests. "
             "This is not the paper's eight-replica 8x1 node cell."
         ),

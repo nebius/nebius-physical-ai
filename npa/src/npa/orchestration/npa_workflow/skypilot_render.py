@@ -107,7 +107,6 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.cosmos3.text_to_image": (),
     "workbench.cosmos3.super_benchmark": (
         "HF_TOKEN",
-        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     ),
