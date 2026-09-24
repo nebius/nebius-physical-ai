@@ -644,13 +644,16 @@ def _diagnostic_chain(
 
 def _run_phase(ground_truth: Mapping[str, Any], progress: float) -> str:
     reason = str(ground_truth.get("termination_reason") or "").strip().lower()
-    if bool(ground_truth.get("placement_stable")) or reason in {"success", "complete"}:
+    if ground_truth.get("placement_stable") is True or reason in {
+        "success",
+        "complete",
+    }:
         return "complete"
-    if bool(ground_truth.get("stable_grasp")):
+    if ground_truth.get("stable_grasp") is True:
         return "lift"
-    if bool(ground_truth.get("gripper_closed")):
+    if ground_truth.get("gripper_closed") is True:
         return "grasp"
-    if bool(ground_truth.get("contact")):
+    if ground_truth.get("contact") is True:
         return "contact"
     return "tracking" if progress < 1.0 else "finished"
 
