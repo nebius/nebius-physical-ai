@@ -13,6 +13,8 @@ config:
   worker_uri: s3://example-bucket/inputs/npa-worker-source.tar.gz
   worker_sha256: REPLACE_WITH_64_HEX
   worker_bytes: "0"
+  worker_package_root: REPLACE_WITH_EXACT_ARCHIVE_ROOT_OR_DOT
+  worker_manifest_sha256: REPLACE_WITH_64_HEX
   dataset_uri: s3://example-bucket/inputs/comet-dataset.tar.gz
   dataset_sha256: REPLACE_WITH_64_HEX
   dataset_bytes: "0"
@@ -92,7 +94,8 @@ states:
         --prefix '{{config.prefix}}' --preflight-uri '{{config.prefix}}/preflight/receipt.json' \
         --openpi-uri '{{config.openpi_uri}}' --openpi-sha256 '{{config.openpi_sha256}}' --openpi-bytes '{{config.openpi_bytes}}' \
         --worker-uri '{{config.worker_uri}}' --worker-sha256 '{{config.worker_sha256}}' \
-        --worker-bytes '{{config.worker_bytes}}' --dataset-uri '{{config.dataset_uri}}' \
+        --worker-bytes '{{config.worker_bytes}}' --worker-package-root '{{config.worker_package_root}}' \
+        --worker-manifest-sha256 '{{config.worker_manifest_sha256}}' --dataset-uri '{{config.dataset_uri}}' \
         --dataset-sha256 '{{config.dataset_sha256}}' --dataset-bytes '{{config.dataset_bytes}}' \
         --parent-uri '{{config.parent_uri}}' --parent-sha256 '{{config.parent_sha256}}' \
         --parent-bytes '{{config.parent_bytes}}' --admission-uri '{{config.admission_uri}}' \
@@ -127,7 +130,8 @@ states:
         --prefix '{{config.prefix}}' --preflight-uri '{{config.prefix}}/preflight/receipt.json' \
         --openpi-uri '{{config.openpi_uri}}' --openpi-sha256 '{{config.openpi_sha256}}' --openpi-bytes '{{config.openpi_bytes}}' \
         --worker-uri '{{config.worker_uri}}' --worker-sha256 '{{config.worker_sha256}}' \
-        --worker-bytes '{{config.worker_bytes}}' --dataset-uri '{{config.dataset_uri}}' \
+        --worker-bytes '{{config.worker_bytes}}' --worker-package-root '{{config.worker_package_root}}' \
+        --worker-manifest-sha256 '{{config.worker_manifest_sha256}}' --dataset-uri '{{config.dataset_uri}}' \
         --dataset-sha256 '{{config.dataset_sha256}}' --dataset-bytes '{{config.dataset_bytes}}' \
         --parent-uri '{{config.parent_uri}}' --parent-sha256 '{{config.parent_sha256}}' \
         --parent-bytes '{{config.parent_bytes}}' --admission-uri '{{config.admission_uri}}' \

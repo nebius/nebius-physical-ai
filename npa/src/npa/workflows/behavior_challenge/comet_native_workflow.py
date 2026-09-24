@@ -25,6 +25,9 @@ from npa.workflows.behavior_challenge.native_training_checkpoint import (
 from npa.workflows.behavior_challenge.native_training_control import (
     publish_with_control,
 )
+from npa.workflows.behavior_challenge.package_archive import (
+    extract_manifest_archive,
+)
 from npa.workflows.behavior_challenge.runtime_cache import prepare_runtime
 
 STRING_ARGUMENTS = (
@@ -238,7 +241,7 @@ def _input_contract(
     args: argparse.Namespace, runtime: dict[str, Any], python: Path
 ) -> dict[str, Any]:
     names = ("openpi", "worker", "dataset", "parent", "admission")
-    return {
+    contract = {
         "schema": "npa.behavior.comet-native-workflow-inputs.v1",
         "archives": {
             name: {
@@ -266,6 +269,35 @@ def _input_contract(
         "final_step": args.final_step,
         "milestones": args.milestones,
     }
+    worker_package = _worker_package_contract(args)
+    if worker_package is not None:
+        contract["worker_package"] = worker_package
+    return contract
+
+
+def _worker_package_contract(args: argparse.Namespace) -> dict[str, str] | None:
+    root = str(getattr(args, "worker_package_root", "") or "").strip()
+    manifest_sha256 = str(getattr(args, "worker_manifest_sha256", "") or "").strip()
+    if not root and not manifest_sha256:
+        return None
+    if not root or re.fullmatch(r"[0-9a-f]{64}", manifest_sha256) is None:
+        raise ValueError("worker package manifest contract is incomplete")
+    return {"root": root, "manifest_sha256": manifest_sha256}
+
+
+def _extract_input_archive(
+    args: argparse.Namespace, name: str, archive: Path, destination: Path
+) -> Path:
+    package = _worker_package_contract(args) if name == "worker" else None
+    if package is None:
+        _extract(archive, destination)
+        return _root(destination)
+    return extract_manifest_archive(
+        archive,
+        destination,
+        expected_root=package["root"],
+        expected_manifest_sha256=package["manifest_sha256"],
+    )
 
 
 def _stage_archives(args: argparse.Namespace, storage: Any) -> dict[str, Path]:
@@ -302,8 +334,7 @@ def _stage_archives(args: argparse.Namespace, storage: Any) -> dict[str, Path]:
             getattr(args, f"{name}_bytes"),
         )
         destination = args.workspace / name
-        _extract(archive, destination)
-        staged[name] = _root(destination)
+        staged[name] = _extract_input_archive(args, name, archive, destination)
     staged["admission"] = admission
     return staged
 
@@ -862,6 +893,8 @@ def parser() -> argparse.ArgumentParser:
         value.add_argument("--" + name, required=True)
     for name in INTEGER_ARGUMENTS:
         value.add_argument("--" + name, type=int, required=True)
+    value.add_argument("--worker-package-root", default="")
+    value.add_argument("--worker-manifest-sha256", default="")
     for name in ("home", "runtime-workspace", "workspace", "checkpoint-root"):
         value.add_argument("--" + name, type=Path, required=True)
     return value

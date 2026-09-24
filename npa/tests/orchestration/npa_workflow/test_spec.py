@@ -56,6 +56,56 @@ def test_token_unknown_config_raises() -> None:
         resolve_tokens("{{config.missing}}", config={}, run={"id": "x"})
 
 
+@pytest.mark.parametrize("field", ["inputs", "outputs"])
+def test_state_run_rejects_nested_artifact_fields(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "nested-artifact.yaml"
+    path.write_text(
+        f"""\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {{name: nested-artifact}}
+states:
+  qualify:
+    run:
+      shell: echo qualify
+      {field}: [{{uri: s3://example.invalid/artifact.json}}]
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=rf"state 'qualify'.*'{field}'.*belong beside run",
+    ):
+        load_spec(path)
+
+
+def test_state_artifacts_and_top_level_run_defaults_reach_plan(tmp_path: Path) -> None:
+    path = tmp_path / "state-artifacts.yaml"
+    path.write_text(
+        """\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: state-artifacts}
+run: {label: retained-default}
+states:
+  qualify:
+    run:
+      argv: [echo, "{{run.label}}"]
+    inputs: [{uri: s3://example.invalid/input.json}]
+    outputs: [{uri: s3://example.invalid/output.json}]
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+
+    step = build_plan(load_spec(path), run_id="run-defaults").steps[0]
+    assert step.argv == ["echo", "retained-default"]
+    assert step.inputs == [{"uri": "s3://example.invalid/input.json", "schema": ""}]
+    assert step.outputs == [{"uri": "s3://example.invalid/output.json", "schema": ""}]
+
+
 @pytest.mark.parametrize(
     "tool_ref",
     ["workbench.byof.repo", "workbench.isaac_lab.byof_repo"],

@@ -172,6 +172,10 @@ stored in durable run state, including names written by older NPA versions.
 | `inputs` / `outputs` | Artifact URIs + optional schema labels |
 | `terminal: true` | End state |
 
+Declare `inputs` and `outputs` beside `run` in the state mapping. A `run` block
+accepts only `shell` or `argv`; validation rejects nested artifact declarations
+before planning so they cannot disappear from the rendered task.
+
 ## Tokens (no Jinja)
 
 | Token | Meaning |

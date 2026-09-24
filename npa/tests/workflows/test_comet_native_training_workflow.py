@@ -23,6 +23,10 @@ def test_workflow_is_real_and_has_control_science_inputs():
     assert (
         "runtime_manifest_uri" in value["config"] and "worker_sha256" in value["config"]
     )
+    assert value["initial"] == "preflight"
+    assert value["states"]["preflight"]["next"] == "train"
+    assert value["states"]["preflight"]["resources"] == "cpu"
+    assert value["states"]["train"]["resources"] == "gpu"
     assert value["states"]["train"]["terminal"] is True
 
 
@@ -66,6 +70,8 @@ def _assert_complete_argv(rows):
         "--prefix",
         "--openpi-uri",
         "--runtime-manifest-uri",
+        "--worker-package-root",
+        "--worker-manifest-sha256",
         "--scientific-runtime-receipt-sha256",
         "--attempt-id",
         "--final-step",

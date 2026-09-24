@@ -24,6 +24,7 @@ MAX_PROFILE_NODES = 32
 API_VERSION = "npa.workflow/v0.0.1"
 API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
 SUPPORTED_API_VERSIONS = frozenset({API_VERSION, API_VERSION_BETA})
+_STATE_RUN_FIELDS = frozenset({"shell", "argv"})
 
 
 @dataclass
@@ -110,6 +111,21 @@ class NpaWorkflowSpec:
     @property
     def name(self) -> str:
         return str(self.metadata.get("name") or "unnamed")
+
+
+def _validate_state_run_fields(name: str, run: Mapping[str, Any]) -> None:
+    """Reject fields that a state command would otherwise silently discard."""
+
+    unknown = set(run) - _STATE_RUN_FIELDS
+    if not unknown:
+        return
+    fields = ", ".join(sorted(repr(field) for field in unknown))
+    placement = ""
+    if {"inputs", "outputs"}.intersection(unknown):
+        placement = "; state inputs/outputs belong beside run, not inside it"
+    raise NpaWorkflowError(
+        f"state {name!r}: run has unknown field(s): {fields}{placement}"
+    )
 
 
 def load_spec(path: str | Path) -> NpaWorkflowSpec:
@@ -205,6 +221,7 @@ def _parse_state(
     if run_raw is not None:
         if not isinstance(run_raw, dict):
             raise NpaWorkflowError(f"state {name}: run must be a mapping")
+        _validate_state_run_fields(name, run_raw)
         run = RunSpec(
             shell=str(run_raw.get("shell") or ""),
             argv=[str(item) for item in (run_raw.get("argv") or [])],

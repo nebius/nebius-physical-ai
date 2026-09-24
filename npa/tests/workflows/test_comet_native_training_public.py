@@ -768,3 +768,82 @@ def test_scientific_receipt_rejects_semantic_runtime_drift(tmp_path, field):
     }
     with pytest.raises(ValueError, match="semantic binding"):
         workflow._scientific_receipt(args, (PurePosixPath("work"),), ready)
+
+
+def _manifest_worker_archive(*, undeclared_pyc: bool) -> tuple[bytes, str]:
+    path = "workflows/implementations/behavior-comet12/train_comet_native.py"
+    source = b"raise AssertionError('science child must not start')\n"
+    manifest = {
+        "files": {
+            path: {
+                "bytes": len(source),
+                "sha256": _sha(source),
+                "mode": "0o644",
+            }
+        }
+    }
+    manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode()
+    rows = {f"bundle/{path}": source, "bundle/MANIFEST.json": manifest_bytes}
+    if undeclared_pyc:
+        rows["bundle/__pycache__/worker.cpython-311.pyc"] = b"undeclared"
+    return _bundle(rows), _sha(manifest_bytes)
+
+
+@pytest.mark.parametrize(
+    ("undeclared_pyc", "package_root", "message"),
+    [(True, "bundle", "file sets differ"), (False, ".", "explicit root")],
+)
+@pytest.mark.parametrize("operation", ["preflight", "train"])
+def test_operations_reject_worker_package_before_science_runtime(
+    tmp_path, monkeypatch, undeclared_pyc, package_root, message, operation
+):
+    import sys
+
+    python_bytes = Path(sys.executable).read_bytes()
+    receipt, admission, storage, runtime_manifest, bindings = _bad_worker_inputs(
+        python_bytes, undeclared_pyc
+    )
+    args = _portable_args(
+        tmp_path, python_bytes, receipt, admission, runtime_manifest, bindings
+    )
+    args.worker_package_root = package_root
+    args.worker_manifest_sha256 = bindings.pop("worker_manifest_sha256")
+    args.operation = operation
+    reached_runtime = []
+    monkeypatch.setattr(workflow.StorageClient, "from_environment", lambda: storage)
+    monkeypatch.setattr(workflow, "_runtime", lambda *_: reached_runtime.append(True))
+    with pytest.raises(ValueError, match=message):
+        workflow.run(args)
+    assert reached_runtime == []
+
+
+def test_worker_package_contract_is_optional_as_a_complete_pair():
+    assert workflow._worker_package_contract(argparse.Namespace()) is None
+    partial = argparse.Namespace(worker_package_root="bundle")
+    with pytest.raises(ValueError, match="contract is incomplete"):
+        workflow._worker_package_contract(partial)
+
+
+def _bad_worker_inputs(python_bytes, undeclared_pyc):
+    receipt = _locked_runtime_receipt(
+        python_bytes, base_relative=".local/python/bin/python"
+    )
+    runtime, archives = _portable_archives(python_bytes, receipt)
+    archives["worker"], manifest_sha = _manifest_worker_archive(
+        undeclared_pyc=undeclared_pyc
+    )
+    minimum = sum(map(len, archives.values()))
+    admission = (
+        json.dumps(
+            {
+                "minimum_materialization_free_bytes": minimum,
+                "minimum_checkpoint_free_bytes": 1,
+            }
+        )
+        + "\n"
+    ).encode()
+    storage, runtime_manifest, bindings = _portable_storage(
+        runtime, archives, admission
+    )
+    bindings["worker_manifest_sha256"] = manifest_sha
+    return receipt, admission, storage, runtime_manifest, bindings
