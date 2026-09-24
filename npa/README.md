@@ -368,6 +368,10 @@ npa/.venv/bin/python -m pytest \
 
 Mocked browser checks require Google Chrome and run with
 `bash npa/scripts/run_agent_cypress.sh --mock` from the repository root.
+The wrapper installs the locked browser and native Codex adapter dependencies
+when absent, then runs the native protocol tests and mocked desktop/agent specs.
+For direct npm invocation, first run `npm ci --prefix npa/tests/browser` and
+`npm ci --prefix npa/src/npa/tools/desktop/native`.
 They use Chrome's software WebGL renderer for real canvas capture coverage;
 Cypress 16's deprecated Electron browser cannot provide that context in CI.
 
