@@ -113,6 +113,20 @@ NPA_BEHAVIOR_SPECIALIST_ADMISSION_LIVE_CONFIG=/path/to/specialist-admission-live
   npa/tests/e2e/test_behavior_specialist_report_admission_live.py -q
 ```
 
+## Conditional replanning
+
+The [conditional replanning library](../../npa/src/npa/workflows/behavior_challenge/conditional_replan/README.md)
+provides a training-data-only refresh decision for a native 32-action policy.
+After 16 actions, it compares the remaining queue with a new proposal. Accepting
+the proposal replaces the queue; rejecting it restores the policy's random
+state so the original continuation remains reproducible.
+
+Its fitting, feature extraction, artifact export, and controller are reusable
+Python components. Callers supply the native policy adapter and verified input
+artifacts. Bind the fitted artifact and controller source to a new policy
+identity before evaluating it. Fit and serving parity checks establish numerical
+consistency; complete development and reporting panels establish task performance.
+
 ## Durable execution and recovery
 
 The internal `campaign-worker` stage takes `--panel-uri`, `--partition-uri`,
