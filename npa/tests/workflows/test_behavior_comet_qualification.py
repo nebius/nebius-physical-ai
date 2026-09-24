@@ -22,6 +22,14 @@ comet_server = importlib.import_module("npa.workflows.behavior_challenge.comet_s
 ROOT = Path(__file__).parents[3]
 IMPLEMENTATION = ROOT / "workflows/implementations/behavior-policy-qualification"
 ADAPTER = ROOT / "npa/src/npa/workflows/behavior_challenge"
+PACKAGED_ADAPTER_FILES = (
+    "comet_policy.py",
+    "comet_server.py",
+    "evaluator_versions.py",
+    "evaluator_wire.py",
+    "comet12-checkpoint.json",
+    "comet50-checkpoint.json",
+)
 
 
 def load_script(monkeypatch, name: str):
@@ -170,13 +178,7 @@ def test_scripts_import_from_checkout_and_packaged_layout(tmp_path):
     package.mkdir()
     for name in ("qualify_comet.py", "process_action.py"):
         shutil.copyfile(IMPLEMENTATION / name, package / name)
-    for name in (
-        "comet_policy.py",
-        "comet_server.py",
-        "comet12-checkpoint.json",
-        "comet50-checkpoint.json",
-    ):
+    for name in PACKAGED_ADAPTER_FILES:
         shutil.copyfile(ADAPTER / name, package / name)
-    subprocess.run(
-        [sys.executable, str(package / "qualify_comet.py"), "--help"], check=True
-    )
+    for name in ("qualify_comet.py", "process_action.py"):
+        subprocess.run([sys.executable, str(package / name), "--help"], check=True)
