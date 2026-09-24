@@ -64,7 +64,16 @@ reused without rerunning training.
 
 ## Qualification status
 
-This reusable workflow remains held pending live qualification. The portable
-CPU and Tiny tests do not establish a completed 20,000-update run, operation on
-a physical 24 GB GPU, exported-serving parity, or final model selection. Those
-claims require their own immutable live receipts and provider readback.
+Live evidence now covers two distinct scopes. A three-update full-SFT adapter
+qualification performed two native updates, saved the complete state, restored
+it in a fresh process, and matched the third update. Independent readback
+streamed all 21 original artifacts and all 36 checkpoint members, totaling
+31,561,943,065 bytes. This qualifies the adapter's update and recovery boundary;
+it did not run the 20,000-update recipe, scoring, selection, or serving.
+
+Separately, the frozen 20,000-update run published its 5,000-update full-state
+milestone. Independent readback streamed all 36 checkpoint members, totaling
+32,249,157,364 bytes, and verified that the milestone is resume-ready. Training
+then resumed through update 5,067. No trained-milestone task score, selected
+candidate, serving-parity result, later milestone, completed 20,000-update run,
+or physical-24-GB qualification is established by this evidence.
