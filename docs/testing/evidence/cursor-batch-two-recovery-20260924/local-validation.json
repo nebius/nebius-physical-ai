@@ -1,0 +1,310 @@
+{
+  "at": "2026-09-24T23:09:08.513835+00:00",
+  "status": "Local validation passed; hosted CI pending. Not a merge-ready declaration.",
+  "main": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+  "repair_commit": "93eb097405aa141e442f995496ef569f175b10b2",
+  "prs": [
+    {
+      "number": 615,
+      "head": "d645be7e7f7b4fc17914347d08f2333064e759be",
+      "tree": "f2f5a7109deaad75b52810294586cbd783021bd7",
+      "local_tests": {
+        "precheck": {
+          "summary": "============================= 198 passed in 21.64s =============================",
+          "log_sha256": "67ca8108337a939a5dc13b3c0a14474faea12a0addacf1ad24b8619248fe78dd"
+        },
+        "smoke": {
+          "summary": "============================= 114 passed in 51.31s =============================",
+          "log_sha256": "fb24ecffad09ed0582fd3fc3432d603ce2cd2c215553be74d51749589b63688e"
+        },
+        "guardrails": {
+          "summary": "======================= 4462 passed in 76.78s (0:01:16) ========================",
+          "log_sha256": "94320b10fbc0ec93211101cc7cdbe3c3f55c0d0ed79e693e338c0e67e49764aa"
+        },
+        "full-suite": {
+          "summary": "=== 27137 passed, 135 skipped, 1 xpassed, 364 warnings in 744.12s (0:12:24) ====",
+          "log_sha256": "c6ce6448540dbb4f9463918d5f5b15e0c51f9f6ae53ed3c01c3e930bb0cf4917"
+        },
+        "hostile-input": {
+          "summary": "================= 859 passed, 2 warnings in 138.68s (0:02:18) ==================",
+          "log_sha256": "01ebbd6d082f0e174736397a7f2bab41fc70d9e62113e75506985b7b4f7f0af8"
+        }
+      },
+      "docs_drift_passed": true,
+      "confidentiality_passed": true,
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "d645be7e7f7b4fc17914347d08f2333064e759be",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "github_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353289",
+      "hosted_ci": "pending"
+    },
+    {
+      "number": 609,
+      "head": "3725041464469af2ac80d51c701f0aa02afa0831",
+      "tree": "9f493c5a1eefc72252db21300b823b196ee5b16f",
+      "local_tests": {
+        "precheck": {
+          "summary": "============================= 198 passed in 18.41s =============================",
+          "log_sha256": "7958f5f8ff0deacf472086b7f48d9cdf5d316988e8379030483eca0b87df4493"
+        },
+        "smoke": {
+          "summary": "============================= 114 passed in 49.87s =============================",
+          "log_sha256": "767b0a850c4191765f099f4be761e602467cf0a1a3626690b450a2160e8cbfe5"
+        },
+        "guardrails": {
+          "summary": "======================= 4462 passed in 73.41s (0:01:13) ========================",
+          "log_sha256": "b539f0e4372de91ff494534854714677e46f0342559e9cbb678e33da9567363a"
+        },
+        "full-suite": {
+          "summary": "=== 27092 passed, 135 skipped, 1 xpassed, 364 warnings in 744.10s (0:12:24) ====",
+          "log_sha256": "e22d30c1a96f16779bd57eddd8d3e4af1353586c1513bc5f4c6d06f4dae5aef7"
+        },
+        "hostile-input": {
+          "summary": "================= 859 passed, 2 warnings in 142.35s (0:02:22) ==================",
+          "log_sha256": "1915e6606f880df9f369cedd3876563b017fd25f3494bb81808fc765e59b1afc"
+        }
+      },
+      "docs_drift_passed": true,
+      "confidentiality_passed": true,
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "3725041464469af2ac80d51c701f0aa02afa0831",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "github_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355714",
+      "hosted_ci": "pending"
+    },
+    {
+      "number": 640,
+      "head": "426270eb47af2bf3a5e19368b11f1a9719ad5e39",
+      "tree": "c038a4538fd9f20bd92b2d90e087f90af8577468",
+      "local_tests": {
+        "precheck": {
+          "summary": "============================= 198 passed in 20.91s =============================",
+          "log_sha256": "f35da3ed7a31e65ded02327741488d33661c6d48e03d24d9d5d67800c91828fd"
+        },
+        "smoke": {
+          "summary": "============================= 114 passed in 51.99s =============================",
+          "log_sha256": "c47b19c50355e32274400e69fddfd7bc22d2104a79f03ad63a5af1dd6f672c73"
+        },
+        "guardrails": {
+          "summary": "======================= 4462 passed in 78.69s (0:01:18) ========================",
+          "log_sha256": "011ceb54dd57da97008bc3cb651c148527a94e6d2c4c8896ce522227219195a2"
+        },
+        "full-suite": {
+          "summary": "=== 27085 passed, 135 skipped, 1 xpassed, 362 warnings in 744.10s (0:12:24) ====",
+          "log_sha256": "2de0f4ae4e7459e0dd64eaab1035b053a9c28e83b7a6997364f9cc8cbf0fa450"
+        },
+        "hostile-input": {
+          "summary": "================= 859 passed, 2 warnings in 139.14s (0:02:19) ==================",
+          "log_sha256": "615fd880e908b627ee7991a5f461b0e6e2f3d3be790f794161a17d612e0b8726"
+        }
+      },
+      "docs_drift_passed": true,
+      "confidentiality_passed": true,
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "426270eb47af2bf3a5e19368b11f1a9719ad5e39",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "github_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355723",
+      "hosted_ci": "pending"
+    },
+    {
+      "number": 679,
+      "head": "469ae6d68d23620da14d91fab05a1c2b267c9b23",
+      "tree": "51f699c1190e56039ea39109b01e13f321d05802",
+      "local_tests": {
+        "precheck": {
+          "summary": "============================= 198 passed in 17.52s =============================",
+          "log_sha256": "9b3051814881bde837ea8dfb19b719245689498d2b4b4c545bff85e5a041ab45"
+        },
+        "smoke": {
+          "summary": "============================= 114 passed in 51.09s =============================",
+          "log_sha256": "2eb3cd990a509f124522e7ca1e0c6cf2e1f592870035cbdadb6b926c29687305"
+        },
+        "guardrails": {
+          "summary": "======================= 4462 passed in 73.85s (0:01:13) ========================",
+          "log_sha256": "665507f4b9313ea242e2ce49c448803268c4fa874440c0ab78d7e44102759f37"
+        },
+        "full-suite": {
+          "summary": "=== 27089 passed, 135 skipped, 1 xpassed, 363 warnings in 744.08s (0:12:24) ====",
+          "log_sha256": "798414c93fa46ecf627eeda8e716cb420e93bef9eb415d68a5a5c8cc184debf7"
+        },
+        "hostile-input": {
+          "summary": "================= 859 passed, 2 warnings in 141.62s (0:02:21) ==================",
+          "log_sha256": "d33e4e364d59e0e7cfc61b95d391af20e2733d97fd304783f47ba2dda7fcd2b8"
+        }
+      },
+      "docs_drift_passed": true,
+      "confidentiality_passed": true,
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "469ae6d68d23620da14d91fab05a1c2b267c9b23",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "github_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353841",
+      "hosted_ci": "pending"
+    },
+    {
+      "number": 687,
+      "head": "761995687a8a79363ac8e1a779621b269787cdc1",
+      "tree": "fb5f80a36d52142740d9e08527f6b29b4a017884",
+      "local_tests": {
+        "precheck": {
+          "summary": "============================= 198 passed in 21.64s =============================",
+          "log_sha256": "099d19eab476e2c9f22352676347af26e98c8f1afbd0beebd4a7a40c03711038"
+        },
+        "smoke": {
+          "summary": "============================= 114 passed in 51.00s =============================",
+          "log_sha256": "e51f5f8ced7ee0aa7b878525de96a54037433dec7b6920fe6eb27b52a7b1a2fe"
+        },
+        "guardrails": {
+          "summary": "======================= 4463 passed in 73.34s (0:01:13) ========================",
+          "log_sha256": "cd751202c1c99f7868b43a53660e205c7d14308fb020ed3e6b7cdacc1ced17cc"
+        },
+        "full-suite": {
+          "summary": "=== 27104 passed, 135 skipped, 1 xpassed, 364 warnings in 744.08s (0:12:24) ====",
+          "log_sha256": "0bdb783d5d78c0a2cc71cf3fecc8aa31a602086589da10e3fcfb1e36a7e7f9a2"
+        },
+        "hostile-input": {
+          "summary": "================= 859 passed, 2 warnings in 139.16s (0:02:19) ==================",
+          "log_sha256": "9dbdec744a0524e5e50a99100572de275349a5626af02a350d4e3720ce059d43"
+        }
+      },
+      "docs_drift_passed": true,
+      "confidentiality_passed": true,
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "761995687a8a79363ac8e1a779621b269787cdc1",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "github_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069354641",
+      "hosted_ci": "pending"
+    },
+    {
+      "number": 650,
+      "head": "38ae0822c366aaea1d174fb4482c3f7c344be93c",
+      "tree": "290edbd37b20dcfade7a8976b0362e4a5c69e108",
+      "local_tests": {
+        "precheck": {
+          "summary": "============================= 198 passed in 17.24s =============================",
+          "log_sha256": "cf4acf755788f1de7d9966208be35fe72ad47caeee72a8d1c6564e4340d54f1c"
+        },
+        "smoke": {
+          "summary": "============================= 114 passed in 51.10s =============================",
+          "log_sha256": "2b686cdeda22e07f5df74da6fd577a57503b4f86559d52c1907ba06165956870"
+        },
+        "guardrails": {
+          "summary": "======================= 4462 passed in 75.95s (0:01:15) ========================",
+          "log_sha256": "455c9a5879bdf9f9e307d633852a2b2501cb8c05546056d3732458c1999aeac8"
+        },
+        "full-suite": {
+          "summary": "=== 27085 passed, 135 skipped, 1 xpassed, 362 warnings in 724.33s (0:12:04) ====",
+          "log_sha256": "ea96f50e3a8efc889642953e95add9781d4f426a4af3030533d4c357a51fde3b"
+        },
+        "hostile-input": {
+          "summary": "================= 859 passed, 2 warnings in 179.10s (0:02:59) ==================",
+          "log_sha256": "8777fc631543b6c37672af222122ac34bff59fbfe2d3fcb7a9c76a5c99f59c02"
+        }
+      },
+      "docs_drift_passed": true,
+      "confidentiality_passed": true,
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "38ae0822c366aaea1d174fb4482c3f7c344be93c",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "github_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355590",
+      "hosted_ci": "pending"
+    }
+  ],
+  "combined": {
+    "head": "caf49391912160dbf3f9de40677d7b7cab0ea829",
+    "tree": "c7f8ee2ec2a043b445e4747cab81d2956e6cea48",
+    "full_suite": "=== 27172 passed, 135 skipped, 1 xpassed, 363 warnings in 743.40s (0:12:23) ====",
+    "log_sha256": "901f062c85b769cf412ba0c1ddc663c2a96ccdf79e3c31903aae4c01cd479c39",
+    "hostile_input": "================= 859 passed, 2 warnings in 162.68s (0:02:42) =================="
+  },
+  "signal_launcher_repair": {
+    "cause": "The first launcher ran validators as asynchronous shell jobs, inheriting ignored SIGINT.",
+    "repair": "Run each validator in its own foreground tmux session and require enabled SIGINT plus both cancellation controls before the full suite.",
+    "repository_changes_for_this_repair": false,
+    "controlled_reproduction": {
+      "baseline": [
+        {
+          "mode": "ignored",
+          "returncode": 1,
+          "summary": "==================== 1 failed, 1 passed in 74.86s (0:01:14) ===================="
+        },
+        {
+          "mode": "default",
+          "returncode": 0,
+          "summary": "============================== 2 passed in 18.58s =============================="
+        }
+      ],
+      "combined": [
+        {
+          "mode": "ignored",
+          "returncode": 1,
+          "summary": "========================= 1 failed, 1 passed in 30.19s ========================="
+        },
+        {
+          "mode": "default",
+          "returncode": 0,
+          "summary": "============================== 2 passed in 1.25s ==============================="
+        }
+      ]
+    }
+  },
+  "receipt_probe": {
+    "production_module_sha256": "b57c2dc0a2b42034c94a20eb345229e611741431af0fbacb5ad9c9b9cc688b1a",
+    "real_filesystem_locking_and_atomic_writes": true,
+    "valid_receipt_persisted": true,
+    "owner_only_modes": true,
+    "negative_controls": [
+      "truncated_json",
+      "invalid_utf8",
+      "wrong_shape",
+      "schema_version",
+      "project",
+      "run_id",
+      "symlink_target_preserved",
+      "explicit_diagnostic_redaction"
+    ],
+    "controls_passed": 10,
+    "network_calls": 0
+  },
+  "kubeconfig_probe": {
+    "production_module_sha256": "d72eb693e1e4755a06740efc78708feb86c48bc011038315fcd1e606cfd87c17",
+    "real_dependency": "kubernetes",
+    "network_calls": 0,
+    "baseline_missing_context_rejected": true,
+    "default_context_resolved": true,
+    "live_symlink_update_visible": true,
+    "explicit_kubeconfig_precedence_preserved": true,
+    "controls_passed": 4
+  },
+  "gpu_vlm_applicability": "Not applicable to these host CPU changes. No new GPU qualification is claimed.",
+  "privacy": "Raw logs and operational details remain private; only sanitized summaries, source identities and hashes are published."
+}
