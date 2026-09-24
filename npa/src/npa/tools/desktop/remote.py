@@ -160,6 +160,7 @@ def _write_viewer(target, assets):
     if set(assets) != {"desktop_clipboard.js"}:
         raise ValueError("Unexpected desktop viewer assets.")
     _patch_clipboard_request(target)
+    _patch_mac_shortcuts(target)
     _write(target / "desktop_clipboard.js", assets["desktop_clipboard.js"], 0o644)
     _write(target / "desktop.html", _VIEWER, 0o644)
     _write(
@@ -186,6 +187,44 @@ def _patch_clipboard_request(target):
     if content.count(anchor) != 1:
         raise RuntimeError("Unexpected noVNC clipboard implementation.")
     _write(path, content.replace(anchor, method + anchor), 0o644)
+
+
+def _patch_mac_shortcuts(target):
+    path = target / "core/input/keyboard.js"
+    content = path.read_text()
+    for source, previous, replacement in [
+        ("Super_L", "Alt_L", "Control_L"),
+        ("Super_R", "Super_L", "Control_R"),
+    ]:
+        prefix = (
+            f"case KeyTable.XK_{source}:\n                    keysym = KeyTable.XK_"
+        )
+        old, new = prefix + previous + ";", prefix + replacement + ";"
+        if content.count(old) == 1:
+            content = content.replace(old, new)
+        elif content.count(new) != 1:
+            raise RuntimeError("Unexpected noVNC Mac keyboard implementation.")
+    # Command must not become a bare Alt press that steals editor focus for menus.
+    core = target / "core/rfb.js"
+    rfb = core.read_text()
+    original = 'from "./input/keyboard.js";'
+    versioned = 'from "./input/keyboard.js?npa-desktop=3";'
+    if rfb.count(original) != 1 and rfb.count(versioned) != 1:
+        raise RuntimeError("Unexpected noVNC keyboard import.")
+    rfb = rfb.replace(original, versioned)
+    _write(path, content, 0o644)
+    _write(core, rfb, 0o644)
+
+
+def _clipboard_policy(environment=None):
+    # Existing desktops adopt this on login without replacing their service unit.
+    _write(
+        _HOME / ".config/autostart/nebius-clipboard.desktop",
+        "[Desktop Entry]\nType=Application\nName=Desktop clipboard\n"
+        "Exec=/usr/bin/vncconfig -set SendPrimary=0\nNoDisplay=true\n",
+    )
+    if environment is not None:
+        _command(["vncconfig", "-set", "SendPrimary=0"], environment=environment)
 
 
 def _install_vscode():
@@ -353,8 +392,11 @@ def _initial_density(dpi):
     )
     if probe.returncode == 0:
         _display(dpi)
-        _optimize(_desktop_environment())
+        environment = _desktop_environment()
+        _optimize(environment)
+        _clipboard_policy(environment)
         return
+    _clipboard_policy()
     _command(
         [
             "dbus-run-session",
@@ -646,6 +688,7 @@ def _chat_setup(config):
         data=json.dumps({"connect_vscode": config.get("connect_vscode", False)}),
     )
     _write_viewer(_STATE / "novnc-tools-v1", config["viewer_assets"])
+    _clipboard_policy(_desktop_environment())
     url = urlsplit(json.loads(public.read_text())["url"])
     _configure_gateway(
         {"public_ip": url.hostname, "https_port": url.port or 443}, tls=True
@@ -846,8 +889,8 @@ header strong{margin-right:auto}button,select,input{font:inherit;padding:4px 8px
 <main id="screen"></main><dialog id="login"><form method="dialog"><label>Desktop password<input id="password" type="password" autocomplete="current-password" required autofocus></label><button>Connect</button></form></dialog>
 <dialog id="clipboard" aria-labelledby="clipboard-title"><h2 id="clipboard-title">Clipboard</h2><p id="clipboard-hint"></p><label>Text to paste<textarea id="clipboard-text" spellcheck="false" autocapitalize="none" autocomplete="off"></textarea></label><div class="clipboard-actions"><button id="send-clipboard" disabled>Paste into desktop</button><button id="copy-clipboard">Copy text</button><button id="close-clipboard">Close</button></div></dialog>
 <script type="module">
-import RFB from './core/rfb.js?npa-desktop=2';
-import { installClipboard } from './desktop_clipboard.js?v=2';
+import RFB from './core/rfb.js?npa-desktop=3';
+import { installClipboard } from './desktop_clipboard.js?v=3';
 const status=document.querySelector('#status'),scale=document.querySelector('#scale'),login=document.querySelector('#login');
 window.npaDesktopScale=Number(localStorage.getItem('npaDesktopScale')||1);
 if(![0.85,1,1.15].includes(window.npaDesktopScale))window.npaDesktopScale=1;

@@ -37,8 +37,9 @@ VNC password privately; on macOS:
 ssh "$DESKTOP_SSH_HOST" 'cat ~/.local/share/nebius-desktop/password' | pbcopy
 ```
 
-Paste it into the desktop password dialog. Linux application shortcuts usually
-use Ctrl rather than Command. Closing the tab leaves the remote session running.
+Paste it into the desktop password dialog. Mac Command maps to Linux Ctrl for
+common app shortcuts such as Select All and Save. Closing the tab leaves the
+remote session running.
 Click the destination in the desktop, then use **Command-V** on a Mac or
 **Ctrl-V** on a PC to paste text from that device. On a phone, tap **Paste** in
 the viewer toolbar and allow the browser's clipboard prompt if one appears.
@@ -51,7 +52,9 @@ or the app's Linux copy shortcut (**Ctrl-C** in editors, **Ctrl-Shift-C** in
 terminals). Mac Command-C sends Linux Ctrl-Insert so it also works in terminals.
 The viewer transfers the copied text to your device, ready to paste into another
 app. Copying from a Linux app's menu also transfers text while the viewer is
-focused, when the browser permits it. On a phone, or if automatic copying is
+focused, when the browser permits it. Selecting or highlighting Linux text
+does not replace your device's clipboard; use an explicit Copy command.
+On a phone, or if automatic copying is
 blocked, tap **Copy to device** after copying within Linux. The status below
 the toolbar reports whether text was copied or needs an extra tap.
 

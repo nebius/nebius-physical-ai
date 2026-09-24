@@ -30,7 +30,7 @@ function pasteText(clipboard, text) {
     return;
   }
   clipboard.rfb.clipboardPasteFrom(text);
-  // noVNC maps Mac Command to Alt. Release the original shortcut before pasting.
+  // Release the held shortcut modifiers before sending the Linux paste shortcut.
   for (const [keysym, code] of modifierKeys) clipboard.rfb.sendKey(keysym, code, false);
   // Shift+Insert pastes in Linux editors and terminals without sending Enter.
   clipboard.rfb.sendKey(0xffe1, "ShiftLeft", true);

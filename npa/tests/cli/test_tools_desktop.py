@@ -179,7 +179,16 @@ def test_viewer_refresh_installs_matching_assets_without_restarting_services(
     monkeypatch.setattr(remote, "_command", commands)
     core = tmp_path / "core/rfb.js"
     core.parent.mkdir()
-    core.write_text("class RFB {\n    clipboardPasteFrom(text) {}\n}\n")
+    core.write_text(
+        'import Keyboard from "./input/keyboard.js";\n'
+        "class RFB {\n    clipboardPasteFrom(text) {}\n}\n"
+    )
+    keyboard = tmp_path / "core/input/keyboard.js"
+    keyboard.parent.mkdir()
+    keyboard.write_text(
+        "case KeyTable.XK_Super_L:\n                    keysym = KeyTable.XK_Alt_L;\n"
+        "case KeyTable.XK_Super_R:\n                    keysym = KeyTable.XK_Super_L;\n"
+    )
     assets = desktop._operation_assets("chat-setup")["viewer_assets"]
     remote._write_viewer(tmp_path, assets)
     remote._write_viewer(tmp_path, assets)
@@ -189,6 +198,8 @@ def test_viewer_refresh_installs_matching_assets_without_restarting_services(
     assert (tmp_path / "desktop.html").read_text() == remote._VIEWER
     assert (tmp_path / "desktop_clipboard.js").stat().st_mode & 0o777 == 0o644
     assert core.read_text().count("    requestClipboard() {") == 1
+    assert 'from "./input/keyboard.js?npa-desktop=3";' in core.read_text()
+    assert "keysym = KeyTable.XK_Alt_L" not in keyboard.read_text()
     commands.assert_not_called()
 
 
@@ -206,6 +217,32 @@ def test_viewer_rejects_unknown_vnc_clipboard_without_partial_asset_update(tmp_p
         remote._write_viewer(tmp_path, {"desktop_clipboard.js": "new assets"})
     assert core.read_text() == "unsupported viewer"
     assert not (tmp_path / "desktop_clipboard.js").exists()
+
+
+def test_clipboard_policy_persists_and_updates_existing_display_without_restart(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(remote, "_HOME", tmp_path)
+    command = Mock()
+    monkeypatch.setattr(remote, "_command", command)
+    remote._clipboard_policy()
+    command.assert_not_called()
+    startup = tmp_path / ".config/autostart/nebius-clipboard.desktop"
+    assert "Exec=/usr/bin/vncconfig -set SendPrimary=0\n" in startup.read_text()
+    environment = {"DISPLAY": ":10", "XAUTHORITY": "/test/.Xauthority"}
+    remote._clipboard_policy(environment)
+    command.assert_called_once_with(
+        ["vncconfig", "-set", "SendPrimary=0"], environment=environment
+    )
+
+
+def test_unknown_mac_keyboard_is_not_partially_patched(tmp_path):
+    keyboard = tmp_path / "core/input/keyboard.js"
+    keyboard.parent.mkdir(parents=True)
+    keyboard.write_text("unsupported keyboard")
+    with pytest.raises(RuntimeError, match="Unexpected noVNC Mac keyboard"):
+        remote._patch_mac_shortcuts(tmp_path)
+    assert keyboard.read_text() == "unsupported keyboard"
 
 
 def test_open_public_desktop_does_not_create_tunnel(monkeypatch):
