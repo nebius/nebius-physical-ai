@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 import json
+import multiprocessing
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,110 @@ CAMERAS = {
 }
 CAMERA_SIZES = {"head": 720, "left_wrist": 480, "right_wrist": 480}
 DATA_RECONSTRUCTION_SCHEMA = "npa.behavior.comet-native-data-reconstruction.v1"
+
+
+class DeliveredSampleDataset:
+    """Attach the source index to each transformed Comet sample.
+
+    This class lives in an importable package because Torch ``spawn`` workers
+    must reconstruct the dataset without the dynamically loaded adapter module.
+
+    Args:
+        dataset: Map-style dataset whose rows can be copied into dictionaries.
+
+    Returns:
+        A map-style dataset that includes ``_npa_sample_index`` in every row.
+
+    Raises:
+        TypeError: A source row cannot be converted to a dictionary.
+    """
+
+    def __init__(self, dataset: Any) -> None:
+        self.dataset = dataset
+
+    def __len__(self) -> int:
+        """Return the source dataset length.
+
+        Args:
+            None.
+        Returns:
+            Number of source samples.
+        Raises:
+            TypeError: The source dataset has no length.
+        """
+        return len(self.dataset)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        """Copy one row and attach its delivered source index.
+
+        Args:
+            index: Zero-based source dataset index.
+        Returns:
+            Copied sample with its source index.
+        Raises:
+            IndexError: The source dataset rejects ``index``.
+            TypeError: The source row cannot be converted to a dictionary.
+        """
+        value = dict(self.dataset[index])
+        value["_npa_sample_index"] = index
+        return value
+
+
+def _read_spawn_sample(dataset: Any, connection: Any) -> None:
+    try:
+        value = dataset[0]
+        connection.send({"status": "sample_read", "type": type(value).__name__})
+    except Exception as exc:
+        connection.send({"status": "failed", "error": type(exc).__name__})
+    finally:
+        connection.close()
+
+
+def _close_spawn_process(process: multiprocessing.Process) -> None:
+    if process.pid is None:
+        return
+    if process.is_alive():
+        process.terminate()
+        process.join()
+    process.close()
+
+
+def verify_spawn_dataset_sample(dataset: Any) -> dict[str, object]:
+    """Verify one real dataset sample in a fresh spawn process.
+
+    Args:
+        dataset: Nonempty map-style dataset passed to Torch loader workers.
+    Returns:
+        Spawn method and successful sample-read status.
+    Raises:
+        ValueError: The dataset is empty, cannot be reconstructed, or cannot
+            produce its first sample in a spawned process.
+    """
+    if len(dataset) < 1:
+        raise ValueError("spawn dataset probe requires a nonempty dataset")
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=_read_spawn_sample, args=(dataset, sender))
+    try:
+        try:
+            process.start()
+        except Exception as exc:
+            raise ValueError("spawn dataset worker could not start") from exc
+        sender.close()
+        process.join()
+        try:
+            result = receiver.recv() if receiver.poll() else None
+        except (EOFError, OSError) as exc:
+            raise ValueError("spawn dataset worker ended without a result") from exc
+        if process.exitcode != 0 or not isinstance(result, dict):
+            raise ValueError("spawn dataset worker failed before returning a sample")
+        if result.get("status") != "sample_read":
+            raise ValueError(f"spawn dataset sample failed: {result.get('error')}")
+        return {"start_method": "spawn", "status": result["status"], "sample_index": 0}
+    finally:
+        receiver.close()
+        sender.close()
+        _close_spawn_process(process)
 
 
 def validate_data_reconstruction(value: object) -> dict[str, object]:

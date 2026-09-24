@@ -4,11 +4,61 @@ import dataclasses
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+
+_SPAWN_DATASET_PROBE = r"""
+import importlib.util
+import sys
+from pathlib import Path
+
+import torch
+
+
+class FailingSampleDataset:
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, _index):
+        raise RuntimeError("deliberate sample failure")
+
+
+def main():
+    adapter = Path(sys.argv[1])
+    name = sys.argv[2]
+    spec = importlib.util.spec_from_file_location(name, adapter)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    source = [{"value": torch.tensor([3])}, {"value": torch.tensor([7])}]
+    dataset = module.DeliveredSampleDataset(source)
+    assert type(dataset).__module__ == "npa.workflows.behavior_challenge.comet_training_data"
+    assert module.NativeCursorSampler.__module__ == "npa.workflows.behavior_challenge.comet_training_sampler"
+    probe = module.verify_spawn_dataset_sample(dataset)
+    assert probe == {"start_method": "spawn", "status": "sample_read", "sample_index": 0}
+    loader = torch.utils.data.DataLoader(
+        dataset, batch_size=2, num_workers=1, multiprocessing_context="spawn"
+    )
+    batch = next(iter(loader))
+    assert batch["_npa_sample_index"].tolist() == [0, 1]
+    assert batch["value"].reshape(-1).tolist() == [3, 7]
+    failed = module.DeliveredSampleDataset(FailingSampleDataset())
+    try:
+        module.verify_spawn_dataset_sample(failed)
+    except ValueError as exc:
+        assert str(exc) == "spawn dataset sample failed: RuntimeError"
+    else:
+        raise AssertionError("spawn sample failure was accepted")
+
+
+if __name__ == "__main__":
+    main()
+"""
 
 
 def _native_modules(tmp_path):
@@ -48,6 +98,26 @@ def _native_modules(tmp_path):
         data_loader,
         TrainState,
     )
+
+
+@pytest.mark.parametrize(
+    "alias", ["npa_public_comet_adapter_qualification", "npa_comet_openpi_runtime"]
+)
+def test_dynamic_adapter_dataset_is_importable_in_spawn_worker(tmp_path, alias):
+    pytest.importorskip("torch")
+    implementation = (
+        Path(__file__).parents[3]
+        / "workflows/implementations/behavior-comet12/comet_openpi_runtime.py"
+    )
+    script = tmp_path / "spawn_dataset_probe.py"
+    script.write_text(_SPAWN_DATASET_PROBE)
+    result = subprocess.run(
+        [sys.executable, str(script), str(implementation), alias],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _data_contract(task_id=1):

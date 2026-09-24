@@ -15,7 +15,9 @@ from typing import Any
 
 from npa.workflows.behavior_challenge.comet_training_data import (
     CometTaskDataset,
+    DeliveredSampleDataset,
     validate_data_reconstruction,
+    verify_spawn_dataset_sample,
 )
 from npa.workflows.behavior_challenge.comet_training_sampler import (
     CommittedCursor,
@@ -47,21 +49,6 @@ class RuntimePaths:
     split: Path
     parent_checkpoint: Path
     workspace: Path
-
-
-class _ObservedDataset:
-    """Attach delivered sampler identity after native transformations."""
-
-    def __init__(self, dataset: Any) -> None:
-        self.dataset = dataset
-
-    def __len__(self) -> int:
-        return len(self.dataset)
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        value = dict(self.dataset[index])
-        value["_npa_sample_index"] = index
-        return value
 
 
 def _load_native_train(source_root: Path) -> Any:
@@ -433,7 +420,7 @@ class CometOpenPIRuntime:
         from openpi.training import data_loader
 
         config, data_config, dataset = _configured_data(self.args, self.admission)
-        transformed = _ObservedDataset(
+        transformed = DeliveredSampleDataset(
             data_loader.transform_dataset(dataset, data_config)
         )
         return config, data_config, transformed
@@ -692,8 +679,13 @@ class CometOpenPIRuntime:
 
 def _input_preflight_receipt(args: Any, admission: dict[str, Any]) -> dict[str, Any]:
     import jax
+    from openpi.training import data_loader
 
     config, data_config, dataset = _configured_data(args, admission)
+    transformed = DeliveredSampleDataset(
+        data_loader.transform_dataset(dataset, data_config)
+    )
+    worker_probe = verify_spawn_dataset_sample(transformed)
     if jax.default_backend() != "cpu" or any(
         device.platform != "cpu" for device in jax.devices()
     ):
@@ -711,6 +703,7 @@ def _input_preflight_receipt(args: Any, admission: dict[str, Any]) -> dict[str, 
         "full_policy_initialized": False,
         "optimizer_updates": 0,
         "jax_backend": "cpu",
+        "worker_spawn_probe": worker_probe,
     }
 
 
