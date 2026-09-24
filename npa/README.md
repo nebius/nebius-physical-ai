@@ -461,3 +461,15 @@ using the installed renderer. Create a project from your own media with
 Install `npa[studio]` for optional speech generation and FFmpeg separately.
 See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
 configuration, offline narration, artifact search and privacy boundaries.
+
+### MJLab
+
+Install optional simulator packages with `pip install -e '.[mjlab]'` on Python
+3.10–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
+provides `train`, `eval`, `export`, `list`, `status`, `system-info`, `deploy`, and
+`workflow`; use `--help` for their options. Training preserves upstream defaults
+unless overridden. Public handoffs are S3 URIs; `--dry-run` plans without metrics
+or writes. The service requires `MJLAB_TOKEN` and `MJLAB_ALLOWED_S3_ROOTS` and
+uses existing storage credentials. See the [MJLab guide](../docs/workbench/mjlab.md)
+for request schemas, deployment Secrets, environment variables, validation and
+image publication status.

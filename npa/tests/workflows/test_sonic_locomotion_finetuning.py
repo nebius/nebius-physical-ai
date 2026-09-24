@@ -155,7 +155,7 @@ def test_sonic_workflow_materializer_supports_docker_payload_mode() -> None:
     assert 'docker run --rm "${docker_gpu_args[@]}"' in task["run"]
 
 
-def test_sonic_locomotion_spec_runs_the_three_stages_in_order() -> None:
+def test_sonic_locomotion_spec_runs_native_policy_stages_in_order() -> None:
     """Replaces the retired template's serial/task-name assertions.
 
     The template said `execution: serial` over three named tasks. The spec's equivalent is a
@@ -171,11 +171,12 @@ def test_sonic_locomotion_spec_runs_the_three_stages_in_order() -> None:
     assert [step.tool_ref for step in steps] == [
         "workbench.retargeting.run",
         "workbench.sonic.train",
-        "workbench.mjlab.eval",
+        "workbench.sonic.export",
+        "workbench.sonic.eval",
     ]
     # Serial, in the engine's terms: no step belongs to a `parallel:` fan-out group, so the
     # scheduler launches them one wave at a time in this order.
-    assert [step.group for step in steps] == ["", "", ""]
+    assert [step.group for step in steps] == ["", "", "", ""]
 
 
 def test_retargeting_spec_invokes_the_real_cli_surface() -> None:
@@ -215,11 +216,9 @@ def test_mjlab_eval_spec_invokes_the_real_cli_surface() -> None:
     assert "npa workbench mjlab eval" in argv
     assert spec.resources[step.resources]["accelerators"] == "H100:1"
     for flag in (
-        "--input-path",
+        "--task",
         "--checkpoint",
         "--output-path",
-        "--suite",
-        "--embodiment",
         "--episodes",
     ):
         assert flag in argv

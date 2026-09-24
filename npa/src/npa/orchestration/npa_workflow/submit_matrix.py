@@ -758,7 +758,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "mjlab-eval.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="Requires an operator-provided native MJLab checkpoint and a built MJLab image.",
     ),
     SubmitLiveCase(
         "sonic-train.yaml",
@@ -903,6 +905,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "status; it is not closed-loop or physical-robot task evidence."
         ),
     ),
+    SubmitLiveCase(
+        "mjlab-train-eval.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="MJLab image awaits exact-byte scans and GPU qualification before publication.",
+        notes="Native train -> eval -> export -> independent-seed eval; requires an explicit built image override.",
+    ),
     # --- Multi-stage GPU ---
     SubmitLiveCase(
         "sonic-export-eval.yaml",
@@ -924,7 +934,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NGC_API_KEY",
         ),
         notes=(
-            "retarget → train → mjlab. Retargeting consumes the SOMA/G1 motion "
+            "retarget → train → export → native SONIC eval. Retargeting consumes the SOMA/G1 motion "
             "clips staged in the run bucket (see SONIC_MOTION_FIXTURE_PREFIX in "
             "the live helpers, overridable with NPA_E2E_SONIC_MOTION_SRC); train "
             "uses the in-job runtime."

@@ -877,6 +877,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Generation runs through the BYOF tier (`base_image: tool://ltx2`), so
         # this verb has no service or YAML env tier to stay coherent with.
         "ltx2",
+        # Typed shared requests are exercised through HTTP, CLI, SDK and toolRefs
+        # in test_mjlab.py and test_mjlab_workflow.py.
         "mjlab",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.

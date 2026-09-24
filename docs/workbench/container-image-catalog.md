@@ -688,3 +688,7 @@ recipes use the same source revision and archive digest, retaining Pillow 12.3
 or newer. The published Genesis release tags above continue to identify their
 original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
+
+MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
+publication plan while it is unbuilt and awaits exact-image scans and real GPU
+qualification. See [MJLab](mjlab.md) for operator builds and workflow overrides.

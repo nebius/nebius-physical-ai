@@ -471,6 +471,17 @@ images:
       mandatory before publication. The supported release must resolve to the
       exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
       runtime fetch and real GPU generation evidence are bound to the same bytes.
+  mjlab:
+    dockerfile: mjlab/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot bootstrap only; service deployment disables privilege escalation, no default SSH daemon or credentials."
+    redistribution: public
+    notes: >-
+      Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
+      No checkpoints, motion datasets, credentials or populated runtime caches.
+      Publication quarantined until built-layer license/security inspection and
+      actual GPU train/eval/export qualification; see mjlab/REDISTRIBUTION.md.
   curobo:
     dockerfile: curobo/Dockerfile
     tier: service

@@ -96,7 +96,7 @@ Reference specs (all pytest-guarded):
 | `av-night-scene-hardening.yaml` | AV night-scene hardening — fan-out into two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
-| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
+| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → export → native SONIC eval |
 | `groot-1-7-finetune.yaml` | GR00T N1.7 operational pipeline: deterministic real-data split, parameterized distributed optimizer smoke, immutable checkpoint, aligned offline inference, honest learning outcome, native RRD/MCAP, S3 publication, and deployed-agent viewer verification |
 | `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool workbench specs |
 

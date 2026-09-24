@@ -86,7 +86,14 @@ def test_workbench_public_surface() -> None:
         "isaac_lab": ["deploy", "train", "eval", "export_lerobot", "status"],
         "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
-        "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
+        "mjlab": [
+            "train",
+            "evaluate",
+            "export",
+            "list_tasks",
+            "system_info",
+            "result_uri_for",
+        ],
         "retargeting": [
             "run_retargeting",
             "validate_motion_lib",
