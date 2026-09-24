@@ -7,6 +7,7 @@ import tarfile
 from pathlib import Path
 from typing import Any
 
+import httpx
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +15,7 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.sdk.workbench import antioch as antioch_sdk
 from npa.workbench.antioch.dataset import AntiochDatasetError, validate_episode
 from npa.workbench.antioch.manager import (
     AntiochManager,
@@ -101,6 +103,72 @@ def _submit() -> SubmitRequest:
         task="Move the cart to the requested target",
         suite="smoke",
     )
+
+
+@pytest.mark.parametrize(
+    "retryable_value,expected",
+    [
+        pytest.param(True, True, id="literal-true"),
+        pytest.param(False, False, id="literal-false"),
+        pytest.param("false", False, id="string-false"),
+        pytest.param(1, False, id="numeric-one"),
+        pytest.param(0, False, id="numeric-zero"),
+        pytest.param(None, False, id="null"),
+        pytest.param([], False, id="list"),
+        pytest.param({}, False, id="object"),
+    ],
+)
+def test_remote_error_retryable_requires_literal_true(
+    monkeypatch: pytest.MonkeyPatch,
+    retryable_value: object,
+    expected: bool,
+) -> None:
+    def respond(*args: object, **kwargs: object) -> httpx.Response:
+        del args, kwargs
+        return httpx.Response(
+            503,
+            json={
+                "detail": {
+                    "message": "service capacity is unavailable",
+                    "type": "capacity",
+                    "retryable": retryable_value,
+                }
+            },
+        )
+
+    monkeypatch.setattr("npa.sdk.workbench.antioch.httpx.post", respond)
+
+    with pytest.raises(AntiochOperationError) as raised:
+        antioch_sdk.submit(_submit(), endpoint="https://antioch.invalid")
+
+    assert str(raised.value) == "service capacity is unavailable"
+    assert raised.value.error_type == "capacity"
+    assert raised.value.retryable is expected
+
+
+def test_remote_error_without_retryable_is_non_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def respond(*args: object, **kwargs: object) -> httpx.Response:
+        del args, kwargs
+        return httpx.Response(
+            503,
+            json={
+                "detail": {
+                    "message": "request was rejected",
+                    "type": "authentication",
+                }
+            },
+        )
+
+    monkeypatch.setattr("npa.sdk.workbench.antioch.httpx.post", respond)
+
+    with pytest.raises(AntiochOperationError) as raised:
+        antioch_sdk.submit(_submit(), endpoint="https://antioch.invalid")
+
+    assert str(raised.value) == "request was rejected"
+    assert raised.value.error_type == "authentication"
+    assert raised.value.retryable is False
 
 
 def test_submit_metadata_is_required_and_non_cartpole_values_are_preserved() -> None:
