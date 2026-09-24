@@ -302,6 +302,36 @@ def _kubectl_env() -> dict[str, str]:
     return env
 
 
+def _node_unschedulable(spec: Any, *, node: str) -> bool:
+    """Read Kubernetes scheduling state without coercing malformed values."""
+
+    if not isinstance(spec, dict):
+        raise MigVerificationError(
+            f"node {node}: Kubernetes spec must be a mapping to determine "
+            "spec.unschedulable"
+        )
+    value = spec.get("unschedulable", False)
+    if not isinstance(value, bool):
+        raise MigVerificationError(
+            f"node {node}: Kubernetes spec.unschedulable must be a boolean; "
+            f"got {value!r}"
+        )
+    return value
+
+
+def _container_statuses_ready(statuses: Any) -> bool:
+    """Accept a non-empty status list only when every readiness value is true."""
+
+    return (
+        isinstance(statuses, list)
+        and bool(statuses)
+        and all(
+            isinstance(status, dict) and status.get("ready") is True
+            for status in statuses
+        )
+    )
+
+
 def inspect_mig_state(
     nodes_payload: dict[str, Any],
     cluster_policy_payload: dict[str, Any],
@@ -364,7 +394,11 @@ def inspect_mig_state(
             and condition.get("status") == "True"
             for condition in conditions
         )
-        schedulable = not bool(spec.get("unschedulable", False))
+        try:
+            schedulable = not _node_unschedulable(spec, node=name)
+        except MigVerificationError as exc:
+            schedulable = False
+            errors.append(str(exc))
         node_statuses.append(
             MigNodeStatus(
                 name=name,
@@ -1099,7 +1133,7 @@ def _reconcile_ondelete_driver(
             ["get", "node", node],
             timeout_seconds=_remaining_timeout(deadline, monotonic_fn),
         )
-        cordoned_here = not bool(node_payload.get("spec", {}).get("unschedulable"))
+        cordoned_here = not _node_unschedulable(node_payload.get("spec"), node=node)
         primary_error: BaseException | None = None
         try:
             if cordoned_here:
@@ -1265,11 +1299,8 @@ def _replace_driver_pod(
                 and candidate.get("spec", {}).get("nodeName") == node
                 and str(candidate.get("metadata", {}).get("uid") or "") != pod_uid
                 and candidate.get("status", {}).get("phase") == "Running"
-                and candidate.get("status", {}).get("containerStatuses")
-                and all(
-                    bool(status.get("ready"))
-                    for status in candidate["status"]["containerStatuses"]
-                    if isinstance(status, dict)
+                and _container_statuses_ready(
+                    candidate.get("status", {}).get("containerStatuses")
                 )
             ),
             None,
