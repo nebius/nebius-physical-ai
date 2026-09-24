@@ -61,6 +61,8 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.insights.record": "public lineage/metrics ingestion primitive",
     "workbench.isaac_lab.byof_repo": "public Isaac Lab BYOF primitive",
     "workbench.lerobot.eval": "public LeRobot evaluation primitive",
+    "workbench.molmoact.serve": "public MolmoAct serving primitive (config validation only; execution not implemented)",
+    "workbench.molmoact.eval": "public MolmoAct evaluation primitive (config validation only; execution not implemented)",
     "workbench.openvla.serve": "public OpenVLA serving primitive (upstream argv planning; eval plan-only)",
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
@@ -133,6 +135,7 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 _NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
 
@@ -1930,6 +1933,57 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.molmoact.finetune": ToolEntry(
+        name="workbench.molmoact.finetune",
+        description=(
+            "Validate a MolmoAct fine-tuning config "
+            "(planning only; training not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "finetune",
+            "--model-id",
+            "{{config.model_id}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-s3-uri",
+            "{{config.training_uri}}",
+        ],
+    ),
+    "workbench.molmoact.serve": ToolEntry(
+        name="workbench.molmoact.serve",
+        description=(
+            "Validate a MolmoAct serving config "
+            "(planning only; serving not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "serve",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--port",
+            "{{config.serve_port}}",
+        ],
+    ),
+    "workbench.molmoact.eval": ToolEntry(
+        name="workbench.molmoact.eval",
+        description=(
+            "Validate a MolmoAct eval config "
+            "(planning only; evaluation not implemented)."
+        ),
+        argv_template=[
+            *_MOLMOACT_PIPELINE,
+            "eval",
+            "--model-id",
+            "{{config.model_id}}",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-s3-uri",
+            "{{config.evaluation_uri}}",
         ],
     ),
     "workbench.openvla.train": ToolEntry(

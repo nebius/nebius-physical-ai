@@ -19,6 +19,7 @@ __all__ = [
     "lancedb",
     "lerobot",
     "mjlab",
+    "molmoact",
     "openvla",
     "newton",
     "retargeting",

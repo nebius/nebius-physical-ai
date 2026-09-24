@@ -191,6 +191,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "molmoact-finetune.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "MolmoAct workbench pipeline stages are stubs in this release: "
+            "finetune validates the config and returns a plan-only manifest "
+            "(training not implemented), so the spec exercises config "
+            "validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the molmoact/finetune three-tier contract "
+            "(CLI <-> SDK <-> spec); real MolmoAct fine-tuning lands with "
+            "nebius/nebius-physical-ai#502. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-super-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

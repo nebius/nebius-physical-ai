@@ -747,6 +747,16 @@ skills:
         contains: "dataset-uri"
       - type: file_exists
         path: skills/tools/openvla/SKILL.md
+  - name: molmoact
+    category: tools
+    when_to_use: "MolmoAct VLA fine-tuning, serving, or evaluation workbench stages, MolmoAct policy configs, or the npa workbench molmoact CLI."
+    path: skills/tools/molmoact/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "molmoact", "finetune", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/molmoact/SKILL.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."

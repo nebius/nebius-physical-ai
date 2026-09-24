@@ -168,6 +168,13 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "seed": "knob",
         "dry_run": "boolean",
     },
+    "molmoact/finetune": {
+        "max_steps": "knob",
+        "batch_size": "knob",
+        "learning_rate": "knob",
+        "num_gpus": "knob",
+        "run_name": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
@@ -223,6 +230,32 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("image_aug", "image_aug", "--image-aug"),
             _p("seed", "seed", "--seed"),
             _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="molmoact/finetune",
+        cli_module="npa.cli.workbench.molmoact",
+        cli_callback="finetune_cmd",
+        sdk_module="npa.sdk.workbench.molmoact",
+        sdk_attr="finetune",
+        spec_path=SPECS / "molmoact-finetune.yaml",
+        tool_ref="workbench.molmoact.finetune",
+        spec_gap=(
+            "max_steps",
+            "batch_size",
+            "learning_rate",
+            "num_gpus",
+            "run_name",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_s3_uri", "output_s3_uri", "--output-s3-uri"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("num_gpus", "num_gpus", "--num-gpus"),
+            _p("run_name", "run_name", "--run-name"),
         ),
     ),
     CapabilityContract(
