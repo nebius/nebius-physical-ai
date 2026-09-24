@@ -5057,7 +5057,9 @@ def _durable_workflow_status(
                 aws_access_key_id=state.aws_access_key_id,
                 aws_secret_access_key=state.aws_secret_access_key,
             )
-            latest_supervision = SupervisorLedger(supervisor_store).latest()
+            latest_supervision = SupervisorLedger(supervisor_store).latest(
+                run_id=run_manifest.run_id or _display_run_id(run_id)
+            )
             if latest_supervision is not None:
                 run_payload["supervisor"] = latest_supervision
         except Exception as exc:  # noqa: BLE001 - status remains useful without enrichment

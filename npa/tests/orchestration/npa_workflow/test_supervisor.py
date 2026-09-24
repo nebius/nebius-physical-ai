@@ -636,6 +636,44 @@ def test_process_restart_reads_content_addressed_immutable_history() -> None:
     assert len(objects) == 1
 
 
+def test_latest_supervision_filters_before_selecting_newest_event() -> None:
+    ledger = SupervisorLedger(MemoryStore())
+    expected = {
+        "recorded_at": "2026-08-30T00:00:00Z",
+        "phase": "decision",
+        "attempt_identity": identity(run_id="requested-run").to_dict(),
+        "classification": "requested",
+    }
+    ledger.record(expected)
+    ledger.record(
+        {
+            "recorded_at": "2026-08-30T00:01:00Z",
+            "phase": "decision",
+            "attempt_identity": identity(run_id="other-run").to_dict(),
+            "classification": "other",
+        }
+    )
+
+    assert ledger.latest(run_id="requested-run")["classification"] == "requested"
+    assert ledger.latest(run_id="absent-run") is None
+
+
+@pytest.mark.parametrize("attempt_identity", [None, {}, {"run_id": 7}])
+def test_latest_supervision_rejects_missing_or_malformed_run_identity(
+    attempt_identity: object,
+) -> None:
+    ledger = SupervisorLedger(MemoryStore())
+    ledger.record(
+        {
+            "recorded_at": "2026-08-30T00:00:00Z",
+            "phase": "decision",
+            "attempt_identity": attempt_identity,
+        }
+    )
+
+    assert ledger.latest(run_id="requested-run") is None
+
+
 def test_immutable_artifact_rejects_conflicting_bytes() -> None:
     store = MemoryStore()
     store.write_immutable_artifact("evidence/event.json", b"one")

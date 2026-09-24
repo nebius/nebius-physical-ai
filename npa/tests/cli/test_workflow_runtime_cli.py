@@ -174,7 +174,7 @@ def test_available_manifest_projects_runtime_resource_snapshot(mocker) -> None:
         "npa.orchestration.npa_workflow.run_resolution.resolve_run",
         return_value=resolution,
     )
-    mocker.patch(
+    latest = mocker.patch(
         "npa.orchestration.npa_workflow.supervisor.SupervisorLedger.latest",
         return_value=None,
     )
@@ -183,6 +183,7 @@ def test_available_manifest_projects_runtime_resource_snapshot(mocker) -> None:
 
     assert payload["stages"]["qualify"]["requested_accelerators"] == "GPU:1"
     assert payload["stages"]["qualify"]["resources_profile"] == profile
+    latest.assert_called_once_with(run_id="resource-snapshot")
 
 
 def test_runtime_resource_snapshot_preserves_manifest_profile() -> None:

@@ -503,8 +503,24 @@ class SupervisorLedger:
             ),
         )
 
-    def latest(self) -> dict[str, Any] | None:
+    def latest(self, *, run_id: str = "") -> dict[str, Any] | None:
+        """Return the newest event, optionally restricted to one exact run.
+
+        Args:
+            run_id: Exact workflow run identity, or empty for all events.
+        Returns:
+            The newest matching event, or ``None`` when no event matches.
+        Raises:
+            None.
+        """
         events = self.events()
+        if run_id:
+            events = [
+                event
+                for event in events
+                if isinstance(event.get("attempt_identity"), dict)
+                and event["attempt_identity"].get("run_id") == run_id
+            ]
         return events[-1] if events else None
 
 
