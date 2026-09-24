@@ -53,6 +53,16 @@
   },
   "images": [
     {
+      "name": "npa-sam3",
+      "dockerfile": "sam3/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-gpu",
+      "redistribution": "public",
+      "smoke": "sam3-runtime segment: real text-prompted video masks, frame-aligned decoded overlay and provenance.",
+      "notes": "Neutral Python bootstrap. Pinned CUDA-enabled PyTorch and SAM 3.1 source/weights are runtime fetches; checkpoint access and real GPU qualification are pending. No B200 or B300 result is claimed.",
+      "development_publication": "docs/workbench/validation/sam31-public-development-20260919.json"
+    },
+    {
       "name": "npa-ncore",
       "dockerfile": "ncore/Dockerfile",
       "build_script": "ncore/build.sh",
@@ -651,6 +661,14 @@
       },
       "validated_tag": "0.1.0",
       "validated_digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"
+    },
+    {
+      "name": "npa-antioch",
+      "dockerfile": "antioch/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "FastAPI service import, non-root runtime, and proprietary-payload image scan",
+      "notes": "CPU-only control-plane adapter. Antioch-managed simulation capacity is remote; this image contains no CUDA, simulator engine, Antioch wheel, credentials, or customer payloads."
     },
     {
       "name": "npa-fiftyone",

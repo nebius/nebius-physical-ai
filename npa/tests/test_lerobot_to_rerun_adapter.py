@@ -72,7 +72,7 @@ def _write_empty_lerobot_dataset(root: Path, *, fps: int = 10) -> Path:
 
 
 def _recording_chunks(path: Path):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     return list(load_recording(path).chunks())
 
@@ -206,7 +206,7 @@ def test_verify_rerun_entities_uses_fallback_counts_without_recording_loader(
     real_import = __import__
 
     def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "rerun.recording":
+        if name == "npa.viz.recordings":
             raise ImportError("recording loader unavailable")
         return real_import(name, globals, locals, fromlist, level)
 

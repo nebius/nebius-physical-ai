@@ -41,6 +41,7 @@ from .schemas import (
     RecordRequest,
     RecordResponse,
 )
+from .storage import InsightsStorageError
 from .store import (
     InsightsStoreError,
     ingest_run,
@@ -135,7 +136,10 @@ def create_app(
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
         await require_auth(request, authorization)
-        return status_for_store(input_uri, run_id)
+        try:
+            return status_for_store(input_uri, run_id)
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/record", response_model=RecordResponse)
     async def record(
@@ -148,6 +152,8 @@ def create_app(
             response = record_metrics(body)
         except InsightsStoreError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except InsightsIntegrationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         _track(response.store_uri, response.total_records, response.total_edges)
@@ -164,6 +170,8 @@ def create_app(
             response = ingest_run(body)
         except InsightsStoreError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except InsightsIntegrationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         _track(response.store_uri, response.total_records, response.total_edges)
@@ -192,6 +200,8 @@ def create_app(
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/query", response_model=QueryResponse)
     async def query(
@@ -248,6 +258,8 @@ def create_app(
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except InsightsIntegrationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -274,6 +286,8 @@ def create_app(
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/dashboard", response_model=DashboardResponse)
     async def dashboard(
@@ -298,6 +312,8 @@ def create_app(
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return app
 

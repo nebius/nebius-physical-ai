@@ -106,7 +106,7 @@ def test_ci_pins_select_one_cpu_runtime_per_interpreter(version: str) -> None:
     assert not any(name.startswith(("nvidia-", "triton")) for name in names)
     assert (
         str(next(item for item in active if item.name == "torch").specifier)
-        == "==2.13.0+cpu"
+        == "==2.14.0+cpu"
     )
 
 

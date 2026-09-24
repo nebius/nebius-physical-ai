@@ -118,6 +118,15 @@ def usable_hf_payload_probe(asset: GatedAsset) -> bool:
 # Face before the token can download them.
 WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
+        "nvidia/Cosmos3-Super",
+        HF,
+        ("cosmos3-super-benchmark",),
+        False,
+        revision="e0262be9d8f7586bc24c069a2aed2b665bdff266",
+        probe_path="transformer/diffusion_pytorch_model-00001-of-00027.safetensors",
+        official_url="https://huggingface.co/nvidia/Cosmos3-Super",
+    ),
+    GatedAsset(
         "nvidia/Alpamayo2-Super",
         HF,
         ("alpamayo2-super",),

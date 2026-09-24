@@ -13,9 +13,10 @@ import time.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 import yaml
 
@@ -715,6 +716,59 @@ ALL_CHECKS: tuple[str, ...] = (
 )
 
 
+def run_checks_concurrently(
+    thunks: Sequence[Callable[[], CheckResult]], *, max_workers: int
+) -> list[CheckResult]:
+    """Run zero-argument check callables with a bounded thread pool.
+
+    Shared by both preflight runners in this package (``run_preflight`` here
+    and ``credential_preflight.run_credential_preflight``): each check is an
+    independent probe, so running them concurrently pays roughly the slowest
+    check's latency instead of their sum, while still returning results in
+    ``thunks`` order regardless of completion order.
+
+    Args:
+        thunks: Zero-argument callables, each producing one ``CheckResult``.
+        max_workers: Upper bound on concurrently running thunks.
+
+    Returns:
+        One result per thunk, in the same order as ``thunks``.
+
+    Raises:
+        Exception: Whatever the first thunk (by ``thunks`` order) raised.
+            Only this exception *selection* matches a plain serial list
+            comprehension; unlike serial execution, every thunk still runs
+            to completion (the executor joins all of them before this
+            propagates), even the ones after the one whose exception wins.
+    """
+
+    if len(thunks) <= 1:
+        return [thunk() for thunk in thunks]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(thunk) for thunk in thunks]
+        return [future.result() for future in futures]
+
+
+def _preflight_thunks(
+    config: Sim2RealLoopConfig,
+    *,
+    repo_root: Path,
+    probes: DoctorProbes,
+    selected: Sequence[str],
+) -> list[Callable[[], CheckResult]]:
+    """Build the zero-argument callable for each selected check, in order."""
+
+    candidates: list[tuple[str, Callable[[], CheckResult]]] = [
+        ("config", lambda: check_config(config)),
+        ("coherence", lambda: check_coherence(repo_root)),
+        ("s3", lambda: check_s3(config, probes=probes)),
+        ("registry", lambda: check_registry(config, probes=probes)),
+        ("tokens", lambda: check_tokens(config, probes=probes)),
+        ("cluster", lambda: check_cluster(config, probes=probes)),
+    ]
+    return [thunk for name, thunk in candidates if name in selected]
+
+
 def run_preflight(
     config: Sim2RealLoopConfig,
     *,
@@ -722,23 +776,36 @@ def run_preflight(
     probes: DoctorProbes,
     checks: Iterable[str] | None = None,
 ) -> list[CheckResult]:
-    """Run the selected checks and return their results in display order."""
+    """Run the selected checks and return their results in display order.
+
+    Each check is independent (a local repo check, or one network/subprocess
+    probe against S3, the registry, tokens, or the cluster). ``ALL_CHECKS``
+    has only 6 entries and each appears in a selection at most once, so
+    (unlike credential preflight's caller-supplied, possibly-duplicated check
+    list) the worker count here needs no separate cap.
+
+    Args:
+        config: Resolved Sim2Real loop configuration each check reads from.
+        repo_root: Repository root for the local ``coherence`` check.
+        probes: Injectable side-effecting probes for the network/subprocess
+            checks (S3, registry, tokens, cluster).
+        checks: Check names to run. Defaults to :data:`ALL_CHECKS`, in that
+            display order.
+
+    Returns:
+        One :class:`CheckResult` per selected check, in ``ALL_CHECKS`` order.
+
+    Raises:
+        None. Individual checks report failure as a ``CheckResult`` rather
+        than raising, so callers should not expect this to raise for probe
+        failures; an unexpected exception from a check would still propagate.
+    """
 
     selected = tuple(checks) if checks is not None else ALL_CHECKS
-    results: list[CheckResult] = []
-    if "config" in selected:
-        results.append(check_config(config))
-    if "coherence" in selected:
-        results.append(check_coherence(repo_root))
-    if "s3" in selected:
-        results.append(check_s3(config, probes=probes))
-    if "registry" in selected:
-        results.append(check_registry(config, probes=probes))
-    if "tokens" in selected:
-        results.append(check_tokens(config, probes=probes))
-    if "cluster" in selected:
-        results.append(check_cluster(config, probes=probes))
-    return results
+    thunks = _preflight_thunks(
+        config, repo_root=repo_root, probes=probes, selected=selected
+    )
+    return run_checks_concurrently(thunks, max_workers=len(thunks))
 
 
 def has_failure(results: list[CheckResult]) -> bool:
@@ -810,5 +877,6 @@ __all__ = [
     "coherence_failures",
     "format_check_report",
     "has_failure",
+    "run_checks_concurrently",
     "run_preflight",
 ]

@@ -1639,6 +1639,7 @@ def reconstruct_scene(
     runner: RunCallable | None = None,
     dry_run: bool = False,
     export_gt: bool = True,
+    gt_frame_step: int = DEFAULT_GT_FRAME_STEP_CAMERA,
     timeout: float | None = None,
 ) -> NurecReconstructResult:
     """Train a 3DGUT Gaussian reconstruction and collect its USDZ + metrics."""
@@ -1715,6 +1716,7 @@ def reconstruct_scene(
         gt_args = build_nre_export_gt_args(
             ncore_json=ncore_json,
             output_dir=str(gt_target),
+            frame_step_camera=gt_frame_step,
         )
         gt_result = _run(
             nre_command(
