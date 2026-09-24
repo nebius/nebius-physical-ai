@@ -37,19 +37,38 @@ VNC password privately; on macOS:
 ssh "$DESKTOP_SSH_HOST" 'cat ~/.local/share/nebius-desktop/password' | pbcopy
 ```
 
-Paste it into the desktop password dialog. Linux application shortcuts usually
-use Ctrl rather than Command. Closing the tab leaves the remote session running.
+Paste it into the desktop password dialog. Mac Command maps to Linux Ctrl for
+common app shortcuts such as Select All and Save. Closing the tab leaves the
+remote session running.
 Click the destination in the desktop, then use **Command-V** on a Mac or
-**Ctrl-V** on a PC to paste text from that device. On a phone, tap **Paste** in
-the viewer toolbar and allow the browser's clipboard prompt if one appears.
+**Ctrl-V** on a PC to paste text from that device. Alternate paste shortcuts
+(Ctrl-Shift-V, Shift-Insert and Mac Command-Shift-V) use the same text bridge.
+On a phone, tap **Paste** in the viewer toolbar. Safari opens a normal text box:
+touch and hold to paste, then choose **Paste into desktop**. Other browsers can
+read the clipboard directly after the tap when permission is granted.
 The viewer copies the text and sends the Linux paste shortcut to the selected
 application; it does not press Enter. Multiline text and Unicode use the VNC
-server's extended clipboard support.
+server's extended clipboard support. Repeated pastes are delivered in order;
+the viewer waits for the server to read each payload before advancing. A lost
+connection discards pending pastes instead of replaying uncertain input.
+
+To copy out, select text in the desktop app and use **Command-C** on a Mac
+or the app's Linux copy shortcut (**Ctrl-C** in editors, **Ctrl-Shift-C** in
+terminals). Mac Command-C sends Linux Ctrl-Insert so it also works in terminals.
+The viewer transfers the copied text to your device, ready to paste into another
+app. Copying from a Linux app's menu also transfers text while the viewer is
+focused, when the browser permits it. Selecting or highlighting Linux text
+does not replace your device's clipboard; use an explicit Copy command.
+On a phone, or if automatic copying is blocked, select text in Linux and tap
+**Copy selection**. This sends a fresh copy command and works after reconnecting,
+without relying on clipboard notifications from the previous connection. The status below
+the toolbar reports whether text was copied or needs an extra tap.
 
 If the browser denies clipboard access, the **Clipboard** dialog provides a
 normal text box: paste there (touch and hold on a phone), then tap **Paste into
-desktop**. To copy text back, copy within Linux, open **Clipboard**, and choose
-**Copy text**. Clipboard contents are transferred only through the authenticated
+desktop**. For outbound text, choose **Copy text** in that dialog or use your
+device's native Copy command on its selected text. Clipboard contents are
+transferred only through the authenticated
 desktop connection and are not saved in browser storage. The desktop bridge
 supports text; use chat attachments for images. Re-running desktop `setup` or
 `chat-setup` refreshes the viewer assets; reload an existing desktop tab to use
@@ -226,8 +245,11 @@ Existing sessions open in an older, independent Codex process are readable in
 the mobile UI. Close the session in that client before reopening it for mobile
 control. The service detects those writers rather than running two agents
 against the same session log. New sessions and sessions opened in the connected
-VDI VS Code window share live controls. Other SSH-based IDE windows are left
-unchanged.
+VDI VS Code window share live controls. Setup also configures the VM's VS Code
+Remote SSH settings (including Insiders when installed) to use that runtime.
+Existing SSH windows adopt the setting on their next reload; wait until their
+active work finishes before reloading. The original settings are backed up
+separately for the desktop and SSH clients.
 
 The `npa-codex-server.service` and `npa-codex-chat.service` user services survive
 browser disconnects. Chat binds only to loopback, requires authentication on
@@ -262,8 +284,20 @@ mode uses a private adapter for the installed extension's IPC protocol; verify
 compatibility after extension upgrades. New or unowned chats use a separate
 Codex app-server that belongs to the local service.
 
+The local service also publishes its owned conversations to VS Code's native
+follower interface. A chat started on mobile can stay open in VS Code during and
+after its turn; both views send prompts, steering, stop requests, model changes, and
+supported approval responses to that same writer. Opening the VS Code view does
+not interrupt the turn or release its writer lock. Unsupported IPC protocol
+versions are rejected, so recheck this path after extension upgrades.
+The adapter retains ownership after completion: Codex's `thread/unsubscribe`
+does not immediately release its persistence writer. Reopening the view follows
+that writer instead of attempting a second resume.
+
 Archive controls preserve the native writer lock: close a chat in its other
 Codex client before archiving it from mobile when that client still owns it.
+For mobile-owned Mac chats, use the mobile archive control; the extension's
+archive command does not forward through its follower interface.
 Saved chats use Codex's own rename/archive APIs; the adapter never edits the
 session database or moves history files itself.
 

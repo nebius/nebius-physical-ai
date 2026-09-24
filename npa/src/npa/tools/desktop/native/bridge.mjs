@@ -15,6 +15,7 @@ import {threadSettings, validateSettings, messageVisible} from './settings.mjs';
 import {removeStaleSocket} from './listener.mjs';
 import {requireUnowned} from './ownership.mjs';
 import {manageThread} from './management.mjs';
+import {SharedOwners} from './shared-owners.mjs';
 
 const configPath = process.argv[2];
 const config = JSON.parse(readFileSync(configPath));
@@ -28,7 +29,10 @@ let catalogCache;
 
 function notify() {
   if (changed) return;
-  changed = setTimeout(() => { changed = null; send({method: 'native/changed', params: {pending: pendingRequests(ipc, approvals)}}); }, 300);
+  changed = setTimeout(() => {
+    changed = null;
+    send({method: 'native/changed', params: {pending: pendingRequests(ipc, approvals)}});
+  }, 300);
 }
 const clients = new Set();
 const daemon = process.argv.includes('--serve');
@@ -46,12 +50,16 @@ function followLoadedChats() {
 }
 ipc.on('change', notify); ipc.on('connected', () => { followLoadedChats(); notify(); }); ipc.on('disconnected', notify);
 setInterval(followLoadedChats, 5000).unref();
-app.on('failure', () => { ownThreads.clear(); approvals.clear(); notify(); });
+app.on('failure', () => { ownThreads.clear(); sharing.clear(); approvals.clear(); notify(); });
 app.on('event', message => {
   const {method, params} = message; const state = ownThreads.get(params?.threadId);
   if (message.id != null) approvals.set(String(message.id), message);
+  if (method === 'serverRequest/resolved') approvals.delete(String(params.requestId));
+  if (state && method === 'thread/settings/updated') Object.assign(state.settings, params.threadSettings);
   if (state && method === 'turn/started') { state.active = true; state.turnId = params.turn.id; }
-  if (state && method === 'turn/completed') { state.active = false; state.turnId = null; state.live = []; }
+  if (state && method === 'turn/completed') {
+    state.active = false; state.turnId = null; state.live = [];
+  }
   if (state && method === 'item/started') state.live.push(params.item);
   if (state && method === 'item/completed') {
     const index = state.live.findIndex(item => item.id === params.item.id);
@@ -60,6 +68,7 @@ app.on('event', message => {
   if (state && method === 'item/agentMessage/delta') {
     const item = state.live.find(item => item.id === params.itemId); if (item) item.text = (item.text || '') + params.delta;
   }
+  if (state) sharing.changed(params.threadId);
   notify();
 });
 
@@ -83,7 +92,7 @@ function getRow(id) {
 async function read(params) {
   const row = getRow(params.id);
   if (!ipc.following.has(params.id)) ipc.follow(params.id);
-  const live = ipc.states.get(params.id); const own = ownThreads.get(params.id);
+  const own = ownThreads.get(params.id); const live = own ? null : ipc.states.get(params.id);
   let messages = row.unsaved ? [] : await store.history(params.id);
   if (live && liveTurns(live).length && live.turnHistory?.history?.isComplete !== false) messages = liveMessages(live);
   else if (own?.active) {
@@ -110,7 +119,8 @@ async function ensureOwn(id) {
     await requireUnowned(config.codexHome, id);
     const result = await app.request('thread/resume', {threadId: id});
     ownThreads.set(id, {active: false, live: [], thread: result.thread,
-      settings: {model: result.model, effort: result.reasoningEffort, serviceTier: result.serviceTier}});
+      settings: runtimeSettings(result)});
+    sharing.changed(id);
   }
 }
 async function prompt(params) {
@@ -119,7 +129,7 @@ async function prompt(params) {
   const input = [{type: 'text', text: params.text || '', text_elements: []},
     ...(params.images ?? []).map(url => ({type: 'image', url}))];
   const clientUserMessageId = params.clientUserMessageId || randomUUID();
-  const owner = await ipc.owner(params.id);
+  const owner = ownThreads.has(params.id) ? null : await ipc.owner(params.id);
   if (owner) return promptInVSCode(params, input, clientUserMessageId);
   await ensureOwn(params.id);
   const own = ownThreads.get(params.id);
@@ -151,7 +161,7 @@ async function promptInVSCode(params, input, clientUserMessageId) {
   return {result, clientUserMessageId, delivery: {target: 'VS Code', visible: messageVisible(ipc.states.get(params.id), clientUserMessageId)}};
 }
 async function stop(params) {
-  const owner = await ipc.owner(params.id);
+  const owner = ownThreads.has(params.id) ? null : await ipc.owner(params.id);
   if (owner) return ipc.control(params.id, 'thread-follower-interrupt-turn', {mode: 'user-stop', expectedTurnId: params.turnId ?? null});
   const state = ownThreads.get(params.id);
   if (!state?.turnId) throw new Error('No running turn controlled by this connection');
@@ -161,13 +171,18 @@ async function create(params) {
   await app.start();
   const result = await app.request('thread/start', {cwd: params.cwd || config.defaultCwd, model: params.model || undefined});
   ownThreads.set(result.thread.id, {active: false, live: [], thread: result.thread,
-    settings: {model: result.model, effort: result.reasoningEffort, serviceTier: result.serviceTier}});
+    settings: runtimeSettings(result)});
+  sharing.changed(result.thread.id);
   return {id: result.thread.id};
+}
+function runtimeSettings(result) {
+  const {thread, ...settings} = result;
+  return {...settings, cwd: thread.cwd, effort: result.reasoningEffort};
 }
 async function respond(params) {
   const allowed = ['thread-follower-command-approval-decision', 'thread-follower-file-approval-decision', 'thread-follower-submit-user-input'];
   if (!allowed.includes(params.method)) throw new Error('Unsupported response');
-  const owner = await ipc.owner(params.id);
+  const owner = ownThreads.has(params.id) ? null : await ipc.owner(params.id);
   if (owner) return ipc.control(params.id, params.method, params.answer);
   const request = approvals.get(String(params.requestId));
   if (!request || request.params.threadId !== params.id) throw new Error('This request is no longer pending');
@@ -176,12 +191,13 @@ async function respond(params) {
 async function openInVSCode(params) {
   if (!/^[a-f0-9-]{36}$/.test(params.id)) throw new Error('Invalid chat identifier');
   if (getRow(params.id).unsaved) throw new Error('Send the first message before opening this chat in VS Code');
-  const own = ownThreads.get(params.id);
-  if (own?.active) throw new Error('Wait for this turn to finish or stop it before opening in VS Code');
-  if (own) { await app.request('thread/unsubscribe', {threadId: params.id}); ownThreads.delete(params.id); }
+  await sharing.prepare(params.id);
   await promisify(execFile)('/usr/bin/open', ['-a', 'Visual Studio Code', `vscode://openai.chatgpt/local/${params.id}`]);
   for (let attempt = 0; attempt < 20; attempt++) {
-    if (await ipc.owner(params.id)) { ipc.follow(params.id); return {ok: true, connected: true}; }
+    if (sharing.followed(params.id) || await ipc.owner(params.id)) {
+      if (!ownThreads.has(params.id)) ipc.follow(params.id);
+      return {ok: true, connected: true};
+    }
     await new Promise(resolve => setTimeout(resolve, 250));
   }
   return {ok: true, connected: false};
@@ -202,7 +218,7 @@ async function configure(params) {
   if (row.archived) throw new Error('Restore this chat before changing its settings');
   const catalog = await models();
   const settings = validateSettings(params, catalog.data, catalog.modes);
-  const owner = await ipc.owner(params.id);
+  const owner = ownThreads.has(params.id) ? null : await ipc.owner(params.id);
   const live = ipc.states.get(params.id); const own = ownThreads.get(params.id);
   const current = threadSettings(live, own, row);
   // Preserve the current mode's instructions when only model/effort/speed changes.
@@ -222,32 +238,45 @@ async function configure(params) {
   notify(); return {ok: true, settings: threadSettings({latestThreadSettings: settings}, null, row)};
 }
 async function manage(params) {
-  return manageThread({getRow, ownThreads, ipc, app, config, notify}, params);
+  const result = await manageThread({getRow, ownThreads, ipc, app, config, notify}, params);
+  if (params.action !== 'rename') sharing.remove(params.id);
+  return result;
 }
 const handlers = {list, read, prompt, stop, create, respond, openInVSCode, models, configure, manage,
   status: async () => ({hostname: hostname(), vscodeConnected: ipc.connected}),
 };
 
 
-const context = {handlers, ipc, app, approvals, ownThreads, mutations: 0, upgrading: false};
+const context = {handlers, ipc, app, approvals, ownThreads, mutations: 0, upgrading: false, notify, mutate};
+const sharing = new SharedOwners(context, config.codexHome);
+ipc.ownerHandler = {owns: id => ownThreads.has(id), accepts: () => false};
+const mutations = new Map();
+async function mutate(id, action) {
+  if (context.upgrading) throw new Error('The local adapter is updating. Reconnect before sending.');
+  context.mutations++;
+  const previous = mutations.get(id) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(action);
+  mutations.set(id, pending);
+  try { return await pending; }
+  finally {
+    context.mutations--;
+    if (mutations.get(id) === pending) mutations.delete(id);
+  }
+}
 async function dispatch(line, output, client) {
   let message;
-  let mutation = false;
   try {
     message = JSON.parse(line);
     if (message.method === 'initialized') return;
     const mutating = ['thread/start', 'thread/settings/update', 'turn/start', 'turn/steer', 'thread/open',
       'thread/name/set', 'thread/archive', 'thread/unarchive'].includes(message.method);
     if (mutating && context.upgrading) throw new Error('The local adapter is updating. Reconnect before sending.');
-    mutation = mutating;
-    if (mutation) context.mutations++;
-    const result = await protocolCall(context, message);
+    const result = mutating ? await mutate(message.params?.threadId, () => protocolCall(context, message))
+      : await protocolCall(context, message);
     if (message.method === 'runtime/prepareUpdate') context.updateClient = client;
     if (message.id != null && message.method) output({id: message.id, result});
   } catch (error) {
     if (message?.id != null) output({id: message.id, error: {message: error.message}});
-  } finally {
-    if (mutation) context.mutations--;
   }
 }
 if (daemon) {
