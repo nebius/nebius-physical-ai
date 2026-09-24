@@ -308,12 +308,21 @@ PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,
 # but must earn a new exact-image scan after their recipes are repaired.
 #
-# The listed tags were inspected at their recorded public digests. Each final
-# filesystem contains package-generated /etc/ssh/ssh_host_* private keys shared
-# by every pull. The Dockerfiles now remove those keys in the install layer;
-# publication remains quarantined until rebuilt candidates pass the image gates.
+# The listed base tags were inspected at their recorded public digests. Each
+# final filesystem contains package-generated /etc/ssh/ssh_host_* private keys
+# shared by every pull. Their direct Dockerfiles now remove those keys in the
+# install layer. The two derivative releases are also stale because their
+# manifests retain every layer of the affected base. Publication remains
+# quarantined until rebuilt candidates pass the image gates.
 STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos-curate", "cosmos-evaluator", "cosmos3", "isaac-lab"}
+    {
+        "cosmos-curate",
+        "cosmos-evaluator",
+        "cosmos3",
+        "cosmos3-ray-serve",
+        "isaac-lab",
+        "isaac-arena",
+    }
 )
 # Compatibility view used by publication callers and public imports. Derive it
 # from the canonical validation-state inventories; never maintain it

@@ -736,7 +736,7 @@ containers:
       serverless_gpu: b200
       gpu: required
       timeout_seconds: 3600
-      status: gpu-gated
+      status: needs-image-update
 
   cosmos3-reason:
     image: npa-cosmos3-reason

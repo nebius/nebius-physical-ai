@@ -318,7 +318,14 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         {"openpi", "curobo", "ncore", "libero", "sam3"}
     )
     assert STALE_PUBLICATION_TOOLS == frozenset(
-        {"cosmos-curate", "cosmos-evaluator", "cosmos3", "isaac-lab"}
+        {
+            "cosmos-curate",
+            "cosmos-evaluator",
+            "cosmos3",
+            "cosmos3-ray-serve",
+            "isaac-lab",
+            "isaac-arena",
+        }
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
@@ -358,12 +365,10 @@ def test_public_set_includes_the_oss_tools() -> None:
         "lancedb",
         "rerun-viewer",
         "lichtblick",
-        # Newly publishable: no baked Omniverse Kit, weights or assets.
-        "isaac-arena",
+        # Independently clean images remain publishable.
         "sonic",
         "groot",
         "cosmos3-serving",
-        "cosmos3-ray-serve",
         "sonic-mujoco",
     ):
         assert tool in public, tool
@@ -386,17 +391,19 @@ def test_libero_neutral_candidate_remains_unvalidated_and_out_of_release_plan() 
     )
 
 
-def test_publish_plan_includes_clean_isaac_images_and_excludes_stale_release() -> None:
-    """A stale base is quarantined without over-blocking independently clean tools."""
+def test_publish_plan_excludes_stale_base_images_and_their_derivatives() -> None:
+    """A stale base and descendants retaining its layers are quarantined together."""
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
-    for image in (
-        "npa-isaac-arena",
-        "npa-sonic",
-        "npa-groot",
-    ):
+    for image in ("npa-sonic", "npa-groot"):
         assert image in names, image
-    assert "npa-isaac-lab" not in names
+    for image in (
+        "npa-isaac-lab",
+        "npa-isaac-arena",
+        "npa-cosmos3",
+        "npa-cosmos3-ray-serve",
+    ):
+        assert image not in names
     assert "npa-sonic-mujoco" in names
     assert "npa-cosmos3-serving" in names
     assert "npa-curobo" not in names
@@ -456,8 +463,8 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     }
     assert accepted_shas
     # Five Sim2Real roles share a source, as do the three native model images.
-    # Arena, flex-pi, and the other accepted images retain distinct exact sources.
-    assert len(set(accepted_shas.values())) == 13
+    # Flex-Pi and the other accepted images retain distinct exact sources.
+    assert len(set(accepted_shas.values())) == 11
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -479,10 +486,8 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "ltx2",
         "wan2-2",
         "cosmos3-serving",
-        "cosmos3-ray-serve",
         "sonic-mujoco",
         "detection-training",
-        "isaac-arena",
         "diffusers",
         "lingbot-world",
         "sam2",

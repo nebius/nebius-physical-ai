@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 import yaml
 
 from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
     PUBLICATION_QUARANTINE_TOOLS,
     STALE_PUBLICATION_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
@@ -127,12 +129,45 @@ def test_stale_publications_are_built_releases_awaiting_requalification() -> Non
     """Stale bytes are not confused with images that have never been built."""
 
     assert STALE_PUBLICATION_TOOLS == frozenset(
-        {"cosmos-curate", "cosmos-evaluator", "cosmos3", "isaac-lab"}
+        {
+            "cosmos-curate",
+            "cosmos-evaluator",
+            "cosmos3",
+            "cosmos3-ray-serve",
+            "isaac-lab",
+            "isaac-arena",
+        }
     )
     assert STALE_PUBLICATION_TOOLS.isdisjoint(UNVALIDATED_PUBLICATION_TOOLS)
     assert STALE_PUBLICATION_TOOLS.isdisjoint(VALIDATION_CANDIDATE_TOOLS)
     for tool in STALE_PUBLICATION_TOOLS:
         assert not SUPPORTED_TOOL_VERSIONS[tool].endswith(UNBUILT_TAG_SUFFIX), tool
+
+
+def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
+    """A child cannot be accepted while retaining every layer of a stale parent."""
+
+    image_to_tool = {
+        image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()
+    }
+    parent_pattern = re.compile(r"\bnpa-[a-z0-9-]+(?=[:@])")
+    for dockerfile in sorted((REPO_ROOT / "npa/docker/workbench").glob("*/Dockerfile")):
+        child = dockerfile.parent.name
+        if child not in CONTAINER_IMAGE_NAMES:
+            continue
+        parents = {
+            image_to_tool[image]
+            for image in parent_pattern.findall(
+                dockerfile.read_text(encoding="utf-8")
+            )
+            if image in image_to_tool
+        }
+        stale_parents = parents & STALE_PUBLICATION_TOOLS
+        if stale_parents:
+            assert child in STALE_PUBLICATION_TOOLS, (
+                f"{child} inherits stale image layer(s) from "
+                f"{sorted(stale_parents)} but remains publication-eligible"
+            )
 
 
 def test_pending_build_never_carries_a_confident_verdict() -> None:

@@ -54,9 +54,9 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory has **56 packaging entries** (47 redistribution-eligible
-and nine restricted) and **47 mapped tools**: 37 public-release members, two
-restricted tools, and eight quarantined tools (`antioch`, `curobo`, `libero`, `mjlab`, `ncore`,
-`openpi`, `robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+and nine restricted) and **47 mapped tools**: 31 public-release members, two
+restricted tools, and 14 quarantined tools. These counts come from
+`packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
 
@@ -371,9 +371,13 @@ previously accepted release filesystems: `npa-cosmos-curate`
 `0.1.2-skypilot-v1-20260813T164700Z-r2`, `npa-cosmos3` `1.2.2-cu130-r7`, and
 `npa-isaac-lab` `3.0.0b2.post1-sim2real-coherent-20260904`. Those tags remain
 historical registry artifacts, but they are no longer in the accepted publishing
-plan or default golden-eval sweep. Their recipes now delete package-generated
-keys in the same build layer. A replacement must pass exact-image scanning and
-the capability evaluation before any of the four re-enters this table.
+plan or default golden-eval sweep. Manifest comparison also proved that
+`npa-cosmos3-ray-serve` retains every layer of the affected Cosmos3 base and
+`npa-isaac-arena` retains every layer of the affected Isaac Lab base. Those two
+derivative releases are quarantined as well. The direct recipes now delete
+package-generated keys in the same build layer. Replacements and derivatives
+must pass exact-image scanning and capability evaluation before any of the six
+re-enters this table.
 
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
@@ -401,12 +405,10 @@ the capability evaluation before any of the four re-enters this table.
 | flex-pi 6B world-action policy | `npa-flex-pi` | `0.1.0-cu128-r2` | 2026-09-17 | Runtime-fetch packaging for the pinned MIT flex-pi source and released RoboTwin checkpoint. The exact payload-clean digest completed strict full-state action-only inference independently on B200 and RTX PRO 6000 and produced finite 32×14 bimanual action chunks plus verified provenance artifacts. See the [operator guide](flex-pi.md). |
 | LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` | 2026-08-19 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
 | NVIDIA Content Agents 0.5.2 | `npa-content-agents` | `0.5.2-npa2` | 2026-08-22 | Public rigid-object material/physics/validation adapter containing Apache-2.0 source and zero OVRTX payload. Exact OVRTX 0.3.0.312915 is fetched directly from NVIDIA into the operator runtime cache. The exact public digest passed byte/layer scanning, anonymous resolution, and a real RTX PRO 6000 workflow. See [Content Agents](content-agents.md). |
-| Cosmos3-Nano native Ray Serve | `npa-cosmos3-ray-serve` | `ray1-cu130` | 2026-08-26 | Persistent authenticated Cosmos3-Nano serving through cosmos-framework's native `OmniModelDeployment` and `@ray.serve.batch` path. The image contains pinned OpenMDW source and the CUDA/Ray closure but no model or guardrail weights. The exact release digest passed payload/security/SBOM/provenance gates and independent guarded two-sample generation with durable S3 evidence on B200 `sm_100` and RTX PRO 6000 `sm_120`. |
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | 2026-09-04 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights and the pinned guardrail tokenizer data are fetched at runtime with `HF_TOKEN`; the NLTK-safe cache materialization keeps guardrails enabled, and baked-byte scans remain a release gate. |
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
-| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260917-r4` | 2026-09-17 | Real completed-episode evaluation through pinned upstream `policy_runner.py`, with independent phase-liveness supervision and verified native rendering quality. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. Fresh exact-digest qualification covers four B200 state seeds and successful RTX GR1 open-microwave replay with 43 exact native actions, progress-bound video and a factual RRD. Upstream remains alpha. |
 | Diffusers native generation and depth | `npa-diffusers` | `0.38.0-rtfetch-20260916` | 2026-09-16 | Pinned OSS runtime for Mochi 1, CogVideoX-2B, Wan 2.1 14B and Depth Anything V2 Small. All four native capabilities qualified on B200 at the exact public digest; CUDA and checkpoints fetched at runtime. |
 | LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
 | SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
@@ -653,17 +655,16 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 34 currently accepted release references resolved anonymously to their
-recorded digests on 2026-09-24. Four previously accepted tags remain pullable
+All 32 currently accepted release references resolved anonymously to their
+recorded digests on 2026-09-24. Six previously accepted tags remain pullable
 but are excluded by the SSH host-identity quarantine above. The chart groups
 the current publishing plan three ways:
 
-- **21 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
-  `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
+- **19 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+  `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
-  `npa-flex-pi`, `npa-isaac-arena`, `npa-lancedb`, `npa-lerobot`,
-  `npa-lerobot-policy`, `npa-lerobot-vlm-rl`, `npa-loop-eval`, `npa-ltx2`,
-  `npa-reference-policy`, `npa-sonic-mujoco`,
+  `npa-flex-pi`, `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
+  `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`,
   `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
