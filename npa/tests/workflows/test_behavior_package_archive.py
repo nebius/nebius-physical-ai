@@ -42,6 +42,7 @@ def _archive(
     *,
     root: str = ".",
     extra: dict[str, bytes] | None = None,
+    directories: tuple[str, ...] = (),
 ) -> tuple[Path, str]:
     manifest = _manifest(files)
     prefix = "" if root == "." else root + "/"
@@ -55,6 +56,11 @@ def _archive(
             member.mode = mode
             member.size = len(payload)
             bundle.addfile(member, io.BytesIO(payload))
+        for name in directories:
+            member = tarfile.TarInfo(name)
+            member.mode = 0o755
+            member.type = tarfile.DIRTYPE
+            bundle.addfile(member)
     return path, _sha(manifest)
 
 
@@ -88,6 +94,25 @@ def test_flat_archive_verifies_and_extracts_exact_modes(tmp_path: Path) -> None:
     assert (extracted / "worker.py").stat().st_mode & 0o777 == 0o755
 
 
+def test_nested_explicit_root_allows_structural_parent_directories(
+    tmp_path: Path,
+) -> None:
+    files = {"worker.py": (b"pass\n", 0o644)}
+    archive, manifest_sha = _archive(
+        tmp_path / "worker.tar.gz",
+        files,
+        root="outer/package",
+        directories=("outer", "outer/package"),
+    )
+    extracted = extract_manifest_archive(
+        archive,
+        tmp_path / "out",
+        expected_root="outer/package",
+        expected_manifest_sha256=manifest_sha,
+    )
+    assert (extracted / "worker.py").read_bytes() == b"pass\n"
+
+
 def test_explicit_root_rejects_enclosing_directory_mismatch(tmp_path: Path) -> None:
     archive, manifest_sha = _archive(
         tmp_path / "worker.tar.gz", {"worker.py": (b"pass\n", 0o644)}, root="package"
@@ -96,6 +121,57 @@ def test_explicit_root_rejects_enclosing_directory_mismatch(tmp_path: Path) -> N
         verify_manifest_archive(
             archive, expected_root=".", expected_manifest_sha256=manifest_sha
         )
+
+
+def test_explicit_root_rejects_undeclared_sibling_directory(tmp_path: Path) -> None:
+    files = {"worker.py": (b"pass\n", 0o644)}
+    archive, manifest_sha = _archive(
+        tmp_path / "worker.tar.gz",
+        files,
+        root="package",
+        directories=("outside",),
+    )
+    destination = tmp_path / "out"
+    with pytest.raises(ValueError, match="outside the explicit root"):
+        extract_manifest_archive(
+            archive,
+            destination,
+            expected_root="package",
+            expected_manifest_sha256=manifest_sha,
+        )
+    assert not destination.exists()
+
+
+def test_archive_rejects_file_ancestor_before_extraction(tmp_path: Path) -> None:
+    files = {"a": (b"parent", 0o644), "a/b": (b"child", 0o644)}
+    archive, manifest_sha = _archive(tmp_path / "worker.tar.gz", files)
+    destination = tmp_path / "out"
+    with pytest.raises(ValueError, match="file topology differs"):
+        extract_manifest_archive(
+            archive,
+            destination,
+            expected_root=".",
+            expected_manifest_sha256=manifest_sha,
+        )
+    assert not destination.exists()
+
+
+def test_archive_rejects_file_ancestor_of_directory_before_extraction(
+    tmp_path: Path,
+) -> None:
+    files = {"a": (b"parent", 0o644)}
+    archive, manifest_sha = _archive(
+        tmp_path / "worker.tar.gz", files, directories=("a/b",)
+    )
+    destination = tmp_path / "out"
+    with pytest.raises(ValueError, match="file topology differs"):
+        extract_manifest_archive(
+            archive,
+            destination,
+            expected_root=".",
+            expected_manifest_sha256=manifest_sha,
+        )
+    assert not destination.exists()
 
 
 def test_archive_rejects_undeclared_bytecode_and_mode_change(tmp_path: Path) -> None:

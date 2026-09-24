@@ -78,7 +78,9 @@ def _row(value: Any) -> tuple[str, dict[str, Any]]:
     return path, {"bytes": size, "sha256": digest, "mode": mode}
 
 
-def _archive_files(bundle: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
+def _archive_files(
+    bundle: tarfile.TarFile,
+) -> tuple[dict[str, tarfile.TarInfo], set[str]]:
     files: dict[str, tarfile.TarInfo] = {}
     seen: set[str] = set()
     for member in bundle.getmembers():
@@ -88,7 +90,27 @@ def _archive_files(bundle: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
         seen.add(path)
         if member.isfile():
             files[path] = member
-    return files
+    return files, seen
+
+
+def _verify_member_topology(
+    files: dict[str, tarfile.TarInfo], paths: set[str], root: PurePosixPath | None
+) -> None:
+    if root is not None:
+        root_name = root.as_posix()
+        if any(
+            path != root_name
+            and _inside_root(path, root) is None
+            and PurePosixPath(path) not in root.parents
+            for path in paths
+        ):
+            raise ValueError("package archive member is outside the explicit root")
+    for path in paths:
+        parent = PurePosixPath(path).parent
+        while parent != PurePosixPath("."):
+            if parent.as_posix() in files:
+                raise ValueError("package archive file topology differs")
+            parent = parent.parent
 
 
 def _inside_root(path: str, root: PurePosixPath | None) -> str | None:
@@ -142,7 +164,8 @@ def _verify_payloads(
 def _verify_bundle(
     bundle: tarfile.TarFile, root: PurePosixPath | None, expected_sha256: str
 ) -> dict[str, Any]:
-    files = _archive_files(bundle)
+    files, paths = _archive_files(bundle)
+    _verify_member_topology(files, paths, root)
     manifest_name = "MANIFEST.json" if root is None else f"{root}/MANIFEST.json"
     if manifest_name not in files:
         raise ValueError("package manifest is absent at the explicit root")
