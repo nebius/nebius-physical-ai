@@ -199,6 +199,19 @@ def resolve_cosmos_reason_model_id(
     return candidate
 
 
+def _validated_success(
+    payload: dict[str, Any], *, score: float, threshold: float, source: str
+) -> bool:
+    """Validate an explicit verdict and enforce its score threshold."""
+
+    if "success" not in payload:
+        return score >= threshold
+    verdict = payload["success"]
+    if not isinstance(verdict, bool):
+        raise CosmosReasonError(f"{source} success must be a JSON boolean")
+    return verdict and score >= threshold
+
+
 def merge_reason_evaluations(
     reason2_eval: dict[str, Any],
     cosmos3_eval: dict[str, Any],
@@ -209,8 +222,14 @@ def merge_reason_evaluations(
 
     score2 = float(reason2_eval.get("score", 0.0))
     score3 = float(cosmos3_eval.get("score", 0.0))
+    reason2_success = _validated_success(
+        reason2_eval, score=score2, threshold=threshold, source="Reason2 lane"
+    )
+    cosmos3_success = _validated_success(
+        cosmos3_eval, score=score3, threshold=threshold, source="Cosmos3 lane"
+    )
     score = round((score2 + score3) / 2.0, 6)
-    success = bool(reason2_eval.get("success")) and bool(cosmos3_eval.get("success"))
+    success = reason2_success and cosmos3_success and score >= threshold
     steps2 = {
         int(item.get("step", index)): item
         for index, item in enumerate(reason2_eval.get("per_step") or [])
@@ -1038,7 +1057,9 @@ def _parse_cosmos_reason_output(
     if "score" not in payload:
         raise CosmosReasonError(f"{family} output did not include a numeric score")
     score = max(0.0, min(1.0, float(payload["score"])))
-    success = bool(payload.get("success", score >= threshold)) and score >= threshold
+    success = _validated_success(
+        payload, score=score, threshold=threshold, source=f"{family} output"
+    )
     raw_steps = payload.get("per_step") or payload.get("steps") or []
     expected_actions = {
         int(action.get("step", index)): action for index, action in enumerate(actions)

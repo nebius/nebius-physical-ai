@@ -304,6 +304,46 @@ def test_cosmos3_success_cannot_bypass_the_fixed_threshold() -> None:
     assert payload["success"] is False
 
 
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [(True, True), (False, False), (pytest.param(None, True, id="omitted"))],
+)
+def test_cosmos_reason_success_accepts_booleans_or_uses_score(
+    verdict, expected
+) -> None:
+    model_payload = {
+        "score": 0.9,
+        "summary": "stable grasp",
+        "per_step": [
+            {"step": 0, "critique_text": "cube is stable", "error_tags": ["ok"]}
+        ],
+    }
+    if verdict is not None:
+        model_payload["success"] = verdict
+
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(model_payload),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-verdict",
+        threshold=0.5,
+        family="cosmos3",
+    )
+
+    assert payload["success"] is expected
+
+
+@pytest.mark.parametrize("verdict", ["false", "true", 0, 1, None, [], {}])
+def test_cosmos_reason_rejects_malformed_explicit_success(verdict) -> None:
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        reason_module._parse_cosmos_reason_output(
+            json.dumps({"success": verdict, "score": 0.9}),
+            actions=[],
+            rollout_id="rollout-malformed-verdict",
+            threshold=0.5,
+            family="cosmos3",
+        )
+
+
 def test_task_description_from_manifest_prefers_task_description() -> None:
     manifest = {"task_description": "Pick up the cube.", "task": "ignored"}
     assert task_description_from_manifest(manifest) == "Pick up the cube."
@@ -370,6 +410,36 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
     archived_alias = merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.75)
     assert archived_alias["score"] == 0.85
     assert archived_alias["success"] is False
+
+
+@pytest.mark.parametrize("lane", ["reason2", "cosmos3"])
+def test_legacy_dual_merge_rejects_malformed_lane_verdict(lane) -> None:
+    reason2 = {"score": 0.9, "success": True}
+    cosmos3 = {"score": 0.9, "success": True}
+    (reason2 if lane == "reason2" else cosmos3)["success"] = "false"
+
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.5)
+
+
+def test_merge_reason_evaluations_derives_omitted_verdicts_from_scores() -> None:
+    merged = merge_reason_evaluations(
+        {"score": 0.9},
+        {"score": 0.8},
+        threshold=0.5,
+    )
+
+    assert merged["success"] is True
+
+
+def test_merge_reason_evaluations_enforces_threshold_for_explicit_true() -> None:
+    merged = merge_reason_evaluations(
+        {"score": 0.49, "success": True},
+        {"score": 0.9, "success": True},
+        threshold=0.5,
+    )
+
+    assert merged["success"] is False
 
 
 def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
