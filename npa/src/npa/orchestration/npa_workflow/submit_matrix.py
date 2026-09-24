@@ -72,6 +72,18 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "behavior-comet-native-full-training.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The reference requires operator-bound source, dataset, parent, "
+            "runtime and admission identities, an immutable runtime image, "
+            "and a durable volume; shipped values are explicit placeholders."
+        ),
+        notes="Native OpenPI input preflight, full-state training and durable resume.",
+    ),
+    SubmitLiveCase(
         "behavior-challenge-eval.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

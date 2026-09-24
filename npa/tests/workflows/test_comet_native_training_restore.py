@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
+
 from npa.workflows.behavior_challenge.native_training_checkpoint import (
     checkpoint_inventory,
 )
@@ -237,3 +239,28 @@ def test_restore_finishes_checkpoint_rename_before_receipt_rename(tmp_path):
     receipt.replace(transaction / "milestone-receipt.json")
     recovered = _restore(tmp_path, storage, prefix, admission, static, workflow_inputs)
     assert Path(recovered["resume_receipt"]).is_file()
+
+
+def test_restore_applies_manifest_modes_under_restrictive_umask(tmp_path):
+    prefix, storage, admission, static, workflow_inputs = _fixture()
+    previous = os.umask(0o077)
+    try:
+        result = _restore(tmp_path, storage, prefix, admission, static, workflow_inputs)
+    finally:
+        os.umask(previous)
+    checkpoint = Path(result["resume_checkpoint"])
+    assert {
+        oct(path.stat().st_mode & 0o777)
+        for path in checkpoint.rglob("*")
+        if path.is_file()
+    } == {"0o644"}
+
+
+def test_restore_rejects_invalid_checkpoint_member_mode(tmp_path):
+    prefix, storage, admission, static, workflow_inputs = _fixture()
+    uri = f"{prefix}/milestones/step-00002/output-manifest.json"
+    manifest = json.loads(storage.values[uri])
+    manifest["checkpoint"]["files"][0]["mode"] = "0o4755"
+    storage.values[uri] = (json.dumps(manifest) + "\n").encode()
+    with pytest.raises(ValueError, match="checkpoint member mode differs"):
+        _restore(tmp_path, storage, prefix, admission, static, workflow_inputs)

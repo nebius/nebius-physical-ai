@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -53,14 +54,30 @@ def _safe_transaction(transaction: Path, manifest: dict[str, Any]) -> None:
             raise ValueError("restore transaction contains an unexpected member")
 
 
+def _checkpoint_modes(manifest: dict[str, Any]) -> dict[str, int]:
+    modes: dict[str, int] = {}
+    for row in manifest["checkpoint"]["files"]:
+        value = row.get("mode")
+        if not isinstance(value, str) or re.fullmatch(r"0o[0-7]{3}", value) is None:
+            raise ValueError("checkpoint member mode differs")
+        name = "checkpoint/" + row["path"]
+        if name in modes:
+            raise ValueError("checkpoint member mode is duplicated")
+        modes[name] = int(value, 8)
+    return modes
+
+
 def _download_files(storage: Any, manifest: dict[str, Any], transaction: Path) -> None:
     _safe_transaction(transaction, manifest)
+    checkpoint_modes = _checkpoint_modes(manifest)
     for name, row in manifest["files"].items():
         destination = transaction / name
         expected = {key: row[key] for key in ("bytes", "sha256")}
         if destination.exists():
             if file_identity(destination) != expected:
                 raise ValueError("completed restore member differs")
+            if name in checkpoint_modes:
+                destination.chmod(checkpoint_modes[name])
             continue
         partial = transaction / (name + ".download")
         partial.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +88,8 @@ def _download_files(storage: Any, manifest: dict[str, Any], transaction: Path) -
         storage.download_file(row["uri"], str(partial))
         if file_identity(partial) != expected:
             raise ValueError("provider milestone member differs")
+        if name in checkpoint_modes:
+            partial.chmod(checkpoint_modes[name])
         partial.replace(destination)
 
 
