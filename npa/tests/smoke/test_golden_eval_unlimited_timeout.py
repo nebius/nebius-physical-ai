@@ -9,6 +9,7 @@ import json
 import math
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -233,6 +234,44 @@ def test_direct_unlimited_serverless_call_refuses_before_config_or_credentials(
         serverless_runner.submit_golden_eval(spec.name)
     for forbidden in forbidden_calls:
         forbidden.assert_not_called()
+
+
+def test_serverless_submission_honors_manifest_gpu_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _spec(monkeypatch, 45)
+    spec = replace(
+        spec,
+        golden_eval=replace(
+            spec.golden_eval, serverless_gpu="b200", serverless_gpu_count=8
+        ),
+    )
+    monkeypatch.setattr(serverless_runner, "container", lambda _name: spec)
+    monkeypatch.setattr(serverless_runner, "_project_id", lambda _value: "project-test")
+    monkeypatch.setattr(
+        serverless_runner, "resolve_golden_image", lambda *_a, **_k: "example/image:tag"
+    )
+    monkeypatch.setattr(
+        serverless_runner,
+        "load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_bucket="s3://bucket",
+            s3_access_key_id="access",
+            s3_secret_access_key="secret",
+            s3_endpoint="https://storage.invalid",
+            hf_token="",
+        ),
+    )
+    seen: dict[str, object] = {}
+
+    def resolve(gpu: str, count: int) -> tuple[str, str, int]:
+        seen.update(gpu=gpu, count=count)
+        raise RuntimeError("stop after platform resolution")
+
+    monkeypatch.setattr(serverless_runner, "resolve_gpu_platform", resolve)
+    with pytest.raises(RuntimeError, match="stop after platform resolution"):
+        serverless_runner.submit_golden_eval(spec.name)
+    assert seen == {"gpu": "b200", "count": 8}
 
 
 @pytest.mark.parametrize("value, expected", [("unlimited", None), (45, 45)])

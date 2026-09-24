@@ -777,7 +777,9 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
 - **Curator encoder gotcha.** `ffmpeg -encoders | grep -E 'libopenh264|h264_nvenc'`
   must match something, or upstream's `ClipTranscodingStage` cannot write clips.
   Debian/Ubuntu ffmpeg has neither; conda-forge's build carries `libopenh264`, and
-  any GPU node's ffmpeg carries `h264_nvenc`.
+  some GPU images also advertise `h264_nvenc`. The in-process CPU curation path
+  deliberately prefers `libopenh264`: H100/H200 expose a CUDA device but no NVENC
+  hardware, so selecting an advertised NVENC encoder there drops every clip.
 - **Curator needs Python >= 3.12** (upstream declares
   `requires-python >=3.12,<3.13`). On an older interpreter the failure otherwise
   surfaces as `cannot import name 'Self' from 'typing'` from deep inside an

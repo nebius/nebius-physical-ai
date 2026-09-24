@@ -54,6 +54,8 @@ def list_evals(
                 "physical_ai_useful": spec.physical_ai.get("useful"),
                 "kind": spec.golden_eval.kind,
                 "gpu": spec.golden_eval.gpu,
+                "serverless_gpu": spec.golden_eval.serverless_gpu,
+                "serverless_gpu_count": spec.golden_eval.serverless_gpu_count,
                 "status": spec.golden_eval.status,
                 "command": spec.golden_eval.command,
             }
@@ -97,6 +99,8 @@ def show(
             "kind": spec.golden_eval.kind,
             "command": spec.golden_eval.command,
             "gpu": spec.golden_eval.gpu,
+            "serverless_gpu": spec.golden_eval.serverless_gpu,
+            "serverless_gpu_count": spec.golden_eval.serverless_gpu_count,
             "timeout_seconds": (
                 "unlimited"
                 if spec.golden_eval.execution_timeout is None
@@ -237,6 +241,11 @@ def run_all_cmd(
         "--include-blocked",
         help="Include blocked-on-upstream containers.",
     ),
+    include_needs_image_update: bool = typer.Option(
+        False,
+        "--include-needs-image-update",
+        help="Include containers whose image must be rebuilt or promoted.",
+    ),
     tools_only: bool = typer.Option(
         False,
         "--tools-only",
@@ -260,6 +269,7 @@ def run_all_cmd(
 
     names = iter_containers(
         include_blocked=include_blocked,
+        include_needs_image_update=include_needs_image_update,
         include_foundation=not tools_only,
         tools_only=tools_only,
     )

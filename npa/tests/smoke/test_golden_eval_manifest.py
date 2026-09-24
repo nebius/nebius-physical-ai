@@ -268,6 +268,51 @@ def test_serverless_gpu_values_are_known() -> None:
             assert gpu in known, f"{name}: unknown serverless_gpu {gpu!r}"
 
 
+def test_serverless_gpu_counts_are_positive_integers() -> None:
+    for name, spec in load_manifest().items():
+        count = spec.golden_eval.serverless_gpu_count
+        assert type(count) is int and count > 0, (
+            f"{name}: invalid serverless_gpu_count {count!r}"
+        )
+
+
+def test_cosmos3_serving_requests_its_documented_eight_gpu_node() -> None:
+    spec = load_manifest()["cosmos3-serving"]
+    assert spec.golden_eval.serverless_gpu == "b200"
+    assert spec.golden_eval.serverless_gpu_count == 8
+
+
+def test_quarantined_images_are_not_reported_as_runnable() -> None:
+    from npa.deploy.images import PUBLICATION_QUARANTINE_TOOLS
+
+    specs = load_manifest()
+    for name in PUBLICATION_QUARANTINE_TOOLS:
+        assert specs[name].golden_eval.status == "needs-image-update", name
+
+
+def test_runnable_defaults_exist_in_shared_serverless_project() -> None:
+    """Keep the nightly sweep on platforms the configured project offers."""
+
+    from npa.smoke.serverless_runner import DEFAULT_SERVERLESS_GPU
+
+    available = {"h200", "b200", "rtx6000"}
+    for name, spec in load_manifest().items():
+        if spec.golden_eval.status == "blocked-on-upstream":
+            continue
+        gpu = spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
+        assert gpu in available, (
+            f"{name}: serverless GPU {gpu!r} is not offered in the shared "
+            f"golden-eval project; choose one of {sorted(available)}"
+        )
+
+
+def test_openpi_serverless_gpu_matches_its_runtime_assertion() -> None:
+    spec = load_manifest()["openpi"]
+    assert spec.golden_eval.serverless_gpu == "rtx6000"
+    assert '--expected-gpu-type "RTX PRO 6000"' in spec.golden_eval.command
+    assert "--expected-compute-capability 12.0" in spec.golden_eval.command
+
+
 def test_serverless_runner_imports() -> None:
     # Import-safe: pulls in no GPU/framework deps.
     from npa.smoke import serverless_runner

@@ -56,6 +56,7 @@ class BatchResult:
 def iter_containers(
     *,
     include_blocked: bool = False,
+    include_needs_image_update: bool = False,
     include_foundation: bool = True,
     tools_only: bool = False,
 ) -> list[str]:
@@ -69,6 +70,11 @@ def iter_containers(
         if (
             not include_blocked
             and specs[name].golden_eval.status == "blocked-on-upstream"
+        ):
+            continue
+        if (
+            not include_needs_image_update
+            and specs[name].golden_eval.status == "needs-image-update"
         ):
             continue
         names.append(name)

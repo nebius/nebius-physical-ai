@@ -10,22 +10,33 @@ from npa.deploy.images import CONTAINER_IMAGE_NAMES
 from npa.smoke.batch import iter_containers, run_all, run_container_eval
 
 
-def test_iter_containers_excludes_blocked_by_default() -> None:
+def test_iter_containers_excludes_unrunnable_by_default() -> None:
     names = iter_containers(include_foundation=True)
     assert "base-cuda13-b300" not in names
     assert "cosmos3-reason" not in names
+    assert "ncore" not in names
+    assert "wan2-2" not in names
+
+
+def test_iter_containers_can_include_each_unrunnable_status() -> None:
+    blocked = iter_containers(include_blocked=True)
+    needs_update = iter_containers(include_needs_image_update=True)
+    assert "base-cuda13-b300" in blocked
+    assert "ncore" not in blocked
+    assert "base-cuda13-b300" not in needs_update
+    assert "ncore" in needs_update
 
 
 def test_iter_containers_tools_only_matches_image_names() -> None:
     from npa.smoke.manifest import load_manifest
 
     names = iter_containers(tools_only=True, include_foundation=False)
-    blocked = {
+    unrunnable = {
         name
         for name, spec in load_manifest().items()
-        if spec.golden_eval.status == "blocked-on-upstream"
+        if spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
     }
-    expected = set(CONTAINER_IMAGE_NAMES) - blocked
+    expected = set(CONTAINER_IMAGE_NAMES) - unrunnable
     assert set(names) == expected
 
 
@@ -39,12 +50,12 @@ def test_run_container_eval_dry_run() -> None:
 def test_run_all_dry_run_includes_every_tool() -> None:
     from npa.smoke.manifest import load_manifest
 
-    blocked = {
+    unrunnable = {
         name
         for name, spec in load_manifest().items()
-        if spec.golden_eval.status == "blocked-on-upstream"
+        if spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
     }
-    expected = set(CONTAINER_IMAGE_NAMES) - blocked
+    expected = set(CONTAINER_IMAGE_NAMES) - unrunnable
     batch = run_all(
         iter_containers(tools_only=True, include_foundation=False),
         execute=False,

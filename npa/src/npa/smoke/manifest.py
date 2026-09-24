@@ -74,6 +74,7 @@ class GoldenEval:
     env_module: str | None = None
     artifact: str | None = None
     serverless_gpu: str | None = None
+    serverless_gpu_count: int = 1
 
     @property
     def execution_timeout(self) -> int | float | None:
@@ -178,6 +179,7 @@ def load_manifest() -> dict[str, ContainerSpec]:
             env_module=eval_raw.get("env_module"),
             artifact=eval_raw.get("artifact"),
             serverless_gpu=eval_raw.get("serverless_gpu"),
+            serverless_gpu_count=eval_raw.get("serverless_gpu_count", 1),
         )
         specs[name] = ContainerSpec(
             name=name,
@@ -253,6 +255,14 @@ def validate_manifest(
             report.add(name, f"invalid golden_eval.gpu: {ge.gpu!r}")
         if ge.status not in VALID_STATUS:
             report.add(name, f"invalid golden_eval.status: {ge.status!r}")
+        if (
+            isinstance(ge.serverless_gpu_count, bool)
+            or not isinstance(ge.serverless_gpu_count, int)
+            or ge.serverless_gpu_count <= 0
+        ):
+            report.add(
+                name, "golden_eval.serverless_gpu_count must be a positive integer"
+            )
         if not ge.command:
             report.add(name, "golden_eval.command is empty")
         if (
