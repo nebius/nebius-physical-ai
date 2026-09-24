@@ -2,7 +2,8 @@
 const fakeConnection = `
 export default class RFB extends EventTarget {
   constructor(screen) {
-    super(); this.calls=[]; this.viewOnly=false;
+    super(); this.calls=[]; this.viewOnly=false; this.autoReceipt=true; this.remoteText='';
+    this.addEventListener('clipboard',event=>{this.remoteText=event.detail.text;});
     this.canvas=document.createElement('canvas'); this.canvas.tabIndex=0;
     screen.append(this.canvas);
     this.canvas.addEventListener('keydown', event=>{
@@ -12,8 +13,15 @@ export default class RFB extends EventTarget {
   }
   focus(){this.canvas.focus();}
   sendKey(...args){this.calls.push(['key',...args]);}
-  clipboardPasteFrom(text){this.calls.push(['clipboard',text]);}
-  requestClipboard(){this.calls.push(['requestClipboard']);}
+  clipboardPasteFrom(text){
+    this.calls.push(['clipboard',text]);
+    if(this.autoReceipt)setTimeout(()=>this.dispatchEvent(new CustomEvent('clipboardread',{detail:{text}})),0);
+  }
+  syncClipboard(){this.calls.push(['syncClipboard']);return Promise.resolve();}
+  requestClipboard(){
+    this.calls.push(['requestClipboard']);
+    if(this.remoteText)setTimeout(()=>this.dispatchEvent(new CustomEvent('clipboard',{detail:{text:this.remoteText}})),0);
+  }
 }
 `;
 
@@ -90,6 +98,55 @@ describe("Cloud desktop clipboard", () => {
     cy.get("#clipboard").should("not.be.visible");
   });
 
+  it("uses native manual paste on WebKit without leaving a permission request pending", () => {
+    cy.window().then(win => Object.defineProperty(win.navigator, "userAgent", {
+      value: "Mozilla/5.0 AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15",
+    }));
+    cy.get("#paste-device").click();
+    cy.get("#clipboard").should("be.visible");
+    cy.get("@readClipboard").should("not.have.been.called");
+    cy.get("#clipboard-text").type("Phone text");
+    cy.get("#send-clipboard").click();
+    clipboardCalls().should("deep.equal", [["clipboard", "Phone text"]]);
+  });
+
+  it("accepts Mac alternate paste shortcuts without forwarding a stale remote paste", () => {
+    cy.window().then(win => {
+      Object.defineProperty(win.navigator, "platform", {value:"MacIntel"});
+      const canvas=win.document.querySelector("canvas"); canvas.focus();
+      canvas.dispatchEvent(new win.KeyboardEvent("keydown", {
+        key:"V", code:"KeyV", metaKey:true, shiftKey:true, bubbles:true, cancelable:true,
+      }));
+      expect(win.desktopRfb.calls.some(call => call[0] === "nativeKey")).to.equal(false);
+    });
+    cy.get("@readClipboard").should("have.been.calledOnce");
+    cy.get("#clipboard-status").should("contain", "Paste sent");
+    clipboardCalls().should("have.length", 1);
+  });
+
+  it("supports native cut menus and exports the resulting desktop text", () => {
+    cy.window().then(win => {
+      const canvas=win.document.querySelector("canvas"); canvas.focus();
+      const event=new win.ClipboardEvent("cut", {bubbles:true,cancelable:true});
+      canvas.dispatchEvent(event);
+      expect(event.defaultPrevented).to.equal(true);
+      expect(win.desktopRfb.calls.some(call => call[2] === "KeyX")).to.equal(true);
+      win.desktopRfb.dispatchEvent(new win.CustomEvent("clipboard", {detail:{text:"Cut selection"}}));
+    });
+    cy.window().its("deviceClipboard").should("equal", "Cut selection");
+  });
+
+  it("preserves the editor's Command-Shift-C and Command-Shift-X commands", () => {
+    cy.window().then(win => {
+      const canvas=win.document.querySelector("canvas"); canvas.focus();
+      for (const key of ["C", "X"]) canvas.dispatchEvent(new win.KeyboardEvent("keydown", {
+        key, code:"Key"+key, metaKey:true, shiftKey:true, bubbles:true, cancelable:true,
+      }));
+      expect(win.desktopRfb.calls).to.deep.equal([["nativeKey", "C"], ["nativeKey", "X"]]);
+    });
+    cy.get("@writeClipboardItem").should("not.have.been.called");
+  });
+
   it("preserves a local draft when the desktop clipboard changes", () => {
     cy.get("#open-clipboard").click();
     cy.get("#clipboard-text").type("Draft on this device");
@@ -141,16 +198,28 @@ describe("Cloud desktop clipboard", () => {
     cy.get("@readClipboard").should("not.have.been.called");
   });
 
-  it("preserves Linux copy shortcuts while exporting their result", () => {
+  it("routes terminal copy through Ctrl-Insert without sending an interrupt", () => {
     cy.window().then(win => {
       const canvas=win.document.querySelector("canvas"); canvas.focus();
       canvas.dispatchEvent(new win.KeyboardEvent("keydown", {
         key:"C", code:"KeyC", ctrlKey:true, shiftKey:true, bubbles:true, cancelable:true,
       }));
-      expect(win.desktopRfb.calls).to.deep.equal([["nativeKey", "C"]]);
+      expect(win.desktopRfb.calls.some(call => call[0] === "nativeKey")).to.equal(false);
+      expect(win.desktopRfb.calls.some(call => call[2] === "KeyC")).to.equal(false);
+      expect(win.desktopRfb.calls.some(call => call[2] === "Insert")).to.equal(true);
       win.desktopRfb.dispatchEvent(new win.CustomEvent("clipboard", {detail:{text:"Terminal selection"}}));
     });
     cy.window().its("deviceClipboard").should("equal", "Terminal selection");
+  });
+
+  it("leaves plain Ctrl-C available for terminal interrupts", () => {
+    cy.window().then(win => {
+      const canvas=win.document.querySelector("canvas"); canvas.focus();
+      canvas.dispatchEvent(new win.KeyboardEvent("keydown", {
+        key:"c", code:"KeyC", ctrlKey:true, bubbles:true, cancelable:true,
+      }));
+      expect(win.desktopRfb.calls).to.deep.equal([["nativeKey", "c"]]);
+    });
   });
 
   it("offers one-tap copy when automatic clipboard access is denied", () => {
@@ -159,7 +228,7 @@ describe("Cloud desktop clipboard", () => {
       cy.stub(win.document, "hasFocus").returns(true);
       win.desktopRfb.dispatchEvent(new win.CustomEvent("clipboard", {detail:{text:"Copied in the desktop menu"}}));
     });
-    cy.get("#clipboard-status").should("contain", "Tap Copy to device");
+    cy.get("#clipboard-status").should("contain", "Tap Copy selection");
     cy.get("#copy-device").should("be.enabled").click();
     cy.window().its("deviceClipboard").should("equal", "Copied in the desktop menu");
   });
@@ -202,6 +271,79 @@ describe("Cloud desktop clipboard", () => {
     cy.window().its("deviceClipboard").should("equal", "Keep this local text");
   });
 
+  it("serializes rapid pastes until the desktop has read and synchronized each payload", () => {
+    cy.window().then(win => {
+      win.desktopRfb.autoReceipt=false;
+      const canvas=win.document.querySelector('canvas');canvas.focus();
+      for(const text of ['first','second','third']){
+        const data=new win.DataTransfer();data.setData('text/plain',text);
+        canvas.dispatchEvent(new win.ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
+      }
+    });
+    clipboardCalls().should('deep.equal',[['clipboard','first']]);
+    for(const [index,text] of ['first','second','third'].entries()){
+      cy.window().then(win=>win.desktopRfb.dispatchEvent(new win.CustomEvent('clipboardread',{detail:{text}})));
+      cy.window().should(win=>{
+        expect(win.desktopRfb.calls.filter(call=>call[0]==='syncClipboard')).to.have.length(index+1);
+        expect(win.desktopRfb.calls.filter(call=>call[0]==='clipboard')).to.have.length(Math.min(index+2,3));
+      });
+    }
+    cy.get('#clipboard-status').should('contain','Paste sent');
+    clipboardCalls().should('deep.equal',[['clipboard','first'],['clipboard','second'],['clipboard','third']]);
+  });
+
+  it("drops queued pastes on disconnect without replaying uncertain delivery", () => {
+    cy.window().then(win => {
+      win.desktopRfb.autoReceipt=false;
+      const canvas=win.document.querySelector('canvas');canvas.focus();
+      for(const text of ['in flight','must not replay']){
+        const data=new win.DataTransfer();data.setData('text/plain',text);
+        canvas.dispatchEvent(new win.ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
+      }
+      win.desktopRfb.dispatchEvent(new win.Event('disconnect'));
+    });
+    cy.get('#clipboard-status').should('contain','not confirmed');
+    clipboardCalls().should('deep.equal',[['clipboard','in flight']]);
+  });
+
+  it("ignores a late clipboard permission response after a manual paste", () => {
+    let resolveRead;
+    cy.get('@readClipboard').then(stub=>stub.callsFake(()=>new Promise(resolve=>{resolveRead=resolve;})));
+    cy.get('#paste-device').click();
+    cy.get('#open-clipboard').click();
+    cy.get('#clipboard-text').type('Manual payload');
+    cy.get('#send-clipboard').click();
+    cy.then(()=>resolveRead('Late old payload'));
+    cy.get('#clipboard-status').should('contain','Paste sent');
+    clipboardCalls().should('deep.equal',[['clipboard','Manual payload']]);
+  });
+
+  it("copies the desktop selection after connecting without a previous notification", () => {
+    cy.window().then(win=>{win.desktopRfb.remoteText='Fresh selected text';});
+    cy.get('#copy-device').should('be.enabled').click();
+    cy.window().its('deviceClipboard').should('equal','Fresh selected text');
+    cy.window().then(win=>expect(win.desktopRfb.calls.some(call=>call[2]==='Insert')).to.equal(true));
+  });
+
+  it("waits for the remote copy command before refreshing an unchanged selection", () => {
+    let acknowledge;
+    cy.clock();
+    cy.window().then(win => {
+      win.desktopRfb.syncClipboard=()=>new Promise(resolve=>{acknowledge=resolve;});
+      win.desktopRfb.remoteText="Old selection";
+    });
+    cy.get('#copy-device').click();
+    cy.tick(150);
+    cy.window().then(win => {
+      expect(win.desktopRfb.calls.some(call=>call[0]==='requestClipboard')).to.equal(false);
+      win.desktopRfb.remoteText="New selection";
+      acknowledge();
+    });
+    cy.window().should(win=>expect(win.desktopRfb.calls.some(call=>call[0]==='requestClipboard')).to.equal(true));
+    cy.tick(1);
+    cy.window().its('deviceClipboard').should('equal','New selection');
+  });
+
   it("requests the current VNC clipboard when unchanged text produces no notification", () => {
     cy.clock();
     cy.window().then(win => {
@@ -214,8 +356,10 @@ describe("Cloud desktop clipboard", () => {
       }));
     });
     cy.tick(150);
-    cy.window().then(win => {
+    cy.window().should(win => {
       expect(win.desktopRfb.calls.filter(call=>call[0]==="requestClipboard")).to.have.length(1);
+    });
+    cy.window().then(win => {
       expect(win.deviceClipboard).to.equal("Another app's local text");
       win.desktopRfb.dispatchEvent(new win.CustomEvent("clipboard", {detail:{text:"Repeated selection"}}));
     });

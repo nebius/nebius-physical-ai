@@ -3,6 +3,7 @@ const modifierKeys = [
   [0xffe1, "ShiftLeft"], [0xffe2, "ShiftRight"],
   [0xffe3, "ControlLeft"], [0xffe4, "ControlRight"],
   [0xffe9, "AltLeft"], [0xffea, "AltRight"],
+  [0xff7e, "AltLeft"], [0xfe03, "AltRight"],
   [0xffeb, "MetaLeft"], [0xffec, "MetaRight"],
 ];
 
@@ -11,6 +12,7 @@ function message(clipboard, text) {
 }
 
 function openClipboard(clipboard, hint = "") {
+  cancelRead(clipboard);
   if (!clipboard.dialog.open) {
     clipboard.text.value = clipboard.remoteText;
     clipboard.dialog.showModal();
@@ -29,28 +31,87 @@ function pasteText(clipboard, text) {
     openClipboard(clipboard, "The clipboard contains no text. Paste or type text below.");
     return;
   }
-  clipboard.rfb.clipboardPasteFrom(text);
+  cancelRead(clipboard);
+  clipboard.pasteQueue.push(text);
+  if (clipboard.dialog.open) clipboard.dialog.close();
+  clipboard.rfb.focus();
+  void drainPastes(clipboard);
+}
+
+function pasteReceipt(clipboard, text) {
+  let finish;
+  const promise = new Promise((resolve, reject) => {
+    const received = event => { if (event.detail.text === text) finish(); };
+    const disconnected = () => finish(new Error("Desktop disconnected"));
+    const timer = setTimeout(() => finish(new Error("Paste was not confirmed")), 4000);
+    finish = error => {
+      clearTimeout(timer);
+      clipboard.rfb.removeEventListener("clipboardread", received);
+      clipboard.rfb.removeEventListener("disconnect", disconnected);
+      if (error) reject(error); else resolve();
+    };
+    clipboard.rfb.addEventListener("clipboardread", received);
+    clipboard.rfb.addEventListener("disconnect", disconnected);
+  });
+  return {promise, finish};
+}
+
+function pasteShortcut(clipboard) {
   // Release the held shortcut modifiers before sending the Linux paste shortcut.
   for (const [keysym, code] of modifierKeys) clipboard.rfb.sendKey(keysym, code, false);
   // Shift+Insert pastes in Linux editors and terminals without sending Enter.
   clipboard.rfb.sendKey(0xffe1, "ShiftLeft", true);
   clipboard.rfb.sendKey(0xff63, "Insert");
   clipboard.rfb.sendKey(0xffe1, "ShiftLeft", false);
-  if (clipboard.dialog.open) clipboard.dialog.close();
-  clipboard.rfb.focus();
-  message(clipboard, "Paste sent to the selected desktop app.");
+}
+
+async function drainPastes(clipboard) {
+  if (clipboard.pasting) return;
+  clipboard.pasting = true;
+  try {
+    while (clipboard.connected && clipboard.pasteQueue.length) {
+      const text = clipboard.pasteQueue.shift(), receipt = pasteReceipt(clipboard, text);
+      message(clipboard, "Pasting into the desktop…");
+      try {
+        clipboard.rfb.clipboardPasteFrom(text);
+        pasteShortcut(clipboard);
+        await receipt.promise;
+        await clipboard.rfb.syncClipboard();
+        // Let the application's asynchronous paste finish before the next shortcut.
+        await new Promise(resolve => setTimeout(resolve, 60));
+      } finally { receipt.finish(); }
+    }
+    if (clipboard.connected) message(clipboard, "Paste sent to the selected desktop app.");
+  } catch {
+    clipboard.pasteQueue.length = 0;
+    message(clipboard, "Paste was not confirmed. Check the desktop before trying again.");
+  } finally { clipboard.pasting = false; }
+}
+
+function cancelRead(clipboard) {
+  clipboard.readSequence++;
+  clipboard.reading = false;
 }
 
 async function pasteFromDevice(clipboard) {
   if (clipboard.reading) return;
+  // WebKit's clipboard prompt can remain pending indefinitely. Its native Paste
+  // command works in the dialog without a second permission flow.
+  if (/AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent)) {
+    openClipboard(clipboard);
+    return;
+  }
   clipboard.reading = true;
+  const sequence = ++clipboard.readSequence;
+  message(clipboard, "Allow Paste in your browser, or use Clipboard for a manual paste.");
   try {
     const text = await navigator.clipboard.readText();
-    pasteText(clipboard, text);
+    if (sequence === clipboard.readSequence) pasteText(clipboard, text);
   } catch {
-    openClipboard(clipboard, "Your browser needs a manual paste. Paste into this text box, then choose Paste into desktop.");
+    if (sequence === clipboard.readSequence)
+      openClipboard(clipboard, "Your browser needs a manual paste. Paste into this text box, then choose Paste into desktop.");
   } finally {
-    clipboard.reading = false;
+    if (sequence === clipboard.readSequence) clipboard.reading = false;
   }
 }
 
@@ -81,7 +142,7 @@ async function writeDeviceClipboard(clipboard, content) {
   } catch {
     try {
       await text;
-      message(clipboard, "Desktop text is ready. Tap Copy to device, or use Clipboard to copy manually.");
+      message(clipboard, "Desktop text is ready. Tap Copy selection, or use Clipboard to copy manually.");
     } catch {
       message(clipboard, "No new copied text received. Select text and copy in the desktop app.");
     }
@@ -90,7 +151,7 @@ async function writeDeviceClipboard(clipboard, content) {
 }
 
 function beginCopy(clipboard) {
-  if (clipboard.pendingCopy) return;
+  if (clipboard.pendingCopy) return clipboard.pendingCopy.copying;
   let resolve, reject;
   const text = new Promise((accept, decline) => { resolve = accept; reject = decline; });
   const timer = setTimeout(() => {
@@ -99,22 +160,38 @@ function beginCopy(clipboard) {
   }, 4000);
   // VNC can suppress notifications for unchanged text. Ask again after the key
   // reaches the desktop, rather than copying a potentially stale local cache.
-  const refresh = setTimeout(() => clipboard.rfb.requestClipboard(), 150);
-  clipboard.pendingCopy = {resolve, reject, timer, refresh};
-  void writeDeviceClipboard(clipboard, text);
+  const pending = {resolve, reject, timer, refresh: null};
+  pending.refresh = setTimeout(() => refreshCopy(clipboard, pending), 150);
+  clipboard.pendingCopy = pending;
+  const copying = writeDeviceClipboard(clipboard, text);
+  clipboard.pendingCopy.copying = copying;
+  return copying;
 }
 
-function remoteCopyShortcut(clipboard) {
+async function refreshCopy(clipboard, pending) {
+  try {
+    // A local timer can expire before the copy key reaches a distant server.
+    await clipboard.rfb.syncClipboard();
+    if (clipboard.pendingCopy === pending) clipboard.rfb.requestClipboard();
+  } catch (error) {
+    if (clipboard.pendingCopy !== pending) return;
+    clearTimeout(pending.timer);
+    clipboard.pendingCopy = null;
+    pending.reject(error);
+  }
+}
+
+function remoteCopyShortcut(clipboard, cut = false) {
   for (const [keysym, code] of modifierKeys) clipboard.rfb.sendKey(keysym, code, false);
   // Ctrl+Insert copies in Linux editors and terminals without interrupting a job.
   clipboard.rfb.sendKey(0xffe3, "ControlLeft", true);
-  clipboard.rfb.sendKey(0xff63, "Insert");
+  clipboard.rfb.sendKey(cut ? 0x78 : 0xff63, cut ? "KeyX" : "Insert");
   clipboard.rfb.sendKey(0xffe3, "ControlLeft", false);
 }
 
 function receiveClipboard(clipboard, text) {
   clipboard.remoteText = text;
-  document.querySelector("#copy-device").disabled = !clipboard.connected || !text;
+  document.querySelector("#copy-device").disabled = !clipboard.connected;
   if (!clipboard.dialog.open) clipboard.text.value = text;
   if (clipboard.pendingCopy) {
     clearTimeout(clipboard.pendingCopy.timer);
@@ -124,7 +201,7 @@ function receiveClipboard(clipboard, text) {
   } else if (text && clipboard.connected && !clipboard.dialog.open && document.hasFocus() && document.visibilityState === "visible") {
     void writeDeviceClipboard(clipboard, text);
   } else if (text) {
-    message(clipboard, "Desktop text is ready. Tap Copy to device.");
+    message(clipboard, "Desktop text is ready. Tap Copy selection.");
   }
 }
 
@@ -146,20 +223,34 @@ function nativePaste(clipboard, event) {
 
 function bindKeyboard(clipboard) {
   document.addEventListener("keydown", (event) => {
-    if (!desktopFocused(clipboard) || event.altKey || !(event.metaKey || event.ctrlKey)) return;
-    if (event.key.toLowerCase() === "c" && clipboard.connected && !clipboard.rfb.viewOnly) {
-      if (!event.repeat) beginCopy(clipboard);
-      if (event.metaKey) {
-        event.preventDefault(); event.stopImmediatePropagation();
-        if (!event.repeat) remoteCopyShortcut(clipboard);
+    if (!desktopFocused(clipboard)) return;
+    const key = event.code === "KeyV" ? "v" : event.key.toLowerCase();
+    const paste = key === "v" && (event.metaKey || event.ctrlKey) && (!event.altKey || event.metaKey && event.shiftKey);
+    if (paste || key === "insert" && event.shiftKey && !event.ctrlKey) {
+      event.stopImmediatePropagation();
+      if (/Mac|iPhone|iPad/.test(navigator.platform) && (!event.metaKey || event.shiftKey)) {
+        event.preventDefault(); void pasteFromDevice(clipboard);
       }
       return;
     }
-    if (event.key.toLowerCase() !== "v") return;
-    // Keep the browser's native paste event; noVNC otherwise cancels it.
-    event.stopImmediatePropagation();
+    if (event.altKey || !(event.metaKey || event.ctrlKey)) return;
+    const copy = key === "insert" || key === "c" && (!event.metaKey || !event.shiftKey);
+    const cut = key === "x" && !event.shiftKey;
+    if ((copy || cut) && clipboard.connected && !clipboard.rfb.viewOnly) {
+      if (!event.repeat) beginCopy(clipboard);
+      if (event.metaKey || key === "insert" || key === "c" && event.shiftKey) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (!event.repeat) remoteCopyShortcut(clipboard, key === "x");
+      }
+    }
   }, true);
   document.addEventListener("paste", (event) => nativePaste(clipboard, event), true);
+  for (const action of ["copy", "cut"]) document.addEventListener(action, event => {
+    if (!desktopFocused(clipboard)) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!clipboard.connected || clipboard.rfb.viewOnly) return;
+    void beginCopy(clipboard); remoteCopyShortcut(clipboard, action === "cut");
+  }, true);
 }
 
 function bindConnection(clipboard) {
@@ -167,10 +258,12 @@ function bindConnection(clipboard) {
     clipboard.connected = true;
     document.querySelector("#paste-device").disabled = false;
     document.querySelector("#send-clipboard").disabled = false;
-    document.querySelector("#copy-device").disabled = !clipboard.remoteText;
+    document.querySelector("#copy-device").disabled = false;
   });
   clipboard.rfb.addEventListener("disconnect", () => {
     clipboard.connected = false;
+    cancelRead(clipboard);
+    clipboard.pasteQueue.length = 0;
     document.querySelector("#paste-device").disabled = true;
     document.querySelector("#send-clipboard").disabled = true;
     document.querySelector("#copy-device").disabled = true;
@@ -194,7 +287,8 @@ function bindConnection(clipboard) {
  */
 export function installClipboard(rfb) {
   const clipboard = {
-    rfb, connected: false, reading: false, remoteText: "", pendingCopy: null,
+    rfb, connected: false, reading: false, readSequence: 0, remoteText: "", pendingCopy: null,
+    pasting: false, pasteQueue: [],
     screen: document.querySelector("#screen"),
     dialog: document.querySelector("#clipboard"),
     text: document.querySelector("#clipboard-text"),
@@ -203,7 +297,9 @@ export function installClipboard(rfb) {
   };
   document.querySelector("#paste-device").onclick = () => pasteFromDevice(clipboard);
   document.querySelector("#copy-device").onclick = async () => {
-    if (!await writeDeviceClipboard(clipboard, clipboard.remoteText))
+    const copying = beginCopy(clipboard);
+    remoteCopyShortcut(clipboard);
+    if (!await copying)
       openClipboard(clipboard, "Use your device’s Copy command on the selected desktop text.");
   };
   document.querySelector("#open-clipboard").onclick = () => openClipboard(clipboard);

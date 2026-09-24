@@ -161,6 +161,7 @@ def _write_viewer(target, assets):
         raise ValueError("Unexpected desktop viewer assets.")
     _patch_clipboard_request(target)
     _patch_mac_shortcuts(target)
+    _patch_clipboard_delivery(target)
     _write(target / "desktop_clipboard.js", assets["desktop_clipboard.js"], 0o644)
     _write(target / "desktop.html", _VIEWER, 0o644)
     _write(
@@ -225,6 +226,81 @@ def _clipboard_policy(environment=None):
     )
     if environment is not None:
         _command(["vncconfig", "-set", "SendPrimary=0"], environment=environment)
+
+
+def _patch_clipboard_delivery(target):
+    path = target / "core/rfb.js"
+    content = path.read_text()
+    for old, new in _CLIPBOARD_DELIVERY_PATCHES:
+        if new in content:
+            continue
+        if content.count(old) != 1:
+            raise RuntimeError("Unexpected noVNC clipboard delivery implementation.")
+        content = content.replace(old, new)
+    _write(path, content, 0o644)
+
+
+_CLIPBOARD_DELIVERY_PATCHES = [
+    (
+        "        this._keyboard = new Keyboard(this._canvas);",
+        """        // An editable keyboard target enables native browser clipboard menus.
+        this._clipboardInput = document.createElement('textarea');
+        this._clipboardInput.id = 'desktop-keyboard';
+        this._clipboardInput.setAttribute('aria-label', 'Remote desktop keyboard');
+        this._clipboardInput.setAttribute('autocomplete', 'off');
+        this._clipboardInput.setAttribute('autocapitalize', 'off');
+        this._clipboardInput.setAttribute('inputmode', 'none');
+        this._clipboardInput.spellcheck = false;
+        this._clipboardInput.value = 'Remote desktop';
+        this._clipboardInput.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;margin:0;padding:0;border:0;opacity:0;pointer-events:none';
+        this._screen.appendChild(this._clipboardInput);
+        this._canvas.addEventListener('focus', () => this.focus());
+        this._keyboard = new Keyboard(this._clipboardInput);""",
+    ),
+    (
+        "        this._canvas.focus(options);",
+        "        this._clipboardInput.focus(options);\n        this._clipboardInput.select();",
+    ),
+    ("        this._canvas.blur();", "        this._clipboardInput.blur();"),
+    (
+        "    clipboardPasteFrom(text) {",
+        """    syncClipboard() {
+        if (!this._supportsFence || this._rfbConnectionState !== 'connected') {
+            return Promise.reject(new Error('Desktop clipboard synchronization unavailable'));
+        }
+        this._npaClipboardFences ??= new Map();
+        this._npaClipboardFenceId = (this._npaClipboardFenceId || 0) + 1;
+        const id = 'npa-clipboard-' + this._npaClipboardFenceId;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._npaClipboardFences.delete(id);
+                reject(new Error('Desktop clipboard synchronization timed out'));
+            }, 4000);
+            this._npaClipboardFences.set(id, () => { clearTimeout(timer); resolve(); });
+            RFB.messages.clientFence(this._sock, 0x80000001, id);
+        });
+    }
+
+    clipboardPasteFrom(text) {""",
+    ),
+    (
+        "                        RFB.messages.extendedClipboardProvide(this._sock, [extendedClipboardFormatText], [this._clipboardText]);",
+        """                        RFB.messages.extendedClipboardProvide(this._sock, [extendedClipboardFormatText], [this._clipboardText]);
+                        this.dispatchEvent(new CustomEvent('clipboardread', { detail: { text: this._clipboardText } }));""",
+    ),
+    (
+        """        if (!(flags & (1<<31))) {
+            return this._fail("Unexpected fence response");
+        }""",
+        """        if (!(flags & (1<<31))) {
+            const complete = this._npaClipboardFences?.get(payload);
+            if (!complete) return this._fail("Unexpected fence response");
+            this._npaClipboardFences.delete(payload);
+            complete();
+            return true;
+        }""",
+    ),
+]
 
 
 def _install_vscode():
@@ -885,12 +961,12 @@ _VIEWER = """<!doctype html>
 header{min-height:36px;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 12px;background:#24282b}
 header strong{margin-right:auto}button,select,input{font:inherit;padding:4px 8px;border-radius:5px;border:1px solid #626970;background:#24282b;color:#eee}
 #screen{flex:1;min-height:0;overflow:hidden}dialog{color:#eee;background:#24282b;border:1px solid #626970;border-radius:12px;padding:24px}dialog input{display:block;margin:14px 0;width:260px}textarea{display:block;width:min(70vw,600px);height:min(35vh,240px);margin:14px 0;background:#151719;color:#eee;font:16px system-ui}dialog{max-width:calc(100vw - 24px);max-height:90dvh;overflow:auto}.clipboard-actions{display:flex;flex-wrap:wrap;gap:8px}#clipboard-status{margin:0;padding:3px 12px;font-size:12px;min-height:22px}#clipboard-hint{max-width:600px;line-height:1.5}@media(max-width:760px){header button,header select{min-height:36px}header strong{display:none}header label{font-size:12px}header #status{flex:1}dialog{padding:16px}textarea{width:100%}.clipboard-actions button{min-height:44px;font-size:16px}}
-</style></head><body><header><strong>NPA Desktop</strong><span id="status">Connecting…</span><label>Workspace <select id="scale"><option value="1">Comfortable</option><option value="0.85">More space</option><option value="1.15">Larger text</option></select></label><button id="paste-device" disabled>Paste</button><button id="copy-device" disabled>Copy to device</button><button id="open-clipboard">Clipboard</button><button id="fullscreen">Full screen</button></header><p id="clipboard-status" role="status" aria-live="polite"></p>
+</style></head><body><header><strong>NPA Desktop</strong><span id="status">Connecting…</span><label>Workspace <select id="scale"><option value="1">Comfortable</option><option value="0.85">More space</option><option value="1.15">Larger text</option></select></label><button id="paste-device" disabled>Paste</button><button id="copy-device" disabled>Copy selection</button><button id="open-clipboard">Clipboard</button><button id="fullscreen">Full screen</button></header><p id="clipboard-status" role="status" aria-live="polite"></p>
 <main id="screen"></main><dialog id="login"><form method="dialog"><label>Desktop password<input id="password" type="password" autocomplete="current-password" required autofocus></label><button>Connect</button></form></dialog>
 <dialog id="clipboard" aria-labelledby="clipboard-title"><h2 id="clipboard-title">Clipboard</h2><p id="clipboard-hint"></p><label>Text to paste<textarea id="clipboard-text" spellcheck="false" autocapitalize="none" autocomplete="off"></textarea></label><div class="clipboard-actions"><button id="send-clipboard" disabled>Paste into desktop</button><button id="copy-clipboard">Copy text</button><button id="close-clipboard">Close</button></div></dialog>
 <script type="module">
-import RFB from './core/rfb.js?npa-desktop=3';
-import { installClipboard } from './desktop_clipboard.js?v=3';
+import RFB from './core/rfb.js?npa-desktop=4';
+import { installClipboard } from './desktop_clipboard.js?v=4';
 const status=document.querySelector('#status'),scale=document.querySelector('#scale'),login=document.querySelector('#login');
 window.npaDesktopScale=Number(localStorage.getItem('npaDesktopScale')||1);
 if(![0.85,1,1.15].includes(window.npaDesktopScale))window.npaDesktopScale=1;

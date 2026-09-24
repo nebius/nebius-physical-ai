@@ -41,11 +41,16 @@ Paste it into the desktop password dialog. Mac Command maps to Linux Ctrl for
 common app shortcuts such as Select All and Save. Closing the tab leaves the
 remote session running.
 Click the destination in the desktop, then use **Command-V** on a Mac or
-**Ctrl-V** on a PC to paste text from that device. On a phone, tap **Paste** in
-the viewer toolbar and allow the browser's clipboard prompt if one appears.
+**Ctrl-V** on a PC to paste text from that device. Alternate paste shortcuts
+(Ctrl-Shift-V, Shift-Insert and Mac Command-Shift-V) use the same text bridge.
+On a phone, tap **Paste** in the viewer toolbar. Safari opens a normal text box:
+touch and hold to paste, then choose **Paste into desktop**. Other browsers can
+read the clipboard directly after the tap when permission is granted.
 The viewer copies the text and sends the Linux paste shortcut to the selected
 application; it does not press Enter. Multiline text and Unicode use the VNC
-server's extended clipboard support.
+server's extended clipboard support. Repeated pastes are delivered in order;
+the viewer waits for the server to read each payload before advancing. A lost
+connection discards pending pastes instead of replaying uncertain input.
 
 To copy out, select text in the desktop app and use **Command-C** on a Mac
 or the app's Linux copy shortcut (**Ctrl-C** in editors, **Ctrl-Shift-C** in
@@ -54,8 +59,9 @@ The viewer transfers the copied text to your device, ready to paste into another
 app. Copying from a Linux app's menu also transfers text while the viewer is
 focused, when the browser permits it. Selecting or highlighting Linux text
 does not replace your device's clipboard; use an explicit Copy command.
-On a phone, or if automatic copying is
-blocked, tap **Copy to device** after copying within Linux. The status below
+On a phone, or if automatic copying is blocked, select text in Linux and tap
+**Copy selection**. This sends a fresh copy command and works after reconnecting,
+without relying on clipboard notifications from the previous connection. The status below
 the toolbar reports whether text was copied or needs an extra tap.
 
 If the browser denies clipboard access, the **Clipboard** dialog provides a

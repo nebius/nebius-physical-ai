@@ -181,7 +181,7 @@ def test_viewer_refresh_installs_matching_assets_without_restarting_services(
     core.parent.mkdir()
     core.write_text(
         'import Keyboard from "./input/keyboard.js";\n'
-        "class RFB {\n    clipboardPasteFrom(text) {}\n}\n"
+        + "\n".join(old for old, _ in remote._CLIPBOARD_DELIVERY_PATCHES)
     )
     keyboard = tmp_path / "core/input/keyboard.js"
     keyboard.parent.mkdir()
@@ -201,6 +201,16 @@ def test_viewer_refresh_installs_matching_assets_without_restarting_services(
     assert 'from "./input/keyboard.js?npa-desktop=3";' in core.read_text()
     assert "keysym = KeyTable.XK_Alt_L" not in keyboard.read_text()
     commands.assert_not_called()
+
+
+def test_unknown_clipboard_delivery_source_is_not_partially_patched(tmp_path):
+    core = tmp_path / "core/rfb.js"
+    core.parent.mkdir()
+    source = "        this._keyboard = new Keyboard(this._canvas);\nunsupported rest"
+    core.write_text(source)
+    with pytest.raises(RuntimeError, match="Unexpected noVNC clipboard delivery"):
+        remote._patch_clipboard_delivery(tmp_path)
+    assert core.read_text() == source
 
 
 def test_viewer_assets_cannot_write_arbitrary_paths(tmp_path):
