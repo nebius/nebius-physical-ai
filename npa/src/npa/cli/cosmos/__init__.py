@@ -328,8 +328,6 @@ class OutputFormat(str, Enum):
 
 class Backend(str, Enum):
     basic = "basic"
-    nim = "nim"
-    triton = "triton"
 
 
 class WorkbenchRuntime(str, Enum):
@@ -936,12 +934,6 @@ def register_byovm_cmd(
         )
     except (ConfigError, NetworkIngressError) as exc:
         _fail(str(exc))
-
-
-def _ensure_basic_backend(backend: Backend) -> None:
-    if backend != Backend.basic:
-        typer.echo("NIM/Triton backend is not yet implemented")
-        raise typer.Exit(1)
 
 
 def _is_cosmos_workbench(name: str, wb_cfg: dict[str, Any]) -> bool:
@@ -2120,10 +2112,7 @@ def deploy_cmd(
     backend: Backend = typer.Option(
         Backend.basic,
         "--backend",
-        help=(
-            "Serving backend: basic uses the built-in FastAPI/Diffusers server; "
-            "nim will use NVIDIA NIM containers; triton will use Triton/TensorRT model serving."
-        ),
+        help="Serving backend. basic uses the built-in FastAPI/Diffusers server.",
     ),
     server_port: int = typer.Option(
         8080,
@@ -2163,7 +2152,6 @@ def deploy_cmd(
     ),
 ) -> None:
     """Deploy or destroy a Cosmos model serving backend."""
-    _ensure_basic_backend(backend)
     byovm = is_byovm_runtime(runtime)
     serverless = is_serverless_runtime(runtime)
     if not destroy and not byovm and not serverless:
@@ -3052,10 +3040,7 @@ def serve_cmd(
     backend: Backend = typer.Option(
         Backend.basic,
         "--backend",
-        help=(
-            "Serving backend: basic restarts the built-in FastAPI/Diffusers server; "
-            "nim will run NVIDIA NIM; triton will run Triton/TensorRT serving."
-        ),
+        help="Serving backend. basic restarts the built-in FastAPI/Diffusers server.",
     ),
     port: int = typer.Option(8080, "--port", help="Server port."),
     no_guardrails: bool = typer.Option(
@@ -3074,7 +3059,6 @@ def serve_cmd(
     with --no-auto-serve. Run it whenever `cosmos status` reports `degraded` /
     model not loaded.
     """
-    _ensure_basic_backend(backend)
     cfg = _get_config()
 
     if is_serverless_runtime(getattr(cfg, "runtime", "")):
@@ -3143,16 +3127,6 @@ def serve_cmd(
     if err.strip():
         result["stderr_tail"] = err.strip()[-1000:]
     _output(result, output)
-
-
-@app.command(
-    "finetune",
-    help="Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on custom datasets.",
-)
-def finetune_cmd() -> None:
-    """LoRA or full fine-tuning of Cosmos models on custom data."""
-    typer.echo("not yet implemented")
-    raise typer.Exit(1)
 
 
 @app.command("train", help="Submit a Cosmos training job.")
@@ -3336,16 +3310,6 @@ def train_cmd(
         },
         output,
     )
-
-
-@app.command(
-    "optimize",
-    help="Roadmap placeholder for TensorRT compilation and quantization of Cosmos models.",
-)
-def optimize_cmd() -> None:
-    """TensorRT compilation and quantization for Cosmos model serving."""
-    typer.echo("not yet implemented")
-    raise typer.Exit(1)
 
 
 def _storage_client_for_config(

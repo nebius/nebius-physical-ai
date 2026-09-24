@@ -137,8 +137,6 @@ def _access_denied(message: str = "AccessDenied") -> ClientError:
         "serve",
         "infer",
         "train",
-        "finetune",
-        "optimize",
         "status",
         "system-info",
         "list",
@@ -682,33 +680,26 @@ def test_cosmos_train_serverless_auth_error_shows_hint(mocker) -> None:
     assert "npa configure" in result.output
 
 
-def test_cosmos_placeholder_help_describes_roadmap() -> None:
-    finetune = runner.invoke(app, ["workbench", "cosmos", "finetune", "--help"])
-    optimize = runner.invoke(app, ["workbench", "cosmos", "optimize", "--help"])
+def test_cosmos_help_excludes_unimplemented_commands() -> None:
+    result = runner.invoke(app, ["workbench", "cosmos", "--help"])
 
-    assert finetune.exit_code == 0
-    assert "LoRA" in finetune.output
-    assert "full fine-tuning" in finetune.output
-    assert "custom" in finetune.output
-    assert optimize.exit_code == 0
-    assert "TensorRT" in optimize.output
-    assert "quantization" in optimize.output
+    assert result.exit_code == 0
+    assert "finetune" not in result.output
+    assert "optimize" not in result.output
 
 
-def test_cosmos_backend_help_describes_choices() -> None:
+def test_cosmos_backend_help_exposes_only_basic() -> None:
     deploy = runner.invoke(app, ["workbench", "cosmos", "deploy", "--help"])
     serve = runner.invoke(app, ["workbench", "cosmos", "serve", "--help"])
 
     assert deploy.exit_code == 0
     assert "basic" in deploy.output
-    assert "NIM" in deploy.output
-    assert "Triton" in deploy.output
-    assert "TensorRT" in deploy.output
+    assert "nim" not in deploy.output.lower()
+    assert "triton" not in deploy.output.lower()
     assert serve.exit_code == 0
     assert "basic" in serve.output
-    assert "NIM" in serve.output
-    assert "Triton" in serve.output
-    assert "TensorRT" in serve.output
+    assert "nim" not in serve.output.lower()
+    assert "triton" not in serve.output.lower()
 
 
 def test_cosmos_deploy_help_lists_serverless_runtime() -> None:
@@ -719,11 +710,11 @@ def test_cosmos_deploy_help_lists_serverless_runtime() -> None:
 
 
 @pytest.mark.parametrize("command", ["finetune", "optimize"])
-def test_cosmos_placeholders_exit_not_implemented(command: str) -> None:
+def test_cosmos_unimplemented_commands_are_not_registered(command: str) -> None:
     result = runner.invoke(app, ["workbench", "cosmos", command])
 
-    assert result.exit_code == 1
-    assert result.output.strip() == "not yet implemented"
+    assert result.exit_code == 2
+    assert "No such command" in result.output
 
 
 @pytest.mark.parametrize("backend", ["nim", "triton"])
@@ -757,8 +748,8 @@ def test_cosmos_deploy_rejects_unimplemented_backends(
         ],
     )
 
-    assert result.exit_code == 1
-    assert result.output.strip() == "NIM/Triton backend is not yet implemented"
+    assert result.exit_code == 2
+    assert "Invalid value for '--backend'" in result.output
     apply.assert_not_called()
 
 
@@ -771,8 +762,8 @@ def test_cosmos_serve_rejects_unimplemented_backends(backend: str, mocker) -> No
         ["workbench", "cosmos", "serve", "--backend", backend],
     )
 
-    assert result.exit_code == 1
-    assert result.output.strip() == "NIM/Triton backend is not yet implemented"
+    assert result.exit_code == 2
+    assert "Invalid value for '--backend'" in result.output
     resolve_config.assert_not_called()
 
 
