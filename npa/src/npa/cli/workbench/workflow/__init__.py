@@ -6837,6 +6837,9 @@ def cancel_cmd(
             jobs_payload = [item.to_dict() for item in assessment.jobs]
             job_ids = [item.job_id for item in assessment.jobs]
             active_ids = [item.job_id for item in assessment.active_jobs]
+            absence_conflict_ids = [
+                item.job_id for item in assessment.absence_conflict_jobs
+            ]
             if not assessment.active_jobs and not assessment.errors:
                 terminal = is_terminal_workflow_state(assessment.detected_state)
                 result = {
@@ -6848,6 +6851,8 @@ def cancel_cmd(
                     "sky_job_ids": job_ids,
                     "cloud_calls": False,
                     "jobs": jobs_payload,
+                    "durable_absence_conflict_job_ids": [],
+                    "owned_teardown_allowed": False,
                     "message": (
                         "No cancellation was needed; authoritative workflow/stage "
                         f"state is {assessment.detected_state}."
@@ -6865,9 +6870,21 @@ def cancel_cmd(
                     "sky_job_ids": job_ids,
                     "cloud_calls": False,
                     "jobs": jobs_payload,
+                    "durable_absence_conflict_job_ids": absence_conflict_ids,
+                    "durable_absence_conflict_errors": (
+                        assessment.absence_conflict_errors
+                    ),
+                    "owned_teardown_allowed": (
+                        assessment.only_verified_absence_conflicts
+                    ),
                     "errors": assessment.errors,
                     "message": (
-                        "Cancellation was not attempted because one or more exact "
+                        "Cancellation remains non-terminal because durable state "
+                        "contradicts exact verified job absence. An explicit project "
+                        "destroy may continue run-owned teardown using this structured "
+                        "evidence."
+                        if assessment.only_verified_absence_conflicts
+                        else "Cancellation was not attempted because one or more exact "
                         "workflow/job records could not be verified."
                     ),
                 }
@@ -6888,6 +6905,11 @@ def cancel_cmd(
                         "sky_job_ids": job_ids,
                         "cloud_calls": False,
                         "jobs": jobs_payload,
+                        "durable_absence_conflict_job_ids": absence_conflict_ids,
+                        "durable_absence_conflict_errors": (
+                            assessment.absence_conflict_errors
+                        ),
+                        "owned_teardown_allowed": False,
                         "errors": reverify_errors,
                         "message": (
                             "Cancellation was not attempted because exact active-job "
@@ -6905,6 +6927,10 @@ def cancel_cmd(
                         sky_bin=sky_bin or None,
                     )
                     errors = [*assessment.errors, *cleanup.errors]
+                    owned_teardown_allowed = (
+                        assessment.only_verified_absence_conflicts
+                        and not cleanup.errors
+                    )
                     result = {
                         "run_id": resolved_run_id,
                         "outcome": "cancelled"
@@ -6917,12 +6943,21 @@ def cancel_cmd(
                         "cancelled_job_ids": active_ids,
                         "cloud_calls": True,
                         "jobs": jobs_payload,
+                        "durable_absence_conflict_job_ids": absence_conflict_ids,
+                        "durable_absence_conflict_errors": (
+                            assessment.absence_conflict_errors
+                        ),
+                        "owned_teardown_allowed": owned_teardown_allowed,
                         "resources_removed": cleanup.resources_removed,
                         "commands": cleanup.commands,
                         "errors": errors,
                         "message": (
                             f"Cancellation converged for {len(active_ids)} active managed job(s)."
                             if not errors
+                            else "Every live managed job converged; only contradictory "
+                            "durable state for exact verified-absent jobs remains. An "
+                            "explicit project destroy may continue run-owned teardown."
+                            if owned_teardown_allowed
                             else "Cancellation was only partial; retry after resolving the "
                             "reported exact job/provider failures."
                         ),
@@ -6981,6 +7016,11 @@ def cancel_cmd(
             result.setdefault("diagnostics", []).append(
                 f"teardown receipt unavailable: {exc}"
             )
+        result["owned_teardown_allowed"] = False
+    result.setdefault("durable_absence_conflict_job_ids", [])
+    result.setdefault("durable_absence_conflict_errors", [])
+    result.setdefault("cancelled_job_ids", [])
+    result.setdefault("owned_teardown_allowed", False)
     result["identity_source"] = (
         identity.source if identity is not None else "unavailable"
     )
