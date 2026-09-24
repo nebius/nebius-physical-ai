@@ -55,6 +55,21 @@ tests explicitly support it.
 
 ## Upstream Post-Training Map
 
+For reserved B200 Slurm scaling, use the standalone application recipe at
+`npa/workflows/workbench/cosmos3-wam-slurm/` and
+`docs/workbench/cookbooks/cosmos3-wam-slurm.md`. It plans native LIBERO WAM runs
+with eight ranks per node, a fixed nominal batch and explicit HSDP topology.
+Its `validation.json` distinguishes real CPU data/schema checks from pending
+GPU execution. Do not claim training duration, scaling efficiency or time to
+quality until completed Slurm runs, profiles and full matched evaluation exist.
+The linked blog is an editorial draft with pending results. Current upstream
+LIBERO already describes two-node training; avoid the outdated blanket claim
+that all public Cosmos3 recipes stop at one node.
+
+The Slurm recipe pins a newer framework than the experimental Workbench policy
+workflow. Keep each run's source/model/data/evaluation revisions coherent;
+do not use one path's successful execution as proof for the other.
+
 In a clone of `https://github.com/NVIDIA/cosmos-framework.git`, inspect:
 
 | Need | Upstream path |
