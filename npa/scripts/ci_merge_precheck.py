@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -15,7 +16,71 @@ def _git(root: Path, *arguments: str) -> str:
     return subprocess.check_output(["git", *arguments], cwd=root, text=True).strip()
 
 
+def _supports_merge_tree_write_tree(root: Path) -> bool:
+    """Return whether the installed Git supports virtual merge-tree writes."""
+    result = subprocess.run(
+        ["git", "merge-tree", "-h"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return "--write-tree" in result.stdout + result.stderr
+
+
+def _legacy_merge_tree(root: Path, base: str, head: str) -> str:
+    """Create a virtual merge tree with the plumbing available in Git 2.34."""
+    merge_bases = _git(root, "merge-base", "--all", base, head).splitlines()
+    with tempfile.TemporaryDirectory(prefix="npa-merge-tree-") as directory:
+        snapshot = Path(directory)
+        work_tree = snapshot / "worktree"
+        work_tree.mkdir()
+        environment = {
+            **os.environ,
+            "GIT_INDEX_FILE": str(snapshot / "index"),
+            "GIT_WORK_TREE": str(work_tree),
+        }
+        checkout = subprocess.run(
+            ["git", "read-tree", "--reset", "-u", base],
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        checkout.check_returncode()
+        result = subprocess.run(
+            ["git", "merge-recursive", *merge_bases, "--", base, head],
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 1:
+            unresolved = subprocess.check_output(
+                ["git", "ls-files", "-u", "-z"],
+                cwd=root,
+                env=environment,
+                text=True,
+            )
+            conflicts = sorted(
+                {
+                    entry.split("\t", 1)[1]
+                    for entry in unresolved.split("\0")
+                    if "\t" in entry
+                }
+            )
+            raise ValueError("Merge conflicts: " + ", ".join(conflicts))
+        result.check_returncode()
+        return subprocess.check_output(
+            ["git", "write-tree"], cwd=root, env=environment, text=True
+        ).strip()
+
+
 def _merge_tree(root: Path, base: str, head: str) -> str:
+    if not _supports_merge_tree_write_tree(root):
+        return _legacy_merge_tree(root, base, head)
     result = subprocess.run(
         ["git", "merge-tree", "--write-tree", "--name-only", base, head],
         cwd=root,

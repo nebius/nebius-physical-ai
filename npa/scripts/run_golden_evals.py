@@ -60,6 +60,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
                 "image": spec.image,
                 "kind": spec.golden_eval.kind,
                 "gpu": spec.golden_eval.gpu,
+                "serverless_gpu": spec.golden_eval.serverless_gpu,
+                "serverless_gpu_count": spec.golden_eval.serverless_gpu_count,
                 "status": spec.golden_eval.status,
                 "command": spec.golden_eval.command,
             }
@@ -120,6 +122,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_run_all(args: argparse.Namespace) -> int:
     names = iter_containers(
         include_blocked=args.include_blocked,
+        include_needs_image_update=args.include_needs_image_update,
         include_foundation=not args.tools_only,
         tools_only=args.tools_only,
     )
@@ -238,6 +241,11 @@ def main(argv: list[str] | None = None) -> int:
         "--include-blocked",
         action="store_true",
         help="Include blocked-on-upstream containers.",
+    )
+    p_all.add_argument(
+        "--include-needs-image-update",
+        action="store_true",
+        help="Include containers whose image must be rebuilt or promoted.",
     )
     p_all.add_argument(
         "--tools-only",
