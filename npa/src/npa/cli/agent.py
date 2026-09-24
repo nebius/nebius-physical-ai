@@ -9805,6 +9805,18 @@ def workflow_execution_status(run_id: str):
     return {{"ok": True, "execution": _workflow_execution_status_payload(run_id)}}
 
 
+def _agent_request_boolean(body: dict, field: str, *, default: bool) -> bool:
+    if field not in body:
+        return default
+    value = body[field]
+    if not isinstance(value, bool):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{{field}} must be a JSON boolean",
+        )
+    return value
+
+
 @app.get("/resources")
 @app.get("/tenant-resources")
 def tenant_resources(refresh: bool = False):
@@ -9820,9 +9832,12 @@ def provision_infra(payload: dict | None = None):
     requested_cluster_name = str(body.get("cluster_name") or "").strip()
     cluster_name = requested_cluster_name or "npa-cluster"
     # Default dry_run=True — real Terraform apply requires an explicit confirm token.
-    dry_run = bool(body.get("dry_run", True))
-    validate = bool(body.get("validate", True))
-    skip_s3 = bool(body.get("skip_s3", True))
+    if "dry_run" in body:
+        dry_run = _agent_request_boolean(body, "dry_run", default=True)
+    else:
+        dry_run = bool(body.get("dry_run", True))
+    validate = _agent_request_boolean(body, "validate", default=True)
+    skip_s3 = _agent_request_boolean(body, "skip_s3", default=True)
     desired = {{
         key: body[key]
         for key in (
@@ -9843,7 +9858,7 @@ def provision_infra(payload: dict | None = None):
             content={{"ok": False, "status": "invalid", "error": str(exc)}},
         )
     logical = str(body.get("logical_allocation") or "").strip()
-    preemptible = bool(body.get("preemptible", False))
+    preemptible = _agent_request_boolean(body, "preemptible", default=False)
     if logical:
         fallback_records = _load_state().get("gpu_allocation_fallback")
         fallback_records = fallback_records if isinstance(fallback_records, dict) else {{}}
