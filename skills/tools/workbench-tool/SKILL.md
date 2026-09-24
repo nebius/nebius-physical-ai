@@ -40,10 +40,17 @@ deploying or configuring a tool; do not inherit another cluster's regional
 endpoint. Prove the selected bucket and credentials together with
 `health-preflight` before provisioning or submitting.
 
-Kubernetes namespace split:
-
-- `workbench`: deployed workbench services.
-- `default`: SkyPilot task pods.
+Kubernetes namespaces are explicit team boundaries. Use
+`npa workbench namespace apply <name> --context <admin-context>` for the complete
+researcher membership, then `namespace context` with each researcher's own
+credentials for private kubeconfig and SkyPilot configuration. Follow
+`docs/workbench/namespaces.md`; do not hand out an administrator kubeconfig.
+SkyPilot task placement, registry pull-secret checks and model-cache lookup
+follow the selected context namespace. Service commands retain their explicit
+`--namespace` options (`workbench` or `default` are historical defaults).
+The generated workload identity has namespace edit access and read-only cluster
+resource discovery; GPU availability checks needing all Pod metadata and
+FUSE/ingress setup require separate administrator permissions.
 
 ## Cross-Tool Data Flow
 
