@@ -63,10 +63,11 @@ lineage. A basename never establishes identity. Conflicting exact assertions
 remain unresolved and fail the completed receipt contract.
 
 Exact `npa.source_uri` metadata identifies the object even when its HTTP host
-changes between pushes. URL-only views of the same UUID do not override that
-metadata. Contradictory source URIs or record IDs, or multiple matching UUIDs,
-still fail closed. Without matching source metadata, conflicting URLs remain
-an error, including when a sidecar supplies the UUID.
+changes between pushes, provided the complete object path still agrees.
+URL-only views of the same UUID may use another host under that same condition.
+Contradictory object paths, source URIs or record IDs, or multiple matching UUIDs,
+still fail closed. Without matching source metadata, conflicting URLs remain an
+error, including when a sidecar supplies the UUID.
 
 Use `--identity-sidecar s3://<bucket>/<key>.json` when existing Encord rows
 cannot expose enough exact metadata for reconciliation.

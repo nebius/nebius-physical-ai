@@ -238,8 +238,8 @@ def _identity_conflicts(
     record_id: str,
     expected_url: str,
 ) -> list[str]:
-    # Metadata describes the durable S3 object; URLs are transport locators that
-    # can change host or representation across inventory views and later pushes.
+    # Metadata permits a transport host change across views and later pushes,
+    # while a different URL path remains a contradictory object assertion.
     metadata_uuids = {view.item_uuid for view in views if view.source_uri == source_uri}
     conflicts: list[str] = []
     for view in views:
@@ -250,10 +250,13 @@ def _identity_conflicts(
         if record_id and view.record_id and view.record_id != record_id:
             conflicts.append(f"{view.item_uuid}:record_id")
         if (
-            view.item_uuid not in metadata_uuids
-            and expected_url
+            expected_url
             and view.object_url
             and view.object_url != expected_url
+            and (
+                view.item_uuid not in metadata_uuids
+                or urlsplit(view.object_url).path != urlsplit(expected_url).path
+            )
         ):
             conflicts.append(f"{view.item_uuid}:object_url")
     return conflicts

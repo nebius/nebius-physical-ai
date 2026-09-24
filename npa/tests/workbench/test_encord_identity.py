@@ -95,6 +95,33 @@ def test_sidecar_alone_cannot_suppress_a_conflicting_object_url() -> None:
     assert result.error_code == "identity_conflict"
 
 
+@pytest.mark.parametrize(
+    "part,replacement", [("incoming", "archive"), ("source-bucket", "other-bucket")]
+)
+@pytest.mark.parametrize("metadata_on_url_view", [False, True])
+def test_source_metadata_cannot_hide_a_different_object_path(
+    part: str,
+    replacement: str,
+    metadata_on_url_view: bool,
+) -> None:
+    metadata = {"npa": {"source_uri": SOURCE}}
+    result = resolve_exact_identity(
+        source_uri=SOURCE,
+        record_id="",
+        submitted_object_url=URL,
+        candidates=[
+            item("uuid-1", metadata=metadata),
+            item(
+                "uuid-1",
+                metadata=metadata if metadata_on_url_view else {},
+                url=URL.replace(part, replacement),
+            ),
+        ],
+    )
+    assert result.error_code == "identity_conflict"
+    assert ":object_url" in result.error
+
+
 def test_exact_normalized_object_url_attaches_uuid() -> None:
     candidate = item(
         "uuid-1",
