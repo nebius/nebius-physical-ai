@@ -48,6 +48,12 @@ NVIDIA_CDI_DEVICE_PREFIX = "nvidia.com/"
 BACKENDS = {REFERENCE_BACKEND, CONTAINER_BACKEND}
 BUILTIN_REFERENCE_ENVS = {"locomotion-smoke", "sonic-locomotion-smoke"}
 BUILTIN_REFERENCE_STEPS = 32
+_EPISODE_BOOLEAN_FIELDS = ("fall", "terminated", "truncated")
+_EPISODE_DERIVED_RATE_METRICS = {
+    "fall_rate",
+    "termination_rate",
+    "truncation_rate",
+}
 
 EVAL_RESULT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -825,6 +831,7 @@ def _normalize_container_result(
     container_metadata_path: str,
     container_output_path: str,
 ) -> dict[str, Any]:
+    episode_metrics = _validated_container_episodes(payload.get("episodes"))
     base = _result_payload(
         bundle=bundle,
         backend=CONTAINER_BACKEND,
@@ -832,15 +839,20 @@ def _normalize_container_result(
         smoke_level=False,
         env=env,
         episodes=episodes,
-        episode_metrics=payload.get("episodes")
-        if isinstance(payload.get("episodes"), list)
-        else [],
+        episode_metrics=episode_metrics,
         warnings=payload.get("warnings")
         if isinstance(payload.get("warnings"), list)
         else [],
     )
     if isinstance(payload.get("metrics"), dict):
-        base["metrics"].update(_jsonable(payload["metrics"]))
+        external_metrics = _jsonable(payload["metrics"])
+        if episode_metrics:
+            external_metrics = {
+                key: value
+                for key, value in external_metrics.items()
+                if key not in _EPISODE_DERIVED_RATE_METRICS
+            }
+        base["metrics"].update(external_metrics)
     if isinstance(payload.get("status"), str):
         base["status"] = payload["status"]
     base["container"] = {
@@ -862,6 +874,21 @@ def _normalize_container_result(
     if payload.get("format") != EVAL_RESULT_FORMAT:
         base["external_result"] = _jsonable(payload)
     return base
+
+
+def _validated_container_episodes(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    for episode_index, episode in enumerate(value):
+        if not isinstance(episode, dict):
+            raise SonicEvalError(f"container episode {episode_index} must be an object")
+        for field in _EPISODE_BOOLEAN_FIELDS:
+            if field in episode and not isinstance(episode[field], bool):
+                raise SonicEvalError(
+                    f"container episode {episode_index} field {field!r} "
+                    "must be a JSON boolean"
+                )
+    return value
 
 
 def _result_payload(

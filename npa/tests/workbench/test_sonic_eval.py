@@ -17,6 +17,7 @@ from npa.workbench.sonic import export_onnx
 from npa.workbench.sonic.eval import (
     EVAL_RESULT_FORMAT,
     EVAL_RESULT_SCHEMA,
+    SonicEvalError,
     evaluate_onnx_policy,
 )
 
@@ -208,7 +209,28 @@ def test_sonic_eval_container_backend_uses_configured_io_contract(
         "frames": 8,
     }
     assert result["metrics"]["episode_return_mean"] == 1.25
-    assert result["metrics"]["distance_mean"] == 2.5
+    assert result["metrics"]["distance_mean"] == 9.5
+    assert result["metrics"]["fall_rate"] == 0.5
+    assert result["metrics"]["termination_rate"] == 0.5
+    assert result["metrics"]["truncation_rate"] == 0.5
+    assert result["episodes"] == [
+        {
+            "episode_index": 0,
+            "episode_return": 1.0,
+            "distance": 2.0,
+            "fall": False,
+            "terminated": True,
+            "truncated": False,
+        },
+        {
+            "episode_index": 1,
+            "episode_return": 1.5,
+            "distance": 3.0,
+            "fall": True,
+            "terminated": False,
+            "truncated": True,
+        },
+    ]
     written = json.loads(result_path.read_text(encoding="utf-8"))
     assert written["backend"] == "container"
     assert written["metrics"]["valid_action_rate"] == 1.0
@@ -252,9 +274,98 @@ def test_sonic_eval_container_backend_accepts_nvidia_cdi_gpu_request(
     }
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("fall", "false"), ("terminated", 1), ("truncated", 0.0)],
+)
+def test_sonic_eval_container_rejects_non_boolean_episode_flags(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    output = tmp_path / "policy.onnx"
+    result_path = tmp_path / "malformed-result.json"
+    export = export_onnx(
+        checkpoint="in-memory-policy",
+        output=str(output),
+        policy=TinyEvalPolicy().eval(),
+        verify=False,
+    )
+    runtime = _fake_container_runtime(
+        tmp_path,
+        episodes=[{"episode_index": 0, field: value}],
+    )
+
+    with pytest.raises(
+        SonicEvalError,
+        match=rf"container episode 0 field '{field}' must be a JSON boolean",
+    ):
+        evaluate_onnx_policy(
+            onnx=export.onnx_path,
+            metadata=export.metadata_path,
+            backend="container",
+            episodes=1,
+            env="locomotion-smoke",
+            output=str(result_path),
+            container_image="mock-sonic-eval:latest",
+            container_runtime=str(runtime),
+        )
+
+    assert not result_path.exists()
+
+
+def test_sonic_eval_container_without_episode_evidence_keeps_summary_rates(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "policy.onnx"
+    export = export_onnx(
+        checkpoint="in-memory-policy",
+        output=str(output),
+        policy=TinyEvalPolicy().eval(),
+        verify=False,
+    )
+    runtime = _fake_container_runtime(tmp_path, episodes=[])
+
+    result = evaluate_onnx_policy(
+        onnx=export.onnx_path,
+        metadata=export.metadata_path,
+        backend="container",
+        episodes=2,
+        env="locomotion-smoke",
+        container_image="mock-sonic-eval:latest",
+        container_runtime=str(runtime),
+    )
+
+    assert result["episodes"] == []
+    assert result["metrics"]["fall_rate"] == 0.75
+    assert result["metrics"]["termination_rate"] == 0.25
+    assert result["metrics"]["truncation_rate"] == 0.5
+
+
 def _fake_container_runtime(
-    tmp_path: Path, *, name: str = "fake-container-runtime.py"
+    tmp_path: Path,
+    *,
+    name: str = "fake-container-runtime.py",
+    episodes: list[dict[str, object]] | None = None,
 ) -> Path:
+    episode_rows = episodes
+    if episode_rows is None:
+        episode_rows = [
+            {
+                "episode_index": 0,
+                "episode_return": 1.0,
+                "distance": 2.0,
+                "fall": False,
+                "terminated": True,
+                "truncated": False,
+            },
+            {
+                "episode_index": 1,
+                "episode_return": 1.5,
+                "distance": 3.0,
+                "fall": True,
+                "terminated": False,
+                "truncated": True,
+            },
+        ]
     runtime = tmp_path / name
     runtime.write_text(
         textwrap.dedent(
@@ -300,22 +411,20 @@ def _fake_container_runtime(
                 "status": "completed",
                 "metrics": {
                     "episode_return_mean": 1.25,
-                    "distance_mean": 2.5,
-                    "fall_rate": 0.0,
-                    "termination_rate": 0.0,
+                    "distance_mean": 9.5,
+                    "fall_rate": 0.75,
+                    "termination_rate": 0.25,
+                    "truncation_rate": 0.5,
                     "episode_length_mean": 4.0,
                     "valid_action_rate": 1.0
                 },
-                "episodes": [
-                    {"episode_index": 0, "episode_return": 1.0, "distance": 2.0},
-                    {"episode_index": 1, "episode_return": 1.5, "distance": 3.0}
-                ],
+                "episodes": __EPISODE_ROWS__,
                 "render": {"backend": "mock", "graphics_api": "vulkan", "frames": 8},
                 "diagnostics": {"argv": args, "env": env},
                 "warnings": []
             }), encoding="utf-8")
             """
-        ),
+        ).replace("__EPISODE_ROWS__", repr(episode_rows)),
         encoding="utf-8",
     )
     runtime.chmod(runtime.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
