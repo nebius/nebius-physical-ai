@@ -322,7 +322,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _archived(thread):
         return (
-            bool(thread.get("archived"))
+            thread.get("archived") is True
             or "archived_sessions" in Path(thread.get("path") or "").parts
         )
 
