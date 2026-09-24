@@ -326,7 +326,7 @@ NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
 # install layer. The two derivative releases are also stale because their
 # manifests retain every layer of the affected base. Publication remains
 # quarantined until rebuilt candidates pass the image gates.
-STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+LAYER_STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {
         "cosmos-curate",
         "cosmos-evaluator",
@@ -335,6 +335,23 @@ STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
         "isaac-lab",
         "isaac-arena",
     }
+)
+# These exact public configs violate current runtime or disclosure claims even
+# though their filesystem layers are not the reason for quarantine. In
+# particular, operator-specific base-image references must never be serialized
+# into anonymously readable OCI labels.
+METADATA_STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "genesis",
+        "lerobot",
+        "lerobot-vlm-rl",
+        "loop-eval",
+        "reference-policy",
+        "sonic",
+    }
+)
+STALE_PUBLICATION_TOOLS: frozenset[str] = (
+    LAYER_STALE_PUBLICATION_TOOLS | METADATA_STALE_PUBLICATION_TOOLS
 )
 # Compatibility view used by publication callers and public imports. Derive it
 # from the canonical validation-state inventories; never maintain it

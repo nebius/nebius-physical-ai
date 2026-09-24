@@ -337,7 +337,7 @@ containers:
       serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
-      status: gpu-gated
+      status: needs-image-update
 
   lerobot-policy:
     image: npa-lerobot-policy
@@ -385,7 +385,7 @@ containers:
       serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
-      status: gpu-gated
+      status: needs-image-update
 
   habitat-sim:
     image: npa-habitat-sim
@@ -448,7 +448,7 @@ containers:
       serverless_gpu: h200
       gpu: required
       timeout_seconds: 1200
-      status: gpu-gated
+      status: needs-image-update
 
   isaac-lab:
     image: npa-isaac-lab
@@ -926,7 +926,7 @@ containers:
       serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 900
-      status: gpu-gated
+      status: needs-image-update
 
   sonic-mujoco:
     image: npa-sonic-mujoco
@@ -1458,7 +1458,7 @@ containers:
       serverless_gpu: h200
       gpu: optional
       timeout_seconds: 300
-      status: gpu-gated
+      status: needs-image-update
 
   loop-eval:
     image: npa-loop-eval
@@ -1481,7 +1481,7 @@ containers:
       serverless_gpu: h200
       gpu: optional
       timeout_seconds: 600
-      status: gpu-gated
+      status: needs-image-update
 
   rerun-viewer:
     image: npa-rerun-viewer

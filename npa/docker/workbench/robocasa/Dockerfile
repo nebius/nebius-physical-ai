@@ -26,7 +26,7 @@ ARG ROBOCASA_VERSION=0.1.0
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
-      npa.base_image="${BASE_IMAGE}" \
+      npa.base_profile="public-cuda-12.4" \
       npa.runtime_user="ubuntu" \
       npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120"
 

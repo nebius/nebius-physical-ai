@@ -7,6 +7,7 @@ ARG UBUNTU_SNAPSHOT=20260820T000000Z
 
 LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}" \
+      npa.base.image="npa-genesis" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \

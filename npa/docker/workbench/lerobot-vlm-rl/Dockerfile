@@ -6,6 +6,7 @@ ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="lerobot-vlm-rl" \
       npa.version="${LEROBOT_VLM_RL_VERSION}" \
+      npa.base.image="npa-genesis" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
