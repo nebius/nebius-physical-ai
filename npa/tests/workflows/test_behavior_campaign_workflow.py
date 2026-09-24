@@ -188,6 +188,21 @@ def test_worker_argv_includes_operator_runtime_and_only_supplied_optional_flags(
     assert "--policy-selected-export-receipt" not in argv
 
 
+def test_worker_runs_source_bound_simulator_startup_inline():
+    document = _workflow(
+        runtime=_runtime(simulator_startup_spec="/campaign/startup-spec.json")
+    )
+
+    assert document["config"]["simulator_startup_spec"] == (
+        "/campaign/startup-spec.json"
+    )
+    for name in document["states"]["campaign-workers"]["parallel"]:
+        argv = document["states"][name]["run"]["argv"]
+        assert argv[argv.index("--simulator-startup-spec") + 1] == (
+            "{{config.simulator_startup_spec}}"
+        )
+
+
 def test_specialist_report_receipts_and_hashes_reach_every_worker():
     runtime = _runtime(
         policy_kind="rlc-specialist",

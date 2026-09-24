@@ -154,6 +154,14 @@ text output identify every source they checked.
 
 Unrelated nested S3 keys are never guessed as runs.
 
+The optional `supervisor` object is a durable snapshot from its `recorded_at`
+time. Status labels it `observation_scope: durable_supervisor_snapshot` and
+`current_artifact_state_verified: false`; reading status does not recheck that
+snapshot's outputs or checkpoints. A live `RUNNING` job can therefore appear
+beside an earlier supervisor observation that outputs were absent. The top-level
+`automation_may_trust_state` flag covers the current lifecycle-state query and
+does not make those historical artifact observations current.
+
 ### Pending storage claims
 
 When a managed job has no remaining worker pod, live status can still report a

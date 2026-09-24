@@ -11,6 +11,7 @@ import pytest
 
 from npa.clients.storage import StoragePreconditionFailed
 from npa.workflows.behavior_challenge import campaign, campaign_runner, serving_identity
+from npa.workflows.behavior_challenge import simulator_startup
 from npa.workflows.behavior_challenge.case_store import CaseAlreadyStarted, CaseStore
 from npa.workflows.behavior_challenge.campaign_status import panel_status
 
@@ -38,6 +39,102 @@ class MemoryStorage:
 
     def download_file(self, uri, destination):
         Path(destination).write_bytes(self.objects[uri][0])
+
+
+def test_startup_receipt_is_checked_before_policy_preparation(
+    tmp_path: Path, monkeypatch
+):
+    events = []
+    args = SimpleNamespace(
+        simulator_startup_receipt=tmp_path / "startup.json",
+        upstream_root=tmp_path,
+        evaluator_python="python",
+        data_root=tmp_path,
+    )
+
+    def build(*_):
+        events.append(("context", args.simulator_startup_receipt))
+        return {"context": "exact"}
+
+    def validate(path, context):
+        events.append(("startup", path, context))
+
+    monkeypatch.setattr(simulator_startup, "build_evaluation_context", build)
+    monkeypatch.setattr(
+        simulator_startup, "validate_simulator_startup_receipt", validate
+    )
+    with pytest.raises(ValueError, match="verified managed policy"):
+        with campaign_runner._prepared_evaluator(args, {}, tmp_path):
+            pass
+
+    assert events == [
+        ("context", args.simulator_startup_receipt),
+        ("startup", args.simulator_startup_receipt, {"context": "exact"}),
+    ]
+
+
+def test_worker_materializes_startup_receipt_in_its_workspace(
+    tmp_path: Path, monkeypatch
+):
+    args = SimpleNamespace(
+        simulator_startup_spec=tmp_path / "spec.json",
+        simulator_startup_receipt=None,
+    )
+    calls = []
+
+    def write(spec, receipt):
+        calls.append((spec, receipt))
+        receipt.write_text("{}")
+
+    monkeypatch.setattr(simulator_startup, "write_simulator_startup_receipt", write)
+    campaign_runner._prepare_worker_startup(args, tmp_path)
+
+    assert calls == [(args.simulator_startup_spec, tmp_path / "simulator-startup.json")]
+    assert args.simulator_startup_receipt == tmp_path / "simulator-startup.json"
+
+
+def test_worker_reuse_requires_the_same_startup_spec(tmp_path: Path, monkeypatch):
+    receipt = tmp_path / "simulator-startup.json"
+    receipt.write_text("{}")
+    args = SimpleNamespace(
+        simulator_startup_spec=tmp_path / "spec.json",
+        simulator_startup_receipt=None,
+    )
+    calls = []
+
+    def validate(path, *, expected_spec_path):
+        calls.append((path, expected_spec_path))
+
+    monkeypatch.setattr(
+        simulator_startup, "validate_simulator_startup_receipt", validate
+    )
+    campaign_runner._prepare_worker_startup(args, tmp_path)
+
+    assert calls == [(receipt, args.simulator_startup_spec)]
+    assert args.simulator_startup_receipt == receipt
+
+
+def test_invalid_startup_file_fails_before_policy_check(tmp_path: Path, monkeypatch):
+    receipt = tmp_path / "startup.json"
+    receipt.write_text("{}")
+    args = SimpleNamespace(
+        simulator_startup_receipt=receipt,
+        upstream_root=tmp_path,
+        evaluator_python="python",
+        data_root=tmp_path,
+    )
+    monkeypatch.setattr(simulator_startup, "build_evaluation_context", lambda *_: {})
+    policy_calls = []
+    monkeypatch.setattr(
+        serving_identity,
+        "verify_serving_identity",
+        lambda *_: policy_calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="startup receipt differs"):
+        with campaign_runner._prepared_evaluator(args, {}, tmp_path):
+            pass
+    assert policy_calls == []
 
 
 @pytest.fixture
@@ -328,6 +425,69 @@ def test_provenance_failure_preserves_primary_evaluator_error(
     with pytest.raises(RuntimeError, match="original evaluator failure"):
         campaign_runner._execute_partition(args, panel, partition, store, workspace)
     assert "Provenance upload also failed" in caplog.text
+
+
+def test_startup_failure_is_published_before_policy_or_case_claim(fixture, monkeypatch):
+    panel, partition, store, workspace = fixture
+    prepared = []
+
+    def fail_startup(_spec, _receipt):
+        (workspace / "simulator-startup.log").write_text("startup failed")
+        (workspace / "simulator-startup-failure.json").write_text("{}")
+        raise RuntimeError("startup failed")
+
+    @contextmanager
+    def evaluator(*_):
+        prepared.append(True)
+        yield
+
+    monkeypatch.setattr(
+        simulator_startup, "write_simulator_startup_receipt", fail_startup
+    )
+    monkeypatch.setattr(campaign_runner, "_prepared_evaluator", evaluator)
+    args = SimpleNamespace(
+        worker_index=0,
+        worker_receipt_uri="s3://example-bucket/run/worker.json",
+        simulator_startup_spec=workspace / "startup-spec.json",
+        simulator_startup_receipt=None,
+    )
+    with pytest.raises(RuntimeError, match="startup failed"):
+        campaign_runner._execute_partition(args, panel, partition, store, workspace)
+
+    assert prepared == []
+    assert all(store.read(case) is None for case in panel["cases"])
+    uploaded = {uri.rsplit("/", 1)[-1] for uri in store.storage.objects}
+    assert uploaded == {
+        "simulator-startup-failure.json",
+        "simulator-startup.log",
+    }
+
+
+def test_startup_precedes_specialist_endpoint_and_evaluator(fixture, monkeypatch):
+    panel, partition, store, workspace = fixture
+    panel = {**panel, "split": "report"}
+    events = []
+
+    monkeypatch.setattr(
+        campaign_runner, "_prepare_worker_startup", lambda *_: events.append("startup")
+    )
+    monkeypatch.setattr(
+        campaign_runner, "_specialist_preclaim", lambda *_: events.append("specialist")
+    )
+
+    @contextmanager
+    def evaluator(*_):
+        events.append("evaluator")
+        raise RuntimeError("stop after ordering checks")
+        yield
+
+    monkeypatch.setattr(campaign_runner, "_prepared_evaluator", evaluator)
+    args = SimpleNamespace(
+        worker_index=0, worker_receipt_uri="s3://example-bucket/run/worker.json"
+    )
+    with pytest.raises(RuntimeError, match="ordering checks"):
+        campaign_runner._execute_partition(args, panel, partition, store, workspace)
+    assert events == ["startup", "specialist", "evaluator"]
 
 
 def test_parallel_workers_have_separate_original_provenance(tmp_path):

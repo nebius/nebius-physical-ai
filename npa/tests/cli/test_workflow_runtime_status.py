@@ -99,6 +99,40 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+@pytest.mark.parametrize("cached", [False, True])
+def test_supervisor_snapshot_does_not_inherit_live_status_trust(
+    observed_status, mocker, cached
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [_wave("train", "12", "running")]
+    snapshot = {
+        "recorded_at": "2000-01-01T00:00:00Z",
+        "attempt_identity": {"run_id": "run-test"},
+        "observation": {"state": "queued"},
+        "outputs": {"status": "absent", "missing": ["s3://bucket/result.json"]},
+    }
+    latest = mocker.patch(
+        "npa.orchestration.npa_workflow.supervisor.SupervisorLedger.latest",
+        return_value=snapshot,
+    )
+
+    payload = _durable_workflow_status("run-test", cached=cached)
+
+    assert payload["automation_may_trust_state"] is not cached
+    if not cached:
+        assert payload["live_verified"] is True
+        assert payload["status"] == "RUNNING"
+    expected = {
+        **snapshot,
+        "observation_scope": "durable_supervisor_snapshot",
+        "current_artifact_state_verified": False,
+    }
+    assert payload["supervisor"] == expected
+    assert "observation_scope" not in snapshot
+    assert "current_artifact_state_verified" not in snapshot
+    latest.assert_called_once_with(run_id="run-test")
+
+
 def test_status_probes_only_claims_attributed_to_each_managed_job(
     observed_status, mocker
 ):

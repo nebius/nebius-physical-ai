@@ -417,6 +417,73 @@ training-only manifest shares its base archive with a simulation manifest.
 Workbench rejects a conflicting manifest before changing cache metadata or
 restoring archives, and preserves the existing runtime receipt.
 
+### Qualify a writable simulator startup
+
+Read-only simulator installations can still require writable application files
+and app data during startup. The `simulator-startup` command accepts an exact
+`npa.workbench.simulator-startup-spec.v1` JSON document. It verifies the source
+Isaac version and complete application-file inventory, copies those application
+files into a fresh run-owned view, and links only the declared extension
+directories. It accepts only the built-in child argv under the exact evaluator
+interpreter. That child imports the pinned OmniGibson source, calls its real
+empty-scene launch, verifies the application and simulator exist with zero
+scenes, and records a startup marker before requesting shutdown. A clean child
+exit without that marker remains a failure.
+
+Cleanup is limited to the two fresh direct children named by the specification.
+It checks the held root inode, device, and owner before inspecting descendants;
+does not follow symlinks; refuses special files, other owners, device changes,
+and root replacement; and only adds user read/write/execute permission to owned
+directories when deletion requires it. The receipt derives its member counts
+and inventory digest after the simulator has generated files, rather than
+assuming the initial view layout is unchanged.
+Failures preserve any remaining writable files and raw marker/log files and emit a
+separate failure record; they never emit the success receipt.
+
+Pass the resulting receipt to `campaign-worker` with
+`--simulator-startup-receipt`. The worker validates it before policy
+preparation, runtime model loading, or any durable case claim. It must bind the
+same evaluator source root, executable bytes, data root, and worker workspace;
+a receipt that differs from the trusted specification or current evaluator
+context is rejected. Keep both the specification and receipt immutable, and pin
+their identities as enclosing workflow inputs. Their internal hashes prove
+consistency, not independent authenticity if both local files are rewritten.
+When this opt-in flag is present, a missing or invalid receipt fails at that
+boundary. The worker then creates a second fresh writable apps and app-data view
+for the actual
+evaluator, passes its environment to every evaluator subprocess, and records a
+derived, attempt-indexed cleanup inventory after the worker finishes. Retries
+allocate fresh view, app-data, success, and failure paths while preserving prior
+evidence. The smoke view is never reused as an evaluation cache.
+`prepare_runtime` remains responsible for
+runtime restoration and is unchanged by this startup qualification.
+The source check rejects tracked changes and non-cache untracked or ignored
+files in the OmniGibson import tree; only generated Python bytecode caches are
+excluded from that check. The receipt also binds the public startup module,
+module entrypoint, and package initializers that the evaluator interpreter runs.
+The startup gate sets the bound simulator data path, headless mode, and bytecode
+suppression for both smoke and evaluation. It does not set any license or EULA
+acceptance variable. Supply the specification at the same mounted local path on
+every campaign worker when using `--simulator-startup-spec`; a retry accepts an
+existing local receipt only when the specification bytes are unchanged.
+
+Invoke the startup gate with paths already prepared for the worker:
+
+```bash
+npa/.venv/bin/python -m npa.workflows.behavior_challenge simulator-startup \
+  --spec-path /run/simulator-startup-spec.json \
+  --receipt-path /run/simulator-startup.json
+```
+
+The specification requires `schema`, `apps`, `appdata_root`, `command`,
+`marker_path`, `shutdown_request_path`, `log_path`, `environment`, and
+`evaluation_context`. The `apps` object declares retained and writable roots,
+the version-file identity, every application-file identity, linked extension
+directories, and directories required to be absent. `evaluation_context`
+declares `upstream_root`, `evaluator_python`, and `data_root`. `command` must
+exactly match the built-in `simulator-startup-child` invocation rendered from
+those fields; arbitrary commands are rejected before process creation.
+
 ### Supervise the official radio policy in the worker
 
 An operator workflow can append these four arguments to the internal `evaluate`

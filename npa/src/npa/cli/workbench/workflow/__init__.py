@@ -5061,7 +5061,11 @@ def _durable_workflow_status(
                 run_id=run_manifest.run_id or _display_run_id(run_id)
             )
             if latest_supervision is not None:
-                run_payload["supervisor"] = latest_supervision
+                run_payload["supervisor"] = {
+                    **latest_supervision,
+                    "observation_scope": "durable_supervisor_snapshot",
+                    "current_artifact_state_verified": False,
+                }
         except Exception as exc:  # noqa: BLE001 - status remains useful without enrichment
             run_payload["supervisor"] = {
                 "state": "evidence_unavailable",

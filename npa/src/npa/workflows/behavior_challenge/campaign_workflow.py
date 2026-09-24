@@ -41,6 +41,9 @@ _OPTIONAL_POLICY_FLAGS = {
     "policy_specialist_report_admission": "--policy-specialist-report-admission",
     "policy_specialist_report_admission_sha256": "--policy-specialist-report-admission-sha256",
 }
+_OPTIONAL_RUNTIME_FLAGS = {
+    "simulator_startup_spec": "--simulator-startup-spec",
+}
 
 
 def build_campaign_workflow(
@@ -192,7 +195,11 @@ def _validate_s3_location(
 def _runtime_config(runtime: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(runtime, dict):
         raise ValueError("runtime must be an object")
-    allowed = set(_BASE_RUNTIME_FIELDS) | set(_OPTIONAL_POLICY_FLAGS)
+    allowed = (
+        set(_BASE_RUNTIME_FIELDS)
+        | set(_OPTIONAL_POLICY_FLAGS)
+        | set(_OPTIONAL_RUNTIME_FLAGS)
+    )
     if set(runtime) - allowed or any(
         field not in runtime for field in _BASE_RUNTIME_FIELDS
     ):
@@ -206,7 +213,8 @@ def _runtime_config(runtime: dict[str, Any]) -> dict[str, Any]:
     port = values["port"]
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("runtime port must be between 1 and 65535")
-    optional = {key: runtime[key] for key in _OPTIONAL_POLICY_FLAGS if key in runtime}
+    optional_fields = set(_OPTIONAL_POLICY_FLAGS) | set(_OPTIONAL_RUNTIME_FLAGS)
+    optional = {key: runtime[key] for key in optional_fields if key in runtime}
     if any(
         not isinstance(value, str) or not value.strip() for value in optional.values()
     ):
@@ -454,6 +462,9 @@ def _worker_argv(
     for field in _BASE_RUNTIME_FIELDS:
         argv.extend((f"--{field.replace('_', '-')}", f"{{{{config.{field}}}}}"))
     for field, flag in _OPTIONAL_POLICY_FLAGS.items():
+        if field in runtime:
+            argv.extend((flag, f"{{{{config.{field}}}}}"))
+    for field, flag in _OPTIONAL_RUNTIME_FLAGS.items():
         if field in runtime:
             argv.extend((flag, f"{{{{config.{field}}}}}"))
     return argv

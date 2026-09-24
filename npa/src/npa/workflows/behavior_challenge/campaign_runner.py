@@ -291,6 +291,7 @@ def _managed_plan(panel, case):
 def _prepared_evaluator(args, panel, workspace):
     from .serving_identity import verify_serving_identity
 
+    simulator = _simulator_preparation(args, workspace)
     if not all(getattr(args, field, None) for field in POLICY_FIELDS):
         raise ValueError("Campaign execution requires a verified managed policy")
     if args.policy_kind == "rlc-specialist" and panel["split"] == "report":
@@ -299,7 +300,6 @@ def _prepared_evaluator(args, panel, workspace):
         verify_specialist_report_token(args, panel)
     else:
         verify_serving_identity(args, panel["policy"])
-    environment = _runtime_environment(args)
     task = panel["selected_tasks"]
     if len(task) != 1:
         raise ValueError("Managed campaign worker currently serves one task per panel")
@@ -320,7 +320,30 @@ def _prepared_evaluator(args, panel, workspace):
     def prepare(case, output):
         return managed_policy(args, _managed_plan(panel, case), output)
 
-    yield execute, prepare
+    with simulator as simulator_environment:
+        environment = _runtime_environment(args)
+        environment.update(simulator_environment)
+        yield execute, prepare
+
+
+def _simulator_preparation(args, workspace):
+    from .simulator_startup import (
+        build_evaluation_context,
+        prepared_evaluator_environment,
+        validate_simulator_startup_receipt,
+    )
+
+    receipt_path = getattr(args, "simulator_startup_receipt", None)
+    if receipt_path is None:
+        return nullcontext({})
+    context = build_evaluation_context(
+        args.upstream_root,
+        Path(args.evaluator_python),
+        Path(args.data_root),
+        workspace,
+    )
+    receipt = validate_simulator_startup_receipt(receipt_path, context)
+    return prepared_evaluator_environment(receipt, workspace)
 
 
 def _publish_worker_provenance(storage, workspace, receipt_uri):
@@ -332,6 +355,8 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
 
 def _execute_partition(args, panel, partition, store, workspace):
     try:
+        _prepare_worker_startup(args, workspace)
+        _specialist_preclaim(args, panel, store.storage, workspace)
         with _prepared_evaluator(args, panel, workspace) as (execute, prepare):
             records = run_partition(
                 panel,
@@ -357,6 +382,23 @@ def _execute_partition(args, panel, partition, store, workspace):
         return records
 
 
+def _specialist_preclaim(args, panel, storage, workspace) -> None:
+    if (
+        getattr(args, "policy_kind", None) != "rlc-specialist"
+        or panel["split"] != "report"
+    ):
+        return
+    from .rlc_specialist_admission import (
+        verify_specialist_preclaim_endpoint,
+        verify_specialist_report_admission,
+    )
+
+    verify_specialist_report_admission(
+        args, panel, storage, workspace / "report-admission"
+    )
+    verify_specialist_preclaim_endpoint(args, panel)
+
+
 def evaluate_partition(args) -> dict:
     """Run a campaign worker through the standard Workbench workflow runtime.
 
@@ -373,16 +415,6 @@ def evaluate_partition(args) -> dict:
     workspace.mkdir(parents=True, exist_ok=True)
     storage = StorageClient.from_environment()
     panel, partition = _worker_declarations(args, storage, workspace)
-    if args.policy_kind == "rlc-specialist" and panel["split"] == "report":
-        from .rlc_specialist_admission import (
-            verify_specialist_preclaim_endpoint,
-            verify_specialist_report_admission,
-        )
-
-        verify_specialist_report_admission(
-            args, panel, storage, workspace / "report-admission"
-        )
-        verify_specialist_preclaim_endpoint(args, panel)
     store = CaseStore(storage, args.output_path, panel["panel_id"])
     records = _execute_partition(args, panel, partition, store, workspace)
     verify_upstream(args.upstream_root)
@@ -395,6 +427,22 @@ def evaluate_partition(args) -> dict:
     }
     _put_original(storage, _json_bytes(result), args.worker_receipt_uri)
     return result
+
+
+def _prepare_worker_startup(args, workspace: Path) -> None:
+    spec_path = getattr(args, "simulator_startup_spec", None)
+    receipt_path = getattr(args, "simulator_startup_receipt", None)
+    if spec_path is None or receipt_path is not None:
+        return
+    from .simulator_startup import write_simulator_startup_receipt
+    from .simulator_startup import validate_simulator_startup_receipt
+
+    receipt_path = workspace / "simulator-startup.json"
+    if receipt_path.exists() or receipt_path.is_symlink():
+        validate_simulator_startup_receipt(receipt_path, expected_spec_path=spec_path)
+    else:
+        write_simulator_startup_receipt(spec_path, receipt_path)
+    args.simulator_startup_receipt = receipt_path
 
 
 def aggregate_campaign_worker(args) -> dict:

@@ -469,9 +469,14 @@ retains its raw status, original update time, and authoritative source. The runt
 ledger continues to use `succeeded`. Conflicting terminal outcomes and failed
 latest attempts still prevent a successful status.
 
-`npa workbench workflow status <run-id> --json` includes the latest supervisor
-classification, recovery action, exact attempt identity, output/checkpoint
-validation, preflight evidence, and remediation. Evidence is credential-redacted.
+`npa workbench workflow status <run-id> --json` includes the latest durable
+supervisor snapshot: classification, recovery action, exact attempt identity,
+output/checkpoint validation, preflight evidence, and remediation. Its
+`recorded_at` timestamp bounds those historical observations. Status marks this
+object with `observation_scope: durable_supervisor_snapshot` and
+`current_artifact_state_verified: false`; live lifecycle verification does not
+refresh its artifact checks. See [Reading status](../run-lifecycle.md#reading-status).
+Evidence is credential-redacted.
 The shared Python contract also drives the existing production
 `npa workbench genesis train-teacher --runtime serverless` Jobs path. That command
 uses exact provider observation/cancellation, digest-resolved image identity,
