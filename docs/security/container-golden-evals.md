@@ -48,6 +48,8 @@ npa workbench golden-eval run cosmos        # print the eval command (dry run)
 npa workbench golden-eval run cosmos --execute       # run locally (needs runtime)
 npa workbench golden-eval run lerobot --serverless   # run on a Nebius GPU
 npa workbench golden-eval run genesis --serverless --gpu h100
+npa workbench golden-eval run wan2-2 --serverless \
+  --registry registry.example.invalid/team --tag candidate-full-sha
 ```
 
 ## Running on Nebius Serverless
@@ -64,6 +66,10 @@ Each eval's GPU and cardinality come from `golden_eval.serverless_gpu` and
 since Nebius Jobs always require a GPU preset). The GPU type can be overridden
 with `--gpu`; the count remains part of the capability contract. Implementation:
 `npa.smoke.serverless_runner`.
+
+Use `--registry` and/or `--tag` with `--serverless` to prove a candidate image
+before promoting its canonical tag. Candidate overrides fail closed in dry-run
+and local-execute modes because those modes do not resolve a container image.
 
 The same logic is available as a script for CI:
 `python npa/scripts/run_golden_evals.py {validate,list,run}`.

@@ -19,6 +19,13 @@ entrypoint that forwards orchestrator arguments. Compliant first-party images
 record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
 config, with Dockerfile behavior covered by build tests.
 
+Installing `openssh-server` generates host private keys during package setup.
+Every recipe must delete `/etc/ssh/ssh_host_*` in that same image layer and let
+SkyPilot's runtime `ssh-keygen -A` create per-pod keys. A later-layer deletion
+does not help: the reusable private keys remain recoverable from the install
+layer. The workbench prerequisite guard checks every Dockerfile and shared
+installer for this layer-local cleanup.
+
 The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
 passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and

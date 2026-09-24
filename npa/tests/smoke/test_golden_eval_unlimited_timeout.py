@@ -186,6 +186,43 @@ def test_unlimited_cli_serverless_fails_before_submission(
     submit.assert_not_called()
 
 
+def test_cli_serverless_forwards_candidate_image_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _spec(monkeypatch, 45)
+    monkeypatch.setattr(cli, "container", lambda _name: spec)
+    submit = Mock(return_value={"ok": True, "status": "COMPLETED"})
+    monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "golden-eval",
+            "run",
+            spec.name,
+            "--serverless",
+            "--registry",
+            "registry.example.invalid/team",
+            "--tag",
+            "candidate-123",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert submit.call_args.kwargs["registry"] == "registry.example.invalid/team"
+    assert submit.call_args.kwargs["tag"] == "candidate-123"
+
+
+def test_cli_rejects_candidate_override_without_serverless() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["workbench", "golden-eval", "run", "lerobot", "--tag", "candidate-123"],
+    )
+    assert result.exit_code == 2
+    assert "require --serverless" in result.output
+
+
 def test_unlimited_batch_serverless_fails_before_submission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -294,3 +331,28 @@ def test_script_local_execution_passes_exact_deadline(
     run.assert_called_once_with(
         ["fixture-capability", "--verify"], timeout=expected, check=False
     )
+
+
+def test_script_rejects_candidate_override_without_serverless(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script_path = Path(__file__).resolve().parents[2] / "scripts/run_golden_evals.py"
+    module_spec = importlib.util.spec_from_file_location(
+        "golden_eval_candidate_script", script_path
+    )
+    assert module_spec is not None and module_spec.loader is not None
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    run = Mock(side_effect=AssertionError("candidate override must not run locally"))
+    monkeypatch.setattr(module.subprocess, "run", run)
+    args = argparse.Namespace(
+        container="lerobot",
+        execute=True,
+        serverless=False,
+        registry=None,
+        tag="candidate-123",
+    )
+
+    assert module._cmd_run(args) == 2
+    assert "require --serverless" in capsys.readouterr().err
+    run.assert_not_called()
