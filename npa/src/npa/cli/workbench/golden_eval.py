@@ -149,6 +149,16 @@ def run(
         "", "--gpu", help="Serverless GPU type override (e.g. h200, h100, l40s, b300)."
     ),
     timeout: str = typer.Option("40m", "--timeout", help="Serverless job timeout."),
+    registry: str = typer.Option(
+        "",
+        "--registry",
+        help="Registry override for validating a candidate image before promotion.",
+    ),
+    tag: str = typer.Option(
+        "",
+        "--tag",
+        help="Candidate image tag override; only valid with --serverless.",
+    ),
 ) -> None:
     """Print, execute locally, or run on serverless a container's golden eval.
 
@@ -157,6 +167,13 @@ def run(
     - ``--serverless``: submit the eval to a Nebius Serverless Job in the real
       container image on a GPU, and wait for the PASS/FAIL result.
     """
+
+    if (registry or tag) and not serverless:
+        err_console.print(
+            "[red]--registry/--tag require --serverless; local and dry-run "
+            "commands do not resolve candidate images[/red]"
+        )
+        raise typer.Exit(code=2)
 
     try:
         spec = container(name)
@@ -185,6 +202,8 @@ def run(
                 name,
                 gpu_type=gpu or None,
                 timeout=timeout,
+                registry=registry or None,
+                tag=tag or None,
                 on_state_change=_on_change,
             )
         except MissingS3CredentialsError as exc:

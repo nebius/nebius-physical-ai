@@ -79,6 +79,15 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    if (
+        getattr(args, "registry", None) or getattr(args, "tag", None)
+    ) and not args.serverless:
+        print(
+            "--registry/--tag require --serverless; local and dry-run commands "
+            "do not resolve candidate images",
+            file=sys.stderr,
+        )
+        return 2
     try:
         spec = container(args.container)
     except KeyError as exc:

@@ -117,6 +117,24 @@ def run_container_eval(
         command=ge.command,
     )
 
+    if (registry or tag) and not serverless:
+        return ContainerRunResult(
+            name=name,
+            mode=mode,
+            ok=False,
+            exit_code=2,
+            status=ge.status,
+            gpu=ge.gpu,
+            command=ge.command,
+            detail={
+                "error": "CandidateOverrideRequiresServerless",
+                "message": (
+                    "registry/tag overrides require serverless execution; local and "
+                    "dry-run commands do not resolve candidate images"
+                ),
+            },
+        )
+
     if serverless:
         if ge.execution_timeout is None:
             return ContainerRunResult(

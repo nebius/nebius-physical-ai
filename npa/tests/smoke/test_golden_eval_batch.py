@@ -208,3 +208,14 @@ def test_run_container_eval_defaults_to_the_canonical_image(monkeypatch) -> None
 
     assert seen["registry"] is None
     assert seen["tag"] is None
+
+
+@pytest.mark.parametrize("execute", [False, True])
+def test_candidate_overrides_fail_closed_without_serverless(execute: bool) -> None:
+    from npa.smoke import batch
+
+    result = batch.run_container_eval("lerobot", execute=execute, tag="candidate-123")
+
+    assert not result.ok
+    assert result.exit_code == 2
+    assert result.detail["error"] == "CandidateOverrideRequiresServerless"
