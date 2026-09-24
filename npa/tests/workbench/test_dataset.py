@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,113 @@ def test_ingest_rejects_duplicate_record_id(tmp_path: Path) -> None:
                 input_uri=raw, output_uri=str(tmp_path / "ds"), dataset_id="d"
             )
         )
+
+
+@pytest.mark.parametrize(
+    "invalid_quality", ["unknown", float("nan"), float("inf"), float("-inf")]
+)
+def test_ingest_rejects_invalid_quality_before_downstream_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_quality: Any,
+) -> None:
+    import npa.workbench.dataset.ingestion as ing
+
+    raw = _raw(
+        tmp_path,
+        [
+            {
+                "record_id": "r1",
+                "modality": "camera",
+                "uri": "s3://b/r1",
+                "quality": {"signal": invalid_quality},
+            }
+        ],
+    )
+    downstream_calls: list[str] = []
+    monkeypatch.setattr(
+        ing,
+        "index_in_lancedb",
+        lambda *args, **kwargs: downstream_calls.append("lancedb"),
+    )
+    monkeypatch.setattr(
+        ing,
+        "write_json_uri",
+        lambda *args, **kwargs: downstream_calls.append("manifest"),
+    )
+    monkeypatch.setattr(
+        ing,
+        "fiftyone_handoff",
+        lambda *args, **kwargs: downstream_calls.append("fiftyone"),
+    )
+
+    with pytest.raises(
+        DatasetIngestError,
+        match=r"record 0 quality 'signal' must be a finite number",
+    ):
+        ingest_dataset(
+            IngestRequest(
+                input_uri=raw,
+                output_uri=str(tmp_path / "ds"),
+                dataset_id="d",
+            ),
+            lancedb_endpoint="https://lancedb.invalid",
+            fiftyone_endpoint="https://fiftyone.invalid",
+        )
+
+    assert downstream_calls == []
+
+
+def test_ingest_preserves_finite_quality_boundaries(tmp_path: Path) -> None:
+    raw = _raw(
+        tmp_path,
+        [
+            {
+                "record_id": "r1",
+                "modality": "camera",
+                "uri": "s3://b/r1",
+                "quality": {
+                    "corruption": "0.5",
+                    "minimum": -sys.float_info.max,
+                    "maximum": sys.float_info.max,
+                },
+            }
+        ],
+    )
+
+    response = ingest_dataset(
+        IngestRequest(
+            input_uri=raw,
+            output_uri=str(tmp_path / "ds"),
+            dataset_id="d",
+        )
+    )
+    repeated = ingest_dataset(
+        IngestRequest(
+            input_uri=raw,
+            output_uri=str(tmp_path / "repeated"),
+            dataset_id="d",
+        )
+    )
+
+    manifest = json.loads(Path(response.manifest_uri).read_text())
+    assert manifest["records"][0]["quality"] == {
+        "corruption": 0.5,
+        "minimum": -sys.float_info.max,
+        "maximum": sys.float_info.max,
+    }
+    assert response.quality_stats.model_dump(mode="json") == {
+        "record_count": 1,
+        "modalities": ["camera"],
+        "events": [],
+        "locations": [],
+        "mean_completeness": 0.2,
+        "corrupt_count": 0,
+        "per_modality_counts": {"camera": 1},
+    }
+    assert manifest["quality_stats"] == response.quality_stats.model_dump(mode="json")
+    assert manifest["manifest_sha256"] == response.manifest_sha256
+    assert repeated.manifest_sha256 == response.manifest_sha256
 
 
 def test_ingest_calls_lancedb_and_fiftyone_seams(
