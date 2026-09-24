@@ -40,6 +40,7 @@ alpamayo2-super  NVIDIA Alpamayo 2 Super trajectory-inference workbench.
 curobo  NVIDIA cuRobo V2 motion planning and complete benchmark evaluation.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
+encord  Register S3 media with Encord SaaS and materialize curated results.
 scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
 dataset  Dataset-of-record: ingest, validate, curate, and query production sensor data.
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
@@ -90,6 +91,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `curobo` | NVIDIA cuRobo V2 motion planning and complete benchmark evaluation. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
+| `encord` | Register S3 media with Encord SaaS and materialize curated results. |
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default). |
 | `dataset` | Dataset-of-record: ingest, validate, curate, and query production sensor data. |
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
