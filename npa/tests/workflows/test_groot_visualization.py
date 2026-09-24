@@ -13,6 +13,36 @@ from npa.workbench.foxglove.inspect import summarize_mcap
 from npa.workflows import groot_visualization as viz
 
 
+def test_rrd_verification_prefers_the_active_python_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment_bin = tmp_path / "environment/bin"
+    environment_bin.mkdir(parents=True)
+    sibling = environment_bin / "rerun"
+    sibling.write_text("#!/bin/sh\nexit 0\n")
+    sibling.chmod(0o700)
+    ambient = tmp_path / "other-environment/rerun"
+    monkeypatch.setattr(viz.sys, "executable", str(environment_bin / "python"))
+    monkeypatch.setattr(viz.shutil, "which", lambda _name: str(ambient))
+
+    assert viz._rerun_executable() == str(sibling)
+
+
+@pytest.mark.parametrize("sibling_exists", [False, True])
+def test_rrd_verification_uses_path_when_python_sibling_is_not_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sibling_exists: bool
+) -> None:
+    sibling = tmp_path / "rerun"
+    if sibling_exists:
+        sibling.write_text("not an executable")
+        sibling.chmod(0o600)
+    ambient = tmp_path / "other-environment/rerun"
+    monkeypatch.setattr(viz.sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(viz.shutil, "which", lambda _name: str(ambient))
+
+    assert viz._rerun_executable() == str(ambient)
+
+
 class _Body:
     def __init__(self, body: bytes) -> None:
         self._body = body

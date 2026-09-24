@@ -629,7 +629,7 @@ def test_publication_orders_runtime_gate_before_login_and_push_and_uploads_only_
     )
     assert "always()" in upload["if"] and upload["with"]["if-no-files-found"] == "error"
     assert upload["uses"] == (
-        "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
     )
 
 

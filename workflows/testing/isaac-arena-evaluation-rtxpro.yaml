@@ -39,6 +39,9 @@ config:
   # The tutorial recording contains the robot and microwave only. An optional
   # extra object changes the scene and requires its own recorded initial state.
   object: ""
+  # Empty preserves the published image's default capture. Set film only with
+  # the updated runtime (a recorded source overlay or a newly qualified image).
+  video_profile: ""
 
 resources:
   gpu:

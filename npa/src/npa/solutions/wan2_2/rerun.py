@@ -1323,7 +1323,7 @@ def verify_wan_rrd(
     """Parse an RRD, verify entity rows, and hash its embedded MP4 bytes."""
 
     try:
-        from rerun.recording import load_recording
+        from npa.viz.recordings import load_recording
     except ImportError as exc:  # pragma: no cover - exercised by runtime failure path
         raise WanRrdError("Wan RRD verification requires the npa[viz] extra") from exc
 

@@ -40,5 +40,7 @@
     "sam2": {"tag": "2.1-rtfetch-20260916", "published_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
     "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"}
   },
-  "publication_pending": {}
+  "publication_pending": {
+    "antioch": "The adapter image is redistribution-eligible but has not yet been published and verified for anonymous pull."
+  }
 }

@@ -1,0 +1,31 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: molmoact-finetune
+  description: >-
+    Fine-tune a MolmoAct vision-language-action policy on a demonstration
+    dataset (stub stage). Exercises the workbench.molmoact.finetune toolRef
+    and anchors the molmoact/finetune three-tier contract (CLI <-> SDK <->
+    spec). The base model is resolved at runtime through the HF Hub cache;
+    no weights are bundled in the repo or image.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/molmoact-finetune"
+  model_id: "allenai/MolmoAct-7B-O-0812"
+  dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 8
+    memory: 32Gi
+initial: finetune
+states:
+  finetune:
+    toolRef: workbench.molmoact.finetune
+    resources: gpu
+    outputs:
+      - uri: "{{config.training_uri}}manifest.json"
+        schema: npa.workbench.molmoact.finetune.stub.v1
+    terminal: true
