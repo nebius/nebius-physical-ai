@@ -169,6 +169,7 @@ if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
   # npa/tests/guardrails/test_workbench_image_k8s_prereqs.py.
   apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip rsync openssh-client openssh-server sudo netcat-openbsd
+  rm -f /etc/ssh/ssh_host_*
   printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user
   chmod 0440 /etc/sudoers.d/99-npa-runtime-user
   install -d -m 0755 /run/sshd

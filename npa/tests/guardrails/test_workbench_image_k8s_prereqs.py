@@ -110,6 +110,59 @@ def _ingredients_for(tool: str) -> tuple[tuple[str, str], ...]:
     return REQUIRED_INGREDIENTS
 
 
+def _dockerfile_instructions(text: str) -> list[str]:
+    """Join backslash-continued Dockerfile instructions for layer-local checks."""
+
+    instructions: list[str] = []
+    current: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not current and (not line or line.startswith("#")):
+            continue
+        current.append(line)
+        if not line.endswith("\\"):
+            instructions.append(" ".join(current))
+            current = []
+    if current:
+        instructions.append(" ".join(current))
+    return instructions
+
+
+def test_openssh_install_layers_do_not_bake_reusable_host_keys() -> None:
+    """Every apt-installed sshd must discard build-time keys in that same layer."""
+
+    cleanup = "rm -f /etc/ssh/ssh_host_*"
+    checked: list[str] = []
+    for dockerfile in sorted(DOCKER_ROOT.rglob("Dockerfile*")):
+        for instruction in _dockerfile_instructions(
+            dockerfile.read_text(encoding="utf-8")
+        ):
+            if (
+                "apt-get install" not in instruction
+                or "openssh-server" not in instruction
+            ):
+                continue
+            checked.append(str(dockerfile.relative_to(DOCKER_ROOT)))
+            assert cleanup in instruction, (
+                f"{dockerfile}: openssh-server generated reusable host private keys in "
+                "the image layer"
+            )
+            assert instruction.index("openssh-server") < instruction.index(cleanup)
+
+    for installer in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+        text = installer.read_text(encoding="utf-8")
+        if "apt-get install" not in text or "openssh-server" not in text:
+            continue
+        checked.append(str(installer.relative_to(DOCKER_ROOT)))
+        assert cleanup in text, (
+            f"{installer}: openssh-server generated reusable host private keys in "
+            "the image layer"
+        )
+        assert text.index("openssh-server") < text.index(cleanup)
+
+    assert checked, "guard did not find any openssh-server install layers"
+
+
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
 def test_dockerfile_has_skypilot_runtime_prerequisites(tool: str) -> None:
     """Follows the Dockerfile into the shared script (#229), per-tool ingredients (this branch).

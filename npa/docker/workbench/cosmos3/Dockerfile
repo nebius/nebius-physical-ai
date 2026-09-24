@@ -83,6 +83,7 @@ RUN apt-get update \
         rsync \
         sudo \
         wget \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/* \
     && find /opt/nvidia/nsight-compute -type f \
          -path '*/plugins/efa_metrics/nic_sampler' -delete \

@@ -22,6 +22,7 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' \
