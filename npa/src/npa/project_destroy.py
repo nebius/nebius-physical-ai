@@ -938,6 +938,114 @@ def _parse_workflow_inventory(
     return [dict(row) for row in rows], ""
 
 
+def _terminal_managed_job_status(value: object) -> bool:
+    """Classify only terminal statuses from the pinned SkyPilot contract."""
+
+    status = str(value or "").strip().upper()
+    return status in {"SUCCEEDED", "CANCELLED"} or status.startswith("FAILED")
+
+
+def _owned_workflow_teardown_allowance(
+    completed: subprocess.CompletedProcess[str],
+) -> dict[str, Any] | None:
+    """Validate the narrow cancel result that explicit project destroy may consume."""
+
+    payload = parse_single_json_document(completed.stdout or "")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("owned_teardown_allowed") is not True:
+        return None
+    if payload.get("outcome") not in {
+        "verification_failed",
+        "partial_cancellation",
+    }:
+        return None
+    if payload.get("detected_state") != "VERIFICATION_UNAVAILABLE":
+        return None
+    raw_conflicts = payload.get("durable_absence_conflict_job_ids")
+    raw_conflict_errors = payload.get("durable_absence_conflict_errors")
+    raw_cancelled = payload.get("cancelled_job_ids")
+    raw_jobs = payload.get("jobs")
+    raw_errors = payload.get("errors")
+    if (
+        not isinstance(raw_conflicts, list)
+        or not raw_conflicts
+        or not isinstance(raw_conflict_errors, list)
+        or not isinstance(raw_cancelled, list)
+        or not isinstance(raw_jobs, list)
+        or not isinstance(raw_errors, list)
+        or any(not isinstance(error, str) or not error.strip() for error in raw_errors)
+        or raw_errors != raw_conflict_errors
+        or len(raw_errors) != len(raw_conflicts)
+    ):
+        return None
+    conflict_ids = [str(value or "").strip() for value in raw_conflicts]
+    if any(not value for value in conflict_ids) or len(set(conflict_ids)) != len(
+        conflict_ids
+    ):
+        return None
+    cancelled_ids = [str(value or "").strip() for value in raw_cancelled]
+    if any(not value for value in cancelled_ids) or len(set(cancelled_ids)) != len(
+        cancelled_ids
+    ):
+        return None
+    if set(conflict_ids) & set(cancelled_ids):
+        return None
+    if any(not isinstance(row, dict) for row in raw_jobs):
+        return None
+    job_ids = [str(row.get("job_id") or "").strip() for row in raw_jobs]
+    if (
+        any(not job_id for job_id in job_ids)
+        or len(set(job_ids)) != len(job_ids)
+        or any(job_id not in job_ids for job_id in conflict_ids + cancelled_ids)
+    ):
+        return None
+    jobs = dict(zip(job_ids, raw_jobs, strict=True))
+    if any(
+        jobs[job_id].get("live_outcome") != "absent"
+        or not isinstance(jobs[job_id].get("persisted_states"), list)
+        or not jobs[job_id]["persisted_states"]
+        or all(
+            _terminal_managed_job_status(state)
+            for state in jobs[job_id]["persisted_states"]
+        )
+        for job_id in conflict_ids
+    ):
+        return None
+    if any(
+        jobs[job_id].get("live_outcome") != "found"
+        or _terminal_managed_job_status(jobs[job_id].get("live_status"))
+        for job_id in cancelled_ids
+    ):
+        return None
+    for job_id, row in jobs.items():
+        live_outcome = str(row.get("live_outcome") or "").strip()
+        if live_outcome == "found":
+            if (
+                not _terminal_managed_job_status(row.get("live_status"))
+                and job_id not in cancelled_ids
+            ):
+                return None
+        elif live_outcome == "durable_terminal":
+            persisted_states = row.get("persisted_states")
+            if (
+                not isinstance(persisted_states, list)
+                or not persisted_states
+                or not all(
+                    _terminal_managed_job_status(state) for state in persisted_states
+                )
+            ):
+                return None
+        elif live_outcome != "absent":
+            return None
+    return {
+        "run_id": str(payload.get("run_id") or ""),
+        "outcome": str(payload.get("outcome") or ""),
+        "verified_absent_job_ids": conflict_ids,
+        "cancelled_job_ids": cancelled_ids,
+    }
+
+
 def _stream_kind(value: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1147,11 +1255,23 @@ def execute_project_destroy(
                     executed.append(list(cancel_command))
                     command_results.append(_command_evidence(completed, cancel_command))
                     if completed.returncode != 0:
-                        phase_errors.append(
-                            f"workflow cancellation failed for {run_id}: "
-                            + _command_failure_detail(completed)
-                        )
-                        recovery_commands.append(list(cancel_command))
+                        allowance = _owned_workflow_teardown_allowance(completed)
+                        if allowance is not None:
+                            phase_warnings.append(
+                                "workflow cancellation remains non-terminal for "
+                                f"{run_id}, but every exact live job converged or was "
+                                "verified absent; explicit project destroy will "
+                                "continue run-owned infrastructure teardown"
+                            )
+                            phase_evidence.setdefault(
+                                "workflow_teardown_allowances", []
+                            ).append(allowance)
+                        else:
+                            phase_errors.append(
+                                f"workflow cancellation failed for {run_id}: "
+                                + _command_failure_detail(completed)
+                            )
+                            recovery_commands.append(list(cancel_command))
         else:
             for command in commands:
                 completed = _run(command, runner)

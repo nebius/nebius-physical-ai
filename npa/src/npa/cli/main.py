@@ -40,6 +40,7 @@ from npa.cli.storage import app as storage_app
 from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
+from npa.cli.tools import app as tools_app
 from npa.clients.serverless import ServerlessClientError
 from npa.provisioning_journal import (
     ProvisioningOperation,
@@ -113,6 +114,7 @@ app.add_typer(
     short_help="Primary Workbench solution: tools and workflows.",
     rich_help_panel="Primary solution",
 )
+app.add_typer(tools_app, name="tools", rich_help_panel="Platform utilities")
 
 # FIXME(solutions): These platform-level command groups predate the solution
 # namespace model. They remain top-level for compatibility in this PR and should
@@ -2237,7 +2239,7 @@ def _prepare_full_catalog_access(*, open_pages: bool = False) -> dict[str, objec
         exact_requirements,
         probe_requirements,
     )
-    from npa.workbench.nurec.nurec import check_ngc_image_access
+    from npa.workbench.model_access import check_ngc_artifact_access
 
     credentials = load_credentials()
     state_path = Path(
@@ -2248,7 +2250,7 @@ def _prepare_full_catalog_access(*, open_pages: bool = False) -> dict[str, objec
         hf_token=credentials.hf_token,
         ngc_key=credentials.ngc_api_key,
         hf_validator=validate_hf_access,
-        ngc_validator=check_ngc_image_access,
+        ngc_validator=check_ngc_artifact_access,
         state_path=state_path,
     )
     plan = approval_plan(

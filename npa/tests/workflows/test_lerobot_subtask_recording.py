@@ -11,7 +11,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 
 REPOSITORY = Path(__file__).parents[3]
 SCRIPT = REPOSITORY / "npa/scripts/record_lerobot_subtask_proof.py"
@@ -166,7 +166,10 @@ def test_committed_bundle_proves_the_saved_parquet_row() -> None:
         assert json.loads(archive.read("manifest.json")) == manifest
     for relative, digest in manifest["provenance"]["recipe_sha256"].items():
         recipe = REPOSITORY / relative
-        if relative == "npa/src/npa/fiftyone_lerobot_subtasks.py":
+        if relative in {
+            "npa/src/npa/fiftyone_lerobot_subtasks.py",
+            "npa/scripts/record_lerobot_subtask_proof.py",
+        }:
             recipe = EVIDENCE.parent / "lerobot-subtask-recipes" / f"{digest}.py"
         assert hashlib.sha256(recipe.read_bytes()).hexdigest() == digest
 

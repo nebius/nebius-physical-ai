@@ -220,7 +220,7 @@ def test_manifest_contains_init_sync_and_rerun_serve(mocker) -> None:
     assert nginx_container["ports"][0]["containerPort"] == DEFAULT_PORT
     assert rerun_container["image"] == DEFAULT_RERUN_IMAGE
     assert "pip install" in rerun_container["command"][-1]
-    assert "rerun-sdk==0.32.0" in rerun_container["command"][-1]
+    assert "rerun-sdk==0.38.1" in rerun_container["command"][-1]
     assert "--serve-web" in rerun_container["command"][-1]
     assert (
         f"--web-viewer-port {RERUN_INTERNAL_WEB_PORT}" in rerun_container["command"][-1]
