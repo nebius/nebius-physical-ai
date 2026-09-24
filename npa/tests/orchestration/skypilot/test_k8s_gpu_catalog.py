@@ -429,7 +429,7 @@ def test_known_b200_label_is_exact_context_scoped() -> None:
             "label",
             "node",
             "node-a",
-            "skypilot.co/accelerator=B200",
+            "skypilot.co/accelerator=b200",
         ]
     ]
 

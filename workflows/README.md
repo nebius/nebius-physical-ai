@@ -179,6 +179,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos3-super-b200-benchmark.yaml`](testing/cosmos3-super-b200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU B200 node |
 | [`cosmos3-super-h200-benchmark.yaml`](testing/cosmos3-super-h200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU H200 node |
 | [`cosmos3-super-h200-single-gpu.yaml`](testing/cosmos3-super-h200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one H200; distinct from node-throughput benchmarks |
+| [`cosmos3-super-b200-single-gpu.yaml`](testing/cosmos3-super-b200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one B200; distinct from node-throughput benchmarks |
 | [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
 | [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |

@@ -74,6 +74,7 @@ change hits most.
 | `test_paidf_image_tags_match_code` | The PAIDF guide builds tags that differ from what submit pulls. Regenerate the guide's build commands from `npa/src/npa/deploy/images.py`. |
 | `test_public_runtime_registry_defaults` | A supported workload inherited a generic build/private registry, emitted an unqualified first-party image, or attached credentials to the official public release. Keep repository-owned defaults on `ghcr.io/nebius/nebius-physical-ai`; require an explicit scoped override for custom bytes. |
 | `test_default_cluster_fits_quickstart` | The default cluster can no longer schedule the documented quickstart. Raise the preset or lower the spec's requests. |
+| `test_workflow_readiness_records` | A readiness record is malformed, orphaned, or no longer matches its adjacent workflow SHA-256. Review the workflow-byte changes and reassess every affected claim before updating the digest; never mechanically preserve or upgrade evidence statuses. |
 
 ## Secrets, Confidentiality, And Consent
 

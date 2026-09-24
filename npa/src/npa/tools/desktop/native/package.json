@@ -1,0 +1,6 @@
+{
+  "name": "npa-native-codex-adapter",
+  "private": true,
+  "type": "module",
+  "dependencies": {"immer": "10.1.1"}
+}

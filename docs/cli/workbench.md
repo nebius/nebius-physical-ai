@@ -28,6 +28,8 @@ nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings 
     Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab locomotion policy evaluation for SONIC workflows.
+molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
+openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
 robocasa  RoboCasa kitchen-task simulation workbench.
 newton  Newton physics engine: teacher training, demo generation, evaluation.
@@ -77,6 +79,8 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
+| `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
+| `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |
 | `newton` | Newton physics engine: teacher training, demo generation, evaluation. |

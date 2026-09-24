@@ -199,6 +199,39 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "openvla-train.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "OpenVLA workbench pipeline stages are stubs in this release: "
+            "train prints an upstream argv plan (not implemented), so the "
+            "spec exercises config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the openvla/train three-tier contract "
+            "(CLI <-> SDK <-> spec); real OpenVLA-OFT fine-tuning lands with "
+            "nebius/nebius-physical-ai#500. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
+        "molmoact-finetune.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "MolmoAct workbench pipeline stages are stubs in this release: "
+            "finetune validates the config and returns a plan-only manifest "
+            "(training not implemented), so the spec exercises config "
+            "validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the molmoact/finetune three-tier contract "
+            "(CLI <-> SDK <-> spec); real MolmoAct fine-tuning lands with "
+            "nebius/nebius-physical-ai#502. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-super-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -487,7 +520,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -502,7 +534,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -517,12 +548,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
             "Real isolated one-H200 TP-1 validation in the immutable vLLM-Omni "
+            "image: one strict warmup followed by 24 sequential validated requests. "
+            "This is not the paper's eight-replica 8x1 node cell."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos3-super-b200-single-gpu.yaml",
+        "gpu",
+        secret_envs=(
+            "HF_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Real isolated one-B200 TP-1 validation in the immutable vLLM-Omni "
             "image: one strict warmup followed by 24 sequential validated requests. "
             "This is not the paper's eight-replica 8x1 node cell."
         ),
