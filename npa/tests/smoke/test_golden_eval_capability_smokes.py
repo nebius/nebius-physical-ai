@@ -86,17 +86,17 @@ def test_manifest_covers_all_tools_with_container_smokes_or_server_smokes() -> N
     )
 
 
-def test_run_all_dry_run_includes_all_tools() -> None:
+def test_run_all_dry_run_includes_all_runnable_tools() -> None:
     from npa.deploy.images import CONTAINER_IMAGE_NAMES
     from npa.smoke.batch import iter_containers, run_all
     from npa.smoke.manifest import load_manifest
 
-    blocked = {
+    unrunnable = {
         name
         for name, spec in load_manifest().items()
-        if spec.golden_eval.status == "blocked-on-upstream"
+        if spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
     }
-    expected = set(CONTAINER_IMAGE_NAMES) - blocked
+    expected = set(CONTAINER_IMAGE_NAMES) - unrunnable
     names = iter_containers(tools_only=True, include_foundation=False)
     batch = run_all(names, serverless=False, execute=False)
     assert {r.name for r in batch.results} == expected
