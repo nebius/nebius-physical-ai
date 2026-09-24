@@ -109,6 +109,68 @@ def test_lift_evidence_rejects_short_or_broken_hold(tmp_path: Path) -> None:
     )
 
 
+def test_lift_evidence_rejects_literal_false_policy_trained(tmp_path: Path) -> None:
+    manifest = _manifest()
+    manifest["policy_trained"] = False
+
+    assert (
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("policy_trained", ["false", 1, None, [], {}])
+def test_lift_evidence_requires_literal_trained_policy_boolean(
+    tmp_path: Path, policy_trained: object
+) -> None:
+    manifest = _manifest()
+    manifest["policy_trained"] = policy_trained
+
+    assert (
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("stable_grasp", ["false", 1, None, [], {}])
+def test_lift_evidence_requires_literal_stable_grasp_boolean(
+    tmp_path: Path, stable_grasp: object
+) -> None:
+    manifest = _manifest()
+    manifest["actions"][0]["simulator_ground_truth"]["stable_grasp"] = stable_grasp
+    manifest["actions"].append(
+        {
+            "step": 3,
+            "sim_step": 3,
+            "sim_time_seconds": 3.0,
+            "simulator_ground_truth": {
+                "stable_grasp": True,
+                "object_lift_m": 0.051,
+            },
+        }
+    )
+
+    assert (
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+        is None
+    )
+
+
 def test_lift_evidence_refuses_sample_count_as_time(tmp_path: Path) -> None:
     manifest = _manifest(timestamped=False)
     manifest.pop("simulation_step_seconds")
