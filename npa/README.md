@@ -30,6 +30,21 @@ That check reads the complete downloaded output bundle and launches no new job.
 
 ## Install
 
+For a persistent remote development environment, use
+[`npa tools desktop`](../docs/tools/development-desktop.md). This operator tool
+installs VS Code and Codex on an existing Ubuntu VM, provides a sharp browser
+desktop with adjustable workspace size, and can enable authenticated HTTPS on a
+public IP. Its setup and operation commands live under `npa tools`.
+`npa tools desktop chat-setup --connect-vscode` adds authenticated mobile Codex
+chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it. Mobile
+and VS Code share conversations, model/reasoning selections, and live activity.
+Cloud chat setup also enables a persistent browser sign-in, automatic phone
+routing to chat, and an installable Home Screen app using the same login.
+`npa tools desktop chat-setup --local` attaches the same interface to existing Mac
+sessions. Add `--gateway-ssh-host <alias>` to use an existing authenticated gateway.
+`npa tools desktop optimize --ssh-host <alias>` reduces desktop effects for faster
+clicking and typing while preserving the running session and display resolution.
+
 From the repository root, with your virtual environment active:
 
 ```bash
@@ -426,6 +441,11 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
 ## Workbench Studio
+
+Studio `preview` and `final` can also deliver the finished MP4 with
+`--output-path s3://<your-bucket>/<your-key>.mp4`. Optional `--storage-project`
+selects an external NPA project alias. Uploads are verified by SHA-256 readback;
+local renders and caches remain available.
 
 `npa studio init --directory ./my-studio` creates a portable local film editor
 using the installed renderer. Create a project from your own media with

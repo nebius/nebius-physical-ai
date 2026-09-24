@@ -10,6 +10,7 @@ Physical AI workbench tools.
 Options
 --help  Show this message and exit.
 Commands
+antioch  Run Antioch simulations and collect policy-compatible data.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
@@ -27,8 +28,11 @@ nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings 
     Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab locomotion policy evaluation for SONIC workflows.
+molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
+openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
 robocasa  RoboCasa kitchen-task simulation workbench.
+newton  Newton physics engine: teacher training, demo generation, evaluation.
 lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
 ltx2  LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement
     unlocks.
@@ -44,6 +48,7 @@ token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatibl
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
 workflow  Multi-stage training workflow orchestration.
 health  Preflight health checks for workbench workflows.
+gc-artifacts  Garbage-collect expired workbench run artifacts from S3 (dry-run by default).
 golden-eval  Per-container golden-eval / hello-world reruns.
 ```
 
@@ -57,6 +62,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 | Command | Description |
 | --- | --- |
+| `antioch` | Run Antioch simulations and collect policy-compatible data. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
@@ -73,8 +79,11 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
+| `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
+| `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |
+| `newton` | Newton physics engine: teacher training, demo generation, evaluation. |
 | `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |
 | `ltx2` | LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement unlocks. |
 | `alpamayo2-super` | NVIDIA Alpamayo 2 Super trajectory-inference workbench. |
@@ -89,13 +98,14 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |
 | `workflow` | Multi-stage training workflow orchestration. |
 | `health` | Preflight health checks for workbench workflows. |
+| `gc-artifacts` | Garbage-collect expired workbench run artifacts from S3 (dry-run by default). |
 | `golden-eval` | Per-container golden-eval / hello-world reruns. |
 
 ## Examples
 
 ```bash
 npa workbench --help
-npa workbench lerobot --help
+npa workbench antioch --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workbench`.

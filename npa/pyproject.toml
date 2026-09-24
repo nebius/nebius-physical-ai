@@ -63,6 +63,9 @@ dependencies = [
     "rerun-sdk==0.38.1",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
     "fastapi>=0.136.1,<0.142.0",
+    # Antioch's supported declared-port bridge uses bounded, authenticated WSS
+    # on both legs. Keep the operator transport matched to the sim dependency.
+    "websockets==15.0.1",
     "python-multipart>=0.0.31",
 ]
 
@@ -144,6 +147,8 @@ dev = [
     "imageio-ffmpeg==0.6.0",
     # Isaac Arena replay validation and its unit fixtures use real HDF5 bytes.
     "h5py==3.16.0",
+    # Exercise the OpenPI simulator's real wire codec in the finite-loop tests.
+    "msgpack>=1.1.1,<2",
     "pytest>=9.0.3",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
@@ -165,6 +170,7 @@ dev = [
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
     "h5py==3.16.0",
+    "msgpack>=1.1.1,<2",
     "pytest>=9.0.3",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
@@ -179,8 +185,10 @@ dev = [
 
 [project.scripts]
 npa = "npa.cli.entry:main"
+npa-openpi-live-deploy = "npa.workflows.byof.openpi_live:main"
 
 [tool.npa.supported-tools]
+antioch = "0.1.0-cli0.4.289"
 openpi = "pi05-full-droid-rlds-cu128-unbuilt"
 # Default LeRobot image release. Selectable package versions and their image tags
 # live in npa/src/npa/deploy/lerobot_version_manifest.json (0.5.1 + 0.6.0).
@@ -230,6 +238,7 @@ wan2-2 = "2.2-ti2v5b-rtfetch-cu130-20260817"
 diffusers = "0.38.0-rtfetch-20260916"
 lingbot-world = "a43bec7-rtfetch-20260916"
 sam2 = "2.1-rtfetch-20260916"
+sam3 = "3.1-unbuilt"
 ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128-r3"
 curobo = "0.8.0-cuda13-b300-unbuilt"

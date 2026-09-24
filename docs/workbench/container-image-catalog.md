@@ -46,11 +46,12 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **42 packaging entries** (40 redistribution-eligible
-and two restricted) and **43 mapped tools**: 37 public-release members, two
-restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
-`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
-they do not constitute acceptance of the quarantined images.
+The current source inventory has **52 packaging entries** (43 redistribution-eligible
+and nine restricted) and **44 mapped tools**: 37 public-release members, two
+restricted tools, and five quarantined tools (`curobo`, `ncore`, `openpi`,
+`robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+the seven restricted PAIDF images have no mapped tool entry. These counts do not
+constitute acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -65,6 +66,14 @@ The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
+
+SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
+Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
+[publication evidence](validation/sam31-public-development-20260919.json) records
+the independently pulled digest, both verified attestations and clean layer scans.
+Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
+Gated checkpoint access and real GPU qualification remain pending; this does
+not replace the accepted SAM 2.1 release or add a supported release row.
 
 ## Native model publication
 

@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import typer
 from rich.console import Console
@@ -90,7 +90,7 @@ def robot_sdg_cmd(
         "--output-path",
         help="Empty S3 prefix for LeRobot data and recorded videos.",
     ),
-    router: str = typer.Option(
+    router: Literal["token_factory", "jev"] = typer.Option(
         "token_factory",
         "--router",
         help="Scene planning selector: token_factory or jev.",
@@ -159,7 +159,7 @@ def sdg_cmd(
         "--context-path",
         help="Optional S3 UTF-8 reference text shared across seeds.",
     ),
-    router: str = typer.Option(
+    router: Literal["token_factory", "jev"] = typer.Option(
         "token_factory", "--router", help="Automatic selector: token_factory or jev."
     ),
     dry_run: bool = typer.Option(

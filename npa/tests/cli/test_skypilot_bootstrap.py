@@ -798,6 +798,90 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
     assert json.loads(failed.output)["outcome"] == "verification_failed"
 
 
+@pytest.mark.parametrize(
+    ("owner_mismatch", "expected_outcome", "expected_local_verified"),
+    [
+        (False, "cleaned", True),
+        (True, "degraded_local_metadata", False),
+    ],
+)
+def test_skypilot_controller_cleanup_reports_exact_owner_convergence(
+    monkeypatch: pytest.MonkeyPatch,
+    owner_mismatch: bool,
+    expected_outcome: str,
+    expected_local_verified: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.controller_ownership import ClusterOwnerIdentityMismatchError
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
+        lambda **_kwargs: SimpleNamespace(
+            ok=True,
+            outcome="cleaned",
+            remote_absence_verified=True,
+            verified=True,
+            resources_removed=["controller"],
+            errors=[],
+            commands=[["sky", "down"]],
+            project_alias="demo",
+            project_id="project-demo",
+            cluster_id="cluster-current",
+            context="context-demo",
+        ),
+    )
+    clear_calls: list[dict[str, str]] = []
+
+    def reject_mismatched_owner(project: str, **identity: str) -> bool:
+        clear_calls.append({"project": project, **identity})
+        if owner_mismatch:
+            raise ClusterOwnerIdentityMismatchError(
+                "Refusing to clear controller ownership for a different cluster id."
+            )
+        return True
+
+    monkeypatch.setattr(
+        "npa.controller_ownership.clear_controller_owner", reject_mismatched_owner
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "cleanup-controller",
+            "--project",
+            "demo",
+            "--context",
+            "context-demo",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == expected_outcome
+    assert payload["remote_absence_verified"] is True
+    assert payload["local_metadata_cleared"] is expected_local_verified
+    assert payload["verified"] is expected_local_verified
+    assert payload["overall_verified"] is expected_local_verified
+    if owner_mismatch:
+        assert (
+            "exact local ownership record could not be cleared" in payload["errors"][0]
+        )
+    else:
+        assert payload["errors"] == []
+    assert clear_calls == [
+        {
+            "project": "demo",
+            "project_id": "project-demo",
+            "cluster_id": "cluster-current",
+            "context": "context-demo",
+        }
+    ]
+
+
 def test_skypilot_controller_cleanup_forwards_explicit_orphan_recovery_attestation(
     monkeypatch,
 ) -> None:

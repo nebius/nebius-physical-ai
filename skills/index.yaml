@@ -84,6 +84,17 @@ skills:
         path: npa/tests/guardrails/test_access_approval_skill.py
       - type: file_exists
         path: npa/tests/agent_eval/test_access_approval.py
+  - name: antioch
+    category: tools
+    when_to_use: "Deploy, operate, debug, or compose Antioch simulation, live OpenPI inference, and dataset-based policy training."
+    path: skills/tools/antioch/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "antioch", "run", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/partners/antioch/antioch-offline-policy-train.yaml
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."
@@ -695,6 +706,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/mjlab-eval.yaml
+  - name: development-desktop
+    category: tools
+    when_to_use: "Set up and operate an Ubuntu development desktop through npa tools desktop, with readable Retina rendering and authenticated public HTTPS access."
+    path: skills/tools/development-desktop/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["tools", "desktop", "setup", "--help"]
+        contains: "ssh-host"
+      - type: cli_help
+        args: ["tools", "desktop", "public-access", "--help"]
+        contains: "public-ip"
   - name: nebius-infra
     category: tools
     when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, retained-backup checksum verification and VM maintenance pauses across reboot."
@@ -705,6 +727,36 @@ skills:
         path: skills/tools/nebius-infra/references/backup-verification.md
       - type: file_exists
         path: skills/tools/nebius-infra/references/maintenance-pauses.md
+  - name: newton
+    category: tools
+    when_to_use: "Newton physics engine workbench stages (teacher training, demo generation, evaluation), the Newton XPBD simulation pipeline, or the npa workbench newton CLI."
+    path: skills/tools/newton/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "newton", "train-teacher", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/newton/SKILL.md
+  - name: openvla
+    category: tools
+    when_to_use: "OpenVLA fine-tuning, serving, or evaluation workbench stages, the OpenVLA-OFT LoRA recipe, or the npa workbench openvla CLI."
+    path: skills/tools/openvla/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openvla", "train", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/openvla/SKILL.md
+  - name: molmoact
+    category: tools
+    when_to_use: "MolmoAct VLA fine-tuning, serving, or evaluation workbench stages, MolmoAct policy configs, or the npa workbench molmoact CLI."
+    path: skills/tools/molmoact/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "molmoact", "finetune", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/molmoact/SKILL.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
@@ -918,18 +970,6 @@ skills:
           - workflows/testing/cosmos3-ray-batch.yaml
       - type: file_exists
         path: npa/docker/workbench/cosmos3-ray-serve/Dockerfile
-  - name: cosmos3-super-benchmark
-    category: tools
-    when_to_use: "Reproduce, run, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU sweep on B200/H200, the ten-cell B200 public record, or the isolated single-H200 TP-1 suite with durable cell resume."
-    path: skills/tools/cosmos3-super-benchmark/SKILL.md
-    smoke:
-      - type: cli_help
-        args: ["workbench", "cosmos3", "super-benchmark", "--help"]
-        contains: "H200 single-GPU validation"
-      - type: npa_workflow_yaml
-        paths:
-          - workflows/testing/cosmos3-super-b200-benchmark.yaml
-          - workflows/testing/cosmos3-super-h200-benchmark.yaml
   - name: contribute-workbench-image
     category: workflows
     when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."

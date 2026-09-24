@@ -1258,8 +1258,8 @@ def discover_kubernetes_gpu_catalog(
 
 
 _KNOWN_SKYPILOT_LABELS = {
-    "b200": "B200",
-    "nvidiab200": "B200",
+    "b200": "b200",
+    "nvidiab200": "b200",
     "rtx6000": "rtxpro6000",
     "rtxpro6000": "rtxpro6000",
     "rtxpro6000blackwellserveredition": "rtxpro6000",
