@@ -75,3 +75,24 @@ def test_repeated_or_regressing_camera_clock_does_not_create_frames():
     assert recording.append((rgb, Fraction(2, 25)), 0.20)
     assert recording.frames == 2
     assert len(accepted) == 2
+
+
+@pytest.mark.parametrize("elapsed", [0.032, 0.0, 0.08])
+def test_native_step_rejects_clamped_frozen_or_skipped_camera_intervals(elapsed):
+    scene = _module("scene")
+
+    class Simulation(scene._Simulation):
+        @property
+        def current_time(self):
+            return self.clock
+
+    simulation = Simulation.__new__(Simulation)
+    simulation.clock = 0.0
+    simulation.app = SimpleNamespace(
+        update=lambda: setattr(simulation, "clock", elapsed)
+    )
+    with pytest.raises(RuntimeError, match="one 25 fps camera frame"):
+        simulation.step()
+    simulation.clock = 0.0
+    simulation.app = SimpleNamespace(update=lambda: setattr(simulation, "clock", 0.04))
+    simulation.step()

@@ -144,3 +144,10 @@ configuration. The current Spot asset uses 0.002-second physics steps and a
 decimation of 10, giving 50 Hz policy updates. The camera records at 25 fps.
 Using a hardcoded 200 Hz physics rate with that asset changes its control rate
 and can destabilize the robot.
+
+The PhysX minimum frame rate is aligned with the 25 fps camera so its default
+30 Hz clamp cannot discard physics substeps. Each native application update
+must advance a complete camera interval; the capture fails immediately if it
+does not. Batch-one CPU policy inference uses one Torch thread.
+
+- [NVIDIA simulation and rendering timestep controls](https://docs.isaacsim.omniverse.nvidia.com/6.0.1/sensors/isaacsim_sensors_multitick_rendering.html)

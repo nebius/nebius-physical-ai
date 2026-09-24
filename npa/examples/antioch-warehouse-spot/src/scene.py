@@ -28,10 +28,14 @@ class _Simulation:
         self.app.update()
 
     def step(self) -> None:
+        before = self.current_time
         self.app.update()
+        if not np.isclose(self.current_time - before, 1 / 25, atol=1e-5):
+            raise RuntimeError("Native physics did not advance one 25 fps camera frame")
 
 
 def _build_scene(start_x: float, start_y: float):
+    import carb
     from isaacsim.core.experimental.utils.stage import define_prim
     from isaacsim.core.rendering_manager import RenderingManager
     from isaacsim.core.simulation_manager import SimulationManager
@@ -49,6 +53,9 @@ def _build_scene(start_x: float, start_y: float):
         root + "/Isaac/Environments/Simple_Warehouse/full_warehouse.usd"
     )
     define_prim("/World/PhysicsScene", "PhysicsScene")
+    # PhysX otherwise clamps a 40 ms frame to its default 30 Hz minimum, dropping
+    # substeps and causing the multi-tick camera to repeat producer timestamps.
+    carb.settings.get_settings().set_float("/persistent/simulation/minFrameRate", 25.0)
     RenderingManager.set_dt(8.0 / 200.0)
     SimulationManager.set_physics_sim_device("cpu")
     SimulationManager.set_physics_dt(1.0 / 200.0)
@@ -78,6 +85,7 @@ class _PolicyStepper:
 
         self.controller = controller
         self.torch = import_module("torch")
+        self.torch.set_num_threads(1)
         self.command = self.torch.zeros(3, device="cpu")
         self.initialized = False
         self.steps = 0

@@ -97,6 +97,8 @@ def test_collected_warehouse_video_matches_successful_physics_run():
     manifest = json.loads(manifest_bytes)
     assert manifest["source"]["source_sha256"] == request["source_sha256"]
     assert manifest["remote"]["outcome"] == "passed"
+    for key, value in request["parameters"].items():
+        assert manifest["remote"]["params"][key] == value
     checks = manifest["remote"]["results"]["checks"]
     assert len(checks) == 7 and all(check["passed"] for check in checks)
     evidence = json.loads(_artifact(storage, manifest, "measurements.json"))
