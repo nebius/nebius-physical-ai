@@ -428,6 +428,28 @@ obsolete local resume-probe checkpoints and recovered 63,123,878,368 bytes of
 training-volume space. Independent readback verified its ten original artifacts.
 The checkpoint admitted through recovery remains preserved in object storage.
 
+### TRAIN-only conditional replanning fit
+
+A released-parent diagnostic collected 4,320 policy calls from 180 TRAIN
+episodes. Its predeclared oracle headroom check passed on the held-out TRAIN
+partition, permitting the fixed small-controller fit. The fit used 160 TRAIN
+episodes and reserved 20 different TRAIN episodes for validation; it did not
+read development or reporting cases.
+
+The selected epoch-8 MLP reached mean validation action error 0.004554229. The
+predeclared refresh and continue baselines were 0.006948014 and 0.013599533,
+so the fitted model reduced the respective errors by 34.45% and 66.51%. The
+export comparison had maximum absolute error 4.0531e-6 and RMS error
+3.9949e-7. Independent readback verified all 15 originals and their semantic
+cross-bindings; the proof receipt has SHA-256
+`44597dffe3afe69acaaadd9db2e6994073f9f15d5bb07715636d6c5642693da8`.
+
+This is a TRAIN-only supervised fit result. Candidate eligibility remains
+false until native queue and random-state parity and the predeclared
+development evaluation pass. It is not a rollout result, task Q result,
+final policy selection, or reporting claim. The validation split was used to
+select the epoch, so its reported error is selection-biased.
+
 ### Full-training startup checks
 
 Four full-training launches failed before full-policy initialization or optimizer
