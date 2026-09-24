@@ -121,6 +121,21 @@ ownership and record a retryable error; after a crash, an expired owner can be
 adopted with the same identities. Deterministic immutable manifests and completion
 markers make retry and resume safe.
 
+Scenario case, parameter overrides, and the expected CLI version are retained
+with the immutable submission identity. Status and recovery therefore replay
+the original request while a queued submission is being staged. Older records
+that cannot reconstruct their original request fail before a changed remote
+submission; retry their original `submit` command with the same arguments.
+String parameters are forwarded as literal argument values, including embedded
+spaces or quotes. A remote `errored` outcome is a failed operation, even when its
+execution phase is `completed`; it cannot enter successful artifact collection.
+
+For a video-producing example, see the
+[Spot warehouse patrol](../../npa/examples/antioch-warehouse-spot/README.md).
+It uses a pretrained locomotion policy, native RTX capture, and measured run
+checks. Collect its review artifacts with `--allow-artifacts-only`; the default
+collection path instead requires policy-training data.
+
 The sanitized operation record contains the vendor run id. Open that run in the
 Antioch Mission Control console using the authenticated account; never paste a
 signed console URL into logs, manifests, issues, or pull requests. If a supported
