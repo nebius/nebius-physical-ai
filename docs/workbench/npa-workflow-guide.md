@@ -333,6 +333,17 @@ resource targets require clarification in the YAML before submission.
 Explicit artifact declarations may use a sibling prefix or another bucket in
 the same project; each destination is checked separately. `config.prefix` is the
 default/ledger prefix and does not restrict explicitly declared artifact locations.
+With `config.bucket` set, the ledger accepts either a relative `config.prefix`
+or an absolute `s3://bucket/key` prefix naming that same bucket. Submission
+receipts, ledger storage, and storage preflight resolve the same location.
+Artifact templates still expand their configured values literally: use a
+relative prefix when a template constructs `s3://{{config.bucket}}/{{config.prefix}}`.
+On runtime resume, NPA retains the exact ledger location recorded in the prior
+submission receipt, including historical doubled prefixes. It checks access to
+that recorded location as well as the current declared outputs using the
+selected project's endpoint and credentials. An unavailable or malformed receipt
+blocks resume before submission state changes or a workload launches.
+
 Nebius storage mounts, including raw `--durable-s3` tasks, also verify the
 executing SkyPilot home's static `nebius` AWS profile against the selected
 storage credentials and endpoint. SkyPilot copies `~/.aws/credentials` and

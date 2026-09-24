@@ -484,6 +484,9 @@ def workflow_output_destinations(
     """Read destinations from the same resolved plan and ledger config as submit."""
     from npa.orchestration.npa_workflow.runtime import plan_preview
     from npa.orchestration.npa_workflow.interpreter import _make_context
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+    )
 
     plan = plan_preview(spec, run_id=run_id, assume_decision=assume_decision)
     destinations = {
@@ -493,10 +496,9 @@ def workflow_output_destinations(
         if str(output.get("uri") or "").startswith("s3://")
     }
     config = _make_context(spec, run_id=run_id).config
-    bucket = str(config.get("bucket") or "")
-    if bucket:
-        prefix = str(config.get("prefix") or run_id).strip("/")
-        destinations[f"s3://{bucket}/{prefix}/"] = "directory"
+    location = resolve_run_storage_location(config, run_id=run_id)
+    if location is not None:
+        destinations[f"{location.uri}/"] = "directory"
     return destinations
 
 

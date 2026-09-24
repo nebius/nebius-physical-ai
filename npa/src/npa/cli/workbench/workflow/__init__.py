@@ -31,6 +31,10 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
+    from npa.orchestration.npa_workflow.run_state import RunStateStore
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        SubmitCredentialContext,
+    )
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 
 app = typer.Typer(
@@ -1483,6 +1487,19 @@ def submit_cmd(
                 return
             paidf_placement_prechecked = True
 
+        recorded_store = None
+        if runtime and not plan_only:
+            try:
+                recorded_store = _recorded_runtime_store(
+                    project,
+                    resolved_run_id,
+                    resume=resume,
+                    credentials=submit_credentials,
+                )
+            except ValueError as exc:
+                _fail(str(exc))
+                return
+
         if not plan_only:
             # Scope and denied output-prefix access must fail before image
             # bootstrap or deployIfAbsent creates compute. This identity gate
@@ -1497,6 +1514,7 @@ def submit_cmd(
                         run_id=resolved_run_id,
                         assume_decision=assume_decision,
                         credentials=submit_credentials,
+                        recorded_store=recorded_store,
                         source_uri=planned_source_uri if stage_source_planned else "",
                         verify_cluster=not deploy_if_absent,
                         gpu_check=(
@@ -2047,6 +2065,7 @@ def submit_cmd(
                 auto_load=auto_load,
                 agent_name=agent_name,
                 s3_endpoint=s3_endpoint,
+                recorded_store=recorded_store,
             )
             return
 
@@ -2642,12 +2661,13 @@ def _workflow_submission_receipt(
         PAIDF_WORKFLOW_NAME,
         paidf_artifact_prefix,
         plan_step_records,
+        resolve_run_storage_location,
     )
     from npa.orchestration.npa_workflow.runtime import _resolved_config
 
     config = _resolved_config(spec, run_id)
-    bucket = str(config.get("bucket") or "").strip()
-    prefix = str(config.get("prefix") or run_id).strip("/")
+    location = resolve_run_storage_location(config, run_id=run_id)
+    prefix = location.prefix if location is not None else ""
     if spec.name == PAIDF_WORKFLOW_NAME:
         canonical = paidf_artifact_prefix(run_id)
         if prefix != canonical:
@@ -2655,7 +2675,7 @@ def _workflow_submission_receipt(
                 "PAIDF run prefix must use the canonical contract "
                 f"{canonical!r}, got {prefix!r}"
             )
-    run_prefix_uri = f"s3://{bucket}/{prefix}" if bucket and prefix else ""
+    run_prefix_uri = location.uri if location is not None else ""
     receipt = {
         "name": spec.name,
         "api_version": spec.api_version,
@@ -2668,6 +2688,46 @@ def _workflow_submission_receipt(
     if plan_preview_error:
         receipt["plan_preview"] = {"status": "failed", "error": plan_preview_error}
     return receipt
+
+
+def _recorded_runtime_store(
+    project: str,
+    run_id: str,
+    *,
+    resume: bool,
+    credentials: SubmitCredentialContext,
+) -> RunStateStore | None:
+    """Return the receipt's exact store so legacy resumes do not move ledgers."""
+
+    if not resume:
+        return None
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+    from npa.orchestration.npa_workflow.submission_state import (
+        inspect_submission_state,
+    )
+
+    recorded = inspect_submission_state(project or "default", run_id)
+    if recorded.outcome == "absent":
+        return None
+    if recorded.outcome == "unavailable":
+        detail = recorded.error or "submission receipt could not be verified"
+        raise ValueError(f"cannot resume from an unavailable receipt: {detail}")
+    if recorded.outcome != "found":
+        raise ValueError(f"unsupported submission receipt outcome: {recorded.outcome}")
+    workflow = recorded.payload.get("workflow")
+    if not isinstance(workflow, Mapping):
+        raise ValueError("resume receipt has no valid workflow record")
+    run_prefix_uri = str(workflow.get("run_prefix_uri") or "").strip()
+    if not run_prefix_uri:
+        raise ValueError("resume receipt workflow has no recorded run_prefix_uri")
+    return store_for_recorded_run_prefix(
+        run_prefix_uri,
+        endpoint_url=credentials.endpoint_url,
+        aws_access_key_id=credentials.access_key_id,
+        aws_secret_access_key=credentials.secret_access_key,
+    )
 
 
 def _runtime_submission_receipt(
@@ -2759,6 +2819,7 @@ def _run_npa_workflow_runtime(
     agent_name: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    recorded_store: RunStateStore | None = None,
 ) -> None:
     """Drive an npa.workflow spec through the runtime orchestrator tier."""
 
@@ -2789,10 +2850,16 @@ def _run_npa_workflow_runtime(
 
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
+    workflow_receipt = _runtime_submission_receipt(spec, run_id, assume_decision)
+    if recorded_store is not None:
+        workflow_receipt["run_prefix_uri"] = recorded_store.run_prefix_uri
+        workflow_receipt["manifest_uri"] = (
+            f"{recorded_store.run_prefix_uri}/npa-workflow/manifest.json"
+        )
     update_submission_state(
         project or "default",
         run_id,
-        {"workflow": _runtime_submission_receipt(spec, run_id, assume_decision)},
+        {"workflow": workflow_receipt},
     )
 
     resolved_secret_envs = secret_env_names(secret_envs, values=secret_env_values)
@@ -2845,6 +2912,7 @@ def _run_npa_workflow_runtime(
                 render_options=render_options,
                 options=options,
                 assume_decision=assume_decision,
+                state_store=recorded_store,
                 workflow_yaml=submitted_yaml,
                 logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
             )
@@ -4259,6 +4327,7 @@ def _execution_target_preflight(
     run_id: str,
     assume_decision: str,
     credentials,
+    recorded_store: RunStateStore | None = None,
     source_uri: str = "",
     verify_cluster: bool = True,
     gpu_check: Callable[[], Any] | None = None,
@@ -4267,14 +4336,11 @@ def _execution_target_preflight(
     from npa.execution_preflight import (
         resolve_execution_target,
         verify_execution_target,
-        workflow_output_destinations,
     )
 
-    destinations = workflow_output_destinations(
-        spec, run_id=run_id, assume_decision=assume_decision
+    destinations = _runtime_output_destinations(
+        spec, run_id, assume_decision, recorded_store, source_uri
     )
-    if source_uri:
-        destinations[source_uri.rstrip("/") + "/"] = "directory"
     target = resolve_execution_target(
         project=project,
         context=context,
@@ -4287,6 +4353,22 @@ def _execution_target_preflight(
         target, verify_cluster=verify_cluster, gpu_check=gpu_check
     )
     return target, report
+
+
+def _runtime_output_destinations(
+    spec, run_id, assume_decision, recorded_store, source_uri
+):
+    """Add the exact resume ledger and staged source to declared outputs."""
+    from npa.execution_preflight import workflow_output_destinations
+
+    destinations = workflow_output_destinations(
+        spec, run_id=run_id, assume_decision=assume_decision
+    )
+    if recorded_store is not None:
+        destinations[recorded_store.run_prefix_uri.rstrip("/") + "/"] = "directory"
+    if source_uri:
+        destinations[source_uri.rstrip("/") + "/"] = "directory"
+    return destinations
 
 
 def _raw_workflow_environment(yaml_path: Path, substitutions: Mapping[str, str]):

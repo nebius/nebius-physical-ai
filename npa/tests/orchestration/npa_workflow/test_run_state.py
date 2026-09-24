@@ -597,3 +597,112 @@ def test_manifest_completion_alias_is_not_a_runtime_ledger_state(runtime_status)
     )
     with pytest.raises(ValueError, match="lifecycle status is missing or unsupported"):
         runtime_workflow_lifecycle(manifest, {"status": runtime_status})
+
+
+def test_absolute_config_prefix_resolves_to_one_canonical_location() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+        store_for_config,
+    )
+
+    config = {"bucket": "unit-bucket", "prefix": "s3://unit-bucket/runs/demo"}
+    location = resolve_run_storage_location(config, run_id="unused")
+    store = store_for_config(config, run_id="unused")
+
+    assert location is not None
+    assert location.bucket == "unit-bucket"
+    assert location.prefix == "runs/demo"
+    assert location.uri == "s3://unit-bucket/runs/demo"
+    assert store is not None
+    assert store.run_prefix_uri == location.uri
+
+
+def test_relative_config_prefix_keeps_existing_location() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+    )
+
+    location = resolve_run_storage_location(
+        {"bucket": "unit-bucket", "prefix": "runs/demo"}, run_id="unused"
+    )
+
+    assert location is not None
+    assert location.uri == "s3://unit-bucket/runs/demo"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "s3://other-bucket/runs/demo",
+        "s3://unit-bucket",
+        "s3://unit-bucket/",
+        "s3://unit-bucket/runs/../demo",
+        "s3://unit-bucket/runs/demo?part=1",
+        "s3://unit-bucket/runs/demo#fragment",
+        "s3://user@unit-bucket/runs/demo",
+        "s3://unit-bucket:443/runs/demo",
+        "s3://unit-bucket/runs\\demo",
+        "https://unit-bucket/runs/demo",
+        "s3:/unit-bucket/runs/demo",
+    ],
+)
+def test_invalid_absolute_config_prefix_is_rejected(prefix: str) -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+    )
+
+    with pytest.raises(ValueError):
+        resolve_run_storage_location(
+            {"bucket": "unit-bucket", "prefix": prefix}, run_id="unused"
+        )
+
+
+@pytest.mark.parametrize("leading_slash", ["", "/"])
+def test_recorded_legacy_doubled_prefix_remains_exactly_readable(leading_slash) -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+
+    observed: list[tuple[str, str]] = []
+
+    def reader(bucket: str, key: str) -> str:
+        observed.append((bucket, key))
+        return json.dumps(
+            {
+                "workflow": "legacy",
+                "run_id": "legacy-run",
+                "api_version": "npa.workflow/v0.0.1",
+            }
+        )
+
+    prefix = leading_slash + "s3://unit-bucket/runs/legacy"
+    recorded = "s3://unit-bucket/" + prefix
+    store = store_for_recorded_run_prefix(recorded)
+    store._reader = reader
+
+    assert store.read_manifest() is not None
+    assert store.run_prefix_uri == recorded
+    assert observed == [
+        (
+            "unit-bucket",
+            prefix + "/npa-workflow/manifest.json",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "s3://unit-bucket/runs/../legacy",
+        "s3://unit-bucket/runs\\legacy",
+        "s3://user@unit-bucket/runs/legacy",
+        "s3://unit-bucket:443/runs/legacy",
+    ],
+)
+def test_malformed_recorded_run_prefix_is_rejected(uri: str) -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+
+    with pytest.raises(ValueError):
+        store_for_recorded_run_prefix(uri)

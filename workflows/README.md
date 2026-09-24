@@ -63,6 +63,9 @@ npa workbench workflow list \
 
 See [run lifecycle](../docs/run-lifecycle.md) for launch, monitoring, interrupted
 submissions, and safe resume, and [teardown](../docs/teardown.md) for cleanup.
+The [workflow guide](../docs/workbench/npa-workflow-guide.md) explains relative
+and absolute ledger prefixes. Runtime resume preserves the recorded ledger
+location and verifies its storage access before launch.
 
 ### Runtime choices
 

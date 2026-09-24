@@ -1,6 +1,7 @@
 """Exercise target resolution and real probe behavior at provider boundaries."""
 
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 from botocore.exceptions import ClientError
@@ -1966,4 +1967,56 @@ def test_pod_session_token_rejected_before_raw_storage_probe(
         preflight_skypilot_submission(
             [document], project="unit", infra="k8s/unit-context"
         )
+    assert not provider.s3.calls
+
+
+def test_workflow_absolute_ledger_prefix_is_canonical(tmp_path: Path) -> None:
+    from npa.execution_preflight import workflow_output_destinations
+    from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+
+    source = tmp_path / "absolute-prefix.yaml"
+    source.write_text(
+        """apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: absolute-prefix}
+config:
+  bucket: unit-output
+  prefix: s3://unit-output/task/unit-run
+initial: execute
+states:
+  execute:
+    run: {shell: 'true'}
+    terminal: true
+"""
+    )
+
+    assert workflow_output_destinations(
+        load_spec_for_submit(source), run_id="unit-run"
+    ) == {"s3://unit-output/task/unit-run/": "directory"}
+
+
+def test_workflow_invalid_absolute_prefix_fails_before_storage(
+    provider, tmp_path: Path
+) -> None:
+    from npa.execution_preflight import workflow_output_destinations
+    from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+
+    source = tmp_path / "wrong-bucket.yaml"
+    source.write_text(
+        """apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: wrong-bucket}
+config:
+  bucket: unit-output
+  prefix: s3://other-output/task/unit-run
+initial: execute
+states:
+  execute:
+    run: {shell: 'true'}
+    terminal: true
+"""
+    )
+
+    with pytest.raises(ValueError, match="must equal config.bucket"):
+        workflow_output_destinations(load_spec_for_submit(source), run_id="unit-run")
     assert not provider.s3.calls

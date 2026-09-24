@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import re
 import shlex
 from typing import Any, Callable, Iterable, Mapping, Sequence
+from urllib.parse import urlparse
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
@@ -21,6 +22,90 @@ PAIDF_INPUT_WORKFLOW_NAMES = frozenset(
         NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
     }
 )
+
+
+@dataclass(frozen=True)
+class RunStorageLocation:
+    """Canonical object-storage location for a newly configured workflow run.
+
+    Args:
+        bucket: Object-storage bucket name.
+        prefix: Canonical key prefix without a leading or trailing slash.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    bucket: str
+    prefix: str
+
+    @property
+    def uri(self) -> str:
+        """Return the canonical S3 URI without a trailing slash.
+
+        Args:
+            None.
+
+        Returns:
+            The canonical ``s3://bucket/key`` URI.
+
+        Raises:
+            None.
+        """
+
+        return f"s3://{self.bucket}/{self.prefix}"
+
+
+def _absolute_prefix_key(value: str, bucket: str) -> str:
+    parsed = urlparse(value)
+    invalid = (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.netloc != parsed.hostname
+        or parsed.query
+        or parsed.fragment
+        or "\\" in value
+    )
+    if invalid:
+        raise ValueError("config.prefix must be a canonical s3://bucket/key URI")
+    if parsed.netloc != bucket:
+        raise ValueError("config.prefix S3 bucket must equal config.bucket")
+    key = parsed.path.strip("/")
+    if not key or any(part in {".", ".."} for part in key.split("/")):
+        raise ValueError("absolute config.prefix must contain a safe non-empty key")
+    return key
+
+
+def resolve_run_storage_location(
+    config: Mapping[str, Any], *, run_id: str
+) -> RunStorageLocation | None:
+    """Resolve one new run's bucket and key without changing the input config.
+
+    Args:
+        config: Resolved workflow configuration.
+        run_id: Fallback prefix when the configuration has no prefix.
+
+    Returns:
+        A canonical storage location, or ``None`` when no bucket is configured.
+
+    Raises:
+        ValueError: The prefix is an invalid URI or names another bucket.
+    """
+
+    bucket = str(config.get("bucket") or "").strip()
+    if not bucket:
+        return None
+    raw = str(config.get("prefix") or run_id).strip()
+    if raw.startswith("s3://"):
+        prefix = _absolute_prefix_key(raw, bucket)
+    elif "://" in raw or raw.startswith("s3:"):
+        raise ValueError("config.prefix must be a relative key or an s3:// URI")
+    else:
+        prefix = raw.strip("/")
+    return RunStorageLocation(bucket=bucket, prefix=prefix)
 
 
 def is_paidf_input_workflow_name(name: object) -> bool:
@@ -1594,10 +1679,59 @@ def store_for_config(
     aws_access_key_id: str = "",
     aws_secret_access_key: str = "",
 ) -> RunStateStore | None:
-    bucket = str(config.get("bucket") or "").strip()
-    prefix = str(config.get("prefix") or run_id).strip()
-    if not bucket:
+    location = resolve_run_storage_location(config, run_id=run_id)
+    if location is None:
         return None
+    return RunStateStore(
+        bucket=location.bucket,
+        prefix=location.prefix,
+        endpoint_url=endpoint_url,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+    )
+
+
+def _recorded_run_location(run_prefix_uri: str) -> tuple[str, str]:
+    raw = str(run_prefix_uri or "").strip()
+    parsed = urlparse(raw)
+    prefix = parsed.path.removeprefix("/").rstrip("/")
+    invalid = (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.netloc != parsed.hostname
+        or parsed.query
+        or parsed.fragment
+        or "\\" in raw
+        or not prefix
+        or any(part in {".", ".."} for part in prefix.split("/"))
+    )
+    if invalid:
+        raise ValueError("recorded run prefix must be a non-empty s3:// URI")
+    return parsed.netloc, prefix
+
+
+def store_for_recorded_run_prefix(
+    run_prefix_uri: str,
+    *,
+    endpoint_url: str = "",
+    aws_access_key_id: str = "",
+    aws_secret_access_key: str = "",
+) -> RunStateStore:
+    """Restore an exact previously recorded run location, including legacy keys.
+
+    Args:
+        run_prefix_uri: Exact URI persisted in the durable submission receipt.
+        endpoint_url: Optional object-storage endpoint override.
+        aws_access_key_id: Optional object-storage access key.
+        aws_secret_access_key: Optional object-storage secret key.
+
+    Returns:
+        A store targeting the recorded bucket and key byte-for-byte.
+
+    Raises:
+        ValueError: The receipt does not contain an exact non-empty S3 location.
+    """
+    bucket, prefix = _recorded_run_location(run_prefix_uri)
     return RunStateStore(
         bucket=bucket,
         prefix=prefix,
