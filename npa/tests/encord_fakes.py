@@ -81,7 +81,7 @@ class FakeS3:
         response = {
             "ContentLength": size,
             "ContentType": self.content_types.get(identity, "application/octet-stream"),
-            "ETag": f'"opaque-{hashlib.sha1(payload).hexdigest()}"',  # noqa: S324
+            "ETag": f'"opaque-{hashlib.sha256(payload).hexdigest()}"',
         }
         response.update(self.head_overrides.get(identity, {}))
         return response
