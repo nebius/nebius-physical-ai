@@ -70,6 +70,19 @@ class SoperatorSpecError(ValueError):
     """Raised when a soperator spec is missing required fields or malformed."""
 
 
+def _exact_boolean(
+    values: dict[str, Any], key: str, *, field_name: str | None = None
+) -> bool:
+    """Return an optional boolean field without coercing other YAML values."""
+
+    if key not in values:
+        return False
+    value = values[key]
+    if not isinstance(value, bool):
+        raise SoperatorSpecError(f"{field_name or key} must be a boolean when supplied")
+    return value
+
+
 def sizing_tier_for_worker_count(worker_count: int) -> str:
     """Return the pinned upstream sizing tier for *worker_count*."""
 
@@ -407,8 +420,16 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
                 size=int(entry.get("size", 1)),
                 boot_disk_gib=int(entry.get("boot_disk_gib", 512)),
                 fabric=str(entry.get("fabric", "")),
-                preemptible=bool(entry.get("preemptible", False)),
-                docker_cache=bool(entry.get("docker_cache", False)),
+                preemptible=_exact_boolean(
+                    entry,
+                    "preemptible",
+                    field_name=f"worker pool {entry.get('name', '')!r} preemptible",
+                ),
+                docker_cache=_exact_boolean(
+                    entry,
+                    "docker_cache",
+                    field_name=f"worker pool {entry.get('name', '')!r} docker_cache",
+                ),
                 docker_cache_gib=int(entry.get("docker_cache_gib", 372)),
                 docker_cache_disk_type=str(
                     entry.get("docker_cache_disk_type", "NETWORK_SSD_IO_M3")
@@ -459,11 +480,11 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
         ),
         login_preset=str(login.get("preset", "16vcpu-64gb")),
         workers=workers,
-        accounting=bool(data.get("accounting", False)),
+        accounting=_exact_boolean(data, "accounting"),
         slurm_rest_enabled=(rest_value if rest_value is not None else None),
-        telemetry=bool(data.get("telemetry", False)),
-        use_default_apparmor_profile=bool(
-            data.get("use_default_apparmor_profile", False)
+        telemetry=_exact_boolean(data, "telemetry"),
+        use_default_apparmor_profile=_exact_boolean(
+            data, "use_default_apparmor_profile"
         ),
         jail_size_gib=int(data.get("jail_size_gib", 512)),
         slurm_operator_version=str(
