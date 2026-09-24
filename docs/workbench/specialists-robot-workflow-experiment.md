@@ -1,5 +1,9 @@
 # Robot workflow repair: model cost and verified results
 
+The subsequent [model-selection experiment](specialists-model-selection-experiment.md)
+tests cheaper Token Factory models and direct dispatch of predefined assignments.
+The original six runs and their results remain below.
+
 In the final matched pair, Astra with Token Factory specialists completed the
 same two repairs as Astra alone for **$0.405 versus $0.754–$1.469 in standard
 model API-price equivalents**. This is at least **46% lower model cost**, but
@@ -125,6 +129,22 @@ usage cannot bound every request below the 272,000-token pricing threshold, the
 report retains both published context tariffs. Fresh hybrid turns below that
 bound use the short-context rate. Reported Astra cached-input counters receive
 the published cache tariff; all Token Factory input receives its full input rate.
+
+A subsequent [Codex cost audit](specialists-codex-cost-audit.json) confirmed the
+cache arithmetic and that reasoning tokens were already included in output.
+The baseline's 336,912 input tokens include 299,264 cached tokens; its short-context
+API equivalent is `(37,648 × $10 + 299,264 × $1 + 1,566 × $50) / 1,000,000`,
+or $0.754044. The upper bound covers unknown per-request context tariffs; it
+does not mean the entire accumulated turn necessarily received long-context
+pricing. The ephemeral runs retained no request-level token records.
+
+One Codex delegation turn can contain several model requests. The recorded turn
+totals include their usage; calling it one API request would be inaccurate.
+Neither actual Codex credit deductions nor invoices were measured. Within an
+included ChatGPT allowance, the hybrid can add a separate Token Factory charge
+while saving Codex quota rather than cash. Its $0.19147928 Token Factory component
+is also a token-tariff estimate, not an invoice. The supervising development and
+research conversation is outside these measured arms.
 
 Elapsed time uses `execution.agent_tool_seconds`, including worker shutdown.
 All recorded model attempts within each arm are included or marked unpriced.

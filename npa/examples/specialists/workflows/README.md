@@ -1,7 +1,7 @@
 # Astra with independent Workbench specialists
 
-This opt-in runner compares **Astra alone** with **the same Astra coordinator
-delegating to configured Token Factory specialists**. Both arms receive the same
+This opt-in runner compares **Astra alone** with **configured Token Factory
+specialists supported by Astra**. Both arms receive the same
 scoped file tools, named operations and concurrent `run_operations` tool. The
 hybrid adds durable `delegate`, `specialist_status`, `wait_specialist`, `wait_specialists` and
 `take_over` tools; its GLM/DeepSeek workers use the existing LangGraph runtime.
@@ -67,7 +67,7 @@ Use the default completion mode when Astra should plan the assignments.
 
 Use `--coordination continuous` to reproduce the original single-conversation
 supervisor. The baseline performs the same task through its direct tools in
-either mode. Give both arms the same playbook, source, operation grants and
+every mode. Give both arms the same playbook, source, operation grants and
 acceptance criteria. The completion mode changes orchestration, not permission
 or the independent grader. `coordination.json` records the host waits, and
 `coordinator-config.json` retains every fresh turn's invocation. All turns enter
@@ -140,7 +140,7 @@ the coordinator cannot act on that workspace. A host-local profile lock also
 excludes delegation during a direct coordinator operation. An uncertain tool
 effect blocks further effects, including a new delegated task, until externally
 reconciled. The bridge exposes no automatic replay tool.
-The hybrid coordinator initially delegates independent workspace tasks. After a
+In completion mode, Astra initially delegates independent workspace tasks. After a
 specialist enters `needs_attention`, Astra may inspect its receipts and call
 `take_over`. This requires the profile lock and fully resolved tool effects,
 preserves the prior error and receipts, and cancels only the local specialist
@@ -238,3 +238,9 @@ hybrid passed both tasks using one Astra delegation turn and no review turn,
 with lower model API-equivalent cost and longer elapsed time. All six runs,
 including the earlier provider failure, remain in the evidence. Jev was not
 invoked in these runs.
+
+The follow-up [model-selection report](../../../../docs/workbench/specialists-model-selection-experiment.md)
+keeps that earlier evidence and tests Flash specialists with explicit dispatch.
+Both fresh comparisons passed all configured repairs without invoking Astra,
+with lower elapsed time and model API-equivalent cost. It includes the failed
+screened candidate, per-request Codex accounting and the exact task scope.

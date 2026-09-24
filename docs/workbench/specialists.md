@@ -426,3 +426,11 @@ receipts. The final matched pair passed 2/2 repairs in both arms and used at
 least 46% less model API-equivalent cost with specialists, but took 56% longer.
 The report retains an earlier provider-failure run that cost more. Live Jev
 routing was unavailable and is not included in the measured result.
+
+The subsequent [model-selection experiment](specialists-model-selection-experiment.md)
+found a cheaper, faster recipe for those predefined tasks: GLM-5.3-Flash with
+direct dispatch and Astra available only for escalation. Two fresh matched
+pairs passed every repair with zero Astra invocations, 29–30% shorter elapsed
+time and at least 98.49% lower model API-equivalent cost. The report retains the
+unsuccessful Lightning candidate, request-level Codex expense audit and the
+limits of applying these measurements to other tasks or subscription bills.

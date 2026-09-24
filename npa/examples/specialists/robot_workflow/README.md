@@ -102,3 +102,7 @@ comparative result is implied by the example alone. The separate
 [measured repair report](../../../../docs/workbench/specialists-robot-workflow-experiment.md)
 retains three matched pairs, their source/artifact audits, model-cost estimates
 and observed provider failures.
+The subsequent [model-selection report](../../../../docs/workbench/specialists-model-selection-experiment.md)
+retains cheaper-model screening and a separate direct-dispatch experiment on
+the same task. Its endpoint recipe changes model selection and coordination;
+the native verification contract remains the same.

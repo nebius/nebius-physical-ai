@@ -99,6 +99,13 @@ those partial sums. An unknown cache count is never presented as a measured
 zero. The recorder's incomplete flags, required missing counters, interrupted
 execution and snapshot errors prevent a complete-run cost estimate.
 
+The explicit `specialists-first` mode can complete with zero coordinator turns.
+That is accepted only when the execution mode, protocol and invocation journal
+agree, the recorder confirms no contradictory Codex events, and the usage
+snapshot is complete. Missing coordinator logs in other modes remain unknown.
+Every specialist response and any actual Astra escalation still enters the
+estimate; zero coordinator usage does not establish task success by itself.
+
 `priced_recorded_cost_usd` gives bounds for the subset of records with enough
 usage and pricing information; inspect `unpriced_records` beside it.
 `estimated_cost_range_usd` is populated only when the recorded usage is complete
