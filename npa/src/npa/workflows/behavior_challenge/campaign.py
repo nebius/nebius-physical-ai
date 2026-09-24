@@ -8,7 +8,7 @@ import math
 import re
 from typing import Any
 
-from .protocol import SPLITS, UPSTREAM_COMMIT, WRAPPER
+from .protocol import SPLITS, UPSTREAM_COMMIT, WRAPPER, require_supported_upstream
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
@@ -150,11 +150,28 @@ def _panel_cases(split: str, tasks: tuple[str, ...]) -> list[dict[str, Any]]:
     return [_case(split, task, index) for task in tasks for index in SPLITS[split]]
 
 
+def _panel_payload(policy, registry, tasks, split, revision) -> dict[str, Any]:
+    return {
+        "schema": "npa.behavior.campaign-panel.v1",
+        "upstream_commit": revision,
+        "wrapper": WRAPPER,
+        "registry_sha256": canonical_digest(list(registry)),
+        "split": split,
+        "selected_tasks": list(tasks),
+        "task_count": len(tasks),
+        "case_count": len(tasks) * len(SPLITS[split]),
+        "policy": policy,
+        "cases": _panel_cases(split, tasks),
+    }
+
+
 def declare_panel(
     policy: dict[str, Any],
     registry_tasks: list[str] | tuple[str, ...],
     selected_tasks: list[str] | tuple[str, ...],
     split: str,
+    *,
+    upstream_commit: str = UPSTREAM_COMMIT,
 ) -> dict[str, Any]:
     """Declare one reusable policy panel over fixed official cases.
 
@@ -163,6 +180,7 @@ def declare_panel(
         registry_tasks: Ordered official 100-task registry.
         selected_tasks: Nonempty subset to include, canonicalized to registry order.
         split: Existing protocol split, development or report.
+        upstream_commit: Supported official evaluator revision to freeze.
     Returns:
         Panel whose ID is independent of campaigns and worker partitions.
     Raises:
@@ -173,18 +191,8 @@ def declare_panel(
     tasks = _selected_tasks(registry, selected_tasks)
     if split not in SPLITS:
         raise ValueError("Panel split must be development or report")
-    payload = {
-        "schema": "npa.behavior.campaign-panel.v1",
-        "upstream_commit": UPSTREAM_COMMIT,
-        "wrapper": WRAPPER,
-        "registry_sha256": canonical_digest(list(registry)),
-        "split": split,
-        "selected_tasks": list(tasks),
-        "task_count": len(tasks),
-        "case_count": len(tasks) * len(SPLITS[split]),
-        "policy": frozen_policy,
-        "cases": _panel_cases(split, tasks),
-    }
+    revision = require_supported_upstream(upstream_commit)
+    payload = _panel_payload(frozen_policy, registry, tasks, split, revision)
     return {**payload, "panel_id": canonical_digest(payload)}
 
 
@@ -222,8 +230,9 @@ def validate_panel(panel: object) -> dict[str, Any]:
 def _validate_panel_fields(panel: dict[str, Any]) -> None:
     if panel["schema"] != "npa.behavior.campaign-panel.v1":
         raise ValueError("Unsupported campaign panel schema")
-    if panel["upstream_commit"] != UPSTREAM_COMMIT or panel["wrapper"] != WRAPPER:
+    if panel["wrapper"] != WRAPPER:
         raise ValueError("Panel protocol identity differs")
+    require_supported_upstream(panel["upstream_commit"])
     if not _valid_sha256(panel["registry_sha256"]):
         raise ValueError("Panel registry identity is invalid")
     policy = validate_policy_identity(panel["policy"])
@@ -309,10 +318,17 @@ def _campaign_panels(
     policies: dict[str, dict[str, Any]],
     registry: tuple[str, ...],
     tasks: tuple[str, ...],
+    upstream_commit: str,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     return {
         name: {
-            role: declare_panel(policy, registry, tasks, _SPLIT_BY_PANEL[name])
+            role: declare_panel(
+                policy,
+                registry,
+                tasks,
+                _SPLIT_BY_PANEL[name],
+                upstream_commit=upstream_commit,
+            )
             for role, policy in policies.items()
         }
         for name in _PANELS
@@ -340,6 +356,7 @@ def declare_campaign(
     *,
     worker_count: int,
     minimum_paired_cases: int = 10,
+    upstream_commit: str = UPSTREAM_COMMIT,
 ) -> dict[str, Any]:
     """Freeze a paired development/reporting campaign before execution.
 
@@ -351,6 +368,7 @@ def declare_campaign(
         candidate: Immutable candidate policy identity.
         worker_count: Worker ownership count for every policy panel.
         minimum_paired_cases: Reviewed evidence threshold for comparisons.
+        upstream_commit: Supported official evaluator revision for every panel.
     Returns:
         Campaign declaration containing reusable panels and worker partitions.
     Raises:
@@ -361,7 +379,7 @@ def declare_campaign(
     registry = _registry_tasks(registry_tasks)
     tasks = _selected_tasks(registry, selected_tasks)
     policies = _campaign_policies(baseline, candidate)
-    panels = _campaign_panels(policies, registry, tasks)
+    panels = _campaign_panels(policies, registry, tasks, upstream_commit)
     _validate_paired_threshold(minimum_paired_cases, len(tasks) * 10)
     partitions = _campaign_partitions(panels, worker_count)
     payload = _campaign_payload(
@@ -431,6 +449,13 @@ def validate_campaign(
         raise ValueError("Campaign must be an object")
     try:
         worker_count = campaign["partitions"]["development"]["baseline"]["worker_count"]
+        revisions = {
+            panel["upstream_commit"]
+            for split in campaign["panels"].values()
+            for panel in split.values()
+        }
+        if len(revisions) != 1:
+            raise ValueError("Campaign panels must use one evaluator revision")
         expected = declare_campaign(
             campaign["campaign_id"],
             registry_tasks,
@@ -439,6 +464,7 @@ def validate_campaign(
             campaign["policies"]["candidate"],
             worker_count=worker_count,
             minimum_paired_cases=campaign["minimum_paired_cases"],
+            upstream_commit=revisions.pop(),
         )
     except (KeyError, TypeError) as exc:
         raise ValueError("Campaign is missing required fields") from exc
@@ -663,6 +689,22 @@ def _paired_rows(
     return rows
 
 
+def _paired_protocol(panels: dict) -> tuple[dict, dict]:
+    baseline = validate_panel(panels["baseline"])
+    candidate = validate_panel(panels["candidate"])
+    fields = (
+        "upstream_commit",
+        "wrapper",
+        "registry_sha256",
+        "split",
+        "selected_tasks",
+        "cases",
+    )
+    if any(baseline[field] != candidate[field] for field in fields):
+        raise ValueError("Paired panels must use one exact evaluator protocol")
+    return baseline, candidate
+
+
 def compare_panels(
     campaign: dict[str, Any],
     panel_name: str,
@@ -687,12 +729,13 @@ def compare_panels(
     panels = campaign.get("panels", {}).get(panel_name, {})
     if set(panels) != set(_POLICY_ROLES):
         raise ValueError("Campaign does not contain the requested paired panels")
-    if baseline_aggregate.get("panel_id") != panels["baseline"]["panel_id"]:
+    baseline_panel, candidate_panel = _paired_protocol(panels)
+    if baseline_aggregate.get("panel_id") != baseline_panel["panel_id"]:
         raise ValueError("Baseline aggregate is not bound to the referenced panel")
-    if candidate_aggregate.get("panel_id") != panels["candidate"]["panel_id"]:
+    if candidate_aggregate.get("panel_id") != candidate_panel["panel_id"]:
         raise ValueError("Candidate aggregate is not bound to the referenced panel")
-    baseline = validate_panel_aggregate(baseline_aggregate, panels["baseline"])
-    candidate = validate_panel_aggregate(candidate_aggregate, panels["candidate"])
+    baseline = validate_panel_aggregate(baseline_aggregate, baseline_panel)
+    candidate = validate_panel_aggregate(candidate_aggregate, candidate_panel)
     rows = _paired_rows(baseline, candidate)
     threshold = campaign.get("minimum_paired_cases")
     if type(threshold) is not int or threshold <= 0:

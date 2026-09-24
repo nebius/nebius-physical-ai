@@ -10,6 +10,8 @@ from .protocol import file_digest
 
 _SERVING_FILES = (
     "campaign_runner.py",
+    "evaluator_versions.py",
+    "evaluator_wire.py",
     "policy.py",
     "policy_server.py",
     "rlc_policy.py",

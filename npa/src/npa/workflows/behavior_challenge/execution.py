@@ -177,6 +177,7 @@ def _commands(args: argparse.Namespace, plan: dict, output: Path) -> list[list[s
             host=args.host,
             port=args.port,
             output=output,
+            upstream_commit=plan["upstream_commit"],
         )
         for case in plan["cases"]
     ]
@@ -221,7 +222,7 @@ def _evaluate_cases(
             records.append(_run_case(command, args, output, case, environment))
             write_summary(output, plan, records)
             _publish(storage, output, args.output_path, published)
-        verify_upstream(args.upstream_root)
+        verify_upstream(args.upstream_root, plan["upstream_commit"])
         summary = write_summary(output, plan, records)
         if plan["eligible_for_reporting"]:
             build_submission(output, plan, records)
@@ -247,6 +248,7 @@ def _prepare_plan(
     storage.download_file(args.input_path, str(output / "recipe.json"))
     recipe = json.loads((output / "recipe.json").read_bytes())
     plan = make_plan(recipe, args.upstream_root)
+    verify_upstream(args.upstream_root, plan["upstream_commit"])
     storage.download_file(args.policy_readme_uri, str(output / "policy.md"))
     if not (output / "policy.md").read_text().strip():
         raise ValueError(
@@ -280,13 +282,12 @@ def evaluate(args: argparse.Namespace) -> dict:
     _s3_location(args.output_path)
     _s3_location(args.policy_readme_uri)
     args.upstream_root = args.upstream_root.resolve()
-    verify_upstream(args.upstream_root)
-    environment = _runtime_environment(args)
     storage = StorageClient.from_environment()
     output = Path(tempfile.mkdtemp(prefix="npa-behavior-"))
     completed = False
     try:
         plan = _prepare_plan(args, storage, output)
+        environment = _runtime_environment(args)
         result = _execute_with_policy(args, plan, output, storage, environment)
         completed = True
         return result

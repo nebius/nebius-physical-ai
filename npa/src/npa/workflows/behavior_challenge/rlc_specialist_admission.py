@@ -12,7 +12,12 @@ from .campaign import (
     canonical_digest,
     validate_panel,
 )
-from .protocol import UPSTREAM_COMMIT, WRAPPER, file_digest
+from .protocol import (
+    UPSTREAM_COMMITS,
+    WRAPPER,
+    file_digest,
+    require_supported_upstream,
+)
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _TASK = "picking_up_trash"
@@ -83,14 +88,6 @@ _BASELINE_POLICIES = {
         "identity_sha256": "daaf62fd1652857fdef26b6762a0fdac173187e758fa1a95a38dfa97bd807e3a",
     },
 }
-_RUNTIME_FILES = (
-    "rlc_server.py",
-    "rlc_observations.py",
-    "rlc_execution.py",
-    "rlc_correlation.py",
-    "rlc_specialist.py",
-    "rlc-specialist-checkpoint.json",
-)
 _LEGACY_RUNTIME_FILES = {
     "rlc_server.py": {
         "sha256": "78caf7eadccbf3803832f58a7451d644d5d938fc2efce59e89c453af2521c2ee",
@@ -117,7 +114,41 @@ _LEGACY_RUNTIME_FILES = {
         "bytes": 3_520,
     },
 }
-_CONTROL_PLANE_CHANGES = (
+_CURRENT_RUNTIME_FILES = {
+    "rlc_server.py": {
+        "sha256": "ec635eeb7cab7b1be313551d963b171030aa0d3d96aa20385a5486ab61fab0d4",
+        "bytes": 8_501,
+    },
+    "rlc_observations.py": {
+        "sha256": "770c1e3ef814b5baa587b4f685112f34230f3277a4679386897f8adcce76437b",
+        "bytes": 1_768,
+    },
+    "rlc_execution.py": {
+        "sha256": "6b56676a73a68b5c4d4d2b31170531b9021756df4acec98fb2b269438eecc3fb",
+        "bytes": 21_421,
+    },
+    "rlc_correlation.py": {
+        "sha256": "c8e2b9367b29e504be9813b8282365b05c0ffb9cd0c79f13e92fce42eacbcf9c",
+        "bytes": 8_938,
+    },
+    "rlc_specialist.py": {
+        "sha256": "9b741fe93dd2a4d8acdbbb37d41cb36698615f02fa29ce92f66bc4c98ab74345",
+        "bytes": 6_068,
+    },
+    "evaluator_versions.py": {
+        "sha256": "95660b00a18e24a0efd9b75a759a7144977c6e63bf8ace915985de8c3adc050a",
+        "bytes": 1_303,
+    },
+    "evaluator_wire.py": {
+        "sha256": "aaf9f549d8aac6ecda6a28d04f95d32dff6cc0face05a4629d18f89423232453",
+        "bytes": 4_541,
+    },
+    "rlc-specialist-checkpoint.json": {
+        "sha256": "f561adc5dafb69446863920831ed430b64495892b4f572d03d8c8832b37ef75a",
+        "bytes": 3_520,
+    },
+}
+_LEGACY_CONTROL_PLANE_CHANGES = (
     "__main__.py",
     "campaign_runner.py",
     "campaign_workflow.py",
@@ -147,11 +178,12 @@ def _identity(payload: dict) -> dict:
     return {**payload, "identity_sha256": hashlib.sha256(encoded).hexdigest()}
 
 
-def specialist_runtime_identity(args) -> dict:
+def specialist_runtime_identity(args, upstream_commit: str) -> dict:
     """Fingerprint only inputs that can change specialist policy behavior.
 
     Args:
         args: Specialist paths and native execution settings.
+        upstream_commit: Official evaluator revision declared by the panel.
     Returns:
         Canonical runtime identity independent of campaign authorization code.
     Raises:
@@ -165,6 +197,7 @@ def specialist_runtime_identity(args) -> dict:
         or args.policy_execution_variant != "native"
     ):
         raise ValueError("Specialist runtime identity requires native execution")
+    revision = require_supported_upstream(upstream_commit)
     _verify_source_checkouts(args, rlc_policy)
     archive = Path(args.policy_archive)
     checkpoint = {"sha256": file_digest(archive), "bytes": archive.stat().st_size}
@@ -176,10 +209,10 @@ def specialist_runtime_identity(args) -> dict:
         "schema": "npa.behavior.rlc-specialist-runtime.v2",
         "kind": "rlc-specialist",
         "task": {"name": _TASK, "id": 1},
-        "runtime_files": _verified_runtime_files(),
+        "runtime_files": _runtime_files(revision),
         "checkpoint": checkpoint,
         "source_commits": _source_commits(rlc_policy, rlc_specialist),
-        "contracts": _runtime_contracts(rlc_specialist),
+        "contracts": _runtime_contracts(rlc_specialist, revision),
     }
     return _identity(payload)
 
@@ -198,22 +231,31 @@ def _verify_source_checkouts(args, rlc_policy) -> None:
         raise ValueError("Specialist task mapping differs from frozen task1")
 
 
-def _verified_runtime_files() -> dict[str, dict]:
+def _runtime_files(upstream_commit: str) -> dict[str, dict]:
+    expected = (
+        _LEGACY_RUNTIME_FILES
+        if upstream_commit == UPSTREAM_COMMITS["3.9.2"]
+        else _CURRENT_RUNTIME_FILES
+    )
     root = Path(__file__).parent
     actual = {
         name: {
             "sha256": file_digest(root / name),
             "bytes": (root / name).stat().st_size,
         }
-        for name in _RUNTIME_FILES
+        for name in expected
     }
-    if actual != _LEGACY_RUNTIME_FILES:
+    if actual != expected:
         raise ValueError("Specialist staged runtime bytes differ from development")
     return actual
 
 
 def verify_staged_specialist_runtime(
-    args, output: Path, adapters: dict[str, str], command: list[str]
+    args,
+    output: Path,
+    adapters: dict[str, str],
+    command: list[str],
+    upstream_commit: str,
 ) -> None:
     """Verify the files and argv that the specialist process will consume.
 
@@ -222,14 +264,19 @@ def verify_staged_specialist_runtime(
         output: Per-case policy directory containing staged source files.
         adapters: SHA-256 map returned by the staging helper.
         command: Native specialist server command.
+        upstream_commit: Evaluator revision from the immutable managed plan.
     Returns:
         None.
     Raises:
         ValueError: Staged bytes, file set, or command semantics differ.
     """
-    expected_hashes = {
-        name: identity["sha256"] for name, identity in _LEGACY_RUNTIME_FILES.items()
-    }
+    revision = require_supported_upstream(upstream_commit)
+    expected_files = (
+        _LEGACY_RUNTIME_FILES
+        if revision == UPSTREAM_COMMITS["3.9.2"]
+        else _CURRENT_RUNTIME_FILES
+    )
+    expected_hashes = {name: row["sha256"] for name, row in expected_files.items()}
     actual = {
         name: {
             "sha256": file_digest(output / name),
@@ -237,12 +284,14 @@ def verify_staged_specialist_runtime(
         }
         for name in adapters
     }
-    if adapters != expected_hashes or actual != _LEGACY_RUNTIME_FILES:
+    if adapters != expected_hashes or actual != expected_files:
         raise ValueError("Staged specialist runtime differs from development")
-    _verify_native_command(args, output, command)
+    _verify_native_command(args, output, command, revision)
 
 
-def _verify_native_command(args, output: Path, command: list[str]) -> None:
+def _verify_native_command(
+    args, output: Path, command: list[str], upstream_commit: str
+) -> None:
     fixed = {
         0: str(args.policy_python),
         1: str(output / "rlc_server.py"),
@@ -254,14 +303,23 @@ def _verify_native_command(args, output: Path, command: list[str]) -> None:
         7: "1",
         8: "--port",
         9: str(args.port),
-        10: "--specialist-state-contract",
-        11: "--execution-variant",
-        12: "native",
+        10: "--upstream-commit",
+        11: upstream_commit,
+        12: "--specialist-state-contract",
+        13: "--execution-variant",
+        14: "native",
     }
-    if len(command) != 13 or any(
+    if len(command) != 15 or any(
         command[index] != value for index, value in fixed.items()
     ):
         raise ValueError("Specialist native command differs from development")
+
+
+def _hold_specialist_report(revision: str) -> None:
+    require_supported_upstream(revision)
+    raise ValueError(
+        "Specialist report is held pending version-matched runtime and lineage qualification"
+    )
 
 
 def _source_commits(rlc_policy, specialist) -> dict[str, str]:
@@ -274,24 +332,28 @@ def _source_commits(rlc_policy, specialist) -> dict[str, str]:
     }
 
 
-def _runtime_contracts(specialist) -> dict:
-    return {
+def _runtime_command(upstream_commit: str) -> list[str]:
+    command = [
+        "{policy_python}",
+        "{output}/rlc_server.py",
+        "--source-root",
+        "{policy_root}",
+        "--checkpoint",
+        "{policy_checkpoint}",
+        "--task-id",
+        "1",
+        "--port",
+        "{port}",
+    ]
+    if upstream_commit == UPSTREAM_COMMITS["3.9.3"]:
+        command.extend(("--upstream-commit", upstream_commit))
+    return command + ["--specialist-state-contract", "--execution-variant", "native"]
+
+
+def _runtime_contracts(specialist, upstream_commit: str) -> dict:
+    contracts = {
         "entrypoint": "rlc_server.py",
-        "command_argv": [
-            "{policy_python}",
-            "{output}/rlc_server.py",
-            "--source-root",
-            "{policy_root}",
-            "--checkpoint",
-            "{policy_checkpoint}",
-            "--task-id",
-            "1",
-            "--port",
-            "{port}",
-            "--specialist-state-contract",
-            "--execution-variant",
-            "native",
-        ],
+        "command_argv": _runtime_command(upstream_commit),
         "specialist_state_contract": True,
         "execution_variant": "native",
         "episode_lifecycle": "fresh-managed-process-per-case-v1",
@@ -300,9 +362,11 @@ def _runtime_contracts(specialist) -> dict:
         "topology_sha256": specialist.TOPOLOGY_SHA256,
         "allowed_observations": "three_rgb_plus_61_proprio",
         "action_shape": 23,
-        "upstream_commit": UPSTREAM_COMMIT,
         "wrapper": WRAPPER,
     }
+    if upstream_commit == UPSTREAM_COMMITS["3.9.3"]:
+        contracts["upstream_commit"] = upstream_commit
+    return contracts
 
 
 def _receipt_digest(receipt: dict, field: str, label: str) -> None:
@@ -312,8 +376,27 @@ def _receipt_digest(receipt: dict, field: str, label: str) -> None:
         raise ValueError(f"{label} digest differs")
 
 
-def _verify_equivalence(receipt: dict, runtime: dict) -> None:
+def _verify_equivalence(receipt: dict, runtime: dict, revision: str) -> None:
     expected_keys = _equivalence_fields()
+    schema, status, changes, claims = _equivalence_contract(revision)
+    if set(receipt) != expected_keys:
+        raise ValueError("Specialist equivalence receipt fields differ")
+    if (
+        receipt["schema"] != schema
+        or receipt["status"] != status
+        or receipt["legacy_policy"] != _LEGACY_POLICY
+        or receipt["legacy_authorization"] != _LEGACY_AUTHORIZATION
+        or receipt["runtime_identity"] != runtime
+        or receipt["control_plane_changes"] != list(changes)
+        or receipt["claims"] != claims
+    ):
+        raise ValueError("Specialist legacy-to-runtime equivalence differs")
+    _receipt_digest(receipt, "receipt_sha256", "Specialist equivalence receipt")
+
+
+def _equivalence_contract(revision: object) -> tuple[str, str, tuple, dict]:
+    if require_supported_upstream(revision) != UPSTREAM_COMMITS["3.9.2"]:
+        raise ValueError("Current specialist runtime has no qualification receipt")
     claims = {
         "runtime_files_byte_identical": True,
         "checkpoint_bytes_identical": True,
@@ -322,19 +405,12 @@ def _verify_equivalence(receipt: dict, runtime: dict) -> None:
         "fresh_process_lifecycle_identical": True,
         "official_24gb_qualified": False,
     }
-    if set(receipt) != expected_keys:
-        raise ValueError("Specialist equivalence receipt fields differ")
-    if (
-        receipt["schema"] != "npa.behavior.rlc-specialist-equivalence.v1"
-        or receipt["status"] != "reviewed_legacy_v1_to_runtime_v2_equivalent"
-        or receipt["legacy_policy"] != _LEGACY_POLICY
-        or receipt["legacy_authorization"] != _LEGACY_AUTHORIZATION
-        or receipt["runtime_identity"] != runtime
-        or receipt["control_plane_changes"] != list(_CONTROL_PLANE_CHANGES)
-        or receipt["claims"] != claims
-    ):
-        raise ValueError("Specialist legacy-to-runtime equivalence differs")
-    _receipt_digest(receipt, "receipt_sha256", "Specialist equivalence receipt")
+    return (
+        "npa.behavior.rlc-specialist-equivalence.v1",
+        "reviewed_legacy_v1_to_runtime_v2_equivalent",
+        _LEGACY_CONTROL_PLANE_CHANGES,
+        claims,
+    )
 
 
 def _equivalence_fields() -> set[str]:
@@ -761,10 +837,14 @@ def _preflight_report_receipts(
 ) -> None:
     if set(equivalence) != _equivalence_fields():
         raise ValueError("Specialist equivalence receipt fields differ")
-    if (
-        equivalence["schema"] != "npa.behavior.rlc-specialist-equivalence.v1"
-        or equivalence["status"] != "reviewed_legacy_v1_to_runtime_v2_equivalent"
-    ):
+    envelope = (equivalence["schema"], equivalence["status"])
+    supported = {
+        (
+            "npa.behavior.rlc-specialist-equivalence.v1",
+            "reviewed_legacy_v1_to_runtime_v2_equivalent",
+        )
+    }
+    if envelope not in supported:
         raise ValueError("Specialist equivalence receipt envelope differs")
     _receipt_digest(equivalence, "receipt_sha256", "Specialist equivalence receipt")
     if set(report_admission) != _admission_fields():
@@ -772,6 +852,17 @@ def _preflight_report_receipts(
     if not _admission_header_matches(report_admission, equivalence_sha):
         raise ValueError("Specialist report admission envelope differs")
     _receipt_digest(report_admission, "admission_sha256", "Specialist report admission")
+
+
+def _record_verified_report_scope(
+    args, runtime: dict, panel_id: str, equivalence_sha: str, admission_sha: str
+) -> None:
+    args._specialist_report_runtime_identity = runtime
+    args._specialist_report_panel_id = panel_id
+    args._specialist_report_receipts = {
+        "equivalence": equivalence_sha,
+        "admission": admission_sha,
+    }
 
 
 def verify_specialist_report_admission(
@@ -797,21 +888,19 @@ def verify_specialist_report_admission(
         if any(_report_paths_present(args)):
             raise ValueError("Specialist development does not accept report receipts")
         return None
+    _hold_specialist_report(valid_panel["upstream_commit"])
     equivalence, equivalence_sha, report_admission, admission_sha = (
         _load_report_receipts(args)
     )
     _preflight_report_receipts(equivalence, equivalence_sha, report_admission)
-    runtime = specialist_runtime_identity(args)
-    _verify_equivalence(equivalence, runtime)
+    runtime = specialist_runtime_identity(args, valid_panel["upstream_commit"])
+    _verify_equivalence(equivalence, runtime, valid_panel["upstream_commit"])
     _verify_admission(
         storage, workspace, report_admission, valid_panel, equivalence_sha
     )
-    args._specialist_report_runtime_identity = runtime
-    args._specialist_report_panel_id = valid_panel["panel_id"]
-    args._specialist_report_receipts = {
-        "equivalence": equivalence_sha,
-        "admission": admission_sha,
-    }
+    _record_verified_report_scope(
+        args, runtime, valid_panel["panel_id"], equivalence_sha, admission_sha
+    )
     return runtime
 
 
@@ -899,6 +988,9 @@ def verify_specialist_policy_scope(args, plan: dict) -> dict:
         or not isinstance(receipts, dict)
         or recipe.get("split") != "report"
         or recipe.get("tasks") != [_TASK]
+        or recipe.get("upstream_commit")
+        != runtime.get("contracts", {}).get("upstream_commit")
+        or plan.get("upstream_commit") != recipe.get("upstream_commit")
         or len(cases) != 1
         or cases[0].get("task") != _TASK
         or cases[0].get("rollout_id") != 0

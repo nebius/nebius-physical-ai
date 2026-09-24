@@ -176,7 +176,36 @@ def test_evaluator_preserves_wrapper_video_and_default_timeout(
     assert argv[argv.index("--num-rollouts") + 1] == "1"
     assert argv[argv.index("--mode") + 1] == "public_test"
     assert "--write-video" in argv
+    assert argv[argv.index("--num-envs") + 1] == "1"
+    assert argv[argv.index("--replay-action-chunk-size") + 1] == "0"
     assert "--max-steps" not in argv and "--policy" not in argv
+
+
+def test_legacy_evaluator_argv_remains_byte_compatible(upstream, recipe, tmp_path):
+    legacy = protocol.UPSTREAM_COMMITS["3.9.2"]
+    recipe["upstream_commit"] = legacy
+    case = protocol.make_plan(recipe, upstream)["cases"][0]
+    argv = protocol.evaluator_argv(
+        case,
+        root=upstream,
+        python="python",
+        host="localhost",
+        port=8000,
+        output=tmp_path,
+        upstream_commit=legacy,
+    )
+    assert "--num-envs" not in argv
+    assert "--replay-action-chunk-size" not in argv
+    assert argv[-2:] == ["--write-video", "--headless"]
+
+
+def test_recipe_pins_supported_evaluator_revision(upstream, recipe):
+    legacy = protocol.UPSTREAM_COMMITS["3.9.2"]
+    recipe["upstream_commit"] = legacy
+    assert protocol.make_plan(recipe, upstream)["upstream_commit"] == legacy
+    recipe["upstream_commit"] = "0" * 40
+    with pytest.raises(ValueError, match="supported official"):
+        protocol.make_plan(recipe, upstream)
 
 
 @pytest.mark.parametrize(
@@ -190,6 +219,18 @@ def test_source_verification_refuses_drift(monkeypatch, tmp_path, revision, dirt
     )
     with pytest.raises(ValueError):
         protocol.verify_upstream(tmp_path)
+
+
+def test_source_verification_uses_explicit_legacy_pin(monkeypatch, tmp_path):
+    legacy = protocol.UPSTREAM_COMMITS["3.9.2"]
+    monkeypatch.setattr(
+        protocol.subprocess,
+        "check_output",
+        lambda argv, **kw: legacy if "rev-parse" in argv else "",
+    )
+    protocol.verify_upstream(tmp_path, legacy)
+    with pytest.raises(ValueError, match="pinned commit"):
+        protocol.verify_upstream(tmp_path, protocol.UPSTREAM_COMMIT)
 
 
 def test_original_failed_rollout_and_infinite_normalization_are_preserved(tmp_path):
@@ -280,7 +321,7 @@ class _Storage:
 @pytest.fixture
 def execution_fixture(upstream, recipe, monkeypatch):
     storage = _Storage(recipe)
-    monkeypatch.setattr(execution, "verify_upstream", lambda root: None)
+    monkeypatch.setattr(execution, "verify_upstream", lambda root, commit=None: None)
     monkeypatch.setattr(execution, "_runtime_environment", lambda args: {})
     monkeypatch.setattr(execution.StorageClient, "from_environment", lambda: storage)
     args = argparse.Namespace(

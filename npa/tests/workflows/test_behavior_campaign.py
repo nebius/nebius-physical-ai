@@ -103,6 +103,45 @@ def test_panel_identity_is_reusable_across_campaigns_and_worker_layouts():
     )
 
 
+def test_panel_defaults_current_and_validates_legacy_protocol():
+    policy = _policy("stock", "a")
+    registry = _registry()
+    current = campaign.declare_panel(policy, registry, registry[:1], "development")
+    legacy = campaign.declare_panel(
+        policy,
+        registry,
+        registry[:1],
+        "development",
+        upstream_commit="b1979916ec1549b10a4e65e630bc6504a9af1b00",
+    )
+    assert current["upstream_commit"] == campaign.UPSTREAM_COMMIT
+    assert campaign.validate_panel(legacy) == legacy
+    changed = copy.deepcopy(legacy)
+    changed["upstream_commit"] = "0" * 40
+    with pytest.raises(ValueError, match="supported official"):
+        campaign.validate_panel(changed)
+
+
+def test_campaign_freezes_one_explicit_legacy_revision_across_every_panel():
+    legacy_commit = "b1979916ec1549b10a4e65e630bc6504a9af1b00"
+    declaration = campaign.declare_campaign(
+        "legacy-comparison",
+        _registry(),
+        ["task_000"],
+        _policy("stock", "a"),
+        _policy("candidate", "b"),
+        worker_count=2,
+        upstream_commit=legacy_commit,
+    )
+
+    assert {
+        panel["upstream_commit"]
+        for split in declaration["panels"].values()
+        for panel in split.values()
+    } == {legacy_commit}
+    assert campaign.validate_campaign(declaration, _registry()) == declaration
+
+
 def test_policy_alias_cannot_disguise_identical_baseline_candidate_bytes():
     artifacts = _policy("stock", "a")["artifacts"]
     with pytest.raises(ValueError, match="must differ"):
@@ -242,6 +281,26 @@ def test_comparison_rejects_wrong_panel_partial_or_changed_campaign():
     changed["minimum_paired_cases"] = 1
     with pytest.raises(ValueError, match="Campaign digest"):
         campaign.compare_panels(changed, "development", baseline, candidate)
+
+
+def test_comparison_rejects_rehashed_cross_version_panels():
+    declaration = _declaration(tasks=["task_000"])
+    panels = declaration["panels"]["reporting"]
+    panels["candidate"] = campaign.declare_panel(
+        declaration["policies"]["candidate"],
+        _registry(),
+        ["task_000"],
+        "report",
+        upstream_commit="b1979916ec1549b10a4e65e630bc6504a9af1b00",
+    )
+    declaration["campaign_sha256"] = campaign.canonical_digest(
+        {key: value for key, value in declaration.items() if key != "campaign_sha256"}
+    )
+    baseline = _aggregate(panels["baseline"], 0.1)
+    candidate = _aggregate(panels["candidate"], 0.2)
+
+    with pytest.raises(ValueError, match="one exact evaluator protocol"):
+        campaign.compare_panels(declaration, "reporting", baseline, candidate)
 
 
 @pytest.mark.parametrize(

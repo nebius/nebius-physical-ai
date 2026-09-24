@@ -11,6 +11,11 @@ import zipfile
 
 import numpy as np
 
+if __package__:
+    from .evaluator_versions import require_supported_upstream
+else:
+    from evaluator_versions import require_supported_upstream
+
 
 SOURCE_COMMIT = "4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5"
 MODEL_REPOSITORY = "sunshk/openpi_comet"
@@ -483,6 +488,10 @@ def build_source_overlay(root: Path, overlay: Path) -> Path:
     policy.write_text(source.replace(old, new))
     with (overlay / "comet_policy.py").open("xb") as adapter:
         adapter.write(Path(__file__).read_bytes())
+    shutil.copyfile(
+        Path(__file__).with_name("evaluator_versions.py"),
+        overlay / "evaluator_versions.py",
+    )
     return overlay
 
 
@@ -515,7 +524,13 @@ def _restrict_training_loader(loader: Path) -> None:
 
 
 def _stage_adapters(output: Path, profile: CometProfile) -> dict[str, str]:
-    names = ("comet_policy.py", "comet_server.py", profile.inventory)
+    names = (
+        "comet_policy.py",
+        "comet_server.py",
+        "evaluator_versions.py",
+        "evaluator_wire.py",
+        profile.inventory,
+    )
     identities = {}
     for name in names:
         source = Path(__file__).with_name(name)
@@ -526,7 +541,12 @@ def _stage_adapters(output: Path, profile: CometProfile) -> dict[str, str]:
 
 
 def _server_command(
-    args, output: Path, task_id: int, task_name: str, profile: CometProfile
+    args,
+    output: Path,
+    task_id: int,
+    task_name: str,
+    profile: CometProfile,
+    upstream_commit: str,
 ) -> list[str]:
     command = [
         str(args.policy_python),
@@ -541,10 +561,18 @@ def _server_command(
         task_name,
         "--port",
         str(args.port),
+        "--upstream-commit",
+        upstream_commit,
     ]
     if profile != COMET12_PROFILE:
         command.extend(("--profile", profile.kind))
     return command
+
+
+def _plan_upstream_commit(plan: dict) -> str:
+    if "upstream_commit" not in plan:
+        raise ValueError("Managed Comet plan lacks its evaluator revision")
+    return require_supported_upstream(plan["upstream_commit"])
 
 
 def _campaign_task(
@@ -579,6 +607,27 @@ def _verify_campaign_ports(args, plan: dict) -> None:
         raise ValueError("Comet policy port must match every planned case")
 
 
+def _policy_evidence(profile, files, adapters, task, revision, command) -> dict:
+    task_id, task_name = task
+    return {
+        "schema": f"npa.behavior.{profile.kind}-policy.v1",
+        "kind": profile.kind,
+        "source_commit": SOURCE_COMMIT,
+        "model_repository": MODEL_REPOSITORY,
+        "model_revision": profile.revision,
+        "checkpoint": profile.checkpoint,
+        "checkpoint_file_count": len(files),
+        "checkpoint_inventory_sha256": adapters[profile.inventory],
+        "task_id": task_id,
+        "task_name": task_name,
+        "upstream_commit": revision,
+        "adapters": adapters,
+        "command": command,
+        "redistribution": "private-runtime-checkpoint",
+        "evaluation_status": "not_evaluated",
+    }
+
+
 def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     """Verify and stage a Comet profile for the managed policy supervisor.
 
@@ -594,7 +643,7 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     profile = get_profile(getattr(args, "policy_kind", "comet12"))
     verify_source(args.policy_root)
     _verify_campaign_ports(args, plan)
-    task_id, task_name = _campaign_task(args, plan, profile)
+    task = _campaign_task(args, plan, profile)
     files = verify_checkpoint_archive(
         args.policy_archive,
         args.policy_checkpoint,
@@ -602,23 +651,11 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
         profile,
     )
     adapters = _stage_adapters(output, profile)
-    command = _server_command(args, output, task_id, task_name, profile)
-    evidence = {
-        "schema": f"npa.behavior.{profile.kind}-policy.v1",
-        "kind": profile.kind,
-        "source_commit": SOURCE_COMMIT,
-        "model_repository": MODEL_REPOSITORY,
-        "model_revision": profile.revision,
-        "checkpoint": profile.checkpoint,
-        "checkpoint_file_count": len(files),
-        "checkpoint_inventory_sha256": adapters[profile.inventory],
-        "task_id": task_id,
-        "task_name": task_name,
-        "adapters": adapters,
-        "command": command,
-        "redistribution": "private-runtime-checkpoint",
-        "evaluation_status": "not_evaluated",
-    }
+    upstream_commit = _plan_upstream_commit(plan)
+    command = _server_command(args, output, *task, profile, upstream_commit)
+    evidence = _policy_evidence(
+        profile, files, adapters, task, upstream_commit, command
+    )
     (output / "policy-provenance.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n"
     )

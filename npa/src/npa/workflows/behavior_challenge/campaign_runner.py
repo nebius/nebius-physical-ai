@@ -268,7 +268,11 @@ def _worker_declarations(args, storage, workspace):
     registry_path = args.upstream_root / "docs/challenge/task_data.json"
     registry = [item["id"] for item in json.loads(registry_path.read_bytes())["tasks"]]
     if panel != declare_panel(
-        panel["policy"], registry, panel["selected_tasks"], panel["split"]
+        panel["policy"],
+        registry,
+        panel["selected_tasks"],
+        panel["split"],
+        upstream_commit=panel["upstream_commit"],
     ):
         raise ValueError("Frozen panel differs from the actual official registry")
     return panel, partition
@@ -276,9 +280,11 @@ def _worker_declarations(args, storage, workspace):
 
 def _managed_plan(panel, case):
     return {
+        "upstream_commit": panel["upstream_commit"],
         "recipe": {
             "tasks": [case["task"]],
             "split": panel["split"],
+            "upstream_commit": panel["upstream_commit"],
             "policy_checkpoint_sha256": panel["policy"]["artifacts"]["checkpoint"][
                 "sha256"
             ],
@@ -305,7 +311,7 @@ def _prepared_evaluator(args, panel, workspace):
         raise ValueError("Managed campaign worker currently serves one task per panel")
 
     def execute(case, output):
-        verify_upstream(args.upstream_root)
+        verify_upstream(args.upstream_root, panel["upstream_commit"])
         command = evaluator_argv(
             case,
             root=args.upstream_root,
@@ -313,9 +319,10 @@ def _prepared_evaluator(args, panel, workspace):
             host=args.host,
             port=args.port,
             output=output,
+            upstream_commit=panel["upstream_commit"],
         )
         _run_case(command, args, output, case, environment)
-        verify_upstream(args.upstream_root)
+        verify_upstream(args.upstream_root, panel["upstream_commit"])
 
     def prepare(case, output):
         return managed_policy(args, _managed_plan(panel, case), output)
@@ -409,13 +416,13 @@ def evaluate_partition(args) -> dict:
         ValueError: Frozen policy, protocol, runtime, or evidence checks fail.
         Exception: Policy, evaluator, or storage fails with durable state retained.
     """
-    verify_upstream(args.upstream_root)
     workspace = args.workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     storage = StorageClient.from_environment()
     panel, partition = _worker_declarations(args, storage, workspace)
+    verify_upstream(args.upstream_root, panel["upstream_commit"])
     records = _execute_partition(args, panel, partition, storage, workspace)
-    verify_upstream(args.upstream_root)
+    verify_upstream(args.upstream_root, panel["upstream_commit"])
     result = {
         "panel_id": panel["panel_id"],
         "partition_sha256": partition["partition_sha256"],

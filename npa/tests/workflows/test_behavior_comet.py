@@ -308,6 +308,7 @@ def test_prepare_policy_stages_only_adapters_and_public_provenance(
         port=8000,
     )
     plan = {
+        "upstream_commit": "6cbf70b075816096e9be53958780769f3264d25d",
         "recipe": {
             "split": "development",
             "tasks": ["picking_up_trash"],
@@ -320,14 +321,17 @@ def test_prepare_policy_stages_only_adapters_and_public_provenance(
     provenance = json.loads((output / "policy-provenance.json").read_text())
 
     assert command[0:2] == ["/runtime/python", str(output / "comet_server.py")]
-    assert command[-6:] == [
+    assert command[-8:] == [
         "--task-id",
         "1",
         "--task-name",
         "picking_up_trash",
         "--port",
         "8000",
+        "--upstream-commit",
+        "6cbf70b075816096e9be53958780769f3264d25d",
     ]
+    assert provenance["upstream_commit"] == plan["upstream_commit"]
     assert provenance["redistribution"] == "private-runtime-checkpoint"
     assert provenance["evaluation_status"] == "not_evaluated"
     assert provenance["checkpoint_file_count"] == 1
@@ -335,6 +339,8 @@ def test_prepare_policy_stages_only_adapters_and_public_provenance(
     assert set(provenance["adapters"]) == {
         "comet_policy.py",
         "comet_server.py",
+        "evaluator_versions.py",
+        "evaluator_wire.py",
         "comet12-checkpoint.json",
     }
     assert not any("private" in name for name in provenance["adapters"])
@@ -367,6 +373,7 @@ def test_prepare_comet50_uses_one_profile_for_inventory_task_and_server(
         port=8000,
     )
     plan = {
+        "upstream_commit": "b1979916ec1549b10a4e65e630bc6504a9af1b00",
         "recipe": {
             "split": "development",
             "tasks": ["task_49"],
@@ -384,6 +391,8 @@ def test_prepare_comet50_uses_one_profile_for_inventory_task_and_server(
     assert set(provenance["adapters"]) == {
         "comet_policy.py",
         "comet_server.py",
+        "evaluator_versions.py",
+        "evaluator_wire.py",
         "comet50-checkpoint.json",
     }
     assert verify.call_args.args[-1] == comet_policy.COMET50_PROFILE

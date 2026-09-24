@@ -255,6 +255,14 @@ def test_each_case_gets_a_fresh_managed_policy_context(fixture):
     ]
 
 
+def test_managed_policy_plan_retains_the_frozen_panel_revision(fixture):
+    panel, _, _, _ = fixture
+    plan = campaign_runner._managed_plan(panel, panel["cases"][0])
+
+    assert plan["upstream_commit"] == panel["upstream_commit"]
+    assert plan["recipe"]["upstream_commit"] == panel["upstream_commit"]
+
+
 def test_resume_reuses_completed_case_and_never_repeats_started_case(fixture):
     panel, partition, store, workspace = fixture
     calls = []

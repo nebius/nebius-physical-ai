@@ -7,6 +7,7 @@ import shutil
 import subprocess
 
 from .protocol import file_digest
+from .evaluator_versions import UPSTREAM_COMMITS, require_supported_upstream
 
 SOURCE_COMMIT = "ca556f74a455cef7987a2be4537b5ac85cc56dd7"
 OPENPI_COMMIT = "01177e0242a1c7e8fad2547caa0e987def614cda"
@@ -76,6 +77,8 @@ def _adapter_files(
 ) -> dict[str, str]:
     adapters = {}
     names = [
+        "evaluator_versions.py",
+        "evaluator_wire.py",
         "rlc_server.py",
         "rlc_observations.py",
         "rlc_execution.py",
@@ -277,8 +280,10 @@ def _command(
     output,
     selected_artifacts=None,
     stock_correlation: Path | None = None,
+    upstream_commit: str | None = None,
 ):
     server = "rlc_selected_server.py" if selected_artifacts else "rlc_server.py"
+    revision = require_supported_upstream(upstream_commit or UPSTREAM_COMMITS["3.9.2"])
     command = [
         str(args.policy_python),
         str(output / server),
@@ -290,18 +295,13 @@ def _command(
         str(task_id),
         "--port",
         str(args.port),
+        "--upstream-commit",
+        revision,
     ]
     if selected_artifacts:
         _append_selected_arguments(command, output, selected_artifacts)
     if stock_correlation is not None:
-        command.extend(
-            [
-                "--correlation-asset",
-                str(stock_correlation),
-                "--correlation-sha256",
-                getattr(args, "policy_stock_correlation_sha256"),
-            ]
-        )
+        _append_stock_correlation(command, args, stock_correlation)
     if getattr(args, "policy_kind", "rlc") == "rlc-specialist":
         command.append("--specialist-state-contract")
     command.extend(
@@ -311,6 +311,17 @@ def _command(
         ]
     )
     return command
+
+
+def _append_stock_correlation(command: list[str], args, artifact: Path) -> None:
+    command.extend(
+        [
+            "--correlation-asset",
+            str(artifact),
+            "--correlation-sha256",
+            getattr(args, "policy_stock_correlation_sha256"),
+        ]
+    )
 
 
 def _append_selected_arguments(
@@ -400,7 +411,7 @@ def _record_selected(output, command, files, receipt, plan, staged):
     )
 
 
-def _record_specialist(output, command, files, plan, *, args):
+def _specialist_metadata() -> dict:
     from .rlc_specialist import (
         MODEL_REPOSITORY,
         MODEL_REVISION,
@@ -410,10 +421,24 @@ def _record_specialist(output, command, files, plan, *, args):
         SUPPORTED_TASK_IDS,
     )
 
+    return {
+        "model_repository": MODEL_REPOSITORY,
+        "model_revision": MODEL_REVISION,
+        "model_source_repository": SOURCE_REPOSITORY,
+        "model_source_commit": SPECIALIST_SOURCE_COMMIT,
+        "supported_task_ids": sorted(SUPPORTED_TASK_IDS),
+        "normalization_asset": NORMALIZATION,
+    }
+
+
+def _record_specialist(output, command, files, plan, *, args):
+
     adapters = _adapter_files(output, selected=False, specialist=True)
     from .rlc_specialist_admission import verify_staged_specialist_runtime
 
-    verify_staged_specialist_runtime(args, output, adapters, command)
+    verify_staged_specialist_runtime(
+        args, output, adapters, command, plan["upstream_commit"]
+    )
     shutil.copyfile(
         Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
     )
@@ -422,19 +447,14 @@ def _record_specialist(output, command, files, plan, *, args):
         "kind": "rlc-specialist",
         "source_commit": SOURCE_COMMIT,
         "openpi_commit": OPENPI_COMMIT,
-        "model_repository": MODEL_REPOSITORY,
-        "model_revision": MODEL_REVISION,
-        "model_source_repository": SOURCE_REPOSITORY,
-        "model_source_commit": SPECIALIST_SOURCE_COMMIT,
-        "supported_task_ids": sorted(SUPPORTED_TASK_IDS),
         "checkpoint_files": files,
         "checkpoint_archive_sha256": plan["recipe"]["policy_checkpoint_sha256"],
-        "normalization_asset": NORMALIZATION,
         "adapters": adapters,
         "command": command,
         "execution_variant": "native",
         "memory_compliance": "unverified",
         "status": "local_development_only_memory_unverified_not_rollout_ranked",
+        **_specialist_metadata(),
     }
     _add_specialist_report_provenance(evidence, args, plan)
     (output / "policy-provenance.json").write_text(
@@ -451,6 +471,68 @@ def _add_specialist_report_provenance(evidence, args, plan) -> None:
     evidence["status"] = "local_report_admitted_memory_unverified"
 
 
+def _verified_policy_files(args, plan: dict, checkpoint: str, kind: str):
+    if kind == "rlc-selected":
+        return _verify_selected_weights(args, plan)
+    if kind == "rlc-specialist":
+        return _verify_specialist_weights(args, plan), None
+    return _verify_weights(args, plan, checkpoint), None
+
+
+def _record_prepared_policy(
+    output, command, files, receipt, checkpoint, plan, args, staged, correlation
+) -> None:
+    kind = getattr(args, "policy_kind", "rlc")
+    if kind == "rlc-selected":
+        _record_selected(output, command, files, receipt, plan, staged)
+    elif kind == "rlc-specialist":
+        _record_specialist(output, command, files, plan, args=args)
+    else:
+        _record(output, command, files, checkpoint, plan, correlation)
+
+
+def _plan_upstream_commit(plan: dict) -> str:
+    if "upstream_commit" not in plan:
+        raise ValueError("Managed RLC plan lacks its evaluator revision")
+    return require_supported_upstream(plan["upstream_commit"])
+
+
+def _prepare_policy_runtime(args, plan: dict, output: Path) -> list[str]:
+    from .policy import _healthy
+
+    task_id, checkpoint = _verify_task(args, plan)
+    upstream_commit = _plan_upstream_commit(plan)
+    kind = getattr(args, "policy_kind", "rlc")
+    selected = kind == "rlc-selected"
+    files, receipt = _verified_policy_files(args, plan, checkpoint, kind)
+    if _healthy(args.port) or any(
+        case.get("policy_port") not in {None, args.port} for case in plan["cases"]
+    ):
+        raise ValueError("Managed RLC policy requires its own matching loopback port")
+    staged = _stage_selected_artifacts(args, output) if selected else None
+    stock_correlation = None if selected else _stage_stock_correlation(args, output)
+    command = _command(
+        args,
+        task_id,
+        output,
+        staged,
+        stock_correlation,
+        upstream_commit=upstream_commit,
+    )
+    _record_prepared_policy(
+        output,
+        command,
+        files,
+        receipt,
+        checkpoint,
+        plan,
+        args,
+        staged,
+        stock_correlation,
+    )
+    return command
+
+
 def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     """Validate the RLC source, task, archive and launcher before policy execution.
 
@@ -464,29 +546,4 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
         ValueError: Source, checkpoint, task, endpoint or development scope is invalid.
         OSError: A required source or checkpoint cannot be read.
     """
-    from .policy import _healthy
-
-    task_id, checkpoint = _verify_task(args, plan)
-    kind = getattr(args, "policy_kind", "rlc")
-    selected = kind == "rlc-selected"
-    specialist = kind == "rlc-specialist"
-    if selected:
-        files, receipt = _verify_selected_weights(args, plan)
-    elif specialist:
-        files = _verify_specialist_weights(args, plan)
-    else:
-        files = _verify_weights(args, plan, checkpoint)
-    if _healthy(args.port) or any(
-        case.get("policy_port") not in {None, args.port} for case in plan["cases"]
-    ):
-        raise ValueError("Managed RLC policy requires its own matching loopback port")
-    staged = _stage_selected_artifacts(args, output) if selected else None
-    stock_correlation = None if selected else _stage_stock_correlation(args, output)
-    command = _command(args, task_id, output, staged, stock_correlation)
-    if selected:
-        _record_selected(output, command, files, receipt, plan, staged)
-    elif specialist:
-        _record_specialist(output, command, files, plan, args=args)
-    else:
-        _record(output, command, files, checkpoint, plan, stock_correlation)
-    return command
+    return _prepare_policy_runtime(args, plan, output)

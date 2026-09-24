@@ -21,6 +21,13 @@ from comet_policy import (
     verify_checkpoint,
 )
 
+try:
+    from evaluator_versions import UPSTREAM_COMMITS
+    from evaluator_wire import EvaluatorWire
+except ModuleNotFoundError:
+    from npa.workflows.behavior_challenge.evaluator_versions import UPSTREAM_COMMITS
+    from npa.workflows.behavior_challenge.evaluator_wire import EvaluatorWire
+
 
 @contextmanager
 def _source_working_directory(root: Path):
@@ -60,26 +67,35 @@ def _health(connection, request):
     return None
 
 
-async def _connection(websocket, policy, profile=None):
+async def _connection(
+    websocket, policy, profile=None, upstream_commit=UPSTREAM_COMMITS["3.9.2"]
+):
     from openpi_client import msgpack_numpy
 
     packer = msgpack_numpy.Packer()
+    wire = EvaluatorWire(upstream_commit)
     policy.reset()
     profile = profile or get_profile("comet12")
     await websocket.send(packer.pack({"policy": profile.handshake}))
     try:
         async for payload in websocket:
             observation = msgpack_numpy.unpackb(payload)
-            if set(observation) == {"reset"} and observation["reset"] is True:
+            if wire.is_reset(observation):
                 policy.reset()
                 continue
-            action = validate_action(policy.act(policy_observation(observation)))
+            inputs = policy_observation(wire.observation_for_policy(observation))
+            action = wire.action_for_evaluator(validate_action(policy.act(inputs)))
             await websocket.send(packer.pack({"action": action}))
     finally:
         policy.reset()
 
 
-async def _serve(policy, port: int, profile=None) -> None:
+async def _serve(
+    policy,
+    port: int,
+    profile=None,
+    upstream_commit=UPSTREAM_COMMITS["3.9.2"],
+) -> None:
     from websockets.asyncio.server import serve
 
     lock = asyncio.Lock()
@@ -89,7 +105,7 @@ async def _serve(policy, port: int, profile=None) -> None:
             await websocket.close(code=1013, reason="Evaluator already connected")
             return
         async with lock:
-            await _connection(websocket, policy, profile)
+            await _connection(websocket, policy, profile, upstream_commit)
 
     async with serve(
         handle,
@@ -127,6 +143,11 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--task-id", type=int, required=True)
     value.add_argument("--task-name", required=True)
     value.add_argument("--port", type=int, required=True)
+    value.add_argument(
+        "--upstream-commit",
+        choices=tuple(UPSTREAM_COMMITS.values()),
+        default=UPSTREAM_COMMITS["3.9.2"],
+    )
     value.add_argument("--profile", choices=tuple(COMET_PROFILES), default="comet12")
     return value
 
@@ -142,7 +163,7 @@ def _main() -> None:
     ) as temporary:
         overlay = build_source_overlay(args.source_root, Path(temporary))
         policy = _load_policy(args, overlay)
-        asyncio.run(_serve(policy, args.port, args.profile))
+        asyncio.run(_serve(policy, args.port, args.profile, args.upstream_commit))
 
 
 if __name__ == "__main__":

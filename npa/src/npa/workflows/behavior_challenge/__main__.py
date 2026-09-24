@@ -127,8 +127,9 @@ def _evaluate(args):
 def _plan(args):
     from .protocol import make_plan, verify_upstream
 
-    verify_upstream(args.upstream_root)
-    return make_plan(json.loads(args.recipe_path.read_bytes()), args.upstream_root)
+    plan = make_plan(json.loads(args.recipe_path.read_bytes()), args.upstream_root)
+    verify_upstream(args.upstream_root, plan["upstream_commit"])
+    return plan
 
 
 def _add_simulator_startup_commands(commands) -> None:

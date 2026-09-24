@@ -14,6 +14,11 @@ import tempfile
 
 from rlc_selected import load_selected_policy, load_validated_correlation
 
+try:
+    from evaluator_versions import UPSTREAM_COMMITS
+except ModuleNotFoundError:
+    from npa.workflows.behavior_challenge.evaluator_versions import UPSTREAM_COMMITS
+
 NATIVE_EXECUTION = "native"
 TRANSITION_REFRESH = "transition-refresh"
 FINAL_STAGE_BACKTRACK = "final-stage-backtrack"
@@ -35,6 +40,11 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--validation-receipt", type=Path, required=True)
     value.add_argument("--task-id", type=int, choices=range(50), required=True)
     value.add_argument("--port", type=int, required=True)
+    value.add_argument(
+        "--upstream-commit",
+        choices=tuple(UPSTREAM_COMMITS.values()),
+        default=UPSTREAM_COMMITS["3.9.2"],
+    )
     value.add_argument(
         "--execution-variant",
         choices=(NATIVE_EXECUTION, TRANSITION_REFRESH, FINAL_STAGE_BACKTRACK),
@@ -70,11 +80,11 @@ def _install_termination_handlers(policy):
 
 def _serve_policy(adapter, policy, args) -> None:
     if args.execution_variant == NATIVE_EXECUTION:
-        asyncio.run(adapter._serve(policy, args.port))
+        asyncio.run(adapter._serve(policy, args.port, args.upstream_commit))
         return
     original_handlers = _install_termination_handlers(policy)
     try:
-        asyncio.run(adapter._serve(policy, args.port))
+        asyncio.run(adapter._serve(policy, args.port, args.upstream_commit))
     finally:
         policy.finalize_telemetry()
         for signum, handler in original_handlers.items():

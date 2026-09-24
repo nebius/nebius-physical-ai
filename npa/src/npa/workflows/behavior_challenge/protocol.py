@@ -9,7 +9,12 @@ import subprocess
 from pathlib import Path
 from typing import BinaryIO
 
-UPSTREAM_COMMIT = "b1979916ec1549b10a4e65e630bc6504a9af1b00"
+from .evaluator_versions import (
+    UPSTREAM_COMMIT,
+    UPSTREAM_COMMITS,
+    require_supported_upstream,
+)
+
 WRAPPER = "omnigibson.eval.wrappers.RGBDFullResWrapper"
 EVAL_DIRECTORY = Path("OmniGibson/omnigibson/eval")
 SPLITS = {"development": tuple(range(10, 20)), "report": tuple(range(10))}
@@ -45,11 +50,12 @@ def file_digest(path: Path) -> str:
         return stream_digest(stream)
 
 
-def verify_upstream(root: Path) -> None:
-    """Require the unmodified official v3.9.2 checkout.
+def verify_upstream(root: Path, expected_commit: str = UPSTREAM_COMMIT) -> None:
+    """Require an unmodified checkout at the panel's official revision.
 
     Args:
         root: BEHAVIOR-1K source checkout.
+        expected_commit: Supported revision declared by the recipe or panel.
     Returns:
         None.
     Raises:
@@ -59,8 +65,9 @@ def verify_upstream(root: Path) -> None:
     revision = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
     ).strip()
-    if revision != UPSTREAM_COMMIT:
-        raise ValueError("BEHAVIOR evaluation requires the official v3.9.2 commit")
+    expected = require_supported_upstream(expected_commit)
+    if revision != expected:
+        raise ValueError("BEHAVIOR evaluation checkout differs from its pinned commit")
     changed = subprocess.check_output(
         ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
         text=True,
@@ -74,10 +81,11 @@ def _validate_recipe(recipe: dict, available: list[str]) -> tuple[list[str], str
     if (
         not isinstance(recipe, dict)
         or not required.issubset(recipe)
-        or set(recipe) - required - {"policy_ports"}
+        or set(recipe) - required - {"policy_ports", "upstream_commit"}
     ):
         raise ValueError(
-            f"Recipe requires {sorted(required)}; only policy_ports is optional"
+            f"Recipe requires {sorted(required)}; only policy_ports and "
+            "upstream_commit are optional"
         )
     if recipe["schema"] != "npa.behavior.recipe.v1":
         raise ValueError("Unsupported BEHAVIOR recipe schema")
@@ -122,6 +130,20 @@ def _policy_ports(recipe: dict, tasks: list[str]) -> dict[str, int]:
     return ports
 
 
+def _plan_cases(tasks: list[str], split: str, ports: dict[str, int]) -> list[dict]:
+    return [
+        {
+            "task": task,
+            "index": index,
+            "instance_id": 301 + index,
+            "rollout_id": 0,
+            "policy_port": ports.get(task),
+        }
+        for task in tasks
+        for index in SPLITS[split]
+    ]
+
+
 def make_plan(recipe: dict, root: Path) -> dict:
     """Freeze tasks, public indices, and actual evaluator instance IDs before execution.
 
@@ -139,21 +161,13 @@ def make_plan(recipe: dict, root: Path) -> dict:
     if len(available) != 100 or len(set(available)) != 100:
         raise ValueError("Expected the official 100-task registry")
     tasks, split = _validate_recipe(recipe, available)
-    ports = _policy_ports(recipe, tasks)
-    cases = [
-        {
-            "task": task,
-            "index": index,
-            "instance_id": 301 + index,
-            "rollout_id": 0,
-            "policy_port": ports.get(task),
-        }
-        for task in tasks
-        for index in SPLITS[split]
-    ]
+    upstream_commit = require_supported_upstream(
+        recipe.get("upstream_commit", UPSTREAM_COMMIT)
+    )
+    cases = _plan_cases(tasks, split, _policy_ports(recipe, tasks))
     return {
         "schema": "npa.behavior.plan.v1",
-        "upstream_commit": UPSTREAM_COMMIT,
+        "upstream_commit": upstream_commit,
         "wrapper": WRAPPER,
         "recipe": recipe,
         "cases": cases,
@@ -162,27 +176,8 @@ def make_plan(recipe: dict, root: Path) -> dict:
     }
 
 
-def evaluator_argv(
-    case: dict, *, root: Path, python: str, host: str, port: int, output: Path
-) -> list[str]:
-    """Construct the official evaluator command without protocol overrides.
-
-    Args:
-        case: One prescribed task and instance index.
-        root: Verified upstream checkout.
-        python: Interpreter with OmniGibson installed from that checkout.
-        host: Policy WebSocket host.
-        port: Policy WebSocket port.
-        output: Worker-local output directory.
-    Returns:
-        Argument vector preserving upstream timeout, seed, robot, and metrics.
-    Raises:
-        ValueError: The policy port is invalid.
-    """
-    port = case.get("policy_port") or port
-    if not 1 <= port <= 65535:
-        raise ValueError("Policy port must be between 1 and 65535")
-    options = {
+def _evaluator_options(case, root, host, port, output) -> dict[str, str]:
+    return {
         "--task-name": case["task"],
         "--mode": "public_test",
         "--instance-indices": str(case["index"]),
@@ -193,7 +188,40 @@ def evaluator_argv(
         "--port": str(port),
         "--output-dir": str(output),
     }
+
+
+def evaluator_argv(
+    case: dict,
+    *,
+    root: Path,
+    python: str,
+    host: str,
+    port: int,
+    output: Path,
+    upstream_commit: str = UPSTREAM_COMMIT,
+) -> list[str]:
+    """Construct the official evaluator command without protocol overrides.
+
+    Args:
+        case: One prescribed task and instance index.
+        root: Verified upstream checkout.
+        python: Interpreter with OmniGibson installed from that checkout.
+        host: Policy WebSocket host.
+        port: Policy WebSocket port.
+        output: Worker-local output directory.
+        upstream_commit: Supported revision declared by the recipe or panel.
+    Returns:
+        Argument vector preserving upstream timeout, seed, robot, and metrics.
+    Raises:
+        ValueError: The revision or policy port is invalid.
+    """
+    revision = require_supported_upstream(upstream_commit)
+    port = case.get("policy_port") or port
+    if not 1 <= port <= 65535:
+        raise ValueError("Policy port must be between 1 and 65535")
     argv = [python, "-m", "omnigibson.eval.eval"]
-    for option, value in options.items():
+    for option, value in _evaluator_options(case, root, host, port, output).items():
         argv.extend((option, value))
+    if revision == UPSTREAM_COMMITS["3.9.3"]:
+        argv.extend(("--num-envs", "1", "--replay-action-chunk-size", "0"))
     return argv + ["--write-video", "--headless"]

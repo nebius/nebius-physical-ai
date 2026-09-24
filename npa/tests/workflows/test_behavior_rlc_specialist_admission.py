@@ -20,6 +20,7 @@ from npa.workflows.behavior_challenge.campaign import (
     partition_panel,
 )
 from npa.workflows.behavior_challenge.case_store import CaseStore
+from npa.workflows.behavior_challenge.evaluator_versions import UPSTREAM_COMMITS
 
 
 class MemoryStorage:
@@ -56,10 +57,11 @@ def _policy(name: str, marker: str) -> dict:
     )
 
 
-def _panel(policy: dict, split: str) -> dict:
+def _panel(policy: dict, split: str, upstream_commit: str | None = None) -> dict:
     tasks = [f"task-{index}" for index in range(100)]
     tasks[1] = "picking_up_trash"
-    return declare_panel(policy, tasks, ["picking_up_trash"], split)
+    kwargs = {} if upstream_commit is None else {"upstream_commit": upstream_commit}
+    return declare_panel(policy, tasks, ["picking_up_trash"], split, **kwargs)
 
 
 def _write_rollout(case: dict, output: Path, q_score: float) -> None:
@@ -128,22 +130,16 @@ def _evidence(tmp_path, storage, name, panel, prefix, seal_sha):
     return _write(tmp_path / f"{name}-evidence.json", value)
 
 
-def _equivalence(runtime: dict) -> dict:
+def _equivalence(runtime: dict, upstream_commit: str) -> dict:
+    schema, status, changes, claims = admission._equivalence_contract(upstream_commit)
     value = {
-        "schema": "npa.behavior.rlc-specialist-equivalence.v1",
-        "status": "reviewed_legacy_v1_to_runtime_v2_equivalent",
+        "schema": schema,
+        "status": status,
         "legacy_policy": admission._LEGACY_POLICY,
         "legacy_authorization": admission._LEGACY_AUTHORIZATION,
         "runtime_identity": runtime,
-        "control_plane_changes": list(admission._CONTROL_PLANE_CHANGES),
-        "claims": {
-            "runtime_files_byte_identical": True,
-            "checkpoint_bytes_identical": True,
-            "native_command_identical": True,
-            "observation_and_action_contract_identical": True,
-            "fresh_process_lifecycle_identical": True,
-            "official_24gb_qualified": False,
-        },
+        "control_plane_changes": list(changes),
+        "claims": claims,
     }
     return _self_digest(value, "receipt_sha256")
 
@@ -190,14 +186,32 @@ def _runtime_args(tmp_path, monkeypatch):
     )
 
 
-def _baseline_receipts(tmp_path, storage):
+def _historical_runtime(args) -> dict:
+    from npa.workflows.behavior_challenge import rlc_specialist
+
+    revision = UPSTREAM_COMMITS["3.9.2"]
+    payload = {
+        "schema": "npa.behavior.rlc-specialist-runtime.v2",
+        "kind": "rlc-specialist",
+        "task": {"name": "picking_up_trash", "id": 1},
+        "runtime_files": admission._LEGACY_RUNTIME_FILES,
+        "checkpoint": admission._LEGACY_POLICY["artifacts"]["checkpoint"],
+        "source_commits": admission._source_commits(rlc_policy, rlc_specialist),
+        "contracts": admission._runtime_contracts(rlc_specialist, revision),
+    }
+    return admission._identity(payload)
+
+
+def _baseline_receipts(tmp_path, storage, upstream_commit=None):
     seals, evidence, panels = {}, {}, {}
     for arm, score in (
         ("native", 0.6),
         ("comet12", 0.4),
         ("comet50", 0.2),
     ):
-        panels[arm] = _panel(admission._BASELINE_POLICIES[arm], "report")
+        panels[arm] = _panel(
+            admission._BASELINE_POLICIES[arm], "report", upstream_commit
+        )
         seals[arm] = _seal(tmp_path, arm, panels[arm])
         prefix = f"s3://test/{arm}"
         _populate(storage, panels[arm], prefix, tmp_path / arm, score)
@@ -266,21 +280,25 @@ def _report_admission(equivalence, dev, candidate, baselines, report):
 @pytest.fixture
 def admitted(tmp_path, monkeypatch):
     args = _runtime_args(tmp_path, monkeypatch)
+    legacy = UPSTREAM_COMMITS["3.9.2"]
+    development = _panel(admission._LEGACY_POLICY, "development", legacy)
     equivalence = _write(
         tmp_path / "equivalence.json",
-        _equivalence(admission.specialist_runtime_identity(args)),
+        _equivalence(
+            _historical_runtime(args),
+            development["upstream_commit"],
+        ),
     )
     args.policy_specialist_equivalence_receipt = Path(equivalence["path"])
     args.policy_specialist_equivalence_sha256 = equivalence["sha256"]
     storage = MemoryStorage()
-    development = _panel(admission._LEGACY_POLICY, "development")
-    report = _panel(admission._LEGACY_POLICY, "report")
+    report = _panel(admission._LEGACY_POLICY, "report", legacy)
     _populate(storage, development, "s3://test/dev", tmp_path / "dev", 0.4)
     dev = _evidence(
         tmp_path, storage, "development", development, "s3://test/dev", None
     )
     candidate = _selection(tmp_path, development, dev["sha256"])
-    seals, evidence, panels = _baseline_receipts(tmp_path, storage)
+    seals, evidence, panels = _baseline_receipts(tmp_path, storage, legacy)
     unseal, bstar = _selection_receipts(tmp_path, candidate, seals, evidence, panels)
     receipt = _report_admission(
         equivalence, dev, candidate, (seals, evidence, unseal, bstar), report
@@ -301,13 +319,84 @@ def _rewrite_admission(args, receipt):
     )["sha256"]
 
 
-def test_complete_original_evidence_admits_exact_report_panel(admitted):
-    args, panel, _, storage, workspace = admitted
-    runtime = admission.verify_specialist_report_admission(
-        args, panel, storage, workspace
+def _verify_legacy_receipts(args, panel, storage, workspace):
+    equivalence, equivalence_sha, report_admission, admission_sha = (
+        admission._load_report_receipts(args)
     )
+    admission._preflight_report_receipts(equivalence, equivalence_sha, report_admission)
+    runtime = _historical_runtime(args)
+    admission._verify_equivalence(equivalence, runtime, panel["upstream_commit"])
+    admission._verify_admission(
+        storage, workspace, report_admission, panel, equivalence_sha
+    )
+    admission._record_verified_report_scope(
+        args, runtime, panel["panel_id"], equivalence_sha, admission_sha
+    )
+    return runtime
+
+
+def test_legacy_receipt_validator_reconstructs_complete_original_evidence(admitted):
+    args, panel, _, storage, workspace = admitted
+    runtime = _verify_legacy_receipts(args, panel, storage, workspace)
     assert runtime["identity_sha256"]
     assert args._specialist_report_receipts["admission"]
+
+
+def test_current_equivalence_is_not_invented():
+    with pytest.raises(ValueError, match="no qualification receipt"):
+        admission._equivalence_contract(UPSTREAM_COMMITS["3.9.3"])
+
+
+def test_legacy_equivalence_contract_remains_exactly_versioned():
+    schema, status, changes, claims = admission._equivalence_contract(
+        UPSTREAM_COMMITS["3.9.2"]
+    )
+
+    assert schema == "npa.behavior.rlc-specialist-equivalence.v1"
+    assert status == "reviewed_legacy_v1_to_runtime_v2_equivalent"
+    assert changes == admission._LEGACY_CONTROL_PLANE_CHANGES
+    assert claims["runtime_files_byte_identical"] is True
+    assert "singleton_wire_semantics_qualified" not in claims
+
+
+def test_legacy_qualification_cannot_authorize_the_current_runtime():
+    with pytest.raises(ValueError, match="report is held"):
+        admission._hold_specialist_report(UPSTREAM_COMMITS["3.9.2"])
+
+
+def test_legacy_runtime_identity_rejects_current_local_files(tmp_path, monkeypatch):
+    args = _runtime_args(tmp_path, monkeypatch)
+
+    with pytest.raises(ValueError, match="runtime bytes differ"):
+        admission.specialist_runtime_identity(args, UPSTREAM_COMMITS["3.9.2"])
+
+
+@pytest.mark.parametrize("version", ["3.9.2", "3.9.3"])
+def test_report_holds_before_receipts_or_storage(tmp_path, version):
+    args = SimpleNamespace(policy_kind="rlc-specialist")
+    panel = _panel(
+        admission._LEGACY_POLICY,
+        "report",
+        UPSTREAM_COMMITS[version],
+    )
+
+    with pytest.raises(ValueError, match="report is held"):
+        admission.verify_specialist_report_admission(
+            args, panel, None, tmp_path / "must-not-exist"
+        )
+    assert not (tmp_path / "must-not-exist").exists()
+
+
+def test_specialist_policy_scope_rejects_a_different_evaluator_revision(admitted):
+    args, panel, _, storage, workspace = admitted
+    _verify_legacy_receipts(args, panel, storage, workspace)
+    plan = campaign_runner._managed_plan(panel, panel["cases"][0])
+    changed = UPSTREAM_COMMITS["3.9.2"]
+    plan["upstream_commit"] = changed
+    plan["recipe"]["upstream_commit"] = changed
+
+    with pytest.raises(ValueError, match="not admitted"):
+        admission.verify_specialist_policy_scope(args, plan)
 
 
 def test_development_needs_no_report_receipts(tmp_path):
@@ -329,7 +418,7 @@ def test_downloaded_video_tamper_rejected(admitted):
     )
     storage.objects[video] = (b"corrupt video", "changed")
     with pytest.raises(ValueError, match="SHA-256 verification"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_bstar_is_recomputed_from_original_aggregates(admitted):
@@ -343,7 +432,7 @@ def test_bstar_is_recomputed_from_original_aggregates(admitted):
     receipt["bstar"] = _write(bstar_path, bstar)
     _rewrite_admission(args, receipt)
     with pytest.raises(ValueError, match="recomputed selection"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_candidate_selection_must_bind_exact_development_evidence(admitted):
@@ -357,7 +446,7 @@ def test_candidate_selection_must_bind_exact_development_evidence(admitted):
     receipt["candidate_selection"] = _write(candidate_path, candidate)
     _rewrite_admission(args, receipt)
     with pytest.raises(ValueError, match="development-only evidence"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_unseal_must_bind_all_frozen_evidence_files(admitted):
@@ -371,7 +460,7 @@ def test_unseal_must_bind_all_frozen_evidence_files(admitted):
     receipt["unseal"] = _write(unseal_path, unseal)
     _rewrite_admission(args, receipt)
     with pytest.raises(ValueError, match="unseal ordering differs"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_receipt_reference_rejects_symlinks(admitted, tmp_path):
@@ -385,16 +474,20 @@ def test_receipt_reference_rejects_symlinks(admitted, tmp_path):
     }
     _rewrite_admission(args, receipt)
     with pytest.raises(ValueError, match="path or SHA-256 is invalid"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_report_panel_requires_exact_specialist_identity(admitted):
     args, _, receipt, storage, workspace = admitted
-    changed = _panel(_policy("other-specialist", "e"), "report")
+    changed = _panel(
+        _policy("other-specialist", "e"),
+        "report",
+        UPSTREAM_COMMITS["3.9.2"],
+    )
     receipt["report_panel"] = changed
     _rewrite_admission(args, receipt)
     with pytest.raises(ValueError, match="frozen candidate"):
-        admission.verify_specialist_report_admission(args, changed, storage, workspace)
+        _verify_legacy_receipts(args, changed, storage, workspace)
 
 
 def test_swapped_baseline_arms_reject_policy_identity(admitted):
@@ -405,7 +498,7 @@ def test_swapped_baseline_arms_reject_policy_identity(admitted):
     )
     _rewrite_admission(args, receipt)
     with pytest.raises(ValueError, match="comet12 baseline policy identity differs"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_started_panel_is_rejected_before_original_recovery(tmp_path):
@@ -511,7 +604,7 @@ def test_equivalence_rejects_runtime_identity_change(admitted):
     )
     _rewrite_admission(args, report_admission)
     with pytest.raises(ValueError, match="equivalence differs"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_bad_receipt_schema_rejects_before_runtime_identity(admitted, monkeypatch):
@@ -526,7 +619,7 @@ def test_bad_receipt_schema_rejects_before_runtime_identity(admitted, monkeypatc
         lambda *_: (_ for _ in ()).throw(AssertionError("runtime identity called")),
     )
     with pytest.raises(ValueError, match="equivalence receipt fields differ"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_bad_receipt_bytes_reject_before_runtime_identity(admitted, monkeypatch):
@@ -538,18 +631,7 @@ def test_bad_receipt_bytes_reject_before_runtime_identity(admitted, monkeypatch)
         lambda *_: (_ for _ in ()).throw(AssertionError("runtime identity called")),
     )
     with pytest.raises(ValueError, match="bytes differ from the frozen receipt"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
-
-
-def test_valid_receipt_envelopes_still_require_runtime_identity(admitted, monkeypatch):
-    args, panel, _, storage, workspace = admitted
-    monkeypatch.setattr(
-        admission,
-        "specialist_runtime_identity",
-        lambda *_: (_ for _ in ()).throw(RuntimeError("runtime identity required")),
-    )
-    with pytest.raises(RuntimeError, match="runtime identity required"):
-        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+        _verify_legacy_receipts(args, panel, storage, workspace)
 
 
 def test_report_receipts_never_enter_native_policy_command(admitted, tmp_path):
@@ -557,11 +639,19 @@ def test_report_receipts_never_enter_native_policy_command(admitted, tmp_path):
     args.policy_python = Path("/runtime/python")
     args.policy_root = Path("/source")
     args.policy_checkpoint = Path("/checkpoint")
-    command = rlc_policy._command(args, 1, tmp_path)
+    command = rlc_policy._command(
+        args, 1, tmp_path, upstream_commit=UPSTREAM_COMMITS["3.9.3"]
+    )
     assert command[-2:] == ["--execution-variant", "native"]
     assert not any("admission" in item or "equivalence" in item for item in command)
     adapters = rlc_policy._adapter_files(tmp_path, selected=False, specialist=True)
-    admission.verify_staged_specialist_runtime(args, tmp_path, adapters, command)
+    admission.verify_staged_specialist_runtime(
+        args, tmp_path, adapters, command, UPSTREAM_COMMITS["3.9.3"]
+    )
+    with pytest.raises(ValueError, match="Staged specialist runtime"):
+        admission.verify_staged_specialist_runtime(
+            args, tmp_path, adapters, command, UPSTREAM_COMMITS["3.9.2"]
+        )
 
 
 def test_report_policy_scope_requires_prior_full_panel_admission(monkeypatch):

@@ -332,9 +332,28 @@ and [baseline guide](https://behavior.stanford.edu/challenge/baselines.html)
 on September 15, 2026. The advertised deadline is October 16, 2026; recheck
 organizer updates before submitting.
 
+Every evaluation plan and campaign panel freezes its evaluator revision in the
+existing `upstream_commit` field. A recipe may set that field explicitly; an
+omission resolves to BEHAVIOR 1K v3.9.3 at plan creation, commit
+`6cbf70b075816096e9be53958780769f3264d25d`. Historical v3.9.2 declarations
+remain reproducible at commit `b1979916ec1549b10a4e65e630bc6504a9af1b00` by
+setting `upstream_commit` explicitly. A worker verifies the panel's declared
+commit and uses that same value for evaluator arguments and policy admission.
+It never replaces a frozen historical revision with the current default.
+Historical v3.9.2 panels and receipts remain readable, but their qualification
+does not authorize the changed public specialist server. All specialist report
+execution fails closed until the selected runtime, evaluator revision, and
+baseline lineage have a fresh qualification. Development execution remains
+available.
+
+For v3.9.3, the supported single-environment evaluator command adds
+`--num-envs 1 --replay-action-chunk-size 0`. The v3.9.2 command remains
+byte-compatible with historical declarations. This adapter does not declare
+support for multi-environment batching.
+
 | Requirement | Integration behavior |
 | --- | --- |
-| BEHAVIOR-1K v3.9.2 | Requires commit `b1979916ec1549b10a4e65e630bc6504a9af1b00` and unchanged tracked source |
+| BEHAVIOR-1K evaluator | Supports v3.9.3 at `6cbf70b075816096e9be53958780769f3264d25d` and historical v3.9.2 at `b1979916ec1549b10a4e65e630bc6504a9af1b00`; requires unchanged tracked source |
 | RGB + depth + proprioception | Uses `omnigibson.eval.wrappers.RGBDFullResWrapper` and the bundled R1Pro config unchanged |
 | Reporting instances | Public indices 0–9, which this evaluator writes as actual instance IDs 301–310 |
 | Development instances | Public indices 10–19; development outputs never produce a submission ZIP or challenge score |

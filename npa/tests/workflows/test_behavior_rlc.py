@@ -957,7 +957,8 @@ def test_selected_server_command_uses_explicit_receipts(tmp_path):
         "--adapter-root",
         str(tmp_path),
     ]
-    assert command[-8:] == [
+    selected_start = command.index("--selected-export-receipt")
+    assert command[selected_start:] == [
         "--selected-export-receipt",
         str(staged["selected_export"]),
         "--correlation-manifest",
@@ -970,6 +971,9 @@ def test_selected_server_command_uses_explicit_receipts(tmp_path):
     published = rlc_policy._command(args, 22, tmp_path)
     assert published[1] == str(tmp_path / "rlc_server.py")
     assert "--adapter-root" not in published
+    assert published[published.index("--upstream-commit") + 1] == (
+        "b1979916ec1549b10a4e65e630bc6504a9af1b00"
+    )
     assert published[-2:] == ["--execution-variant", "transition-refresh"]
 
 
