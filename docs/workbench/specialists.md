@@ -323,7 +323,7 @@ repeated after a crash before their checkpoint. There are no default task-count,
 runtime or token-generation caps; `model_options.max_tokens` is optional and
 operator-controlled. Provider context limits still apply and surface as failures.
 
-## Optional Jev
+## Jev routing
 
 To choose a model while preserving an explicitly delegated workspace, set that
 profile's `model_router` to `"jev"` and provide `model_criteria` for its primary
@@ -332,6 +332,7 @@ model and every `fallback_models` model ID:
 ```json
 {
   "model_router": "jev",
+  "require_model_route": true,
   "model_criteria": {
     "your-primary-model": "Localized code changes with clear requirements",
     "your-backup-model": "Complex diagnosis and multi-step repairs"
@@ -348,6 +349,18 @@ HTTP, then the provider decision, actual token usage and effective model under
 and requires attention without an automatic retry. Missing credentials record
 an explicit no-call fallback; abstention and provider failures retain their
 actual attempt and usage evidence. None proves that live Jev inference succeeded.
+
+Set `require_model_route: true`, as above, when the run must use Jev. It requires
+`model_router: "jev"` and an accepted, attempted provider decision choosing one
+of the configured endpoints. Missing credentials, abstention and failed routing
+stop the specialist before generation or tools and retain an attention receipt.
+Restarting or reconciling that task does not repeat the paid routing request.
+The default is `false`, preserving the advisory fallback behavior. This policy
+requires the initial Jev choice; subsequent generation failures can still use
+the profile's authorized fallback endpoints, with every attempt recorded.
+
+The [Jev + LangGraph + Token Factory setup](specialists-jev-stack.md) configures
+this required path and describes the live workflow-repair check.
 
 The older team-level option selects a profile for unassigned tasks:
 

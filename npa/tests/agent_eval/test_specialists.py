@@ -796,6 +796,7 @@ def test_legacy_fingerprint_and_new_recovery_policy_binding(configuration):
             "fallback_models",
             "required_operations",
             "model_router",
+            "require_model_route",
             "model_criteria",
             "compact_context",
         },

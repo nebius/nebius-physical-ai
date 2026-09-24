@@ -100,6 +100,7 @@ def test_default_policy_hash_remains_compatible_and_flag_is_strict(team):
         exclude={
             "fallback_models",
             "model_router",
+            "require_model_route",
             "model_criteria",
             "compact_context",
         },

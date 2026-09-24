@@ -40,6 +40,7 @@ def _route_model(profile, task, store):
                 "Model routing result was lost; do not repeat the paid request"
             )
         _model_order(profile, task)
+        _require_selection(profile, previous)
         return task
     key = os.environ.get("TYPESAFE_API_KEY", "") or load_credentials().tokens.get(
         "TYPESAFE_API_KEY", ""
@@ -59,7 +60,21 @@ def _route_model(profile, task, store):
     )
     receipt = _route_receipt(profile, intent, decision, attempted=bool(key))
     store._model_route(task["id"], receipt)
+    _require_selection(profile, receipt)
     return store._get(task["id"])
+
+
+def _require_selection(profile, receipt):
+    if profile.require_model_route and not (
+        receipt.get("status") == "accepted"
+        and receipt.get("api_call_attempted") is True
+        and receipt.get("fallback") is False
+        and receipt.get("selected_model")
+        in {profile.model, *(item.model for item in profile.fallback_models)}
+    ):
+        raise ValueError(
+            "Required Jev model selection was not accepted; generation blocked"
+        )
 
 
 def _route_receipt(profile, intent, decision, *, attempted):

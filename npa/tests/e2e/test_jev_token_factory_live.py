@@ -149,3 +149,89 @@ def test_live_rendered_agent_routes_and_generates(monkeypatch, tmp_path, use_jev
     )
     for record in records:
         _assert_agent_record(record, use_jev)
+
+
+def _specialist_workflow_case(tmp_path):
+    from npa.agent_backend.specialists.config import Profile, TeamConfig
+
+    path = Path(__file__).with_name("test_specialists_live.py")
+    spec = importlib.util.spec_from_file_location("jev_workflow_case", path)
+    case = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(case)
+    primary, backup = "zai-org/GLM-5.3-Flash", "zai-org/GLM-5.3"
+    data = case._profile(tmp_path, "glm", primary).model_dump()
+    data.update(
+        model_router="jev",
+        require_model_route=True,
+        fallback_models=[
+            {
+                "model": backup,
+                "model_options": {"chat_template_kwargs": {"reasoning_effort": "low"}},
+            }
+        ],
+        model_criteria={
+            primary: "Localized workflow repairs with explicit validation and a clear defect",
+            backup: "Ambiguous cross-component diagnosis requiring deeper reasoning",
+        },
+    )
+    config = TeamConfig(
+        state_directory=tmp_path / "state",
+        profiles=[Profile.model_validate(data)],
+        default_profile="glm",
+    )
+    return case, config
+
+
+def _assert_jev_workflow(team, case, profile):
+    task = team.status("glm")
+    route = task["route"]["model_selection"]
+    assert route["status"] == "accepted" and route["api_call_attempted"] is True
+    assert route["fallback"] is False
+    assert route["usage"]["input_tokens"] > 0
+    models = [event for event in task["events"] if event["type"] == "model"]
+    assert models[0]["model"] == route["selected_model"]
+    assert all(event["usage"]["prompt_tokens"] > 0 for event in models)
+    assert team.task_report("glm")["required_operations_passed"] is True
+    filename = case._WORKFLOWS["glm"][0]
+    assert (profile.workspace / "workflows" / filename).read_bytes() == (
+        case._ROOT / "workflows/main" / filename
+    ).read_bytes()
+    assert any(event.get("name") == "edit_file" for event in task["events"])
+
+
+def test_live_jev_langgraph_token_factory_repairs_workflow(tmp_path):
+    _require_live()
+    key = os.environ.get("TYPESAFE_API_KEY") or load_credentials().tokens.get(
+        "TYPESAFE_API_KEY"
+    )
+    if not key:
+        pytest.fail(
+            "Required Jev workflow needs TYPESAFE_API_KEY; no inference started"
+        )
+    from npa.agent_backend.specialists.team import SpecialistTeam
+    from npa.agent_backend.specialists.worker import supervise
+    from npa.clients.token_factory import TokenFactoryClient
+
+    case, config = _specialist_workflow_case(tmp_path)
+    profile = config.profiles[0]
+    assert {profile.model, profile.fallback_models[0].model} <= set(
+        TokenFactoryClient().list_models()
+    )
+    path = tmp_path / "team.json"
+    path.write_text(config.model_dump_json(indent=2))
+    path.chmod(0o600)
+    team = SpecialistTeam(config)
+    team.submit(
+        "Repair the broken transition in workflows/paidf-cosmos3.yaml; run native validation and planning.",
+        specialist="glm",
+        task_id="glm",
+    )
+    with supervise(str(path)):
+        case._wait_for(
+            team,
+            lambda state: all(task["status"] == "completed" for task in state["tasks"]),
+        )
+    _assert_jev_workflow(team, case, profile)
+    (tmp_path / "jev-specialist-evidence.json").write_text(
+        json.dumps(team.status("glm"), indent=2) + "\n"
+    )

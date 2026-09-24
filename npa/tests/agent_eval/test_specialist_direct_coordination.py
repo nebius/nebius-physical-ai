@@ -410,3 +410,112 @@ def test_summary_rejects_undeclared_zero_even_with_specialist_tokens(
     assert report["usage_complete"] is False
     assert report["estimated_cost_usd"] is None
     assert set(report["models"]) == {"primary", "backup"}
+
+
+def _require_jev(setup):
+    from npa.agent_backend.specialists.config import Profile
+
+    profiles = []
+    for profile in setup.team.config.profiles:
+        data = profile.model_dump()
+        data.update(
+            model_router="jev",
+            require_model_route=True,
+            fallback_models=[{"model": "test/backup"}],
+            model_criteria={
+                "test/model": "Routine repair",
+                "test/backup": "Deep diagnosis",
+            },
+        )
+        profiles.append(Profile.model_validate(data))
+    setup.team.config.profiles = profiles
+
+
+def _jev_answer(body, chosen, model):
+    return {
+        "model": model,
+        "answers": {
+            "model": {
+                "type": "choice",
+                "choice": chosen,
+                "confidence": 1.0,
+                "probabilities": {
+                    name: float(name == chosen)
+                    for name in body["questions"]["model"]["criteria"]
+                },
+            }
+        },
+        "usage": {"input_tokens": 100, "output_tokens": 5},
+    }
+
+
+def test_required_jev_dispatch_routes_each_langgraph_worker(
+    modules, setup, monkeypatch
+):
+    from npa.agent_backend import model_router
+    from npa.agent_backend.specialists import routing
+
+    _require_jev(setup)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "synthetic-key")
+    requests = []
+
+    def classify(post, body, key, timeout):
+        requests.append(body)
+        chosen = (
+            "test/backup"
+            if "Repair task 1" in body["state"]["request"]
+            else "test/model"
+        )
+        return _jev_answer(body, chosen, model_router.JEV_MODEL)
+
+    monkeypatch.setattr(model_router, "_classify", classify)
+    monkeypatch.setattr(routing, "load_credentials", lambda: SimpleNamespace(tokens={}))
+    assert _coordinate(modules, setup, lambda *_a, **_k: pytest.fail("Astra")) == 0
+    assert len(requests) == 2
+    assert setup.clients["worker-0"].calls[0]["model"] == "test/model"
+    assert setup.clients["worker-1"].calls[0]["model"] == "test/backup"
+    for task in setup.team.store._list():
+        route = task["route"]["model_selection"]
+        assert route["status"] == "accepted" and route["api_call_attempted"] is True
+        assert route["fallback"] is False
+        assert setup.team.task_report(task["id"])["required_operations_passed"] is True
+
+
+def test_unaccepted_required_route_never_wakes_astra(modules, setup, monkeypatch):
+    from npa.agent_backend.specialists import routing
+
+    _require_jev(setup)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(routing, "load_credentials", lambda: SimpleNamespace(tokens={}))
+
+    def reject(identities):
+        for profile in setup.team.config.profiles:
+            assert setup.team.work_once(profile.name)["status"] == "needs_attention"
+        return {"attention_task_ids": identities}
+
+    monkeypatch.setattr(setup.team, "wait_for_attention", reject)
+    assert (
+        _coordinate(modules, setup, lambda *_a, **_k: pytest.fail("Astra bypass")) == 1
+    )
+    blocked = json.loads((setup.directory / "routing-blocked.json").read_text())
+    assert len(blocked["tasks"]) == 2
+    assert not (setup.directory / "completion-result.json").exists()
+    assert all(client.calls == [] for client in setup.clients.values())
+
+
+def test_required_key_preflight_precedes_trial_creation(modules, setup, monkeypatch):
+    _require_jev(setup)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(
+        modules.experiment, "load_credentials", lambda: SimpleNamespace(tokens={})
+    )
+    config = setup.directory / "team.json"
+    config.write_text(setup.team.config.model_dump_json())
+    prompt = setup.directory / "prompt.txt"
+    prompt.write_text("Perform the assigned repairs")
+    output = setup.directory / "new-trial"
+    with pytest.raises(ValueError, match="no inference started"):
+        modules.experiment._prepare(config, prompt, output, "astra-tofa", "medium")
+    assert not output.exists()
+    assert setup.team.store._list() == []
+    modules.experiment._require_router_credentials(setup.team.config, "astra-only")

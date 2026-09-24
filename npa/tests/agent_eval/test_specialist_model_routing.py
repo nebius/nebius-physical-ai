@@ -246,3 +246,93 @@ def test_rejected_routed_endpoint_falls_back_within_original_grants(
 def test_router_configuration_cannot_ambiguously_bind_model_ids(routed, change):
     with pytest.raises(ValueError):
         Profile.model_validate({**routed.profile.model_dump(), **change})
+
+
+@pytest.fixture
+def required_team(routed):
+    profile = Profile.model_validate(
+        {**routed.profile.model_dump(), "require_model_route": True}
+    )
+    config = routed.team.config.model_copy(
+        update={
+            "profiles": [profile],
+            "state_directory": routed.team.config.state_directory.parent / "required",
+        }
+    )
+    team = SpecialistTeam(config, clients={profile.name: routed.client})
+    team.submit("Repair difficult source", specialist="repair", task_id="task")
+    return team
+
+
+def test_required_routing_missing_key_cannot_generate(
+    required_team, routed, monkeypatch
+):
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    from npa.agent_backend import model_router
+
+    monkeypatch.setattr(
+        model_router,
+        "_request_decision",
+        lambda *_a, **_k: pytest.fail("HTTP without key"),
+    )
+    result = required_team.work_once("repair")
+    assert result["status"] == "needs_attention"
+    assert "Required Jev" in result["error"]
+    receipt = result["route"]["model_selection"]
+    assert receipt["reason"] == "missing_credential"
+    assert receipt["api_call_attempted"] is False
+    assert routed.client.calls == []
+    assert required_team.store._calls("task") == []
+
+
+@pytest.mark.parametrize("status", ["abstained", "unavailable"])
+def test_required_route_keeps_failure_and_usage_without_replay(
+    required_team, routed, monkeypatch, status
+):
+    attempts = []
+
+    def classify(*args, **kwargs):
+        attempts.append(True)
+        return _decision(status, None)
+
+    monkeypatch.setattr(routing, "classify_generation_model", classify)
+    first = required_team.work_once("repair")
+    assert first["status"] == "needs_attention"
+    assert first["route"]["model_selection"]["usage"] == _decision()["usage"]
+    required_team.reconcile("task", retry=True)
+    restarted = SpecialistTeam(required_team.config, clients={"repair": routed.client})
+    assert restarted.work_once("repair")["status"] == "needs_attention"
+    assert attempts == [True]
+    assert routed.client.calls == []
+
+
+def test_required_accepted_route_runs_chosen_model_and_survives_restart(
+    required_team, routed, monkeypatch
+):
+    monkeypatch.setattr(
+        routing, "classify_generation_model", lambda *_a, **_k: _decision()
+    )
+    profile = required_team.config.profile("repair")
+    routing._route_model(profile, required_team.store._get("task"), required_team.store)
+    monkeypatch.setattr(
+        routing,
+        "classify_generation_model",
+        lambda *_a, **_k: pytest.fail("router replay"),
+    )
+    restarted = SpecialistTeam(required_team.config, clients={"repair": routed.client})
+    result = restarted.work_once("repair")
+    assert result["status"] == "completed"
+    assert result["route"]["model_selection"]["selected_model"] == "synthetic/reasoning"
+    assert routed.client.calls[0]["model"] == "synthetic/reasoning"
+    assert result["route"]["model_selection"]["api_call_attempted"] is True
+
+
+def test_required_flag_binds_policy_and_rejects_explicit_router(routed, required_team):
+    from npa.agent_backend.specialists.config import fingerprint
+
+    profile = required_team.config.profile("repair")
+    assert fingerprint(profile) != fingerprint(routed.profile)
+    with pytest.raises(ValueError, match="requires model_router=jev"):
+        Profile.model_validate({**profile.model_dump(), "model_router": "explicit"})
+    with pytest.raises(ValueError):
+        Profile.model_validate({**profile.model_dump(), "require_model_route": "true"})

@@ -9,6 +9,7 @@ import time
 
 from npa.agent_backend.specialists.reports import task_report_for_store
 from npa.agent_backend.specialists.store import TaskStore
+from npa.agent_backend.specialists.routing import _require_selection
 
 from evidence import _write_json
 
@@ -271,7 +272,35 @@ def _assignment_receipts(profile, workers, recovery):
     return accepted
 
 
+def _routing_blockers(team):
+    profiles = {
+        profile.name: profile
+        for profile in team.config.profiles
+        if getattr(profile, "require_model_route", False)
+    }
+    blockers = []
+    for task in team.store._list():
+        profile = profiles.get(task["profile"])
+        if profile is None:
+            continue
+        if task["status"] in {"queued", "running"}:
+            continue
+        selection = task.get("route", {}).get("model_selection", {})
+        try:
+            _require_selection(profile, selection)
+        except ValueError:
+            blockers.append(
+                {
+                    "task_id": task["id"],
+                    "route_status": selection.get("status", "missing"),
+                }
+            )
+    return blockers
+
+
 def _complete(team, directory, reports, coordinator_reports):
+    if _routing_blockers(team):
+        return False
     profiles = {profile.name: profile for profile in team.config.profiles}
     if not profiles or any(
         report.get("specialist") not in profiles for report in reports.values()
@@ -310,6 +339,9 @@ def _review_loop(team, arguments, common, policies, invoke):
     events, seen = [], {}
     while True:
         reports = _wait(team, directory, events, seen)
+        if blockers := _routing_blockers(team):
+            _write_json(directory / "routing-blocked.json", {"tasks": blockers})
+            return 1
         recovery = _coordinator_reports(team, directory)
         if _complete(team, directory, reports, recovery):
             return 0

@@ -15,6 +15,7 @@ import time
 from npa.agent_backend.specialists.config import load_config, private_directory
 from npa.agent_backend.specialists.team import SpecialistTeam
 from npa.agent_backend.specialists.worker import supervise
+from npa.clients.credentials import load_credentials
 
 from evidence import _granted_tools, _receipts, _snapshot, _write_json
 from workflow_bridge import _coordinator_store
@@ -143,10 +144,25 @@ def _prompt(common, team, arm):
     )
 
 
+def _require_router_credentials(config, arm):
+    if arm != "astra-tofa" or not any(
+        profile.require_model_route for profile in config.profiles
+    ):
+        return
+    key = os.environ.get("TYPESAFE_API_KEY") or load_credentials().tokens.get(
+        "TYPESAFE_API_KEY"
+    )
+    if not key:
+        raise ValueError(
+            "Required Jev routing needs TYPESAFE_API_KEY; no inference started"
+        )
+
+
 def _prepare(
     config_path, prompt_path, directory, arm, effort, coordination="continuous"
 ):
     config = load_config(config_path)
+    _require_router_credentials(config, arm)
     common = prompt_path.read_text()
     if not common.strip():
         raise ValueError("the common task prompt must not be empty")

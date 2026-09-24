@@ -168,6 +168,7 @@ class Profile(ModelEndpoint):
         model, base_url, key_env, model_options: Primary inference configuration.
         fallback_models: Ordered, opt-in endpoints for rejected generations.
         model_router, model_criteria: Optional Jev endpoint selection within these same grants.
+        require_model_route: Require an accepted Jev decision before generation.
         compact_context: Omit superseded source content from model requests only.
         required_operations: Commands that must succeed after the latest edit.
         workspace, read_paths, write_paths, operations: Operator-owned grants.
@@ -182,6 +183,7 @@ class Profile(ModelEndpoint):
     instructions: str = ""
     fallback_models: list[ModelEndpoint] = Field(default_factory=list)
     model_router: Literal["explicit", "jev"] = "explicit"
+    require_model_route: StrictBool = False
     model_criteria: dict[str, str] = Field(default_factory=dict)
     compact_context: StrictBool = False
     required_operations: list[str] = Field(default_factory=list)
@@ -210,6 +212,8 @@ class Profile(ModelEndpoint):
 
     @model_validator(mode="after")
     def _completion_policy(self):
+        if self.require_model_route and self.model_router != "jev":
+            raise ValueError("require_model_route requires model_router=jev")
         if set(self.required_operations) - self.operations.keys():
             raise ValueError("required_operations must name configured operations")
         if self.model_router == "jev":
@@ -313,6 +317,8 @@ def fingerprint(profile: Profile) -> str:
         del policy["model_criteria"]
     if not policy["compact_context"]:
         del policy["compact_context"]
+    if not policy["require_model_route"]:
+        del policy["require_model_route"]
     for operation in policy["operations"].values():
         if not operation["handoff_on_failure"]:
             del operation["handoff_on_failure"]

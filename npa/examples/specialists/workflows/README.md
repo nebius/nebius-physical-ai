@@ -10,6 +10,15 @@ workspace's existing grants. Selecting a workspace explicitly does not bypass
 that endpoint policy. A live Jev result requires an accepted provider receipt;
 missing credentials or fallback are reported separately.
 
+For a required Jev run, set each profile's `model_router: "jev"` and
+`require_model_route: true`, with criteria for every declared endpoint. The
+hybrid preflight checks `TYPESAFE_API_KEY` before creating trial state or invoking
+inference. In `completion` and `specialists-first` modes, an unaccepted route
+ends the experiment with `routing-blocked.json` instead of starting an Astra
+recovery that bypasses Jev. Use `specialists-first` when even the initial
+delegation should avoid an Astra invocation. See the
+[stack setup and live check](../../../../docs/workbench/specialists-jev-stack.md).
+
 Install the `agent-specialists` extra and the optional MCP dependency described
 in [the simulation example](../simulation/README.md). The runner uses an
 authenticated `codex exec -m gpt-6-astra` with native shell and additional Codex
@@ -187,6 +196,8 @@ The output directory retains:
 - `codex.jsonl` and `codex.stderr`: every observed Astra event and diagnostic.
   They are absent when specialists-first finishes without invoking Astra.
 - `dispatch.json`: configured assignments and goal hashes for specialists-first.
+- `routing-blocked.json`: required Jev decisions that were not accepted; these
+  stop completion-mode experiments without an Astra recovery invocation.
 - `coordinator-end-task-receipts.json`: worker state when Astra exits.
 - `completion-result.json`: host-accepted required-operation contracts and the
   worker/recovery reports supporting them, when the automatic completion gate passes.

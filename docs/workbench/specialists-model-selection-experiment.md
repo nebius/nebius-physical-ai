@@ -29,6 +29,10 @@ suggested two candidates; only these two were screened. Advertised throughput
 was a selection hint, not measured task performance. Both models used explicit
 Token Factory endpoints. Jev was not invoked.
 
+The [required Jev stack](specialists-jev-stack.md) adds enforced provider routing
+and a separate live test. It does not change these historical timing or cost
+results; measuring its benefit requires new runs that include routing overhead.
+
 | Pair | Arm | Verified repairs | Elapsed | Model API-equivalent cost |
 | --- | --- | --- | --- | --- |
 | 4 | Astra | 2/2 | 184.4s | $0.774–$1.508 |
