@@ -47,7 +47,7 @@ ARG BUILD_SONIC_DEPLOY=0
 
 LABEL npa.tool="sonic" \
       npa.version="${SONIC_VERSION}" \
-      npa.base_image="${BASE_IMAGE}" \
+      npa.base_profile="cuda13-workbench-or-public-cuda" \
       npa.driver_provisioning="${NPA_DRIVER_PROVISIONING}" \
       npa.runtime_user="${NPA_RUNTIME_USER}" \
       npa.cuda_architectures="${NPA_CUDA_ARCHITECTURES}" \

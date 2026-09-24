@@ -323,8 +323,14 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
             "cosmos-evaluator",
             "cosmos3",
             "cosmos3-ray-serve",
+            "genesis",
             "isaac-lab",
             "isaac-arena",
+            "lerobot",
+            "lerobot-vlm-rl",
+            "loop-eval",
+            "reference-policy",
+            "sonic",
         }
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
@@ -352,21 +358,18 @@ def test_public_set_excludes_every_restricted_tool(monkeypatch) -> None:
     assert public.isdisjoint({"genesis", "cosmos"})
     for tool in ("genesis", "cosmos"):
         assert not is_publicly_redistributable(tool)
-    assert "lerobot" in public, "unrelated tools must stay publishable"
+    assert "fiftyone" in public, "unrelated tools must stay publishable"
 
 
 def test_public_set_includes_the_oss_tools() -> None:
     public = set(publicly_publishable_tools())
     for tool in (
-        "lerobot",
-        "genesis",
         "cosmos",
         "fiftyone",
         "lancedb",
         "rerun-viewer",
         "lichtblick",
         # Independently clean images remain publishable.
-        "sonic",
         "groot",
         "cosmos3-serving",
         "sonic-mujoco",
@@ -395,13 +398,19 @@ def test_publish_plan_excludes_stale_base_images_and_their_derivatives() -> None
     """A stale base and descendants retaining its layers are quarantined together."""
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
-    for image in ("npa-sonic", "npa-groot"):
+    for image in ("npa-groot",):
         assert image in names, image
     for image in (
         "npa-isaac-lab",
         "npa-isaac-arena",
         "npa-cosmos3",
         "npa-cosmos3-ray-serve",
+        "npa-genesis",
+        "npa-lerobot",
+        "npa-lerobot-vlm-rl",
+        "npa-loop-eval",
+        "npa-reference-policy",
+        "npa-sonic",
     ):
         assert image not in names
     assert "npa-sonic-mujoco" in names
@@ -439,9 +448,9 @@ def test_publish_plan_still_refuses_a_restricted_image(monkeypatch) -> None:
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     assert "npa-genesis" not in names
-    # sonic is publishable under this monkeypatched set, so the plan must contain it -
+    # groot is publishable under this monkeypatched set, so the plan must contain it -
     # proving the refusal followed the patched set instead of a captured one.
-    assert "npa-sonic" in names
+    assert "npa-groot" in names
 
 
 def test_publish_plan_requires_a_target() -> None:
@@ -506,15 +515,9 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         assert entry["published_digest"] == accepted_digest
 
 
-def test_publish_plan_uses_the_public_sonic_pin_not_the_default_variant() -> None:
+def test_publish_plan_excludes_the_stale_public_sonic_pin() -> None:
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
-    sonic = next(item for item in plan if item.tool == "sonic")
-    expected = (
-        "npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
-        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-    )
-    assert sonic.source_ref.endswith(f"npa-sonic:dev-{'0' * 40}") is False
-    assert sonic.target_ref.endswith(expected)
+    assert all(item.tool != "sonic" for item in plan)
 
 
 def test_public_registry_defaults_to_ghcr(monkeypatch) -> None:
@@ -557,10 +560,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
         set(CONTAINER_IMAGE_NAMES)
-        & (
-            set(RESTRICTED_PUBLICATION_TOOLS)
-            | set(PUBLICATION_QUARANTINE_TOOLS)
-        )
+        & (set(RESTRICTED_PUBLICATION_TOOLS) | set(PUBLICATION_QUARANTINE_TOOLS))
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
@@ -2584,7 +2584,7 @@ def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(
         assert not any(f"/{image}:" in ref for ref in copied), image
         # Skipping quietly would leave a hole in the mirror nobody knew about.
         assert image in captured.err, image
-    assert any("/npa-lerobot:" in ref for ref in copied), (
+    assert any("/npa-groot:" in ref for ref in copied), (
         "ready images must still publish"
     )
     assert f"Copied {len(plan) - len(missing)} image(s)." in captured.out

@@ -584,6 +584,24 @@ def test_image_declares_redistribution_class(image_name: str) -> None:
     )
 
 
+def test_public_recipes_do_not_embed_operator_base_references_in_labels() -> None:
+    """Build provenance may record a profile, never a private registry coordinate."""
+
+    contract = _load_contract()
+    unsafe = re.compile(
+        r'npa\.(?:base[._]image(?:_digest)?|build_info)="[^"\n]*\$\{BASE_IMAGE'
+    )
+    for image_name, entry in contract["images"].items():
+        if entry.get("redistribution") != "public":
+            continue
+        dockerfile = WORKBENCH_DOCKER / entry["dockerfile"]
+        text = dockerfile.read_text(encoding="utf-8")
+        assert unsafe.search(text) is None, (
+            f"{image_name}: public OCI labels must not expose the operator's "
+            "BASE_IMAGE registry or digest"
+        )
+
+
 @pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
 def test_dockerfiles_that_bake_omniverse_are_restricted(image_name: str) -> None:
     """An image that BAKES NVIDIA Omniverse Kit (Isaac Sim) is not freely

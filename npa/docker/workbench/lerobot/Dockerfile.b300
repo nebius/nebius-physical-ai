@@ -5,16 +5,14 @@ ARG BASE_IMAGE=<your-registry>/<namespace>/npa-base:cuda13-b300-tag
 ARG BUILD_TS=unknown
 ARG LEROBOT_VERSION=0.5.1
 ARG LEROBOT_COMMIT=1396b9fab7aecddd10006c33c47a487ffdcb54b4
-ARG BASE_IMAGE_DIGEST=unknown
 
 LABEL npa.tool="lerobot" \
       npa.version="${LEROBOT_VERSION}" \
       npa.target_gpu="b300-sm_103" \
-      npa.base_image="${BASE_IMAGE}" \
-      npa.base_image_digest="${BASE_IMAGE_DIGEST}" \
+      npa.base_profile="cuda13-workbench" \
       npa.lerobot.commit="${LEROBOT_COMMIT}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="lerobot_commit=${LEROBOT_COMMIT};base_image=${BASE_IMAGE};base_image_digest=${BASE_IMAGE_DIGEST};build_ts=${BUILD_TS}"
+      npa.build_info="lerobot_commit=${LEROBOT_COMMIT};base_profile=cuda13-workbench;build_ts=${BUILD_TS}"
 
 ENV HF_LEROBOT_HOME=/opt/lerobot/hf_cache \
     MUJOCO_GL=egl \

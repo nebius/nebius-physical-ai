@@ -25,6 +25,8 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    LAYER_STALE_PUBLICATION_TOOLS,
+    METADATA_STALE_PUBLICATION_TOOLS,
     PUBLICATION_QUARANTINE_TOOLS,
     STALE_PUBLICATION_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
@@ -134,9 +136,18 @@ def test_stale_publications_are_built_releases_awaiting_requalification() -> Non
             "cosmos-evaluator",
             "cosmos3",
             "cosmos3-ray-serve",
+            "genesis",
             "isaac-lab",
             "isaac-arena",
+            "lerobot",
+            "lerobot-vlm-rl",
+            "loop-eval",
+            "reference-policy",
+            "sonic",
         }
+    )
+    assert STALE_PUBLICATION_TOOLS == (
+        LAYER_STALE_PUBLICATION_TOOLS | METADATA_STALE_PUBLICATION_TOOLS
     )
     assert STALE_PUBLICATION_TOOLS.isdisjoint(UNVALIDATED_PUBLICATION_TOOLS)
     assert STALE_PUBLICATION_TOOLS.isdisjoint(VALIDATION_CANDIDATE_TOOLS)
@@ -147,9 +158,7 @@ def test_stale_publications_are_built_releases_awaiting_requalification() -> Non
 def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
     """A child cannot be accepted while retaining every layer of a stale parent."""
 
-    image_to_tool = {
-        image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()
-    }
+    image_to_tool = {image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()}
     parent_pattern = re.compile(r"\bnpa-[a-z0-9-]+(?=[:@])")
     for dockerfile in sorted((REPO_ROOT / "npa/docker/workbench").glob("*/Dockerfile")):
         child = dockerfile.parent.name
@@ -157,12 +166,10 @@ def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
             continue
         parents = {
             image_to_tool[image]
-            for image in parent_pattern.findall(
-                dockerfile.read_text(encoding="utf-8")
-            )
+            for image in parent_pattern.findall(dockerfile.read_text(encoding="utf-8"))
             if image in image_to_tool
         }
-        stale_parents = parents & STALE_PUBLICATION_TOOLS
+        stale_parents = parents & LAYER_STALE_PUBLICATION_TOOLS
         if stale_parents:
             assert child in STALE_PUBLICATION_TOOLS, (
                 f"{child} inherits stale image layer(s) from "

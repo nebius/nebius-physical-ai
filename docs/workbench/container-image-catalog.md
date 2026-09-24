@@ -54,8 +54,8 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory has **56 packaging entries** (47 redistribution-eligible
-and nine restricted) and **47 mapped tools**: 31 public-release members, two
-restricted tools, and 14 quarantined tools. These counts come from
+and nine restricted) and **47 mapped tools**: 25 public-release members, two
+restricted tools, and 20 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -379,6 +379,20 @@ package-generated keys in the same build layer. Replacements and derivatives
 must pass exact-image scanning and capability evaluation before any of the six
 re-enters this table.
 
+## 2026-09-24 OCI metadata and runtime-user quarantine
+
+Exact-config inspection found that six more previously accepted releases no
+longer satisfy the current public-image contract. `npa-sonic` defaults to root
+despite the documented non-root runtime, and its config also exposes an
+operator-specific build-base reference. `npa-genesis`, `npa-lerobot`,
+`npa-lerobot-vlm-rl`, `npa-loop-eval`, and `npa-reference-policy` expose the
+same class of operator infrastructure detail in anonymously readable OCI
+labels. Those tags are historical registry artifacts and no longer belong to
+the accepted plan. The recipes now record only generic base profiles, and the
+three thin Genesis derivatives override inherited base metadata explicitly.
+Replacements must pass exact-config disclosure checks, non-root validation,
+image scanning, and capability evaluation before re-entering this table.
+
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
@@ -388,13 +402,7 @@ re-enters this table.
 | Cosmos 1.0 Diffusion 7B (Predict) | `npa-cosmos` | `1.0.9`, `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2026-08-03 | Cosmos world-model generation with `Cosmos-1.0-Diffusion-7B-Text2World`, plus the default self-hosted VLM image for workflows. Uses Torch 2.7 and CUDA 12.8 with flash-attn, NATTEN, and Transformer Engine. |
 | Cosmos Reason 2 / Predict 2.5 (3.0.1) | `npa-cosmos3-reason` | `3.0.1-genuine-sm120`, `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | VLM reasoning over video/images with `Cosmos-Reason2-8B` or `Cosmos-Reason2-2B`, serving as a judge/critic stage. Also wires Predict 2.5, Transfer 2.5, and Cosmos-Guardrail1 model IDs on a Blackwell-capable CUDA 13 base. |
 | Foxglove Embed SDK 0.58.0 | `npa-foxglove-embed` | `0.58.0` | 2026-08-03 | Static host for the pinned `@foxglove/embed` browser SDK (MIT) and shared NPA glue module used by the agent UI, on port 8099. Serves operator-mounted MCAP/bag recordings with CORS and byte ranges; the Foxglove app is not redistributed. |
-| Genesis 0.4.6 | `npa-genesis` | `0.4.6`, `cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Genesis physics simulator for interactive simulation and development. It is the base image for the Sim2Real family: environment generation, evaluation, policies, and VLM-RL. |
 | LanceDB 0.30.3 + CLIP | `npa-lancedb` | `0.30.3`, `cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z` | 2026-08-03 | CLIP embedding and LanceDB vector service on port 8686: the query index behind dataset-of-record search. Exact-source builds use a thin FastAPI layer on the shared CUDA/PyTorch base and include the snapshot-pinned non-root SkyPilot Kubernetes bootstrap needed by native insights workflow stages. |
-| LeRobot 0.5.1 | `npa-lerobot` | `0.5.1`, `cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Hugging Face LeRobot training/evaluation service on port 8080 for manipulation policies. Includes CUDA and MuJoCo/EGL headless rendering; checkpoints and job state live on mounted volumes. |
-| LeRobot VLM-RL 0.1.1 | `npa-lerobot-vlm-rl` | `0.1.1`, `cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | RL loop in which a VLM supplies reward or shaping signals for LeRobot policies. It is built on the Genesis image so simulation and policy execution share one container. |
-| Sim2Real Loop Eval 0.1.3 | `npa-loop-eval` | `0.1.3-genuine-sm120`, `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Batched closed-loop policy evaluation in Genesis (default 16 environments and 240 steps), providing the scoring stage of the Sim2Real loop. Exact-source workflow builds bake the same snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure as EnvGen so Stage 14 can start without a privileged or moving bootstrap image. Built from `sim2real-eval/Dockerfile`; the tool key is `loop-eval`. |
-| Sim2Real Reference Policy 0.1.2 | `npa-reference-policy` | `0.1.2`, `cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Reference BYO-compatible Sim2Real action policy and worked example of the policy-container contract. Includes the policy functional smoke for comparison with custom images. |
-| SONIC (GR00T-WholeBodyControl) | `npa-sonic` | `cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Whole-body humanoid locomotion training and evaluation using `gear_sonic` (Apache-2.0 at a pinned commit). The public active image runtime-fetches Isaac and requires GPU Operator driver mounts. The old L40S and combined H100/H200 MuJoCo images are restricted and rejected; compute-only serverless use requires a separately validated custom image. |
 | Lichtblick 1.26.0 | `npa-lichtblick` | `1.26.0` | 2026-08-07 | Fully open-source (MPL-2.0), Foxglove-compatible MCAP/ROS log viewer served by Caddy on port 8080. No account or proprietary component is required. |
 | FiftyOne 1.21.0 (Voxel51) | `npa-fiftyone` | `1.21.0-skypilot-v1-20260915` | 2026-09-15 | CPU dataset curation and loopback visualization on port 5151, including real Brain uniqueness, similarity, and embedding visualization. The non-root SkyPilot worker includes MongoDB 7.0.40 with matching source and notices, and supports the current NPA dependency environment. |
 | Cosmos3-Super serving | `npa-cosmos3-serving` | `0.2.0-oss` | 2026-08-17 | Zero-payload non-root bootstrap on a digest-pinned public Python base. The serving closure, models, and guardrails are operator runtime fetches after terms and entitlement checks; the exact accepted digest passed guarded multi-GPU service boot and real inference. |
@@ -655,22 +663,22 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 32 currently accepted release references resolved anonymously to their
-recorded digests on 2026-09-24. Six previously accepted tags remain pullable
-but are excluded by the SSH host-identity quarantine above. The chart groups
+All 26 currently accepted release references resolved anonymously to their
+recorded digests on 2026-09-24. Twelve previously accepted tags remain pullable
+but are excluded by the two security quarantines above. The chart groups
 the current publishing plan three ways:
 
-- **19 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **14 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3-reason`,
-  `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
-  `npa-flex-pi`, `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
-  `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`,
+  `npa-detection-training`, `npa-envgen`, `npa-flex-pi`, `npa-groot`,
+  `npa-lancedb`, `npa-lerobot-policy`,
+  `npa-ltx2`, `npa-sonic-mujoco`,
   `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
-- **7 public images are blocked on at least one platform**:
+- **6 public images are blocked on at least one platform**:
   `npa-content-agents`, `npa-cosmos`, `npa-cosmos2-transfer`,
-  `npa-cosmos3-serving`, `npa-leisaac`, `npa-openarm`, and `npa-sonic`.
+  `npa-cosmos3-serving`, `npa-leisaac`, and `npa-openarm`.
   Their constraints are not interchangeable. They include missing RT cores,
   vendor-stack or extension allowlists, a CUDA 12.8 NVRTC `sm_103` gap, and an
   8-GPU memory floor; `npa-leisaac` is also not routed to L40S by its launcher.
