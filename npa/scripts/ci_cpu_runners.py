@@ -15,6 +15,8 @@ import sys
 import time
 import uuid
 
+from ci_cpu_runner_remote import _run_remote, _stop_controller
+
 from ci_cpu_runner_cloud import (
     _check_capacity,
     _create_worker,
@@ -319,6 +321,7 @@ def _maintain(root: Path, config: dict, executor) -> None:
             if not retiring:
                 _retire_workers(root, config, _records(root))
                 _save(root / "status.json", {"phase": "stopped", "workers": 0})
+                _stop_controller(root, config)
                 return
         else:
             for record in _reconcile(root, config, runners, retiring):
@@ -347,6 +350,10 @@ def _running(root: Path) -> bool:
 
 def _launch(root: Path, config: dict) -> None:
     if _running(root):
+        return
+    if config.get("supervisor") == "systemd":
+        subprocess.run(["systemctl", "start", "npa-ci-runners.service"], check=True)
+        print("Cloud runner controller started.")
         return
     command = [
         sys.executable,
@@ -413,6 +420,36 @@ def _status(root: Path, config: dict) -> None:
     )
 
 
+def _operate(root: Path, config: dict, command: str) -> None:
+    if (root / "remote-controller.json").exists():
+        _run_remote(root, config, command)
+        return
+    if command == "up":
+        if (root / "drain.json").exists() and _running(root):
+            raise RuntimeError(
+                "Wait for the requested drain to finish before starting again"
+            )
+        (root / "drain.json").unlink(missing_ok=True)
+        (root / "controller-stopped").unlink(missing_ok=True)
+        _launch(root, config)
+    elif command == "down":
+        if not _records(root) and not _running(root):
+            _disable(root, config)
+            print("No workers remain.")
+            _stop_controller(root, config)
+            return
+        _begin_drain(root, config)
+        (root / "controller-stopped").unlink(missing_ok=True)
+        _launch(root, config)
+        print(
+            "Drain requested. Existing workflows finish before workers and their disks are deleted."
+        )
+    else:
+        {"serve": _serve, "status": _status, "enable": _enable, "disable": _disable}[
+            command
+        ](root, config)
+
+
 def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -423,28 +460,7 @@ def _main() -> None:
     )
     args = parser.parse_args()
     root = args.state_dir.expanduser().resolve()
-    config = _config(root)
-    if args.command == "up":
-        if (root / "drain.json").exists() and _running(root):
-            raise RuntimeError(
-                "Wait for the requested drain to finish before starting again"
-            )
-        (root / "drain.json").unlink(missing_ok=True)
-        _launch(root, config)
-    elif args.command == "down":
-        if not _records(root) and not _running(root):
-            _disable(root, config)
-            print("No workers remain.")
-            return
-        _begin_drain(root, config)
-        _launch(root, config)
-        print(
-            "Drain requested. Existing workflows finish before workers and their disks are deleted."
-        )
-    else:
-        {"serve": _serve, "status": _status, "enable": _enable, "disable": _disable}[
-            args.command
-        ](root, config)
+    _operate(root, _config(root), args.command)
 
 
 if __name__ == "__main__":

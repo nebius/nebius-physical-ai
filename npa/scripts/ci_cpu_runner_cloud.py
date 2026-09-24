@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 import uuid
 
+from ci_cpu_runner_auth import _github_environment
+
 
 def _save(path: Path, value: dict | list) -> None:
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".pending-")
@@ -26,13 +28,14 @@ def _load(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
-def _command(root: Path, command: list[str], payload=None, *, absent=False):
+def _command(root: Path, command: list[str], payload=None, *, absent=False, env=None):
     result = subprocess.run(
         command,
         input=json.dumps(payload) if payload is not None else None,
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     if result.returncode == 0:
         return json.loads(result.stdout) if result.stdout.strip() else None
@@ -53,7 +56,9 @@ def _github(
     command.append(f"repos/{config['repository']}/{endpoint}")
     if payload is not None:
         command.extend(["--input", "-"])
-    return _command(root, command, payload, absent=absent)
+    return _command(
+        root, command, payload, absent=absent, env=_github_environment(root, config)
+    )
 
 
 def _pages(root: Path, config: dict, endpoint: str, key: str) -> list[dict]:
@@ -65,7 +70,8 @@ def _pages(root: Path, config: dict, endpoint: str, key: str) -> list[dict]:
         "--slurp",
         f"repos/{config['repository']}/{endpoint}{separator}per_page=100",
     ]
-    return [item for page in _command(root, command) for item in page[key]]
+    pages = _command(root, command, env=_github_environment(root, config))
+    return [item for page in pages for item in page[key]]
 
 
 def _nebius(
@@ -155,7 +161,11 @@ def _quota_headroom(quota: dict, name: str, *, inherited: bool):
 
 def _check_capacity(root: Path, config: dict, count: int) -> None:
     requirements = _capacity_requirements(config, count)
-    for field in ("tenant_id", "project_id"):
+    scope = config.get("quota_scope", "tenant-and-project")
+    if scope not in {"project", "tenant-and-project"}:
+        raise ValueError("Unknown controller quota scope")
+    fields = ("project_id",) if scope == "project" else ("tenant_id", "project_id")
+    for field in fields:
         quotas = _nebius_items(root, config, "quotas quota-allowance", config[field])
         regional = {
             q["metadata"]["name"]: q
