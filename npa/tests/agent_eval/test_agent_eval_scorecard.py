@@ -17,6 +17,7 @@ import uuid
 import pytest
 
 from agent_eval.harness import (
+    _fake_embed,
     assert_scorecard_not_regressed,
     run_operate_eval,
     run_suite,
@@ -56,6 +57,43 @@ def _baseline_scorecard() -> dict:
 def test_agent_eval_scorecard_does_not_regress_from_committed_baseline():
     current = run_suite()["scorecard"]
     assert_scorecard_not_regressed(current, _baseline_scorecard())
+
+
+@pytest.mark.parametrize("hash_seed", [0, 269, 471])
+def test_mocked_embeddings_and_scorecard_ignore_process_hash_seed(hash_seed):
+    """Keep retrieval results stable across workers with different hash seeds.
+
+    Args:
+        hash_seed: Includes seeds that previously ranked an unrelated document first.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Embeddings differ or a fresh process regresses the scorecard.
+    """
+    script = (
+        "import json\n"
+        "from agent_eval.harness import _fake_embed, run_suite\n"
+        "print(json.dumps({'vectors': _fake_embed(['genesis gpu physics simulator']), "
+        "'scorecard': run_suite()['scorecard']}))\n"
+    )
+    tests_directory = str(Path(__file__).resolve().parents[1])
+    environment = {
+        **os.environ,
+        "PYTHONHASHSEED": str(hash_seed),
+        "PYTHONPATH": os.pathsep.join(
+            [tests_directory, os.environ.get("PYTHONPATH", "")]
+        ),
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(result.stdout)
+    assert_scorecard_not_regressed(report["scorecard"], _baseline_scorecard())
+    assert report["vectors"] == _fake_embed(["genesis gpu physics simulator"])
 
 
 def test_agent_eval_regression_gate_rejects_negative_control():

@@ -312,6 +312,18 @@ def seed_live_workflow_inputs(
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
 
+    if spec_name == "encord-roundtrip-smoke.yaml":
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/source.png",
+            Body=base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                validate=True,
+            ),
+            ContentType="image/png",
+        )
+        return
+
     if spec_name == "lerobot-subtask-proof.yaml":
         _seed_lerobot_subtask_dataset(client, bucket=bucket, marker=marker)
         return
@@ -496,6 +508,26 @@ def seed_live_workflow_inputs(
     if spec_name == "token-factory-gate-loop.yaml":
         # The loop captions and scores the same small batch every iteration.
         _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
+        return
+
+    if spec_name == "token-factory-robot-sdg.yaml":
+        body = b'{"id":"robot-e2e","prompt":"Extract these scene values: red cube at (-0.10,-0.08), green target at (0.10,0.08), lighting=1.0."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
+        return
+
+    if spec_name == "token-factory-sdg.yaml":
+        body = b'{"id":"e2e-sdg","prompt":"Create a training example asking for a concise paraphrase of: put the red cube in the blue tray."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
         return
 
     if spec_name == "token-factory-generate.yaml":
@@ -1644,7 +1676,7 @@ def _assert_nurec_rrd(
     import sys
 
     import yaml
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     path = local / "reports/sim2real.rrd"
     verified = subprocess.run(
@@ -2038,10 +2070,14 @@ def live_credential_markers() -> list[str]:
     try:
         from npa.clients.credentials import load_credentials
 
-        storage = load_credentials().get("storage") or {}
-        for key in ("aws_access_key_id", "aws_secret_access_key"):
-            value = storage.get(key)
+        credentials = load_credentials()
+        for key in ("s3_access_key_id", "s3_secret_access_key"):
+            value = getattr(credentials, key, "")
             if isinstance(value, str) and len(value) >= 8:
+                markers.append(value)
+        for key in ("ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64"):
+            value = credentials.tokens.get(key, "")
+            if len(value) >= 8:
                 markers.append(value)
     except Exception:
         pass
@@ -2050,6 +2086,8 @@ def live_credential_markers() -> list[str]:
         "AWS_SECRET_ACCESS_KEY",
         "HF_TOKEN",
         "NEBIUS_TOKEN_FACTORY_KEY",
+        "ENCORD_SSH_KEY",
+        "ENCORD_SSH_KEY_B64",
     ):
         value = os.environ.get(env_key, "")
         if value and len(value) >= 8:
