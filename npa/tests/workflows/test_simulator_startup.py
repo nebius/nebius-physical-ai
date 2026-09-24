@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -213,6 +214,7 @@ def test_cleanup_repairs_owned_directories_and_derives_inventory(
     (nested / "payload").write_text("value")
     nested.chmod(0o2000)
     guard = hold_owned_tree(root, owner)
+    held_fd = guard.root_fd
 
     receipt = remove_owned_tree(guard)
 
@@ -223,6 +225,10 @@ def test_cleanup_repairs_owned_directories_and_derives_inventory(
         "symlink": 0,
     }
     assert receipt["repairs"][0]["mode_before"] == "0o2000"
+    with pytest.raises(OSError):
+        os.fstat(held_fd)
+    with pytest.raises(ValueError, match="already consumed"):
+        remove_owned_tree(guard)
 
 
 def test_cleanup_never_follows_external_symlink(tmp_path: Path) -> None:
@@ -246,6 +252,7 @@ def test_cleanup_rejects_root_replacement_before_permission_repair(
     root = owner / "tree"
     root.mkdir(parents=True)
     guard = hold_owned_tree(root, owner)
+    held_fd = guard.root_fd
     root.rmdir()
     root.mkdir(mode=0o000)
 
@@ -254,8 +261,41 @@ def test_cleanup_rejects_root_replacement_before_permission_repair(
 
     assert root.stat().st_mode & 0o777 == 0
     assert raised.value.evidence["inventory"]["counts"]["directory"] == 0
+    with pytest.raises(OSError):
+        os.fstat(held_fd)
+    with pytest.raises(ValueError, match="already consumed"):
+        remove_owned_tree(guard)
     root.chmod(0o700)
     root.rmdir()
+
+
+def test_child_failure_releases_retained_directory_fds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = """app = None
+sim = None
+def launch():
+    raise RuntimeError('startup failed')
+def shutdown():
+    raise RuntimeError('not reached')
+"""
+    apps = _apps(tmp_path, source)
+    original = startup_module.hold_owned_tree
+    held_fds = []
+
+    def tracked(*args):
+        guard = original(*args)
+        held_fds.append(guard.root_fd)
+        return guard
+
+    monkeypatch.setattr(startup_module, "hold_owned_tree", tracked)
+    with pytest.raises(ValueError, match="child exit differs"):
+        run_simulator_startup(_startup_spec(apps))
+
+    assert len(held_fds) == 2
+    for held_fd in held_fds:
+        with pytest.raises(OSError):
+            os.fstat(held_fd)
 
 
 def test_real_child_fast_exit_produces_derived_cleanup_receipt(tmp_path: Path) -> None:

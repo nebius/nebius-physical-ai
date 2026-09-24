@@ -420,10 +420,14 @@ def test_provenance_failure_preserves_primary_evaluator_error(
     monkeypatch.setattr(campaign_runner, "_prepared_evaluator", evaluator)
     monkeypatch.setattr(campaign_runner, "_publish_worker_provenance", unavailable)
     args = SimpleNamespace(
-        worker_index=0, worker_receipt_uri="s3://example-bucket/run/worker.json"
+        worker_index=0,
+        output_path="s3://example-bucket/campaign",
+        worker_receipt_uri="s3://example-bucket/run/worker.json",
     )
     with pytest.raises(RuntimeError, match="original evaluator failure"):
-        campaign_runner._execute_partition(args, panel, partition, store, workspace)
+        campaign_runner._execute_partition(
+            args, panel, partition, store.storage, workspace
+        )
     assert "Provenance upload also failed" in caplog.text
 
 
@@ -452,7 +456,9 @@ def test_startup_failure_is_published_before_policy_or_case_claim(fixture, monke
         simulator_startup_receipt=None,
     )
     with pytest.raises(RuntimeError, match="startup failed"):
-        campaign_runner._execute_partition(args, panel, partition, store, workspace)
+        campaign_runner._execute_partition(
+            args, panel, partition, store.storage, workspace
+        )
 
     assert prepared == []
     assert all(store.read(case) is None for case in panel["cases"])
@@ -463,7 +469,7 @@ def test_startup_failure_is_published_before_policy_or_case_claim(fixture, monke
     }
 
 
-def test_startup_precedes_specialist_endpoint_and_evaluator(fixture, monkeypatch):
+def test_startup_and_admission_precede_case_store_and_evaluator(fixture, monkeypatch):
     panel, partition, store, workspace = fixture
     panel = {**panel, "split": "report"}
     events = []
@@ -475,6 +481,12 @@ def test_startup_precedes_specialist_endpoint_and_evaluator(fixture, monkeypatch
         campaign_runner, "_specialist_preclaim", lambda *_: events.append("specialist")
     )
 
+    def create_store(*_):
+        events.append("store")
+        return store
+
+    monkeypatch.setattr(campaign_runner, "CaseStore", create_store)
+
     @contextmanager
     def evaluator(*_):
         events.append("evaluator")
@@ -483,11 +495,15 @@ def test_startup_precedes_specialist_endpoint_and_evaluator(fixture, monkeypatch
 
     monkeypatch.setattr(campaign_runner, "_prepared_evaluator", evaluator)
     args = SimpleNamespace(
-        worker_index=0, worker_receipt_uri="s3://example-bucket/run/worker.json"
+        worker_index=0,
+        output_path="s3://example-bucket/campaign",
+        worker_receipt_uri="s3://example-bucket/run/worker.json",
     )
     with pytest.raises(RuntimeError, match="ordering checks"):
-        campaign_runner._execute_partition(args, panel, partition, store, workspace)
-    assert events == ["startup", "specialist", "evaluator"]
+        campaign_runner._execute_partition(
+            args, panel, partition, store.storage, workspace
+        )
+    assert events == ["startup", "specialist", "store", "evaluator"]
 
 
 def test_parallel_workers_have_separate_original_provenance(tmp_path):

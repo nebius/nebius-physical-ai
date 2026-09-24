@@ -56,7 +56,7 @@ class IsaacAppsSpec:
     absent_directories: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass
 class OwnedTreeGuard:
     """Hold the identity of one fresh writable tree.
 
@@ -66,6 +66,7 @@ class OwnedTreeGuard:
         device: Device captured before child execution.
         inode: Inode captured before child execution.
         uid: Owner captured before child execution.
+        root_fd: Open descriptor retaining the original directory identity.
     """
 
     root: Path
@@ -73,6 +74,7 @@ class OwnedTreeGuard:
     device: int
     inode: int
     uid: int
+    root_fd: int
 
 
 @dataclass(frozen=True)
@@ -530,7 +532,7 @@ def hold_owned_tree(root: Path, owner_root: Path) -> OwnedTreeGuard:
         root: Existing direct child to guard.
         owner_root: Existing parent run root that bounds later removal.
     Returns:
-        Immutable device, inode, and UID guard.
+        Device, inode, UID, and retained-directory guard.
     Raises:
         OSError: Filesystem inspection fails.
         ValueError: The root is not an owned direct-child directory.
@@ -538,12 +540,77 @@ def hold_owned_tree(root: Path, owner_root: Path) -> OwnedTreeGuard:
     owner = owner_root.resolve(strict=True)
     if root.parent.resolve(strict=True) != owner or root.is_symlink():
         raise ValueError("owned tree must be a nonsymlink direct child")
-    observed = root.lstat()
+    root_fd, observed = _open_owned_tree_fd(owner, root.name)
     if not stat.S_ISDIR(observed.st_mode) or observed.st_uid != os.geteuid():
+        os.close(root_fd)
         raise ValueError("owned tree directory or UID differs")
     return OwnedTreeGuard(
-        owner / root.name, owner, observed.st_dev, observed.st_ino, observed.st_uid
+        owner / root.name,
+        owner,
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_uid,
+        root_fd,
     )
+
+
+def _open_owned_tree_fd(owner: Path, name: str) -> tuple[int, os.stat_result]:
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    owner_fd = os.open(owner, flags)
+    root_fd = -1
+    try:
+        root_fd = os.open(name, flags, dir_fd=owner_fd)
+        observed = os.fstat(root_fd)
+        current = os.stat(name, dir_fd=owner_fd, follow_symlinks=False)
+        if _guard_dict(observed) != _guard_dict(current):
+            raise ValueError("owned tree changed while its identity was captured")
+        result = root_fd, observed
+        root_fd = -1
+        return result
+    finally:
+        try:
+            os.close(owner_fd)
+        finally:
+            if root_fd >= 0:
+                os.close(root_fd)
+
+
+def _take_owned_tree_fd(guard: OwnedTreeGuard) -> int:
+    if guard.root_fd < 0:
+        raise ValueError("owned tree guard was already consumed")
+    held_fd = guard.root_fd
+    guard.root_fd = -1
+    return held_fd
+
+
+def _release_owned_tree_guard(guard: OwnedTreeGuard) -> None:
+    if guard.root_fd < 0:
+        return
+    held_fd = _take_owned_tree_fd(guard)
+    os.close(held_fd)
+
+
+def _release_owned_tree_guards(guards: Sequence[OwnedTreeGuard]) -> None:
+    error = None
+    for guard in guards:
+        try:
+            _release_owned_tree_guard(guard)
+        except OSError as raised:
+            error = error or raised
+    if error is not None:
+        raise error
+
+
+def _hold_owned_tree_pair(
+    first_root: Path, second_root: Path, owner_root: Path
+) -> tuple[OwnedTreeGuard, OwnedTreeGuard]:
+    first = hold_owned_tree(first_root, owner_root)
+    try:
+        second = hold_owned_tree(second_root, owner_root)
+    except BaseException:
+        _release_owned_tree_guard(first)
+        raise
+    return first, second
 
 
 def _kind(mode: int) -> str:
@@ -692,10 +759,22 @@ def remove_owned_tree(guard: OwnedTreeGuard) -> dict[str, object]:
         Derived pre-removal inventory, permission repairs, and removal status.
     Raises:
         OwnedTreeCleanupError: Validation or removal fails; evidence is attached.
+        ValueError: The guard was already consumed by an earlier cleanup.
     """
+    held_fd = _take_owned_tree_fd(guard)
+    try:
+        return _remove_owned_tree(guard, held_fd)
+    finally:
+        os.close(held_fd)
+
+
+def _remove_owned_tree(guard: OwnedTreeGuard, held_fd: int) -> dict[str, object]:
     evidence = _cleanup_evidence(guard)
     evidence["_held_guard"] = guard
     try:
+        held = os.fstat(held_fd)
+        if _guard_dict(held) != evidence["guard"] or not stat.S_ISDIR(held.st_mode):
+            raise ValueError("retained owned tree identity differs")
         flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
         owner_fd = os.open(guard.owner_root, flags)
         try:
@@ -866,8 +945,9 @@ def run_simulator_startup(spec: SimulatorStartupSpec) -> dict[str, object]:
     _direct_fresh_child(spec.appdata_root, spec.apps.owner_root, "simulator appdata")
     apps = prepare_writable_isaac_apps(spec.apps)
     spec.appdata_root.mkdir(mode=0o700, exist_ok=False)
-    view_guard = hold_owned_tree(spec.apps.view_root, spec.apps.owner_root)
-    appdata_guard = hold_owned_tree(spec.appdata_root, spec.apps.owner_root)
+    view_guard, appdata_guard = _hold_owned_tree_pair(
+        spec.apps.view_root, spec.appdata_root, spec.apps.owner_root
+    )
     return _run_and_cleanup(spec, apps, view_guard, appdata_guard)
 
 
@@ -877,26 +957,29 @@ def _run_and_cleanup(
     view_guard: OwnedTreeGuard,
     appdata_guard: OwnedTreeGuard,
 ) -> dict[str, object]:
-    with spec.log_path.open("xb") as stream:
-        process = subprocess.Popen(
-            list(spec.command),
-            env=_startup_environment(spec, apps),
-            cwd=_public_source_root(),
-            stdout=stream,
-            stderr=subprocess.STDOUT,
+    try:
+        with spec.log_path.open("xb") as stream:
+            process = subprocess.Popen(
+                list(spec.command),
+                env=_startup_environment(spec, apps),
+                cwd=_public_source_root(),
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+            )
+            returncode = process.wait()
+        if returncode != 0 or process.poll() != returncode:
+            raise ValueError("simulator startup child exit differs")
+        marker = _marker(spec.marker_path, process.pid)
+        request = _shutdown_request(
+            spec.shutdown_request_path, process.pid, spec.marker_path
         )
-        returncode = process.wait()
-    if returncode != 0 or process.poll() != returncode:
-        raise ValueError("simulator startup child exit differs")
-    marker = _marker(spec.marker_path, process.pid)
-    request = _shutdown_request(
-        spec.shutdown_request_path, process.pid, spec.marker_path
-    )
-    cleanup = {
-        "appdata": remove_owned_tree(appdata_guard),
-        "view": remove_owned_tree(view_guard),
-    }
-    return _startup_receipt(spec, apps, marker, request, cleanup)
+        cleanup = {
+            "appdata": remove_owned_tree(appdata_guard),
+            "view": remove_owned_tree(view_guard),
+        }
+        return _startup_receipt(spec, apps, marker, request, cleanup)
+    finally:
+        _release_owned_tree_guards((appdata_guard, view_guard))
 
 
 def _startup_receipt(
@@ -1138,12 +1221,15 @@ def prepared_evaluator_environment(receipt: dict[str, object], owner_root: Path)
     view, appdata, success, failure = _fresh_evaluator_attempt(owner)
     apps = prepare_writable_isaac_apps(_apps_from_receipt(receipt, owner, view))
     appdata.mkdir(mode=0o700, exist_ok=False)
-    guards = hold_owned_tree(view, owner), hold_owned_tree(appdata, owner)
-    environment = _evaluator_environment(receipt, apps, appdata)
+    guards = _hold_owned_tree_pair(view, appdata, owner)
     try:
+        environment = _evaluator_environment(receipt, apps, appdata)
         yield environment
     finally:
-        _finish_evaluator_cleanup(success, failure, guards)
+        try:
+            _finish_evaluator_cleanup(success, failure, guards)
+        finally:
+            _release_owned_tree_guards(guards)
 
 
 def _fresh_evaluator_attempt(owner: Path) -> tuple[Path, Path, Path, Path]:

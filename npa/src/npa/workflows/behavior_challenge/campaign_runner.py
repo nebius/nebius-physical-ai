@@ -353,10 +353,11 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
             _put_original(storage, path.read_bytes(), f"{prefix}/{path.name}")
 
 
-def _execute_partition(args, panel, partition, store, workspace):
+def _execute_partition(args, panel, partition, storage, workspace):
     try:
         _prepare_worker_startup(args, workspace)
-        _specialist_preclaim(args, panel, store.storage, workspace)
+        _specialist_preclaim(args, panel, storage, workspace)
+        store = CaseStore(storage, args.output_path, panel["panel_id"])
         with _prepared_evaluator(args, panel, workspace) as (execute, prepare):
             records = run_partition(
                 panel,
@@ -369,16 +370,14 @@ def _execute_partition(args, panel, partition, store, workspace):
             )
     except BaseException:
         try:
-            _publish_worker_provenance(
-                store.storage, workspace, args.worker_receipt_uri
-            )
+            _publish_worker_provenance(storage, workspace, args.worker_receipt_uri)
         except Exception:
             logging.getLogger(__name__).warning(
                 "Provenance upload also failed; retain the worker workspace for recovery"
             )
         raise
     else:
-        _publish_worker_provenance(store.storage, workspace, args.worker_receipt_uri)
+        _publish_worker_provenance(storage, workspace, args.worker_receipt_uri)
         return records
 
 
@@ -415,8 +414,7 @@ def evaluate_partition(args) -> dict:
     workspace.mkdir(parents=True, exist_ok=True)
     storage = StorageClient.from_environment()
     panel, partition = _worker_declarations(args, storage, workspace)
-    store = CaseStore(storage, args.output_path, panel["panel_id"])
-    records = _execute_partition(args, panel, partition, store, workspace)
+    records = _execute_partition(args, panel, partition, storage, workspace)
     verify_upstream(args.upstream_root)
     result = {
         "panel_id": panel["panel_id"],

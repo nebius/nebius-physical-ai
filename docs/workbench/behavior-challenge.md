@@ -431,12 +431,15 @@ scenes, and records a startup marker before requesting shutdown. A clean child
 exit without that marker remains a failure.
 
 Cleanup is limited to the two fresh direct children named by the specification.
-It checks the held root inode, device, and owner before inspecting descendants;
+An open directory handle retains each root's identity across child execution,
+preventing a deleted directory's inode from being reused by a replacement.
+Cleanup checks that identity, device, and owner before inspecting descendants;
 does not follow symlinks; refuses special files, other owners, device changes,
 and root replacement; and only adds user read/write/execute permission to owned
 directories when deletion requires it. The receipt derives its member counts
 and inventory digest after the simulator has generated files, rather than
 assuming the initial view layout is unchanged.
+The directory handles close on both success and failure and cannot be reused.
 Failures preserve any remaining writable files and raw marker/log files and emit a
 separate failure record; they never emit the success receipt.
 
