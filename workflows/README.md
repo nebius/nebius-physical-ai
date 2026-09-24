@@ -173,8 +173,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`alpamayo2-ray-hardcases.yaml`](testing/alpamayo2-ray-hardcases.yaml) | Ray baseline → mean-error selection → refinement with matched scenarios and seeds; reports measured error changes ([guide](../docs/workbench/alpamayo2-super.md#ray-experiments)) |
 | [`alpamayo2-super-inference.yaml`](testing/alpamayo2-super-inference.yaml) | Real Alpamayo 2 Super 34B trajectory inference on `B200:1`; runtime-only OpenMDW weights and separately gated PhysicalAI-AV sample data ([guide](../docs/workbench/alpamayo2-super.md)) |
 | [`adversarial-scenario-hardening.yaml`](testing/adversarial-scenario-hardening.yaml) | Adversarial scenario generation and ranking → policy hardening loop → promotion gate |
-| [`av-night-scene-hardening.yaml`](testing/av-night-scene-hardening.yaml) | AV night-scene hardening from diagram |
-| [`bdd100k-pipeline.yaml`](testing/bdd100k-pipeline.yaml) | 11-stage AV pipeline |
+| [`av-night-scene-hardening.yaml`](testing/av-night-scene-hardening.yaml) | 8-stage AV night-scene pipeline ending when both detector metrics artifacts are written; human/FiftyOne inspection is post-run |
+| [`bdd100k-pipeline.yaml`](testing/bdd100k-pipeline.yaml) | 10-stage AV pipeline ending when all three detector metrics artifacts are written; human/FiftyOne inspection is post-run ([cookbook](../docs/workbench/cookbooks/bdd100k-pipeline.md)) |
 | [`dataset-ingest-curate.yaml`](testing/dataset-ingest-curate.yaml) | Sensor-data ingest → validation gate → slice curation → queryable version registration |
 | [`dataset-of-record-smoke.yaml`](testing/dataset-of-record-smoke.yaml) | CPU dataset-of-record smoke using the manifest-backed query fallback |
 | [`hardening-with-insights.yaml`](testing/hardening-with-insights.yaml) | Adversarial hardening loop → policy publication → insights metrics, lineage, and dashboard |

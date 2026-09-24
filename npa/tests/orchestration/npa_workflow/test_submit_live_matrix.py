@@ -259,7 +259,6 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
-        "av-night-scene-hardening.yaml",
         "byof-droid-policy-learning.yaml",
         "byof-maniskill.yaml",
         "byof-mujoco-playground.yaml",
@@ -275,6 +274,21 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         assert case.plan_only, (
             f"{name} must retain its reviewed plan-only classification"
         )
+
+
+def test_av_night_scene_rotation_skip_names_real_prerequisites() -> None:
+    case = next(
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.spec == "av-night-scene-hardening.yaml"
+    )
+
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert "LanceDB" in case.skip_reason
+    assert "detection-training" in case.skip_reason
+    assert "BDD100K night subset" in case.skip_reason
+    assert "FiftyOne inspection" in case.notes
 
 
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
