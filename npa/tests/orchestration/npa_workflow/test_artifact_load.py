@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from npa.clients import config
 from npa.orchestration.npa_workflow.artifact_load import (
     discover_final_rerun_artifact,
@@ -55,7 +57,7 @@ def _inventory(artifact: str, *, next_cursor: str = "") -> dict:
     }
 
 
-def _ready_status(artifact: str) -> dict:
+def _ready_status(artifact: str, *, rerun_ready: object = True) -> dict:
     return {
         "run_id": "paidf-1",
         "artifact_uri": artifact,
@@ -65,7 +67,7 @@ def _ready_status(artifact: str) -> dict:
         "project_id": "project-a",
         "bucket": "bucket",
         "resolved_prefix": "physical-ai-data-factory",
-        "rerun_ready": True,
+        "rerun_ready": rerun_ready,
     }
 
 
@@ -182,6 +184,42 @@ def test_resume_skips_duplicate_post_when_agent_already_has_artifact(
     assert result.verified is True
     assert result.posted is False
     assert methods == ["GET", "GET"]
+
+
+@pytest.mark.parametrize(
+    "rerun_ready",
+    [False, "true", 1, None, [True], {"ready": True}],
+    ids=["false", "string", "number", "null", "array", "object"],
+)
+def test_resume_posts_and_fails_closed_for_non_true_readiness(
+    monkeypatch, tmp_path: Path, rerun_ready: object
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/physical-ai-data-factory/paidf-1/reports/sim2real.rrd"
+    client = FakeS3({artifact.removeprefix("s3://bucket/")})
+    methods: list[str] = []
+
+    def request(method: str, url: str, **_kwargs):  # noqa: ANN202
+        methods.append(method)
+        if "/api/artifacts/run/" in url:
+            return Response(200, _inventory(artifact))
+        status = _ready_status(artifact, rerun_ready=rerun_ready)
+        if method == "POST":
+            return Response(200, {"ok": True, "sim_viz": status})
+        return Response(200, status)
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri="s3://bucket/physical-ai-data-factory/paidf-1",
+        storage_client=client,
+        http_request=request,
+    )
+
+    assert result.status == "partial"
+    assert result.verified is False
+    assert methods == ["GET", "GET", "POST"]
 
 
 def test_agent_source_ambiguity_fails_closed_without_post(

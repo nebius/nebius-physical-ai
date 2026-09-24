@@ -119,7 +119,7 @@ def _status_matches(
         return False, ""
     render = str(payload.get("artifact_render") or payload.get("render") or "").lower()
     actual = str(payload.get("artifact_uri") or "")
-    ready = bool(payload.get("rerun_ready"))
+    ready = payload.get("rerun_ready") is True
     exact_source = True
     if selection is not None:
         exact_source = bool(
