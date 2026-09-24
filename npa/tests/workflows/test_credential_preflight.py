@@ -197,6 +197,8 @@ def test_encord_presence_and_live_probe() -> None:
     )
     assert present.status == PASS
     assert "authenticated" in present.summary
+
+
 @dataclass
 class _ProfileVerification:
     identity_verified: bool

@@ -128,7 +128,9 @@ def test_push_counts_reconcile(values: tuple[int, ...]) -> None:
 
 def test_completed_push_rejects_unlinked_requested_dataset_row() -> None:
     with pytest.raises(ValidationError):
-        push_receipt(successful_push_item(link_state="unattempted"), dataset_requested=True)
+        push_receipt(
+            successful_push_item(link_state="unattempted"), dataset_requested=True
+        )
 
 
 def test_partial_and_failed_push_states_are_truthful() -> None:
@@ -176,7 +178,9 @@ def test_pull_counts_reconcile() -> None:
 
 
 def test_label_counts_reconcile() -> None:
-    artifact = LabelArtifact(data_hash="data-1", outcome="successful", artifact_uri="s3://b/l.json")
+    artifact = LabelArtifact(
+        data_hash="data-1", outcome="successful", artifact_uri="s3://b/l.json"
+    )
     with pytest.raises(ValidationError):
         PullManifest(
             phase="final",
@@ -202,7 +206,9 @@ def test_label_counts_reconcile() -> None:
 
 
 def test_roundtrip_report_counts_reconcile() -> None:
-    item = RoundtripItem(item_uuid="uuid", relation="matched", integrity_state="matched")
+    item = RoundtripItem(
+        item_uuid="uuid", relation="matched", integrity_state="matched"
+    )
     report = RoundtripReport(
         generated_at=NOW,
         receipt_uri="s3://b/receipt.json",

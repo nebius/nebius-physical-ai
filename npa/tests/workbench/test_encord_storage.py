@@ -78,10 +78,14 @@ def test_s3_stale_replace_is_an_artifact_conflict() -> None:
     uri = "s3://result-bucket/run/receipt.json"
     store.create_json(uri, {"revision": 0})
     with pytest.raises(ArtifactConflict):
-        store.replace_json(uri, {"revision": 1}, ArtifactVersion(kind="s3_etag", token='"stale"'))
+        store.replace_json(
+            uri, {"revision": 1}, ArtifactVersion(kind="s3_etag", token='"stale"')
+        )
 
 
-def test_local_create_does_not_overwrite_and_stale_replace_fails(tmp_path: Path) -> None:
+def test_local_create_does_not_overwrite_and_stale_replace_fails(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "receipt.json"
     store = ConditionalArtifactStore(ConditionalClient())
     version = store.create_json(str(target), {"revision": 0})
@@ -106,7 +110,11 @@ def test_invalid_json_and_top_level_arrays_are_rejected(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "uri",
-    ["s3://bucket/a/../receipt.json", "s3://bucket/receipt.json?token=x", "s3:///missing.json"],
+    [
+        "s3://bucket/a/../receipt.json",
+        "s3://bucket/receipt.json?token=x",
+        "s3:///missing.json",
+    ],
 )
 def test_unsafe_artifact_uri_fails_before_storage_call(uri: str) -> None:
     client = ConditionalClient()
@@ -134,7 +142,9 @@ def test_object_gateway_lists_every_page_and_heads_each_object() -> None:
     client = FakeStorageClient()
     client.s3.objects[("source-bucket", "incoming/a.mp4")] = b"a"
     client.s3.objects[("source-bucket", "incoming/b.mp4")] = b"bb"
-    rows = list(S3ObjectStorageGateway(client).list_objects("s3://source-bucket/incoming/"))
+    rows = list(
+        S3ObjectStorageGateway(client).list_objects("s3://source-bucket/incoming/")
+    )
     assert [row.size for row in rows] == [1, 2]
     assert sum(event[0] == "head" for event in client.s3.events) == 2
 
@@ -144,9 +154,7 @@ def test_object_gateway_preserves_literal_percent_encoded_key() -> None:
     literal_key = "incoming/a%2Fb.mp4"
     client.s3.objects[("source-bucket", literal_key)] = b"video"
     rows = list(
-        S3ObjectStorageGateway(client).list_objects(
-            "s3://source-bucket/incoming/"
-        )
+        S3ObjectStorageGateway(client).list_objects("s3://source-bucket/incoming/")
     )
     assert rows[0].uri == "s3://source-bucket/incoming/a%252Fb.mp4"
     assert ("head", "source-bucket", literal_key) in client.s3.events
@@ -224,7 +232,5 @@ def test_upload_rejects_compatible_destination_checksum_mismatch(
         S3ObjectStorageGateway(client).upload_file(
             source,
             "s3://result-bucket/run/clip.mp4",
-            digest=TransferDigest(
-                size=5, sha256=hashlib.sha256(b"video").hexdigest()
-            ),
+            digest=TransferDigest(size=5, sha256=hashlib.sha256(b"video").hexdigest()),
         )

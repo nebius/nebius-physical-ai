@@ -109,4 +109,11 @@ def verify_roundtrip(
     )
 
 
-__all__ = ["PullManifest", "PushReceipt", "RoundtripReport", "pull", "push", "verify_roundtrip"]
+__all__ = [
+    "PullManifest",
+    "PushReceipt",
+    "RoundtripReport",
+    "pull",
+    "push",
+    "verify_roundtrip",
+]

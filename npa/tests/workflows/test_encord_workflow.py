@@ -34,7 +34,10 @@ def test_pull_spec_defaults_to_no_label_initialization() -> None:
     spec, plan = _plan("encord-pull.yaml")
     step = plan.steps[0]
     assert _value(step.argv, "--label-export") == "none"
-    assert _value(step.argv, "--output-path").rstrip("/") + "/manifest.json" == step.outputs[0]["uri"]
+    assert (
+        _value(step.argv, "--output-path").rstrip("/") + "/manifest.json"
+        == step.outputs[0]["uri"]
+    )
     assert spec.states["pull"].terminal
 
 

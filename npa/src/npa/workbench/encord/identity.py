@@ -46,9 +46,8 @@ def normalize_object_url(url: str) -> str:
         host = f"{host}:{port}"
     normalized_path = _normalize_url_path(parsed.path)
     segments = normalized_path.split("/")[1:]
-    if (
-        not normalized_path.startswith("/")
-        or any(segment in {"", ".", ".."} for segment in segments)
+    if not normalized_path.startswith("/") or any(
+        segment in {"", ".", ".."} for segment in segments
     ):
         raise EncordToolError("object URL contains an ambiguous path")
     return urlunsplit((parsed.scheme.lower(), host, normalized_path, "", ""))
@@ -66,10 +65,14 @@ def _normalize_url_path(path: str) -> str:
     while index < len(path):
         character = path[index]
         if character == "%":
-            if index + 2 >= len(path) or not {
-                path[index + 1],
-                path[index + 2],
-            } <= hexadecimal:
+            if (
+                index + 2 >= len(path)
+                or not {
+                    path[index + 1],
+                    path[index + 2],
+                }
+                <= hexadecimal
+            ):
                 raise EncordToolError("object URL contains an invalid percent escape")
             value = int(path[index + 1 : index + 3], 16)
             decoded = chr(value)
@@ -197,8 +200,10 @@ def _match_candidates(
 
 
 def _match_sidecar(
-    matched: list[tuple[IdentityCandidate, str]], sidecar: IdentitySidecarRow | None,
-    source_uri: str, record_id: str,
+    matched: list[tuple[IdentityCandidate, str]],
+    sidecar: IdentitySidecarRow | None,
+    source_uri: str,
+    record_id: str,
 ) -> IdentityResolution | None:
     if sidecar is not None:
         if sidecar.source_uri != source_uri:
@@ -227,8 +232,11 @@ def _match_sidecar(
 
 
 def _identity_conflicts(
-    views: list[IdentityCandidate], uuids: set[str], source_uri: str,
-    record_id: str, expected_url: str,
+    views: list[IdentityCandidate],
+    uuids: set[str],
+    source_uri: str,
+    record_id: str,
+    expected_url: str,
 ) -> list[str]:
     # Metadata describes the durable S3 object; URLs are transport locators that
     # can change host or representation across inventory views and later pushes.
@@ -243,15 +251,20 @@ def _identity_conflicts(
             conflicts.append(f"{view.item_uuid}:record_id")
         if (
             view.item_uuid not in metadata_uuids
-            and expected_url and view.object_url and view.object_url != expected_url
+            and expected_url
+            and view.object_url
+            and view.object_url != expected_url
         ):
             conflicts.append(f"{view.item_uuid}:object_url")
     return conflicts
 
 
 def _resolve_matches(
-    matched: list[tuple[IdentityCandidate, str]], views: list[IdentityCandidate],
-    source_uri: str, record_id: str, expected_url: str,
+    matched: list[tuple[IdentityCandidate, str]],
+    views: list[IdentityCandidate],
+    source_uri: str,
+    record_id: str,
+    expected_url: str,
 ) -> IdentityResolution:
     uuids = {view.item_uuid for view, _ in matched}
     conflicts = _identity_conflicts(views, uuids, source_uri, record_id, expected_url)
@@ -266,6 +279,11 @@ def _resolve_matches(
             error_code="identity_unresolved",
             error="no exact metadata, object URL, or sidecar identity matched",
         )
-    best_order = {"record_id_metadata": 0, "source_uri_metadata": 1, "object_url": 2, "sidecar": 3}
+    best_order = {
+        "record_id_metadata": 0,
+        "source_uri_metadata": 1,
+        "object_url": 2,
+        "sidecar": 3,
+    }
     view, signal = sorted(matched, key=lambda entry: best_order[entry[1]])[0]
     return IdentityResolution(item_uuid=view.item_uuid, signal=signal)

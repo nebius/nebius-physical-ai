@@ -63,6 +63,8 @@ def test_live_credential_markers_include_saved_encord_values(monkeypatch) -> Non
     markers = helpers.live_credential_markers()
     assert "saved-encord-private-key" in markers
     assert "saved-encord-base64-key" in markers
+
+
 @pytest.mark.parametrize(
     "variant", ["image-attribute-augmentation", "event-video-generation"]
 )

@@ -29,7 +29,10 @@ def item(uuid: str, *, metadata=None, url: str = "", name: str = "clip.mp4"):
 def test_exact_returned_object_key_attaches_uuid() -> None:
     candidate = item("uuid-1", metadata={"npa": {"source_uri": SOURCE}})
     result = resolve_exact_identity(
-        source_uri=SOURCE, record_id="", submitted_object_url=URL, candidates=[candidate]
+        source_uri=SOURCE,
+        record_id="",
+        submitted_object_url=URL,
+        candidates=[candidate],
     )
     assert result.item_uuid == "uuid-1"
 
@@ -37,25 +40,42 @@ def test_exact_returned_object_key_attaches_uuid() -> None:
 @pytest.mark.parametrize("record_id", ["", "record-1"])
 def test_source_metadata_survives_changed_transport_host(record_id: str) -> None:
     candidates = [
-        item("uuid-1", metadata={"npa": {"source_uri": SOURCE, "record_id": record_id}}, url=URL),
+        item(
+            "uuid-1",
+            metadata={"npa": {"source_uri": SOURCE, "record_id": record_id}},
+            url=URL,
+        ),
         item("uuid-1", url=URL),
     ]
     result = resolve_exact_identity(
-        source_uri=SOURCE, record_id=record_id,
-        submitted_object_url=URL.replace("storage.test.example", "new-storage.test.example"),
+        source_uri=SOURCE,
+        record_id=record_id,
+        submitted_object_url=URL.replace(
+            "storage.test.example", "new-storage.test.example"
+        ),
         candidates=candidates,
     )
     assert result.resolved
     assert result.item_uuid == "uuid-1"
-    assert result.signal == ("record_id_metadata" if record_id else "source_uri_metadata")
+    assert result.signal == (
+        "record_id_metadata" if record_id else "source_uri_metadata"
+    )
 
 
-@pytest.mark.parametrize("field,value", [("source_uri", "s3://source-bucket/other.mp4"), ("record_id", "other-record")])
-def test_metadata_host_drift_does_not_hide_conflicting_views(field: str, value: str) -> None:
+@pytest.mark.parametrize(
+    "field,value",
+    [("source_uri", "s3://source-bucket/other.mp4"), ("record_id", "other-record")],
+)
+def test_metadata_host_drift_does_not_hide_conflicting_views(
+    field: str, value: str
+) -> None:
     metadata = {"source_uri": SOURCE, "record_id": "record-1"}
     result = resolve_exact_identity(
-        source_uri=SOURCE, record_id="record-1",
-        submitted_object_url=URL.replace("storage.test.example", "new-storage.test.example"),
+        source_uri=SOURCE,
+        record_id="record-1",
+        submitted_object_url=URL.replace(
+            "storage.test.example", "new-storage.test.example"
+        ),
         candidates=[
             item("uuid-1", metadata={"npa": metadata}, url=URL),
             item("uuid-1", metadata={"npa": {**metadata, field: value}}, url=URL),
@@ -66,7 +86,9 @@ def test_metadata_host_drift_does_not_hide_conflicting_views(field: str, value: 
 
 def test_sidecar_alone_cannot_suppress_a_conflicting_object_url() -> None:
     result = resolve_exact_identity(
-        source_uri=SOURCE, record_id="", submitted_object_url=URL,
+        source_uri=SOURCE,
+        record_id="",
+        submitted_object_url=URL,
         candidates=[item("uuid-1", url=URL.replace("incoming", "archive"))],
         sidecar=IdentitySidecarRow(source_uri=SOURCE, item_uuid="uuid-1"),
     )
@@ -79,7 +101,10 @@ def test_exact_normalized_object_url_attaches_uuid() -> None:
         url="HTTPS://STORAGE.TEST.EXAMPLE/source-bucket/incoming/clip%2Emp4?secret=x",
     )
     result = resolve_exact_identity(
-        source_uri=SOURCE, record_id="", submitted_object_url=URL, candidates=[candidate]
+        source_uri=SOURCE,
+        record_id="",
+        submitted_object_url=URL,
+        candidates=[candidate],
     )
     assert result.resolved
     assert normalize_object_url(candidate.url) == URL
@@ -132,7 +157,10 @@ def test_conflicting_exact_signals_fail_closed() -> None:
 def test_legacy_basename_only_item_is_unresolved() -> None:
     candidate = item("uuid-1", name="archive/clip.mp4")
     result = resolve_exact_identity(
-        source_uri=SOURCE, record_id="", submitted_object_url=URL, candidates=[candidate]
+        source_uri=SOURCE,
+        record_id="",
+        submitted_object_url=URL,
+        candidates=[candidate],
     )
     assert result.error_code == "identity_unresolved"
 
@@ -164,9 +192,7 @@ def test_sidecar_uuid_cannot_override_contradictory_inventory_evidence() -> None
     sidecar = IdentitySidecarRow(source_uri=SOURCE, item_uuid="uuid-1")
     contradictory = item(
         "uuid-1",
-        metadata={
-            "npa": {"source_uri": "s3://source-bucket/archive/clip.mp4"}
-        },
+        metadata={"npa": {"source_uri": "s3://source-bucket/archive/clip.mp4"}},
         url="https://storage.test.example/source-bucket/archive/clip.mp4",
     )
     result = resolve_exact_identity(
@@ -184,9 +210,7 @@ def test_all_representations_of_resolved_uuid_must_agree() -> None:
         item("uuid-1", metadata={"npa": {"source_uri": SOURCE}}),
         item(
             "uuid-1",
-            metadata={
-                "npa": {"source_uri": "s3://source-bucket/archive/clip.mp4"}
-            },
+            metadata={"npa": {"source_uri": "s3://source-bucket/archive/clip.mp4"}},
         ),
     ]
     result = resolve_exact_identity(
@@ -209,5 +233,5 @@ def test_canonical_s3_uri_rejects_ambiguous_identity(bucket: str, key: str) -> N
 
 def test_identity_module_has_no_basename_fallback() -> None:
     source = inspect.getsource(identity)
-    forbidden = ("basename", ".name ==", "rsplit(\"/\", 1)", "split(\"/\")[-1]")
+    forbidden = ("basename", ".name ==", 'rsplit("/", 1)', 'split("/")[-1]')
     assert not any(value in source for value in forbidden)

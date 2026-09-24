@@ -18,7 +18,11 @@ from npa.workbench.encord.client import (
     resolve_public_endpoint,
 )
 from npa.workbench.encord.identity import canonical_s3_uri, metadata_identity
-from npa.workbench.encord.integrity import HttpDownloader, HttpxDownloader, retry_signed_download
+from npa.workbench.encord.integrity import (
+    HttpDownloader,
+    HttpxDownloader,
+    retry_signed_download,
+)
 from npa.workbench.encord.schemas import (
     PULL_MANIFEST_FILENAME,
     EncordToolError,
@@ -91,9 +95,7 @@ def enumerate_items(user_client: Any, *, source: str, source_id: str) -> PullSou
             )
             yield from rows
 
-        return PullSource(
-            dataset_hash, title, dataset_rows(), hydrate_items=True
-        )
+        return PullSource(dataset_hash, title, dataset_rows(), hydrate_items=True)
     if source == "project":
         project, project_hash, title = resolve_project(user_client, source_id)
 
@@ -132,7 +134,9 @@ def run_pull(
     if label_export not in LABEL_EXPORT_MODES:
         raise EncordToolError(f"unknown label export mode {label_export!r}")
     if label_export == "initialize" and source != "project":
-        raise EncordToolError("label initialization is available only for project pulls")
+        raise EncordToolError(
+            "label initialization is available only for project pulls"
+        )
     if not output_path.startswith("s3://"):
         raise EncordToolError("output_path must be an s3:// prefix")
     from npa.clients.storage import StorageClient
@@ -191,7 +195,8 @@ def run_pull(
                 [item.outcome for item in label_artifacts]
             ),
             media_copied=sum(
-                item.outcome == "successful" and item.transfer == "copy" for item in items
+                item.outcome == "successful" and item.transfer == "copy"
+                for item in items
             ),
             media_downloaded=sum(
                 item.outcome == "successful" and item.transfer == "download"
@@ -311,7 +316,9 @@ def run_pull(
         ):
             try:
                 row.initialise_labels()
-                label_name = artifact.label_hash or artifact.data_hash or artifact.item_uuid
+                label_name = (
+                    artifact.label_hash or artifact.data_hash or artifact.item_uuid
+                )
                 artifact.artifact_uri = (
                     output_path.rstrip("/") + f"/labels/{_safe_name(label_name)}.json"
                 )
@@ -332,7 +339,9 @@ def run_pull(
                 break
             checkpoint()
 
-    status = _pull_status(items, label_artifacts if label_export == "initialize" else [])
+    status = _pull_status(
+        items, label_artifacts if label_export == "initialize" else []
+    )
     revision += 1
     final = make_manifest("final", status)
     try:
@@ -345,7 +354,9 @@ def run_pull(
             f"be claimed: {exc}"
         ) from exc
     if status != "completed":
-        raise EncordToolError(f"Encord pull {status}; manifest written to {manifest_uri}")
+        raise EncordToolError(
+            f"Encord pull {status}; manifest written to {manifest_uri}"
+        )
     return final
 
 
@@ -392,8 +403,12 @@ def _preallocate_media(item: Any, output_uri: str) -> PullItem:
         record_id=record_id,
         source_uri=source_uri,
         name=name,
-        item_type=str(getattr(item, "item_type", "") or getattr(item, "data_type", "") or ""),
-        mime_type=str(getattr(item, "mime_type", "") or getattr(item, "file_type", "") or ""),
+        item_type=str(
+            getattr(item, "item_type", "") or getattr(item, "data_type", "") or ""
+        ),
+        mime_type=str(
+            getattr(item, "mime_type", "") or getattr(item, "file_type", "") or ""
+        ),
         source_size=int(getattr(item, "file_size", 0) or 0),
         destination_uri=destination,
         metadata_uri=(
@@ -420,7 +435,11 @@ def _transfer_one(
     object_store: ObjectStorageGateway | None = None,
 ) -> None:
     gateway = object_store or S3ObjectStorageGateway(storage_client)
-    signed_url = item.get_signed_url() if hasattr(item, "get_signed_url") else getattr(item, "signed_url", "")
+    signed_url = (
+        item.get_signed_url()
+        if hasattr(item, "get_signed_url")
+        else getattr(item, "signed_url", "")
+    )
     if not signed_url:
         row.outcome = "failed"
         row.error_code = "signed_url_unavailable"
@@ -555,10 +574,14 @@ def _decode_signed_path_once(path: str) -> str:
     for index, character in enumerate(path):
         if character != "%":
             continue
-        if index + 2 >= len(path) or not {
-            path[index + 1],
-            path[index + 2],
-        } <= hexadecimal:
+        if (
+            index + 2 >= len(path)
+            or not {
+                path[index + 1],
+                path[index + 2],
+            }
+            <= hexadecimal
+        ):
             raise EncordToolError("signed URL contains an invalid percent escape")
     try:
         return unquote(path, encoding="utf-8", errors="strict")
@@ -567,7 +590,9 @@ def _decode_signed_path_once(path: str) -> str:
 
 
 def _safe_name(value: str) -> str:
-    cleaned = "".join(char if char.isalnum() or char in "._-" else "_" for char in value)
+    cleaned = "".join(
+        char if char.isalnum() or char in "._-" else "_" for char in value
+    )
     return cleaned or "item"
 
 

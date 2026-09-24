@@ -29,7 +29,11 @@ from npa.workflows.sim2real_health import (
 # Preserve the lightweight default for hosted-inference users. The explicit
 # ``all`` selection also checks the Nebius CLI profile needed for cloud work.
 DEFAULT_CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
-SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (*DEFAULT_CREDENTIAL_CHECKS, "encord", "nebius")
+SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (
+    *DEFAULT_CREDENTIAL_CHECKS,
+    "encord",
+    "nebius",
+)
 # Backward-compatible name for callers that use the default check set.
 CREDENTIAL_CHECKS = DEFAULT_CREDENTIAL_CHECKS
 
@@ -282,7 +286,9 @@ def check_encord(credentials: Any, probes: CredentialProbes) -> CheckResult:
     from npa.clients.credentials import ENCORD_TOKEN_KEYS
 
     tokens = getattr(credentials, "tokens", {}) or {}
-    present = [name for name in ENCORD_TOKEN_KEYS if str(tokens.get(name) or "").strip()]
+    present = [
+        name for name in ENCORD_TOKEN_KEYS if str(tokens.get(name) or "").strip()
+    ]
     if not present:
         return CheckResult(
             name="encord",

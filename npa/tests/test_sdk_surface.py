@@ -134,7 +134,16 @@ def test_encord_sdk_delegates_all_push_seams(mocker) -> None:
 
     sentinel = object()
     run_push = mocker.patch("npa.workbench.encord.run_push", return_value=sentinel)
-    seams = {name: object() for name in ("user_client", "storage_client", "artifact_store", "clock", "environ")}
+    seams = {
+        name: object()
+        for name in (
+            "user_client",
+            "storage_client",
+            "artifact_store",
+            "clock",
+            "environ",
+        )
+    }
 
     result = encord.push(
         input_path="s3://bucket/input/",
@@ -147,7 +156,9 @@ def test_encord_sdk_delegates_all_push_seams(mocker) -> None:
 
     assert result is sentinel
     assert run_push.call_args.kwargs["transfer"] == "register"
-    assert run_push.call_args.kwargs["identity_sidecar_uri"] == "s3://bucket/identity.json"
+    assert (
+        run_push.call_args.kwargs["identity_sidecar_uri"] == "s3://bucket/identity.json"
+    )
     for name, value in seams.items():
         assert run_push.call_args.kwargs[name] is value
 
@@ -185,7 +196,9 @@ def test_encord_sdk_delegates_pull_and_verify_seams(mocker) -> None:
     for name, value in pull_seams.items():
         assert run_pull.call_args.kwargs[name] is value
 
-    verify_seams = {name: object() for name in ("storage_client", "artifact_store", "clock")}
+    verify_seams = {
+        name: object() for name in ("storage_client", "artifact_store", "clock")
+    }
     assert (
         encord.verify_roundtrip(
             receipt_uri="s3://bucket/push_receipt.json",

@@ -103,9 +103,7 @@ def setup(receipt, manifest):
     storage = FakeStorageClient()
     storage.s3.objects[("result-bucket", "run/media/uuid-1__clip.mp4")] = b"video"
     if receipt.items[0].source_checksum_kind in {"sha256", "s3_checksum_sha256"}:
-        storage.s3.head_overrides[
-            ("result-bucket", "run/media/uuid-1__clip.mp4")
-        ] = {
+        storage.s3.head_overrides[("result-bucket", "run/media/uuid-1__clip.mp4")] = {
             "ChecksumSHA256": base64.b64encode(
                 hashlib.sha256(b"video").digest()
             ).decode(),
@@ -140,10 +138,12 @@ def test_roundtrip_mismatch_matrix_is_nonzero(failure: str) -> None:
     store, storage = setup(receipt, manifest)
     if failure == "missing":
         manifest.items[0].item_uuid = "uuid-other"
-        manifest.items[0].destination_uri = (
-            "s3://result-bucket/run/media/uuid-other__clip.mp4"
+        manifest.items[
+            0
+        ].destination_uri = "s3://result-bucket/run/media/uuid-other__clip.mp4"
+        storage.s3.objects[("result-bucket", "run/media/uuid-other__clip.mp4")] = (
+            b"video"
         )
-        storage.s3.objects[("result-bucket", "run/media/uuid-other__clip.mp4")] = b"video"
     elif failure == "unexpected":
         extra = manifest.items[0].model_copy(
             update={
@@ -161,17 +161,13 @@ def test_roundtrip_mismatch_matrix_is_nonzero(failure: str) -> None:
             ("result-bucket", "run/media/uuid-1__clip.mp4")
         )
     else:
-        storage.s3.head_overrides[
-            ("result-bucket", "run/media/uuid-1__clip.mp4")
-        ] = {
+        storage.s3.head_overrides[("result-bucket", "run/media/uuid-1__clip.mp4")] = {
             "ChecksumSHA256": base64.b64encode(
                 hashlib.sha256(b"wrong").digest()
             ).decode(),
             "ChecksumType": "FULL_OBJECT",
         }
-    store.payloads[MANIFEST_URI] = (
-        manifest.model_dump_json(by_alias=True).encode()
-    )
+    store.payloads[MANIFEST_URI] = manifest.model_dump_json(by_alias=True).encode()
     with pytest.raises(EncordToolError):
         verify_roundtrip(
             receipt_uri=RECEIPT_URI,
@@ -256,12 +252,8 @@ def test_missing_required_record_id_fails_lineage_verification() -> None:
 def test_current_destination_head_overrides_conflicting_manifest_evidence() -> None:
     receipt, manifest = artifacts()
     store, storage = setup(receipt, manifest)
-    storage.s3.head_overrides[
-        ("result-bucket", "run/media/uuid-1__clip.mp4")
-    ] = {
-        "ChecksumSHA256": base64.b64encode(
-            hashlib.sha256(b"wrong").digest()
-        ).decode(),
+    storage.s3.head_overrides[("result-bucket", "run/media/uuid-1__clip.mp4")] = {
+        "ChecksumSHA256": base64.b64encode(hashlib.sha256(b"wrong").digest()).decode(),
         "ChecksumType": "FULL_OBJECT",
     }
     with pytest.raises(EncordToolError, match="verification failed"):
@@ -274,6 +266,6 @@ def test_current_destination_head_overrides_conflicting_manifest_evidence() -> N
         )
     report = json.loads(store.payloads[REPORT_URI])
     assert report["checksum_mismatched"] == 1
-    assert report["items"][0]["observed_checksum"] == hashlib.sha256(
-        b"wrong"
-    ).hexdigest()
+    assert (
+        report["items"][0]["observed_checksum"] == hashlib.sha256(b"wrong").hexdigest()
+    )

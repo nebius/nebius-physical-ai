@@ -12,7 +12,9 @@ from npa.workbench.encord.push import run_push
 from npa.workbench.encord.schemas import EncordToolError
 
 
-def test_unique_basename_with_different_full_key_is_never_linked(tmp_path: Path) -> None:
+def test_unique_basename_with_different_full_key_is_never_linked(
+    tmp_path: Path,
+) -> None:
     del tmp_path
     storage = _Storage()
     storage.s3.objects[("source-bucket", "incoming/clip.mp4")] = b"video"
@@ -42,9 +44,7 @@ def test_unique_basename_with_different_full_key_is_never_linked(tmp_path: Path)
     except EncordToolError:
         raised = True
 
-    receipt = json.loads(
-        storage.s3.objects[("result-bucket", "run/push_receipt.json")]
-    )
+    receipt = json.loads(storage.s3.objects[("result-bucket", "run/push_receipt.json")])
     item = receipt["items"][0]
     unresolved = receipt.get("counts", {}).get("unresolved", 0)
 

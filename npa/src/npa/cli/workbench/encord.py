@@ -217,10 +217,16 @@ def verify_roundtrip_cmd(
 
     try:
         validate_read_path(
-            receipt_uri, tool="encord verify-roundtrip", option="--receipt-uri", allow_hf=False
+            receipt_uri,
+            tool="encord verify-roundtrip",
+            option="--receipt-uri",
+            allow_hf=False,
         )
         validate_read_path(
-            manifest_uri, tool="encord verify-roundtrip", option="--manifest-uri", allow_hf=False
+            manifest_uri,
+            tool="encord verify-roundtrip",
+            option="--manifest-uri",
+            allow_hf=False,
         )
         validate_write_path(output_path, tool="encord verify-roundtrip", required=True)
         report = verify_roundtrip(

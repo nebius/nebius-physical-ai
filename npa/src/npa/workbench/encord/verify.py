@@ -111,9 +111,7 @@ def verify_roundtrip(
                 )
             )
             continue
-        report_items.append(
-            _compare_row(source, observed, object_store=object_store)
-        )
+        report_items.append(_compare_row(source, observed, object_store=object_store))
 
     for item_uuid in sorted(set(manifest_rows) - set(receipt_rows)):
         observed = manifest_rows[item_uuid]
@@ -135,7 +133,9 @@ def verify_roundtrip(
         receipt.phase == manifest.phase == "final"
         and receipt.status == manifest.status == "completed"
     )
-    passed = inputs_complete and all(item.relation == "matched" for item in report_items)
+    passed = inputs_complete and all(
+        item.relation == "matched" for item in report_items
+    )
     generated_at = (clock or _utc_now)()
     report = RoundtripReport(
         generated_at=generated_at,
@@ -167,7 +167,9 @@ def verify_roundtrip(
     )
     active_artifacts.create_json(report_uri, report.model_dump(by_alias=True))
     if not passed:
-        raise EncordToolError(f"Encord roundtrip verification failed; report at {report_uri}")
+        raise EncordToolError(
+            f"Encord roundtrip verification failed; report at {report_uri}"
+        )
     return report
 
 
@@ -229,9 +231,7 @@ def _compare_row(
         reasons.append("compatible source and destination checksums differ")
     elif integrity_state == "matched" and source_comparison is None:
         integrity_state = "not_comparable"
-        reasons.append(
-            "no compatible source-to-destination checksum is available"
-        )
+        reasons.append("no compatible source-to-destination checksum is available")
 
     relation = "matched"
     if observed.outcome != "successful":

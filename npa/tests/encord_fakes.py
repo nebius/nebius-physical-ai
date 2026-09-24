@@ -90,16 +90,22 @@ class FakeS3:
         self.events.append(("get", Bucket, Key))
         return {"Body": StreamingBody(self.objects[(Bucket, Key)])}
 
-    def put_object(self, *, Bucket: str, Key: str, Body: Any, **kwargs: Any) -> dict[str, str]:
+    def put_object(
+        self, *, Bucket: str, Key: str, Body: Any, **kwargs: Any
+    ) -> dict[str, str]:
         payload = Body if isinstance(Body, bytes) else Body.read()
         self.events.append(("put", Bucket, Key, kwargs))
         self.objects[(Bucket, Key)] = payload
         self.content_types[(Bucket, Key)] = str(kwargs.get("ContentType", ""))
         return {"ETag": f'"v-{len(self.events)}"'}
 
-    def copy_object(self, *, Bucket: str, Key: str, CopySource: Mapping[str, str]) -> None:
+    def copy_object(
+        self, *, Bucket: str, Key: str, CopySource: Mapping[str, str]
+    ) -> None:
         self.events.append(("copy", Bucket, Key, dict(CopySource)))
-        self.objects[(Bucket, Key)] = self.objects[(CopySource["Bucket"], CopySource["Key"])]
+        self.objects[(Bucket, Key)] = self.objects[
+            (CopySource["Bucket"], CopySource["Key"])
+        ]
 
 
 class FakeStorageClient:
@@ -180,7 +186,9 @@ class MemoryArtifactStore:
 
     def head(self, uri: str) -> ObjectMetadata:
         payload = self.payloads.get(uri)
-        return ObjectMetadata(uri=uri, exists=payload is not None, size=len(payload or b""))
+        return ObjectMetadata(
+            uri=uri, exists=payload is not None, size=len(payload or b"")
+        )
 
 
 @dataclass
@@ -312,7 +320,9 @@ class BytesDownloader:
         del url
         self.calls += 1
         destination.write_bytes(self.payload)
-        return StreamDigest(size=len(self.payload), sha256=hashlib.sha256(self.payload).hexdigest())
+        return StreamDigest(
+            size=len(self.payload), sha256=hashlib.sha256(self.payload).hexdigest()
+        )
 
 
 def _split(uri: str) -> tuple[str, str]:

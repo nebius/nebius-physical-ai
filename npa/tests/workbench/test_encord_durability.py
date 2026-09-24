@@ -100,9 +100,7 @@ def test_register_checkpoint_failure_stops_linking() -> None:
         uuid="00000000-0000-0000-0000-000000000061",
         name="clip.mp4",
         url="https://storage.test.example/source-bucket/incoming/clip.mp4",
-        client_metadata={
-            "npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}
-        },
+        client_metadata={"npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}},
     )
     folder = RefreshingFolder(exact)
     dataset = FakeDataset()
@@ -196,9 +194,7 @@ def test_exact_existing_item_is_verified_after_dataset_link() -> None:
         uuid="00000000-0000-0000-0000-000000000061",
         name="unrelated-display-name.mp4",
         url="https://storage.test.example/source-bucket/incoming/clip.mp4",
-        client_metadata={
-            "npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}
-        },
+        client_metadata={"npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}},
     )
     folder = FakeFolder([exact])
     dataset = FakeDataset()
@@ -221,7 +217,8 @@ def test_exact_existing_item_is_verified_after_dataset_link() -> None:
 def test_repush_with_changed_endpoint_reuses_item_without_registration() -> None:
     storage = storage_with("incoming/clip.mp4")
     exact = FakeStorageItem(
-        uuid="00000000-0000-0000-0000-000000000061", name="clip.mp4",
+        uuid="00000000-0000-0000-0000-000000000061",
+        name="clip.mp4",
         url="https://storage.test.example/source-bucket/incoming/clip.mp4",
         client_metadata={"npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}},
     )
@@ -230,14 +227,24 @@ def test_repush_with_changed_endpoint_reuses_item_without_registration() -> None
     client = FakeUserClient(folder, dataset)
     receipts = []
     for endpoint in [ENV["AWS_ENDPOINT_URL"], "https://new-storage.test.example"]:
-        receipts.append(run_push(
-            input_path="s3://source-bucket/incoming/", integration="s3",
-            folder="folder", dataset="dataset", output_path="s3://result-bucket/run",
-            user_client=client, storage_client=storage,
-            artifact_store=MemoryArtifactStore(), environ={"AWS_ENDPOINT_URL": endpoint},
-        ))
+        receipts.append(
+            run_push(
+                input_path="s3://source-bucket/incoming/",
+                integration="s3",
+                folder="folder",
+                dataset="dataset",
+                output_path="s3://result-bucket/run",
+                user_client=client,
+                storage_client=storage,
+                artifact_store=MemoryArtifactStore(),
+                environ={"AWS_ENDPOINT_URL": endpoint},
+            )
+        )
     assert [receipt.status for receipt in receipts] == ["completed", "completed"]
-    assert [receipt.items[0].item_uuid for receipt in receipts] == [exact.uuid, exact.uuid]
+    assert [receipt.items[0].item_uuid for receipt in receipts] == [
+        exact.uuid,
+        exact.uuid,
+    ]
     assert len(folder.registered) == 1
     assert folder.uploaded == []
     assert dataset.linked == [[exact.uuid]]
@@ -271,9 +278,7 @@ def test_created_dataset_identity_is_checkpointed_before_hydration() -> None:
 
 def test_known_inventory_conflict_never_submits_registration() -> None:
     storage = storage_with("incoming/clip.mp4")
-    exact_metadata = {
-        "npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}
-    }
+    exact_metadata = {"npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}}
     folder = FakeFolder(
         [
             FakeStorageItem(uuid="uuid-1", name="one", client_metadata=exact_metadata),
@@ -303,9 +308,7 @@ def test_sidecar_conflict_never_registers_or_links() -> None:
         uuid="uuid-1",
         name="clip.mp4",
         url="https://storage.test.example/source-bucket/archive/clip.mp4",
-        client_metadata={
-            "npa": {"source_uri": "s3://source-bucket/archive/clip.mp4"}
-        },
+        client_metadata={"npa": {"source_uri": "s3://source-bucket/archive/clip.mp4"}},
     )
     folder = FakeFolder([contradictory])
     dataset = FakeDataset()
@@ -346,9 +349,7 @@ def test_literal_percent_encoded_key_never_links_slash_key_inventory() -> None:
         uuid="uuid-slash",
         name="b.mp4",
         url="https://storage.test.example/source-bucket/incoming/a/b.mp4",
-        client_metadata={
-            "npa": {"source_uri": "s3://source-bucket/incoming/a/b.mp4"}
-        },
+        client_metadata={"npa": {"source_uri": "s3://source-bucket/incoming/a/b.mp4"}},
     )
     folder = FakeFolder([slash_item])
     dataset = FakeDataset()

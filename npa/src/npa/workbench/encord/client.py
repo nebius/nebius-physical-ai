@@ -44,7 +44,9 @@ def resolve_public_endpoint(environ: dict[str, str] | None = None) -> str:
 
         endpoint = load_credentials().s3_endpoint.strip()
     if not endpoint:
-        raise EncordToolError("no S3 endpoint is configured for object URL construction")
+        raise EncordToolError(
+            "no S3 endpoint is configured for object URL construction"
+        )
     return endpoint.rstrip("/")
 
 
@@ -56,7 +58,11 @@ def _resolve_auth_env(environ: dict[str, str] | None = None) -> dict[str, str]:
     tokens = load_credentials().tokens
     return {
         name: tokens.get(name, "")
-        for name in (ENCORD_SSH_KEY_ENV, ENCORD_SSH_KEY_B64_ENV, ENCORD_SSH_KEY_FILE_ENV)
+        for name in (
+            ENCORD_SSH_KEY_ENV,
+            ENCORD_SSH_KEY_B64_ENV,
+            ENCORD_SSH_KEY_FILE_ENV,
+        )
     }
 
 
@@ -71,11 +77,15 @@ def _default_user_client(environ: dict[str, str] | None = None) -> Any:
         try:
             ssh_key = base64.b64decode(ssh_key_b64, validate=True).decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
-            raise EncordAuthError("ENCORD_SSH_KEY_B64 is not valid base64 UTF-8") from exc
+            raise EncordAuthError(
+                "ENCORD_SSH_KEY_B64 is not valid base64 UTF-8"
+            ) from exc
     try:
         from encord.user_client import EncordUserClient
     except ModuleNotFoundError as exc:
-        raise EncordToolError("Install the optional Encord SDK with `npa[encord]`.") from exc
+        raise EncordToolError(
+            "Install the optional Encord SDK with `npa[encord]`."
+        ) from exc
     kwargs = {"domain": resolve_domain(environ)}
     if ssh_key:
         kwargs["ssh_private_key"] = ssh_key

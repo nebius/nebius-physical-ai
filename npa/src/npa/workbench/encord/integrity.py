@@ -26,7 +26,9 @@ class HttpxDownloader:
 
         with httpx.stream("GET", url, timeout=600.0, follow_redirects=True) as response:
             response.raise_for_status()
-            return write_hashed_stream(response.iter_bytes(8 * 1024 * 1024), destination)
+            return write_hashed_stream(
+                response.iter_bytes(8 * 1024 * 1024), destination
+            )
 
 
 def write_hashed_stream(chunks: Iterable[bytes], destination: Path) -> StreamDigest:

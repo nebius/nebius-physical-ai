@@ -92,7 +92,9 @@ class ConditionalArtifactStore:
         if path.is_symlink() or path.is_dir():
             raise ArtifactInvalid(f"artifact target is not a regular file path: {uri}")
         path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{path.name}.", dir=path.parent
+        )
         try:
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(body)
@@ -124,7 +126,9 @@ class ConditionalArtifactStore:
                     content_type="application/json",
                 )
             except StoragePreconditionFailed as exc:
-                raise ArtifactConflict(f"artifact changed before checkpoint: {uri}") from exc
+                raise ArtifactConflict(
+                    f"artifact changed before checkpoint: {uri}"
+                ) from exc
             return ArtifactVersion(kind="s3_etag", token=str(token))
         if version.kind != "local_sha256" or not version.token:
             raise ArtifactInvalid("local replacement requires a local SHA-256 token")
@@ -227,7 +231,10 @@ def head_object(storage_client: Any, uri: str) -> ObjectMetadata:
 
 def checksum_from_head(response: Mapping[str, Any]) -> tuple[str, ChecksumKind]:
     sha256 = str(response.get("ChecksumSHA256", "") or "").strip()
-    if sha256 and str(response.get("ChecksumType", "FULL_OBJECT")).upper() != "COMPOSITE":
+    if (
+        sha256
+        and str(response.get("ChecksumType", "FULL_OBJECT")).upper() != "COMPOSITE"
+    ):
         try:
             normalized = base64.b64decode(sha256, validate=True).hex()
         except ValueError:
@@ -342,7 +349,9 @@ class S3ObjectStorageGateway:
         if not source.exists:
             raise ArtifactNotFound(f"copy source does not exist: {source_uri}")
         source_target = authorize_uri(source_uri, operation="copy source")
-        destination_target = authorize_uri(destination_uri, operation="copy destination")
+        destination_target = authorize_uri(
+            destination_uri, operation="copy destination"
+        )
         if source_target.kind != "s3" or destination_target.kind != "s3":
             raise ArtifactInvalid("server-side copy requires two S3 object URIs")
         self._storage.s3.copy_object(
@@ -360,7 +369,9 @@ class S3ObjectStorageGateway:
             destination.checksum_kind,
         )
         if checksum_match is False:
-            raise EncordToolError("server-side copy destination checksum did not verify")
+            raise EncordToolError(
+                "server-side copy destination checksum did not verify"
+            )
         return destination
 
     def download_to_file(self, uri: str, destination: Path) -> TransferDigest:
@@ -404,7 +415,9 @@ class S3ObjectStorageGateway:
         digest: TransferDigest | None = None,
     ) -> ObjectMetadata:
         if digest is not None and digest.size != source.stat().st_size:
-            raise EncordToolError("local upload digest size does not match the source file")
+            raise EncordToolError(
+                "local upload digest size does not match the source file"
+            )
         self._storage.upload_file(str(source), destination_uri)
         metadata = self.head(destination_uri)
         if not metadata.exists or metadata.size != source.stat().st_size:

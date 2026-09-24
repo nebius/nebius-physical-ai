@@ -79,15 +79,11 @@ def test_installed_encord_0_1_202_surface() -> None:
 
     image = DataUploadImage(
         objectUrl="https://storage.test.example/source-bucket/incoming/clip.png",
-        clientMetadata={
-            "npa": {"source_uri": "s3://source-bucket/incoming/clip.png"}
-        },
+        clientMetadata={"npa": {"source_uri": "s3://source-bucket/incoming/clip.png"}},
     )
     video = DataUploadVideo(
         objectUrl="https://storage.test.example/source-bucket/incoming/clip.mp4",
-        clientMetadata={
-            "npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}
-        },
+        clientMetadata={"npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}},
     )
     payload = DataUploadItems(
         images=[image], videos=[video], skipDuplicateUrls=True

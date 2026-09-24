@@ -41,9 +41,7 @@ RegistrationState = Literal[
 LinkState = Literal[
     "not_requested", "unattempted", "linked", "already_linked", "failed"
 ]
-ChecksumKind = Literal[
-    "sha256", "s3_checksum_sha256", "md5", "etag_opaque", "none"
-]
+ChecksumKind = Literal["sha256", "s3_checksum_sha256", "md5", "etag_opaque", "none"]
 
 
 class EncordToolError(RuntimeError):
@@ -163,11 +161,15 @@ class PushItem(StrictModel):
 
         canonical = canonical_s3_uri(self.bucket, self.object_key)
         if self.source_uri != canonical:
-            raise ValueError("push row source URI does not match its bucket and object key")
+            raise ValueError(
+                "push row source URI does not match its bucket and object key"
+            )
         if self.submitted_object_url:
-            normalized_path = normalize_object_url(self.submitted_object_url).split(
-                "://", 1
-            )[1].partition("/")[2]
+            normalized_path = (
+                normalize_object_url(self.submitted_object_url)
+                .split("://", 1)[1]
+                .partition("/")[2]
+            )
             expected_path = canonical.split("/", 3)[3]
             expected_suffix = f"{self.bucket}/{expected_path}"
             if not (
@@ -182,11 +184,17 @@ class PushItem(StrictModel):
                 raise ValueError("successful push row requires exact Encord identity")
             if self.transfer_mode == "register":
                 if self.registration_state not in {"registered", "existing"}:
-                    raise ValueError("successful register row has invalid registration state")
+                    raise ValueError(
+                        "successful register row has invalid registration state"
+                    )
                 if not self.submitted_object_url.strip():
-                    raise ValueError("successful register row requires submitted object URL")
+                    raise ValueError(
+                        "successful register row requires submitted object URL"
+                    )
             elif self.registration_state != "not_applicable":
-                raise ValueError("successful upload row must use not_applicable registration")
+                raise ValueError(
+                    "successful upload row must use not_applicable registration"
+                )
             if self.transfer_mode == "upload" and self.source_checksum_kind != "sha256":
                 raise ValueError("successful upload row requires a SHA-256 checksum")
             if self.error_code or self.error:
@@ -275,7 +283,9 @@ class PushReceipt(StrictModel):
                     item.link_state not in {"linked", "already_linked"}
                     for item in self.items
                 ):
-                    raise ValueError("completed push receipt has an unlinked dataset row")
+                    raise ValueError(
+                        "completed push receipt has an unlinked dataset row"
+                    )
         return self
 
 
@@ -336,7 +346,9 @@ class LabelArtifact(StrictModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> "LabelArtifact":
-        if not (self.label_hash.strip() or self.data_hash.strip() or self.item_uuid.strip()):
+        if not (
+            self.label_hash.strip() or self.data_hash.strip() or self.item_uuid.strip()
+        ):
             raise ValueError("label artifact requires a stable identity")
         if self.outcome == "successful" and not self.artifact_uri.strip():
             raise ValueError("successful label artifact requires an artifact URI")
@@ -375,7 +387,12 @@ class PullManifest(StrictModel):
     label_artifacts: list[LabelArtifact] = Field(default_factory=list)
 
     _required = field_validator(
-        "generated_at", "updated_at", "encord_domain", "source_id", "output_uri", "manifest_uri"
+        "generated_at",
+        "updated_at",
+        "encord_domain",
+        "source_id",
+        "output_uri",
+        "manifest_uri",
     )(_nonempty)
 
     @model_validator(mode="after")
@@ -390,11 +407,16 @@ class PullManifest(StrictModel):
         )
         if self.label_export == "none":
             if self.label_export_remote_mutation or self.label_artifacts:
-                raise ValueError("label_export none cannot contain label mutation artifacts")
+                raise ValueError(
+                    "label_export none cannot contain label mutation artifacts"
+                )
         elif not self.label_export_remote_mutation:
-            raise ValueError("label initialization must disclose its remote mutation posture")
+            raise ValueError(
+                "label initialization must disclose its remote mutation posture"
+            )
         copied = sum(
-            item.outcome == "successful" and item.transfer == "copy" for item in self.items
+            item.outcome == "successful" and item.transfer == "copy"
+            for item in self.items
         )
         downloaded = sum(
             item.outcome == "successful" and item.transfer == "download"
@@ -434,7 +456,9 @@ class RoundtripItem(StrictModel):
     integrity_state: Literal[
         "matched", "not_comparable", "missing", "size_mismatch", "checksum_mismatch"
     ] = "missing"
-    relation: Literal["matched", "missing", "unexpected", "unresolved", "integrity_failed"]
+    relation: Literal[
+        "matched", "missing", "unexpected", "unresolved", "integrity_failed"
+    ]
     reasons: list[str] = Field(default_factory=list)
 
 
@@ -462,9 +486,9 @@ class RoundtripReport(StrictModel):
     checksum_unavailable: int = Field(ge=0)
     items: list[RoundtripItem] = Field(default_factory=list)
 
-    _required = field_validator("generated_at", "receipt_uri", "manifest_uri", "report_uri")(
-        _nonempty
-    )
+    _required = field_validator(
+        "generated_at", "receipt_uri", "manifest_uri", "report_uri"
+    )(_nonempty)
 
     @model_validator(mode="after")
     def validate_report(self) -> "RoundtripReport":
@@ -484,7 +508,8 @@ class RoundtripReport(StrictModel):
             raise ValueError("roundtrip relation counts do not reconcile")
         integrity_counts = (
             sum(
-                item.relation == "integrity_failed" and item.integrity_state == "missing"
+                item.relation == "integrity_failed"
+                and item.integrity_state == "missing"
                 for item in self.items
             ),
             sum(item.integrity_state == "size_mismatch" for item in self.items),
@@ -534,4 +559,6 @@ def _validate_final_status(status: RunStatus, counts: OutcomeCounts) -> None:
     if status == "partial" and (complete or not has_progress):
         raise ValueError("partial artifact status is not supported by its rows")
     if status == "failed" and has_progress:
-        raise ValueError("failed artifact must not hide successful or unresolved progress")
+        raise ValueError(
+            "failed artifact must not hide successful or unresolved progress"
+        )

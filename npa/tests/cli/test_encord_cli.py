@@ -29,7 +29,9 @@ def test_encord_group_exposes_only_transport_verbs() -> None:
     assert "seed-demo" not in result.output
 
 
-def test_push_defaults_to_register_and_forwards_sidecar(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_push_defaults_to_register_and_forwards_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def fake_push(**kwargs):
@@ -67,7 +69,9 @@ def test_push_defaults_to_register_and_forwards_sidecar(monkeypatch: pytest.Monk
     assert captured["identity_sidecar_uri"] == "s3://bucket/identity.json"
 
 
-def test_upload_requires_explicit_cli_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upload_requires_explicit_cli_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def fake_push(**kwargs):
@@ -102,7 +106,9 @@ def test_upload_requires_explicit_cli_selection(monkeypatch: pytest.MonkeyPatch)
     assert captured["integration"] == ""
 
 
-def test_pull_defaults_to_no_label_initialization(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pull_defaults_to_no_label_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def fake_pull(**kwargs):
@@ -175,7 +181,9 @@ def test_verify_forwards_both_artifacts(monkeypatch: pytest.MonkeyPatch) -> None
     assert captured["manifest_uri"] == "s3://bucket/manifest.json"
 
 
-def test_contract_error_exits_one_without_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_contract_error_exits_one_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fail(**kwargs):
         del kwargs
         raise EncordToolError("exact identity is unresolved")

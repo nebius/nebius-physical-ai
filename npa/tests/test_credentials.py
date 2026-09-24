@@ -336,8 +336,12 @@ def test_persist_partial_s3_credentials_reports_names_not_values(
     assert secret not in repr(report)
 
 
-@pytest.mark.parametrize("name", ["ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64", "ENCORD_SSH_KEY_FILE"])
-def test_all_encord_transports_persist_and_reload_privately(tmp_path: Path, name: str) -> None:
+@pytest.mark.parametrize(
+    "name", ["ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64", "ENCORD_SSH_KEY_FILE"]
+)
+def test_all_encord_transports_persist_and_reload_privately(
+    tmp_path: Path, name: str
+) -> None:
     path = tmp_path / "credentials.yaml"
     value = str(tmp_path / "encord-key") if name.endswith("_FILE") else "synthetic-key"
     report = persist_supported_env_credentials(path=path, environ={name: value})

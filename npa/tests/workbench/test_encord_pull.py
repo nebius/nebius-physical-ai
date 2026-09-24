@@ -96,9 +96,7 @@ def item(uuid: str, name: str, url: str, size: int = 5) -> FakeStorageItem:
         name=name,
         signed_url=url,
         file_size=size,
-        client_metadata={
-            "npa": {"source_uri": f"s3://source-bucket/incoming/{name}"}
-        },
+        client_metadata={"npa": {"source_uri": f"s3://source-bucket/incoming/{name}"}},
     )
 
 
@@ -187,7 +185,10 @@ def test_server_side_copy_heads_destination(port: str) -> None:
 @pytest.mark.parametrize("signed_explicit", [False, True])
 @pytest.mark.parametrize("virtual_host", [False, True])
 def test_same_endpoint_accepts_equivalent_default_ports(
-    scheme: str, port: int, signed_explicit: bool, virtual_host: bool,
+    scheme: str,
+    port: int,
+    signed_explicit: bool,
+    virtual_host: bool,
 ) -> None:
     host = "storage.test.example"
     signed_host = f"source-bucket.{host}" if virtual_host else host
@@ -200,14 +201,21 @@ def test_same_endpoint_accepts_equivalent_default_ports(
     ) == ("source-bucket", "incoming/clip.mp4")
 
 
-@pytest.mark.parametrize("signed_base,endpoint", [
-    ("https://storage.test.example:8443", "https://storage.test.example"),
-    ("http://storage.test.example", "https://storage.test.example"),
-    ("http://storage.test.example:443", "https://storage.test.example:443"),
-    ("https://other.test.example", "https://storage.test.example"),
-])
-def test_same_endpoint_rejects_different_origins(signed_base: str, endpoint: str) -> None:
-    assert _same_endpoint_source(f"{signed_base}/source-bucket/clip.mp4", endpoint) is None
+@pytest.mark.parametrize(
+    "signed_base,endpoint",
+    [
+        ("https://storage.test.example:8443", "https://storage.test.example"),
+        ("http://storage.test.example", "https://storage.test.example"),
+        ("http://storage.test.example:443", "https://storage.test.example:443"),
+        ("https://other.test.example", "https://storage.test.example"),
+    ],
+)
+def test_same_endpoint_rejects_different_origins(
+    signed_base: str, endpoint: str
+) -> None:
+    assert (
+        _same_endpoint_source(f"{signed_base}/source-bucket/clip.mp4", endpoint) is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -329,9 +337,7 @@ def test_signed_url_identity_conflict_never_falls_back_to_download() -> None:
         ),
         file_size=5,
         client_metadata={
-            "npa": {
-                "source_uri": "s3://source-bucket/incoming/a%252Fb.mp4"
-            }
+            "npa": {"source_uri": "s3://source-bucket/incoming/a%252Fb.mp4"}
         },
     )
     storage = FakeStorageClient()

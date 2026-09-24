@@ -131,9 +131,7 @@ def build_registration_payload(items: Iterable[PushItem]) -> Any:
     images = []
     videos = []
     for item in rows:
-        metadata = {
-            "npa": {"source_uri": item.source_uri, "record_id": item.record_id}
-        }
+        metadata = {"npa": {"source_uri": item.source_uri, "record_id": item.record_id}}
         if item.category == "images":
             images.append(
                 DataUploadImage(
@@ -181,7 +179,9 @@ def run_push(
     if transfer not in TRANSFER_MODES:
         raise EncordToolError(f"unknown transfer mode {transfer!r}")
     try:
-        target = authorize_uri(input_path.rstrip("/"), operation="discover Encord media")
+        target = authorize_uri(
+            input_path.rstrip("/"), operation="discover Encord media"
+        )
         if target.kind != "s3" or not target.bucket:
             raise StorageAuthorizationError("input is not an S3 prefix")
     except StorageAuthorizationError:
@@ -199,9 +199,13 @@ def run_push(
     for item in items:
         item.transfer_mode = transfer  # type: ignore[assignment]
         item.link_state = "unattempted" if dataset.strip() else "not_requested"
-        item.registration_state = "unattempted" if transfer == "register" else "not_applicable"
+        item.registration_state = (
+            "unattempted" if transfer == "register" else "not_applicable"
+        )
         if item.category == "mcap":
-            item.registration_state = "failed" if transfer == "register" else "not_applicable"
+            item.registration_state = (
+                "failed" if transfer == "register" else "not_applicable"
+            )
             item.outcome = "failed"
             item.error_code = "unsupported_media"
             item.error = "MCAP requires a structured Encord scene definition"
@@ -246,7 +250,9 @@ def run_push(
             endpoint_url=endpoint_url,
             encord_domain=encord_domain,
             transfer_mode=transfer,  # type: ignore[arg-type]
-            idempotency="exact_identity" if transfer == "register" else "not_guaranteed",
+            idempotency="exact_identity"
+            if transfer == "register"
+            else "not_guaranteed",
             integration_id=integration_id,
             integration_title=integration_title,
             folder_uuid=str(getattr(folder_obj, "uuid", "") or ""),
@@ -273,7 +279,8 @@ def run_push(
     # Creating this object is the output preflight. No Encord mutation precedes it.
     try:
         version = active_artifacts.create_json(
-            receipt_uri, make_receipt("provisional", "running").model_dump(by_alias=True)
+            receipt_uri,
+            make_receipt("provisional", "running").model_dump(by_alias=True),
         )
     except Exception as exc:  # noqa: BLE001 - store implementations vary
         raise EncordToolError(
@@ -360,7 +367,9 @@ def run_push(
     _fail_duplicate_resolutions(items)
     if dataset_obj is not None:
         linkable = [
-            item for item in items if item.identity_state == "resolved" and item.item_uuid
+            item
+            for item in items
+            if item.identity_state == "resolved" and item.item_uuid
         ]
         if linkable:
             before = _dataset_membership(client, dataset_obj, dataset_hash)
@@ -380,7 +389,9 @@ def run_push(
                             item.link_state = "failed"
                             item.outcome = "unresolved"
                             item.error_code = "dataset_link_unverified"
-                            item.error = "Encord did not expose exact post-link membership"
+                            item.error = (
+                                "Encord did not expose exact post-link membership"
+                            )
             except Exception as exc:  # noqa: BLE001
                 for item in missing:
                     item.link_state = "failed"
@@ -407,9 +418,7 @@ def run_push(
             f"be claimed: {_sanitize_error(str(exc))}"
         ) from exc
     if status != "completed":
-        raise EncordToolError(
-            f"Encord push {status}; receipt written to {receipt_uri}"
-        )
+        raise EncordToolError(f"Encord push {status}; receipt written to {receipt_uri}")
     return final
 
 
@@ -505,7 +514,9 @@ def _run_register(
                 item.registration_state = "failed"
                 item.outcome = "failed"
                 item.error_code = "registration_job_failed"
-                item.error = _sanitize_error(global_error or f"registration job {state.lower()}")
+                item.error = _sanitize_error(
+                    global_error or f"registration job {state.lower()}"
+                )
                 continue
             resolution = resolve_exact_identity(
                 source_uri=item.source_uri,
@@ -520,7 +531,9 @@ def _run_register(
                 item.registration_state = "unresolved"
                 item.identity_state = "unresolved"
                 item.outcome = "unresolved"
-                item.error_code = "registration_timeout" if pending else resolution.error_code
+                item.error_code = (
+                    "registration_timeout" if pending else resolution.error_code
+                )
                 item.error = (
                     "registration polling remained pending; exact identity is unknown"
                     if pending
@@ -601,7 +614,9 @@ def _folder_inventory(folder_obj: Any, user_client: Any) -> list[Any]:
     return rows
 
 
-def _dataset_membership(user_client: Any, dataset_obj: Any, dataset_hash: str) -> set[str]:
+def _dataset_membership(
+    user_client: Any, dataset_obj: Any, dataset_hash: str
+) -> set[str]:
     current = dataset_obj
     if dataset_hash and hasattr(user_client, "get_dataset"):
         try:
@@ -714,9 +729,7 @@ def _finalize_push_failure(
     error_code: str,
     exc: Exception,
 ) -> PushReceipt:
-    receipt = make_receipt(
-        "final", "failed", error_code=error_code, error=str(exc)
-    )
+    receipt = make_receipt("final", "failed", error_code=error_code, error=str(exc))
     payload = receipt.model_dump(by_alias=True)
     payload["revision"] = revision + 1
     receipt = PushReceipt.model_validate(payload)
