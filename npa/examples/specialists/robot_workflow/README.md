@@ -61,9 +61,11 @@ MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa \
 
 The verifier reconstructs the scene with upstream Gymnasium-Robotics and MuJoCo.
 It independently checks every control action, pre/post state, contact,
-object/goal observation and both raw camera frames. It independently re-encodes verified raw frames using the fixed H.264 settings,
-then checks every decoded preview/dataset frame and its exact 25 Hz timestamp.
-This catches shifted or duplicated frames that whole-image similarity can miss. Native LeRobot verification checks all exported state/action/image
+object/goal observation and both raw camera frames. It independently re-encodes
+verified raw frames using the fixed H.264 settings, then checks every decoded
+preview/dataset frame and its exact 25 Hz timestamp. This catches shifted or
+duplicated frames that whole-image similarity can miss. Native LeRobot
+verification checks all exported state/action/image
 samples, timestamps, task labels and episode indices, decodes dataset videos
 and forms a real training batch. Neither verifier imports candidate simulation
 or export helpers. Exact raw-pixel replay requires matching simulator, renderer
@@ -96,4 +98,7 @@ Account for coordinator, specialist, router, fallback and rejected model
 responses, including missing usage. Simulation, native verification, setup,
 host allocation and human/development effort are separate quantities. A
 successful local workflow does not establish cloud deployment or savings. No
-comparative result is claimed by this example.
+comparative result is implied by the example alone. The separate
+[measured repair report](../../../../docs/workbench/specialists-robot-workflow-experiment.md)
+retains three matched pairs, their source/artifact audits, model-cost estimates
+and observed provider failures.

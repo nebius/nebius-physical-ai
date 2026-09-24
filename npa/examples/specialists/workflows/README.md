@@ -216,3 +216,10 @@ compares actual source edits followed by affected-stage execution. Both arms
 verified 2/2 repairs; the hybrid needed an Astra takeover and cost more.
 It preserves the original measured patches separately from later production
 hardening and runtime improvements.
+
+The [robot workflow repair report](../../../../docs/workbench/specialists-robot-workflow-experiment.md)
+compares real MuJoCo/LeRobot repairs with the completion policy above. The final
+hybrid passed both tasks using one Astra delegation turn and no review turn,
+with lower model API-equivalent cost and longer elapsed time. All six runs,
+including the earlier provider failure, remain in the evidence. Jev was not
+invoked in these runs.

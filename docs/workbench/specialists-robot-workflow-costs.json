@@ -1,0 +1,854 @@
+{
+  "schema": "npa.specialists.robot_workflow.six_arm_api_equivalent_accounting.v1",
+  "runs": [
+    {
+      "pair": 1,
+      "arm": "astra-only",
+      "agent_tool_seconds": 177.05452443496324,
+      "model_usage_complete": true,
+      "raw_usage_audit_passed": true,
+      "api_equivalent_cost_usd": {
+        "minimum": 0.765242,
+        "maximum": 1.487559
+      },
+      "known_recorded_cost_usd": {
+        "minimum": 0.765242,
+        "maximum": 1.487559
+      },
+      "unknown_provider_error_events": 0,
+      "astra_completed_turns": 1,
+      "astra_turn_token_totals": [
+        370789
+      ],
+      "astra_all_turns_below_context_bound": false,
+      "models": {
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 2,
+          "tokens": {
+            "input_tokens": 369072,
+            "output_tokens": 1717,
+            "cached_input_tokens": 334592,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 60
+          },
+          "known_tokens": {
+            "input_tokens": 369072,
+            "output_tokens": 1717,
+            "cached_input_tokens": 334592,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 60
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.765242,
+            "maximum": 1.487559
+          }
+        }
+      },
+      "router": {
+        "decision_records": 0,
+        "api_calls_attempted": 0,
+        "api_calls_not_attempted": 0,
+        "unknown_api_call_attempts": 0,
+        "accepted_routes": 0,
+        "abstained_routes": 0,
+        "unavailable_routes": 0,
+        "fallback_decisions": 0,
+        "jev_responses_received": 0,
+        "accepted_jev_routes": 0
+      },
+      "jev_accepted_routes": 0,
+      "iteration": "original_protocol"
+    },
+    {
+      "pair": 1,
+      "arm": "astra-tofa",
+      "agent_tool_seconds": 398.0961646019714,
+      "model_usage_complete": false,
+      "raw_usage_audit_passed": true,
+      "api_equivalent_cost_usd": null,
+      "known_recorded_cost_usd": {
+        "minimum": 1.82275176,
+        "maximum": 3.47477176
+      },
+      "unknown_provider_error_events": 2,
+      "astra_completed_turns": 4,
+      "astra_turn_token_totals": [
+        43495,
+        263198,
+        497019,
+        17761
+      ],
+      "astra_all_turns_below_context_bound": false,
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "usage_records": 10,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 10,
+          "accepted_specialist_responses": 9,
+          "rejected_specialist_responses": 1,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 42876,
+            "output_tokens": 8804,
+            "cached_input_tokens": 22528,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 42876,
+            "output_tokens": 8804,
+            "cached_input_tokens": 22528,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 10,
+            "reasoning_output_tokens": 10
+          },
+          "priced_records": 10,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.09146016,
+            "maximum": 0.09146016
+          }
+        },
+        "gpt-6-astra": {
+          "usage_records": 4,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 2,
+          "tokens": {
+            "input_tokens": 818539,
+            "output_tokens": 2934,
+            "cached_input_tokens": 734080,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 157
+          },
+          "known_tokens": {
+            "input_tokens": 818539,
+            "output_tokens": 2934,
+            "cached_input_tokens": 734080,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 157
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 4,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 1.72537,
+            "maximum": 3.37739
+          }
+        },
+        "zai-org/GLM-5.3": {
+          "usage_records": 2,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 2,
+          "accepted_specialist_responses": 2,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 4038,
+            "output_tokens": 61,
+            "cached_input_tokens": 1408,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 4038,
+            "output_tokens": 61,
+            "cached_input_tokens": 1408,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 2,
+            "reasoning_output_tokens": 2
+          },
+          "priced_records": 2,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.005921599999999999,
+            "maximum": 0.005921599999999999
+          }
+        }
+      },
+      "router": {
+        "decision_records": 0,
+        "api_calls_attempted": 0,
+        "api_calls_not_attempted": 0,
+        "unknown_api_call_attempts": 0,
+        "accepted_routes": 0,
+        "abstained_routes": 0,
+        "unavailable_routes": 0,
+        "fallback_decisions": 0,
+        "jev_responses_received": 0,
+        "accepted_jev_routes": 0
+      },
+      "jev_accepted_routes": 0,
+      "iteration": "original_protocol"
+    },
+    {
+      "pair": 2,
+      "arm": "astra-only",
+      "agent_tool_seconds": 148.31663035898237,
+      "model_usage_complete": true,
+      "raw_usage_audit_passed": true,
+      "api_equivalent_cost_usd": {
+        "minimum": 0.654584,
+        "maximum": 1.270818
+      },
+      "known_recorded_cost_usd": {
+        "minimum": 0.654584,
+        "maximum": 1.270818
+      },
+      "unknown_provider_error_events": 0,
+      "astra_completed_turns": 1,
+      "astra_turn_token_totals": [
+        279700
+      ],
+      "astra_all_turns_below_context_bound": false,
+      "models": {
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 2,
+          "tokens": {
+            "input_tokens": 278166,
+            "output_tokens": 1534,
+            "cached_input_tokens": 244864,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 60
+          },
+          "known_tokens": {
+            "input_tokens": 278166,
+            "output_tokens": 1534,
+            "cached_input_tokens": 244864,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 60
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.654584,
+            "maximum": 1.270818
+          }
+        }
+      },
+      "router": {
+        "decision_records": 0,
+        "api_calls_attempted": 0,
+        "api_calls_not_attempted": 0,
+        "unknown_api_call_attempts": 0,
+        "accepted_routes": 0,
+        "abstained_routes": 0,
+        "unavailable_routes": 0,
+        "fallback_decisions": 0,
+        "jev_responses_received": 0,
+        "accepted_jev_routes": 0
+      },
+      "jev_accepted_routes": 0,
+      "iteration": "original_protocol"
+    },
+    {
+      "pair": 2,
+      "arm": "astra-tofa",
+      "agent_tool_seconds": 185.00411543197697,
+      "model_usage_complete": true,
+      "raw_usage_audit_passed": true,
+      "api_equivalent_cost_usd": {
+        "minimum": 0.57216504,
+        "maximum": 0.57216504
+      },
+      "known_recorded_cost_usd": {
+        "minimum": 0.57216504,
+        "maximum": 0.57216504
+      },
+      "unknown_provider_error_events": 0,
+      "astra_completed_turns": 2,
+      "astra_turn_token_totals": [
+        43626,
+        16379
+      ],
+      "astra_all_turns_below_context_bound": true,
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "usage_records": 10,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 10,
+          "accepted_specialist_responses": 9,
+          "rejected_specialist_responses": 1,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 42624,
+            "output_tokens": 8881,
+            "cached_input_tokens": 19456,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 42624,
+            "output_tokens": 8881,
+            "cached_input_tokens": 19456,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 10,
+            "reasoning_output_tokens": 10
+          },
+          "priced_records": 10,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.09143244,
+            "maximum": 0.09143244
+          }
+        },
+        "gpt-6-astra": {
+          "usage_records": 2,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 59170,
+            "output_tokens": 835,
+            "cached_input_tokens": 27648,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "known_tokens": {
+            "input_tokens": 59170,
+            "output_tokens": 835,
+            "cached_input_tokens": 27648,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 2,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.384618,
+            "maximum": 0.384618
+          }
+        },
+        "zai-org/GLM-5.3": {
+          "usage_records": 15,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 15,
+          "accepted_specialist_responses": 15,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 62487,
+            "output_tokens": 1962,
+            "cached_input_tokens": 47488,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 62487,
+            "output_tokens": 1962,
+            "cached_input_tokens": 47488,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 15,
+            "reasoning_output_tokens": 15
+          },
+          "priced_records": 15,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.0961146,
+            "maximum": 0.0961146
+          }
+        }
+      },
+      "router": {
+        "decision_records": 0,
+        "api_calls_attempted": 0,
+        "api_calls_not_attempted": 0,
+        "unknown_api_call_attempts": 0,
+        "accepted_routes": 0,
+        "abstained_routes": 0,
+        "unavailable_routes": 0,
+        "fallback_decisions": 0,
+        "jev_responses_received": 0,
+        "accepted_jev_routes": 0
+      },
+      "jev_accepted_routes": 0,
+      "iteration": "original_protocol"
+    },
+    {
+      "pair": 3,
+      "iteration": "post_failure_runtime_improvement",
+      "arm": "astra-only",
+      "agent_tool_seconds": 154.35052112402627,
+      "model_usage_complete": true,
+      "raw_usage_audit_passed": true,
+      "api_equivalent_cost_usd": {
+        "minimum": 0.754044,
+        "maximum": 1.468938
+      },
+      "known_recorded_cost_usd": {
+        "minimum": 0.754044,
+        "maximum": 1.468938
+      },
+      "unknown_provider_error_events": 0,
+      "astra_completed_turns": 1,
+      "astra_turn_token_totals": [
+        338478
+      ],
+      "astra_all_turns_below_context_bound": false,
+      "models": {
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 2,
+          "tokens": {
+            "input_tokens": 336912,
+            "output_tokens": 1566,
+            "cached_input_tokens": 299264,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 72
+          },
+          "known_tokens": {
+            "input_tokens": 336912,
+            "output_tokens": 1566,
+            "cached_input_tokens": 299264,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 72
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.754044,
+            "maximum": 1.468938
+          }
+        }
+      },
+      "router": {
+        "decision_records": 0,
+        "api_calls_attempted": 0,
+        "api_calls_not_attempted": 0,
+        "unknown_api_call_attempts": 0,
+        "accepted_routes": 0,
+        "abstained_routes": 0,
+        "unavailable_routes": 0,
+        "fallback_decisions": 0,
+        "jev_responses_received": 0,
+        "accepted_jev_routes": 0
+      },
+      "jev_accepted_routes": 0,
+      "host_completion_gate": {
+        "present": false,
+        "model_calls_attributed": 0
+      }
+    },
+    {
+      "pair": 3,
+      "iteration": "post_failure_runtime_improvement",
+      "arm": "astra-tofa",
+      "agent_tool_seconds": 241.3743879160029,
+      "model_usage_complete": true,
+      "raw_usage_audit_passed": true,
+      "api_equivalent_cost_usd": {
+        "minimum": 0.40461727999999997,
+        "maximum": 0.40461727999999997
+      },
+      "known_recorded_cost_usd": {
+        "minimum": 0.40461727999999997,
+        "maximum": 0.40461727999999997
+      },
+      "unknown_provider_error_events": 0,
+      "astra_completed_turns": 1,
+      "astra_turn_token_totals": [
+        43537
+      ],
+      "astra_all_turns_below_context_bound": true,
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "usage_records": 10,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 10,
+          "accepted_specialist_responses": 9,
+          "rejected_specialist_responses": 1,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 43381,
+            "output_tokens": 8831,
+            "cached_input_tokens": 22272,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 43381,
+            "output_tokens": 8831,
+            "cached_input_tokens": 22272,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 10,
+            "reasoning_output_tokens": 10
+          },
+          "priced_records": 10,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.09223368,
+            "maximum": 0.09223368
+          }
+        },
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 42872,
+            "output_tokens": 665,
+            "cached_input_tokens": 27648,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "known_tokens": {
+            "input_tokens": 42872,
+            "output_tokens": 665,
+            "cached_input_tokens": 27648,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.213138,
+            "maximum": 0.213138
+          }
+        },
+        "zai-org/GLM-5.3": {
+          "usage_records": 15,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 15,
+          "accepted_specialist_responses": 15,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 64802,
+            "output_tokens": 1937,
+            "cached_input_tokens": 49984,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 64802,
+            "output_tokens": 1937,
+            "cached_input_tokens": 49984,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 15,
+            "reasoning_output_tokens": 15
+          },
+          "priced_records": 15,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.09924559999999999,
+            "maximum": 0.09924559999999999
+          }
+        }
+      },
+      "router": {
+        "decision_records": 0,
+        "api_calls_attempted": 0,
+        "api_calls_not_attempted": 0,
+        "unknown_api_call_attempts": 0,
+        "accepted_routes": 0,
+        "abstained_routes": 0,
+        "unavailable_routes": 0,
+        "fallback_decisions": 0,
+        "jev_responses_received": 0,
+        "accepted_jev_routes": 0
+      },
+      "jev_accepted_routes": 0,
+      "host_completion_gate": {
+        "present": true,
+        "receipt_sha256": "292aaf2b17e81406302330aab679b91c11daa3ecc0ce4310ca765969a32e5939",
+        "recorded_call_binding_passed": true,
+        "assignment_count": 2,
+        "model_calls_attributed": 0,
+        "completed_epoch": 1790216101.692529,
+        "independent_artifact_reexecution": false,
+        "scope": "Recorded required-operation receipts and edit hashes; independent full artifact audit is separate."
+      }
+    }
+  ],
+  "price_table": {
+    "schema": "npa.specialists.published_api_equivalent_prices.v1",
+    "observed_date": "2026-09-24",
+    "models": {
+      "gpt-6-astra": {
+        "cache_policy": "itemized",
+        "rate_options": [
+          {
+            "input_price_per_million_tokens": 10,
+            "output_price_per_million_tokens": 50,
+            "cached_input_price_per_million_tokens": 1,
+            "cache_write_price_per_million_tokens": 12.5
+          },
+          {
+            "input_price_per_million_tokens": 20,
+            "output_price_per_million_tokens": 75,
+            "cached_input_price_per_million_tokens": 2,
+            "cache_write_price_per_million_tokens": 25
+          }
+        ]
+      },
+      "zai-org/GLM-5.3": {
+        "cache_policy": "full-input",
+        "rate_options": [
+          {
+            "input_price_per_million_tokens": 1.4,
+            "output_price_per_million_tokens": 4.4
+          }
+        ]
+      },
+      "deepseek-ai/DeepSeek-V4-Pro-0813": {
+        "cache_policy": "full-input",
+        "rate_options": [
+          {
+            "input_price_per_million_tokens": 1.32,
+            "output_price_per_million_tokens": 3.96
+          }
+        ]
+      },
+      "jev-1.13.0": {
+        "cache_policy": "full-input",
+        "rate_options": [
+          {
+            "input_price_per_million_tokens": 0.042,
+            "output_price_per_million_tokens": 0
+          }
+        ]
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-6-astra.md",
+        "retrieved_at": "2026-09-24T01:06:57.441702+00:00",
+        "sha256": "f45ae813c3f69708e2576328056de14cdf71fec174c875f4b81d236105545625"
+      },
+      {
+        "url": "https://docs.typesafe.ai/models.md",
+        "retrieved_at": "2026-09-24T01:06:57.595208+00:00",
+        "sha256": "9d20bb3c90a0147532d0b20ddc4c64579391be7842e965543b27bad684eeb4d6"
+      },
+      {
+        "url": "https://tokenfactory.nebius.com/api/public/models_info",
+        "retrieved_at": "2026-09-24T01:06:58.249946+00:00",
+        "sha256": "d00c0eb7718afc9124118d0afdbe53d153c1f09e9bee39ea679c2823eb6d2b95"
+      }
+    ],
+    "description": "Standard published API price equivalents only; Astra used ChatGPT login, so these are not invoices or actual service-tier claims. All reported input/output tokens count. No undocumented Token Factory cache discount. Reasoning output is a subset, not a second charge. Router missing usage remains unknown; missing credentials are no API call.",
+    "astra_context_rule": "Use the first rate only when every complete, reconciled fresh turn has aggregate input plus output below 272000; otherwise retain both context rates."
+  },
+  "recorded_execution_order": [
+    "pair1/astra-only",
+    "pair1/astra-tofa",
+    "pair2/astra-tofa",
+    "pair2/astra-only",
+    "pair3/astra-tofa",
+    "pair3/astra-only"
+  ],
+  "observed_protocol_equalities": [
+    {
+      "common_prompt_sha256": true,
+      "model": true,
+      "reasoning_effort": true,
+      "sources": true
+    },
+    {
+      "common_prompt_sha256": true,
+      "model": true,
+      "reasoning_effort": true,
+      "sources": true
+    }
+  ],
+  "matched_workload_acceptance_assessed_here": false,
+  "actual_jev_inference_used": false,
+  "overall_cost_savings_proven": false,
+  "pair2_api_equivalent_reduction_fraction": {
+    "minimum": 0.12591044082959568,
+    "maximum": 0.5497663394758336
+  },
+  "limitations": [
+    "Pair1 hybrid contains two provider-error events with unreported usage; its full cost and the aggregate hybrid full cost are unknown. Known recorded subtotals exclude these unknown charges.",
+    "Astra used ChatGPT login. Rates describe standard published API equivalents, not subscription invoices or actual service-tier charges.",
+    "Astra aggregate turn usage above the short-context bound leaves the per-request context tariff unresolved; both rates are retained.",
+    "All observed Token Factory input tokens are charged at the published full-input tariff here; no undocumented cache discount is assumed.",
+    "Durations are execution.agent_tool_seconds; launcher preparation, human effort, host compute, storage and network are excluded.",
+    "No Jev credential was available, so the benchmark does not demonstrate real Jev routing or Jev savings.",
+    "Outcome, source and native artifact acceptance require the separate independent outcome audit.",
+    "Pair3 is a declared post-failure runtime iteration with provider failure recording/fallback and receipt-based host completion. It is retained separately and is not pooled into the original paired estimates; one pair cannot establish a general causal advantage."
+  ],
+  "private_audit_sha256": "1c4f6bc22dc9db91fb725698f2b8e8094bc937fc5d226471566c694cfbe35f6b",
+  "original_two_pair_totals_by_arm": {
+    "astra-only": {
+      "runs": 2,
+      "complete_cost_eligible": true,
+      "sum_cost_usd": {
+        "minimum": 1.419826,
+        "maximum": 2.7583770000000003
+      },
+      "real_jev_accepted_routes": 0,
+      "usage_records": 2,
+      "provider_errors_with_unknown_usage": 0,
+      "known_recorded_cost_usd": {
+        "minimum": 1.419826,
+        "maximum": 2.7583770000000003
+      },
+      "known_recorded_cost_is_not_full_cost": false
+    },
+    "astra-tofa": {
+      "runs": 2,
+      "complete_cost_eligible": false,
+      "sum_cost_usd": null,
+      "real_jev_accepted_routes": 0,
+      "usage_records": 43,
+      "provider_errors_with_unknown_usage": 2,
+      "known_recorded_cost_usd": {
+        "minimum": 2.3949168,
+        "maximum": 4.0469368
+      },
+      "known_recorded_cost_is_not_full_cost": true
+    }
+  },
+  "post_failure_pair3": {
+    "pooled_with_original_pair_totals": false,
+    "observed_protocol_equalities": {
+      "common_prompt_sha256": true,
+      "model": true,
+      "reasoning_effort": true,
+      "sources": true
+    },
+    "accounting_audit_sha256": "6db345268b4d0d9137e4a29e97107a1e88946acd486311ab01b4a829bca55ed6",
+    "api_equivalent_cost_reduction_fraction": {
+      "minimum": 0.4634036210088537,
+      "maximum": 0.7245511519206393
+    },
+    "observed_elapsed_reduction_fraction": -0.563806757231806
+  },
+  "original_four_arm_export_sha256": "dd3394f86d3e7ffee7812baad1162e7f8f38f7f235cb32247b6e7e711aa27d71"
+}

@@ -393,3 +393,10 @@ The [NuRec source-repair experiment](specialists-nurec-repair-experiment.md)
 required source edits and freshly verified stages: both arms completed 2/2
 repairs. GLM authored the hybrid render fix; Astra repaired the viewer after
 specialist escalation. The hybrid cost more in model-price equivalents.
+
+The [robot workflow repair experiment](specialists-robot-workflow-experiment.md)
+tests fresh Astra turns, specialist execution and completion from verified host
+receipts. The final matched pair passed 2/2 repairs in both arms and used at
+least 46% less model API-equivalent cost with specialists, but took 56% longer.
+The report retains an earlier provider-failure run that cost more. Live Jev
+routing was unavailable and is not included in the measured result.
