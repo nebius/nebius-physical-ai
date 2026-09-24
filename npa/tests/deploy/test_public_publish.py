@@ -34,6 +34,7 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    PUBLICATION_QUARANTINE_TOOLS,
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
@@ -313,7 +314,9 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_DERIVED_IMAGES
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
+        {"openpi", "curobo", "ncore", "sam3"}
+    )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
         "lingbot-world",
@@ -364,7 +367,7 @@ def test_public_set_includes_the_oss_tools() -> None:
     assert public == (
         set(CONTAINER_IMAGE_NAMES)
         - RESTRICTED_PUBLICATION_TOOLS
-        - images.PUBLICATION_QUARANTINE_TOOLS
+        - PUBLICATION_QUARANTINE_TOOLS
     )
 
 
@@ -528,10 +531,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # having no built/validated artifact to publish. Both are subtracted from the
     # contract-derived total rather than hardcoded, so adding a freely
     # redistributable image does not silently drift this gate.
-    assert len(plan) == len(publicly_publishable_tools()) - len(
-        set(publicly_publishable_tools())
-        & (set(UNVALIDATED_PUBLICATION_TOOLS) | set(VALIDATION_CANDIDATE_TOOLS))
-    )
+    assert len(plan) == len(publicly_publishable_tools())
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
     # tool silently dropping out of the plan, which the derived equality above cannot.
@@ -1130,14 +1130,30 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
         target_registry="ghcr.io/nebius/nebius-physical-ai"
     )
 
-    assert not manifest["publication_pending"]
     assert len(plan) == len(manifest["releases"])
-    assert set(manifest["releases"]) | set(manifest["publication_pending"]) == set(
-        publicly_publishable_tools()
-    )
+    assert set(manifest["releases"]) == set(publicly_publishable_tools())
+    assert set(manifest["publication_pending"]) == {"antioch"}
     for item in plan:
         recorded = manifest["releases"][item.tool]["published_digest"]
         assert item.source_ref.endswith(f"@{recorded}")
+
+
+def test_release_manifest_delegates_redistribution_classification(monkeypatch) -> None:
+    original = images.is_publicly_redistributable
+    classified: list[str] = []
+
+    def classify(tool: str) -> bool:
+        classified.append(tool)
+        return original(tool)
+
+    images.public_release_manifest.cache_clear()
+    monkeypatch.setattr(images, "is_publicly_redistributable", classify)
+    try:
+        images.public_release_manifest()
+    finally:
+        images.public_release_manifest.cache_clear()
+
+    assert set(classified) == set(CONTAINER_IMAGE_NAMES)
 
 
 def test_verify_accepted_releases_compares_anonymous_live_and_recorded_digests(

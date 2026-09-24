@@ -5,34 +5,59 @@ runs **Security regression / security-regression**. It is the only automatic PR
 workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
 source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
-PRs and merge-queue candidates run the same browser and focused Python
-compatibility checks alongside the complete duration-balanced Python 3.12
-coverage suite. This catches cross-subsystem failures before queue admission;
-the queue rechecks the combined candidate against the latest main revision.
+PRs run browser and focused Python compatibility checks alongside the complete
+Python 3.12 coverage suite. `pr-precheck` provides an early five-minute signal;
+it does not replace required validation. Queue candidates reuse those successful
+results only after trusted-base code verifies the current PR head, latest
+attempt, all required jobs, receipt, tested merge parent, and an identical Git
+tree through GitHub APIs. Evidence must be less than 24 hours old; no downloaded
+artifact content is trusted. Changed combined trees rerun all tests, lint,
+guardrails and hostile-input checks. A complete Git-tree comparison and the
+trusted base image-scope policy decide whether image checks must rerun too.
+Stale proof, missing results and API errors restore the full queue gate;
+all fresh tests and security checks must pass before merging. Secret, confidentiality and real
+source/dependency scanners still run against every queue candidate. Main and
+scheduled deep image audits remain in place. See the
+[queue evidence and timing contract](../../CONTRIBUTING.md#testing-requirements).
 The narrow prose-only exception described in
 [the contributor CI guide](../../CONTRIBUTING.md) retains smoke, documentation,
 lint, guardrails, and every security gate. The test selector comes from the
 trusted base commit and uses its merge-candidate policy for both events,
 including when an older base still has a narrower PR policy. Missing policy
 keeps full validation and invalid comparisons fail. The full three-interpreter
-test audit runs daily instead of immediately after each merge. Repository-wide
-job concurrency
-limits validation to seven PR jobs, nine merge-candidate jobs, and three background
-audit jobs. Each candidate pool has a separate slot for the short test-scope
-selector, coverage, and the final required check. Shards can start without
-waiting for long docs and guardrail jobs. Optional timing reports use the audit
-pool. These groups bound repository demand but cannot reserve organization
-runners. See the
+test audit runs daily instead of immediately after each merge. Independent
+validation jobs use available GitHub runner capacity without shared job queues.
+The parent workflow still cancels superseded PR work; distinct candidate groups
+keep unrelated PRs and merge candidates independent. Scope selection, coverage,
+and final checks wait for their declared dependencies and an available runner.
+Organization runner limits can still cause waiting.
+Queue proof now shares the secret-scan runner, while full precheck collection
+overlaps smoke and guardrail execution on one runner. Both precheck results remain
+blocking. The shared secret-scan job uses GitHub's default job timeout: full-history
+checkout, queue-evidence verification, scanning, and cleanup must all complete
+before it can report success. A short job timeout can reject a clean candidate
+even after the scanner reports no leaks.
+Optional priority/test runner labels separate candidate validation from
+background audits when operators provision that capacity; their defaults preserve
+standard runner behavior. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
-for queue retention, superseded-commit cancellation, and rollout limits.
+for cancellation and rollout behavior, including refreshing older PR branches.
 
-The image workflow has no top-level path filter. Its two automatic jobs always
-report an internal, fail-closed scope decision. Image, packaging, workflow, and
+The image workflow has no top-level path filter. On full PR validation and main
+audits, its policy and base-inventory planning jobs always report an internal,
+fail-closed scope decision. Image, packaging, workflow, and
 security-policy changes run complete-byte, configuration, and base-image checks;
 unrelated source changes take the verified fast path. Main, scheduled, and manual
-audits always run the deep checks. Seven pinned bases use one Trivy database
-download and three isolated worker caches inside one runner. Deep candidates block
-on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
+audits always run the deep checks. A matrix derived from every validated
+inventory entry gives each base image its own standard runner. Matrix failure
+does not cancel sibling scans, and the required aggregate rejects failed,
+cancelled, skipped, or missing deep-scan results. Each entry has a private
+archive, mutable cache, and temporary layer directory that are removed after
+scanning. Patched bases use a dedicated Buildx builder;
+its container and cache volume are removed before Trivy reads the archive.
+Unmodified bases are scanned directly from their remote digest, without loading
+the shared Docker image store. Cleanup never prunes shared images or builders.
+Deep candidates block on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their
 [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
 are checked separately from the application-dependency scan.
@@ -50,7 +75,7 @@ Those boundaries motivate three complementary maintained scanners:
 | Scanner | Blocking coverage |
 |---|---|
 | Bandit 1.9.4 | All tracked Python, including scripts and tests; medium/high severity and confidence, including unsafe deserialization, injection, weak transport and unsafe APIs. |
-| zizmor 1.30.0 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
+| zizmor 1.30.1 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
 | Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
 
 The gate materializes regular files from the actual target commit and the
@@ -76,8 +101,10 @@ The AnyIO floor is 4.14.2 for ordinary installs and the application lock, coveri
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
 `.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
-dependencies daily and proposes updates for review. After changing Python
-dependency declarations, regenerate the CI pins with
+dependencies daily and proposes version updates in one cross-ecosystem
+`dependencies` PR, so overlapping manifests and generated locks are reviewed
+and tested together. After changing Python dependency declarations, regenerate
+the CI pins with
 `npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
 Dependabot security-update enablement is a separate repository setting; the
 version-update configuration does not enable it or merge its PRs automatically.
@@ -106,6 +133,12 @@ Use a fresh private directory outside the repository for each run. Install the
 scanner requirements into a separate virtual environment and put its `bin`
 directory on `PATH`; keep `npa/.venv/bin/python` for repository validation.
 The installer supports Linux x86-64 and verifies the Trivy archive's SHA-256.
+Trivy and gitleaks release downloads retry transient HTTP failures, including
+429 and 504, with curl's exponential backoff. Downloads still require their
+exact pinned SHA-256 before extraction; permanent HTTP failures, exhausted
+retries, checksum mismatches, and scanner findings fail the gate. When a hosted
+run fails during tool download, inspect that step and rerun only the failed
+jobs after the release host recovers.
 
 ```bash
 umask 077
@@ -164,10 +197,17 @@ the exact latest-main candidate without requiring every open PR branch to be
 bulk-refreshed. Preserve other required checks and branch protections. Workflow
 configuration alone does not enable merge enforcement; administrators must
 verify the required contexts and active merge-queue rule.
+Keep the repository's **Allow auto-merge** setting enabled as well so contributors
+can request automatic merging through clients that use that setting. It does
+not replace or bypass queue validation. See the contributor guide for
+[mobile recovery and pending-check diagnosis](../../CONTRIBUTING.md#auto-merge-and-the-merge-queue).
 Repository administrators and configured bypass actors may still bypass checks.
-Keep the component workflows enabled as reusable candidate gates and
-superseding main audits. Secret and confidentiality checks also run for merge
-queue candidates.
+Keep the component workflows enabled as reusable candidate gates. Lint,
+documentation drift, and guardrails do not repeat on every main push; they
+remain required before merging and available through manual dispatch. The daily
+full test audit also includes guardrails. Post-merge security audits remain
+automatic and supersede older main runs. Secret and confidentiality checks also
+run for merge queue candidates.
 
 These checks reduce known risks; they do not prove the absence of vulnerabilities.
 Bandit is Python pattern analysis, not application-wide dataflow or JavaScript

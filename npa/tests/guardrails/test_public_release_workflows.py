@@ -104,6 +104,8 @@ def test_automatic_triggers_build_dev_images_without_promoting() -> None:
     script = resolve["run"]
     assert resolve["env"]["EVENT_NAME"] == "${{ github.event_name }}"
     assert "_automatic_build_tools" in script
+    assert "select_public_image_builds" in script
+    assert 'os.environ.get("EVENT_BEFORE", "")' in script
     assert 'os.environ.get("EVENT_NAME", "")' in script
     assert '"schedule"' in script
     assert "packaging-contract.yaml" in script
@@ -126,6 +128,7 @@ def test_automatic_triggers_build_dev_images_without_promoting() -> None:
     # The promote job never runs after a build: automatic dev builds must not
     # fall through into a release preflight or write.
     assert "needs.resolve.outputs.build_count == '0'" in jobs["promote"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in jobs["promote"]["if"]
 
 
 def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
@@ -281,14 +284,14 @@ def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
     script = (ROOT / "npa/scripts/scan_base_images.py").read_text()
     # Tokens, not one contiguous line: ruff format may split the arg list.
     assert '"--timeout"' in script and '"2562047h47m16s"' in script
-    job = _spec(SECURITY_SCAN)["jobs"]["base-image-cve-scan"]
+    job = _spec(SECURITY_SCAN)["jobs"]["base-image-entry"]
     command = next(
         step["run"]
         for step in job["steps"]
-        if step.get("name") == "Scan all pinned bases with three local workers"
+        if step.get("name") == "Scan the exact inventory entry"
     )
     assert "scan_base_images.py" in command
-    assert "--workers 3" in command
+    assert '--entry-name "$SCAN_ENTRY"' in command
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:

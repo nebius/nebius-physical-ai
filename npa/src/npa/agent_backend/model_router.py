@@ -115,7 +115,7 @@ def classify_generation_model(
     threshold = _probability(min_confidence)
     if not candidates or "none" in candidates:
         raise ValueError("candidates must be nonempty and exclude the none label")
-    decision = {
+    decision: dict[str, Any] = {
         "provider": "typesafe",
         "model": model,
         "question_revision": QUESTION_REVISION,

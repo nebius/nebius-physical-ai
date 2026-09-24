@@ -124,6 +124,7 @@ likewise predates its current coherent release.
 | `npa-wan2-2` | supported | supported | **verified** [accepted records](#accepted-release-evidence) | **historical evidence** [61]; current distributed path unqualified | supported |
 | `npa-diffusers` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-lingbot-world` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
+| `npa-sam3` | unverified | unverified | unverified | unverified | unverified |
 | `npa-sam2` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
@@ -147,6 +148,7 @@ likewise predates its current coherent release.
 | `npa-ncore` (unpublished ingestion candidate) | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
 | `npa-sim2real-control` | CPU | CPU | CPU | CPU | CPU |
+| `npa-antioch` | CPU | CPU | CPU | CPU | CPU |
 | `npa-fiftyone` | CPU | CPU | CPU | CPU | CPU |
 | `npa-retargeting` | CPU | CPU | CPU | CPU | CPU |
 | `npa-rerun-viewer` | CPU | CPU | CPU | CPU | CPU |

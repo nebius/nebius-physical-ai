@@ -160,6 +160,54 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
     ),
     SubmitLiveCase(
+        "newton-train-teacher.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "Newton workbench pipeline stages are stubs in this release: "
+            "train-teacher raises NewtonPipelineError (not implemented), so the "
+            "spec exercises config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the newton/train_teacher three-tier contract "
+            "(CLI <-> SDK <-> spec); real Newton simulation lands with "
+            "nebius/nebius-physical-ai#499."
+        ),
+    ),
+    SubmitLiveCase(
+        "openvla-train.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "OpenVLA workbench pipeline stages are stubs in this release: "
+            "train prints an upstream argv plan (not implemented), so the "
+            "spec exercises config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the openvla/train three-tier contract "
+            "(CLI <-> SDK <-> spec); real OpenVLA-OFT fine-tuning lands with "
+            "nebius/nebius-physical-ai#500. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
+        "molmoact-finetune.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "MolmoAct workbench pipeline stages are stubs in this release: "
+            "finetune validates the config and returns a plan-only manifest "
+            "(training not implemented), so the spec exercises config "
+            "validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the molmoact/finetune three-tier contract "
+            "(CLI <-> SDK <-> spec); real MolmoAct fine-tuning lands with "
+            "nebius/nebius-physical-ai#502. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-super-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -168,6 +216,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Real single-B200 Alpamayo 2 Super VLM + diffusion-expert inference; "
             "publishes calibrated trajectory JSON/PNG and provenance. Requires "
             "operator-side PhysicalAI-AV dataset acceptance."
+        ),
+    ),
+    SubmitLiveCase(
+        "antioch-offline-policy-train.yaml",
+        "gpu",
+        secret_envs=(
+            "ANTIOCH_WORKBENCH_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        image_overrides=(("workbench.lerobot.policy_train", "lerobot"),),
+        notes=(
+            "Requires the operator's separately deployed Antioch adapter and a synthetic "
+            "immutable project; trains an offline ACT checkpoint from the collected dataset."
         ),
     ),
     SubmitLiveCase(
@@ -205,6 +267,48 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Ray baseline followed by error-threshold selection and matched-seed refinement; requires current staged NPA source.",
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
+    SubmitLiveCase(
+        "encord-push.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-selected Encord integration, folder, and source "
+            "prefix; keep it available for an explicitly configured live run."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-pull.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-selected existing Encord source; the shared "
+            "rotation must not guess or mutate third-party state."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-roundtrip-smoke.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Creates run-scoped Encord folder and dataset state whose exact cleanup "
+            "contract is not yet automated; run only with explicit live approval."
+        ),
+    ),
     SubmitLiveCase(
         "token-factory-caption.yaml",
         "cpu",
@@ -434,7 +538,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -449,7 +552,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -464,12 +566,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
             "Real isolated one-H200 TP-1 validation in the immutable vLLM-Omni "
+            "image: one strict warmup followed by 24 sequential validated requests. "
+            "This is not the paper's eight-replica 8x1 node cell."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos3-super-b200-single-gpu.yaml",
+        "gpu",
+        secret_envs=(
+            "HF_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Real isolated one-B200 TP-1 validation in the immutable vLLM-Omni "
             "image: one strict warmup followed by 24 sequential validated requests. "
             "This is not the paper's eight-replica 8x1 node cell."
         ),
