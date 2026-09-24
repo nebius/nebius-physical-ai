@@ -27,8 +27,9 @@ media. A native invocation produced 45 new frames, but the original wrapper
 reported 46 and the CLI published from the reused parent. Each arm changed the
 Python render wrapper and CLI, ran source checks, submitted a fresh real render,
 waited for completion and verified the result against its final source hashes.
-Both passed seven checks: 45 decoded PNGs, a 45-frame MP4, and matching inventories
-and bytes for all 49 native, selected and published files. Previous files were
+Both passed seven source/adapter checks and a separate native artifact gate:
+45 decoded PNGs, a 45-frame MP4, and matching inventories and bytes for all 49
+native, selected and published files. Previous files were
 preserved. This used an existing trained scene; neither arm retrained it.
 
 **Faithful viewer tracks and sampling.** Grouping images only by their immediate
@@ -107,7 +108,10 @@ Both renders selected camera 2, rig Y offset −0.25 m, frame step 1, image scal
 ## Costs and limitations
 
 Hybrid model-price equivalents were Astra $2.84–$5.60, GLM $2.55 and DeepSeek
-$0.75. All recorded pricing-relevant input/output counters were available;
+$0.75. Hybrid Astra input stayed near the baseline (1.84 million versus
+1.83 million tokens), while the specialists added 2.31 million input tokens.
+Delegation did not materially reduce coordinator input in this pair.
+All recorded pricing-relevant input/output counters were available;
 Token Factory did not expose separate cache-write or reasoning counters. Its
 input is priced at the full input rate without assuming a cache discount.
 Astra's aggregate turn counters do not identify each request's context pricing
@@ -119,7 +123,8 @@ Rates were recorded on 23 September 2026 from
 and [Token Factory model information](https://tokenfactory.nebius.com/api/public/models_info).
 GPU allocation is reported separately from model inference and is neither GPU
 kernel time nor incremental whole-host billing. Human work, development-agent
-inference, host compute, storage and network are excluded. Development-agent
+inference, the original retained-checkpoint training, host compute, storage and
+network are excluded from both these arm and setup totals. Development-agent
 inference outside the measured runners was not metered.
 
 Preparation is separate: three native probes used 777.000–777.865 GPU-seconds;
@@ -153,6 +158,24 @@ line-range reads and small edits, and omit repeated source text from supervisor
 status responses unless explicitly requested. Full journals, source hashes,
 operation failures and uncertain effects remain available. These improvements
 were made after the comparison; no savings claim is attributed to them.
+
+Separate production validation on code commit `e5360fc30` passed the same seven
+render source/adapter checks and native artifact gate: 45 PNGs, 45 decoded video
+frames and 49 matching files. Its one additional GPU allocation was
+262.000–262.287 seconds, outside the measured arms. A collector path assumption
+failed in the nested post-review evidence directory; the unchanged independent
+graders then checked the retained native files and submitted source directly.
+No GPU retry or source change was needed, and the failed collector receipt is
+preserved. Owned resources were cleaned up.
+
+The final viewer also produced eight fresh accepted Rerun artifacts, totaling
+322 decoded rows, and passed 24 PAIDF regressions. The committed public verifier
+accepted both genuine-input recordings with embedded settings and full image
+coverage. An additional hosted-model smoke paused and restarted both workers:
+GLM repaired a public Cosmos3 PAIDF workflow and DeepSeek repaired Sim2Real,
+then passed real Workbench validation and planning. This smoke used 11 model
+responses, cost $0.11136 in model-price equivalents and submitted no GPU jobs.
+These are separate post-review checks, not replacement trials or score changes.
 
 The [comparison runner](../../npa/examples/specialists/workflows/README.md),
 [artifact verifier](../../npa/examples/specialists/workflows/VERIFICATION.md),

@@ -379,7 +379,8 @@
       "human effort",
       "host compute",
       "storage",
-      "network"
+      "network",
+      "original retained-checkpoint training, outside both these arm and setup totals"
     ],
     "gpu_allocation": "Requested allocation intervals on shared hosts, not kernel time or full-host billing."
   },
@@ -389,5 +390,118 @@
     "Candidate Python ran in CPU sandbox with real native GPU execution through a trusted broker.",
     "Final production hardening and runtime improvements were made after measurement.",
     "Exact operator configuration and raw operational evidence remain outside Git."
-  ]
+  ],
+  "post_review_validation": {
+    "code_commit": "e5360fc302cce5d7c926fee58d7abdc42809f40c",
+    "included_in_measured_outcomes": false,
+    "render": {
+      "source_checks_passed": 7,
+      "native_launches": 1,
+      "decoded_pngs": 45,
+      "decoded_video_frames": 45,
+      "matching_files": 49,
+      "gpu_allocation_seconds_lower": 262.0,
+      "gpu_allocation_seconds_upper": 262.286229,
+      "collector_path_failure_retained": true,
+      "unchanged_graders_applied_to_retained_evidence": true,
+      "gpu_retry": false,
+      "owned_resources_cleaned": true,
+      "private_verification_sha256": "e51f97a3f108fa4dd38b6a18a4ed094eff36cc481caf629cd6ce20081f672051"
+    },
+    "viewer": {
+      "artifact_cases_passed": 8,
+      "decoded_rrd_rows": 322,
+      "paidf_regressions_passed": 24,
+      "public_verifier_genuine_input_recordings_passed": 2,
+      "viewer_source_sha256": "e37c3d7221292d6b6bc95eb618b62e424be185fd9879eb0c7e261cdc633b9798",
+      "private_verification_sha256": "b11d9859fde18254a1b277819acf0269f4e013f4eb03ca94e35b667ab8fd74dd"
+    },
+    "live_specialist_smoke": {
+      "tasks_completed": 2,
+      "worker_restarts": 2,
+      "model_responses": 11,
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "usage_records": 6,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 6,
+          "accepted_specialist_responses": 6,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 52959,
+            "output_tokens": 605,
+            "cached_input_tokens": 9728,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 52959,
+            "output_tokens": 605,
+            "cached_input_tokens": 9728,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 6,
+            "reasoning_output_tokens": 6
+          },
+          "priced_records": 6,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.07230168000000001,
+            "maximum": 0.07230168000000001
+          }
+        },
+        "zai-org/GLM-5.3": {
+          "usage_records": 5,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 5,
+          "accepted_specialist_responses": 5,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 27085,
+            "output_tokens": 258,
+            "cached_input_tokens": 16320,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 27085,
+            "output_tokens": 258,
+            "cached_input_tokens": 16320,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 5,
+            "reasoning_output_tokens": 5
+          },
+          "priced_records": 5,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.0390542,
+            "maximum": 0.0390542
+          }
+        }
+      },
+      "model_price_equivalent_usd": 0.11135588,
+      "usage_complete": true,
+      "gpu_workloads": 0,
+      "work": "Repair broken transitions in Cosmos3 PAIDF and Sim2Real workflow copies; validate and plan."
+    }
+  }
 }
