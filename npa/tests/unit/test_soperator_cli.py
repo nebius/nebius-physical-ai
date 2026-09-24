@@ -574,6 +574,64 @@ def test_rest_contract_rejects_string_boolean() -> None:
         spec_from_mapping(data)
 
 
+@pytest.mark.parametrize("malformed", ["false", 0, 1, None, [], {}])
+@pytest.mark.parametrize(
+    ("field", "worker_index"),
+    [
+        ("preemptible", 0),
+        ("docker_cache", 0),
+        ("accounting", None),
+        ("telemetry", None),
+        ("use_default_apparmor_profile", None),
+    ],
+)
+def test_operational_flags_reject_non_boolean_values(
+    field: str, worker_index: int | None, malformed: object
+) -> None:
+    data = _base_spec_mapping()
+    target = data if worker_index is None else data["workers"][worker_index]
+    target[field] = malformed
+
+    with pytest.raises(SoperatorSpecError, match=field):
+        spec_from_mapping(data)
+
+
+@pytest.mark.parametrize("value", [False, True])
+@pytest.mark.parametrize(
+    ("field", "worker_index"),
+    [
+        ("preemptible", 0),
+        ("docker_cache", 0),
+        ("accounting", None),
+        ("telemetry", None),
+        ("use_default_apparmor_profile", None),
+    ],
+)
+def test_operational_flags_accept_exact_booleans_and_omission(
+    field: str, worker_index: int | None, value: bool
+) -> None:
+    data = _base_spec_mapping()
+    target = data if worker_index is None else data["workers"][worker_index]
+    target.pop(field, None)
+    omitted = spec_from_mapping(data)
+
+    target[field] = value
+    explicit = spec_from_mapping(data)
+
+    omitted_value = (
+        getattr(omitted, field)
+        if worker_index is None
+        else getattr(omitted.workers[worker_index], field)
+    )
+    explicit_value = (
+        getattr(explicit, field)
+        if worker_index is None
+        else getattr(explicit.workers[worker_index], field)
+    )
+    assert omitted_value is False
+    assert explicit_value is value
+
+
 def test_solutions_library_ref_requires_immutable_commit() -> None:
     from npa.soperator.lifecycle import _validate_immutable_solutions_library_ref
 
