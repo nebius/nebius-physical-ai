@@ -24,6 +24,7 @@ import yaml
 
 from npa.deploy.images import (
     PUBLICATION_QUARANTINE_TOOLS,
+    STALE_PUBLICATION_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
@@ -110,7 +111,9 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
 
 def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
     assert PUBLICATION_QUARANTINE_TOOLS == (
-        UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+        UNVALIDATED_PUBLICATION_TOOLS
+        | VALIDATION_CANDIDATE_TOOLS
+        | STALE_PUBLICATION_TOOLS
     )
     for tool in VALIDATION_CANDIDATE_TOOLS:
         version = str(SUPPORTED_TOOL_VERSIONS[tool])
@@ -118,6 +121,18 @@ def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
         build = REPO_ROOT / "npa" / "docker" / "workbench" / tool / "build.sh"
         assert build.is_file(), tool
         assert version in build.read_text(encoding="utf-8"), tool
+
+
+def test_stale_publications_are_built_releases_awaiting_requalification() -> None:
+    """Stale bytes are not confused with images that have never been built."""
+
+    assert STALE_PUBLICATION_TOOLS == frozenset(
+        {"cosmos-curate", "cosmos-evaluator", "cosmos3", "isaac-lab"}
+    )
+    assert STALE_PUBLICATION_TOOLS.isdisjoint(UNVALIDATED_PUBLICATION_TOOLS)
+    assert STALE_PUBLICATION_TOOLS.isdisjoint(VALIDATION_CANDIDATE_TOOLS)
+    for tool in STALE_PUBLICATION_TOOLS:
+        assert not SUPPORTED_TOOL_VERSIONS[tool].endswith(UNBUILT_TAG_SUFFIX), tool
 
 
 def test_pending_build_never_carries_a_confident_verdict() -> None:

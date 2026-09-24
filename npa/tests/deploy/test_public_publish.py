@@ -37,8 +37,8 @@ from npa.deploy.images import (
     PUBLICATION_QUARANTINE_TOOLS,
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
+    STALE_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
-    VALIDATION_CANDIDATE_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
@@ -317,6 +317,9 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
         {"openpi", "curobo", "ncore", "libero", "sam3"}
     )
+    assert STALE_PUBLICATION_TOOLS == frozenset(
+        {"cosmos-curate", "cosmos-evaluator", "cosmos3", "isaac-lab"}
+    )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
         "lingbot-world",
@@ -356,7 +359,6 @@ def test_public_set_includes_the_oss_tools() -> None:
         "rerun-viewer",
         "lichtblick",
         # Newly publishable: no baked Omniverse Kit, weights or assets.
-        "isaac-lab",
         "isaac-arena",
         "sonic",
         "groot",
@@ -365,6 +367,7 @@ def test_public_set_includes_the_oss_tools() -> None:
         "sonic-mujoco",
     ):
         assert tool in public, tool
+    assert public.isdisjoint(STALE_PUBLICATION_TOOLS)
     assert public == (
         set(CONTAINER_IMAGE_NAMES)
         - RESTRICTED_PUBLICATION_TOOLS
@@ -383,17 +386,17 @@ def test_libero_neutral_candidate_remains_unvalidated_and_out_of_release_plan() 
     )
 
 
-def test_publish_plan_now_includes_the_isaac_images() -> None:
-    """The point of the re-architecture: these are publishable at last."""
+def test_publish_plan_includes_clean_isaac_images_and_excludes_stale_release() -> None:
+    """A stale base is quarantined without over-blocking independently clean tools."""
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     for image in (
-        "npa-isaac-lab",
         "npa-isaac-arena",
         "npa-sonic",
         "npa-groot",
     ):
         assert image in names, image
+    assert "npa-isaac-lab" not in names
     assert "npa-sonic-mujoco" in names
     assert "npa-cosmos3-serving" in names
     assert "npa-curobo" not in names
@@ -454,7 +457,7 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     assert accepted_shas
     # Five Sim2Real roles share a source, as do the three native model images.
     # Arena, flex-pi, and the other accepted images retain distinct exact sources.
-    assert len(set(accepted_shas.values())) == 14
+    assert len(set(accepted_shas.values())) == 13
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -475,7 +478,6 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
     for tool in (
         "ltx2",
         "wan2-2",
-        "cosmos3",
         "cosmos3-serving",
         "cosmos3-ray-serve",
         "sonic-mujoco",
@@ -552,8 +554,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
         set(CONTAINER_IMAGE_NAMES)
         & (
             set(RESTRICTED_PUBLICATION_TOOLS)
-            | set(UNVALIDATED_PUBLICATION_TOOLS)
-            | set(VALIDATION_CANDIDATE_TOOLS)
+            | set(PUBLICATION_QUARANTINE_TOOLS)
         )
     )
     for item in plan:
@@ -1145,7 +1146,10 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
 
     assert len(plan) == len(manifest["releases"])
     assert set(manifest["releases"]) == set(publicly_publishable_tools())
-    assert set(manifest["publication_pending"]) == {"antioch"}
+    assert set(manifest["publication_pending"]) == {
+        "antioch",
+        *STALE_PUBLICATION_TOOLS,
+    }
     for item in plan:
         recorded = manifest["releases"][item.tool]["published_digest"]
         assert item.source_ref.endswith(f"@{recorded}")
@@ -2485,7 +2489,7 @@ def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> N
 
 
 def _run2_readability(plan):
-    """The catalog fixture has 19 readable images, 4 absent repos, and 1 absent tag."""
+    """Model a mixed catalog with absent repos and an absent immutable tag."""
     never_built = {
         "npa-cosmos-curate",
         "npa-cosmos-evaluator",
@@ -2503,6 +2507,13 @@ def _run2_readability(plan):
         return True, "ok"
 
     return readable
+
+
+def _run2_missing(plan) -> list:
+    """Return only planned images the synthetic registry reports as absent."""
+
+    readable = _run2_readability(plan)
+    return [item for item in plan if not readable(item.source_ref)[0]]
 
 
 def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> None:
@@ -2524,9 +2535,10 @@ def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> Non
 
     rc = publish_public.main(["--target", "ghcr.io/example/workbench"])
     err = capsys.readouterr().err
+    missing = _run2_missing(plan)
 
     assert rc == 1
-    assert f"5 of {len(plan)}" in err
+    assert f"{len(missing)} of {len(plan)}" in err
     # Both codes must survive into the explanation: they need different fixes, and an
     # operator greps for the registry's own wording.
     assert "NAME_UNKNOWN" in err and "never been pushed" in err
@@ -2559,17 +2571,18 @@ def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(
         ["--target", "ghcr.io/example/workbench", "--skip-missing"]
     )
     captured = capsys.readouterr()
+    missing = _run2_missing(plan)
 
     assert rc == 0
-    assert len(copied) == len(plan) - 5
-    for image in ("npa-cosmos3", "npa-foxglove-embed", "npa-cosmos2-transfer"):
+    assert len(copied) == len(plan) - len(missing)
+    for image in ("npa-foxglove-embed", "npa-cosmos2-transfer"):
         assert not any(f"/{image}:" in ref for ref in copied), image
         # Skipping quietly would leave a hole in the mirror nobody knew about.
         assert image in captured.err, image
     assert any("/npa-lerobot:" in ref for ref in copied), (
         "ready images must still publish"
     )
-    assert f"Copied {len(plan) - 5} image(s)." in captured.out
+    assert f"Copied {len(plan) - len(missing)} image(s)." in captured.out
 
 
 def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:
@@ -2652,9 +2665,10 @@ def test_verify_public_with_skip_missing_ignores_the_unpublished(
         ]
     )
     captured = capsys.readouterr()
+    missing = _run2_missing(plan)
 
     assert rc == 1
-    assert captured.out.count("NOT PUBLIC") == len(plan) - 5
+    assert captured.out.count("NOT PUBLIC") == len(plan) - len(missing)
     # Match whole package names: "npa-cosmos3-reason" contains "npa-cosmos3" as a substring
     # and IS readable, so a substring check would fail for the wrong reason.
     listed = set(
@@ -2704,7 +2718,8 @@ def test_the_post_copy_verification_only_covers_what_was_copied(
     rc = publish_public.main(
         ["--target", "ghcr.io/example/workbench", "--skip-missing"]
     )
+    missing = _run2_missing(plan)
 
     assert rc == 0
-    assert len(verified) == len(plan) - 5
+    assert len(verified) == len(plan) - len(missing)
     assert not any("npa-cosmos3:" in ref for ref in verified)

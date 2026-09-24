@@ -120,6 +120,22 @@ def test_validator_rejects_nan_in_programmatically_supplied_spec(
     assert not manifest.validate_manifest(check_paths=False, check_modules=False).ok
 
 
+@pytest.mark.parametrize("value", [True, False, 0, -1, "8", 8.0, None])
+def test_validator_rejects_invalid_serverless_gpu_counts(
+    monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    """Counts reach a cloud API, so bools/coercible strings must fail closed."""
+
+    spec = _spec(monkeypatch, 45)
+    spec = replace(
+        spec, golden_eval=replace(spec.golden_eval, serverless_gpu_count=value)
+    )
+    monkeypatch.setattr(manifest, "load_manifest", lambda: {spec.name: spec})
+    report = manifest.validate_manifest(check_paths=False, check_modules=False)
+    assert not report.ok
+    assert any("serverless_gpu_count" in issue.message for issue in report.issues)
+
+
 @pytest.mark.parametrize("value, expected", [("unlimited", "unlimited"), (45, 45)])
 def test_cli_show_emits_standard_json_timeout(
     monkeypatch: pytest.MonkeyPatch, value: object, expected: object
@@ -273,8 +289,10 @@ def test_direct_unlimited_serverless_call_refuses_before_config_or_credentials(
         forbidden.assert_not_called()
 
 
+@pytest.mark.parametrize("gpu_override", [None, "h200"])
 def test_serverless_submission_honors_manifest_gpu_count(
     monkeypatch: pytest.MonkeyPatch,
+    gpu_override: str | None,
 ) -> None:
     spec = _spec(monkeypatch, 45)
     spec = replace(
@@ -307,8 +325,8 @@ def test_serverless_submission_honors_manifest_gpu_count(
 
     monkeypatch.setattr(serverless_runner, "resolve_gpu_platform", resolve)
     with pytest.raises(RuntimeError, match="stop after platform resolution"):
-        serverless_runner.submit_golden_eval(spec.name)
-    assert seen == {"gpu": "b200", "count": 8}
+        serverless_runner.submit_golden_eval(spec.name, gpu_type=gpu_override)
+    assert seen == {"gpu": gpu_override or "b200", "count": 8}
 
 
 @pytest.mark.parametrize("value, expected", [("unlimited", None), (45, 45)])

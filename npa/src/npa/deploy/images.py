@@ -303,11 +303,25 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
+# Previously accepted releases whose published bytes no longer satisfy the
+# repository's current security contract. Keep this separate from
+# UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,
+# but must earn a new exact-image scan after their recipes are repaired.
+#
+# The listed tags were inspected at their recorded public digests. Each final
+# filesystem contains package-generated /etc/ssh/ssh_host_* private keys shared
+# by every pull. The Dockerfiles now remove those keys in the install layer;
+# publication remains quarantined until rebuilt candidates pass the image gates.
+STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"cosmos-curate", "cosmos-evaluator", "cosmos3", "isaac-lab"}
+)
 # Compatibility view used by publication callers and public imports. Derive it
-# from the two canonical validation-state inventories; never maintain it
+# from the canonical validation-state inventories; never maintain it
 # independently.
 PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
-    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+    UNVALIDATED_PUBLICATION_TOOLS
+    | VALIDATION_CANDIDATE_TOOLS
+    | STALE_PUBLICATION_TOOLS
 )
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported

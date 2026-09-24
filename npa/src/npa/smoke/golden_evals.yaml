@@ -426,7 +426,7 @@ containers:
       serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 1800
-      status: gpu-gated
+      status: needs-image-update
 
   isaac-arena:
     image: npa-isaac-arena
@@ -582,7 +582,7 @@ containers:
       serverless_gpu: h200
       gpu: required
       timeout_seconds: 3600
-      status: gpu-gated
+      status: needs-image-update
 
   cosmos3-serving:
     image: npa-cosmos3-serving
@@ -829,7 +829,7 @@ containers:
       serverless_gpu: h200
       gpu: none
       timeout_seconds: unlimited
-      status: ready
+      status: needs-image-update
 
   sonic:
     image: npa-sonic
