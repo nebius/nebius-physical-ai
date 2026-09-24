@@ -1,0 +1,31 @@
+{
+  "cause": "The first launcher ran validators as asynchronous shell jobs, inheriting ignored SIGINT.",
+  "repair": "Run each validator in its own foreground tmux session and require enabled SIGINT plus both cancellation controls before the full suite.",
+  "repository_changes_for_this_repair": false,
+  "controlled_reproduction": {
+    "baseline": [
+      {
+        "mode": "ignored",
+        "returncode": 1,
+        "summary": "==================== 1 failed, 1 passed in 74.86s (0:01:14) ===================="
+      },
+      {
+        "mode": "default",
+        "returncode": 0,
+        "summary": "============================== 2 passed in 18.58s =============================="
+      }
+    ],
+    "combined": [
+      {
+        "mode": "ignored",
+        "returncode": 1,
+        "summary": "========================= 1 failed, 1 passed in 30.19s ========================="
+      },
+      {
+        "mode": "default",
+        "returncode": 0,
+        "summary": "============================== 2 passed in 1.25s ==============================="
+      }
+    ]
+  }
+}

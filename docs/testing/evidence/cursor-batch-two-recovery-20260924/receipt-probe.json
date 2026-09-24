@@ -1,0 +1,18 @@
+{
+  "production_module_sha256": "b57c2dc0a2b42034c94a20eb345229e611741431af0fbacb5ad9c9b9cc688b1a",
+  "real_filesystem_locking_and_atomic_writes": true,
+  "valid_receipt_persisted": true,
+  "owner_only_modes": true,
+  "negative_controls": [
+    "truncated_json",
+    "invalid_utf8",
+    "wrong_shape",
+    "schema_version",
+    "project",
+    "run_id",
+    "symlink_target_preserved",
+    "explicit_diagnostic_redaction"
+  ],
+  "controls_passed": 10,
+  "network_calls": 0
+}

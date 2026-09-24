@@ -1,0 +1,576 @@
+{
+  "generated_at": "2026-09-24T23:36:37.363323+00:00",
+  "github_checked_at": "2026-09-24T23:36:18.906382+00:00",
+  "target_main": "552171fd5779b011a876083b9549eddbd031cfae",
+  "individual_head_validation_base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+  "queue_rejection": {
+    "pr": 615,
+    "run": "https://github.com/nebius/nebius-physical-ai/actions/runs/36056749591",
+    "gitleaks_job": "https://github.com/nebius/nebius-physical-ai/actions/runs/36056749591/job/107825576162",
+    "reason": "Gitleaks job exceeded its two-minute execution timeout; the scan itself reported no leaks. Required downstream checks were skipped and the aggregate failed.",
+    "repair_commit": "93eb097405aa141e442f995496ef569f175b10b2",
+    "repair": "Remove the two-minute job timeout; preserve the required secret scan and use the GitHub runner default."
+  },
+  "merge_order": [
+    615,
+    609,
+    640,
+    679,
+    687,
+    650
+  ],
+  "prs": [
+    {
+      "number": 615,
+      "title": "Fail closed on corrupt submission receipts",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/615",
+      "head": "d645be7e7f7b4fc17914347d08f2333064e759be",
+      "tree": "f2f5a7109deaad75b52810294586cbd783021bd7",
+      "local_validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "67ca8108337a939a5dc13b3c0a14474faea12a0addacf1ad24b8619248fe78dd"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "fb24ecffad09ed0582fd3fc3432d603ce2cd2c215553be74d51749589b63688e"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4462
+          },
+          "log_sha256": "94320b10fbc0ec93211101cc7cdbe3c3f55c0d0ed79e693e338c0e67e49764aa"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27137,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "c6ce6448540dbb4f9463918d5f5b15e0c51f9f6ae53ed3c01c3e930bb0cf4917"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "01ebbd6d082f0e174736397a7f2bab41fc70d9e62113e75506985b7b4f7f0af8"
+        },
+        "docs_drift_passed": true,
+        "merge_precheck_passed": true,
+        "confidentiality_passed": true,
+        "clean_source_after_validation": true
+      },
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "d645be7e7f7b4fc17914347d08f2333064e759be",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353289/job/107866412715",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353289/job/107866412684",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353289/job/107878442990",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "unresolved_review_threads": 0,
+      "ahead_base_commit_signatures_valid": true
+    },
+    {
+      "number": 609,
+      "title": "Recover stage log attribution from durable waves",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/609",
+      "head": "3725041464469af2ac80d51c701f0aa02afa0831",
+      "tree": "9f493c5a1eefc72252db21300b823b196ee5b16f",
+      "local_validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "7958f5f8ff0deacf472086b7f48d9cdf5d316988e8379030483eca0b87df4493"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "767b0a850c4191765f099f4be761e602467cf0a1a3626690b450a2160e8cbfe5"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4462
+          },
+          "log_sha256": "b539f0e4372de91ff494534854714677e46f0342559e9cbb678e33da9567363a"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27092,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "e22d30c1a96f16779bd57eddd8d3e4af1353586c1513bc5f4c6d06f4dae5aef7"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "1915e6606f880df9f369cedd3876563b017fd25f3494bb81808fc765e59b1afc"
+        },
+        "docs_drift_passed": true,
+        "merge_precheck_passed": true,
+        "confidentiality_passed": true,
+        "clean_source_after_validation": true
+      },
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "3725041464469af2ac80d51c701f0aa02afa0831",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355714/job/107866421882",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355714/job/107866421785",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355714/job/107879433328",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "unresolved_review_threads": 0,
+      "ahead_base_commit_signatures_valid": true
+    },
+    {
+      "number": 640,
+      "title": "fix(skypilot): link default ~/.kube/config into isolated HOME when KUBECONFIG is unset",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/640",
+      "head": "426270eb47af2bf3a5e19368b11f1a9719ad5e39",
+      "tree": "c038a4538fd9f20bd92b2d90e087f90af8577468",
+      "local_validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "f35da3ed7a31e65ded02327741488d33661c6d48e03d24d9d5d67800c91828fd"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "c47b19c50355e32274400e69fddfd7bc22d2104a79f03ad63a5af1dd6f672c73"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4462
+          },
+          "log_sha256": "011ceb54dd57da97008bc3cb651c148527a94e6d2c4c8896ce522227219195a2"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27085,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "2de0f4ae4e7459e0dd64eaab1035b053a9c28e83b7a6997364f9cc8cbf0fa450"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "615fd880e908b627ee7991a5f461b0e6e2f3d3be790f794161a17d612e0b8726"
+        },
+        "docs_drift_passed": true,
+        "merge_precheck_passed": true,
+        "confidentiality_passed": true,
+        "clean_source_after_validation": true
+      },
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "426270eb47af2bf3a5e19368b11f1a9719ad5e39",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355723/job/107866421748",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355723/job/107866421433",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355723/job/107877036572",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "unresolved_review_threads": 0,
+      "ahead_base_commit_signatures_valid": true
+    },
+    {
+      "number": 679,
+      "title": "fix(workflow): preserve executable recovery commands",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/679",
+      "head": "469ae6d68d23620da14d91fab05a1c2b267c9b23",
+      "tree": "51f699c1190e56039ea39109b01e13f321d05802",
+      "local_validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "9b3051814881bde837ea8dfb19b719245689498d2b4b4c545bff85e5a041ab45"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "2eb3cd990a509f124522e7ca1e0c6cf2e1f592870035cbdadb6b926c29687305"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4462
+          },
+          "log_sha256": "665507f4b9313ea242e2ce49c448803268c4fa874440c0ab78d7e44102759f37"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27089,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "798414c93fa46ecf627eeda8e716cb420e93bef9eb415d68a5a5c8cc184debf7"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "d33e4e364d59e0e7cfc61b95d391af20e2733d97fd304783f47ba2dda7fcd2b8"
+        },
+        "docs_drift_passed": true,
+        "merge_precheck_passed": true,
+        "confidentiality_passed": true,
+        "clean_source_after_validation": true
+      },
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "469ae6d68d23620da14d91fab05a1c2b267c9b23",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353841/job/107866414889",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353841/job/107866414577",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069353841/job/107877118088",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "unresolved_review_threads": 0,
+      "ahead_base_commit_signatures_valid": true
+    },
+    {
+      "number": 687,
+      "title": "Reject image secrets at every severity before public copy",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/687",
+      "head": "761995687a8a79363ac8e1a779621b269787cdc1",
+      "tree": "fb5f80a36d52142740d9e08527f6b29b4a017884",
+      "local_validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "099d19eab476e2c9f22352676347af26e98c8f1afbd0beebd4a7a40c03711038"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "e51f5f8ced7ee0aa7b878525de96a54037433dec7b6920fe6eb27b52a7b1a2fe"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4463
+          },
+          "log_sha256": "cd751202c1c99f7868b43a53660e205c7d14308fb020ed3e6b7cdacc1ced17cc"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27104,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "0bdb783d5d78c0a2cc71cf3fecc8aa31a602086589da10e3fcfb1e36a7e7f9a2"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "9dbdec744a0524e5e50a99100572de275349a5626af02a350d4e3720ce059d43"
+        },
+        "docs_drift_passed": true,
+        "merge_precheck_passed": true,
+        "confidentiality_passed": true,
+        "clean_source_after_validation": true
+      },
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "761995687a8a79363ac8e1a779621b269787cdc1",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069354641/job/107866417446",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069354641/job/107866417630",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069354641/job/107878644183",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "unresolved_review_threads": 0,
+      "ahead_base_commit_signatures_valid": true
+    },
+    {
+      "number": 650,
+      "title": "fix(sim2real): gate submit preflight on all sim2real gated HF repos",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/650",
+      "head": "38ae0822c366aaea1d174fb4482c3f7c344be93c",
+      "tree": "290edbd37b20dcfade7a8976b0362e4a5c69e108",
+      "local_validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "cf4acf755788f1de7d9966208be35fe72ad47caeee72a8d1c6564e4340d54f1c"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "2b686cdeda22e07f5df74da6fd577a57503b4f86559d52c1907ba06165956870"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4462
+          },
+          "log_sha256": "455c9a5879bdf9f9e307d633852a2b2501cb8c05546056d3732458c1999aeac8"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27085,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "ea96f50e3a8efc889642953e95add9781d4f426a4af3030533d4c357a51fde3b"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "8777fc631543b6c37672af222122ac34bff59fbfe2d3fcb7a9c76a5c99f59c02"
+        },
+        "docs_drift_passed": true,
+        "merge_precheck_passed": true,
+        "confidentiality_passed": true,
+        "clean_source_after_validation": true
+      },
+      "native_security": {
+        "base": "a370b5e13822ce37d69d6489978ed929ab69f6bb",
+        "head": "38ae0822c366aaea1d174fb4482c3f7c344be93c",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355590/job/107866422044",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355590/job/107866422036",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36069355590/job/107874952843",
+          "conclusion": "SUCCESS",
+          "github_app_id": 15368
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "unresolved_review_threads": 0,
+      "ahead_base_commit_signatures_valid": true
+    }
+  ],
+  "combined": {
+    "base": "552171fd5779b011a876083b9549eddbd031cfae",
+    "head": "267e13d6022111299afae81326710470c9ee771f",
+    "tree": "0eb013f90e1c92c9e53984dffb60cabb6e9e0f8a",
+    "validation": {
+      "precheck": {
+        "counts": {
+          "passed": 198
+        },
+        "log_sha256": "2979341b18f8d4f9bcf71fb6e03050abb0ce47bccec7d9cdd35b639a02d2e901"
+      },
+      "smoke": {
+        "counts": {
+          "passed": 114
+        },
+        "log_sha256": "aaef24a21b0d10d748e1fe0f38ba1c50dad426ef417d49c24a2b25848211b255"
+      },
+      "guardrails": {
+        "counts": {
+          "passed": 4467
+        },
+        "log_sha256": "59eb1a5362853030d59bedc1e648b5d188a7d735f382c5ae34ee83c60fb6a75d"
+      },
+      "full-suite": {
+        "counts": {
+          "passed": 27193,
+          "skipped": 135,
+          "xpassed": 1
+        },
+        "log_sha256": "b405030ff2a1c84eb9ae6d13b98da694b17547d04b3d90da46ad73626d3ab019"
+      },
+      "hostile-input": {
+        "counts": {
+          "passed": 859
+        },
+        "log_sha256": "2a9726c700b8129332c1b63d16ae0433d9fdcbe9e55fca3cc0fe9af5f63ef0b5"
+      },
+      "docs_drift_passed": true,
+      "merge_precheck_passed": true,
+      "confidentiality_passed": true,
+      "clean_source_after_validation": true
+    },
+    "native_security": {
+      "base": "552171fd5779b011a876083b9549eddbd031cfae",
+      "head": "267e13d6022111299afae81326710470c9ee771f",
+      "base_findings": 603,
+      "candidate_findings": 603,
+      "regressions": [],
+      "blocking_findings": []
+    }
+  },
+  "gpu_vlm_applicability": "Not applicable to these host CPU workflow/security changes. No new GPU qualification is claimed.",
+  "limitations": [
+    "The required GitHub merge queue must validate the actual queue candidate at enqueue time.",
+    "PR 609 has production durable-object resolution evidence but no successful real SkyPilot controller log-tail run.",
+    "PR 687 retains real Trivy image-scan proof bound to unchanged publisher bytes; this does not qualify or publish the scanned image."
+  ],
+  "local_harness_repair": {
+    "cause": "The first launcher ran validators as asynchronous shell jobs, inheriting ignored SIGINT.",
+    "repair": "Run each validator in its own foreground tmux session and require enabled SIGINT plus both cancellation controls before the full suite.",
+    "repository_changes_for_this_repair": false,
+    "controlled_reproduction": {
+      "baseline": [
+        {
+          "mode": "ignored",
+          "returncode": 1,
+          "summary": "==================== 1 failed, 1 passed in 74.86s (0:01:14) ===================="
+        },
+        {
+          "mode": "default",
+          "returncode": 0,
+          "summary": "============================== 2 passed in 18.58s =============================="
+        }
+      ],
+      "combined": [
+        {
+          "mode": "ignored",
+          "returncode": 1,
+          "summary": "========================= 1 failed, 1 passed in 30.19s ========================="
+        },
+        {
+          "mode": "default",
+          "returncode": 0,
+          "summary": "============================== 2 passed in 1.25s ==============================="
+        }
+      ]
+    }
+  },
+  "cursor_used_for_recovery": false,
+  "prs_enqueued_or_merged": false
+}

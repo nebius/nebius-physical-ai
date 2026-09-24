@@ -1,0 +1,32 @@
+{
+  "687": {
+    "path": "npa/src/npa/deploy/publish_public.py",
+    "hashes": {
+      "prior": "25334055032c8eb2e4fa70057cbaaa50e705066b97c9afe393dcdd1eddfc0a87",
+      "refreshed": "25334055032c8eb2e4fa70057cbaaa50e705066b97c9afe393dcdd1eddfc0a87",
+      "combined": "25334055032c8eb2e4fa70057cbaaa50e705066b97c9afe393dcdd1eddfc0a87"
+    },
+    "identical": true,
+    "current_main_integration": "267e13d6022111299afae81326710470c9ee771f"
+  },
+  "640": {
+    "path": "npa/src/npa/orchestration/skypilot/cleanup.py",
+    "hashes": {
+      "prior": "2058c0218aa8f9fab5458b04f030c57127dea097661c0ed4879ac3c6d1b0062e",
+      "refreshed": "d72eb693e1e4755a06740efc78708feb86c48bc011038315fcd1e606cfd87c17",
+      "combined": "d72eb693e1e4755a06740efc78708feb86c48bc011038315fcd1e606cfd87c17"
+    },
+    "identical": false,
+    "current_main_integration": "267e13d6022111299afae81326710470c9ee771f"
+  },
+  "650": {
+    "path": "npa/src/npa/orchestration/npa_workflow/sim2real_preflight.py",
+    "hashes": {
+      "prior": "9cdcf613149d67a3ba0793d249485698e45f1ca997da8b37e1b7ad778a56da5a",
+      "refreshed": "9cdcf613149d67a3ba0793d249485698e45f1ca997da8b37e1b7ad778a56da5a",
+      "combined": "9cdcf613149d67a3ba0793d249485698e45f1ca997da8b37e1b7ad778a56da5a"
+    },
+    "identical": true,
+    "current_main_integration": "267e13d6022111299afae81326710470c9ee771f"
+  }
+}

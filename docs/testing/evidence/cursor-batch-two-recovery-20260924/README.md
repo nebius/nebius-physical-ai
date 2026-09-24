@@ -1,0 +1,28 @@
+# Cursor PR recovery and batch two
+
+Verified 2026-09-24T23:36:18.906382+00:00. Individual heads were tested from base `a370b5e13822ce37d69d6489978ed929ab69f6bb`; the ordered integration was revalidated against current main `552171fd5779b011a876083b9549eddbd031cfae`.
+
+#615 was rejected after the Gitleaks job exceeded a two-minute timeout. Its scanner had reported no leaks. The repair removes that short job timeout while preserving all required scanning and aggregate checks. The same signed repair is included in all six refreshed branches.
+
+Merge #615 first, then batch two in the order below. Codex prepared and validated this recovery without using Cursor. No PR was enqueued or merged by this recovery.
+
+| Order | PR | Full Linux suite | Required GitHub checks |
+|---|---|---:|---|
+| 1 | [#615: Fail closed on corrupt submission receipts](https://github.com/nebius/nebius-physical-ai/pull/615) | 27,137 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36069353289/job/107866412715), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36069353289/job/107866412684), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36069353289/job/107878442990) |
+| 2 | [#609: Recover stage log attribution from durable waves](https://github.com/nebius/nebius-physical-ai/pull/609) | 27,092 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355714/job/107866421882), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355714/job/107866421785), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355714/job/107879433328) |
+| 3 | [#640: fix(skypilot): link default ~/.kube/config into isolated HOME when KUBECONFIG is unset](https://github.com/nebius/nebius-physical-ai/pull/640) | 27,085 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355723/job/107866421748), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355723/job/107866421433), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355723/job/107877036572) |
+| 4 | [#679: fix(workflow): preserve executable recovery commands](https://github.com/nebius/nebius-physical-ai/pull/679) | 27,089 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36069353841/job/107866414889), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36069353841/job/107866414577), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36069353841/job/107877118088) |
+| 5 | [#687: Reject image secrets at every severity before public copy](https://github.com/nebius/nebius-physical-ai/pull/687) | 27,104 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36069354641/job/107866417446), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36069354641/job/107866417630), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36069354641/job/107878644183) |
+| 6 | [#650: fix(sim2real): gate submit preflight on all sim2real gated HF repos](https://github.com/nebius/nebius-physical-ai/pull/650) | 27,085 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355590/job/107866422044), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355590/job/107866422036), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36069355590/job/107874952843) |
+
+The ordered squash-merge simulation passed **27,193 tests with zero failures**, at tree `0eb013f90e1c92c9e53984dffb60cabb6e9e0f8a`. Each PR and the combined tree also passed precheck, smoke, guardrails, hostile-input security tests with real CPU PyTorch, docs drift, and confidentiality checks. Full-range Gitleaks found no leaks. Native Bandit, zizmor, and Trivy comparisons found zero new regressions and zero blocking findings for every individual head and the combined tree.
+
+The initial full-suite attempts each exposed one inherited-SIGINT launcher failure. It was reproduced on unchanged main and the combined candidate, then cleared by normal signal handling. Complete suites were rerun after correcting the launcher; no test was skipped or weakened. [Controlled reproduction](signal-controls.json).
+
+The real scanner adversarial controls passed. Fresh production-path probes cover ten filesystem receipt/redaction controls for #615 and four real Kubernetes parser controls for #640. These use task-owned temporary files and do not contact infrastructure.
+
+For #687, the publisher module remains byte-identical to the [real Trivy image-scan proof](https://github.com/nebius/nebius-physical-ai/blob/e0b17231183fb11188cb49a5922a7fad26e874e3/docs/testing/evidence/image-secret-severity-control/README.md): all-severity scanning detects three HIGH-severity secret findings hidden by CRITICAL-only filtering. No image publication or workload qualification is claimed.
+
+GPU and VLM execution do not apply to this batch. #609 retains the limitation that a real controller log-tail run has not succeeded; durable object resolution and ambiguity rejection have been exercised. The merge queue still validates the final candidate against current main.
+
+[Machine-readable results and exact source heads](report.json), [receipt probe](receipt-probe.json) and [reproducer](receipt-probe.py), [Kubernetes parser probe](kubeconfig-probe.json) and [reproducer](kubeconfig-probe.py), [source binding](source-binding.json), and [checksums](SHA256SUMS). Raw logs and operational details remain private; the report includes log hashes.
