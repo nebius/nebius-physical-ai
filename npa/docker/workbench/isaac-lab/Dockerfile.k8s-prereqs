@@ -44,6 +44,7 @@ RUN apt-get update \
     && for package in curl fuse netcat-openbsd rsync wget; do \
          test "$(dpkg-query -W -f='${db:Status-Abbrev}' "$package")" = 'ii ' || exit 1; \
        done \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/* \
     && (getent group isaac-sim >/dev/null 2>&1 && usermod -aG isaac-sim ubuntu || true) \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \

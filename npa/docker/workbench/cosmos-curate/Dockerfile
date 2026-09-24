@@ -83,6 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       procps \
       rsync \
       sudo \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/*
 
 # SkyPilot's Kubernetes provisioner gates on `sudo -l` and then runs, as this image's

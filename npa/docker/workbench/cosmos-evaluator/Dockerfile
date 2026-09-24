@@ -65,6 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       procps \
       rsync \
       sudo \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
