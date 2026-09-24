@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from npa.workflows.behavior_challenge.comet_training_data import (
+    validate_data_reconstruction,
+)
 from npa.workflows.behavior_challenge.native_training import (
     NativeTrainingPlan,
     run_native_training,
@@ -45,6 +48,7 @@ def _admission(path: Path, expected_sha256: str) -> dict[str, Any]:
         raise ValueError("training admission contract differs")
     if not isinstance(value.get("source_files"), dict) or not value["source_files"]:
         raise ValueError("source identity inventory is absent")
+    validate_data_reconstruction(value.get("data_reconstruction"))
     for name in ("minimum_materialization_free_bytes", "minimum_checkpoint_free_bytes"):
         amount = value.get(name)
         if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:

@@ -13,7 +13,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from npa.workflows.behavior_challenge.comet_training_data import CometTask1Dataset
+from npa.workflows.behavior_challenge.comet_training_data import (
+    CometTaskDataset,
+    validate_data_reconstruction,
+)
 from npa.workflows.behavior_challenge.comet_training_sampler import (
     CommittedCursor,
     NativeCursorSampler,
@@ -77,14 +80,24 @@ def _require_no_openpi_import() -> None:
         raise ValueError("OpenPI was imported before source-overlay verification")
 
 
-def _data_factory(config: Any) -> Any:
-    factories = config.data if isinstance(config.data, (list, tuple)) else [config.data]
-    if len(factories) != 1:
-        raise ValueError("Comet native training requires one data config")
-    return factories[0]
+def _explicit_data_factory(
+    training_config: Any, args: Any, episodes: tuple[int, ...], contract: dict[str, Any]
+) -> Any:
+    return training_config.LeRobotB1KDataConfig(
+        repo_id=contract["dataset_repository"],
+        base_config=training_config.DataConfig(
+            prompt_from_task=True,
+            behavior_dataset_root=str(args.dataset_root),
+            episodes_index=list(episodes),
+            tasks=[contract["task_name"]],
+            modalities=list(contract["modalities"]),
+            tolerance_s=contract["tolerance_s"],
+            fine_grained_level=contract["fine_grained_level"],
+        ),
+    )
 
 
-def _explicit_config(base: Any, parent: Path) -> Any:
+def _explicit_config(base: Any, parent: Path, data_factory: Any) -> Any:
     from flax import nnx
     from openpi.training import optimizer as optimizer_config
     from openpi.training import weight_loaders
@@ -92,6 +105,7 @@ def _explicit_config(base: Any, parent: Path) -> Any:
     return dataclasses.replace(
         base,
         name="comet_native_full_parameter_adamw_20k",
+        data=data_factory,
         weight_loader=weight_loaders.CheckpointWeightLoader(str(parent / "params")),
         lr_schedule=optimizer_config.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=2.5e-6, decay_steps=20_000, decay_lr=0.0
@@ -134,14 +148,47 @@ def _config_contract(config: Any) -> dict[str, Any]:
     }
 
 
-def _native_config(config_name: str, parent: Path, expected: dict[str, Any]) -> Any:
+def _native_config(
+    config_name: str, parent: Path, data_factory: Any, expected: dict[str, Any]
+) -> Any:
     from openpi.training import config as training_config
 
-    config = _explicit_config(training_config.get_config(config_name), parent)
+    configs = getattr(training_config, "_CONFIGS_DICT", {})
+    if config_name not in configs:
+        raise ValueError("native OpenPI base config name is unknown")
+    config = _explicit_config(configs[config_name], parent, data_factory)
     observed = _config_contract(config)
     if observed != expected:
         raise ValueError("native OpenPI static reconstruction differs")
     return config
+
+
+def _configured_data(args: Any, admission: dict[str, Any]) -> tuple[Any, Any, Any]:
+    from openpi.training import config as training_config
+
+    contract = validate_data_reconstruction(admission.get("data_reconstruction"))
+    dataset = CometTaskDataset(
+        args.dataset_root,
+        args.split,
+        task_id=contract["task_id"],
+        expected_split_sha256=args.split_sha256,
+        partition="training",
+    )
+    factory = _explicit_data_factory(training_config, args, dataset.episodes, contract)
+    config = _native_config(
+        args.config_name,
+        args.parent_checkpoint,
+        factory,
+        admission["static_reconstruction"],
+    )
+    assets = training_config.AssetsConfig(
+        assets_dir=str(args.parent_checkpoint / "assets"),
+        asset_id=admission["data_asset_id"],
+    )
+    data_config = dataclasses.replace(factory, assets=assets).create(
+        config.assets_dirs, config.model
+    )
+    return config, data_config, dataset
 
 
 def _save_state(state: Any, data_config: Any, target: Path, manager_step: int) -> None:
@@ -383,27 +430,9 @@ class CometOpenPIRuntime:
         }
 
     def _configure_data(self) -> tuple[Any, Any, Any]:
-        from openpi.training import config as training_config
         from openpi.training import data_loader
 
-        config = _native_config(
-            self.args.config_name,
-            self.args.parent_checkpoint,
-            self.admission["static_reconstruction"],
-        )
-        factory = _data_factory(config)
-        assets = training_config.AssetsConfig(
-            assets_dir=str(self.args.parent_checkpoint / "assets"),
-            asset_id=self.admission["data_asset_id"],
-        )
-        local_factory = dataclasses.replace(factory, assets=assets)
-        data_config = local_factory.create(config.assets_dirs, config.model)
-        dataset = CometTask1Dataset(
-            self.args.dataset_root,
-            self.args.split,
-            expected_split_sha256=self.args.split_sha256,
-            partition="training",
-        )
+        config, data_config, dataset = _configured_data(self.args, self.admission)
         transformed = _ObservedDataset(
             data_loader.transform_dataset(dataset, data_config)
         )
@@ -664,15 +693,7 @@ class CometOpenPIRuntime:
 def _input_preflight_receipt(args: Any, admission: dict[str, Any]) -> dict[str, Any]:
     import jax
 
-    config = _native_config(
-        args.config_name, args.parent_checkpoint, admission["static_reconstruction"]
-    )
-    dataset = CometTask1Dataset(
-        args.dataset_root,
-        args.split,
-        expected_split_sha256=args.split_sha256,
-        partition="training",
-    )
+    config, data_config, dataset = _configured_data(args, admission)
     if jax.default_backend() != "cpu" or any(
         device.platform != "cpu" for device in jax.devices()
     ):
@@ -682,6 +703,8 @@ def _input_preflight_receipt(args: Any, admission: dict[str, Any]) -> dict[str, 
         "status": "real_overlay_config_dataset_verified_before_policy_initialization",
         "config_name": config.name,
         "dataset_size": len(dataset),
+        "data_reconstruction": admission["data_reconstruction"],
+        "data_asset_id": data_config.asset_id,
         "source_overlay": "ephemeral_verified_source_overlay",
         "admission": admission["identity"],
         "workflow_inputs": args.workflow_inputs,

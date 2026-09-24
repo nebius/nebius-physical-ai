@@ -71,6 +71,11 @@ The operator supplies immutable archives and a
 `npa.behavior.comet-native-training-admission.v1` document that binds the
 load-bearing upstream source files, full static training reconstruction,
 released non-resumable parent, data identity, and checkpoint space floor.
+The admission also binds an explicit Comet data reconstruction: dataset
+revision, supported task ID and name, RGB modalities, prompt behavior, and
+alignment tolerance. The adapter constructs this data factory directly and
+rejects unknown upstream base-config names; it never accepts OpenPI's fallback
+config. The same contract supports the declared task 0, 1, and 22 readers.
 `train_comet_native.py preflight` installs the same verified source overlay and
 follows the training config/data entrypoint, stopping before policy
 initialization. The dependent GPU stage uses the same entrypoint and arguments.

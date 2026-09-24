@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,17 +50,125 @@ def _native_modules(tmp_path):
     )
 
 
-def _assert_full_recipe(module, training_config, tmp_path):
-    recipe = module._explicit_config(
-        training_config.get_config("pi05_b1k-base"), tmp_path / "released-parent"
+def _data_contract(task_id=1):
+    names = {0: "turning_on_radio", 1: "picking_up_trash", 22: "putting_shoes_on_rack"}
+    return {
+        "schema": "npa.behavior.comet-native-data-reconstruction.v1",
+        "dataset_repository": "behavior-1k/2026-challenge-demos",
+        "dataset_revision": "4f50b44796641a4d526a19d9aeadc8aa51e2f2c2",
+        "task_id": task_id,
+        "task_name": names[task_id],
+        "modalities": ["rgb"],
+        "tolerance_s": 5e-4,
+        "prompt_from_task": True,
+        "fine_grained_level": 0,
+    }
+
+
+def _data_factory(module, training_config, tmp_path, task_id, episodes):
+    contract = module.validate_data_reconstruction(_data_contract(task_id))
+    return module._explicit_data_factory(
+        training_config,
+        SimpleNamespace(dataset_root=tmp_path / "dataset"),
+        episodes,
+        contract,
     )
-    contract = module._config_contract(recipe)
+
+
+def _assert_full_recipe(module, training_config, tmp_path):
+    data_contract = _data_contract()
+    factory = _data_factory(module, training_config, tmp_path, 1, (200, 201))
+    recipe = module._explicit_config(
+        training_config.get_config("pi05_b1k-base"),
+        tmp_path / "released-parent",
+        factory,
+    )
+    recipe_contract = module._config_contract(recipe)
     assert recipe.model.pi05 is True and recipe.model.action_horizon == 32
-    assert module._data_factory(recipe) is not None
-    assert contract == {**contract, "name": "comet_native_full_parameter_adamw_20k"}
-    assert (contract["batch_size"], contract["num_workers"]) == (256, 8)
-    assert (contract["num_train_steps"], contract["seed"]) == (20_000, 42)
-    assert contract["freeze_filter"] == "full_parameter_nnx.Nothing"
+    assert recipe.data.repo_id == data_contract["dataset_repository"]
+    assert recipe.data.base_config.tasks == ["picking_up_trash"]
+    assert recipe.data.base_config.episodes_index == [200, 201]
+    assert recipe.data.base_config.tolerance_s == 5e-4
+    assert recipe_contract == {
+        **recipe_contract,
+        "name": "comet_native_full_parameter_adamw_20k",
+    }
+    assert (recipe_contract["batch_size"], recipe_contract["num_workers"]) == (256, 8)
+    assert (recipe_contract["num_train_steps"], recipe_contract["seed"]) == (
+        20_000,
+        42,
+    )
+    assert recipe_contract["freeze_filter"] == "full_parameter_nnx.Nothing"
+
+    radio = _data_factory(module, training_config, tmp_path, 0, (0,))
+    assert radio.base_config.tasks == ["turning_on_radio"]
+    with pytest.raises(ValueError, match="base config name is unknown"):
+        module._native_config(
+            "not-a-real-openpi-config", tmp_path / "parent", radio, {}
+        )
+
+
+def _train_entrypoint():
+    implementation = (
+        Path(__file__).parents[3]
+        / "workflows/implementations/behavior-comet12/train_comet_native.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "held_train_entrypoint", implementation
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def _admission_value(task_id=1):
+    return {
+        "schema": "npa.behavior.comet-native-training-admission.v1",
+        "status": "qualified_inputs_bound_for_native_training",
+        "source_files": {"scripts/train.py": {"bytes": 1, "sha256": "a" * 64}},
+        "minimum_materialization_free_bytes": 1,
+        "minimum_checkpoint_free_bytes": 1,
+        "data_reconstruction": _data_contract(task_id),
+    }
+
+
+def _write_admission(module, path, value):
+    path.write_text(json.dumps(value) + "\n")
+    return module._admission(path, module.file_identity(path)["sha256"])
+
+
+@pytest.mark.parametrize("task_id", [0, 1])
+def test_admission_accepts_supported_task_contracts(tmp_path, task_id):
+    module = _train_entrypoint()
+    result = _write_admission(
+        module, tmp_path / "admission.json", _admission_value(task_id)
+    )
+    assert result["data_reconstruction"]["task_id"] == task_id
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong"),
+    [
+        ("dataset_revision", "0" * 40),
+        ("modalities", ["depth"]),
+        ("tolerance_s", 1e-4),
+    ],
+)
+def test_admission_rejects_fixed_data_contract_drift(tmp_path, field, wrong):
+    module = _train_entrypoint()
+    value = _admission_value()
+    value["data_reconstruction"][field] = wrong
+    with pytest.raises(ValueError, match="data reconstruction contract differs"):
+        _write_admission(module, tmp_path / "admission.json", value)
+
+
+def test_admission_rejects_mismatched_task_identity(tmp_path):
+    module = _train_entrypoint()
+    value = _admission_value()
+    value["data_reconstruction"]["task_name"] = "turning_on_radio"
+    with pytest.raises(ValueError, match="task identity differs"):
+        _write_admission(module, tmp_path / "admission.json", value)
 
 
 def _tiny_state(jnp, optax, nnx, model_module, TrainState):

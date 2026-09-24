@@ -37,6 +37,40 @@ CAMERAS = {
     "right_wrist": "right_realsense_link",
 }
 CAMERA_SIZES = {"head": 720, "left_wrist": 480, "right_wrist": 480}
+DATA_RECONSTRUCTION_SCHEMA = "npa.behavior.comet-native-data-reconstruction.v1"
+
+
+def validate_data_reconstruction(value: object) -> dict[str, object]:
+    """Validate one explicit Comet task data contract.
+
+    Args:
+        value: Candidate admission data reconstruction.
+    Returns:
+        The validated contract.
+    Raises:
+        ValueError: Fixed data or task identity differs.
+    """
+    fixed = {
+        "schema": DATA_RECONSTRUCTION_SCHEMA,
+        "dataset_repository": DATASET_REPOSITORY,
+        "dataset_revision": DATASET_REVISION,
+        "modalities": ["rgb"],
+        "tolerance_s": ALIGNMENT_TOLERANCE_SECONDS,
+        "prompt_from_task": True,
+        "fine_grained_level": 0,
+    }
+    if not isinstance(value, dict) or any(
+        value.get(key) != expected for key, expected in fixed.items()
+    ):
+        raise ValueError("Comet data reconstruction contract differs")
+    task_id = value.get("task_id")
+    if (
+        type(task_id) is not int
+        or task_id not in TASK_NAMES
+        or TASK_NAMES[task_id] != value.get("task_name")
+    ):
+        raise ValueError("Comet task identity differs")
+    return value
 
 
 def load_task1_episodes(

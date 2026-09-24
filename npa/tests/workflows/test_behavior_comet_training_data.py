@@ -687,3 +687,55 @@ def test_mask_rejects_invalid_episode_positions():
         data.action_valid_mask(40, 40)
     with pytest.raises(ValueError, match="32-step"):
         data.action_valid_mask(0, 40, horizon=30)
+
+
+def _reconstruction_contract(task_id=1):
+    names = {0: "turning_on_radio", 1: "picking_up_trash", 22: "putting_shoes_on_rack"}
+    return {
+        "schema": data.DATA_RECONSTRUCTION_SCHEMA,
+        "dataset_repository": data.DATASET_REPOSITORY,
+        "dataset_revision": data.DATASET_REVISION,
+        "task_id": task_id,
+        "task_name": names[task_id],
+        "modalities": ["rgb"],
+        "tolerance_s": data.ALIGNMENT_TOLERANCE_SECONDS,
+        "prompt_from_task": True,
+        "fine_grained_level": 0,
+    }
+
+
+@pytest.mark.parametrize("task_id", [0, 1, 22])
+def test_data_reconstruction_accepts_supported_tasks(task_id):
+    contract = _reconstruction_contract(task_id)
+    assert data.validate_data_reconstruction(contract) is contract
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong"),
+    [
+        ("dataset_revision", "0" * 40),
+        ("modalities", ["depth"]),
+        ("tolerance_s", 1e-4),
+    ],
+)
+def test_data_reconstruction_rejects_fixed_contract_drift(field, wrong):
+    contract = _reconstruction_contract()
+    contract[field] = wrong
+    with pytest.raises(ValueError, match="data reconstruction contract differs"):
+        data.validate_data_reconstruction(contract)
+
+
+def test_data_reconstruction_rejects_task_name_mismatch():
+    contract = _reconstruction_contract()
+    contract["task_name"] = "turning_on_radio"
+    with pytest.raises(ValueError, match="task identity differs"):
+        data.validate_data_reconstruction(contract)
+
+
+@pytest.mark.parametrize("task_id", [999, None, True, "1"])
+def test_data_reconstruction_rejects_unknown_task_without_name(task_id):
+    contract = _reconstruction_contract()
+    contract["task_id"] = task_id
+    contract.pop("task_name")
+    with pytest.raises(ValueError, match="task identity differs"):
+        data.validate_data_reconstruction(contract)

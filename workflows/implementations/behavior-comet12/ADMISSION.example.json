@@ -1,5 +1,18 @@
 {
   "data_asset_id": "REPLACE_WITH_VERIFIED_ASSET_ID",
+  "data_reconstruction": {
+    "dataset_repository": "behavior-1k/2026-challenge-demos",
+    "dataset_revision": "4f50b44796641a4d526a19d9aeadc8aa51e2f2c2",
+    "fine_grained_level": 0,
+    "modalities": [
+      "rgb"
+    ],
+    "prompt_from_task": true,
+    "schema": "npa.behavior.comet-native-data-reconstruction.v1",
+    "task_id": 1,
+    "task_name": "picking_up_trash",
+    "tolerance_s": 0.0005
+  },
   "minimum_checkpoint_free_bytes": 50000000000,
   "minimum_materialization_free_bytes": 150000000000,
   "released_parent": {
