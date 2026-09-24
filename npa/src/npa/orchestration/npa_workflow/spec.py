@@ -126,21 +126,24 @@ def load_spec(path: str | Path) -> NpaWorkflowSpec:
         raise NpaWorkflowError(
             f"workflow spec must be a mapping, got {type(data).__name__}"
         )
+    spec = _parse_document(data)
+    validate_spec(spec)
+    # Parse first so state-specific failures retain their actionable domain
+    # messages. The schema pass then catches raw-document constraints that do not
+    # affect the normalized runtime model (metadata fields, enums, and so on).
     from npa.orchestration.npa_workflow.schema_validation import validate_document
 
     validate_document(data)
-    spec = _parse_document(data)
-    validate_spec(spec)
     return spec
 
 
 def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
     api_version = str(data.get("apiVersion") or "")
     kind = str(data.get("kind") or "Workflow")
-    metadata = dict(data.get("metadata") or {})
-    config = dict(data.get("config") or {})
-    run_defaults = dict(data.get("run") or {})
-    resources = dict(data.get("resources") or {})
+    metadata = _document_mapping(data, "metadata")
+    config = _document_mapping(data, "config")
+    run_defaults = _document_mapping(data, "run")
+    resources = _document_mapping(data, "resources")
 
     raw_states = data.get("states") or {}
     if isinstance(raw_states, list):
@@ -148,7 +151,13 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
         for entry in raw_states:
             if not isinstance(entry, dict) or "name" not in entry:
                 raise NpaWorkflowError(f"each list state needs a name: {entry!r}")
-            name = str(entry["name"])
+            name = entry["name"]
+            if not isinstance(name, str):
+                raise NpaWorkflowError(
+                    f"state name must be a string, got {type(name).__name__}"
+                )
+            if name in states_dict:
+                raise NpaWorkflowError(f"duplicate state name {name!r}")
             states_dict[name] = entry
         raw_states = states_dict
     if not isinstance(raw_states, dict) or not raw_states:
@@ -158,9 +167,13 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
 
     states: dict[str, StateSpec] = {}
     for name, entry in raw_states.items():
+        if not isinstance(name, str):
+            raise NpaWorkflowError(
+                f"state name must be a string, got {type(name).__name__}"
+            )
         if not isinstance(entry, dict):
             raise NpaWorkflowError(f"state {name!r} must be a mapping")
-        states[str(name)] = _parse_state(str(name), entry, config)
+        states[name] = _parse_state(name, entry, config)
 
     initial = str(data.get("initial") or next(iter(states)))
     return NpaWorkflowSpec(
@@ -175,6 +188,22 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
     )
 
 
+def _document_mapping(data: Mapping[str, Any], key: str) -> dict[str, Any]:
+    raw = data.get(key)
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise NpaWorkflowError(
+            f"workflow field {key!r} must be a mapping, got {type(raw).__name__}"
+        )
+    non_string_keys = [item for item in raw if not isinstance(item, str)]
+    if non_string_keys:
+        raise NpaWorkflowError(
+            f"workflow field {key!r} keys must be strings, got {non_string_keys[0]!r}"
+        )
+    return dict(raw)
+
+
 def _parse_state(
     name: str, entry: dict[str, Any], config: dict[str, Any] | None = None
 ) -> StateSpec:
@@ -183,20 +212,27 @@ def _parse_state(
     if loop_raw is not None:
         if not isinstance(loop_raw, dict):
             raise NpaWorkflowError(f"state {name}: loop must be a mapping")
+        until = _optional_string(name, "loop.until", loop_raw, "until")
         loop = LoopSpec(
             max=loop_raw.get("max"),
-            until=str(loop_raw["until"]) if loop_raw.get("until") else None,
+            until=until or None,
         )
 
     transitions: list[TransitionSpec] = []
-    for tr in entry.get("transitions") or []:
-        if not isinstance(tr, dict) or not tr.get("goto"):
+    transitions_raw = entry.get("transitions")
+    if transitions_raw is not None and not isinstance(transitions_raw, list):
+        raise NpaWorkflowError(f"state {name}: transitions must be a list")
+    for tr in transitions_raw or []:
+        if not isinstance(tr, dict):
+            raise NpaWorkflowError(f"state {name}: transition must be a mapping")
+        goto = _optional_string(name, "transition.goto", tr, "goto")
+        if not goto:
             raise NpaWorkflowError(f"state {name}: transition needs goto")
         transitions.append(
             TransitionSpec(
-                when=str(tr["when"]) if tr.get("when") else None,
-                goto=str(tr["goto"]),
-                if_config=str(tr["if"]) if tr.get("if") else None,
+                when=_optional_string(name, "transition.when", tr, "when") or None,
+                goto=goto,
+                if_config=_optional_string(name, "transition.if", tr, "if") or None,
             )
         )
 
@@ -205,9 +241,12 @@ def _parse_state(
     if run_raw is not None:
         if not isinstance(run_raw, dict):
             raise NpaWorkflowError(f"state {name}: run must be a mapping")
+        argv = _string_list(
+            name, "run.argv", run_raw.get("argv"), present="argv" in run_raw
+        )
         run = RunSpec(
-            shell=str(run_raw.get("shell") or ""),
-            argv=[str(item) for item in (run_raw.get("argv") or [])],
+            shell=_optional_string(name, "run.shell", run_raw, "shell"),
+            argv=argv,
         )
 
     trigger = None
@@ -216,7 +255,7 @@ def _parse_state(
         if not isinstance(trigger_raw, dict):
             raise NpaWorkflowError(f"state {name}: trigger must be a mapping")
         trigger = TriggerSpec(
-            uri=str(trigger_raw.get("uri") or ""),
+            uri=_optional_string(name, "trigger.uri", trigger_raw, "uri"),
             poll_seconds=_positive_int(
                 name, "trigger.pollSeconds", trigger_raw, 30, config=config
             ),
@@ -240,10 +279,14 @@ def _parse_state(
             },
         )
 
-    params_raw = entry.get("params") or {}
+    params_raw = entry["params"] if "params" in entry else {}
     if not isinstance(params_raw, dict):
         raise NpaWorkflowError(f"state {name}: params must be a mapping")
     for param_key, param_value in params_raw.items():
+        if not isinstance(param_key, str):
+            raise NpaWorkflowError(
+                f"state {name}: params keys must be strings, got {param_key!r}"
+            )
         # params values become config values for this state, and config values are
         # rendered into commands/URIs by token substitution. A dict/list cannot be
         # rendered, and would otherwise only fail much later (at render or run time).
@@ -253,68 +296,181 @@ def _parse_state(
                 f"(tokens render scalars), got {type(param_value).__name__}"
             )
 
-    # Type checks live here (not in the JSON Schema): the shipped schema walker in
-    # schema_validation.py does not resolve `$ref`/`$defs`, so state bodies are
-    # only enforced in Python. Without this an author writing `parallel: shard-a`
-    # would get a confusing "duplicate parallel member" error from iterating a
-    # string character by character.
-    parallel_raw = entry.get("parallel")
-    if parallel_raw is not None and not isinstance(parallel_raw, list):
-        raise NpaWorkflowError(
-            f"state {name}: parallel must be a list of state names, got "
-            f"{type(parallel_raw).__name__}"
-        )
-    for member in parallel_raw or []:
-        if not isinstance(member, str):
-            raise NpaWorkflowError(
-                f"state {name}: parallel member must be a state name (string), got {member!r}"
-            )
+    # Keep strict checks in the parser as well as the JSON Schema walker: callers
+    # may construct raw state mappings directly, and silent ``str()``/``bool()``
+    # coercion changes workflow control flow (for example, ``terminal: "false"``
+    # used to become true).
+    needs = _string_list(name, "needs", entry.get("needs"), present="needs" in entry)
+    sequence = _string_list(
+        name, "sequence", entry.get("sequence"), present="sequence" in entry
+    )
+    parallel = _string_list(
+        name, "parallel", entry.get("parallel"), present="parallel" in entry
+    )
+    inputs = _artifact_list(name, "inputs", entry)
+    outputs = _artifact_list(name, "outputs", entry)
 
-    inputs = [
-        ArtifactSpec(
-            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or "")
-        )
-        for item in (entry.get("inputs") or [])
-        if isinstance(item, dict)
+    invalid_kinds = [
+        artifact.kind
+        for artifact in [*inputs, *outputs]
+        if artifact.kind not in {"", "file", "directory"}
     ]
-    outputs = [
-        ArtifactSpec(
-            uri=str(item.get("uri") or ""),
-            schema=str(item.get("schema") or ""),
-            kind=str(item.get("kind") or ""),
+    if invalid_kinds:
+        raise NpaWorkflowError(
+            f"state {name}: artifact kind must be file or directory, got "
+            f"{invalid_kinds[0]!r}"
         )
-        for item in (entry.get("outputs") or [])
-        if isinstance(item, dict)
-    ]
-    if any(output.kind not in {"", "file", "directory"} for output in outputs):
-        raise NpaWorkflowError(f"state {name}: output kind must be file or directory")
 
     return StateSpec(
         name=name,
-        description=str(entry.get("description") or ""),
-        needs=[str(item) for item in (entry.get("needs") or [])],
+        description=_optional_string(name, "description", entry, "description"),
+        needs=needs,
         run=run,
-        tool_ref=str(entry.get("toolRef") or entry.get("tool_ref") or ""),
-        sequence=[str(item) for item in (entry.get("sequence") or [])],
-        parallel=[str(item) for item in (entry.get("parallel") or [])],
+        tool_ref=_aliased_string(name, entry, "toolRef", "tool_ref"),
+        sequence=sequence,
+        parallel=parallel,
         parallel_count=entry.get("parallelCount", entry.get("parallel_count")),
         max_concurrency=entry.get("maxConcurrency", entry.get("max_concurrency")),
         params=dict(params_raw),
         trigger=trigger,
         loop=loop,
         transitions=transitions,
-        next=str(entry.get("next") or ""),
+        next=_optional_string(name, "next", entry, "next"),
         inputs=inputs,
         outputs=outputs,
-        resources=str(entry.get("resources") or "default"),
-        terminal=bool(entry.get("terminal")),
-        writes_decision=bool(
-            entry.get("writesDecision") or entry.get("writes_decision")
+        resources=_optional_string(
+            name, "resources", entry, "resources", default="default"
         ),
-        multi_node_mode=str(
-            entry.get("multiNodeMode") or entry.get("multi_node_mode") or "forbidden"
+        terminal=_aliased_bool(name, entry, "terminal"),
+        writes_decision=_aliased_bool(name, entry, "writesDecision", "writes_decision"),
+        multi_node_mode=_aliased_string(
+            name,
+            entry,
+            "multiNodeMode",
+            "multi_node_mode",
+            default="forbidden",
         ),
     )
+
+
+def _optional_string(
+    state_name: str,
+    field_name: str,
+    entry: Mapping[str, Any],
+    key: str,
+    *,
+    default: str = "",
+) -> str:
+    if key not in entry:
+        return default
+    value = entry[key]
+    if not isinstance(value, str):
+        raise NpaWorkflowError(
+            f"state {state_name}: {field_name} must be a string, got "
+            f"{type(value).__name__}"
+        )
+    return value
+
+
+def _aliased_string(
+    state_name: str,
+    entry: Mapping[str, Any],
+    key: str,
+    alias: str,
+    *,
+    default: str = "",
+) -> str:
+    selected = key if key in entry else alias
+    return _optional_string(state_name, key, entry, selected, default=default)
+
+
+def _aliased_bool(
+    state_name: str,
+    entry: Mapping[str, Any],
+    key: str,
+    alias: str | None = None,
+    *,
+    default: bool = False,
+) -> bool:
+    selected = key if key in entry else alias
+    if selected is None or selected not in entry:
+        return default
+    value = entry[selected]
+    if type(value) is not bool:
+        raise NpaWorkflowError(
+            f"state {state_name}: {key} must be a boolean, got {type(value).__name__}"
+        )
+    return value
+
+
+def _string_list(
+    state_name: str,
+    field_name: str,
+    raw: Any,
+    *,
+    present: bool,
+) -> list[str]:
+    if not present:
+        return []
+    if not isinstance(raw, list):
+        expected = (
+            "a list of state names"
+            if field_name in {"needs", "sequence", "parallel"}
+            else "a list of strings"
+        )
+        raise NpaWorkflowError(
+            f"state {state_name}: {field_name} must be {expected}, got "
+            f"{type(raw).__name__}"
+        )
+    for item in raw:
+        if not isinstance(item, str):
+            expected = (
+                "a state name (string)"
+                if field_name in {"needs", "sequence", "parallel"}
+                else "a string"
+            )
+            raise NpaWorkflowError(
+                f"state {state_name}: {field_name} member must be {expected}, got "
+                f"{item!r}"
+            )
+    return list(raw)
+
+
+def _artifact_list(
+    state_name: str, field_name: str, entry: Mapping[str, Any]
+) -> list[ArtifactSpec]:
+    if field_name not in entry:
+        return []
+    raw = entry[field_name]
+    if not isinstance(raw, list):
+        raise NpaWorkflowError(
+            f"state {state_name}: {field_name} must be a list of artifacts, got "
+            f"{type(raw).__name__}"
+        )
+    artifacts: list[ArtifactSpec] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise NpaWorkflowError(
+                f"state {state_name}: {field_name}[{index}] must be a mapping"
+            )
+        if "uri" not in item:
+            raise NpaWorkflowError(
+                f"state {state_name}: {field_name}[{index}] requires uri"
+            )
+        artifacts.append(
+            ArtifactSpec(
+                uri=_optional_string(
+                    state_name, f"{field_name}[{index}].uri", item, "uri"
+                ),
+                schema=_optional_string(
+                    state_name, f"{field_name}[{index}].schema", item, "schema"
+                ),
+                kind=_optional_string(
+                    state_name, f"{field_name}[{index}].kind", item, "kind"
+                ),
+            )
+        )
+    return artifacts
 
 
 def _positive_int(
@@ -330,16 +486,19 @@ def _positive_int(
 
     key = field_name.split(".", 1)[1]
     snake = "".join(f"_{char.lower()}" if char.isupper() else char for char in key)
-    raw = entry.get(key, entry.get(snake))
-    if raw is None or raw == "":
+    if key in entry:
+        raw = entry[key]
+    elif snake in entry:
+        raw = entry[snake]
+    else:
         return default
     if isinstance(raw, str) and "{{" in raw:
         # Config-driven knob (e.g. pollSeconds: "{{config.inbox_poll_seconds}}"); the
         # value is resolved against config, like loop.max.
         raw = resolve_config_int(raw, config or {})
     try:
-        value = int(raw)
-    except (TypeError, ValueError) as exc:
+        value = _exact_int(raw)
+    except ValueError as exc:
         raise NpaWorkflowError(
             f"state {state_name}: {field_name} must be an integer, got {raw!r}"
         ) from exc
@@ -402,6 +561,10 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
                 raise NpaWorkflowError(
                     f"state {state.name}: transition goto unknown state {tr.goto!r}"
                 )
+        if state.next and state.next not in spec.states:
+            raise NpaWorkflowError(
+                f"state {state.name}: next references unknown state {state.next!r}"
+            )
         for dep in state.needs:
             if dep not in spec.states:
                 raise NpaWorkflowError(f"state {state.name}: unknown needs {dep!r}")
@@ -463,6 +626,7 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
+    _assert_acyclic_expansion(spec)
     _validate_resolvable(spec)
 
 
@@ -540,14 +704,14 @@ def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
             mode=mode,
             model_id=str(spec.config.get("sam2_model") or ""),
             model_revision=str(spec.config.get("sam2_model_revision") or ""),
-            points_per_side=int(spec.config.get("sam2_points_per_side") or 0),
+            points_per_side=_exact_int(spec.config.get("sam2_points_per_side", 0)),
             predicted_iou_threshold=float(
                 spec.config.get("sam2_predicted_iou_threshold") or 0
             ),
             stability_threshold=float(spec.config.get("sam2_stability_threshold") or 0),
             min_area_fraction=float(spec.config.get("sam2_min_area_fraction") or 0),
             max_area_fraction=float(spec.config.get("sam2_max_area_fraction") or 0),
-            max_objects=int(spec.config.get("sam2_max_objects") or 0),
+            max_objects=_exact_int(spec.config.get("sam2_max_objects", 0)),
         )
     except (TypeError, ValueError) as exc:
         raise NpaWorkflowError(
@@ -583,9 +747,9 @@ def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
                 "multi-GPU variant fan-out on that node"
             )
     try:
-        luma_delta = int(spec.config.get("protected_luma_max_delta"))
-        feather_pixels = int(spec.config.get("protected_feather_pixels"))
-    except (TypeError, ValueError) as exc:
+        luma_delta = _exact_int(spec.config.get("protected_luma_max_delta"))
+        feather_pixels = _exact_int(spec.config.get("protected_feather_pixels"))
+    except ValueError as exc:
         raise NpaWorkflowError(
             "optional SAM2 protected-luma delta and feather width must be integers"
         ) from exc
@@ -815,8 +979,8 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
                     "positive integer, not a bool"
                 )
             try:
-                variants = int(raw_variants)
-            except (TypeError, ValueError) as exc:
+                variants = _exact_int(raw_variants)
+            except ValueError as exc:
                 raise NpaWorkflowError(
                     f"state {state.name}: {entry.variant_count_config} must be a "
                     f"positive integer, got {raw_variants!r}"
@@ -883,8 +1047,8 @@ def resolve_resource_profile(
                     "count must be a positive integer"
                 )
             try:
-                count = int(raw_count)
-            except (TypeError, ValueError) as exc:
+                count = _exact_int(raw_count)
+            except ValueError as exc:
                 raise NpaWorkflowError(
                     f"resource profile {name!r}: accelerator {accelerator!r} "
                     f"count must be a positive integer, got {raw_count!r}"
@@ -1129,6 +1293,50 @@ def _assert_bounded_control_flow_cycles(spec: NpaWorkflowSpec) -> None:
         dfs(name)
 
 
+def _assert_acyclic_expansion(spec: NpaWorkflowSpec) -> None:
+    """Reject cycles in the edges followed during recursive group expansion.
+
+    A leaf inside ``sequence`` is expanded with ``follow_transitions=False``:
+    transitions become bounded-loop decision signals, but an unconditional
+    ``next`` is still followed. Group and loop states always follow ``next``.
+    Model that separately from ordinary control flow so valid decision loops are
+    accepted while nested groups cannot recurse forever during ``plan-spec``.
+    """
+
+    graph: dict[str, set[str]] = {name: set() for name in spec.states}
+    for name, state in spec.states.items():
+        graph[name].update(state.sequence)
+        follows_next_in_sequence = (
+            bool(state.sequence)
+            or bool(state.parallel)
+            or state.loop is not None
+            or not state.transitions
+        )
+        if state.next and follows_next_in_sequence:
+            graph[name].add(state.next)
+
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def dfs(node: str) -> None:
+        if node in visiting:
+            cycle = visiting[visiting.index(node) :] + [node]
+            raise NpaWorkflowError(
+                "unbounded control-flow cycle detected during sequence expansion: "
+                + " -> ".join(cycle)
+            )
+        if node in visited:
+            return
+        visiting.append(node)
+        for nxt in sorted(graph[node]):
+            dfs(nxt)
+        visiting.pop()
+        visited.add(node)
+
+    for name in spec.states:
+        dfs(name)
+
+
 def resolve_config_int(value: Any, config: dict[str, Any]) -> int:
     if isinstance(value, bool):
         raise NpaWorkflowError("loop max must be int or config ref, not bool")
@@ -1146,14 +1354,26 @@ def resolve_config_int(value: Any, config: dict[str, Any]) -> int:
             if attr not in config:
                 raise NpaWorkflowError(f"config has no attribute {attr!r}")
             try:
-                return int(config[attr])
-            except (TypeError, ValueError) as exc:
+                return _exact_int(config[attr])
+            except ValueError as exc:
                 raise NpaWorkflowError(
                     f"config.{attr} must be an integer loop bound, got {config[attr]!r}"
                 ) from exc
-        if text.isdigit():
-            return int(text)
+        try:
+            return _exact_int(text)
+        except ValueError:
+            pass
     raise NpaWorkflowError(f"cannot resolve loop max from {value!r}")
+
+
+def _exact_int(value: Any) -> int:
+    """Return an integer without accepting booleans or truncating decimals."""
+
+    if type(value) is int:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+        return int(value.strip())
+    raise ValueError(f"not an exact integer: {value!r}")
 
 
 def config_truthy(value: Any, config: dict[str, Any]) -> bool:

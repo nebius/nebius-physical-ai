@@ -481,6 +481,32 @@ def test_optional_sam2_config_is_validated_before_provisioning(
         load_spec(path)
 
 
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("sam2_points_per_side", 16.5, "numeric sampling"),
+        ("sam2_max_objects", True, "numeric sampling"),
+        ("protected_luma_max_delta", 32.5, "must be integers"),
+        ("protected_feather_pixels", False, "must be integers"),
+    ],
+)
+def test_optional_sam2_integer_fields_are_exact(
+    tmp_path: pathlib.Path, key: str, value: object, message: str
+) -> None:
+    raw = _spec()
+    raw["config"].update(
+        segmentation_mode="sam2-auto",
+        segmentation_uri="s3://example/run/segmentation/",
+        augment_nodes="1",
+    )
+    raw["config"][key] = value
+    path = tmp_path / f"invalid-{key}.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(NpaWorkflowError, match=message):
+        load_spec(path)
+
+
 def test_blueprint_toolrefs_exist_in_catalog() -> None:
     for name, state in _states().items():
         tool_ref = state.get("toolRef")
