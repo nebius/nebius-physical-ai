@@ -1258,6 +1258,15 @@ def extract_frames(
     return sorted(dest_dir.glob("frame-*.png"))
 
 
+def _provenance_boolean(record: dict[str, Any], field: str, *, default: bool) -> bool:
+    """Return an exact boolean provenance field, preserving its default."""
+
+    value = record.get(field, default)
+    if type(value) is not bool:
+        raise ValueError(f"{field} must be a boolean")
+    return value
+
+
 def publish_transfer_clip(
     transfer: dict[str, Any],
     output_uri: str,
@@ -1302,6 +1311,12 @@ def publish_transfer_clip(
 
     if not output_uri.startswith("s3://"):
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    input_conditioned = _provenance_boolean(
+        transfer, "input_conditioned", default=False
+    )
+    content_guardrails_enabled = _provenance_boolean(
+        transfer, "content_guardrails_enabled", default=True
+    )
     from npa.clients.storage import StorageClient
     import tempfile as _tempfile
 
@@ -1321,10 +1336,8 @@ def publish_transfer_clip(
     # classifier in data_factory_provenance.py). When the transfer was
     # conditioned on the caller's input clip, record that provenance so the run
     # view can show the augmentation is genuinely derived from real input.
-    input_conditioned = bool(transfer.get("input_conditioned"))
     conditioned_input = Path(str(transfer.get("input_video") or "")).name
     conditioned_control = str(transfer.get("control") or "")
-    content_guardrails_enabled = bool(transfer.get("content_guardrails_enabled", True))
     protected_chroma = transfer.get("protected_chroma") or {"mode": "off"}
     refinement = transfer.get("refinement") or {}
     effective_control_weight = transfer.get("effective_control_weight")
@@ -1968,6 +1981,10 @@ def build_run_manifest(
     """
 
     first = clips[0] if clips else {}
+    input_conditioned = _provenance_boolean(first, "input_conditioned", default=False)
+    content_guardrails_enabled = _provenance_boolean(
+        first, "content_guardrails_enabled", default=True
+    )
     variant_failures = list(failures or [])
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {
@@ -1995,7 +2012,7 @@ def build_run_manifest(
         "augmented_frames_uri": first.get("frames_uri", ""),
         "control_spec": first.get("control_spec", ""),
         "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
-        "input_conditioned": bool(first.get("input_conditioned")),
+        "input_conditioned": input_conditioned,
         "conditioned_input": first.get("conditioned_input", ""),
         "conditioning_clip_uri": first.get("conditioning_clip_uri", ""),
         "control": first.get("control", ""),
@@ -2008,9 +2025,7 @@ def build_run_manifest(
         "negative_prompt": str(first.get("negative_prompt") or ""),
         "mask_prompt": str(first.get("mask_prompt") or ""),
         "control_uris": first.get("control_uris", {}),
-        "content_guardrails_enabled": bool(
-            first.get("content_guardrails_enabled", True)
-        ),
+        "content_guardrails_enabled": content_guardrails_enabled,
         "protected_chroma": first.get("protected_chroma", {"mode": "off"}),
         "refinement": first.get("refinement", {}),
         "effective_control_weight": first.get("effective_control_weight"),
