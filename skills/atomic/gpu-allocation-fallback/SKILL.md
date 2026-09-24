@@ -10,6 +10,12 @@ Send typed results to `POST /api/agent/gpu-allocation/attempt` with a stable
 typed failure evidence, and the identical compatible preemptible candidate.
 The grounded route uses zero model tokens.
 
+The optional `success` field must be a literal JSON boolean. Omitting it records
+the attempt as unsuccessful, the same as `"success": false`; only
+`"success": true` resets the tracked allocation as succeeded. Strings, numbers,
+`null`, arrays, and objects are rejected with HTTP 400 without changing fallback
+or confirmation-token state.
+
 Only quota/capacity exhaustion, insufficient GPU or Unschedulable, and no
 compatible product/affinity count. Auth, RBAC, network, image-pull, checkpoint,
 application, runtime, cancellation, and timeout failures never count. The
