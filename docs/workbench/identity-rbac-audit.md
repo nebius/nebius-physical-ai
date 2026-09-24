@@ -2,7 +2,9 @@
 
 **Status:** design proposal for issue #524. Not implemented. Phase 0 of the
 plan in §7. This document deliberately proposes no behavior change; it defines
-the model that later phases build on.
+the model that later phases build on. For the supported operating model and
+access boundaries in the current implementation, see
+[Team operation and access boundaries](team-operation.md).
 
 ## 1. Problem
 

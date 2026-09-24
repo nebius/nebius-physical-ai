@@ -31,6 +31,7 @@ prepare its project and compute, then inspect the result.
 | Task | Read |
 | --- | --- |
 | Manage Kubernetes | [Kubernetes](workbench/kubernetes.md) · [GPU driver strategy](workbench/mk8s-gpu-driver-strategy.md) |
+| Operate with a team | [Current sharing and access boundaries](workbench/team-operation.md) · [future identity/RBAC design](workbench/identity-rbac-audit.md) |
 | Configure workflow scheduling | [SkyPilot setup](orchestration/skypilot-setup.md) |
 | Manage fleets or Slurm | [Cluster backends](cluster-backends.md) · [Fleet storage verification](fleet-storage-verification.md) · [RTX MIG](fleet-rtx-pro-6000-mig.md) |
 | Choose an image and GPU | [Public image catalog](workbench/container-image-catalog.md) · [compatibility matrix](workbench/image-gpu-compatibility-matrix.md) |

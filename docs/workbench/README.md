@@ -65,6 +65,7 @@ Python and HTTP access follow each tool's documented contract.
 | Task | Guide |
 | --- | --- |
 | Configure credentials | [Project configuration](../configuration.md) · [Hugging Face](huggingface-token.md) · [NGC](ngc-api-key.md) · [Token Factory key](token-factory-key.md) |
+| Operate as a team | [Current sharing and access boundaries](team-operation.md) · [future identity/RBAC design](identity-rbac-audit.md) |
 | Select images | [Public catalog](container-image-catalog.md) · [GPU compatibility](image-gpu-compatibility-matrix.md) · [SONIC variants](sonic-image-catalog.md) |
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |

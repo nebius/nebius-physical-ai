@@ -22,8 +22,8 @@ as `s3://<bucket>/<run-id>/...`.
 
 ## User Setup Checklist
 
-Complete the platform quickstart first, then collect these values from your
-operator:
+Complete the platform quickstart first, then collect these non-secret values
+from your operator:
 
 ```bash
 export NEBIUS_PROJECT_ID="<your-project-id>"
@@ -33,9 +33,15 @@ export AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
 export NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud
 ```
 
-Secrets belong in `~/.npa/credentials.yaml` or Kubernetes secrets, not in
+Use your own Nebius principal, kubeconfig identity, and assigned storage
+credential. The operator/user split is enforced by Nebius IAM, Kubernetes RBAC,
+and storage policy, not by an NPA team role; see
+[Team operation and access boundaries](team-operation.md). Do not copy the
+operator's `~/.npa/` or authentication cache.
+
+Secrets belong in your `~/.npa/credentials.yaml` or Kubernetes secrets, not in
 committed workflow YAML. For S3-backed workflows, the credential file should
-contain:
+contain the scoped credential assigned to you or the workload:
 
 ```yaml
 storage:
