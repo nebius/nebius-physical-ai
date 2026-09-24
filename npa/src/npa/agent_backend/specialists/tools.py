@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from npa.agent_backend.trajectory import redact
 
 from .call_policy import _classification
+from .waiting import _observation_result
 
 
 class _Arguments(BaseModel):
@@ -249,7 +250,7 @@ class WorkbenchTools:
             text=True,
             check=False,
         )
-        return {
+        receipt = {
             "ok": result.returncode == 0,
             "operation": arguments.name,
             "returncode": result.returncode,
@@ -257,6 +258,7 @@ class WorkbenchTools:
             "stderr": result.stderr,
             "run_id": substitutions["run_id"],
         }
+        return _observation_result(receipt, operation.wait_for)
 
     def _save_patch(self):
         patch = []

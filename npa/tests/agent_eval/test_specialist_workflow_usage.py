@@ -291,3 +291,110 @@ def test_cli_reads_frozen_evidence_without_overwriting(
     repeated = subprocess.run(argv, capture_output=True, text=True, check=False)
     assert repeated.returncode != 0
     assert "FileExistsError" in repeated.stderr
+
+
+def _router_response(status, *, attempted=True, usage=None, **extra):
+    return {
+        "task_id": "private-router-task",
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "status": status,
+        "api_call_attempted": attempted,
+        "usage": {} if usage is None else usage,
+        **extra,
+    }
+
+
+def test_router_acceptance_and_abstention_are_both_priced(
+    accounting, evidence, execution, prices
+):
+    evidence["router"] = {
+        "usage_complete": True,
+        "responses": [
+            _router_response(
+                "accepted", usage={"input_tokens": 100, "output_tokens": 2}
+            ),
+            _router_response(
+                "abstained",
+                usage={"input_tokens": 200, "output_tokens": 3},
+                fallback=True,
+            ),
+        ],
+    }
+    prices["models"]["jev-1.13.0"] = {
+        "cache_policy": "full-input",
+        "rate_options": [_rates(0.042, 0)],
+    }
+    report = _summarize(accounting, evidence, execution, prices)
+    assert report["estimated_cost_usd"] == pytest.approx(0.00225 + 300 * 0.042 / 1e6)
+    router = report["models"]["jev-1.13.0"]
+    assert router["recorded_api_calls"] == 2
+    assert router["accepted_specialist_responses"] == 0
+    assert router["tokens"]["cached_input_tokens"] is None
+    assert report["router"]["jev_responses_received"] == 2
+    assert report["router"]["accepted_jev_routes"] == 1
+    assert report["router"]["fallback_decisions"] == 1
+    assert "private-router-task" not in json.dumps(report)
+
+
+def test_missing_jev_key_is_no_call_not_a_free_jev_response(
+    accounting, evidence, execution, prices
+):
+    evidence["router"] = {
+        "usage_complete": True,
+        "responses": [
+            _router_response(
+                "unavailable",
+                attempted=False,
+                reason="missing_credential",
+                fallback=True,
+            )
+        ],
+    }
+    report = _summarize(accounting, evidence, execution, prices)
+    assert report["usage_complete"] is True
+    assert report["estimated_cost_usd"] == pytest.approx(0.00225)
+    assert "jev-1.13.0" not in report["models"]
+    assert report["router"]["api_calls_not_attempted"] == 1
+    assert report["router"]["jev_responses_received"] == 0
+    assert report["router"]["accepted_jev_routes"] == 0
+    assert report["router"]["unavailable_routes"] == 1
+
+
+@pytest.mark.parametrize("reason", ["provider_http_error", "provider_transport_error"])
+def test_failed_router_call_keeps_unknown_spend(
+    accounting, evidence, execution, prices, reason
+):
+    evidence["router"] = {
+        "usage_complete": False,
+        "responses": [_router_response("unavailable", reason=reason, fallback=True)],
+    }
+    report = _summarize(accounting, evidence, execution, prices)
+    assert report["usage_complete"] is False
+    assert report["estimated_cost_range_usd"] is None
+    assert report["models"]["jev-1.13.0"]["tokens"]["input_tokens"] is None
+    assert report["totals"]["unpriced_records"] == 1
+    assert report["router"]["api_calls_attempted"] == 1
+    assert report["router"]["jev_responses_received"] == 0
+
+
+def test_interrupted_router_intent_is_not_reclassified_as_no_call(
+    accounting, evidence, execution, prices
+):
+    evidence["router"] = {
+        "usage_complete": False,
+        "responses": [_router_response("started", attempted="unknown")],
+    }
+    report = _summarize(accounting, evidence, execution, prices)
+    assert report["estimated_cost_range_usd"] is None
+    assert report["models"]["jev-1.13.0"]["recorded_api_calls"] is None
+    assert report["router"]["unknown_api_call_attempts"] == 1
+    assert "router_call_outcome_unknown" in report["incomplete_reasons"]
+
+
+def test_historical_receipts_do_not_acquire_router_claims(
+    accounting, evidence, execution, prices
+):
+    report = _summarize(accounting, evidence, execution, prices)
+    assert "router" not in report
+    assert report["estimated_cost_usd"] == pytest.approx(0.00225)

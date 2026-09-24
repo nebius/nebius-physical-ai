@@ -12,6 +12,9 @@ from npa.clients.credentials import load_credentials
 from npa.clients.token_factory import TokenFactoryClient, TokenFactoryConfig
 
 from .recovery import _handoff, _RejectedGeneration, _require_operations
+from .waiting import _tool_step
+from .routing import _endpoints
+from .context import model_messages
 
 
 class _State(TypedDict, total=False):
@@ -20,6 +23,9 @@ class _State(TypedDict, total=False):
     answer: str
     model_index: int
     recovering: bool
+    model_order: list[int]
+    poll_ordinal: int
+    poll_after: float
 
 
 def build_graph(profile, tools, checkpointer, *, client=None):
@@ -39,7 +45,7 @@ def build_graph(profile, tools, checkpointer, *, client=None):
 
     builder = StateGraph(_State)
     builder.add_node("model", lambda state: _model(state, profile, tools, client))
-    builder.add_node("tool", lambda state: _tool(state, tools))
+    builder.add_node("tool", lambda state: _tool_step(state, tools))
     builder.add_edge(START, "model")
     builder.add_conditional_edges("model", _after_model)
     builder.add_conditional_edges(
@@ -56,13 +62,26 @@ def _after_model(state):
     return "tool" if state.get("pending") else END
 
 
-def initial_state(profile, goal):
+def initial_state(profile, goal, *, model_order=None):
     """Build initial messages from explicit role and configured tool capabilities.
 
     Args: profile: Specialist configuration. goal: Operator task text.
+        model_order: Durable routing order of eligible endpoint indices.
     Returns: JSON-compatible graph state.
     Raises: None.
     """
+    return {
+        "messages": [
+            {"role": "system", "content": _instructions(profile)},
+            {"role": "user", "content": goal},
+        ],
+        "pending": [],
+        "answer": "",
+        "model_order": model_order or list(range(1 + len(profile.fallback_models))),
+    }
+
+
+def _instructions(profile):
     operations = {name: item.description for name, item in profile.operations.items()}
     policy = {
         "role": profile.description,
@@ -71,12 +90,16 @@ def initial_state(profile, goal):
         "write_paths": profile.write_paths,
         "operations": operations,
         "required_operations": profile.required_operations,
+        "observation_waits": [
+            name for name, operation in profile.operations.items() if operation.wait_for
+        ],
     }
-    system = (
+    return (
         "You are a Workbench specialist. Complete the operator's goal using the provided tools. "
         "Call one tool at a time. Inspect real tool results before claiming success. "
         "A command exit or submission receipt is not proof that a remote workload finished. "
         "Use configured status/evidence operations to verify that separately. "
+        "Observation waits poll in the runtime without model calls until an actionable result. "
         "Read files before editing and preserve unrelated work. Run appropriate checks after edits. "
         "Use targeted line-range reads for large source files and small exact replacements with edit_file. "
         "Avoid copying a whole file into an edit when only a few lines need to change. "
@@ -84,14 +107,6 @@ def initial_state(profile, goal):
         "If blocked, explain the blocker and the evidence. Finish with a concise factual result.\n"
         + json.dumps(policy, sort_keys=True)
     )
-    return {
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": goal},
-        ],
-        "pending": [],
-        "answer": "",
-    }
 
 
 def _client(profile):
@@ -106,14 +121,16 @@ def _client(profile):
 
 
 def _model(state, profile, tools, client):
-    endpoint = [profile, *profile.fallback_models][state.get("model_index", 0)]
+    endpoint = _endpoints(profile, state)[state.get("model_index", 0)]
     extra = {
         **endpoint.model_options,
         "tools": tools.schemas(),
         "parallel_tool_calls": False,
     }
     response = (client or _client(endpoint)).chat_completion(
-        model=endpoint.model, messages=state["messages"], extra=extra
+        model=endpoint.model,
+        messages=_request_messages(state, profile, tools),
+        extra=extra,
     )
     try:
         message, pending = _recorded_response(response, endpoint.model, tools, state)
@@ -125,6 +142,29 @@ def _model(state, profile, tools, client):
         "answer": "" if pending else redact(message["content"]),
         "recovering": False,
     }
+
+
+def _request_messages(state, profile, tools):
+    messages = state["messages"]
+    if not profile.compact_context:
+        return messages
+    observations = {
+        name
+        for name, operation in profile.operations.items()
+        if operation.observation_only
+    }
+    view = model_messages(messages, observation_operations=observations)
+    tools.store._event(
+        tools.task_id,
+        {
+            "type": "context_view",
+            "policy": "superseded_observations",
+            "full_message_bytes": len(json.dumps(messages).encode()),
+            "request_message_bytes": len(json.dumps(view).encode()),
+            "message_count": len(messages),
+        },
+    )
+    return view
 
 
 def _recorded_response(response, model, tools, state):
@@ -216,14 +256,3 @@ def _validate_calls(calls):
             raise ValueError("invalid tool call")
         if not isinstance(json.loads(function["arguments"]), dict):
             raise ValueError("tool arguments must be a JSON object")
-
-
-def _tool(state, tools):
-    call = state["pending"][0]
-    result = tools.execute(call)
-    message = {
-        "role": "tool",
-        "tool_call_id": call["id"],
-        "content": json.dumps(result),
-    }
-    return {"messages": [*state["messages"], message], "pending": state["pending"][1:]}

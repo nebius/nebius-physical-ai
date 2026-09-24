@@ -22,7 +22,18 @@ from workflow_bridge import _coordinator_store
 HERE = Path(__file__).resolve().parent
 
 
-def _settings(config_path, directory, arm, effort):
+def _source_hashes():
+    from npa.agent_backend import specialists
+
+    roots = {"runner": HERE, "runtime": Path(specialists.__file__).parent}
+    return {
+        f"{name}/{path.name}": hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, root in roots.items()
+        for path in sorted(root.glob("*.py"))
+    }
+
+
+def _settings(config_path, directory, arm, effort, phase="work"):
     settings = {
         "model_reasoning_effort": effort,
         "approval_policy": "never",
@@ -32,17 +43,26 @@ def _settings(config_path, directory, arm, effort):
             str(config_path),
             str(directory),
             arm,
+            phase,
         ],
         # This is a transport deadline, not a job runtime limit. Wait observations are <=60s.
         "mcp_servers.workbench.tool_timeout_sec": 120,
     }
     names = _granted_tools(arm, load_config(config_path))
+    if phase == "delegate":
+        names = ("delegate",)
+    elif phase == "review":
+        names = tuple(
+            name
+            for name in names
+            if name not in {"wait_specialist", "wait_specialists"}
+        )
     for name in names:
         settings[f"mcp_servers.workbench.tools.{name}.approval_mode"] = "approve"
     return settings
 
 
-def _astra_argv(config_path, directory, arm, effort):
+def _astra_argv(config_path, directory, arm, effort, phase="work"):
     argv = [
         "codex",
         "exec",
@@ -59,7 +79,7 @@ def _astra_argv(config_path, directory, arm, effort):
     ]
     for feature in ("shell_tool", "unified_exec", "multi_agent"):
         argv.extend(["--disable", feature])
-    for key, value in _settings(config_path, directory, arm, effort).items():
+    for key, value in _settings(config_path, directory, arm, effort, phase).items():
         argv.extend(["-c", key + "=" + json.dumps(value)])
     return [*argv, "-"]
 
@@ -123,7 +143,9 @@ def _prompt(common, team, arm):
     )
 
 
-def _prepare(config_path, prompt_path, directory, arm, effort):
+def _prepare(
+    config_path, prompt_path, directory, arm, effort, coordination="continuous"
+):
     config = load_config(config_path)
     common = prompt_path.read_text()
     if not common.strip():
@@ -146,24 +168,42 @@ def _prepare(config_path, prompt_path, directory, arm, effort):
             "arm": arm,
             "model": "gpt-6-astra",
             "reasoning_effort": effort,
+            "coordination": coordination,
             "common_prompt_sha256": hashlib.sha256(common.encode()).hexdigest(),
             "team_sha256": hashlib.sha256(saved.read_bytes()).hexdigest(),
-            "sources": {
-                path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                for path in HERE.glob("*.py")
-            },
+            "sources": _source_hashes(),
             "workload_budgets": None,
         },
     )
     return team, saved, _prompt(common, team, arm)
 
 
-def _codex(config_path, directory, arm, effort, prompt):
-    argv = _astra_argv(config_path, directory, arm, effort)
-    _write_json(directory / "coordinator-config.json", {"argv": argv})
+def _codex(config_path, directory, arm, effort, prompt, phase="work"):
+    argv = _astra_argv(config_path, directory, arm, effort, phase)
+    path = directory / "coordinator-config.json"
+    previous = json.loads(path.read_text()).get("turns", []) if path.exists() else []
+    turn = {
+        "phase": phase,
+        "argv": argv,
+        "started_epoch": time.time(),
+        "exit_code": None,
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+    }
+    turns = [*previous, turn]
+    _write_json(path, {"argv": argv, "turns": turns})
+    (directory / f"coordinator-prompt-{len(turns)}.txt").write_text(prompt)
+    try:
+        turn["exit_code"] = _call_process(argv, prompt, directory)
+        return turn["exit_code"]
+    finally:
+        turn["ended_epoch"] = time.time()
+        _write_json(path, {"argv": argv, "turns": turns})
+
+
+def _call_process(argv, prompt, directory):
     with (
-        (directory / "codex.jsonl").open("w") as output,
-        (directory / "codex.stderr").open("w") as errors,
+        (directory / "codex.jsonl").open("a") as output,
+        (directory / "codex.stderr").open("a") as errors,
     ):
         result = subprocess.run(
             argv,
@@ -184,20 +224,31 @@ def _coordinator_ended(team, directory, hybrid):
             team.pause(specialist=profile.name)
 
 
-def _run(config_path, prompt_path, directory, arm, effort):
-    team, saved, prompt = _prepare(config_path, prompt_path, directory, arm, effort)
+def _run(config_path, prompt_path, directory, arm, effort, coordination="continuous"):
+    team, saved, prompt = _prepare(
+        config_path, prompt_path, directory, arm, effort, coordination
+    )
     coordinator = _coordinator_store(team, directory)
-    hybrid = arm == "astra-tofa"
     started = time.perf_counter()
-    execution = {"arm": arm, "started_epoch": time.time(), "exit_code": None}
+    execution = {
+        "arm": arm,
+        "coordination": coordination,
+        "started_epoch": time.time(),
+        "exit_code": None,
+    }
     try:
-        with supervise(str(saved)) if hybrid else nullcontext():
-            try:
-                execution["exit_code"] = _codex(saved, directory, arm, effort, prompt)
-            finally:
-                execution["coordinator_seconds"] = time.perf_counter() - started
-                execution["coordinator_ended_epoch"] = time.time()
-                _coordinator_ended(team, directory, hybrid)
+        _supervised_execution(
+            team,
+            saved,
+            directory,
+            arm,
+            effort,
+            prompt_path,
+            prompt,
+            coordination,
+            execution,
+            started,
+        )
     except BaseException as error:
         execution["error_type"] = type(error).__name__
         raise
@@ -209,12 +260,60 @@ def _run(config_path, prompt_path, directory, arm, effort):
     return execution
 
 
+def _supervised_execution(
+    team,
+    saved,
+    directory,
+    arm,
+    effort,
+    prompt_path,
+    prompt,
+    coordination,
+    execution,
+    started,
+):
+    hybrid = arm == "astra-tofa"
+    with supervise(str(saved)) if hybrid else nullcontext():
+        try:
+            execution["exit_code"] = _coordinate(
+                team, saved, directory, arm, effort, prompt_path, prompt, coordination
+            )
+        finally:
+            execution["coordinator_seconds"] = time.perf_counter() - started
+            execution["coordinator_ended_epoch"] = time.time()
+            _coordinator_ended(team, directory, hybrid)
+
+
+def _coordinate(team, saved, directory, arm, effort, prompt_path, prompt, mode):
+    if mode == "continuous" or arm == "astra-only":
+        return _codex(saved, directory, arm, effort, prompt)
+    if mode != "completion":
+        raise ValueError("unknown coordination mode")
+    from completion_coordinator import coordinate
+
+    return coordinate(
+        team,
+        saved,
+        directory,
+        effort,
+        (directory / "prompt.txt").read_text(),
+        _workspace_policies(team),
+        _codex,
+    )
+
+
 def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--team-config", type=Path, required=True)
     parser.add_argument("--prompt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arm", choices=["astra-only", "astra-tofa"], required=True)
+    parser.add_argument(
+        "--coordination",
+        choices=["completion", "continuous"],
+        default="completion",
+        help="Wait outside Astra between delegation and fresh reviews (default: completion).",
+    )
     parser.add_argument(
         "--effort", default="medium", choices=["low", "medium", "high", "xhigh"]
     )
@@ -233,6 +332,7 @@ def _main():
                 options.output.resolve(),
                 options.arm,
                 options.effort,
+                options.coordination,
             )
         )
     )

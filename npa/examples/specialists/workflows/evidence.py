@@ -84,6 +84,46 @@ def _outside_tool_scope(event, allowed):
     )
 
 
+def _coordinator_invocations(directory, completed):
+    path = directory / "coordinator-config.json"
+    if not path.exists():
+        protocol = directory / "protocol.json"
+        modern = protocol.exists() and "coordination" in json.loads(
+            protocol.read_text()
+        )
+        return {
+            "verification": "missing" if modern else "legacy_unavailable",
+            "usage_complete": not modern,
+        }
+    config = json.loads(path.read_text())
+    if not isinstance(config, dict):
+        return {"verification": "invalid", "usage_complete": False}
+    if "turns" not in config:
+        return {
+            "verification": "legacy_single_invocation",
+            "expected_turns": 1,
+            "usage_complete": completed == 1 and bool(config.get("argv")),
+        }
+    turns = config["turns"]
+    if not isinstance(turns, list) or not turns:
+        return {"verification": "invalid", "usage_complete": False}
+    unfinished = [
+        index + 1
+        for index, turn in enumerate(turns)
+        if not isinstance(turn, dict)
+        or type(turn.get("exit_code")) is not int
+        or turn["exit_code"] != 0
+        or turn.get("ended_epoch") is None
+    ]
+    return {
+        "verification": "invocation_records",
+        "expected_turns": len(turns),
+        "completed_turns": completed,
+        "failed_or_unfinished_invocations": unfinished,
+        "usage_complete": not unfinished and completed == len(turns),
+    }
+
+
 def _astra_usage(directory, arm="astra-only"):
     events, malformed = _astra_events(directory)
     turns = [
@@ -97,13 +137,16 @@ def _astra_usage(directory, arm="astra-only"):
     forbidden = [event for event in events if _outside_tool_scope(event, allowed)]
     failed = any(event.get("type") in {"turn.failed", "error"} for event in events)
     required = {"input_tokens", "output_tokens"}
+    invocations = _coordinator_invocations(directory, len(turns))
     return {
         "turns": turns,
+        "invocations": invocations,
         "malformed_lines": malformed,
         "out_of_scope_events": forbidden,
         "usage_complete": bool(turns)
         and not malformed
         and not failed
+        and invocations["usage_complete"]
         and all(required <= turn.keys() for turn in turns),
         "matched_tool_scope": bool(events) and not malformed and not forbidden,
     }
@@ -133,6 +176,62 @@ def _specialist_usage(receipts):
     return {"responses": responses, "usage_complete": complete}
 
 
+def _router_attempted(route):
+    attempted = route.get("api_call_attempted")
+    if type(attempted) is bool or attempted == "unknown":
+        return attempted
+    if "api_call_attempted" in route:
+        return "unknown"
+    if route.get("reason") in {"missing_credential", "invalid_configuration"}:
+        return False
+    if route.get("status") in {"accepted", "abstained"} or route.get("reason") in {
+        "provider_http_error",
+        "provider_transport_error",
+        "invalid_response",
+    }:
+        return True
+    return "unknown"
+
+
+def _router_decisions(receipts):
+    for task_id, task in receipts.items():
+        route = task.get("route", {})
+        if route.get("provider") == "typesafe":
+            yield task_id, "profile", route
+        selection = route.get("model_selection")
+        if selection is not None:
+            yield task_id, "model", selection
+
+
+def _router_usage(receipts):
+    responses, complete = [], True
+    for task_id, kind, selection in _router_decisions(receipts):
+        attempted = _router_attempted(selection)
+        responses.append(
+            {
+                **{
+                    key: value
+                    for key, value in selection.items()
+                    if key != "model_selection"
+                },
+                "task_id": task_id,
+                "route_kind": kind,
+                "api_call_attempted": attempted,
+            }
+        )
+        counters = selection.get("usage", {})
+        if attempted is not False and (
+            attempted is not True
+            or not isinstance(counters, dict)
+            or any(
+                type(counters.get(key)) is not int or counters[key] < 0
+                for key in ("input_tokens", "output_tokens")
+            )
+        ):
+            complete = False
+    return {"responses": responses, "usage_complete": complete}
+
+
 def _snapshot(team, coordinator, directory, execution):
     errors = {}
     receipts = {}
@@ -151,6 +250,7 @@ def _snapshot(team, coordinator, directory, execution):
         usage = {
             "astra": _astra_usage(directory, execution["arm"]),
             "specialists": _specialist_usage(receipts),
+            "router": _router_usage(receipts),
         }
         usage["usage_complete"] = not errors and all(
             part["usage_complete"] for part in usage.values()

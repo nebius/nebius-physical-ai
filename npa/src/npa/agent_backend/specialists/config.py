@@ -20,6 +20,34 @@ from pydantic import (
 )
 
 
+class ObservationWait(BaseModel):
+    """Declare terminal states in an observation command's JSON stdout.
+
+    Args: field: JSON Pointer to a string state. pending_values, success_values,
+        failure_values: Disjoint explicit state labels. poll_interval: Seconds between polls.
+    Returns: Validated observation policy, without an execution deadline.
+    Raises: ValueError: The pointer, interval or state sets are invalid.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    field: str = Field(pattern=r"^/")
+    pending_values: list[str] = Field(min_length=1)
+    success_values: list[str] = Field(min_length=1)
+    failure_values: list[str] = Field(min_length=1)
+    poll_interval: float = Field(default=5, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _states(self):
+        import re
+
+        labels = self.pending_values + self.success_values + self.failure_values
+        if any(not value for value in labels) or len(set(labels)) != len(labels):
+            raise ValueError("observation states must be nonempty and disjoint")
+        if re.search(r"~(?![01])", self.field):
+            raise ValueError("field must be a valid JSON Pointer")
+        return self
+
+
 class Operation(BaseModel):
     """An operator-authorized command selected by name, never by model-supplied argv.
 
@@ -28,6 +56,7 @@ class Operation(BaseModel):
         description: What this operation does and how to interpret its result.
         pass_env: Explicit environment names to forward to the command.
         observation_only: Operator attestation that execution only observes existing state.
+        wait_for: Optional JSON state policy that suppresses routine model polling.
     Returns:
         Validated command policy.
     Raises:
@@ -39,6 +68,13 @@ class Operation(BaseModel):
     description: str = Field(min_length=1)
     pass_env: list[str] = Field(default_factory=list)
     observation_only: StrictBool = False
+    wait_for: ObservationWait | None = None
+
+    @model_validator(mode="after")
+    def _wait_policy(self):
+        if self.wait_for is not None and not self.observation_only:
+            raise ValueError("wait_for requires observation_only=true")
+        return self
 
     @field_validator("argv")
     @classmethod
@@ -129,6 +165,8 @@ class Profile(ModelEndpoint):
         name, description, instructions: Specialist identity and role.
         model, base_url, key_env, model_options: Primary inference configuration.
         fallback_models: Ordered, opt-in endpoints for rejected generations.
+        model_router, model_criteria: Optional Jev endpoint selection within these same grants.
+        compact_context: Omit superseded source content from model requests only.
         required_operations: Commands that must succeed after the latest edit.
         workspace, read_paths, write_paths, operations: Operator-owned grants.
     Returns:
@@ -141,6 +179,9 @@ class Profile(ModelEndpoint):
     description: str = Field(min_length=1)
     instructions: str = ""
     fallback_models: list[ModelEndpoint] = Field(default_factory=list)
+    model_router: Literal["explicit", "jev"] = "explicit"
+    model_criteria: dict[str, str] = Field(default_factory=dict)
+    compact_context: StrictBool = False
     required_operations: list[str] = Field(default_factory=list)
     workspace: Path
     read_paths: list[str] = Field(default_factory=list)
@@ -169,6 +210,16 @@ class Profile(ModelEndpoint):
     def _completion_policy(self):
         if set(self.required_operations) - self.operations.keys():
             raise ValueError("required_operations must name configured operations")
+        if self.model_router == "jev":
+            models = [self.model, *(item.model for item in self.fallback_models)]
+            if len(models) != len(set(models)) or "none" in models:
+                raise ValueError("Jev requires unique endpoint model IDs")
+            if set(self.model_criteria) != set(models) or any(
+                not value.strip() for value in self.model_criteria.values()
+            ):
+                raise ValueError("model_criteria must describe every eligible endpoint")
+        elif self.model_criteria:
+            raise ValueError("model_criteria requires model_router=jev")
         return self
 
 
@@ -254,9 +305,17 @@ def fingerprint(profile: Profile) -> str:
     for name in ("fallback_models", "required_operations"):
         if not policy[name]:
             del policy[name]
+    if policy["model_router"] == "explicit":
+        del policy["model_router"]
+    if not policy["model_criteria"]:
+        del policy["model_criteria"]
+    if not policy["compact_context"]:
+        del policy["compact_context"]
     for operation in policy["operations"].values():
         if not operation["observation_only"]:
             del operation["observation_only"]
+        if operation["wait_for"] is None:
+            del operation["wait_for"]
     body = json.dumps(policy, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()
 

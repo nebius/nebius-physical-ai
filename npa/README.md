@@ -460,6 +460,12 @@ endpoints, optional Jev routing, scoped workspaces, durable restart, task contro
 and the required `NPA_SPECIALISTS_TOKEN` service credential. `NEBIUS_TOKEN_FACTORY_KEY`
 supplies hosted inference; `TYPESAFE_API_KEY` is needed only for optional Jev.
 Configuration contains credential environment names, never credential values.
+Profile `model_router: "jev"` chooses among that profile's declared model endpoints
+without changing its workspace or tool grants. Optional `compact_context: true`
+omits superseded observations from inference requests while preserving full
+receipts. Observation operations can declare `wait_for` JSON states so workers
+poll without routine model calls; `SpecialistTeam.wait_for_attention` lets a
+coordinator wait outside its model turn and consume compact evidence reports.
 
 ## Workbench Studio
 

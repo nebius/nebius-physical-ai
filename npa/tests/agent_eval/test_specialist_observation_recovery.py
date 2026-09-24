@@ -95,9 +95,18 @@ def _trigger(team, sql):
 def test_default_policy_hash_remains_compatible_and_flag_is_strict(team):
     profile = team.config.profiles[0]
     profile.operations["status"].observation_only = False
-    legacy = profile.model_dump(mode="json", exclude={"fallback_models"})
+    legacy = profile.model_dump(
+        mode="json",
+        exclude={
+            "fallback_models",
+            "model_router",
+            "model_criteria",
+            "compact_context",
+        },
+    )
     for operation in legacy["operations"].values():
         operation.pop("observation_only")
+        operation.pop("wait_for")
     expected = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()
     assert fingerprint(profile) == expected
     profile.operations["status"].observation_only = True

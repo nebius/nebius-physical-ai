@@ -121,6 +121,31 @@ write grants also permit reading and listing those files. Listings exclude
 symlinks, hard links, `.git` entries and nonexistent files. Listing an ancestor
 does not grant permission to read or edit any additional path.
 
+Set a profile's optional `compact_context` to `true` to avoid repeatedly sending
+superseded observations to its model. The default is `false`. A successful edit
+makes earlier source reads stale; a later read can replace an earlier covered
+range. Current disjoint ranges remain available. Repeated successful operations
+declared `observation_only` keep their latest output. Effectful command receipts
+and every failure stay visible. Omitted text
+is replaced with hashes and byte counts in the request only. The complete
+conversation, receipts and tool-call identities remain in durable storage.
+This reduces transmitted input; provider cache hits alone do not establish a
+billing discount.
+
+For an external coordinator, `team.wait_for_attention(task_ids)` waits in Python
+without inference until a task completes, needs attention, is cancelled or is
+paused. `team.task_report(task_id)` provides a compact handoff with source hashes,
+required-operation receipts, failures and unresolved effects. Keep the coordinator
+outside its model loop while waiting. The [workflow comparison runner](../../npa/examples/specialists/workflows/README.md)
+demonstrates complete-task delegation followed by fresh Astra review turns;
+it records and prices planning, workers and recovery separately.
+For repairs performed by a coordinator after takeover,
+`reports.task_report_for_store(config, coordinator_store, task_id)` uses the same
+evidence checks against that coordinator's own journal. Its `status_completed`
+field describes task storage state; only successful required receipts after the
+latest edit can establish that the configured checks passed. The original worker
+outcome remains separate.
+
 An operation contains fixed `argv`, a description and optional `pass_env` names.
 The model chooses its name; it cannot supply command arguments or shell text.
 `{python}`, `{workspace}`, `{task_id}` and `{run_id}` are the only substitutions.
@@ -138,6 +163,44 @@ paths. Local diagnostic output and audit logs are allowed; this declaration is
 operator trust, not automatic analysis or an OS sandbox. Models cannot supply
 or change this flag. Default configurations retain their existing policy hashes;
 opting in changes the policy and applies only to newly created calls/tasks.
+
+An observation can also define `wait_for` to keep routine polling inside the
+worker instead of asking the model to call status repeatedly:
+
+```json
+{
+  "argv": ["{python}", "/opt/operator/observe_run.py", "{run_id}"],
+  "description": "Observe this task's existing run until it finishes",
+  "observation_only": true,
+  "wait_for": {
+    "field": "/workflow/status",
+    "pending_values": ["QUEUED", "RUNNING"],
+    "success_values": ["SUCCEEDED"],
+    "failure_values": ["FAILED", "CANCELLED"],
+    "poll_interval": 5
+  }
+}
+```
+
+`field` is a JSON Pointer into the command's stdout. Configure exact, disjoint
+string states; there are no implicit status aliases. The command must exit zero
+and emit valid JSON. The specialist receives only an actionable terminal result;
+pending observations remain in its private journal without growing model input.
+Unknown states, malformed output and command failures return to the specialist
+for diagnosis. Each poll has its own durable receipt and checkpoint. Pause,
+cancel and worker shutdown take effect between polls; an interrupted observation
+still needs reconciliation. `poll_interval` defaults to five seconds and sets
+polling frequency, never a workload deadline. Only declared observations may
+use `wait_for`. A direct `WorkbenchTools.execute` call performs one observation;
+checkpointed repetition belongs to the specialist worker.
+
+`wait_for_attention` returns `tasks` keyed by task ID and `attention_task_ids`.
+Remove reviewed terminal tasks before waiting again. Optional `poll_interval`
+controls local journal reads; a `threading.Event` passed as `stop_event` stops
+only the caller's wait. Compact reports distinguish a model final answer from
+successful required commands and list omitted failure counts. Source hashes
+cover recorded edits, not an arbitrary complete repository snapshot. Workload
+and artifact acceptance still comes from the configured verifier receipts.
 
 The example authorizes validation and planning. To authorize execution, add
 fixed Workbench `health preflight`, `workflow submit`, `workflow status` and
@@ -234,12 +297,39 @@ operator-controlled. Provider context limits still apply and surface as failures
 
 ## Optional Jev
 
+To choose a model while preserving an explicitly delegated workspace, set that
+profile's `model_router` to `"jev"` and provide `model_criteria` for its primary
+model and every `fallback_models` model ID:
+
+```json
+{
+  "model_router": "jev",
+  "model_criteria": {
+    "your-primary-model": "Localized code changes with clear requirements",
+    "your-backup-model": "Complex diagnosis and multi-step repairs"
+  }
+}
+```
+
+Use the actual configured endpoint model IDs as keys. Jev reorders only those
+endpoints; the workspace, file grants and operations do not change. Generation
+fallback retains all originally authorized endpoints in the new order. The
+default `model_router` is `"explicit"`. A task records the routing intent before
+HTTP, then the provider decision, actual token usage and effective model under
+`route.model_selection`. An interrupted request remains an unknown paid attempt
+and requires attention without an automatic retry. Missing credentials record
+an explicit no-call fallback; abstention and provider failures retain their
+actual attempt and usage evidence. None proves that live Jev inference succeeded.
+
+The older team-level option selects a profile for unassigned tasks:
+
 Set `router` to `jev` and provide `TYPESAFE_API_KEY` through the private credential
 store or environment. Workbench reuses its existing Jev HTTP classifier with
 profile descriptions as criteria. It sends only redacted task text, not source
 files, system messages or tool transcripts. Only use this option for task text
 permitted for that provider; pattern redaction cannot classify arbitrary
-proprietary prose. Explicit assignments bypass Jev. Missing credentials,
+proprietary prose. Explicit assignments bypass this profile selection, while
+opt-in `model_router` still selects within their fixed profile. Missing credentials,
 abstention and provider failure select `default_profile` without changing its
 permissions. The routing receipt records the choice and fallback.
 

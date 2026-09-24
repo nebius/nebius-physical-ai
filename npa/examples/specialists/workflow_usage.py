@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import math
@@ -63,6 +64,26 @@ def _records(usage, coordinator_model):
                 model,
                 "specialist-response",
                 response.get("accepted"),
+                _tokens(response.get("usage")),
+            )
+        )
+    return records + _router_records(usage)
+
+
+def _router_records(usage):
+    records = []
+    for response in usage.get("router", {}).get("responses", []):
+        attempted = response.get("api_call_attempted", "unknown")
+        if attempted is False:
+            continue
+        model = response.get("model") or "<unreported-router-model>"
+        if not isinstance(model, str):
+            raise ValueError("model identifiers must be strings")
+        records.append(
+            (
+                model,
+                "router-request",
+                None if attempted is True else "unknown",
                 _tokens(response.get("usage")),
             )
         )
@@ -167,10 +188,13 @@ def _cost_totals(records, prices):
 
 def _model_summary(records, price):
     kinds = sorted({record[1] for record in records})
+    unknown_calls = "coordinator-turn" in kinds or any(
+        record[1] == "router-request" and record[2] == "unknown" for record in records
+    )
     return {
         "usage_records": len(records),
         "record_granularity": kinds,
-        "recorded_api_calls": None if "coordinator-turn" in kinds else len(records),
+        "recorded_api_calls": None if unknown_calls else len(records),
         "accepted_specialist_responses": sum(record[2] is True for record in records),
         "rejected_specialist_responses": sum(record[2] is False for record in records),
         "cache_policy": price.get("cache_policy") if price else None,
@@ -182,9 +206,18 @@ def _model_summary(records, price):
 
 def _completeness(usage, execution, records):
     reasons = []
-    for name in ("astra", "specialists"):
+    sections = (
+        ("astra", "specialists", "router")
+        if "router" in usage
+        else ("astra", "specialists")
+    )
+    for name in sections:
         if usage.get(name, {}).get("usage_complete") is not True:
             reasons.append(name + "_usage_incomplete")
+    if any(
+        record[1] == "router-request" and record[2] == "unknown" for record in records
+    ):
+        reasons.append("router_call_outcome_unknown")
     if usage.get("usage_complete") is not True:
         reasons.append("recorder_usage_incomplete")
     if not any(record[1] == "coordinator-turn" for record in records):
@@ -200,6 +233,42 @@ def _completeness(usage, execution, records):
     if execution.get("error_type") or execution.get("exit_code") is None:
         reasons.append("execution_interrupted")
     return reasons
+
+
+def _routing_summary(usage):
+    responses = usage["router"].get("responses", [])
+    observed = [
+        response for response in responses if response.get("api_call_attempted") is True
+    ]
+    jev = [
+        response
+        for response in observed
+        if response.get("provider") == "typesafe"
+        and str(response.get("model", "")).startswith("jev-")
+    ]
+    statuses = Counter(response.get("status") for response in observed)
+    jev_statuses = Counter(response.get("status") for response in jev)
+    return {
+        "decision_records": len(responses),
+        "api_calls_attempted": len(observed),
+        "api_calls_not_attempted": sum(
+            response.get("api_call_attempted") is False for response in responses
+        ),
+        "unknown_api_call_attempts": sum(
+            type(response.get("api_call_attempted")) is not bool
+            for response in responses
+        ),
+        "accepted_routes": statuses["accepted"],
+        "abstained_routes": statuses["abstained"],
+        "unavailable_routes": sum(
+            response.get("status") == "unavailable" for response in responses
+        ),
+        "fallback_decisions": sum(
+            response.get("fallback") is True for response in responses
+        ),
+        "jev_responses_received": jev_statuses["accepted"] + jev_statuses["abstained"],
+        "accepted_jev_routes": jev_statuses["accepted"],
+    }
 
 
 def _report(usage, execution, records, prices):
@@ -256,6 +325,8 @@ def summarize_usage(usage, execution, prices, *, coordinator_model="gpt-6-astra"
     models = _validate_prices(prices)
     records = _records(usage, coordinator_model)
     report = _report(usage, execution, records, models)
+    if "router" in usage:
+        report["router"] = _routing_summary(usage)
     serialized_prices = json.dumps(prices, sort_keys=True, allow_nan=False).encode()
     report["price_table_sha256"] = hashlib.sha256(serialized_prices).hexdigest()
     return report

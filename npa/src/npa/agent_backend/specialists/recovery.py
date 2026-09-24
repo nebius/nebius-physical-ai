@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from .routing import _endpoints
+
 
 class _RejectedGeneration(ValueError):
     """An unusable generation that is safe to hand to an authorized backup."""
@@ -43,7 +45,7 @@ def _handoff(state, profile, tools, error):
     index = state.get("model_index", 0)
     if index >= len(profile.fallback_models):
         raise error
-    endpoints = [profile, *profile.fallback_models]
+    endpoints = _endpoints(profile, state)
     tools.store._event(
         tools.task_id,
         {

@@ -517,19 +517,27 @@ def _register_observation_recovery(server, bridge):
         )
 
 
-def _server(config_path, directory, hybrid=False):
+def _server(config_path, directory, hybrid=False, phase="work"):
     from mcp.server.mcpserver import MCPServer
 
     bridge = _Bridge(config_path, directory, hybrid)
     server = MCPServer("workbench-workflow-experiment")
+    if phase not in {"work", "delegate", "review"}:
+        raise ValueError("unknown coordinator phase")
+    if phase == "delegate":
+        if not hybrid:
+            raise ValueError("delegation requires the hybrid arm")
+        _register_delegation(server, bridge)
+        return server
     _register_reads(server, bridge)
     _register_edits(server, bridge)
     _register_operations(server, bridge)
     if hybrid:
         _register_delegation(server, bridge)
         _register_status(server, bridge)
-        _register_wait(server, bridge)
-        _register_team_wait(server, bridge)
+        if phase == "work":
+            _register_wait(server, bridge)
+            _register_team_wait(server, bridge)
         _register_takeover(server, bridge)
         if any(
             operation.observation_only
@@ -542,6 +550,9 @@ def _server(config_path, directory, hybrid=False):
 
 if __name__ == "__main__":
     os.umask(0o077)
-    _server(sys.argv[1], sys.argv[2], sys.argv[3] == "astra-tofa").run(
-        transport="stdio"
-    )
+    _server(
+        sys.argv[1],
+        sys.argv[2],
+        sys.argv[3] == "astra-tofa",
+        sys.argv[4] if len(sys.argv) > 4 else "work",
+    ).run(transport="stdio")

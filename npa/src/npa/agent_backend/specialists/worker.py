@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 from .config import load_config
 from .store import _private_file
@@ -37,6 +38,8 @@ def run_worker(config_path: str, specialist: str):
             task = None
         if task is None or task["status"] in {"completed", "needs_attention"}:
             stopped.wait(1)
+        elif task.get("next_observation_at", 0) > time.time():
+            stopped.wait(min(1, task["next_observation_at"] - time.time()))
 
 
 @contextmanager

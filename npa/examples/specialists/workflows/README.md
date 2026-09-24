@@ -4,8 +4,11 @@ This opt-in runner compares **Astra alone** with **the same Astra coordinator
 delegating to configured Token Factory specialists**. Both arms receive the same
 scoped file tools, named operations and concurrent `run_operations` tool. The
 hybrid adds durable `delegate`, `specialist_status`, `wait_specialist`, `wait_specialists` and
-`take_over` tools; its GLM/DeepSeek workers use the existing LangGraph runtime. Jev is optional in
-Workbench and is not used by this explicitly assigned experiment.
+`take_over` tools; its GLM/DeepSeek workers use the existing LangGraph runtime.
+Optional per-profile Jev routing chooses an endpoint within the assigned
+workspace's existing grants. Selecting a workspace explicitly does not bypass
+that endpoint policy. A live Jev result requires an accepted provider receipt;
+missing credentials or fallback are reported separately.
 
 Install the `agent-specialists` extra and the optional MCP dependency described
 in [the simulation example](../simulation/README.md). The runner uses an
@@ -28,6 +31,24 @@ differ.
 Both coordinators and specialists can read large files in inclusive, 1-based
 line ranges with `read_file(..., start_line=100, end_line=160)`. The returned hash
 always covers the full file, including unread lines, for subsequent guarded edits.
+
+The default `--coordination completion` separates hybrid planning from review.
+Astra delegates complete tasks and exits its planning turn. Python then waits
+for all workers to finish or one to need attention without a running Astra
+process or model calls. Intermediate successful completions accumulate without
+another coordinator call. A fresh Astra turn receives the common requirements, workspace
+policies and compact host-generated task reports. It reviews verification
+receipts or recovers a failed worker; unrelated active workers continue. Full
+worker traces stay in the private journal. A model's completion message alone
+does not establish artifact acceptance.
+
+Use `--coordination continuous` to reproduce the original single-conversation
+supervisor. The baseline performs the same task through its direct tools in
+either mode. Give both arms the same playbook, source, operation grants and
+acceptance criteria. The completion mode changes orchestration, not permission
+or the independent grader. `coordination.json` records the host waits, and
+`coordinator-config.json` retains every fresh turn's invocation. All turns enter
+the cost calculation, including unsuccessful planning and recovery.
 
 The runner takes the same common prompt file for both arms:
 
@@ -55,7 +76,7 @@ Workbench's submit reconciliation, durable status and artifact verification.
 Never pass arbitrary model-supplied shell commands. Forward needed environment
 names explicitly with `pass_env`; secrets must not appear in argv or task files.
 
-Operations should return observations within the MCP transport deadline
+Direct operations should return observations within the MCP transport deadline
 (120 seconds). A long-running workflow submission needs a durable asynchronous
 adapter, and a `wait` operation should return new stage evidence within a short
 observation interval. This transport deadline does not cancel or constrain

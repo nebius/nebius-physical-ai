@@ -139,6 +139,27 @@ class TaskStore:
                 (profile, os.getpid(), time.time()),
             )
 
+    def _model_route(self, task_id, selection):
+        with self._connection("model_routing") as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT route FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("unknown task")
+            route = {**json.loads(row[0]), "model_selection": selection}
+            connection.execute(
+                "UPDATE tasks SET route=? WHERE id=?", (json.dumps(route), task_id)
+            )
+            connection.execute(
+                "INSERT INTO events(task_id,at,body) VALUES(?,?,?)",
+                (
+                    task_id,
+                    time.time(),
+                    json.dumps({"type": "model_routing", **selection}),
+                ),
+            )
+
     def _workers(self):
         with self._connection() as connection:
             rows = connection.execute("SELECT * FROM workers").fetchall()

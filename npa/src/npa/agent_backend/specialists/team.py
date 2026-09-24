@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 import uuid
 
 from npa.agent_backend.model_router import classify_generation_model
@@ -17,6 +18,8 @@ from npa.clients.credentials import load_credentials
 from .config import TeamConfig, fingerprint
 from .graph import build_graph, initial_state
 from .observations import _dismiss
+from .routing import _model_order, _route_model
+from .reports import _task_report, _wait_for_attention
 from .store import TaskStore, UncertainOperation, _private_file
 from .storage_errors import StorageFailure
 from .tools import WorkbenchTools
@@ -117,6 +120,25 @@ class SpecialistTeam:
         self.store._pause_profile(specialist, paused)
         return {"specialist": specialist, "paused": paused}
 
+    def task_report(self, task_id: str):
+        """Summarize completion evidence without source content or full tool transcripts.
+
+        Args: task_id: Existing specialist task.
+        Returns: Compact model status, source hashes, check receipts and uncertainties.
+        Raises: KeyError, OSError: The task or its retained evidence is unavailable.
+        """
+        return _task_report(self, task_id)
+
+    def wait_for_attention(self, task_ids, *, poll_interval=1, stop_event=None):
+        """Wait outside any model turn until a task ends, pauses or needs attention.
+
+        Args: task_ids: Distinct task identities. poll_interval: Local polling seconds.
+            stop_event: Optional threading.Event to interrupt this caller's wait only.
+        Returns: Tasks keyed by ID, attention_task_ids, and an interrupted flag.
+        Raises: ValueError, KeyError, OSError: Inputs or durable task storage are invalid.
+        """
+        return _wait_for_attention(self, task_ids, poll_interval, stop_event)
+
     def reconcile(
         self,
         task_id: str,
@@ -200,18 +222,14 @@ class SpecialistTeam:
         if self.store._get(task["id"])["status"] == "cancelled":
             return self.store._get(task["id"])
         try:
-            with self._graph(profile, task["id"]) as graph:
-                options = {"configurable": {"thread_id": task["id"]}}
-                snapshot = graph.get_state(options)
-                if snapshot.values and not snapshot.next:
-                    return self._complete(task["id"], snapshot.values)
-                state = (
-                    None if snapshot.values else initial_state(profile, task["goal"])
-                )
-                graph.invoke(state, options, durability="sync")
-                snapshot = graph.get_state(options)
-                if not snapshot.next:
-                    return self._complete(task["id"], snapshot.values)
+            task = _route_model(profile, task, self.store)
+            task = self.store._get(task["id"])
+            if (
+                task["status"] != "cancelled"
+                and not task["paused"]
+                and profile.name not in self.store._paused_profiles()
+            ):
+                return self._advance_graph(profile, task)
         except (
             RuntimeError,
             ValueError,
@@ -221,6 +239,30 @@ class SpecialistTeam:
             IndexError,
         ) as error:
             self._attention(task["id"], error)
+        return self.store._get(task["id"])
+
+    def _advance_graph(self, profile, task):
+        with self._graph(profile, task["id"]) as graph:
+            options = {"configurable": {"thread_id": task["id"]}}
+            snapshot = graph.get_state(options)
+            if snapshot.values and not snapshot.next:
+                return self._complete(task["id"], snapshot.values)
+            if snapshot.values.get("poll_after", 0) > time.time():
+                return {
+                    **self.store._get(task["id"]),
+                    "next_observation_at": snapshot.values["poll_after"],
+                }
+            state = (
+                None
+                if snapshot.values
+                else initial_state(
+                    profile, task["goal"], model_order=_model_order(profile, task)
+                )
+            )
+            graph.invoke(state, options, durability="sync")
+            snapshot = graph.get_state(options)
+            if not snapshot.next:
+                return self._complete(task["id"], snapshot.values)
         return self.store._get(task["id"])
 
     def _attention(self, task_id, error):
