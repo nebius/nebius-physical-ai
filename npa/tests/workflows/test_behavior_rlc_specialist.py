@@ -10,6 +10,7 @@ import pytest
 
 from npa.workflows.behavior_challenge import __main__ as behavior_main
 from npa.workflows.behavior_challenge import rlc_policy, rlc_specialist
+from npa.workflows.behavior_challenge.evaluator_versions import UPSTREAM_COMMIT
 
 
 def _sha256(path: Path) -> str:
@@ -228,7 +229,10 @@ def test_specialist_command_enables_post_load_contract(tmp_path):
 def test_specialist_provenance_is_memory_unqualified_and_unranked(tmp_path):
     output = tmp_path / "evidence"
     output.mkdir()
-    plan = {"recipe": {"policy_checkpoint_sha256": "a" * 64}}
+    plan = {
+        "upstream_commit": UPSTREAM_COMMIT,
+        "recipe": {"policy_checkpoint_sha256": "a" * 64},
+    }
     args = SimpleNamespace(
         policy_python=Path("/runtime/python"),
         policy_root=Path("/source"),
@@ -246,6 +250,8 @@ def test_specialist_provenance_is_memory_unqualified_and_unranked(tmp_path):
         "1",
         "--port",
         "8000",
+        "--upstream-commit",
+        UPSTREAM_COMMIT,
         "--specialist-state-contract",
         "--execution-variant",
         "native",
