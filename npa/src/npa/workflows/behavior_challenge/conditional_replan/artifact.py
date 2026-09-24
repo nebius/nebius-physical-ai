@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from .contract import validate_semantic_config
 from .extraction import FEATURE_DIMENSION
 
 ARTIFACT_SCHEMA = "npa.behavior.parent-diagnostic-conditional-gate-artifact.v1"
@@ -86,14 +87,25 @@ class GateArtifact:
             raise ValueError("conditional gate scaler is not positive")
         if self.metadata.get("schema") != ARTIFACT_SCHEMA:
             raise ValueError("conditional gate metadata schema differs")
-        if set(self.metadata.get("selection", {})) != {"linear_control", "mlp"}:
-            raise ValueError("conditional gate selection metadata differs")
+        _validate_selection(self.metadata.get("selection"))
         if self.metadata.get("development_or_report_used") is not False:
             raise ValueError("conditional gate data scope differs")
-        for name in ("feature_config", "target_config", "model_config", "gate_config"):
-            if not isinstance(self.metadata.get(name), dict):
-                raise ValueError(f"conditional gate metadata differs: {name}")
+        validate_semantic_config(
+            self.metadata.get("feature_config"),
+            self.metadata.get("target_config"),
+            self.metadata.get("model_config"),
+            self.metadata.get("gate_config"),
+        )
         return self
+
+
+def _validate_selection(selection: Any) -> None:
+    if not isinstance(selection, dict) or set(selection) != {"linear_control", "mlp"}:
+        raise ValueError("conditional gate selection metadata differs")
+    if any(
+        type(epoch) is not int or not 1 <= epoch <= 200 for epoch in selection.values()
+    ):
+        raise ValueError("conditional gate selected epoch differs")
 
 
 def write_artifact(path: Path, artifact: GateArtifact) -> None:

@@ -116,6 +116,10 @@ def _require_membership(data: FitData) -> None:
         counts = np.unique(observed, return_counts=True)[1]
         if not np.array_equal(counts, np.full(episodes, 12)):
             raise ValueError("fit rows per episode differ")
+    fit = set(data.episodes[data.partitions == "fit"].tolist())
+    validation = set(data.episodes[data.partitions == "validation"].tolist())
+    if fit & validation or len(fit | validation) != 180:
+        raise ValueError("fit membership episodes must be globally unique")
 
 
 def scaled_rows(
@@ -154,6 +158,11 @@ def export_result(result: FitResult, metadata: dict[str, Any]) -> GateArtifact:
     """
     if metadata.get("schema") != ARTIFACT_SCHEMA:
         raise ValueError("artifact metadata schema differs")
+    expected_selection = {
+        name: row.get("selected_epoch") for name, row in result.selection.items()
+    }
+    if metadata.get("selection") != expected_selection:
+        raise ValueError("artifact selection differs from fitted result")
     arrays = {
         name: np.ascontiguousarray(value) for name, value in result.scalers.items()
     }

@@ -9,6 +9,9 @@ from npa.workflows.behavior_challenge.conditional_replan.artifact import (
     GateArtifact,
     expected_arrays,
 )
+from npa.workflows.behavior_challenge.conditional_replan.contract import (
+    fixed_semantic_config,
+)
 from npa.workflows.behavior_challenge.conditional_replan.fit_data import FitData
 
 
@@ -21,14 +24,15 @@ def artifact() -> GateArtifact:
     }
     arrays["input_std"].fill(1)
     arrays["target_std"].fill(1)
+    semantics = fixed_semantic_config()
     metadata = {
         "schema": ARTIFACT_SCHEMA,
         "selection": {"linear_control": 1, "mlp": 1},
         "development_or_report_used": False,
-        "feature_config": {},
-        "target_config": {},
-        "model_config": {},
-        "gate_config": {},
+        "feature_config": semantics["features"],
+        "target_config": semantics["target"],
+        "model_config": semantics["models"],
+        "gate_config": semantics["gate"],
     }
     return GateArtifact(arrays, metadata).validated()
 

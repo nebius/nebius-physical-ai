@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,84 @@ STATUS = "preregistered_before_parent_proposal_extraction"
 SPLIT_DOMAIN = "task1-gate-v1:"
 NOISE_DOMAIN = "task1-gate-v1-noise"
 
+FIXED_SEMANTIC_CONFIG = {
+    "features": {
+        "constant_features": "zero_after_centering",
+        "dimension": 1233,
+        "dtype": "float32",
+        "input_scaling": (
+            "fit_only_population_mean_std_per_feature_float64_then_float32"
+        ),
+        "mask_source": "verified_start_valid_suffix16_and_expert_valid_first16",
+        "minimum_std": 1e-6,
+        "serialization_order": [
+            "continue_normalized_first16x23_C_order",
+            "fresh_normalized_first16x23_C_order",
+            "fresh_minus_continue_first16x23_C_order",
+            "continue_valid_mask16_float32",
+            "fresh_valid_mask16_float32",
+            "start_transformed_state32",
+            "fresh_transformed_state32",
+            "fresh_minus_start_transformed_state32",
+            "check_offset_divided_by_native_horizon_scalar",
+        ],
+    },
+    "target": {
+        "definition": "continue_error_minus_fresh_error",
+        "minimum_std": 1e-6,
+        "prediction_decoding": "scaled_prediction_times_fit_std_plus_fit_mean",
+        "scaling": "fit_only_population_mean_std_float64_then_float32",
+    },
+    "models": {
+        "initialization": "torch_2.7.1_nn_Linear_defaults",
+        "initialization_seed": 1033,
+        "linear_control": {"widths": [1233, 1]},
+        "mlp": {
+            "activation": "GELU_exact_erf",
+            "dropout": 0.0,
+            "widths": [1233, 256, 64, 1],
+        },
+        "parameter_dtype": "float32",
+    },
+    "gate": {
+        "check_offset": 16,
+        "evaluation": "canonical_exported_numpy_inference",
+        "export_test_max_abs_scaled_output_error": 1e-5,
+        "export_test_rms_scaled_output_error": 1e-6,
+        "numpy_gelu": "0.5*x*(1+erf(x/sqrt(2)))",
+        "refresh_when": "finite_decoded_prediction_strictly_greater_than_zero",
+        "threshold_decoded_delta": 0.0,
+    },
+}
+
+FIXED_OPTIMIZATION = {
+    "amsgrad": False,
+    "backend": "locked217_torch2.7.1_cpu",
+    "batch_size": 64,
+    "betas": [0.9, 0.999],
+    "cpu_threads": 1,
+    "deterministic_algorithms": True,
+    "drop_last": False,
+    "early_stop_patience_epochs": 20,
+    "epoch_shuffle_seed": 1729,
+    "epsilon": 1e-8,
+    "foreach": False,
+    "fused": False,
+    "gradient_clip_global_l2": 1.0,
+    "huber_delta": 1.0,
+    "learning_rate": 0.001,
+    "learning_rate_schedule": "constant",
+    "loss": "Huber_scaled_target",
+    "maximum_epochs": 200,
+    "minimum_epochs": 1,
+    "optimizer": "AdamW",
+    "reduction": "mean",
+    "refit_after_selection": False,
+    "selection": "earliest_strictly_lowest_validation_mean_huber",
+    "weight_decay": 0.001,
+}
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+
 
 @dataclass(frozen=True)
 class ReplanContract:
@@ -21,6 +100,8 @@ class ReplanContract:
 
     Args:
         value: Validated versioned contract mapping.
+        expected_split_sha256: Independently verified split-file identity.
+        expected_nested_canonical_sha256: Verified nested membership identity.
     Returns:
         None.
     Raises:
@@ -28,22 +109,42 @@ class ReplanContract:
     """
 
     value: dict[str, Any]
+    expected_split_sha256: str
+    expected_nested_canonical_sha256: str
 
     @classmethod
-    def from_mapping(cls, value: dict[str, Any]) -> ReplanContract:
+    def from_mapping(
+        cls,
+        value: dict[str, Any],
+        *,
+        expected_split_sha256: str,
+        expected_nested_canonical_sha256: str,
+    ) -> ReplanContract:
         """Validate the fixed scientific contract.
 
         Args:
             value: Candidate contract mapping.
+            expected_split_sha256: Independently verified split-file digest.
+            expected_nested_canonical_sha256: Verified nested-membership digest.
         Returns:
             Validated immutable contract wrapper.
         Raises:
             ValueError: If required scientific values differ.
         """
-        if _contract_summary(value) != _expected_summary():
-            raise ValueError("conditional replanning contract differs")
-        _validate_fixed_recipe(value)
-        return cls(json.loads(json.dumps(value)))
+        _validate_contract_summary(value)
+        validate_semantic_config(
+            value.get("features"),
+            value.get("target"),
+            value.get("models"),
+            value.get("gate"),
+        )
+        _validate_optimization(value.get("optimization", {}))
+        digests = _validate_membership(
+            value.get("membership", {}),
+            expected_split_sha256,
+            expected_nested_canonical_sha256,
+        )
+        return cls(json.loads(json.dumps(value)), *digests)
 
     @property
     def horizon(self) -> int:
@@ -71,7 +172,11 @@ class ReplanContract:
         if len(episodes) != 180 or len(set(episodes)) != 180:
             raise ValueError("TRAIN membership must contain 180 unique episodes")
         ranked = sorted(episodes, key=_episode_rank)
-        return {"validation": tuple(ranked[:20]), "fit": tuple(ranked[20:])}
+        result = {"validation": tuple(ranked[:20]), "fit": tuple(ranked[20:])}
+        encoded = {name: list(rows) for name, rows in result.items()}
+        if canonical_sha256(encoded) != self.expected_nested_canonical_sha256:
+            raise ValueError("nested TRAIN membership identity differs")
+        return result
 
     def selected_starts(self, episode_length: int) -> tuple[int, ...]:
         """Select first, middle, and last nonoverlapping chunk starts.
@@ -126,6 +231,44 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def fixed_semantic_config() -> dict[str, dict[str, Any]]:
+    """Return an independent copy of the qualified mathematical configuration.
+
+    Args:
+        None.
+    Returns:
+        Exact feature, target, model, and gate configuration.
+    Raises:
+        None.
+    """
+    return json.loads(json.dumps(FIXED_SEMANTIC_CONFIG))
+
+
+def validate_semantic_config(
+    features: Any, target: Any, models: Any, gate: Any
+) -> None:
+    """Require the exact qualified mathematical configuration.
+
+    Args:
+        features: Candidate feature serialization and scaling configuration.
+        target: Candidate prediction target and decoding configuration.
+        models: Candidate linear and MLP architecture configuration.
+        gate: Candidate refresh rule and numerical parity configuration.
+    Returns:
+        None.
+    Raises:
+        ValueError: If any mathematical configuration differs.
+    """
+    observed = {
+        "features": features,
+        "target": target,
+        "models": models,
+        "gate": gate,
+    }
+    if not _same_json(observed, FIXED_SEMANTIC_CONFIG):
+        raise ValueError("conditional replanning semantic configuration differs")
+
+
 def _episode_rank(episode: int) -> tuple[str, int]:
     raw = f"{SPLIT_DOMAIN}{episode}".encode()
     return hashlib.sha256(raw).hexdigest(), episode
@@ -159,33 +302,45 @@ def _contract_summary(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_fixed_recipe(value: dict[str, Any]) -> None:
-    features = value.get("features", {})
-    models = value.get("models", {})
-    optimization = value.get("optimization", {})
-    gate = value.get("gate", {})
-    checks = [
-        features.get("dtype") == "float32",
-        features.get("minimum_std") == 1e-6,
-        models.get("initialization_seed") == 1033,
-        models.get("parameter_dtype") == "float32",
-        models.get("linear_control", {}).get("widths") == [1233, 1],
-        models.get("mlp", {}).get("widths") == [1233, 256, 64, 1],
-        models.get("mlp", {}).get("activation") == "GELU_exact_erf",
-        models.get("mlp", {}).get("dropout") == 0.0,
-        optimization.get("optimizer") == "AdamW",
-        optimization.get("learning_rate") == 0.001,
-        optimization.get("betas") == [0.9, 0.999],
-        optimization.get("epsilon") == 1e-8,
-        optimization.get("weight_decay") == 0.001,
-        optimization.get("batch_size") == 64,
-        optimization.get("epoch_shuffle_seed") == 1729,
-        optimization.get("maximum_epochs") == 200,
-        optimization.get("early_stop_patience_epochs") == 20,
-        optimization.get("gradient_clip_global_l2") == 1.0,
-        optimization.get("huber_delta") == 1.0,
-        gate.get("threshold_decoded_delta") == 0.0,
-        gate.get("numpy_gelu") == "0.5*x*(1+erf(x/sqrt(2)))",
-    ]
-    if not all(checks):
-        raise ValueError("conditional replanning recipe differs")
+def _validate_contract_summary(value: dict[str, Any]) -> None:
+    if _contract_summary(value) != _expected_summary():
+        raise ValueError("conditional replanning contract differs")
+
+
+def _validate_optimization(optimization: dict[str, Any]) -> None:
+    if not _same_json(optimization, FIXED_OPTIMIZATION):
+        raise ValueError("conditional replanning optimization differs")
+
+
+def _validate_membership(
+    membership: Any, split_sha256: str, nested_sha256: str
+) -> tuple[str, str]:
+    split = _validated_sha256(split_sha256, "split")
+    nested = _validated_sha256(nested_sha256, "nested membership")
+    expected = {
+        "development_report_or_campaign_holdout_fit": False,
+        "episodes": 180,
+        "fit_episodes": 160,
+        "nested_canonical_sha256": nested,
+        "row_weighting": "uniform_equal_to_episode_weighting",
+        "rows_per_episode": 12,
+        "split_sha256": split,
+        "validation_episodes": 20,
+    }
+    if not _same_json(membership, expected):
+        raise ValueError("conditional replanning membership differs")
+    return split, nested
+
+
+def _validated_sha256(value: Any, name: str) -> str:
+    if not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{name} SHA-256 identity differs")
+    return value
+
+
+def _same_json(observed: Any, expected: Any) -> bool:
+    encoding = {"sort_keys": True, "separators": (",", ":"), "allow_nan": False}
+    try:
+        return json.dumps(observed, **encoding) == json.dumps(expected, **encoding)
+    except (TypeError, ValueError):
+        return False
