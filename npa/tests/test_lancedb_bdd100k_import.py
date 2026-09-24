@@ -130,6 +130,90 @@ def test_bdd100k_accepts_both_label_filename_conventions(tmp_path: Path) -> None
     assert result.rows_per_split == {"train": 1, "val": 1}
 
 
+@pytest.mark.parametrize("occluded", [True, False])
+def test_bdd100k_accepts_boolean_occlusion_values(
+    tmp_path: Path, occluded: bool
+) -> None:
+    _write_occlusion_fixture(
+        tmp_path,
+        [[{"attributes": {"occluded": occluded}}]],
+    )
+
+    rows = _imported_fixture_rows(tmp_path, table="bdd_boolean_occlusion")
+
+    assert rows[0]["ann_occluded"] == [occluded]
+
+
+def test_bdd100k_missing_occlusion_defaults_to_false(tmp_path: Path) -> None:
+    _write_occlusion_fixture(tmp_path, [[{}]])
+
+    rows = _imported_fixture_rows(tmp_path, table="bdd_missing_occlusion")
+
+    assert rows[0]["ann_occluded"] == [False]
+
+
+@pytest.mark.parametrize("occluded", [True, False])
+def test_bdd100k_accepts_top_level_occlusion_fallback(
+    tmp_path: Path, occluded: bool
+) -> None:
+    _write_occlusion_fixture(tmp_path, [[{"occluded": occluded}]])
+
+    rows = _imported_fixture_rows(tmp_path, table="bdd_top_level_occlusion")
+
+    assert rows[0]["ann_occluded"] == [occluded]
+
+
+@pytest.mark.parametrize(
+    ("nested", "top_level"),
+    [(False, True), (True, False)],
+)
+def test_bdd100k_nested_occlusion_precedes_top_level_fallback(
+    tmp_path: Path, nested: bool, top_level: bool
+) -> None:
+    annotation = {
+        "attributes": {"occluded": nested},
+        "occluded": top_level,
+    }
+    _write_occlusion_fixture(tmp_path, [[annotation]])
+
+    rows = _imported_fixture_rows(tmp_path, table="bdd_nested_occlusion")
+
+    assert rows[0]["ann_occluded"] == [nested]
+
+
+@pytest.mark.parametrize("malformed", ["false", 1, [], {}])
+def test_bdd100k_rejects_malformed_occlusion_before_writing_rows(
+    tmp_path: Path, malformed: object
+) -> None:
+    _write_occlusion_fixture(
+        tmp_path,
+        [
+            [{"attributes": {"occluded": False}}],
+            [{"attributes": {"occluded": malformed}}],
+        ],
+    )
+    database_path = tmp_path / "db"
+
+    with pytest.raises(
+        BDD100KValidationError,
+        match=r"annotation 0 for image 'train-001.jpg'.*expected a boolean",
+    ):
+        import_bdd100k(
+            source=str(tmp_path),
+            splits=["train"],
+            lance_uri=str(database_path),
+            table="bdd_malformed_occlusion",
+            batch_size=1,
+        )
+
+    import lancedb
+
+    assert (
+        "bdd_malformed_occlusion"
+        not in lancedb.connect(str(database_path)).table_names()
+    )
+
+
 def test_bdd100k_sdk_function_returns_typed_result(tmp_path: Path) -> None:
     from npa.workbench.lancedb import BDD100KImportResult, import_bdd100k as sdk_import
 
@@ -301,6 +385,46 @@ def _write_fixture_split(
         }
     ]
     (root / label_name).write_text(json.dumps(labels), encoding="utf-8")
+
+
+def _write_occlusion_fixture(
+    root: Path,
+    annotations_by_image: list[list[dict[str, object]]],
+) -> None:
+    image_dir = root / "images" / "100k" / "train"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for image_index, image_annotations in enumerate(annotations_by_image):
+        image_name = f"train-{image_index:03d}.jpg"
+        _jpeg_bytes(image_dir / image_name)
+        entries.append(
+            {
+                "name": image_name,
+                "labels": [
+                    {
+                        "category": "car",
+                        "box2d": {"x1": 1.0, "y1": 2.0, "x2": 30.0, "y2": 40.0},
+                        **annotation,
+                    }
+                    for annotation in image_annotations
+                ],
+            }
+        )
+    (root / "det_train.json").write_text(json.dumps(entries), encoding="utf-8")
+
+
+def _imported_fixture_rows(root: Path, *, table: str) -> list[dict[str, object]]:
+    database_path = root / "db"
+    import_bdd100k(
+        source=str(root),
+        splits=["train"],
+        lance_uri=str(database_path),
+        table=table,
+    )
+
+    import lancedb
+
+    return lancedb.connect(str(database_path)).open_table(table).to_arrow().to_pylist()
 
 
 def _jpeg_bytes(path: Path) -> bytes:
