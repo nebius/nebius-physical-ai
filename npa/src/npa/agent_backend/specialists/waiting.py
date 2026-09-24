@@ -99,4 +99,22 @@ def _tool_step(state, tools):
         "pending": state["pending"][1:],
         "poll_ordinal": 0,
         "poll_after": 0.0,
+        "operation_failure": state.get("operation_failure", "")
+        or _failed_operation(tools, result),
     }
+
+
+def _failed_operation(tools, result):
+    name = result.get("operation")
+    operation = tools.profile.operations.get(name)
+    if operation is None or not operation.handoff_on_failure:
+        return ""
+    code = result.get("returncode")
+    if result.get("ok") is not False or type(code) is not int or code < 0:
+        return ""
+    if code > 0 or (
+        operation.wait_for is not None
+        and result.get("observation", {}).get("status") == "failed"
+    ):
+        return name
+    return ""

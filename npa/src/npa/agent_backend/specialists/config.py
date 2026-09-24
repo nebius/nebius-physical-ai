@@ -57,6 +57,7 @@ class Operation(BaseModel):
         pass_env: Explicit environment names to forward to the command.
         observation_only: Operator attestation that execution only observes existing state.
         wait_for: Optional JSON state policy that suppresses routine model polling.
+        handoff_on_failure: Opt into a configured backup after a recorded terminal failure.
     Returns:
         Validated command policy.
     Raises:
@@ -69,6 +70,7 @@ class Operation(BaseModel):
     pass_env: list[str] = Field(default_factory=list)
     observation_only: StrictBool = False
     wait_for: ObservationWait | None = None
+    handoff_on_failure: StrictBool = False
 
     @model_validator(mode="after")
     def _wait_policy(self):
@@ -312,6 +314,8 @@ def fingerprint(profile: Profile) -> str:
     if not policy["compact_context"]:
         del policy["compact_context"]
     for operation in policy["operations"].values():
+        if not operation["handoff_on_failure"]:
+            del operation["handoff_on_failure"]
         if not operation["observation_only"]:
             del operation["observation_only"]
         if operation["wait_for"] is None:

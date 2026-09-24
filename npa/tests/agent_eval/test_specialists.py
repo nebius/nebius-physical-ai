@@ -801,6 +801,7 @@ def test_legacy_fingerprint_and_new_recovery_policy_binding(configuration):
         },
     )
     for operation in legacy["operations"].values():
+        operation.pop("handoff_on_failure")
         operation.pop("observation_only")
         operation.pop("wait_for")
     expected = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()

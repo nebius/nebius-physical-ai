@@ -287,11 +287,12 @@ def _supervised_execution(
 def _coordinate(team, saved, directory, arm, effort, prompt_path, prompt, mode):
     if mode == "continuous" or arm == "astra-only":
         return _codex(saved, directory, arm, effort, prompt)
-    if mode != "completion":
+    if mode not in {"completion", "specialists-first"}:
         raise ValueError("unknown coordination mode")
-    from completion_coordinator import coordinate
+    from completion_coordinator import coordinate, coordinate_specialists_first
 
-    return coordinate(
+    run = coordinate if mode == "completion" else coordinate_specialists_first
+    return run(
         team,
         saved,
         directory,
@@ -310,9 +311,12 @@ def _main():
     parser.add_argument("--arm", choices=["astra-only", "astra-tofa"], required=True)
     parser.add_argument(
         "--coordination",
-        choices=["completion", "continuous"],
+        choices=["completion", "continuous", "specialists-first"],
         default="completion",
-        help="Wait outside Astra between delegation and fresh reviews (default: completion).",
+        help=(
+            "completion: Astra delegates, then host waits; specialists-first: dispatch "
+            "every configured assignment and use Astra only for escalation."
+        ),
     )
     parser.add_argument(
         "--effort", default="medium", choices=["low", "medium", "high", "xhigh"]

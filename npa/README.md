@@ -453,6 +453,11 @@ conventions (branch → PR → squash, one approval, never self-approve).
 
 ## Workbench specialists
 
+Named operations can opt into `handoff_on_failure` (default `false`) to pass a
+recorded terminal verification failure to the next configured model, retaining
+the failed receipt and existing grants. It never retries an uncertain operation;
+see the [specialist recovery guide](../docs/workbench/specialists.md).
+
 For independently running GLM/DeepSeek agents, install `npa[agent-specialists]`
 and run `npa workbench specialists --config <operator-team.json> serve`.
 The [specialist guide](../docs/workbench/specialists.md) covers explicit model
@@ -466,6 +471,10 @@ omits superseded observations from inference requests while preserving full
 receipts. Observation operations can declare `wait_for` JSON states so workers
 poll without routine model calls; `SpecialistTeam.wait_for_attention` lets a
 coordinator wait outside its model turn and consume compact evidence reports.
+The [workflow experiment runner](examples/specialists/workflows/README.md) also
+offers `--coordination specialists-first` for predefined assignments with required
+checks: it dispatches those workers directly and invokes Astra only for recovery
+or evidence review. The default `completion` mode retains Astra planning.
 
 ## Workbench Studio
 

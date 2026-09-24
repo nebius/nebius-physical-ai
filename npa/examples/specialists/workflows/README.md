@@ -52,6 +52,19 @@ original worker failures alongside recovery evidence. Full worker traces stay
 in the private journal. A model's completion message alone does not establish
 artifact acceptance.
 
+For an already defined workflow, `--coordination specialists-first` dispatches
+every configured profile directly. Each profile must contain its complete
+assignment in `instructions` and nonempty `required_operations`; include only
+assignments authorized for this run. Workers receive the unchanged common
+request and keep their existing grants and endpoint routing policy. This mode
+does not decompose an arbitrary prompt or select which profiles to run.
+The host records assignment IDs, goal hashes and policies in `dispatch.json`.
+Passing receipts finish without starting Codex; a failure or incomplete check
+starts a fresh Astra review through the same recovery path. Omitted Codex logs
+alone never count as zero usage: the protocol and invocation journal must
+explicitly record this mode and zero invocations, with no contradictory events.
+Use the default completion mode when Astra should plan the assignments.
+
 Use `--coordination continuous` to reproduce the original single-conversation
 supervisor. The baseline performs the same task through its direct tools in
 either mode. Give both arms the same playbook, source, operation grants and
@@ -172,6 +185,8 @@ The output directory retains:
 - `protocol.json`, `team.json`, `prompt.txt`: exact configuration, shared prompt
   digest and source hashes; `coordinator-config.json` records the executed argv.
 - `codex.jsonl` and `codex.stderr`: every observed Astra event and diagnostic.
+  They are absent when specialists-first finishes without invoking Astra.
+- `dispatch.json`: configured assignments and goal hashes for specialists-first.
 - `coordinator-end-task-receipts.json`: worker state when Astra exits.
 - `completion-result.json`: host-accepted required-operation contracts and the
   worker/recovery reports supporting them, when the automatic completion gate passes.

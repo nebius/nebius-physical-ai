@@ -105,6 +105,7 @@ def test_default_policy_hash_remains_compatible_and_flag_is_strict(team):
         },
     )
     for operation in legacy["operations"].values():
+        operation.pop("handoff_on_failure")
         operation.pop("observation_only")
         operation.pop("wait_for")
     expected = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()

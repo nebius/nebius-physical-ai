@@ -223,6 +223,21 @@ def _model_summary(records, price):
     }
 
 
+def _declared_zero_coordinator(usage, execution):
+    astra = usage.get("astra", {})
+    invocations = astra.get("invocations", {})
+    return (
+        execution.get("arm") == "astra-tofa"
+        and execution.get("coordination") == "specialists-first"
+        and astra.get("turns") == []
+        and astra.get("usage_complete") is True
+        and invocations.get("verification") == "explicit_zero_invocations"
+        and invocations.get("expected_turns") == 0
+        and invocations.get("completed_turns") == 0
+        and invocations.get("usage_complete") is True
+    )
+
+
 def _completeness(usage, execution, records):
     reasons = []
     if any(record[1] == "specialist-request-failure" for record in records):
@@ -241,7 +256,9 @@ def _completeness(usage, execution, records):
         reasons.append("router_call_outcome_unknown")
     if usage.get("usage_complete") is not True:
         reasons.append("recorder_usage_incomplete")
-    if not any(record[1] == "coordinator-turn" for record in records):
+    if not any(record[1] == "coordinator-turn" for record in records) and not (
+        _declared_zero_coordinator(usage, execution)
+    ):
         reasons.append("no_coordinator_usage")
     if any(
         record[3][key] is None

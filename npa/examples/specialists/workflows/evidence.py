@@ -84,20 +84,19 @@ def _outside_tool_scope(event, allowed):
     )
 
 
-def _coordinator_invocations(directory, completed):
-    path = directory / "coordinator-config.json"
-    if not path.exists():
-        protocol = directory / "protocol.json"
-        modern = protocol.exists() and "coordination" in json.loads(
-            protocol.read_text()
-        )
-        return {
-            "verification": "missing" if modern else "legacy_unavailable",
-            "usage_complete": not modern,
-        }
-    config = json.loads(path.read_text())
-    if not isinstance(config, dict):
-        return {"verification": "invalid", "usage_complete": False}
+def _explicit_zero_invocations(directory, config, completed):
+    path = directory / "protocol.json"
+    protocol = json.loads(path.read_text()) if path.exists() else {}
+    return (
+        config.get("strategy") == "specialists-first"
+        and config.get("turns") == []
+        and completed == 0
+        and protocol.get("arm") == "astra-tofa"
+        and protocol.get("coordination") == "specialists-first"
+    )
+
+
+def _recorded_invocations(config, completed):
     if "turns" not in config:
         return {
             "verification": "legacy_single_invocation",
@@ -124,6 +123,30 @@ def _coordinator_invocations(directory, completed):
     }
 
 
+def _coordinator_invocations(directory, completed):
+    path = directory / "coordinator-config.json"
+    if not path.exists():
+        protocol = directory / "protocol.json"
+        modern = protocol.exists() and "coordination" in json.loads(
+            protocol.read_text()
+        )
+        return {
+            "verification": "missing" if modern else "legacy_unavailable",
+            "usage_complete": not modern,
+        }
+    config = json.loads(path.read_text())
+    if not isinstance(config, dict):
+        return {"verification": "invalid", "usage_complete": False}
+    if _explicit_zero_invocations(directory, config, completed):
+        return {
+            "verification": "explicit_zero_invocations",
+            "expected_turns": 0,
+            "completed_turns": 0,
+            "usage_complete": True,
+        }
+    return _recorded_invocations(config, completed)
+
+
 def _astra_usage(directory, arm="astra-only"):
     events, malformed = _astra_events(directory)
     turns = [
@@ -138,17 +161,20 @@ def _astra_usage(directory, arm="astra-only"):
     failed = any(event.get("type") in {"turn.failed", "error"} for event in events)
     required = {"input_tokens", "output_tokens"}
     invocations = _coordinator_invocations(directory, len(turns))
+    zero = invocations["verification"] == "explicit_zero_invocations" and not events
     return {
         "turns": turns,
         "invocations": invocations,
         "malformed_lines": malformed,
         "out_of_scope_events": forbidden,
-        "usage_complete": bool(turns)
+        "usage_complete": (bool(turns) or zero)
         and not malformed
         and not failed
         and invocations["usage_complete"]
         and all(required <= turn.keys() for turn in turns),
-        "matched_tool_scope": bool(events) and not malformed and not forbidden,
+        "matched_tool_scope": (bool(events) or zero)
+        and not malformed
+        and not forbidden,
     }
 
 

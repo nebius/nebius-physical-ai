@@ -11,7 +11,12 @@ from npa.cli.agent_routing import usage_summary
 from npa.clients.credentials import load_credentials
 from npa.clients.token_factory import TokenFactoryClient, TokenFactoryConfig
 
-from .recovery import _handoff, _RejectedGeneration, _require_operations
+from .recovery import (
+    _FailedOperation,
+    _handoff,
+    _RejectedGeneration,
+    _require_operations,
+)
 from .waiting import _tool_step
 from .routing import _endpoints
 from .context import model_messages
@@ -27,6 +32,7 @@ class _State(TypedDict, total=False):
     model_order: list[int]
     poll_ordinal: int
     poll_after: float
+    operation_failure: str
 
 
 def build_graph(profile, tools, checkpointer, *, client=None):
@@ -123,6 +129,9 @@ def _client(profile):
 
 
 def _model(state, profile, tools, client):
+    if state.get("operation_failure"):
+        error = _FailedOperation("Operation failed: " + state["operation_failure"])
+        return _handoff(state, profile, tools, error)
     endpoint = _endpoints(profile, state)[state.get("model_index", 0)]
     extra = {
         **endpoint.model_options,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import time
@@ -346,3 +347,62 @@ def coordinate(team, config, directory, effort, common, policies, invoke):
     if code or not team.store._list():
         return code or 1
     return _review_loop(team, arguments, common, policies, invoke)
+
+
+def _dispatch_configured(team, directory, common):
+    profiles = tuple(team.config.profiles)
+    if not profiles or any(
+        not profile.instructions.strip() or not profile.required_operations
+        for profile in profiles
+    ):
+        raise ValueError("specialists-first requires explicit assignments and checks")
+    if team.store._list():
+        raise ValueError("configured dispatch requires fresh task state")
+    _write_json(
+        directory / "coordinator-config.json",
+        {"strategy": "specialists-first", "turns": []},
+    )
+    assignments = {}
+    for profile in profiles:
+        goal = (
+            "Complete only your configured workspace assignment, including its required "
+            "verification. The common request supplies acceptance context, not permission "
+            "to operate another workspace.\nAssignment:\n"
+            + profile.instructions
+            + "\nCommon request:\n"
+            + common
+        )
+        task = team.submit(
+            goal,
+            specialist=profile.name,
+            task_id="workflow-" + hashlib.sha256(profile.name.encode()).hexdigest(),
+        )
+        assignments[profile.name] = {
+            "task_id": task["id"],
+            "policy": task["policy"],
+            "goal_sha256": hashlib.sha256(goal.encode()).hexdigest(),
+        }
+    _write_json(directory / "dispatch.json", {"assignments": assignments})
+
+
+def coordinate_specialists_first(
+    team, config, directory, effort, common, policies, invoke
+):
+    """Dispatch explicit workflow assignments and invoke Astra only for escalation.
+
+    Args:
+        team: Fresh team whose profiles are all authorized workflow assignments.
+        config, directory: Private configuration and evidence paths.
+        effort: Astra reasoning setting if an escalation needs its judgment.
+        common, policies: Operator request and unchanged workspace grants.
+        invoke: Callable recording each actual coordinator invocation.
+    Returns:
+        Coordinator exit code; independent artifact checks establish acceptance.
+    Raises:
+        ValueError: Assignments/checks are absent or task state is not fresh.
+        OSError: Dispatch or evidence persistence fails.
+    """
+    _dispatch_configured(team, directory, common)
+    return _review_loop(
+        team, (config, directory, "astra-tofa", effort), common, policies, invoke
+    )

@@ -270,6 +270,24 @@ Exhausted candidates leave the task in `needs_attention`. There are no implicit
 backup models. Identity mismatches, provider refusals, transport failures and
 uncertain tool effects do not trigger this handoff.
 
+An operator can set `"handoff_on_failure": true` on a named operation such as
+final artifact verification. It defaults to `false`, leaving ordinary failed
+checks available for the current model to diagnose and repair. When enabled,
+a recorded positive exit code or an explicitly configured `wait_for` terminal
+failure advances to the next configured model. The complete failed receipt is
+checkpointed first; the backup receives that result and the conversation under
+the same grants. Exhaustion leaves the task in `needs_attention`. Existing
+accepted tool batches finish before the handoff; a lost result interrupts the
+batch and requires reconciliation. No command is automatically repeated, and
+all preceding model usage remains in the journal.
+
+Use this policy only where the operation's terminal failure is authoritative,
+such as a trusted verifier that has finished checking existing artifacts. It is
+not a retry policy for an uncertain remote submission. Pending observations,
+invalid tool arguments, signal termination and interrupted receipt writes do
+not trigger it. Enabling it changes the task policy fingerprint; declare it
+before creating tasks rather than modifying an active task's configuration.
+
 Specialists disable automatic client transport retries. A failed provider request
 adds a `provider_failure` activity event with its model, confirmed HTTP status
 and allowlisted request counters/timing. Response bodies, headers and raw
@@ -382,6 +400,14 @@ attention. Its [NuRec artifact verifier](../../npa/examples/specialists/workflow
 checks actual reconstructed scenes, rendered media, Rerun recordings and native
 quality metrics against independently collected execution receipts. Submission
 acceptance alone does not count as a completed workflow.
+
+For predefined workflow assignments, the runner's opt-in
+`--coordination specialists-first` submits every configured specialist directly
+and starts Astra only when evidence needs review or recovery. Each profile
+requires explicit instructions and completion checks. Passing host-verified
+work therefore consumes no Codex tokens. Use the default completion mode when
+Astra needs to decompose a new request; see the runner README for the exact
+dispatch and accounting contract.
 
 The [real NuRec experiment](specialists-nurec-experiment.md) exercised GPU
 reconstruction and rendering on four scenes. Both original agent runs ended

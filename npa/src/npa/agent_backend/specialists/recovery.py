@@ -1,4 +1,4 @@
-"""Recover rejected generations without replaying tools or expanding their grants."""
+"""Hand off rejected generations and opted-in terminal failures without replaying tools."""
 
 from __future__ import annotations
 
@@ -9,6 +9,10 @@ from .routing import _endpoints
 
 class _RejectedGeneration(ValueError):
     """An unusable generation that is safe to hand to an authorized backup."""
+
+
+class _FailedOperation(ValueError):
+    """A completed operation whose operator policy requests a model handoff."""
 
 
 def _require_operations(messages, required):
@@ -70,10 +74,24 @@ def _handoff(state, profile, tools, error):
         "answer": "",
         "model_index": index + 1,
         "recovering": True,
+        "operation_failure": "",
     }
 
 
 def _recovery_instruction(error):
+    if isinstance(error, _FailedOperation):
+        return {
+            "role": "user",
+            "content": (
+                "Workbench runtime recovery: an operation executed and its recorded "
+                "terminal failure triggered the operator's configured model handoff. "
+                + str(error)
+                + ". Inspect the full failed tool receipt and current files, diagnose "
+                "the cause, and preserve completed work. The runtime has not replayed "
+                "the operation or undone its effects. Continue within the same grants "
+                "and satisfy the configured completion checks."
+            ),
+        }
     return {
         "role": "user",
         "content": (
