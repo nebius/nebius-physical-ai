@@ -1,0 +1,33 @@
+{
+  "pr": 688,
+  "head": "cf141d7a67affda8089b6fc35befcf03190e9dd4",
+  "helper_sha256": "f0b00e4792cbd571754ba69b355868a8109fbf5e7b286111ed7bb3e95fe33236",
+  "key_origin": "A fresh disposable Ed25519 PKCS8 key generated in memory for this control; no customer key or private-key bytes are recorded.",
+  "cases": [
+    {
+      "case": "standard",
+      "parse_valid": true,
+      "detection": "private_key_content",
+      "input_sha256": "f6ef0f96e9b3bdb037b7e2fe2453fb9c93a45e9204bf3b3bd2fe5341684b3756"
+    },
+    {
+      "case": "nine-newlines",
+      "parse_valid": true,
+      "detection": null,
+      "input_sha256": "8deb9adf93630922463f8485e4404d85506a9f64be1edfb54ae36a28c4372e7b"
+    },
+    {
+      "case": "nine-spaces",
+      "parse_valid": true,
+      "detection": null,
+      "input_sha256": "6ed036436f6299e502cbe25b0d1ead5c0f0442ede518bcb2850ca8cad9684413"
+    },
+    {
+      "case": "two-MiB-newlines",
+      "parse_valid": true,
+      "detection": null,
+      "input_sha256": "b190f708fd3491baffc190d070b317d27c1a40e9695f1779234fa9adffda2033"
+    }
+  ],
+  "execution_scope": "Executed the unchanged PR helper from the superseded private integration. The recorded helper hash equals that at the stated PR head. This is a real generated-key parse and production-helper probe, not a full image qualification."
+}

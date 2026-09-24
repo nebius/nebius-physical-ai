@@ -1,0 +1,433 @@
+{
+  "checked_at": "2026-09-24T02:52:43.656536+00:00",
+  "main": "fad4a0f7197b34c6326a17825baf581941c5a342",
+  "method": "Codex review and validation; no Cursor usage. Ordered private squash integration against the stated main. Synthetic validation commits were not pushed or merged.",
+  "merge_queue": "Required; squash; max_entries_to_merge=1. Submit batch two only after batch one clears and refresh its checks.",
+  "prs": [
+    {
+      "batch": 1,
+      "order": 1,
+      "pr": 594,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/594",
+      "title": "Fail closed on corrupt workflow resume ledgers",
+      "head": "93d37b49429b89950eff47ee72406ecd0ddc6d1a",
+      "branch": "cursor/physicalai-workflows-20260919",
+      "purpose": "Preserve corrupt or mismatched resume ledgers instead of overwriting history.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 14,
+      "ci_skipped": 4,
+      "verified_commits": 3,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35481952902/job/106001537670",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35481952902/job/106001537680",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35481952902/job/106003929536",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "81422e74efd8df0b1f69a3830c797de5839f0b5d"
+    },
+    {
+      "batch": 1,
+      "order": 2,
+      "pr": 613,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/613",
+      "title": "Keep declarative workflow outputs visible",
+      "head": "54d61f256fe5efad0b279e109d503e4b179ab0c6",
+      "branch": "cursor/physicalai-workflows-artifacts-20260920",
+      "purpose": "Show declarative outputs under their exact run root.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 14,
+      "ci_skipped": 4,
+      "verified_commits": 2,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35487572665/job/106017872136",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35487572665/job/106017872137",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35487572665/job/106023102154",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "6edda2da83e520e032ab68fb5dbfd86a72a55d00"
+    },
+    {
+      "batch": 1,
+      "order": 3,
+      "pr": 614,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/614",
+      "title": "Fail closed on contradictory cancellation state",
+      "head": "b1123f9128ce998c7bffcd9957a60da49474fa52",
+      "branch": "cursor/physicalai-workflows-cancel-absence-20260920",
+      "purpose": "Prevent cancellation and teardown from claiming success on contradictory or still-live job state.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 20,
+      "ci_skipped": 2,
+      "verified_commits": 4,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35489524947/job/106025432646",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35489524947/job/106025432670",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35489524947/job/106032315406",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "a84b4bf00450b62b5af81978bfd0ec1b989f59c9"
+    },
+    {
+      "batch": 1,
+      "order": 4,
+      "pr": 615,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/615",
+      "title": "Fail closed on corrupt submission receipts",
+      "head": "ccb64699facc2742ec65a60fc9116207e848e9d7",
+      "branch": "cursor/physicalai-workflows-submission-receipt-20260920",
+      "purpose": "Block duplicate submission on damaged receipts and redact failure diagnostics.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 20,
+      "ci_skipped": 2,
+      "verified_commits": 8,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35644247049/job/106481593667",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35644247049/job/106481593978",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35644247049/job/106489845962",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "936bd739113eb5d87514974519c3efc15bcc3810"
+    },
+    {
+      "batch": 1,
+      "order": 5,
+      "pr": 621,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/621",
+      "title": "Complete workflow image preflight across decision paths",
+      "head": "4369e175cdc7f1616fbea06ebbe1e8f1880f14e4",
+      "branch": "cursor/physicalai-workflows-preflight-images-20260920",
+      "purpose": "Check branch-only images and preserve exact image/pull-authority attribution.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 20,
+      "ci_skipped": 2,
+      "verified_commits": 1,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35501740574/job/106054592646",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35501740574/job/106054592769",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35501740574/job/106055974058",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "36d73935f49a02a1b1dc87189d652a717c0da9af"
+    },
+    {
+      "batch": 2,
+      "order": 6,
+      "pr": 609,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/609",
+      "title": "Recover stage log attribution from durable waves",
+      "head": "e962e6fbd46093a4f4b84ce72bc259ac1959ab77",
+      "branch": "cursor/physicalai-workflows-next-20260920",
+      "purpose": "Recover stage log identity only from unambiguous durable waves.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 20,
+      "ci_skipped": 2,
+      "verified_commits": 2,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35485300653/job/106010442292",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35485300653/job/106010442318",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35485300653/job/106017258065",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "f65d1609840ee945c04b8ba7b0704436a87de96a"
+    },
+    {
+      "batch": 2,
+      "order": 7,
+      "pr": 640,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/640",
+      "title": "fix(skypilot): link default ~/.kube/config into isolated HOME when KUBECONFIG is unset",
+      "head": "ca6a515d2562008d96570029ed5cbcc7b447fd71",
+      "branch": "cursor/fix-isolated-sky-default-kubeconfig-eda9",
+      "purpose": "Keep the default Kubernetes configuration available to isolated SkyPilot submits.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 14,
+      "ci_skipped": 4,
+      "verified_commits": 2,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35534646864/job/106141372419",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35534646864/job/106141372535",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35534646864/job/106142216656",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "ff492fbdd738b662fbaef4ed60690adbb9e22c06"
+    },
+    {
+      "batch": 2,
+      "order": 8,
+      "pr": 679,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/679",
+      "title": "fix(workflow): preserve executable recovery commands",
+      "head": "f97eea0a74a829bf170e2e7bcf09dcea7ab000f8",
+      "branch": "cursor/physicalai-workflows-raw-sky-recovery-20260921",
+      "purpose": "Record executable recovery commands with the original run and non-secret options.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 19,
+      "ci_skipped": 3,
+      "verified_commits": 2,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35561409189/job/106214839362",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35561409189/job/106214839053",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35561409189/job/106396090342",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "062fa9669c50a9a2bbdfe6e340be9b242a638970"
+    },
+    {
+      "batch": 2,
+      "order": 9,
+      "pr": 687,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/687",
+      "title": "Reject image secrets at every severity before public copy",
+      "head": "2f903246507ddc82e7e45e7b55a010e48507664c",
+      "branch": "cursor/image-secret-gate-20260921",
+      "purpose": "Reject image secrets at every severity before public copy.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 19,
+      "ci_skipped": 2,
+      "verified_commits": 3,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35577242655/job/106261774226",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35577242655/job/106261774251",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35577242655/job/106461281929",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "5a3576e6e42d8177cbfb0db9778abaa0861d6874"
+    },
+    {
+      "batch": 2,
+      "order": 10,
+      "pr": 650,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/650",
+      "title": "fix(sim2real): gate submit preflight on all sim2real gated HF repos",
+      "head": "47f7fea38fa5e7d6b2e162bab9ab4e032abc1e03",
+      "branch": "cursor/sim2real-preflight-gated-hf-parity-eda9",
+      "purpose": "Check all catalogued gated Sim2Real dependencies before provisioning or submitting.",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "ci_passed": 14,
+      "ci_skipped": 4,
+      "verified_commits": 1,
+      "unresolved_threads": 0,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35540509121/job/106157169026",
+          "app_id": 15368
+        },
+        {
+          "name": "scan",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35540509121/job/106157168788",
+          "app_id": 15368
+        },
+        {
+          "name": "security-regression",
+          "result": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35540509121/job/106158475521",
+          "app_id": 15368
+        }
+      ],
+      "tree_after_squash": "7256f2d42231d8f1f2822e69f385d1fb3122c447"
+    }
+  ],
+  "validation": {
+    "batch_one": {
+      "main": "c2a162278ea279d0882f9a5893dc62658c118b24",
+      "tree": "cfcb6b557b8c0bfbacce83061303b068d65e3ede",
+      "affected_tests_passed": 960,
+      "log_sha256": "fbfb4116764c0610c77abf6b6e9c89f1c640a8676fa150382a22ade273bda17f"
+    },
+    "combined": {
+      "tree": "7256f2d42231d8f1f2822e69f385d1fb3122c447",
+      "full_suite": "26969 passed, 133 skipped, 1 xpassed, 445 warnings in 222.59s (0:03:42)",
+      "execution": "make test with PYTEST_ADDOPTS=-n auto --dist worksteal; complete local parallel CPU suite, separate from hosted CI coverage",
+      "git_tool": "2.55.0, built in a private task directory from git/git e9019fcafe0040228b8631c30f97ae1adb61bcdc with the C implementation (NO_RUST), without curl/gettext/Tcl features",
+      "environment_repair": "The prior run was interrupted after three merge-precheck failures caused by Git 2.34.1 lacking merge-tree --write-tree. The same three failures reproduced on unchanged main (3 failed, 2 passed). With task-local Git 2.55.0 all 5 precheck tests passed before this fresh full run. No repository source was changed.",
+      "full_log_sha256": "208eab93f1839b6923a2a85c14b1ea415b0a8e3ef3146af1ba6198302e62837b",
+      "ruff": "PASS",
+      "previous_main_smoke_tests_passed": 114,
+      "previous_main_guardrails_passed": 4422,
+      "latest_main_advance": "Main advanced by PR 740, adding a standalone readiness validator and tests and updating two readiness records. The ordered integration was rebuilt; its only difference from the previous combined tree was the exact six-file main delta. The new focused checks and this full suite ran on the rebuilt tree.",
+      "confidentiality": "PASS: zero raw/unresolved findings",
+      "gitleaks": "PASS: ten private integration commits, zero leaks",
+      "source_unchanged": true
+    },
+    "native_security": {
+      "policy_source": "fad4a0f7197b34c6326a17825baf581941c5a342",
+      "base_findings": 603,
+      "candidate_findings": 603,
+      "regressions": 0,
+      "blocking_findings": 0,
+      "real_adversarial_controls": "PASS",
+      "report_sha256": "c7e664e39281acf366b63c772e8d217afc0fd519ea331daa77af4d3ca72ab966",
+      "setup_attempts": "The superseded selection had two pre-scan harness import failures, followed by a passing corrected scan. Its full-suite run was interrupted after PR 688 failed an additional native key-padding control. The final ten were validated separately."
+    }
+  },
+  "hardware": "These ten change host-CPU workflow or image-security behavior. GPU and VLM tests are not applicable. Existing actual object-storage and native scanner proof remains attributed to its original runs; no new live-cloud run is claimed.",
+  "held_candidates": [
+    {
+      "pr": 628,
+      "reason": "Conflicts with earlier batch cancellation tests."
+    },
+    {
+      "pr": 629,
+      "reason": "Conflicts with earlier batch resume-ledger source."
+    },
+    {
+      "pr": 688,
+      "reason": "Returned to draft: a parse-valid private key with more than eight whitespace bytes after its header evades the scanner."
+    }
+  ],
+  "compatibility": [
+    "PR 621 deliberately makes submit preflight reject unqualified Docker Hub base references used by eight existing BYOF/partner specs, matching standalone preflight; see its documented compatibility note.",
+    "PR 640 uses live provider-file symlinks; isolation separates SkyPilot process/state ownership, not the underlying provider files.",
+    "PR 609 retains real object-storage attribution proof but does not claim an actual controller-log tail."
+  ],
+  "merges_performed": 0,
+  "cursor_calls": 0
+}
