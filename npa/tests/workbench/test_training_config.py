@@ -7,6 +7,7 @@ from npa.workbench.training_config import (
     TrainingConfigError,
     build_training_config,
     overrides_to_mapping,
+    training_config_from_mapping,
 )
 
 
@@ -35,6 +36,22 @@ def test_training_config_builds_canonical_env_and_redacts_secrets() -> None:
 def test_training_config_rejects_invalid_override() -> None:
     with pytest.raises(TrainingConfigError, match="KEY=VALUE"):
         build_training_config(overrides=["learning_rate"])
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_training_config_from_mapping_preserves_wandb_boolean(enabled: bool) -> None:
+    config = training_config_from_mapping({"wandb": {"enabled": enabled}})
+
+    assert config.wandb.enabled is enabled
+    assert config.env()["NPA_TRAINING_WANDB_ENABLED"] == ("1" if enabled else "0")
+
+
+@pytest.mark.parametrize("enabled", ["false", 0, None])
+def test_training_config_from_mapping_rejects_non_boolean_wandb_enabled(
+    enabled: object,
+) -> None:
+    with pytest.raises(TrainingConfigError, match="wandb.enabled must be a boolean"):
+        training_config_from_mapping({"wandb": {"enabled": enabled}})
 
 
 def test_overrides_to_mapping_parses_typed_values() -> None:
