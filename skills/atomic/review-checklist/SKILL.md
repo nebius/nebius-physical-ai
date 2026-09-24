@@ -1,11 +1,18 @@
 ---
 name: review-checklist
-description: Use during Claude Code reviews to classify API, IAM, cleanup, exception, concurrency, config, temp-file, and version-pin risks.
+description: Use when reviewing NPA changes to classify API, IAM, cleanup, exception, concurrency, config, temp-file, and version-pin risks.
 ---
 
 # Review Checklist
 
 Prioritize findings that can break users, expand permissions, hide failures, or make parallel agent runs unsafe.
+
+For CLI, SDK, shell-wrapper, and provisioning changes, apply
+`skills/atomic/npa-cli-conventions/SKILL.md`. In particular, check partial-failure
+exit status, SSH transport errors, validation before remote work, artifact path
+collisions, required upload failures, explicit Terraform booleans, and help text
+that matches accepted values. These checks apply regardless of which coding
+agent performs the review.
 
 - API contract safety: are new endpoints backward compatible? Does removing a field break existing callers?
 - Silent IAM expansion: any change that quietly adds new IAM permissions is a HIGH finding. It must be explicit and operator-approved.

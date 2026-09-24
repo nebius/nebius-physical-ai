@@ -56,6 +56,20 @@ call the deployed service instead of running in-process, and `--token-env` for
 the env var holding a bearer token. Not every tool has all of them; check the
 sibling module rather than assuming.
 
+Validate all batch inputs before opening SSH connections, provisioning, or
+starting a workload. Check numeric conversions, accepted ranges, and each field
+of structured values such as `POLICY:DATASET:STEPS`. Use the command's typed
+validation error and explain the expected format; redact credential-bearing
+values. Document sentinel values in the option's help text and validate their
+meaning per command rather than copying another command's range.
+
+When an operator-selectable Terraform boolean is exposed through the CLI, carry
+both explicit true and explicit false through to Terraform. For example,
+`enable_preemptible` must receive the selected value, serialized as `"true"` or
+`"false"` in a `-var` argument. Preserve an existing unset/inherit state when the
+contract supports one; a false value must not accidentally fall back to a true
+Terraform default.
+
 ## Output
 
 There is no shared output-format module. Each CLI package defines its own
@@ -90,6 +104,33 @@ On exit code 2 the CLI prints a hint instead of a traceback; `NPA_DEBUG=1`
 restores the traceback. Never swallow an exception silently — a bare
 `except Exception: pass` is rejected by
 `npa/tests/guardrails/test_hygiene_guards.py`.
+
+For a batch of independent operations, record each outcome and exit nonzero if
+any required operation fails. A failure recorded in JSON does not replace the
+exit status. Stop dependent work when its prerequisite fails; continue other
+items only when they are independent and the command's contract permits it.
+
+At the operation boundary, translate `SSHError` from
+`npa/src/npa/clients/ssh.py` into the domain error with exception chaining.
+Handle transport exceptions as well as nonzero remote command results. A failed
+optional diagnostic may be reported as a warning, but required artifact upload
+or image push failures must affect the result and exit status. Report a remote
+artifact as available only after its upload has succeeded.
+
+Shell wrappers must preserve the same contract: check each invocation, collect
+failures when continuing independent work, and return nonzero for partial
+failure. Emit success messages only for confirmed success. Do not rely on
+`set -e` to handle failures inside conditionals or loops.
+
+## Artifact Identity
+
+Give each batch item a distinct output path under a run-scoped directory or S3
+prefix. Basenames lose dataset namespaces, and resolved options can collapse
+distinct requests: a symbolic worker count of `0` may resolve to the same value
+as an explicitly supplied count. Use a stable item index or collision-resistant
+identity that preserves the original request. Scope retries by attempt where
+needed so one attempt cannot overwrite another's evidence. A batch-local index
+alone does not isolate concurrent runs; retain the run identity as well.
 
 ## Three Decorators That Are Easy To Forget
 
@@ -140,3 +181,9 @@ Changing CLI options invalidates generated docs and can break catalog argv.
 Regenerate with `bash scripts/build_docs.sh` and re-check the catalog contract
 in `skills/atomic/toolref-argv-contract/SKILL.md`. Full gate order is in
 `skills/atomic/pre-pr-validation/SKILL.md`.
+
+For changes to these boundaries, test the observable failure contract: invalid
+input starts no remote work; one failed batch item produces a nonzero exit;
+transport and required upload failures remain visible; colliding basenames and
+equivalent resolved options retain distinct artifacts; explicit Terraform false
+reaches the provisioner. Exercise only the boundaries affected by the change.

@@ -1017,6 +1017,36 @@ an unregistered skill fails `harness-guardrails.yml`. Run `make test-guardrails`
 after adding one.
 
 Update `AGENTS.md` only if the skill list or root index changes.
+
+### Promoting global agent guidance
+
+Promote reusable NPA knowledge from personal Codex, Claude Code, or Cursor
+instructions into the canonical `skills/` tree. Check `skills/index.yaml` first
+and extend the relevant skill when it already owns the behavior. Keep root
+`AGENTS.md` and `CLAUDE.md` as discovery indexes, and use the existing
+`.agents/skills` and `.claude/skills` compatibility symlinks rather than copying
+skill bodies into editor-specific trees.
+
+| Global guidance | Workbench destination |
+| --- | --- |
+| NPA CLI review lessons: partial failures, SSH errors, input validation, artifact identity, uploads, Terraform booleans, and accurate help | [CLI conventions](skills/atomic/npa-cli-conventions/SKILL.md), linked from the [review checklist](skills/atomic/review-checklist/SKILL.md) |
+| Generic skill discovery, installation, authoring, editor configuration, or vendor-specific review commands | Keep in the coding application's own skills or plugins; these do not define Workbench behavior |
+| OSMO CLI operations | Keep with OSMO; use the existing [OSMO-to-NPA translation skill](skills/workflows/nvidia-osmo-to-npa-workflow/SKILL.md) for a Workbench translation |
+| Plugin instructions that depend on Figma, Slack, or another application's tools | Keep with that plugin; add NPA-specific guidance only when a concrete integration needs it |
+| Physical AI partner capabilities | Check the [partner roadmap](docs/architecture/partner-skills-roadmap.md) and existing tool skills; add instructions alongside the implemented, validated NPA capability |
+
+Adapt only the missing project knowledge. Remove personal paths, credentials,
+live infrastructure details, and assumptions about tools available only in one
+editor. Preserve applicable source attribution and license notices when reusing
+third-party material. An installed skill or marketplace cache is not evidence
+that its runtime is supported by NPA.
+
+For skill edits, run `test_skills_index` and `test_develop_skills` from
+`npa/tests/guardrails/`, plus the applicable checks in the
+[validation guide](skills/atomic/pre-pr-validation/SKILL.md). The existing
+repository corpus includes `skills/`; refresh it after updating a deployed
+Workbench agent checkout to make the guidance available there.
+
 ## Commit And PR Conventions
 Every proposed merge runs the [security regression gate](docs/security/merge-security-gate.md).
 Run its real scanner regression checks and base comparison before changing the
