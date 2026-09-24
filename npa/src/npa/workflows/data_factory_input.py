@@ -2322,30 +2322,24 @@ def _read_provenance(client: Any, base_uri: str) -> dict[str, Any] | None:
 def _legacy_staged_video(client: Any, base_uri: str) -> str:
     bucket, prefix = _split_s3(base_uri)
     try:
-        response = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        keys = _list_s3_keys(client, bucket=bucket, prefix=prefix)
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            f"could not inspect the canonical PAIDF input prefix: {exc}"
+            "could not inspect every object in the canonical PAIDF input prefix"
         ) from exc
     videos = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "").lower().endswith(".mp4")
-        and not str(item.get("Key") or "").lower().endswith("conditioning.mp4")
+        key
+        for key in keys
+        if key.lower().endswith(".mp4") and not key.lower().endswith("conditioning.mp4")
     ]
     if len(videos) > 1:
         raise PaidfInputError(
             f"multiple uncommitted videos already exist under {base_uri}; pass one "
             "explicitly with --input-uri or use a new --run-id"
         )
-    if videos:
+    if len(videos) == 1 and len(keys) == 1:
         return f"s3://{bucket}/{videos[0]}"
-    other = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "")
-    ]
-    if other:
+    if keys:
         raise PaidfInputError(
             f"uncommitted input artifacts already exist under {base_uri}, but no source "
             "MP4 can be adopted. Use --input-video/--input-uri, --seed-fixture, or a new run id."

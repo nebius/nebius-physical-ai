@@ -78,6 +78,23 @@ class FakeStorage:
         return str(target)
 
 
+class PaginatedS3(FakeS3):
+    def __init__(self, pages: list[dict]) -> None:
+        super().__init__()
+        self.pages = pages
+
+    def get_paginator(self, operation: str):
+        assert operation == "list_objects_v2"
+        owner = self
+
+        class Paginator:
+            def paginate(self, *, Bucket: str, Prefix: str):
+                owner.list_requests.append((Bucket, Prefix))
+                yield from owner.pages
+
+        return Paginator()
+
+
 @pytest.fixture
 def h264_video(tmp_path: Path) -> Path:
     path = tmp_path / "capture.mp4"
@@ -619,6 +636,70 @@ def test_implicit_retry_reuses_committed_fixture_without_starter_fetch(
 
     assert result.selection == "synthetic_fixture"
     assert result.reused is True
+
+
+def test_legacy_input_adopts_one_source_after_inspecting_every_page() -> None:
+    storage = FakeStorage()
+    prefix = "physical-ai-data-factory/paidf-legacy/input/"
+    storage.s3 = PaginatedS3(
+        [
+            {"Contents": []},
+            {"Contents": [{"Key": prefix + "capture.mp4"}]},
+        ]
+    )
+
+    result = dfi._legacy_staged_video(storage, f"s3://artifacts/{prefix}")
+
+    assert result == f"s3://artifacts/{prefix}capture.mp4"
+    assert storage.s3.list_requests == [("artifacts", prefix)]
+
+
+@pytest.mark.parametrize(
+    "later_key",
+    [
+        "second.mp4",
+        "partial-upload.json",
+        "conditioning.mp4",
+    ],
+)
+def test_legacy_input_rejects_conflicts_on_later_pages(later_key: str) -> None:
+    storage = FakeStorage()
+    prefix = "physical-ai-data-factory/paidf-legacy-conflict/input/"
+    storage.s3 = PaginatedS3(
+        [
+            {"Contents": [{"Key": prefix + "capture.mp4"}]},
+            {"Contents": [{"Key": prefix + later_key}]},
+        ]
+    )
+
+    with pytest.raises(dfi.PaidfInputError, match="uncommitted"):
+        dfi._legacy_staged_video(storage, f"s3://artifacts/{prefix}")
+
+
+def test_legacy_input_pagination_failure_never_returns_partial_source() -> None:
+    storage = FakeStorage()
+    prefix = "physical-ai-data-factory/paidf-legacy-list-failure/input/"
+
+    class FailingPaginatedS3(PaginatedS3):
+        def get_paginator(self, operation: str):
+            assert operation == "list_objects_v2"
+
+            class Paginator:
+                def paginate(self, *, Bucket: str, Prefix: str):
+                    yield {"Contents": [{"Key": Prefix + "capture.mp4"}]}
+                    raise RuntimeError("later page unavailable")
+
+            return Paginator()
+
+    storage.s3 = FailingPaginatedS3([])
+
+    with pytest.raises(
+        dfi.PaidfInputError,
+        match="could not inspect every object",
+    ) as error:
+        dfi._legacy_staged_video(storage, f"s3://artifacts/{prefix}")
+
+    assert "capture.mp4" not in str(error.value)
 
 
 def test_local_video_staging_records_lineage_and_is_idempotent(
