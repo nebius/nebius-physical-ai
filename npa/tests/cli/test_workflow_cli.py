@@ -1287,6 +1287,136 @@ def test_workflow_logs_after_driver_crash_without_task_timeline(
     assert json.loads(result.output)["log"] == "rendered rollout\n"
 
 
+def _put_log_attempt_projection(
+    fake_s3: FakeWorkflowS3, *, stage_attempt: object, wave_attempt: object
+) -> str:
+    wave = {
+        "key": "wave-1",
+        "kind": "serial",
+        "states": ["rollout"],
+        "attempt": wave_attempt,
+        "status": "running",
+        "job_id": "42",
+        "tasks": [{"task_id": 7}],
+    }
+    uri = _put_workflow_log_waves(fake_s3, [wave])
+    runtime_key = "crashed-driver/npa-workflow/runtime.json"
+    runtime = json.loads(fake_s3.objects[("bucket", runtime_key)])
+    runtime["stages"] = [
+        {
+            "stage": "rollout",
+            "attempt": stage_attempt,
+            "logical_state": "RUNNING",
+            "managed_job_id": "42",
+            "sky_task_id": "7",
+            "provenance": "runtime_wave_projection",
+        }
+    ]
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=runtime_key,
+        Body=json.dumps(runtime, sort_keys=True).encode(),
+    )
+    return uri
+
+
+@pytest.mark.parametrize(
+    ("stage_attempt", "wave_attempt"),
+    [
+        pytest.param("not-a-number", 1, id="stage-string"),
+        pytest.param([], 1, id="stage-empty-list"),
+        pytest.param(1, "not-a-number", id="wave-string"),
+        pytest.param(1, {}, id="wave-empty-object"),
+    ],
+)
+def test_workflow_logs_fail_closed_on_invalid_attempt_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    stage_attempt: object,
+    wave_attempt: object,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_log_attempt_projection(
+        fake_s3, stage_attempt=stage_attempt, wave_attempt=wave_attempt
+    )
+    retained_objects = dict(fake_s3.objects)
+    live_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
+        lambda **kwargs: live_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin",
+        lambda value: pytest.fail("invalid attribution must not resolve SkyPilot"),
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "logs", uri, "--stage", "rollout", "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert live_calls == []
+    assert fake_s3.objects == retained_objects
+    payload = json.loads(result.output)
+    assert payload["error_code"] == "STAGE_ATTEMPT_INVALID"
+    assert payload["live_log_state"] == "unavailable"
+    assert payload["live_verification"]["category"] == "ATTRIBUTION"
+    assert payload["reason"] == (
+        "persisted attempt metadata is invalid; live logs cannot be attributed safely"
+    )
+    assert "managed_job_id" not in payload
+    assert "not-a-number" not in result.output
+
+    human = runner.invoke(
+        app, ["workbench", "workflow", "logs", uri, "--stage", "rollout"]
+    )
+    assert human.exit_code == 2, human.output
+    assert human.output.startswith("VERIFICATION_UNAVAILABLE\n")
+    assert "live logs cannot be attributed safely" in human.output
+    assert "not-a-number" not in human.output
+    assert "42" not in human.output
+    assert live_calls == []
+    assert fake_s3.objects == retained_objects
+
+
+@pytest.mark.parametrize(
+    ("attempt", "expected_attempt"),
+    [(None, 1), ("2", 2), (2.0, 2)],
+)
+def test_workflow_logs_accept_missing_and_numeric_attempt_metadata(
+    monkeypatch: pytest.MonkeyPatch, attempt: object, expected_attempt: int
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_log_attempt_projection(
+        fake_s3, stage_attempt=attempt, wave_attempt=attempt
+    )
+    live_calls: list[tuple[str, str]] = []
+
+    def logs(**kwargs: object) -> subprocess.CompletedProcess[str]:
+        live_calls.append((str(kwargs["job_id"]), str(kwargs["stage"])))
+        return subprocess.CompletedProcess([], 0, "rendered rollout\n", "")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", logs
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: "synthetic-sky"
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "logs", uri, "--stage", "rollout", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert live_calls == [("42", "7")]
+    payload = json.loads(result.output)
+    assert payload["attempt"] == expected_attempt
+    assert payload["managed_job_id"] == "42"
+
+
 def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
     tmp_path: Path,
     monkeypatch,
