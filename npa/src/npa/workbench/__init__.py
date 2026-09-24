@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __all__ = [
     "alpamayo2_super",
+    "antioch",
     "cosmos",
     "curobo",
     "data",
@@ -19,6 +20,9 @@ __all__ = [
     "lerobot",
     "mjlab",
     "ros2",
+    "molmoact",
+    "openvla",
+    "newton",
     "retargeting",
     "robocasa",
     "scenario_gen",

@@ -23,6 +23,7 @@ else:
 
     from . import (
         alpamayo2_super,
+        antioch,
         byof,
         cosmos,
         cosmos2,
@@ -36,8 +37,11 @@ else:
         isaac_arena,
         lichtblick,
         mjlab,
+        molmoact,
+        newton,
         nurec,
         openarm,
+        openvla,
         retargeting,
         robocasa,
         scenario_gen,
@@ -52,6 +56,7 @@ else:
 
     __all__ = [
         "alpamayo2_super",
+        "antioch",
         "byof",
         "cosmos",
         "cosmos2",
@@ -66,8 +71,11 @@ else:
         "lancedb",
         "lichtblick",
         "mjlab",
+        "molmoact",
+        "newton",
         "nurec",
         "openarm",
+        "openvla",
         "retargeting",
         "robocasa",
         "scenario_gen",

@@ -14,7 +14,7 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: ubuntu
-  base_image: "nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"
+  base_image: "nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed"
   build_command: >
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
@@ -24,6 +24,7 @@ config:
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip uv &&
     GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install
     --python /opt/venv/bin/python --no-cache -e . 'boto3>=1.34' &&
+    find /opt/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -delete &&
     printf '%s\n'
     '#include <cuda_runtime.h>'
     '#include <cstdio>'

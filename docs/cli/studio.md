@@ -5,8 +5,12 @@
 ```text
 Usage: npa studio [--registry studio.json] <film> <command> [options]
 
-Commands: init, create, list, brief, scenes, narrate, draft, watch, preview, final.
+Commands: init, create, list, brief, scenes, narrate, draft, watch, preview, final, review.
 Example: npa studio inference draft --scene 01-opening --open
+
+Deliver a completed video using external NPA storage configuration:
+npa studio demo final --output-path 's3://<your-bucket>/<your-key>.mp4'
+Add --storage-project '<your-project-alias>' to select storage credentials.
 
 Search accessible object storage using external NPA configuration:
 npa studio search --all-projects --query cosmos --kind video

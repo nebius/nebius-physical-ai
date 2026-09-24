@@ -606,6 +606,7 @@ def reconstruct_cmd(
             ncore_json=resolved_json,
             dry_run=dry_run,
             export_gt=export_gt,
+            gt_frame_step=gt_frame_step,
         )
     except (NurecError, OSError) as exc:
         _finish_nurec_result({"status": "failed", "errors": [str(exc)]}, output)
