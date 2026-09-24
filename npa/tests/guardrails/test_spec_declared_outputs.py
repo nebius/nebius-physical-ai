@@ -227,6 +227,32 @@ def test_live_job_339_cosmos_output_regressions_remain_guarded() -> None:
     assert JOB_339_COSMOS_OUTPUT_LOCATIONS <= guarded
 
 
+def test_cosmos_synth_fanout_producers_have_distinct_canonical_manifests() -> None:
+    path = ROOT / "workflows" / "testing" / "cosmos-synth-fanout-curation.yaml"
+    plan = build_plan(load_spec(path), run_id="collision-check")
+    producers = [
+        step for step in plan.steps if step.state in {"synth-shard-a", "synth-shard-b"}
+    ]
+
+    assert len(producers) == 2
+    output_prefixes = {
+        step.argv[step.argv.index("--output-uri") + 1] for step in producers
+    }
+    declared_manifests = {
+        output["uri"]
+        for step in producers
+        for output in step.outputs
+        if output["schema"] == "npa.cosmos2.transfer.v1"
+    }
+    canonical_manifests = {
+        _resolve("npa.workbench.cosmos.transfer:transfer_manifest_uri_for")(prefix)
+        for prefix in output_prefixes
+    }
+
+    assert len(output_prefixes) == 2
+    assert declared_manifests == canonical_manifests
+
+
 @pytest.mark.parametrize(
     "path",
     tuple(

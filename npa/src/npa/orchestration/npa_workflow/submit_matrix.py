@@ -1357,12 +1357,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "cosmos-synth-fanout-curation.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        runtime=True,
+        expected_parallel_tasks=2,
         plan_only=True,
-        plan_only_justification="contains a stub FiftyOne state and colliding synthetic output targets",
+        plan_only_justification=(
+            "downstream merge-index and workbench.fiftyone.launch_app stages remain stubs"
+        ),
         notes=(
-            "workbench.fiftyone.launch_app is a stub, and both synthetic shard states "
-            "currently target the same transfer manifest object; keep plan-only until "
-            "both gaps close."
+            "The two Cosmos Transfer producers form a collision-free runtime parallel "
+            "wave. merge-index and workbench.fiftyone.launch_app remain stubs, so no "
+            "merged index, human review, or successful curation is claimed."
         ),
     ),
     SubmitLiveCase(

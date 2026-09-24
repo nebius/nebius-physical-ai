@@ -277,6 +277,29 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         )
 
 
+def test_cosmos_synth_fanout_records_runtime_topology_without_live_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = "cosmos-synth-fanout-curation.yaml"
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == name)
+
+    assert case.runtime
+    assert case.expected_parallel_tasks == 2
+    assert case.plan_only
+    assert "merge-index" in case.plan_only_justification
+    assert "workbench.fiftyone.launch_app" in case.plan_only_justification
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    }
+
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", name)
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "multi")
+    assert runtime_submit_cases() == []
+    assert one_shot_submit_cases() == []
+
+
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
     incomplete = {
         "adversarial-scenario-hardening.yaml",
@@ -810,11 +833,15 @@ def test_runtime_specs_are_registered_with_the_right_tiers() -> None:
         assert not case.plan_only, f"{spec} is the live proof; it must not be plan-only"
 
 
-def test_runtime_cases_declare_their_secrets_and_are_not_plan_only() -> None:
+def test_runtime_cases_declare_secrets_and_explain_plan_only_status() -> None:
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.runtime):
         assert case.secret_envs, f"{case.spec} must declare the secrets its tasks need"
         assert "AWS_ACCESS_KEY_ID" in case.secret_envs
-        assert not case.plan_only
+        if case.plan_only:
+            assert case.plan_only_justification.strip(), (
+                f"{case.spec} records runtime topology but does not explain why "
+                "live submission remains disabled"
+            )
 
 
 def test_every_live_case_declares_the_object_store_credentials_setup_needs() -> None:

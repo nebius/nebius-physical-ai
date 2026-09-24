@@ -444,6 +444,28 @@ def test_shipped_fanout_spec_wave_shape() -> None:
     assert all(f"/images/shard-{letter}/" in argv for letter, argv in zip("abc", argvs))
 
 
+def test_cosmos_synth_fanout_has_one_parallel_wave_then_serial_stubs() -> None:
+    spec = load_spec(SHIPPED / "cosmos-synth-fanout-curation.yaml")
+    waves = build_wave_plan(spec, run_id="cosmos-fanout").waves
+
+    assert [(wave.kind, wave.name, len(wave.steps)) for wave in waves] == [
+        (WAVE_PARALLEL, "synth-fanout", 2),
+        (WAVE_SERIAL, "merge-index", 1),
+        (WAVE_SERIAL, "curate", 1),
+    ]
+    assert waves[0].max_concurrency == 2
+
+
+def test_cosmos_synth_fanout_rejects_mismatched_shard_override() -> None:
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    with pytest.raises(NpaWorkflowError, match="parallelCount resolves to 3"):
+        merge_config_overrides(
+            load_spec(SHIPPED / "cosmos-synth-fanout-curation.yaml"),
+            {"synth_shards": "3"},
+        )
+
+
 def test_shipped_sweep_spec_wave_shape() -> None:
     spec = load_spec(SHIPPED / "isaac-lab-rl-sweep.yaml")
     waves = build_wave_plan(spec, run_id="shape-2").waves
