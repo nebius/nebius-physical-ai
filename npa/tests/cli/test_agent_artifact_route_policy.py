@@ -118,6 +118,45 @@ def test_cold_search_filters_refreshed_index_before_immutable_pagination() -> No
     assert second["pagination_complete"] is True
 
 
+@pytest.mark.parametrize(
+    ("field", "malformed_value"),
+    [
+        ("query_complete", "false"),
+        ("query_complete", 0),
+        ("query_complete", None),
+        ("source_index_truncated", "false"),
+        ("source_index_truncated", 0),
+        ("source_index_truncated", None),
+    ],
+)
+def test_continuation_rejects_malformed_snapshot_completeness(
+    field: str, malformed_value: object
+) -> None:
+    metadata = {
+        "contract": ARTIFACT_ROUTE_POLICY_CONTRACT,
+        "observed_run_count": 0,
+        "observed_match_count": 0,
+        "query_complete": True,
+        "source_index_truncated": False,
+        "source_errors": [],
+    }
+    metadata[field] = malformed_value
+
+    def malformed_snapshot_page(**_kwargs):
+        return [], "", metadata
+
+    with pytest.raises(ValueError, match=field):
+        build_artifact_run_list_response(
+            None,
+            query="missing",
+            page_size=100,
+            cursor="snapshot:1",
+            snapshot_context="scope-digest",
+            snapshot_page=malformed_snapshot_page,
+            effective_scope_complete=True,
+        )
+
+
 def test_partial_effective_scope_never_reports_a_globally_empty_result() -> None:
     response = build_artifact_run_list_response(
         _page(),

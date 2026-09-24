@@ -229,6 +229,13 @@ def _run_list_total_scope(query: str, query_complete: bool) -> str:
     return "global"
 
 
+def _snapshot_completeness_boolean(metadata: Mapping[str, Any], field: str) -> bool:
+    value = metadata.get(field)
+    if type(value) is not bool:
+        raise ValueError(f"run-list snapshot {field} must be a boolean")
+    return value
+
+
 def _run_list_identity_fields(
     visible: Sequence[Any], query: str, size: int, cursor: str, next_cursor: str
 ) -> dict[str, Any]:
@@ -248,9 +255,11 @@ def _run_list_identity_fields(
 def _run_list_completeness_fields(
     metadata: Mapping[str, Any], query: str, next_cursor: str
 ) -> dict[str, Any]:
-    query_complete = bool(metadata.get("query_complete"))
+    query_complete = _snapshot_completeness_boolean(metadata, "query_complete")
     observed_matches = int(metadata.get("observed_match_count") or 0)
-    source_truncated = bool(metadata.get("source_index_truncated"))
+    source_truncated = _snapshot_completeness_boolean(
+        metadata, "source_index_truncated"
+    )
     return {
         "total_runs": observed_matches if query_complete else None,
         "total_runs_scope": _run_list_total_scope(query, query_complete),
