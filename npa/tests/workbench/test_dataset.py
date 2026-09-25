@@ -139,44 +139,32 @@ def test_ingest_rejects_duplicate_record_id(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "invalid_quality", ["unknown", float("nan"), float("inf"), float("-inf")]
 )
+@pytest.mark.parametrize("invalid_record_index", [0, 1])
 def test_ingest_rejects_invalid_quality_before_downstream_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     invalid_quality: Any,
+    invalid_record_index: int,
 ) -> None:
-    import npa.workbench.dataset.ingestion as ing
-
     raw = _raw(
         tmp_path,
         [
             {
-                "record_id": "r1",
+                "record_id": f"r{index}",
                 "modality": "camera",
-                "uri": "s3://b/r1",
-                "quality": {"signal": invalid_quality},
+                "uri": f"s3://b/r{index}",
+                "quality": {
+                    "signal": invalid_quality if index == invalid_record_index else 1.0
+                },
             }
+            for index in range(invalid_record_index + 1)
         ],
     )
-    downstream_calls: list[str] = []
-    monkeypatch.setattr(
-        ing,
-        "index_in_lancedb",
-        lambda *args, **kwargs: downstream_calls.append("lancedb"),
-    )
-    monkeypatch.setattr(
-        ing,
-        "write_json_uri",
-        lambda *args, **kwargs: downstream_calls.append("manifest"),
-    )
-    monkeypatch.setattr(
-        ing,
-        "fiftyone_handoff",
-        lambda *args, **kwargs: downstream_calls.append("fiftyone"),
-    )
+    downstream_calls = _track_ingest_downstream_calls(monkeypatch)
 
     with pytest.raises(
         DatasetIngestError,
-        match=r"record 0 quality 'signal' must be a finite number",
+        match=rf"record {invalid_record_index} quality 'signal' must be a finite number",
     ):
         ingest_dataset(
             IngestRequest(
@@ -189,24 +177,35 @@ def test_ingest_rejects_invalid_quality_before_downstream_work(
         )
 
     assert downstream_calls == []
+    assert not (tmp_path / "ds").exists()
+
+
+def _track_ingest_downstream_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    import npa.workbench.dataset.ingestion as ing
+
+    calls: list[str] = []
+    for name in ("index_in_lancedb", "write_json_uri", "fiftyone_handoff"):
+        monkeypatch.setattr(
+            ing, name, lambda *args, operation=name, **kwargs: calls.append(operation)
+        )
+    return calls
+
+
+def _finite_quality_record() -> dict[str, Any]:
+    return {
+        "record_id": "r1",
+        "modality": "camera",
+        "uri": "s3://b/r1",
+        "quality": {
+            "corruption": "0.5",
+            "minimum": -sys.float_info.max,
+            "maximum": sys.float_info.max,
+        },
+    }
 
 
 def test_ingest_preserves_finite_quality_boundaries(tmp_path: Path) -> None:
-    raw = _raw(
-        tmp_path,
-        [
-            {
-                "record_id": "r1",
-                "modality": "camera",
-                "uri": "s3://b/r1",
-                "quality": {
-                    "corruption": "0.5",
-                    "minimum": -sys.float_info.max,
-                    "maximum": sys.float_info.max,
-                },
-            }
-        ],
-    )
+    raw = _raw(tmp_path, [_finite_quality_record()])
 
     response = ingest_dataset(
         IngestRequest(
