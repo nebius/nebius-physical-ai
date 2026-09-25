@@ -28,8 +28,13 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _records() -> list[dict[str, object]]:
     return [
-        {"id": "clip-1", "location": "san-francisco", "frames": 120, "night": True},
-        {"id": "clip-2", "location": "berlin", "frames": 90, "night": False},
+        {
+            "record_id": "clip-1",
+            "location": "san-francisco",
+            "frames": 120,
+            "night": True,
+        },
+        {"record_id": "clip-2", "location": "berlin", "frames": 90, "night": False},
     ]
 
 
@@ -232,6 +237,8 @@ def test_index_creates_the_table_on_first_write(client: TestClient) -> None:
     body = response.json()
     assert body["status"] == "created"
     assert body["rows"] == 2
+    assert body["inserted"] == 2
+    assert body["reused"] == 0
     assert body["table"] == "dataset"
 
 
@@ -243,14 +250,139 @@ def test_index_appends_on_a_second_write(client: TestClient) -> None:
         json={
             "table": "dataset",
             "records": [
-                {"id": "clip-3", "location": "berlin", "frames": 30, "night": False}
+                {
+                    "record_id": "clip-3",
+                    "location": "berlin",
+                    "frames": 30,
+                    "night": False,
+                }
             ],
         },
     )
 
     assert response.json()["status"] == "appended"
+    assert response.json()["inserted"] == 1
+    assert response.json()["reused"] == 0
     listed = client.post("/query", json={"table": "dataset", "limit": 100}).json()
     assert listed["count"] == 3
+
+
+def test_index_replays_identical_records_without_duplicate_rows(
+    client: TestClient,
+) -> None:
+    client.post("/index", json={"table": "dataset", "records": _records()})
+
+    response = client.post("/index", json={"table": "dataset", "records": _records()})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "replayed"
+    assert response.json()["inserted"] == 0
+    assert response.json()["reused"] == 2
+    listed = client.post("/query", json={"table": "dataset", "limit": 100}).json()
+    assert listed["count"] == 2
+    assert [record["record_id"] for record in listed["records"]] == [
+        "clip-1",
+        "clip-2",
+    ]
+    berlin = client.post(
+        "/query", json={"table": "dataset", "filter": {"location": "berlin"}}
+    ).json()
+    assert berlin["count"] == 1
+    assert berlin["records"][0]["record_id"] == "clip-2"
+
+
+def test_index_mixes_novel_and_replayed_records_atomically(client: TestClient) -> None:
+    original = _records()[0]
+    client.post("/index", json={"table": "dataset", "records": [original]})
+    novel = {
+        "record_id": "clip-2",
+        "location": "berlin",
+        "frames": 90,
+        "night": False,
+    }
+
+    response = client.post(
+        "/index", json={"table": "dataset", "records": [original, novel]}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "appended"
+    assert response.json()["inserted"] == 1
+    assert response.json()["reused"] == 1
+    assert client.post("/query", json={"table": "dataset"}).json()["count"] == 2
+
+
+def test_index_rejects_conflicting_content_before_appending(
+    client: TestClient,
+) -> None:
+    client.post("/index", json={"table": "dataset", "records": _records()})
+    novel = {
+        "record_id": "clip-3",
+        "location": "oslo",
+        "frames": 10,
+        "night": False,
+    }
+    conflicting = {**_records()[0], "frames": 121}
+
+    response = client.post(
+        "/index", json={"table": "dataset", "records": [novel, conflicting]}
+    )
+
+    assert response.status_code == 409, response.text
+    assert "clip-1" in response.json()["detail"]
+    listed = client.post("/query", json={"table": "dataset", "limit": 100}).json()
+    assert listed["count"] == 2
+    assert {record["record_id"] for record in listed["records"]} == {
+        "clip-1",
+        "clip-2",
+    }
+
+
+def test_index_deduplicates_identical_records_within_one_request(
+    client: TestClient,
+) -> None:
+    record = {
+        "record_id": "nested",
+        "location": "oslo",
+        "frames": 10,
+        "night": False,
+        "metadata": {"weather": "snow", "sensors": ["camera", "lidar"]},
+    }
+    reordered = {
+        "metadata": {"sensors": ["camera", "lidar"], "weather": "snow"},
+        "night": False,
+        "frames": 10,
+        "location": "oslo",
+        "record_id": "nested",
+    }
+
+    response = client.post(
+        "/index", json={"table": "dataset", "records": [record, reordered]}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["inserted"] == 1
+    assert response.json()["reused"] == 1
+    replay = client.post("/index", json={"table": "dataset", "records": [reordered]})
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "replayed"
+    assert replay.json()["inserted"] == 0
+    assert replay.json()["reused"] == 1
+    assert client.post("/query", json={"table": "dataset"}).json()["count"] == 1
+
+
+def test_index_rejects_conflicting_request_duplicates_before_creation(
+    client: TestClient, tmp_path: Path
+) -> None:
+    record = _records()[0]
+
+    response = client.post(
+        "/index",
+        json={"table": "dataset", "records": [record, {**record, "frames": 121}]},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "dataset" not in _created_table_names(tmp_path)
 
 
 def test_index_rejects_an_empty_payload(client: TestClient) -> None:
@@ -270,7 +402,7 @@ def test_query_filters_by_equality_facet(client: TestClient) -> None:
 
     body = response.json()
     assert body["count"] == 1
-    assert body["records"][0]["id"] == "clip-2"
+    assert body["records"][0]["record_id"] == "clip-2"
 
 
 def test_query_handles_a_boolean_facet(client: TestClient) -> None:
@@ -280,7 +412,7 @@ def test_query_handles_a_boolean_facet(client: TestClient) -> None:
         "/query", json={"table": "dataset", "filter": {"night": True}}
     ).json()
 
-    assert [record["id"] for record in body["records"]] == ["clip-1"]
+    assert [record["record_id"] for record in body["records"]] == ["clip-1"]
 
 
 def test_query_on_an_unregistered_table_is_empty_not_an_error(
@@ -298,7 +430,14 @@ def test_query_escapes_a_value_containing_a_quote(client: TestClient) -> None:
         "/index",
         json={
             "table": "dataset",
-            "records": [{"id": "x", "location": "o'hare", "frames": 1, "night": False}],
+            "records": [
+                {
+                    "record_id": "x",
+                    "location": "o'hare",
+                    "frames": 1,
+                    "night": False,
+                }
+            ],
         },
     )
 

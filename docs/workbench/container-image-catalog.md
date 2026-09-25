@@ -52,9 +52,9 @@ the locally built candidate does not replace any release listed here. On
 2026-09-25, anonymous verification confirmed all 37 current accepted release
 digests still matched. Historical aliases were not re-audited in that check.
 
-The current source inventory has **52 packaging entries** (43 redistribution-eligible
-and nine restricted) and **44 mapped tools**: 37 public-release members, two
-restricted tools, and five quarantined tools (`curobo`, `ncore`, `openpi`,
+The current source inventory has **54 packaging entries** (45 redistribution-eligible
+and nine restricted) and **46 mapped tools**: 37 public-release members, two
+restricted tools, and seven quarantined tools (`antioch`, `curobo`, `libero`, `ncore`, `openpi`,
 `robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -623,6 +623,16 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
+- **LIBERO** has a quarantined public-neutral-bootstrap development candidate,
+  with no supported release. Its neutral bytes contain only a
+  digest-pinned Python/Debian base, snapshot-locked bootstrap packages, NPA
+  code, and immutable manifests—no LIBERO, GPU runtime, model, demonstration,
+  task/render asset, cache, checkpoint, credential, or output. Trusted development
+  publication requires complete-byte, published-base-provenance and anonymous-pull
+  checks. Customer-authorized exact-digest B200 acceptance remains required before
+  any public-table row or supported release claim.
+  Historical private r15 bytes do not establish equivalence. See the
+  [LIBERO qualification contract](byof-libero.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.
@@ -694,3 +704,11 @@ recipes use the same source revision and archive digest, retaining Pillow 12.3
 or newer. The published Genesis release tags above continue to identify their
 original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
+
+MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
+publication plan. A historical private CUDA 12.8 image completed native B200 and
+RTX PRO 6000 GPU qualification. The current CUDA 13.0 candidate replaces vulnerable
+Torch and setuptools pins and has separate [trained G1 rollout evidence](validation/mjlab-trained-g1-20260925.json)
+on RTX PRO 6000. Public promotion still requires the exact-image security,
+licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
+operator builds and workflow overrides.

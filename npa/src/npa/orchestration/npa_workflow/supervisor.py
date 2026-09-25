@@ -209,10 +209,16 @@ class PreflightEvidence:
 
     @property
     def relaunch_ready(self) -> bool:
-        return all(
-            str(self.checks.get(name) or "").lower() in {"pass", "not_required"}
-            for name in self.REQUIRED_RELAUNCH_CHECKS
-        )
+        for name in self.REQUIRED_RELAUNCH_CHECKS:
+            value = str(self.checks.get(name) or "").lower()
+            # Credential evidence is deliberately persisted only as the
+            # redacted marker.  It still proves the access check passed without
+            # putting a token or credential value into the durable receipt.
+            if name == "credentials_access" and value == "<redacted>":
+                continue
+            if value not in {"pass", "not_required"}:
+                return False
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         return {

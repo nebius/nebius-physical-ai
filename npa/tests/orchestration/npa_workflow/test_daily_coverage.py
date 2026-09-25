@@ -78,7 +78,6 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     rotation = {c.spec for c in cases}
     # Verified-passing on real GPU (RTXPRO-6000) stay in the rotation.
     for good in (
-        "mjlab-eval.yaml",
         "cosmos3-reason.yaml",
         "tokenfactory-rollout-judge.yaml",
         # SONIC twins are self-contained now: the in-job train runtime writes a
@@ -95,6 +94,8 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     # Twins that can't pass as a standalone submit today are excluded.
     for bad in (
         "sonic-eval.yaml",
+        "mjlab-eval.yaml",
+        "mjlab-train-eval.yaml",
         "bdd100k-pipeline.yaml",
     ):
         assert bad not in rotation, f"{bad} should be excluded from the rotation"

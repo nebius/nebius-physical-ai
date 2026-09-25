@@ -16,6 +16,10 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_NAMESPACE_LIVE_E2E": (
+        "requires an explicitly selected disposable cluster with administrator access; "
+        "creates namespaces, temporary client contexts, and CPU pods"
+    ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
         "run with docs/workbench/token-factory-robot-sdg.md"
@@ -87,6 +91,9 @@ MANUAL_GATES = {
     "NPA_BYOF_LIVE_GPU": "BYOF GPU mutation requires a reviewed onboarding target",
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
+    "NPA_BYOF_LIBERO_LIVE_B200": (
+        "LIBERO qualification consumes an accepted immutable candidate image and one reserved B200"
+    ),
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
     "NPA_ANTIOCH_ACCEPT_TERMS": (
         "Antioch live validation requires the operator's own runtime terms acceptance"

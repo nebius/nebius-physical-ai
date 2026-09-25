@@ -83,6 +83,17 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "spec": "byof-wan2.1-14b.yaml",
         "must_exercise": ["wan2.1-14b_text_to_video", "decoded_mp4_validation"],
     },
+    "libero": {
+        "capability_name": "libero_spatial_bc_rnn_train_reload_heldout",
+        "smoke_artifact_name": "libero-smoke.json",
+        "spec": "byof-libero.yaml",
+        "must_exercise": [
+            "libero_official_demo_sha256",
+            "libero_upstream_bert_task_conditioning",
+            "libero_trajectory_disjoint_heldout_split",
+            "libero_spatial_bc_rnn_train_reload_heldout",
+        ],
+    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
@@ -197,6 +208,16 @@ def _load_wan_input_contract():
     return module
 
 
+def _smoke_contract_text(path: Path) -> str:
+    command = str(_load_config(path).get("smoke_command") or "")
+    if path.name == "byof-libero.yaml":
+        assert command == "/opt/npa/libero/smoke.sh"
+        return (
+            ROOT / "npa" / "docker" / "workbench" / "libero" / "libero_smoke.py"
+        ).read_text(encoding="utf-8")
+    return command
+
+
 def test_byof_solution_specs_have_capability_smokes() -> None:
     assert SOLUTION_SPECS, "expected BYOF solution candidate specs"
     for path in SOLUTION_SPECS:
@@ -205,7 +226,7 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
         assert str(config.get("solution_name") or "").strip(), path.name
         assert str(config.get("capability_name") or "").strip(), path.name
         artifact = str(config.get("smoke_artifact_name") or "").strip()
-        smoke = str(config.get("smoke_command") or "")
+        smoke = _smoke_contract_text(path)
         assert artifact.endswith(".json"), path.name
         assert "NPA_SMOKE_OUTPUT_DIR" in smoke, path.name
         assert artifact in smoke, path.name
@@ -213,7 +234,7 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
 
 def test_byof_solution_smokes_are_not_import_only() -> None:
     for path in SOLUTION_SPECS:
-        smoke = str(_load_config(path).get("smoke_command") or "")
+        smoke = _smoke_contract_text(path)
         assert ".write_text(" in smoke, path.name
         assert "json.dumps(" in smoke, path.name
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
@@ -315,7 +336,7 @@ def test_solution_capability_contracts_match_specs() -> None:
         assert path.name == expected["spec"]
         assert config.get("capability_name") == expected["capability_name"]
         assert config.get("smoke_artifact_name") == expected["smoke_artifact_name"]
-        smoke = str(config.get("smoke_command") or "")
+        smoke = _smoke_contract_text(path)
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke
         for capability in expected["must_exercise"]:
