@@ -16,7 +16,7 @@ import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
 
-from npa.workbench.lancedb.server import create_app
+from npa.workbench.lancedb.server import CreateTableRequest, create_app
 
 
 @pytest.fixture()
@@ -61,6 +61,15 @@ def _open_created_table(tmp_path: Path, name: str):
 
 def _created_table_names(tmp_path: Path) -> set[str]:
     return set(lancedb.connect(tmp_path / "lance").list_tables().tables)
+
+
+def test_create_table_schema_keeps_its_wire_name_without_shadowing_pydantic() -> None:
+    field = CreateTableRequest.model_fields["table_schema"]
+
+    assert "schema" not in CreateTableRequest.model_fields
+    assert field.alias == "schema"
+    assert CreateTableRequest.model_validate({"schema": _table_schema()}).table_schema
+    assert "schema" in CreateTableRequest.model_json_schema()["properties"]
 
 
 def test_create_table_with_schema_stores_zero_rows(

@@ -75,7 +75,7 @@ except ImportError:  # pragma: no cover - used by the copied Docker module.
 
 
 class CreateTableRequest(BaseModel):
-    schema: dict[str, Any] | None = None
+    table_schema: dict[str, Any] | None = Field(default=None, alias="schema")
     input_path: str = ""
     rows: list[dict[str, Any]] = Field(default_factory=list)
     mode: Literal["create", "overwrite", "append"] = "create"
@@ -461,7 +461,7 @@ def _mutate_table(
             status_code=400,
             detail="server-side S3 import is not implemented in the OSS wrapper",
         )
-    requested_schema = _parse_arrow_schema(body.schema)
+    requested_schema = _parse_arrow_schema(body.table_schema)
     if not body.rows and requested_schema is None:
         raise HTTPException(
             status_code=400, detail="rows or a usable schema are required"
