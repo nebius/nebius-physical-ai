@@ -180,7 +180,6 @@ def test_bundle_refuses_leakage_ambiguity_and_missing_contract(navigation, edit)
 @pytest.mark.parametrize(
     "uri",
     [
-        "/tmp/scan",
         "https://host/scan",
         "s3://fixture/../x",
         "s3://fixture/a//b",
@@ -196,6 +195,11 @@ def test_bundle_refuses_leakage_ambiguity_and_missing_contract(navigation, edit)
 def test_hostile_paths_rejected(uri):
     with pytest.raises(ValueError):
         _object_uri(uri)
+
+
+def test_local_path_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        _object_uri(str(tmp_path / "scan"))
 
 
 def test_pinned_bundle_tampering_rejected(navigation):
