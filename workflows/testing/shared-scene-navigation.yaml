@@ -3,17 +3,18 @@ kind: Workflow
 metadata:
   name: shared-scene-navigation
   description: >-
-    Operator-owned Isaac Lab navigation: seal explicit task/scene/reset inputs,
+    Public reference or operator-owned Isaac Lab navigation: seal task/scene/reset inputs,
     measure shared-scene contact and perception isolation, train native RSL-RL,
-    and evaluate the exact checkpoint on held-out goals. Requires a BYOF task
-    adapter and digest-pinned image. No stock robot, warehouse or GPU acceptance
-    is implied. RGB-D supports only all_robot_geometry_hidden.
+    and evaluate the exact checkpoint on held-out goals. Use the public native
+    reference bundle builder or a BYOF task adapter with a digest-pinned image.
+    Native GPU acceptance is recorded separately. RGB-D supports only
+    all_robot_geometry_hidden.
 config:
   bucket: example-bucket
   prefix: "shared-scene-navigation/{{run.id}}"
   source_overlay: "1"
   input_uri: ""
-  # Must be an operator BYOF image digest matching recipe.json before execution.
+  # Exact native runtime or BYOF image digest matching recipe.json.
   byof_image: "tool://isaac-lab"
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"

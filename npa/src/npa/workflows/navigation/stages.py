@@ -53,7 +53,7 @@ def run_stage(stage: str, input_path: str, output_path: str) -> dict:
     """Execute native Isaac through its installed interpreter and publish real evidence.
 
     Args:
-        stage: train or evaluate; the workflow owns stage order.
+        stage: train, evaluate, or evaluate-checkpoint on independent sealed inputs.
         input_path: Sealed upstream S3 prefix or local bundle.
         output_path: Fresh run-scoped result prefix or local directory.
     Returns:
@@ -63,8 +63,8 @@ def run_stage(stage: str, input_path: str, output_path: str) -> dict:
         RuntimeError: Native execution or the held-out quality gate fails.
         OSError: Interpreter, required files or storage are unavailable.
     """
-    if stage not in {"train", "evaluate"}:
-        raise ValueError("native stage must be train or evaluate")
+    if stage not in {"train", "evaluate", "evaluate-checkpoint"}:
+        raise ValueError("native stage must be train, evaluate or evaluate-checkpoint")
     with tempfile.TemporaryDirectory(prefix="npa-navigation-") as temp:
         source = materialize(input_path, Path(temp) / "input")
         recipe = read_recipe(source)
@@ -122,13 +122,16 @@ def _native(stage, source, output):
         and file_sha256(output / "policy.pt") != evidence["checkpoint_sha256"]
     ):
         raise ValueError("training checkpoint does not match native evidence")
-    if stage == "evaluate" and evidence.get("policy_loaded") is not True:
+    if stage != "train" and evidence.get("policy_loaded") is not True:
         raise ValueError("evaluation did not load the trained policy")
     return evidence
 
 
 def _carry_inputs(source, output, recipe, stage):
-    for name in ("recipe.json", recipe.scene_file):
+    names = ["recipe.json", recipe.scene_file]
+    if recipe.initial_checkpoint:
+        names.append(recipe.initial_checkpoint.file)
+    for name in names:
         destination = output / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, destination)

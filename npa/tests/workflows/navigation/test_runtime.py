@@ -24,7 +24,7 @@ def test_corrupt_checkpoint_rejected_before_native_loader(
     (tmp_path / "policy.pt").write_bytes(b"tampered")
     (tmp_path / "training.json").write_text(json.dumps({"checkpoint_sha256": "0" * 64}))
     monkeypatch.setattr(
-        "npa.workflows.franka_rl_environment.load_checkpoint",
+        "npa.workflows.navigation.initialization.load_native_checkpoint",
         lambda *args: pytest.fail("corrupt checkpoint must not be decoded"),
     )
     with pytest.raises(ValueError, match="SHA-256 differs"):
@@ -41,7 +41,9 @@ def test_policy_load_error_never_calls_rollout(recipe, tmp_path, monkeypatch):
         raise RuntimeError("native checkpoint decoder rejected payload")
 
     monkeypatch.setattr(runtime, "_verify_training_binding", lambda *args: None)
-    monkeypatch.setattr("npa.workflows.franka_rl_environment.load_checkpoint", fail)
+    monkeypatch.setattr(
+        "npa.workflows.navigation.initialization.load_native_checkpoint", fail
+    )
     monkeypatch.setattr(
         runtime, "_rollout", lambda *args: pytest.fail("no fallback policy")
     )

@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "26e492e78f8cb796140eac8ed71663d41ef92e8e765dae0683418719efd10144",
+  "workflow_sha256": "a83b419b937db9ba293de462b2e81d927bdd033988efcaf14f7a7901db0e4642",
   "planning": {
     "validation": {
       "status": "verified",
@@ -26,9 +26,11 @@
       "evidence": []
     },
     "worker_input": {
-      "status": "blocked",
-      "reason": "Operator-owned task adapter, scene USDZ and deterministic reset/probe bundle are required; proprietary task data is unavailable.",
-      "evidence": []
+      "status": "unverified",
+      "reason": "The public native reference and collision-scene/reset bundle builder are implemented and locally tested. Native behavior and learning require GPU validation; proprietary task inputs remain operator-owned.",
+      "evidence": [
+        "npa/src/npa/workflows/navigation/reference_bundle.py"
+      ]
     },
     "credentials": {
       "status": "unverified",
@@ -37,7 +39,7 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "An exact operator BYOF image digest containing the registered navigation task and adapter must replace the planning placeholder.",
+      "reason": "An exact native image digest plus matching reviewed reference source overlay, or an operator BYOF image, must replace the planning placeholder.",
       "evidence": []
     },
     "target_runtime": {

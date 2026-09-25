@@ -73,6 +73,33 @@ class Camera(BaseModel):
     peer_in_view: Case
 
 
+class InitialCheckpoint(BaseModel):
+    """Bind native training initialization to exact checkpoint bytes.
+
+    Args:
+        **data: Bundle-relative checkpoint file and its SHA-256.
+    Returns:
+        Validated optional starting checkpoint.
+    Raises:
+        ValueError: The path or digest is invalid.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    file: str
+    sha256: Digest
+
+    @model_validator(mode="after")
+    def _path(self):
+        path = PurePosixPath(self.file)
+        if path.is_absolute() or ".." in path.parts or str(path) != self.file:
+            raise ValueError("initial checkpoint must use a normalized relative path")
+        if path.suffix != ".pt" or path.name == "policy.pt":
+            raise ValueError(
+                "initial checkpoint must be a .pt file other than policy.pt"
+            )
+        return self
+
+
 class Recipe(BaseModel):
     """Bind a BYOF task, scene, training recipe and held-out reset set.
 
@@ -103,6 +130,8 @@ class Recipe(BaseModel):
     train_cases: Annotated[list[Case], Field(min_length=2)]
     eval_cases: Annotated[list[Case], Field(min_length=2)]
     probe: Probe
+    initial_checkpoint: InitialCheckpoint | None = None
+    source_bundle_sha256: Digest | None = None
 
     @model_validator(mode="after")
     def _check_contract(self):
@@ -153,6 +182,17 @@ def read_recipe(root: Path) -> Recipe:
         raise ValueError("scene file escapes input bundle")
     if hashlib.sha256(scene.read_bytes()).hexdigest() != recipe.scene_sha256:
         raise ValueError("scene SHA-256 mismatch")
+    if recipe.initial_checkpoint:
+        checkpoint = root / recipe.initial_checkpoint.file
+        if checkpoint.is_symlink() or not checkpoint.resolve().is_relative_to(
+            root.resolve()
+        ):
+            raise ValueError("initial checkpoint escapes input bundle")
+        if (
+            hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+            != recipe.initial_checkpoint.sha256
+        ):
+            raise ValueError("initial checkpoint SHA-256 mismatch")
     return recipe
 
 

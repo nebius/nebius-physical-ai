@@ -21,6 +21,9 @@ def task_adapter(recipe):
         ValueError: Source hash or required integration methods differ.
         ImportError: Operator adapter is not installed in the BYOF image.
     """
+    if recipe.adapter_module == "npa.workflows.navigation.reference":
+        if recipe.source_bundle_sha256 != source_bundle_digest():
+            raise ValueError("installed reference source bundle SHA-256 mismatch")
     source = _module_source(recipe.adapter_module)
     if file_sha256(source) != recipe.adapter_sha256:
         raise ValueError("installed task adapter source SHA-256 mismatch")
@@ -35,6 +38,24 @@ def task_adapter(recipe):
     ):
         raise ValueError("RGB-D adapter requires visibility_paths(env)")
     return module
+
+
+def source_bundle_digest() -> str:
+    """Bind all built-in navigation source bytes separately from the native image.
+
+    Args:
+        None.
+    Returns:
+        Stable SHA-256 of relative module names and file digests.
+    Raises:
+        OSError: An installed source module cannot be read.
+    """
+    import hashlib
+    import json
+
+    root = Path(__file__).parent
+    sources = {path.name: file_sha256(path) for path in sorted(root.glob("*.py"))}
+    return hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
 
 
 def _module_source(name):
@@ -103,27 +124,46 @@ def inspect_scene(env, recipe, scene_file: Path) -> dict:
     from npa.workbench.isaac_lab.routing import validate_render_gpu_target
     import torch
 
-    if not version("isaacsim").startswith("6.0.1"):
-        raise ValueError("navigation adapter requires the Isaac Sim 6.0.1 runtime")
     native = env.unwrapped
+    _verify_sim_version()
     if not isinstance(native, (DirectRLEnv, ManagerBasedRLEnv)):
         raise ValueError("BYOF task must be a native Isaac Lab RL environment")
     if native.num_envs != recipe.num_envs or not str(native.device).startswith("cuda"):
         raise ValueError("native Isaac robot count or CUDA device differs from recipe")
     validate_render_gpu_target(torch.cuda.get_device_name(), what="Isaac navigation")
     _verify_scene_reference(native.sim.stage, recipe, scene_file)
-    sensors = _inspect_sensors(native.scene.sensors, recipe)
     return {
         "isaaclab": version("isaaclab"),
         "isaacsim": version("isaacsim"),
         "rsl_rl": version("rsl-rl-lib"),
         "torch": torch.__version__,
         "gpu": torch.cuda.get_device_name(),
+        "gpu_total_memory_bytes": torch.cuda.get_device_properties(0).total_memory,
+        "robot_population": native.num_envs,
+        "scene_collision_meshes": _scene_collider_count(
+            native.sim.stage, recipe.scene_prim
+        ),
         "scene_instances": 1,
         "scene_sha256": recipe.scene_sha256,
         "scene_prim": recipe.scene_prim,
-        "sensors": sensors,
+        "sensors": _inspect_sensors(native.scene.sensors, recipe),
     }
+
+
+def _verify_sim_version():
+    if not version("isaacsim").startswith("6.0.1"):
+        raise ValueError("navigation adapter requires the Isaac Sim 6.0.1 runtime")
+
+
+def _scene_collider_count(stage, root):
+    from pxr import Sdf, Usd, UsdPhysics
+
+    return sum(
+        prim.GetPath().HasPrefix(Sdf.Path(root))
+        and prim.HasAPI(UsdPhysics.CollisionAPI)
+        and bool(UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get())
+        for prim in stage.Traverse(Usd.TraverseInstanceProxies())
+    )
 
 
 def _verify_scene_reference(stage, recipe, scene_file):
@@ -147,7 +187,9 @@ def _verify_scene_reference(stage, recipe, scene_file):
 
 
 def _inspect_sensors(sensors, recipe):
-    from isaaclab.sensors import Camera, ContactSensor, RayCaster
+    from isaaclab.sensors import Camera
+    from isaaclab.sensors.contact_sensor import BaseContactSensor
+    from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 
     inventory = {}
     rays = cameras = 0
@@ -156,11 +198,11 @@ def _inspect_sensors(sensors, recipe):
             inventory[name] = {"type": "camera"}
             cameras += 1
             continue
-        if isinstance(sensor, ContactSensor):
+        if isinstance(sensor, BaseContactSensor):
             inventory[name] = {"type": "contact"}
             continue
         if (
-            not isinstance(sensor, RayCaster)
+            not isinstance(sensor, BaseRayCaster)
             or "camera" in type(sensor).__name__.lower()
         ):
             raise ValueError(

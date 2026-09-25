@@ -1,18 +1,99 @@
 # Shared-scene Isaac navigation
 
-[The workflow](../../../workflows/testing/shared-scene-navigation.yaml) runs an
-operator's registered Isaac Lab navigation task in its existing BYOF image:
+[The workflow](../../../workflows/testing/shared-scene-navigation.yaml) runs the
+built-in public reference or an operator's registered Isaac Lab navigation task:
 prepare inputs → native RSL-RL train → reload checkpoint and evaluate held-out
-goals. It requires an integration adapter, a self-contained warehouse USDZ, and
-explicit reset/probe cases. **GPU acceptance has not been run.** Proprietary
-robot and scene integration remains operator input. There is no substitute task,
-CPU simulator, random-action evaluation, deployment or image build in this spec.
+goals. It requires a self-contained collision USDZ and explicit reset/probe cases.
+The public bundle builder supplies a cluttered warehouse and reviewed native task;
+custom robots retain the BYOF adapter boundary. **GPU acceptance has not been run.**
+Proprietary robot and scene integration remains operator input.
 
-The public [Isaac Lab ANYmal navigation configuration](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab_tasks/isaaclab_tasks/manager_based/navigation/config/anymal_c/navigation_env_cfg.py)
-is a useful reference for registered navigation observations, commands and
-low-level control. It does not establish shared-warehouse isolation. This
-workflow deliberately supplies no guessed robot internals or generic
-`env_spacing=0` patch. A task that does not implement the contract fails closed.
+The reference extends the pinned public
+[Isaac Lab navigation configuration](https://github.com/isaac-sim/IsaacLab/blob/v3.0.0-beta2.patch1/source/isaaclab_tasks/isaaclab_tasks/manager_based/navigation/config/anymal_c/navigation_env_cfg.py).
+Its public quadruped uses the upstream pretrained low-level locomotion controller;
+the high-level navigation policy is trained with native RSL-RL PPO. It adds 216
+static-scene range rays, fixed goals, progress rewards and measured collision
+penalties. Robot clones share one warehouse at world coordinates, with native
+collision filtering and independent parked/coincident-peer and obstacle controls.
+The reference demonstrates the public task, not a proprietary controller.
+See the [component attribution](shared-scene-navigation.NOTICE.txt) for upstream
+modules and the separate runtime/asset boundary.
+
+## Public reference inputs
+
+The pinned runtime is Isaac Lab `3.0.0b2.post1`, Isaac Sim `6.0.1.0`, and RSL-RL
+`5.0.1`. Authorize native runtime and upstream robot/controller asset access using
+the normal Isaac procedure. The task fetches public assets through upstream Isaac
+paths; it does not bake them into a new image. Supply an exact runtime image digest
+and the reviewed Workbench source overlay. `source_bundle_sha256` binds all
+installed navigation Python module names and bytes before adapter import; it is
+distinct from the image digest and is not a hash of the entire overlay archive.
+Use the same source checkout to build inputs and stage runtime source.
+
+```bash
+npa/.venv/bin/python -m npa.workflows.navigation.reference_bundle \
+  --output-path "$NPA_NAVIGATION_BUNDLE" --image "$NPA_NAVIGATION_IMAGE" \
+  --num-envs 4000 --iterations "$NPA_PPO_ITERATIONS" \
+  --episode-steps "$NPA_EVALUATION_STEPS"
+```
+
+Training iterations and evaluation horizon are explicit experiment inputs. The
+reference's native training episodes last 30 simulated seconds. Its generated
+warehouse has real triangle-mesh floor, walls and racks, with disjoint seeded
+routes through the clutter. This is a public procedural scene, not a reconstructed
+customer environment. To use reconstructed geometry, supply `--scene-file` and
+`--cases-file`; the latter must contain measured `train_cases`, `eval_cases`, and
+`probe` objects. Geometry must be metric Z-up static triangle meshes with actual
+USD collision schemas. The adapter derives its range mesh from those exact
+colliders, without adding a floor or modifying collision surfaces. Choose root
+heights from measured floor elevation and the public robot's stance.
+
+The contact instrumentation samples native PhysX at every physics substep. It
+classifies nonvertical contact normals as obstacles, counts every base contact,
+and excludes ordinary vertical foot support. Unexpected net contacts after
+subtracting static-scene forces are reported as peer contacts. Values below
+0.02 N are treated as numerical noise. These controls and the 4000-robot target
+require real GPU validation; local tensor and USD tests do not prove runtime
+throughput or learning convergence.
+
+Native training retains `reference_checkpoint.pt` before the first update,
+`policy.pt` after learning, TensorBoard logs and exported `learning-curves.json`.
+The training record reports measured wall time, native control-transition
+throughput and peak PyTorch CUDA memory; runtime evidence includes the actual
+GPU model, physical device memory, robot population and static collider count.
+`comparison.compare_reference(training_prefix, output_prefix)` reloads both
+checkpoints on the identical held-out inputs and publishes the measured gain.
+The initial reference is an untrained high-level navigation policy above the
+public pretrained low-level controller; it is not a customer's existing policy.
+
+Public reference evaluation captures the actual Isaac Replicator RGB renderer
+while the focal robot follows its native policy. The video overlays measured
+goal distance, contact forces and simulated time. Peer visuals are hidden only
+for this recording; their physics remain active, and render steps use zero
+simulation delta. Artifacts include `rendered-rollout/*.png`, frame measurements,
+and `rollout.mp4` when the runtime supplies FFmpeg. The PNG sequence can be encoded
+later without rerunning or reconstructing the simulation. Custom BYOF tasks
+retain their own visualization integration.
+
+## Resume and independent checkpoint evaluation
+
+Add `--checkpoint` when building inputs, or set optional
+`initial_checkpoint: {file: baseline.pt, sha256: ...}` in a custom recipe. The
+checkpoint must be a contained `.pt` file with a distinct name from the generated
+`policy.pt`. Training verifies its bytes immediately before safe tensor-only
+decoding and restores complete native policy, optimizer and iteration state with
+strict architecture checks. `training.json.initialization` records the input
+digest and initial iteration; parameter-change measurement starts after loading.
+
+Programmatic local/S3 entrypoints are `stages.prepare(input, prepared, image)` and
+`stages.run_stage("train", prepared, trained)`. For paired comparisons, construct
+a separate sealed bundle with the held-out scene/cases and each arm's exact
+`initial_checkpoint`, then call
+`stages.run_stage("evaluate-checkpoint", prepared_eval, evaluated)`. It reloads
+that checkpoint and emits `evaluation.json` and raw `trajectory.json` without
+requiring a training receipt for the held-out scene. A valid low-scoring arm is
+published with `passed=false`; it remains usable for a baseline/candidate
+comparison. Normal workflow `evaluate` retains its qualification gate.
 
 ## Execution
 
@@ -76,6 +157,8 @@ or overlapping reset cases are rejected.
 | `train_cases`, `eval_cases` | Disjoint case IDs, seeds and physical reset tuples; evaluation inputs never reach the training configurator |
 | `probe` | `free`, `parked`, `obstacle` cases, native `actions` sequence and absolute `tolerance` (default `1e-5`, at most `0.001`) |
 | `camera` | Required only for RGB-D, described below |
+| `initial_checkpoint` | Optional contained `.pt` file and SHA-256 for actual native resume or independent checkpoint evaluation |
+| `source_bundle_sha256` | Required for the built-in public reference: digest of all installed navigation modules, checked before import; optional for image-owned external adapters |
 
 Each case contains `id`, nonnegative integer `seed`, `position_m: [x,y,z]`,
 `heading_rad` and `goal_m: [x,y]`, all finite world-frame SI values. Episode

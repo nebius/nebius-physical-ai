@@ -1,0 +1,25 @@
+Shared-scene navigation public reference attribution
+
+The native reference imports Isaac Lab v3.0.0-beta2.patch1, including the
+manager-based navigation configuration, public quadruped asset configuration,
+pretrained low-level policy action, pose command and native sensor managers.
+https://github.com/isaac-sim/IsaacLab/tree/v3.0.0-beta2.patch1
+Isaac Lab source is provided by The Isaac Lab Project Developers under its
+upstream BSD-3-Clause license. No upstream source or vendor asset payload is
+vendored by this change.
+
+Training and checkpoint state use upstream RSL-RL v5.0.1 OnPolicyRunner and PPO.
+https://github.com/leggedrobotics/rsl_rl/tree/v5.0.1
+RSL-RL is provided by ETH Zurich and NVIDIA CORPORATION under its upstream
+BSD-3-Clause license.
+
+NPA supplies the shared-scene configuration, explicit reset distributions,
+static-collider range-mesh derivation, PhysX contact measurement, provenance,
+and paired checkpoint evaluation boundaries. The public procedural warehouse
+is NPA-generated geometry. It contains no customer capture or robot internals.
+
+Isaac Sim runtime, upstream robot USD and pretrained controller assets retain
+their separate upstream terms. They are fetched into the operator-owned runtime
+and cache through the existing Isaac procedure, not redistributed in this PR's
+source or a new image. Source licensing alone does not grant rights to those
+asset payloads or authorize publication of derived outputs.
