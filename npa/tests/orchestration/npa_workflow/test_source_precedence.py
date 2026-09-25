@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -28,7 +29,11 @@ def test_submitted_source_wins_over_baked_package(
     script = render_task_run_script(
         [sys.executable, "-c", "import npa; assert npa.SOURCE == 'submitted'"]
     )
-    script = script.replace("/tmp/npa", str(tmp_path / "npa"))
+    # Follow the renderer's real control directory without using shared host files.
+    shim = re.search(r"^  mkdir -p (.+/npa-shim)$", script, flags=re.MULTILINE)
+    assert shim is not None
+    control_prefix = str(PurePosixPath(shim[1]).with_name("npa"))
+    script = script.replace(control_prefix, str(tmp_path / "npa"))
     script = script.replace("/etc/profile.d", str(tmp_path / "profiles"))
     environment = {**os.environ, "PYTHONPATH": str(baked), "HOME": str(tmp_path)}
     result = subprocess.run(
