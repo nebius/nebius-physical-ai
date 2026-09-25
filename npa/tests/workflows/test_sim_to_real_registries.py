@@ -19,6 +19,7 @@ from npa.workflows.feedback import (
     FeedbackType,
     adapt_feedback_to_training_signal,
     collect_feedback,
+    parse_source_payload,
 )
 
 
@@ -292,4 +293,38 @@ def test_byo_container_feedback_source_rejects_mismatched_declared_type(
                 feedback_type=FeedbackType.SCALAR,
                 byo_endpoint_url="https://feedback.invalid/score",
             )
+        )
+
+
+@pytest.mark.parametrize(
+    ("source_payload", "expected_success"),
+    [
+        ({"value": 0.8}, True),
+        ({"value": 0.2}, False),
+        ({"value": 0.2, "success": True}, True),
+        ({"value": 0.8, "success": False}, False),
+    ],
+)
+def test_parse_source_payload_preserves_boolean_or_score_based_success(
+    source_payload: dict, expected_success: bool
+) -> None:
+    payload = parse_source_payload(
+        source_payload,
+        source="byo-container",
+        feedback_type=FeedbackType.SCALAR,
+    )
+
+    assert payload.success is expected_success
+
+
+@pytest.mark.parametrize("success", ["false", 0, 1, [], [False], {}, {"value": False}])
+def test_parse_source_payload_rejects_non_boolean_success(success: object) -> None:
+    with pytest.raises(
+        FeedbackSourceError,
+        match="feedback source 'success' must be a JSON boolean",
+    ):
+        parse_source_payload(
+            {"value": 0.9, "success": success},
+            source="byo-container",
+            feedback_type=FeedbackType.SCALAR,
         )

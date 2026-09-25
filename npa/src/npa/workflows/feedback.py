@@ -447,7 +447,7 @@ def parse_source_payload(
     if value is None:
         value = _fallback_value(payload, feedback_type)
     score = _score_from_payload(payload, value, feedback_type)
-    success = bool(payload.get("success", score >= 0.5))
+    success = _success_from_payload(payload, score)
     rationale = str(payload.get("rationale") or payload.get("critique") or "")
     return FeedbackPayload(
         source=str(payload.get("source") or source),
@@ -458,6 +458,15 @@ def parse_source_payload(
         rationale=rationale,
         metadata=dict(payload.get("metadata") or {}),
     )
+
+
+def _success_from_payload(payload: dict[str, Any], score: float) -> bool:
+    if "success" not in payload:
+        return score >= 0.5
+    success = payload["success"]
+    if not isinstance(success, bool):
+        raise FeedbackSourceError("feedback source 'success' must be a JSON boolean")
+    return success
 
 
 def _payload_from_score(
