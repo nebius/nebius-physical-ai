@@ -36,13 +36,21 @@ def source_trees(tmp_path, monkeypatch):
     (package / "content/dataset").mkdir(parents=True)
     data = b"verified synthetic importer fixture\n"
     (package / "content/dataset/test.yaml").write_bytes(data)
-    monkeypatch.setattr(runner, "DATASET_FILES", {"test": ("test.yaml", hashlib.sha256(data).hexdigest())})
+    monkeypatch.setattr(
+        runner,
+        "DATASET_FILES",
+        {"test": ("test.yaml", hashlib.sha256(data).hexdigest())},
+    )
     monkeypatch.setattr(runner, "version", lambda _: "0.8.0")
     monkeypatch.setenv("NPA_CUROBO_SOURCE", str(source))
     monkeypatch.setenv("NPA_CUROBO_DATASET_SOURCE", str(dataset))
     monkeypatch.delenv("PYTHONPATH", raising=False)
     monkeypatch.setattr(sys, "path", list(sys.path))
-    saved = {name: module for name, module in sys.modules.items() if name == "robometrics" or name.startswith("robometrics.")}
+    saved = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "robometrics" or name.startswith("robometrics.")
+    }
     for name in saved:
         sys.modules.pop(name)
     yield source, dataset
@@ -58,7 +66,10 @@ def test_scrubbed_pythonpath_loads_only_verified_raw_dataset(source_trees):
     before.update({p: p.read_bytes() for p in dataset.rglob("*") if p.is_file()})
     module = runner._benchmark_module()
     assert module.OBSERVED_DATA == "verified synthetic importer fixture\n"
-    assert Path(importlib.import_module("robometrics.datasets").__file__) == dataset / "robometrics/datasets.py"
+    assert (
+        Path(importlib.import_module("robometrics.datasets").__file__)
+        == dataset / "robometrics/datasets.py"
+    )
     assert all(path.read_bytes() == payload for path, payload in before.items())
 
 
@@ -82,13 +93,20 @@ def test_ambient_import_path_cannot_shadow_verified_dataset(source_trees, tmp_pa
     _, dataset = source_trees
     shadow = tmp_path / "shadow"
     (shadow / "robometrics").mkdir(parents=True)
-    (shadow / "robometrics/__init__.py").write_text("raise AssertionError('ambient package executed')\n")
+    (shadow / "robometrics/__init__.py").write_text(
+        "raise AssertionError('ambient package executed')\n"
+    )
     sys.path.insert(0, str(shadow))
-    assert runner._benchmark_module().OBSERVED_DATA == "verified synthetic importer fixture\n"
+    assert (
+        runner._benchmark_module().OBSERVED_DATA
+        == "verified synthetic importer fixture\n"
+    )
     assert sys.path[0] == str(dataset)
 
 
-def test_cached_foreign_package_is_rejected_before_upstream_execution(source_trees, tmp_path):
+def test_cached_foreign_package_is_rejected_before_upstream_execution(
+    source_trees, tmp_path
+):
     _, dataset = source_trees
     shadow = tmp_path / "shadow"
     (shadow / "robometrics").mkdir(parents=True)
@@ -103,9 +121,15 @@ def test_cached_foreign_package_is_rejected_before_upstream_execution(source_tre
 
 
 @pytest.mark.parametrize("mutation", ["revision", "bytes"])
-def test_bad_dataset_identity_fails_before_import_or_path_change(source_trees, mutation):
+def test_bad_dataset_identity_fails_before_import_or_path_change(
+    source_trees, mutation
+):
     _, dataset = source_trees
-    target = dataset / ("NPA_SOURCE_REVISION" if mutation == "revision" else "robometrics/content/dataset/test.yaml")
+    target = dataset / (
+        "NPA_SOURCE_REVISION"
+        if mutation == "revision"
+        else "robometrics/content/dataset/test.yaml"
+    )
     target.write_text("different identity")
     before_path = list(sys.path)
     with pytest.raises(CuroboError, match="(revision|YAML bytes)"):

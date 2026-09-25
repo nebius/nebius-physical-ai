@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import time
 
 import pytest
@@ -33,6 +34,46 @@ ROBOMIMIC_PATH = robomimic_attribution.REPOSITORY_PATH
 ROBOMIMIC_LOCK = REPO_ROOT / ROBOMIMIC_PATH
 ROBOMIMIC_ATTRIBUTION_TEXT = ROBOMIMIC_LOCK.read_text().splitlines()[248]
 ROBOMIMIC_ATTRIBUTION_PATTERN = re.escape(ROBOMIMIC_ATTRIBUTION_TEXT)
+
+
+@pytest.mark.parametrize("content,expected", [("public", 0), ("private-fixture", 1)])
+def test_confidentiality_runs_without_application_dependencies(content, expected):
+    """Preserve detection and redaction with only the standard library installed.
+
+    Args:
+        content: Public or confidential synthetic input.
+        expected: Required scanner exit status.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A dependency is required or confidential input is accepted.
+    """
+    bootstrap = (
+        "import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
+        "runpy.run_module('npa.guardrails.confidentiality', run_name='__main__')"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            bootstrap,
+            str(REPO_ROOT / "npa/src"),
+            "--stdin-source",
+            "fixture",
+            "--pattern-env",
+            "SCANNER_TEST_DENYLIST",
+        ],
+        input=content,
+        capture_output=True,
+        text=True,
+        env={"SCANNER_TEST_DENYLIST": "private-fixture"},
+        check=False,
+    )
+    assert result.returncode == expected, result.stderr
+    assert "private-fixture" not in result.stdout + result.stderr
+    assert f"unresolved={expected}" in result.stdout + result.stderr
 
 
 def test_confidentiality_matcher_reports_redacted_locations_only() -> None:
@@ -393,9 +434,10 @@ def test_robomimic_attribution_foreign_copy_remains_unresolved(
         confidentiality, "verify_public_license_lock", lambda _lock, _proof: {}
     )
 
-    assert _run_robomimic_tree(
-        repo, _robomimic_proof_directory(tmp_path), monkeypatch
-    ) == 1
+    assert (
+        _run_robomimic_tree(repo, _robomimic_proof_directory(tmp_path), monkeypatch)
+        == 1
+    )
     captured = capsys.readouterr()
     assert "docs/foreign-license-record.txt:1" in captured.err
     assert "raw=2 dispositioned=1 unresolved=1" in captured.err
@@ -419,12 +461,15 @@ def test_changed_robomimic_lock_and_private_marker_fail_closed(
 
     monkeypatch.setattr(confidentiality, "verify_public_license_lock", unexpected)
 
-    assert _run_robomimic_tree(
-        repo,
-        _robomimic_proof_directory(tmp_path),
-        monkeypatch,
-        rf"{ROBOMIMIC_ATTRIBUTION_PATTERN}|{marker}",
-    ) == 1
+    assert (
+        _run_robomimic_tree(
+            repo,
+            _robomimic_proof_directory(tmp_path),
+            monkeypatch,
+            rf"{ROBOMIMIC_ATTRIBUTION_PATTERN}|{marker}",
+        )
+        == 1
+    )
     captured = capsys.readouterr()
     assert "raw=2 dispositioned=0 unresolved=2" in captured.err
     assert marker not in captured.out + captured.err
@@ -443,13 +488,14 @@ def test_wrong_robomimic_line_cannot_receive_disposition(
         return {}
 
     monkeypatch.setattr(confidentiality, "verify_public_license_lock", unexpected)
-    hit = confidentiality.ScanHit(
-        ROBOMIMIC_PATH, 250, repository_path=ROBOMIMIC_PATH
-    )
+    hit = confidentiality.ScanHit(ROBOMIMIC_PATH, 250, repository_path=ROBOMIMIC_PATH)
 
-    assert confidentiality._robomimic_disposition_indexes(
-        [hit], repo, _robomimic_proof_directory(tmp_path)
-    ) == set()
+    assert (
+        confidentiality._robomimic_disposition_indexes(
+            [hit], repo, _robomimic_proof_directory(tmp_path)
+        )
+        == set()
+    )
     assert not called
 
 
@@ -475,9 +521,10 @@ def test_hostile_robomimic_git_shapes_cannot_receive_disposition(
         confidentiality, "verify_public_license_lock", lambda _lock, _proof: {}
     )
 
-    assert _run_robomimic_tree(
-        repo, _robomimic_proof_directory(tmp_path), monkeypatch
-    ) == 1
+    assert (
+        _run_robomimic_tree(repo, _robomimic_proof_directory(tmp_path), monkeypatch)
+        == 1
+    )
     assert "raw=1 dispositioned=0 unresolved=1" in capsys.readouterr().err
 
 
@@ -499,16 +546,19 @@ def test_robomimic_diff_requires_exact_canonical_post_image(
         confidentiality, "verify_public_license_lock", lambda _lock, _proof: {}
     )
 
-    assert main(
-        [
-            "--repo-root",
-            str(repo),
-            "--diff-range",
-            f"{base}..{head}",
-            "--ncore-attribution-proof-directory",
-            str(_robomimic_proof_directory(tmp_path)),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--repo-root",
+                str(repo),
+                "--diff-range",
+                f"{base}..{head}",
+                "--ncore-attribution-proof-directory",
+                str(_robomimic_proof_directory(tmp_path)),
+            ]
+        )
+        == 0
+    )
     assert "raw=1 dispositioned=1 unresolved=0" in capsys.readouterr().out
 
     lines = lock.read_text().splitlines()
@@ -548,9 +598,7 @@ def test_robomimic_diff_range_cannot_inject_git_options(tmp_path: Path) -> None:
     assert not raw_output.exists()
 
 
-def _synthetic_debian_source_proof(
-    *, version: str = "0.11.7-2"
-) -> tuple[bytes, bytes]:
+def _synthetic_debian_source_proof(*, version: str = "0.11.7-2") -> tuple[bytes, bytes]:
     checksum_lines = "\n".join(
         f" {digest} {size} {name}"
         for digest, size, name in robomimic_attribution._SOURCE_FILES
@@ -607,16 +655,12 @@ def test_robomimic_signed_snapshot_and_source_mismatch_fail_closed(
             source_index,
         )
 
-    changed_release, changed_source = _synthetic_debian_source_proof(
-        version="0.11.7-3"
-    )
+    changed_release, changed_source = _synthetic_debian_source_proof(version="0.11.7-3")
     monkeypatch.setattr(
         robomimic_attribution, "_SOURCES", _source_proof_record(changed_source)
     )
     with pytest.raises(ValueError, match="source identity"):
-        robomimic_attribution._verify_snapshot_source(
-            changed_release, changed_source
-        )
+        robomimic_attribution._verify_snapshot_source(changed_release, changed_source)
 
 
 def test_robomimic_lock_digest_and_private_proof_mode_fail_closed(
@@ -755,9 +799,7 @@ def test_robomimic_independent_copyright_bytes_must_agree(
         robomimic_attribution, "_verify_snapshot_source", lambda *_args: None
     )
 
-    def payload(
-        _directory: Path, source: robomimic_attribution._PublicProof
-    ) -> bytes:
+    def payload(_directory: Path, source: robomimic_attribution._PublicProof) -> bytes:
         if source is robomimic_attribution._FTP_MASTER_COPYRIGHT:
             return b"official-a"
         if source is robomimic_attribution._SOURCES_COPYRIGHT:
@@ -803,9 +845,7 @@ def test_robomimic_invalid_openpgp_signature_fails_closed(
     monkeypatch.setattr(
         robomimic_attribution.shutil, "which", lambda name: f"/usr/bin/{name}"
     )
-    monkeypatch.setattr(
-        robomimic_attribution, "_proof_payload", lambda *_args: b"key"
-    )
+    monkeypatch.setattr(robomimic_attribution, "_proof_payload", lambda *_args: b"key")
     results = iter(
         [
             subprocess.CompletedProcess([], 0, b"", b""),
@@ -830,9 +870,7 @@ def test_robomimic_openpgp_commands_have_bounded_timeouts(
     monkeypatch.setattr(
         robomimic_attribution.shutil, "which", lambda name: f"/usr/bin/{name}"
     )
-    monkeypatch.setattr(
-        robomimic_attribution, "_proof_payload", lambda *_args: b"key"
-    )
+    monkeypatch.setattr(robomimic_attribution, "_proof_payload", lambda *_args: b"key")
     timeouts: list[int] = []
 
     def completed(*_args: object, **kwargs: object) -> subprocess.CompletedProcess:
@@ -857,9 +895,7 @@ def test_robomimic_openpgp_timeout_fails_closed(
     monkeypatch.setattr(
         robomimic_attribution.shutil, "which", lambda name: f"/usr/bin/{name}"
     )
-    monkeypatch.setattr(
-        robomimic_attribution, "_proof_payload", lambda *_args: b"key"
-    )
+    monkeypatch.setattr(robomimic_attribution, "_proof_payload", lambda *_args: b"key")
 
     def timed_out(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
         raise subprocess.TimeoutExpired("gpg", 30)

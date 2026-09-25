@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+from npa.deploy.images import (
+    DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    wan_accepted_image_manifest,
+)
 
 
 WAN_IMAGE = (
@@ -31,9 +34,7 @@ WAN_RUNTIME_REQUIREMENTS_PATH = (
 WAN_RUNTIME_SCRIPT_PATH = (
     ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
 )
-ROBOMIMIC_SMOKE_PATH = (
-    ROOT / "npa" / "docker" / "workbench" / "robomimic" / "smoke.py"
-)
+ROBOMIMIC_SMOKE_PATH = ROOT / "npa" / "docker" / "workbench" / "robomimic" / "smoke.py"
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
@@ -59,7 +60,11 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "capability_name": "lingbot_world_camera_conditioned_video",
         "smoke_artifact_name": "lingbot_world_camera_conditioned_video.json",
         "spec": "byof-lingbot-world.yaml",
-        "must_exercise": ["lingbot_world_camera_conditioned_video", "distributed_rank_validation", "decoded_mp4_validation"],
+        "must_exercise": [
+            "lingbot_world_camera_conditioned_video",
+            "distributed_rank_validation",
+            "decoded_mp4_validation",
+        ],
     },
     "mochi-1": {
         "capability_name": "mochi-1_text_to_video",

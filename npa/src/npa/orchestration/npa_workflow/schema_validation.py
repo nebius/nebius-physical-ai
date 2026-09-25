@@ -8,7 +8,9 @@ from typing import Any
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
-_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "npa.workflow.v0.0.1.schema.json"
+_SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "schema" / "npa.workflow.v0.0.1.schema.json"
+)
 
 
 def validate_document(data: dict[str, Any]) -> None:
@@ -25,7 +27,9 @@ def _validate_against_schema(value: Any, schema: dict[str, Any], *, path: str) -
     schema_type = schema.get("type")
     if schema_type == "object":
         if not isinstance(value, dict):
-            raise NpaWorkflowError(f"{path}: expected object, got {type(value).__name__}")
+            raise NpaWorkflowError(
+                f"{path}: expected object, got {type(value).__name__}"
+            )
         for key in schema.get("required", []):
             if key not in value:
                 raise NpaWorkflowError(f"{path}: missing required field {key!r}")
@@ -43,7 +47,9 @@ def _validate_against_schema(value: Any, schema: dict[str, Any], *, path: str) -
 
     if schema_type == "array":
         if not isinstance(value, list):
-            raise NpaWorkflowError(f"{path}: expected array, got {type(value).__name__}")
+            raise NpaWorkflowError(
+                f"{path}: expected array, got {type(value).__name__}"
+            )
         item_schema = schema.get("items")
         if item_schema:
             for index, item in enumerate(value):

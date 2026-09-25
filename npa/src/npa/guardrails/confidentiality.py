@@ -337,11 +337,7 @@ def _canonical_git_bytes(
     """Return bytes only for one exact, unaliased, regular Git entry."""
     path = repo_root / repository_path
     details = path.lstat()
-    if (
-        not stat.S_ISREG(details.st_mode)
-        or path.is_symlink()
-        or details.st_nlink != 1
-    ):
+    if not stat.S_ISREG(details.st_mode) or path.is_symlink() or details.st_nlink != 1:
         raise ValueError("canonical attribution is not an unaliased regular file")
     payload = path.read_bytes()
     object_id = subprocess.run(
@@ -362,7 +358,8 @@ def _canonical_git_bytes(
     records = [record for record in result.stdout.split(b"\0") if record]
     expected = b"100644 " + object_id + b" 0\t" + repository_path.encode()
     same_objects = [
-        record for record in records
+        record
+        for record in records
         if record.split(b"\t", 1)[0].split()[1] == object_id
     ]
     if expected not in records or same_objects != [expected]:

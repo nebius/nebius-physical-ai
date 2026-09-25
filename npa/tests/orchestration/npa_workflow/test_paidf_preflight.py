@@ -63,9 +63,12 @@ def test_cpu_node_parser_budgets_controller_and_one_paidf_cpu_stage():
     assert _ready_schedulable_cpu_nodes(_nodes(gpu="4")) == ["cpu-0"]
     assert _ready_schedulable_cpu_nodes(_nodes(cpu="5900m")) == []
     assert _ready_schedulable_cpu_nodes(_nodes(memory="23Gi")) == []
-    assert _ready_schedulable_cpu_nodes(
-        _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
-    ) == []
+    assert (
+        _ready_schedulable_cpu_nodes(
+            _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
+        )
+        == []
+    )
 
 
 def test_kubernetes_preflight_reports_cpu_placement_or_api_failure():

@@ -170,7 +170,9 @@ def curate_augmented(
             warnings=warnings,
         )
         if not variants:
-            raise CosmosCurateError(f"no augmented variant videos found under {augment_uri}")
+            raise CosmosCurateError(
+                f"no augmented variant videos found under {augment_uri}"
+            )
 
         run = curate_videos(
             input_dir=staged,
@@ -233,8 +235,14 @@ def ingest_output(output_dir: str | Path) -> dict[str, Any]:
                 continue
             if isinstance(meta, dict):
                 clips.append(_clip_from_meta(meta, clip_id=meta_path.stem))
-    processed = sorted((root / PROCESSED_VIDEOS_DIR).glob("*.json")) if (root / PROCESSED_VIDEOS_DIR).is_dir() else []
-    clip_files = sorted((root / CLIPS_DIR).glob("*.mp4")) if (root / CLIPS_DIR).is_dir() else []
+    processed = (
+        sorted((root / PROCESSED_VIDEOS_DIR).glob("*.json"))
+        if (root / PROCESSED_VIDEOS_DIR).is_dir()
+        else []
+    )
+    clip_files = (
+        sorted((root / CLIPS_DIR).glob("*.mp4")) if (root / CLIPS_DIR).is_dir() else []
+    )
     return {
         "clips": clips,
         "clip_files": [str(path) for path in clip_files],
@@ -246,7 +254,9 @@ def _clip_from_meta(meta: dict[str, Any], *, clip_id: str) -> CuratedClip:
     span_raw = meta.get("duration_span") or []
     span = [float(value) for value in span_raw if isinstance(value, (int, float))]
     duration = round(span[1] - span[0], 3) if len(span) == 2 else 0.0
-    motion = meta.get("motion_score") if isinstance(meta.get("motion_score"), dict) else {}
+    motion = (
+        meta.get("motion_score") if isinstance(meta.get("motion_score"), dict) else {}
+    )
     errors = meta.get("errors")
     caption = ""
     windows = meta.get("windows")
@@ -255,7 +265,11 @@ def _clip_from_meta(meta: dict[str, Any], *, clip_id: str) -> CuratedClip:
             if not isinstance(window, dict):
                 continue
             for key, value in window.items():
-                if key.endswith("_caption") and isinstance(value, str) and value.strip():
+                if (
+                    key.endswith("_caption")
+                    and isinstance(value, str)
+                    and value.strip()
+                ):
                     caption = value.strip()
                     break
             if caption:
@@ -284,7 +298,9 @@ def _maybe_float(value: Any) -> float | None:
         return None
 
 
-def _rewrite_source(clip: CuratedClip, *, variants: dict[str, str], curated_uri: str) -> CuratedClip:
+def _rewrite_source(
+    clip: CuratedClip, *, variants: dict[str, str], curated_uri: str
+) -> CuratedClip:
     """Map a clip's local staging path back to the variant it came from."""
 
     stem = Path(clip.source).stem
@@ -345,7 +361,9 @@ def _list_keys(uri: str, *, store: Any) -> list[str]:
         if token:
             kwargs["ContinuationToken"] = token
         page = store.s3.list_objects_v2(**kwargs)
-        keys.extend(entry["Key"] for entry in page.get("Contents", []) if entry.get("Key"))
+        keys.extend(
+            entry["Key"] for entry in page.get("Contents", []) if entry.get("Key")
+        )
         if not page.get("IsTruncated"):
             break
         token = page.get("NextContinuationToken")
@@ -462,7 +480,9 @@ def _stage_variants(
 
     for variant in sorted(by_variant):
         keys = by_variant[variant]
-        preferred = [key for key in keys if key.endswith(VARIANT_VIDEO_NAME)] or sorted(keys)
+        preferred = [key for key in keys if key.endswith(VARIANT_VIDEO_NAME)] or sorted(
+            keys
+        )
         target = staged / f"{_safe_stem(variant, taken=variants)}.mp4"
         try:
             local = store.download_path(f"s3://{bucket}/{preferred[0]}", str(target))
@@ -487,7 +507,9 @@ def _stage_variants(
 def _has_attempt_layout(augment_uri: str, *, store: Any) -> bool:
     if not _is_remote(augment_uri):
         return (Path(_local_path(augment_uri)) / "_attempts").exists()
-    _bucket, prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
+    _bucket, prefix = _split(
+        augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+    )
     marker = prefix + "_attempts/"
     return any(key.startswith(marker) for key in _list_keys(augment_uri, store=store))
 
@@ -567,10 +589,14 @@ def _safe_stem(variant: str, *, taken: Container[str] = frozenset()) -> str:
         candidate = f"{stem}-{index}"
         if candidate not in taken:
             return candidate
-    raise CosmosCurateError(f"could not find a free staging name for variant {variant!r}")
+    raise CosmosCurateError(
+        f"could not find a free staging name for variant {variant!r}"
+    )
 
 
-def _publish(produced: Path, curated_uri: str, *, store: Any, warnings: list[str]) -> bool:
+def _publish(
+    produced: Path, curated_uri: str, *, store: Any, warnings: list[str]
+) -> bool:
     """Publish the curator's output tree to ``curated_uri``.
 
     Returns whether the clips are actually readable at ``curated_uri``. The caller
@@ -594,13 +620,19 @@ def _publish(produced: Path, curated_uri: str, *, store: Any, warnings: list[str
     try:
         store.upload_directory(str(produced), curated_uri.rstrip("/") + "/")
     except Exception as exc:  # noqa: BLE001 - report but keep the run's findings
-        _log.warning("could not publish curator output to %s", curated_uri, exc_info=True)
-        warnings.append(f"could not publish curator output to {curated_uri}: {exc}"[:300])
+        _log.warning(
+            "could not publish curator output to %s", curated_uri, exc_info=True
+        )
+        warnings.append(
+            f"could not publish curator output to {curated_uri}: {exc}"[:300]
+        )
         return False
     return True
 
 
-def write_report(payload: dict[str, Any], *, result_uri: str, storage: Any | None = None) -> str:
+def write_report(
+    payload: dict[str, Any], *, result_uri: str, storage: Any | None = None
+) -> str:
     """Write the curation report to S3 or a local path."""
 
     body = json.dumps(payload, indent=2, sort_keys=True) + "\n"

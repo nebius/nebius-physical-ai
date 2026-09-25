@@ -177,8 +177,8 @@ def write_remote_text_file(
             f"npa_install_dir=$(sudo mktemp -d {template}); "
             "trap 'sudo rm -rf -- \"$npa_install_dir\"' EXIT HUP INT TERM; "
             f"sudo install -m {shlex.quote(mode)} -o {shlex.quote(owner)} "
-            f"-g {group_name} -- {shlex.quote(source)} \"$npa_install_dir/payload\"; "
-            f"sudo mv -fT -- \"$npa_install_dir/payload\" {target}"
+            f'-g {group_name} -- {shlex.quote(source)} "$npa_install_dir/payload"; '
+            f'sudo mv -fT -- "$npa_install_dir/payload" {target}'
         )
         ssh.run_or_raise(f"bash -lc {shlex.quote(script)}", label="install remote file")
 
@@ -251,10 +251,10 @@ def deploy_workbench_container(
         if str(group).isdigit():
             resolved_group_add.append(str(group))
             continue
-        code, out, _ = ssh.run(
-            f"getent group {shlex.quote(str(group))} | cut -d: -f3"
+        code, out, _ = ssh.run(f"getent group {shlex.quote(str(group))} | cut -d: -f3")
+        resolved_group_add.append(
+            out.strip() if code == 0 and out.strip() else str(group)
         )
-        resolved_group_add.append(out.strip() if code == 0 and out.strip() else str(group))
     group_flags = " ".join(
         f"--group-add {shlex.quote(group)}" for group in resolved_group_add
     )
@@ -265,7 +265,8 @@ def deploy_workbench_container(
     # `-e` wins over `--env-file`, so a configured shared cache supersedes the
     # per-tool cache path an image bakes into its own env file.
     cache_env_flags = " ".join(
-        f"-e {shlex.quote(f'{key}={value}')}" for key, value in sorted(cache_env.items())
+        f"-e {shlex.quote(f'{key}={value}')}"
+        for key, value in sorted(cache_env.items())
     )
     cache_env_flags = f"{cache_env_flags} " if cache_env_flags else ""
     run_cmd = (
@@ -310,23 +311,31 @@ def deploy_server(
         env_vars: dict[str, Any] = {
             "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),
             "NPA_SERVER_PORT": server_config.get("server_port", 8080),
-            "NPA_CHECKPOINT_DIR": server_config.get("checkpoint_dir", "/opt/lerobot/checkpoints"),
+            "NPA_CHECKPOINT_DIR": server_config.get(
+                "checkpoint_dir", "/opt/lerobot/checkpoints"
+            ),
             "NPA_CHECKPOINT_BUCKET": server_config.get("checkpoint_bucket", ""),
-            "NPA_JOB_STATUS_DIR": server_config.get("job_status_dir", "/opt/lerobot/job_status"),
+            "NPA_JOB_STATUS_DIR": server_config.get(
+                "job_status_dir", "/opt/lerobot/job_status"
+            ),
             "NPA_LOG_DIR": server_config.get("log_dir", "/var/log/npa-lerobot"),
             "AWS_ENDPOINT_URL": server_config.get("storage_endpoint", ""),
         }
         shared_env = server_config.get("shared_env", {})
         if isinstance(shared_env, dict):
             env_vars.update(shared_env)
-        write_remote_env_file(ssh, "/etc/npa-lerobot-server/env", env_vars, owner="root")
+        write_remote_env_file(
+            ssh, "/etc/npa-lerobot-server/env", env_vars, owner="root"
+        )
 
         # 5. Upload and enable systemd unit
         service_src = _DEPLOY_DIR / "npa-lerobot-server.service"
         if service_src.exists():
             write_remote_text_file(
-                ssh, "/etc/systemd/system/npa-lerobot-server.service",
-                service_src.read_text(), owner="root",
+                ssh,
+                "/etc/systemd/system/npa-lerobot-server.service",
+                service_src.read_text(),
+                owner="root",
             )
             ssh.run_or_raise(
                 "sudo systemctl daemon-reload && "
@@ -425,9 +434,13 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
     env_args = {
         "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),
         "NPA_SERVER_PORT": "8080",
-        "NPA_CHECKPOINT_DIR": server_config.get("checkpoint_dir", "/opt/lerobot/checkpoints"),
+        "NPA_CHECKPOINT_DIR": server_config.get(
+            "checkpoint_dir", "/opt/lerobot/checkpoints"
+        ),
         "NPA_CHECKPOINT_BUCKET": server_config.get("checkpoint_bucket", ""),
-        "NPA_JOB_STATUS_DIR": server_config.get("job_status_dir", "/opt/lerobot/job_status"),
+        "NPA_JOB_STATUS_DIR": server_config.get(
+            "job_status_dir", "/opt/lerobot/job_status"
+        ),
         "NPA_LOG_DIR": server_config.get("log_dir", "/var/log/npa-lerobot"),
         "AWS_ENDPOINT_URL": server_config.get("storage_endpoint", ""),
         "HF_LEROBOT_HOME": hf_cache_dir,
@@ -533,13 +546,20 @@ def health_check_auto(
     public_retries = min(retries, max(1, auto_public_retries))
     if health_check(endpoint, retries=public_retries, backoff=backoff):
         return True, ""
-    if ssh is not None and port is not None and health_check_ssh(
-        ssh,
-        port,
-        retries=retries,
-        backoff=backoff,
+    if (
+        ssh is not None
+        and port is not None
+        and health_check_ssh(
+            ssh,
+            port,
+            retries=retries,
+            backoff=backoff,
+        )
     ):
-        return True, f"Public port {port} unreachable; service healthy via SSH on {host}."
+        return (
+            True,
+            f"Public port {port} unreachable; service healthy via SSH on {host}.",
+        )
     return False, ""
 
 
@@ -557,7 +577,7 @@ def parse_env_file_content(content: str, keys: Sequence[str]) -> dict[str, str]:
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         if stripped.startswith("export "):
-            stripped = stripped[len("export "):]
+            stripped = stripped[len("export ") :]
         key, value = stripped.split("=", 1)
         if key in selected:
             values[key] = _decode_env_file_value(value)

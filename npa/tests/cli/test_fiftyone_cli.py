@@ -560,7 +560,10 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in install_cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=5151" in install_cmd
     assert 'service_group="$(id -gn "$service_user")"' in install_cmd
-    assert 'sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"' in install_cmd
+    assert (
+        'sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"'
+        in install_cmd
+    )
     assert "lerobot[pusht" not in install_cmd
     assert "Installing LeRobot" not in install_cmd
     assert "TimeoutStopSec=15" in install_cmd
@@ -568,7 +571,13 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     assert update_status.call_args_list[0].args == ("proj", "curate-gpu", "installing")
     assert update_status.call_args_list[1].args == ("proj", "curate-gpu", "provisioned")
     assert update_status.call_args_list[-1].args == ("proj", "curate-gpu", "healthy")
-    health.assert_called_once_with(ssh, 5151, path="/", retries=FIFTYONE_HEALTH_RETRIES, backoff=FIFTYONE_HEALTH_BACKOFF_SEC)
+    health.assert_called_once_with(
+        ssh,
+        5151,
+        path="/",
+        retries=FIFTYONE_HEALTH_RETRIES,
+        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+    )
 
 
 def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
@@ -852,7 +861,9 @@ def test_fiftyone_deploy_writes_config_before_readiness_and_warns_on_timeout(
     mocker.patch("npa.cli.fiftyone.write_manifest")
     mocker.patch(
         "npa.cli.fiftyone.health_check_ssh",
-        side_effect=lambda *_args, **_kwargs: events.append(("health", "timeout")) or False,
+        side_effect=lambda *_args, **_kwargs: (
+            events.append(("health", "timeout")) or False
+        ),
     )
 
     result = runner.invoke(
@@ -1629,7 +1640,10 @@ def test_fiftyone_datasets_list_queries_graphql(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     post = mocker.patch("npa.cli.fiftyone.httpx.post", return_value=response)
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(
         app,
@@ -1651,7 +1665,10 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     get = mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(
         app,
@@ -1785,7 +1802,8 @@ def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
             "svc/npa-fiftyone",
             "6161:5151",
         ],
-        stdout=-1, stderr=-2,
+        stdout=-1,
+        stderr=-2,
     )
     process.terminate.assert_called_once()
     process.wait.assert_called()
@@ -1896,7 +1914,10 @@ def test_fiftyone_status_reports_http_error(mocker) -> None:
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 
@@ -1912,7 +1933,10 @@ def test_fiftyone_status_reports_provisioning_when_unreachable(mocker) -> None:
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", side_effect=httpx.ConnectError("down"))
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 

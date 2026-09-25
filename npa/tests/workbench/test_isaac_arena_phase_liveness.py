@@ -1,9 +1,12 @@
 """Exercise measured phase stalls and real owned-process cleanup without a simulator."""
 
+import errno
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -11,9 +14,15 @@ from npa.workbench.isaac_arena import phase_liveness as liveness
 
 
 def _event(sequence, timestamp, event, action=1, phase="simulation_step"):
-    return {"schema": "npa.isaac-arena.simulator-phase.v1", "sequence": sequence,
-            "monotonic_ns": timestamp, "event": event, "action_step": action,
-            "phase": phase, "rank": 0}
+    return {
+        "schema": "npa.isaac-arena.simulator-phase.v1",
+        "sequence": sequence,
+        "monotonic_ns": timestamp,
+        "event": event,
+        "action_step": action,
+        "phase": phase,
+        "rank": 0,
+    }
 
 
 def _calibrated():
@@ -50,7 +59,9 @@ def test_nested_advancement_and_rank_observers_do_not_reset_each_other():
     assert second.stalled(50000) is None
 
 
-@pytest.mark.parametrize("change", ["sequence", "clock", "nesting", "fields", "rank", "type"])
+@pytest.mark.parametrize(
+    "change", ["sequence", "clock", "nesting", "fields", "rank", "type"]
+)
 def test_invalid_progress_is_not_healthy_evidence(change):
     progress = _calibrated()
     row = _event(17, 200, "begin")
@@ -102,7 +113,9 @@ while True: time.sleep(1)
 """
     result = liveness.run_supervised(
         [sys.executable, "-c", source, str(run / "simulator-phases-rank0.jsonl")],
-        artifact_root=root, private_dir=private, text=True,
+        artifact_root=root,
+        private_dir=private,
+        text=True,
     )
     assert result.returncode == 124
     assert "real child reached" in result.stdout
@@ -113,7 +126,9 @@ while True: time.sleep(1)
 
 def test_success_preserves_exact_native_result_and_command(tmp_path):
     argv = [sys.executable, "-c", "print('native completed')"]
-    result = liveness.run_supervised(argv, artifact_root=tmp_path, private_dir=tmp_path, text=True)
+    result = liveness.run_supervised(
+        argv, artifact_root=tmp_path, private_dir=tmp_path, text=True
+    )
     assert result.args is argv and result.returncode == 0
     assert result.stdout == "native completed\n"
     assert not (tmp_path / "simulator-liveness.json").exists()
@@ -123,8 +138,14 @@ def test_state_only_evaluation_stages_private_log_without_replay_or_graphics(tmp
     private = tmp_path / "private"
     assert not private.exists()
     result = liveness.run_supervised(
-        [sys.executable, "-c", "print('state-only native result'); raise SystemExit(7)"],
-        artifact_root=tmp_path, private_dir=private, text=True,
+        [
+            sys.executable,
+            "-c",
+            "print('state-only native result'); raise SystemExit(7)",
+        ],
+        artifact_root=tmp_path,
+        private_dir=private,
+        text=True,
     )
     assert result.returncode == 7
     assert result.stdout == "state-only native result\n"
@@ -133,14 +154,129 @@ def test_state_only_evaluation_stages_private_log_without_replay_or_graphics(tmp
 
 
 def test_termination_escalates_only_for_owned_process(tmp_path):
-    process = subprocess.Popen([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(60)"],
-                               start_new_session=True, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(60)",
+        ],
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     assert process.stdout.readline() == "ready\n"
     liveness._stop_owned_process(process)
     assert process.returncode == -9
     assert os.getpid() != process.pid
 
 
+def _child_is_active(stat: Path) -> bool:
+    try:
+        return stat.read_text().split()[2] != "Z"
+    except (FileNotFoundError, ProcessLookupError):
+        # Reaping can remove /proc/<pid>/stat at any point, including mid-read.
+        return False
+
+
+@pytest.mark.parametrize("state,active", [("S", True), ("R", True), ("Z", False)])
+def test_child_probe_distinguishes_live_processes_from_zombies(tmp_path, state, active):
+    """Keep live children failing the cleanup assertion while accepting zombies.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        state: Linux process state.
+        active: Whether the state represents a live child.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A process state is misclassified.
+    """
+    stat = tmp_path / "stat"
+    stat.write_text(f"123 (python) {state} 1 123 123\n")
+    assert _child_is_active(stat) is active
+
+
+def test_child_probe_accepts_already_reaped_process(tmp_path):
+    """Accept process state that init has already removed.
+
+    Args:
+        tmp_path: Isolated fixture directory with no process state.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A reaped process appears active.
+    """
+    assert not _child_is_active(tmp_path / "stat")
+
+
+@pytest.mark.parametrize("error_type", [FileNotFoundError, ProcessLookupError])
+def test_child_probe_accepts_reaping_during_read(tmp_path, monkeypatch, error_type):
+    """Reproduce init removing process state between observation and reading.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        monkeypatch: Simulates reaping at the read boundary.
+        error_type: Kernel error when the process disappears before or during read.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Concurrent reaping appears as a cleanup failure.
+    """
+    stat = tmp_path / "stat"
+    stat.write_text("123 (python) S 1 123 123\n")
+
+    def reap_before_read(path):
+        path.unlink()
+        raise error_type(path)
+
+    monkeypatch.setattr(Path, "read_text", reap_before_read)
+    assert not _child_is_active(stat)
+
+
+def test_child_probe_accepts_esrch_during_read(tmp_path, monkeypatch):
+    """Accept Linux ESRCH when the process disappears during the stat read.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        monkeypatch: Simulates procfs reporting an exited process at read time.
+    Returns:
+        None.
+    Raises:
+        AssertionError: ESRCH is misclassified as a cleanup failure.
+    """
+    stat = tmp_path / "stat"
+    stat.write_text("123 (python) S 1 123 123\n")
+
+    def process_disappeared(path):
+        raise ProcessLookupError(errno.ESRCH, os.strerror(errno.ESRCH), path)
+
+    monkeypatch.setattr(Path, "read_text", process_disappeared)
+    assert not _child_is_active(stat)
+
+
+def test_child_probe_does_not_hide_unreadable_process_state(tmp_path, monkeypatch):
+    """Keep errors other than process disappearance visible.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        monkeypatch: Simulates a permission failure.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The probe suppresses an unexpected read failure.
+    """
+
+    def denied(path):
+        raise PermissionError(path)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(PermissionError):
+        _child_is_active(tmp_path / "stat")
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Requires Linux /proc process state"
+)
 def test_termination_reaps_resistant_native_child_after_leader_exits(tmp_path):
     source = """import os, signal, time
 if os.fork() == 0:
@@ -149,16 +285,20 @@ if os.fork() == 0:
     while True: time.sleep(1)
 while True: time.sleep(1)
 """
-    process = subprocess.Popen([sys.executable, "-c", source], start_new_session=True,
-                               stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        [sys.executable, "-c", source],
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     child_pid = int(process.stdout.readline())
     liveness._stop_owned_process(process)
     assert process.returncode == -15
     # A killed orphan can remain a zombie until the host init reaps it.
-    stat = __import__("pathlib").Path(f"/proc/{child_pid}/stat")
+    stat = Path(f"/proc/{child_pid}/stat")
     for _ in range(100):
-        if not stat.exists() or stat.read_text().split()[2] == "Z":
+        if not _child_is_active(stat):
             break
-        __import__("time").sleep(0.01)
+        time.sleep(0.01)
     else:
         pytest.fail("native child remained active after the leader terminated")

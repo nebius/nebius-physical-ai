@@ -207,7 +207,9 @@ def test_groot_deploy_checks_cosmos_reason_access_before_provisioning(mocker) ->
 
     def validate(_token, repo):
         if repo == COSMOS_REASON_MODEL:
-            return SimpleNamespace(ok=False, error="HF token lacks Cosmos-Reason access")
+            return SimpleNamespace(
+                ok=False, error="HF token lacks Cosmos-Reason access"
+            )
         return SimpleNamespace(ok=True, error="")
 
     mocker.patch("npa.cli.groot.validate_hf_access", side_effect=validate)

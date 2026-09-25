@@ -45,7 +45,10 @@ def deployment_review_prompt_records() -> list[dict[str, str]]:
         None.
     """
 
-    return [{"id": prompt_id, "prompt": prompt} for prompt_id, prompt in DEPLOYMENT_REVIEW_PROMPTS]
+    return [
+        {"id": prompt_id, "prompt": prompt}
+        for prompt_id, prompt in DEPLOYMENT_REVIEW_PROMPTS
+    ]
 
 
 def render_deployment_review_prompts() -> str:
@@ -88,7 +91,11 @@ def write_deployment_review_prompts(
         raise ValueError("--output-uri is required")
     payload = render_deployment_review_prompts()
     written = _write_prompt_payload(payload, target, storage_client=storage_client)
-    return {"schema": PROMPT_SCHEMA, "prompt_count": len(DEPLOYMENT_REVIEW_PROMPTS), "output_uri": written}
+    return {
+        "schema": PROMPT_SCHEMA,
+        "prompt_count": len(DEPLOYMENT_REVIEW_PROMPTS),
+        "output_uri": written,
+    }
 
 
 def _write_prompt_payload(
@@ -141,7 +148,9 @@ def main(argv: list[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     try:
-        print(json.dumps(write_deployment_review_prompts(args.output_uri), sort_keys=True))
+        print(
+            json.dumps(write_deployment_review_prompts(args.output_uri), sort_keys=True)
+        )
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1

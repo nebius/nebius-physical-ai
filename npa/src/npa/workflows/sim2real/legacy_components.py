@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import random
+import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -193,8 +195,12 @@ def evaluate_rollout_with_vlm(
                 "NPA_SIM2REAL_VLM_IMAGE": config.vlm_image,
             },
         )
+        vlm_argv, vlm_env = _split_component_command(
+            config.byo_vlm_command, component="vlm_eval"
+        )
+        env.update(vlm_env)
         invocation = _run_component_command(
-            config.byo_vlm_command,
+            vlm_argv,
             cwd=rollout_dir,
             env=env,
             component="vlm_eval",
@@ -499,19 +505,53 @@ def _component_env(
     return env
 
 
+_ENV_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _split_component_command(
+    command: str, *, component: str
+) -> tuple[list[str], dict[str, str]]:
+    """Split an operator-supplied command string into (argv, env_overrides).
+
+    Quoting follows POSIX shell rules, but no shell is ever spawned. Leading
+    ``NAME=value`` tokens become env overrides, mirroring the shell's
+    ``VAR=x cmd`` prefix with values taken literally. Pipes, redirects,
+    ``&&`` chains, and ``$(...)`` expansions are passed through as literal
+    argument text instead of being interpreted.
+    """
+    tokens = shlex.split(command, posix=True)
+    env_overrides: dict[str, str] = {}
+    argv_start = 0
+    for token in tokens:
+        name, sep, value = token.partition("=")
+        if sep and _ENV_ASSIGNMENT_RE.fullmatch(name):
+            env_overrides[name] = value
+            argv_start += 1
+        else:
+            break
+    argv = tokens[argv_start:]
+    if not argv:
+        raise Sim2RealLoopError(f"{component}: command is empty")
+    return argv, env_overrides
+
+
 def _run_component_command(
-    command: str,
+    command: list[str],
     *,
     cwd: Path,
     env: dict[str, str],
     component: str,
     timeout_s: int = 0,
 ) -> dict[str, Any]:
+    if isinstance(command, str):
+        raise TypeError(
+            f"{component}: command must be an argv list, not a shell string; "
+            "split it with _split_component_command first"
+        )
     result = subprocess.run(
         command,
         cwd=str(cwd),
         env=env,
-        shell=True,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -744,8 +784,12 @@ def _run_policy_rollouts_via_command(
             "NPA_SIM2REAL_ROLLOUT_TAG": f"outer-{outer_iteration:02d}-iter-{iteration:02d}",
         },
     )
+    policy_argv, policy_env = _split_component_command(
+        config.byo_policy_command, component="policy_actions"
+    )
+    env.update(policy_env)
     invocation = _run_component_command(
-        config.byo_policy_command,
+        policy_argv,
         cwd=actions_dir,
         env=env,
         component="policy_actions",
@@ -1434,8 +1478,8 @@ def _component_excerpt(text: str, limit: int = 1200) -> str:
     return "\n".join(scrubbed)[-limit:]
 
 
-def _redact_command(command: str) -> str:
-    redacted = str(command)
+def _redact_command(command: str | list[str]) -> str:
+    redacted = command if isinstance(command, str) else shlex.join(command)
     for key in (
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
@@ -1527,8 +1571,12 @@ def _convert_eval_to_signal(
             "NPA_SIM2REAL_RL_SIGNAL_SCHEMA": SCHEMA_RL_SIGNAL,
         },
     )
+    signal_argv, signal_env = _split_component_command(
+        config.byo_signal_converter, component="signal_converter"
+    )
+    env.update(signal_env)
     invocation = _run_component_command(
-        config.byo_signal_converter,
+        signal_argv,
         cwd=output_dir,
         env=env,
         component="signal_converter",
@@ -1666,8 +1714,12 @@ def _run_trainer_via_command(
         output_json=output_path,
         extra=extra,
     )
+    trainer_argv, trainer_env = _split_component_command(
+        config.byo_trainer_command, component="trainer"
+    )
+    env.update(trainer_env)
     invocation = _run_component_command(
-        config.byo_trainer_command,
+        trainer_argv,
         cwd=output_dir,
         env=env,
         component="trainer",
@@ -1724,6 +1776,7 @@ __all__ = [
     "_run_policy_rollouts_via_command",
     "_run_trainer_via_command",
     "_safe_slug",
+    "_split_component_command",
     "_storage_client",
     "_upload_component_directory",
     "_upload_component_file",

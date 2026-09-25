@@ -12,8 +12,12 @@ import subprocess
 from npa.cli.cluster import capacity
 
 
-def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+def _completed(
+    stdout: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=""
+    )
 
 
 def _quota(limit: int, usage: int) -> str:
@@ -37,12 +41,20 @@ def _advice(*, on_demand_level: str, preemptible_available: int) -> str:
                         "region": "us-central1",
                         "compute_instance": {
                             "platform": "gpu-rtx6000",
-                            "preset": {"name": "1gpu-24vcpu-218gb", "resources": {"gpu_count": 1}},
+                            "preset": {
+                                "name": "1gpu-24vcpu-218gb",
+                                "resources": {"gpu_count": 1},
+                            },
                         },
                     },
                     "status": {
-                        "reserved": {"availability_level": "AVAILABILITY_LEVEL_LIMIT_REACHED"},
-                        "on_demand": {"availability_level": on_demand_level, "limit": 0},
+                        "reserved": {
+                            "availability_level": "AVAILABILITY_LEVEL_LIMIT_REACHED"
+                        },
+                        "on_demand": {
+                            "availability_level": on_demand_level,
+                            "limit": 0,
+                        },
                         "preemptible": {
                             "availability_level": "AVAILABILITY_LEVEL_HIGH",
                             "available": preemptible_available,
@@ -81,7 +93,9 @@ def test_gpu_quota_name_maps_the_platform() -> None:
 def test_exhausted_quota_reports_the_numbers_and_the_preemptible_option() -> None:
     capture = _capture(
         _quota(limit=0, usage=0),
-        _advice(on_demand_level="AVAILABILITY_LEVEL_LIMIT_REACHED", preemptible_available=44),
+        _advice(
+            on_demand_level="AVAILABILITY_LEVEL_LIMIT_REACHED", preemptible_available=44
+        ),
     )
 
     message = capacity.gpu_capacity_error(
@@ -145,7 +159,13 @@ def test_unused_quota_of_zero_is_not_treated_as_unreadable() -> None:
     ) == (0, 0)
 
     message = capacity.gpu_capacity_error(
-        _capture(payload, _advice(on_demand_level="AVAILABILITY_LEVEL_LIMIT_REACHED", preemptible_available=44)),
+        _capture(
+            payload,
+            _advice(
+                on_demand_level="AVAILABILITY_LEVEL_LIMIT_REACHED",
+                preemptible_available=44,
+            ),
+        ),
         nebius_bin="nebius",
         tenant_id="tenant-a",
         region="us-central1",
@@ -226,13 +246,18 @@ def test_unreadable_quota_never_blocks_a_provision() -> None:
 
 
 def test_platform_advice_falls_back_to_another_preset_in_the_region() -> None:
-    items = json.loads(_advice(on_demand_level="AVAILABILITY_LEVEL_LOW", preemptible_available=3))["items"]
+    items = json.loads(
+        _advice(on_demand_level="AVAILABILITY_LEVEL_LOW", preemptible_available=3)
+    )["items"]
 
     exact = capacity.platform_advice(
         items, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb", region="us-central1"
     )
     other_preset = capacity.platform_advice(
-        items, platform="gpu-rtx6000", preset="8gpu-192vcpu-1744gb", region="us-central1"
+        items,
+        platform="gpu-rtx6000",
+        preset="8gpu-192vcpu-1744gb",
+        region="us-central1",
     )
     other_region = capacity.platform_advice(
         items, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb", region="eu-north1"
@@ -243,63 +268,112 @@ def test_platform_advice_falls_back_to_another_preset_in_the_region() -> None:
     assert other_region == {}
 
 
-def _cgb(*, tenant='tenant-a', region='us-central1', platform='gpu-rtx6000',
-         state='STATE_ACTIVE', limit=48, usage=12) -> str:
+def _cgb(
+    *,
+    tenant="tenant-a",
+    region="us-central1",
+    platform="gpu-rtx6000",
+    state="STATE_ACTIVE",
+    limit=48,
+    usage=12,
+) -> str:
     # Shape taken from `nebius capacity capacity-block-group get`.
-    return json.dumps({
-        'metadata': {'id': 'cg-1', 'parent_id': tenant},
-        'status': {
-            'region': region,
-            'state': state,
-            'current_limit': str(limit),
-            'usage': str(usage),
-            'resource_affinity': {'compute_v1': {'platform': platform}},
-        },
-    })
+    return json.dumps(
+        {
+            "metadata": {"id": "cg-1", "parent_id": tenant},
+            "status": {
+                "region": region,
+                "state": state,
+                "current_limit": str(limit),
+                "usage": str(usage),
+                "resource_affinity": {"compute_v1": {"platform": platform}},
+            },
+        }
+    )
 
 
 def test_capacity_block_group_sufficient_reservation_is_ok() -> None:
     def _ok(args):
-        assert '--id' in args
+        assert "--id" in args
         return _completed(_cgb())
-    assert capacity.capacity_block_group_error(
-        _ok, nebius_bin='nebius', block_group_id='cg-1',
-        tenant_id='tenant-a', region='us-central1',
-        platform='gpu-rtx6000', required_gpus=16,
-    ) is None
+
+    assert (
+        capacity.capacity_block_group_error(
+            _ok,
+            nebius_bin="nebius",
+            block_group_id="cg-1",
+            tenant_id="tenant-a",
+            region="us-central1",
+            platform="gpu-rtx6000",
+            required_gpus=16,
+        )
+        is None
+    )
 
 
 def test_capacity_block_group_insufficient_or_wrong_is_error() -> None:
     def _low(args):  # 20-12 = 8 free < 16 requested
         return _completed(_cgb(limit=20, usage=12))
-    assert capacity.capacity_block_group_error(
-        _low, nebius_bin='nebius', block_group_id='cg-1',
-        tenant_id='tenant-a', region='us-central1',
-        platform='gpu-rtx6000', required_gpus=16,
-    ) is not None
+
+    assert (
+        capacity.capacity_block_group_error(
+            _low,
+            nebius_bin="nebius",
+            block_group_id="cg-1",
+            tenant_id="tenant-a",
+            region="us-central1",
+            platform="gpu-rtx6000",
+            required_gpus=16,
+        )
+        is not None
+    )
 
     def _wrong_region(args):
-        return _completed(_cgb(region='eu-north1'))
-    assert capacity.capacity_block_group_error(
-        _wrong_region, nebius_bin='nebius', block_group_id='cg-1',
-        tenant_id='tenant-a', region='us-central1',
-        platform='gpu-rtx6000', required_gpus=1,
-    ) is not None
+        return _completed(_cgb(region="eu-north1"))
+
+    assert (
+        capacity.capacity_block_group_error(
+            _wrong_region,
+            nebius_bin="nebius",
+            block_group_id="cg-1",
+            tenant_id="tenant-a",
+            region="us-central1",
+            platform="gpu-rtx6000",
+            required_gpus=1,
+        )
+        is not None
+    )
 
     def _wrong_platform(args):
-        return _completed(_cgb(platform='gpu-b200-sxm'))
-    assert capacity.capacity_block_group_error(
-        _wrong_platform, nebius_bin='nebius', block_group_id='cg-1',
-        tenant_id='tenant-a', region='us-central1',
-        platform='gpu-rtx6000', required_gpus=1,
-    ) is not None
+        return _completed(_cgb(platform="gpu-b200-sxm"))
+
+    assert (
+        capacity.capacity_block_group_error(
+            _wrong_platform,
+            nebius_bin="nebius",
+            block_group_id="cg-1",
+            tenant_id="tenant-a",
+            region="us-central1",
+            platform="gpu-rtx6000",
+            required_gpus=1,
+        )
+        is not None
+    )
 
 
 def test_capacity_block_group_unreadable_fails_closed() -> None:
     def _missing(args):
-        return _completed('', returncode=1)
-    assert capacity.capacity_block_group_error(
-        _missing, nebius_bin='nebius', block_group_id='cg-1',
-        tenant_id='tenant-a', region='us-central1',
-        platform='gpu-rtx6000', required_gpus=1,
-    ) is not None
+        return _completed("", returncode=1)
+
+    assert (
+        capacity.capacity_block_group_error(
+            _missing,
+            nebius_bin="nebius",
+            block_group_id="cg-1",
+            tenant_id="tenant-a",
+            region="us-central1",
+            platform="gpu-rtx6000",
+            required_gpus=1,
+        )
+        is not None
+    )

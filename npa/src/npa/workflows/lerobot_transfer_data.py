@@ -33,7 +33,9 @@ def write_json(path: Path, payload: object) -> None:
         ValueError: Evidence contains nonfinite values.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
 
 
 def file_sha256(path: Path) -> str:
@@ -66,7 +68,9 @@ def tree_hashes(root: Path) -> dict[str, str]:
     return {
         path.relative_to(root).as_posix(): file_sha256(path)
         for path in sorted(root.rglob("*"))
-        if path.is_file() and ".cache" not in path.parts and path != root / "checksums.json"
+        if path.is_file()
+        and ".cache" not in path.parts
+        and path != root / "checksums.json"
     }
 
 
@@ -134,20 +138,29 @@ def prepare_dataset(output: Path, recipe: dict) -> None:
     info = json.loads((dataset / "meta/info.json").read_text())
     rows = _read_rows(dataset, info)
     train, heldout = seeded_episode_split(
-        sorted({row["episode_index"] for row in rows}), train_fraction=0.8, seed=recipe["seed"],
+        sorted({row["episode_index"] for row in rows}),
+        train_fraction=0.8,
+        seed=recipe["seed"],
     )
     selected = [row for row in rows if row["episode_index"] in set(train)]
     write_json(dataset / "meta/stats.json", _training_statistics(selected))
-    recipe.update({
-        "schema": "npa.lerobot-transfer.recipe.v1", "dataset_repo": DEFAULT_PUBLIC_LEROBOT_REPO,
-        "dataset_revision": DEFAULT_PUBLIC_LEROBOT_REVISION, "train_episodes": train,
-        "reserved_episodes": heldout, "train_frames": len(selected), "total_frames": len(rows),
-        "normalization": "training episodes only; fixed ImageNet camera statistics",
-        "dataset_source_hashes": source_hashes, "lerobot_version": LEROBOT_VERSION,
-        "video_backend": "torchcodec",
-        "lerobot_release_commit": "30da8e687a6dfc617fcd94afc367ac7071c376ce",
-        "conditions": ["clean", "dim", "warm", "delay"],
-    })
+    recipe.update(
+        {
+            "schema": "npa.lerobot-transfer.recipe.v1",
+            "dataset_repo": DEFAULT_PUBLIC_LEROBOT_REPO,
+            "dataset_revision": DEFAULT_PUBLIC_LEROBOT_REVISION,
+            "train_episodes": train,
+            "reserved_episodes": heldout,
+            "train_frames": len(selected),
+            "total_frames": len(rows),
+            "normalization": "training episodes only; fixed ImageNet camera statistics",
+            "dataset_source_hashes": source_hashes,
+            "lerobot_version": LEROBOT_VERSION,
+            "video_backend": "torchcodec",
+            "lerobot_release_commit": "30da8e687a6dfc617fcd94afc367ac7071c376ce",
+            "conditions": ["clean", "dim", "warm", "delay"],
+        }
+    )
     write_json(output / "recipe.json", recipe)
 
 
@@ -157,7 +170,13 @@ def _read_rows(dataset: Path, info: dict) -> list[dict]:
     for feature in ("action", "observation.state"):
         if info["features"][feature]["shape"] != [2]:
             raise ValueError(f"PushT requires two-dimensional {feature}")
-    columns = ["episode_index", "frame_index", "timestamp", "observation.state", "action"]
+    columns = [
+        "episode_index",
+        "frame_index",
+        "timestamp",
+        "observation.state",
+        "action",
+    ]
     rows = []
     for path in sorted((dataset / "data").rglob("*.parquet")):
         rows.extend(pq.read_table(path, columns=columns).to_pylist())
@@ -191,13 +210,17 @@ def _training_statistics(rows: list[dict]) -> dict:
     for feature in ("action", "observation.state"):
         values = np.asarray([row[feature] for row in rows], dtype=np.float64)
         stats[feature] = {
-            "mean": values.mean(axis=0).tolist(), "std": values.std(axis=0).tolist(),
-            "min": values.min(axis=0).tolist(), "max": values.max(axis=0).tolist(),
+            "mean": values.mean(axis=0).tolist(),
+            "std": values.std(axis=0).tolist(),
+            "min": values.min(axis=0).tolist(),
+            "max": values.max(axis=0).tolist(),
             "count": [len(values)],
         }
     stats["observation.image"] = {
         "mean": [[[v]] for v in (0.485, 0.456, 0.406)],
         "std": [[[v]] for v in (0.229, 0.224, 0.225)],
-        "min": [[[0.0]]] * 3, "max": [[[1.0]]] * 3, "count": [len(rows)],
+        "min": [[[0.0]]] * 3,
+        "max": [[[1.0]]] * 3,
+        "count": [len(rows)],
     }
     return stats

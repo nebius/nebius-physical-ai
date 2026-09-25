@@ -8,6 +8,7 @@ Outputs (next to the committed FiftyOne screenshots):
 Run with the repo venv:
     npa/.venv/bin/python docs/demos/build_bdd100k_demo_video.py
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,12 +29,12 @@ W, H = 1920, 1080
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-INK = "#0f172a"       # slate-900
-ACCENT = "#ff6d04"    # FiftyOne / Voxel51 orange
-NEBIUS = "#1f6feb"    # blue
-GPU = "#16a34a"       # green for H100 stages
-STORE = "#7c3aed"     # purple for data/vector store
-BG = "#0b1020"        # dark slide background
+INK = "#0f172a"  # slate-900
+ACCENT = "#ff6d04"  # FiftyOne / Voxel51 orange
+NEBIUS = "#1f6feb"  # blue
+GPU = "#16a34a"  # green for H100 stages
+STORE = "#7c3aed"  # purple for data/vector store
+BG = "#0b1020"  # dark slide background
 
 
 def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -49,35 +50,89 @@ def build_architecture() -> None:
     ax.set_ylim(0, 9)
     ax.axis("off")
 
-    ax.text(8, 8.55, "BDD100K Failure-Mode Detection",
-            ha="center", va="center", fontsize=26, fontweight="bold", color=INK)
-    ax.text(8, 8.05, "Nebius Physical AI Workbench  ·  LanceDB + FiftyOne (Voxel51)",
-            ha="center", va="center", fontsize=15, color="#475569")
+    ax.text(
+        8,
+        8.55,
+        "BDD100K Failure-Mode Detection",
+        ha="center",
+        va="center",
+        fontsize=26,
+        fontweight="bold",
+        color=INK,
+    )
+    ax.text(
+        8,
+        8.05,
+        "Nebius Physical AI Workbench  ·  LanceDB + FiftyOne (Voxel51)",
+        ha="center",
+        va="center",
+        fontsize=15,
+        color="#475569",
+    )
 
     def band(y, h, color, label):
-        ax.add_patch(FancyBboxPatch((0.3, y), 15.4, h,
-                     boxstyle="round,pad=0.02,rounding_size=0.12",
-                     linewidth=0, facecolor=color, alpha=0.10))
-        ax.text(0.55, y + h - 0.28, label, ha="left", va="center",
-                fontsize=12, fontweight="bold", color=color)
+        ax.add_patch(
+            FancyBboxPatch(
+                (0.3, y),
+                15.4,
+                h,
+                boxstyle="round,pad=0.02,rounding_size=0.12",
+                linewidth=0,
+                facecolor=color,
+                alpha=0.10,
+            )
+        )
+        ax.text(
+            0.55,
+            y + h - 0.28,
+            label,
+            ha="left",
+            va="center",
+            fontsize=12,
+            fontweight="bold",
+            color=color,
+        )
 
     # Orchestration band (top) and substrate band (bottom).
     band(6.7, 0.95, NEBIUS, "SkyPilot — one YAML orchestrates every stage")
     band(0.45, 0.95, NEBIUS, "Nebius substrate")
-    ax.text(8, 0.78, "Object Storage (artifacts)   ·   Managed Kubernetes   ·   GPU clusters (H100)",
-            ha="center", va="center", fontsize=12.5, color=NEBIUS)
+    ax.text(
+        8,
+        0.78,
+        "Object Storage (artifacts)   ·   Managed Kubernetes   ·   GPU clusters (H100)",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=NEBIUS,
+    )
 
     def box(cx, cy, text, color, w=2.7, h=1.15):
-        ax.add_patch(FancyBboxPatch((cx - w / 2, cy - h / 2), w, h,
-                     boxstyle="round,pad=0.02,rounding_size=0.10",
-                     linewidth=2, edgecolor=color, facecolor="white"))
-        ax.text(cx, cy, text, ha="center", va="center", fontsize=11.5,
-                color=INK, wrap=True)
+        ax.add_patch(
+            FancyBboxPatch(
+                (cx - w / 2, cy - h / 2),
+                w,
+                h,
+                boxstyle="round,pad=0.02,rounding_size=0.10",
+                linewidth=2,
+                edgecolor=color,
+                facecolor="white",
+            )
+        )
+        ax.text(
+            cx, cy, text, ha="center", va="center", fontsize=11.5, color=INK, wrap=True
+        )
 
     def arrow(x0, y0, x1, y1):
-        ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1),
-                     arrowstyle="-|>", mutation_scale=18,
-                     linewidth=2, color="#64748b"))
+        ax.add_patch(
+            FancyArrowPatch(
+                (x0, y0),
+                (x1, y1),
+                arrowstyle="-|>",
+                mutation_scale=18,
+                linewidth=2,
+                color="#64748b",
+            )
+        )
 
     # Row A: ingest + enrich.
     yA = 5.35
@@ -98,12 +153,28 @@ def build_architecture() -> None:
         arrow(x0, yB, x1, yB)
 
     # Wrap arrow from end of Row A down to start of Row B.
-    ax.add_patch(FancyArrowPatch((12.7, yA - 0.6), (2.6, yB + 0.6),
-                 connectionstyle="arc3,rad=-0.18", arrowstyle="-|>",
-                 mutation_scale=18, linewidth=2, color="#64748b"))
+    ax.add_patch(
+        FancyArrowPatch(
+            (12.7, yA - 0.6),
+            (2.6, yB + 0.6),
+            connectionstyle="arc3,rad=-0.18",
+            arrowstyle="-|>",
+            mutation_scale=18,
+            linewidth=2,
+            color="#64748b",
+        )
+    )
 
-    ax.text(13.0, yB - 0.95, "Execs & engineers review here",
-            ha="center", va="center", fontsize=10.5, style="italic", color=ACCENT)
+    ax.text(
+        13.0,
+        yB - 0.95,
+        "Execs & engineers review here",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        style="italic",
+        color=ACCENT,
+    )
 
     fig.savefig(ARCH_PNG, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -135,13 +206,17 @@ def _text_slide(title, subtitle, lines=None, accent=ACCENT):
     if subtitle:
         d.text((120, 280), subtitle, font=_font(38), fill="#9fb3c8")
     y = 430
-    for ln in (lines or []):
+    for ln in lines or []:
         for seg in _wrap(d, ln, _font(40), W - 320):
             d.text((140, y), seg, font=_font(40), fill="#e2e8f0")
             y += 64
         y += 24
-    d.text((120, H - 90), "Nebius Physical AI  ·  FiftyOne (Voxel51) on Nebius",
-           font=_font(30), fill="#64748b")
+    d.text(
+        (120, H - 90),
+        "Nebius Physical AI  ·  FiftyOne (Voxel51) on Nebius",
+        font=_font(30),
+        fill="#64748b",
+    )
     return img
 
 
@@ -165,58 +240,80 @@ def build_slides():
     title = _text_slide(
         "BDD100K Failure-Mode Detection",
         "Finding the rare, dangerous cases AV perception models miss",
-        ["Riders  ·  pedestrians at night  ·  distant pedestrians",
-         "Built on Nebius — reviewed visually in FiftyOne (Voxel51)"],
+        [
+            "Riders  ·  pedestrians at night  ·  distant pedestrians",
+            "Built on Nebius — reviewed visually in FiftyOne (Voxel51)",
+        ],
     )
     problem = _text_slide(
         "The problem",
         "Aggregate accuracy hides safety-critical failures",
-        ["Self-driving models can score well overall yet fail on rare scenes.",
-         "Those rare scenes — riders, night pedestrians, far-away people —",
-         "are exactly the ones that matter most for safety.",
-         "We surface, slice, and target them explicitly."],
+        [
+            "Self-driving models can score well overall yet fail on rare scenes.",
+            "Those rare scenes — riders, night pedestrians, far-away people —",
+            "are exactly the ones that matter most for safety.",
+            "We surface, slice, and target them explicitly.",
+        ],
         accent=NEBIUS,
     )
-    arch = _image_slide(ARCH_PNG, "How it works",
-                        "One pipeline on Nebius: ingest -> enrich -> embed -> slice -> train -> evaluate -> review in FiftyOne.",
-                        accent=NEBIUS)
+    arch = _image_slide(
+        ARCH_PNG,
+        "How it works",
+        "One pipeline on Nebius: ingest -> enrich -> embed -> slice -> train -> evaluate -> review in FiftyOne.",
+        accent=NEBIUS,
+    )
+
     # Prefer the live captures from the deployed FiftyOne app; fall back to the
     # archived screenshots if a live capture is missing.
     def shot(live: str, archived: str):
         p = ASSETS / live
         return p if p.exists() else ASSETS / archived
 
-    s1 = _image_slide(shot("live-full.png", "01-full-dataset.png"),
-                      "Every frame, searchable",
-                      "Real BDD100K dashcam frames, with boxes and AI metadata, in one browsable view.")
-    s2 = _image_slide(shot("live-rider.png", "02-rider-view.png"),
-                      "Failure mode 1 — riders",
-                      "A saved view isolating motorcyclists and cyclists, an underrepresented, high-risk class.")
-    s3 = _image_slide(shot("live-nighttime.png", "03-nighttime-view.png"),
-                      "Failure mode 2 — pedestrians at night",
-                      "Low-light pedestrians, filtered with one SQL rule on the data.")
-    s4 = _image_slide(shot("live-distant.png", "04-distant-view.png"),
-                      "Failure mode 3 — distant pedestrians",
-                      "Small, far-away people the model is most likely to miss.")
-    s5 = _image_slide(ASSETS / "05-clip-umap-by-rider.png",
-                      "AI-learned similarity map",
-                      "CLIP embeddings cluster visually similar scenes — find more rare cases without writing rules.")
+    s1 = _image_slide(
+        shot("live-full.png", "01-full-dataset.png"),
+        "Every frame, searchable",
+        "Real BDD100K dashcam frames, with boxes and AI metadata, in one browsable view.",
+    )
+    s2 = _image_slide(
+        shot("live-rider.png", "02-rider-view.png"),
+        "Failure mode 1 — riders",
+        "A saved view isolating motorcyclists and cyclists, an underrepresented, high-risk class.",
+    )
+    s3 = _image_slide(
+        shot("live-nighttime.png", "03-nighttime-view.png"),
+        "Failure mode 2 — pedestrians at night",
+        "Low-light pedestrians, filtered with one SQL rule on the data.",
+    )
+    s4 = _image_slide(
+        shot("live-distant.png", "04-distant-view.png"),
+        "Failure mode 3 — distant pedestrians",
+        "Small, far-away people the model is most likely to miss.",
+    )
+    s5 = _image_slide(
+        ASSETS / "05-clip-umap-by-rider.png",
+        "AI-learned similarity map",
+        "CLIP embeddings cluster visually similar scenes — find more rare cases without writing rules.",
+    )
     results = _text_slide(
         "Results",
         "A targeted detector per failure mode, scored per view (mAP)",
-        ["rider                          mAP 0.354    mAP@50 0.637",
-         "nighttime pedestrian   mAP 0.274    mAP@50 0.545",
-         "distant pedestrian       mAP 0.397    mAP@50 0.668",
-         "",
-         "Note: small 3,000-frame run — validates the end-to-end path, not final model quality."],
+        [
+            "rider                          mAP 0.354    mAP@50 0.637",
+            "nighttime pedestrian   mAP 0.274    mAP@50 0.545",
+            "distant pedestrian       mAP 0.397    mAP@50 0.668",
+            "",
+            "Note: small 3,000-frame run — validates the end-to-end path, not final model quality.",
+        ],
         accent=GPU,
     )
     close = _text_slide(
         "Reproducible, and live",
         "Anyone can re-run it; reviewers just open a URL",
-        ["Whole pipeline is one YAML on Nebius (no bespoke glue).",
-         "Validate with no cloud/GPU:  run_bdd100k_pipeline.py --mock-endpoints",
-         "Live review: npa workbench fiftyone open  ->  authenticated localhost"],
+        [
+            "Whole pipeline is one YAML on Nebius (no bespoke glue).",
+            "Validate with no cloud/GPU:  run_bdd100k_pipeline.py --mock-endpoints",
+            "Live review: npa workbench fiftyone open  ->  authenticated localhost",
+        ],
         accent=ACCENT,
     )
     return [title, problem, arch, s1, s2, s3, s4, s5, results, close]
@@ -228,19 +325,26 @@ def build_video(slides, seconds_per_slide=5, fps=30):
     frames_per_slide = seconds_per_slide * fps
     try:
         import imageio.v2 as imageio
-        writer = imageio.get_writer(VIDEO_MP4, fps=fps, codec="libx264",
-                                    quality=8, macro_block_size=8)
+
+        writer = imageio.get_writer(
+            VIDEO_MP4, fps=fps, codec="libx264", quality=8, macro_block_size=8
+        )
         for slide in slides:
             arr = np.asarray(slide)
             for _ in range(frames_per_slide):
                 writer.append_data(arr)
         writer.close()
-        print(f"wrote {VIDEO_MP4} ({len(slides)*seconds_per_slide}s)")
+        print(f"wrote {VIDEO_MP4} ({len(slides) * seconds_per_slide}s)")
         return VIDEO_MP4
     except Exception as exc:  # pragma: no cover - fallback path
         print(f"MP4 encode unavailable ({exc}); writing GIF instead")
-        slides[0].save(VIDEO_GIF, save_all=True, append_images=slides[1:],
-                       duration=seconds_per_slide * 1000, loop=0)
+        slides[0].save(
+            VIDEO_GIF,
+            save_all=True,
+            append_images=slides[1:],
+            duration=seconds_per_slide * 1000,
+            loop=0,
+        )
         print(f"wrote {VIDEO_GIF}")
         return VIDEO_GIF
 

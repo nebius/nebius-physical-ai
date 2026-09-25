@@ -13,7 +13,10 @@ from npa.orchestration.npa_workflow.run_state import (
     build_actionable_run_status,
     reconcile_submitted_manifest,
 )
-from npa.orchestration.skypilot.workflow import _status_from_queue_payload, parse_task_statuses
+from npa.orchestration.skypilot.workflow import (
+    _status_from_queue_payload,
+    parse_task_statuses,
+)
 
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
@@ -172,19 +175,41 @@ def test_terminal_and_unavailable_scheduler_fixtures(live, rows, expected) -> No
 
 @pytest.mark.parametrize("failed_task", ["FAILED", "FAILED_SETUP", "CANCELLED"])
 def test_terminal_job_with_successful_parallel_member_is_not_a_conflict(failed_task):
-    manifest = RunManifest("parallel", "run-test", "npa.workflow/v0.0.1", sky_job_id="11",
-        steps=[{"state": "prepare", "status": "succeeded"}, {"state": "generate", "status": failed_task}])
-    wave = {"key": "001|parallel|parallel:prepare:-,parallel:generate:-",
-            "states": ["prepare", "generate"], "group": "parallel", "kind": "parallel",
-            "job_id": "11", "attempt": 1, "status": "failed" if failed_task.startswith("FAILED") else "cancelled"}
-    result = build_actionable_run_status(manifest, runtime_waves=[wave], job_observations={"11": {
-        "status": "FAILED" if failed_task.startswith("FAILED") else "CANCELLED",
-        "task_rows": [
-            {"task_id": 0, "task_name": "prepare", "status": "SUCCEEDED"},
-            {"task_id": 1, "task_name": "generate", "status": failed_task},
+    manifest = RunManifest(
+        "parallel",
+        "run-test",
+        "npa.workflow/v0.0.1",
+        sky_job_id="11",
+        steps=[
+            {"state": "prepare", "status": "succeeded"},
+            {"state": "generate", "status": failed_task},
         ],
-    }})
-    assert result["status"] == ("FAILED" if failed_task.startswith("FAILED") else "CANCELLED")
+    )
+    wave = {
+        "key": "001|parallel|parallel:prepare:-,parallel:generate:-",
+        "states": ["prepare", "generate"],
+        "group": "parallel",
+        "kind": "parallel",
+        "job_id": "11",
+        "attempt": 1,
+        "status": "failed" if failed_task.startswith("FAILED") else "cancelled",
+    }
+    result = build_actionable_run_status(
+        manifest,
+        runtime_waves=[wave],
+        job_observations={
+            "11": {
+                "status": "FAILED" if failed_task.startswith("FAILED") else "CANCELLED",
+                "task_rows": [
+                    {"task_id": 0, "task_name": "prepare", "status": "SUCCEEDED"},
+                    {"task_id": 1, "task_name": "generate", "status": failed_task},
+                ],
+            }
+        },
+    )
+    assert result["status"] == (
+        "FAILED" if failed_task.startswith("FAILED") else "CANCELLED"
+    )
     assert result["stages"]["prepare"]["state"] == "SUCCEEDED"
     assert result["stages"]["generate"]["state"] == failed_task
     assert all(not stage["outcome_conflict"] for stage in result["stages"].values())
@@ -192,42 +217,101 @@ def test_terminal_job_with_successful_parallel_member_is_not_a_conflict(failed_t
 
 @pytest.mark.parametrize("cancelled_first", [False, True])
 @pytest.mark.parametrize("reverse_task_ids", [False, True])
-@pytest.mark.parametrize("failed_task", ["FAILED", "FAILED_SETUP", "FAILED_PRECHECKS", "FAILED_CONTROLLER", "FAILED_STARTUP"])
-def test_mixed_failure_and_cancellation_matches_actual_queue_aggregate(cancelled_first, reverse_task_ids, failed_task):
-    states = ["CANCELLED", failed_task] if cancelled_first else [failed_task, "CANCELLED"]
-    rows = [{"job_id": "11", "task_id": 1 - index if reverse_task_ids else index,
-             "task_name": f"member-{index}", "status": state}
-            for index, state in enumerate(states)]
+@pytest.mark.parametrize(
+    "failed_task",
+    [
+        "FAILED",
+        "FAILED_SETUP",
+        "FAILED_PRECHECKS",
+        "FAILED_CONTROLLER",
+        "FAILED_STARTUP",
+    ],
+)
+def test_mixed_failure_and_cancellation_matches_actual_queue_aggregate(
+    cancelled_first, reverse_task_ids, failed_task
+):
+    states = (
+        ["CANCELLED", failed_task] if cancelled_first else [failed_task, "CANCELLED"]
+    )
+    rows = [
+        {
+            "job_id": "11",
+            "task_id": 1 - index if reverse_task_ids else index,
+            "task_name": f"member-{index}",
+            "status": state,
+        }
+        for index, state in enumerate(states)
+    ]
     queue_payload = json.dumps(rows)
     aggregate = _status_from_queue_payload(queue_payload, "11")
     assert aggregate == states[0]
-    manifest = RunManifest("parallel", "run-test", "npa.workflow/v0.0.1", sky_job_id="11",
-        steps=[{"state": row["task_name"], "status": row["status"]} for row in rows])
-    wave = {"key": "001|parallel|parallel:member-0:-,parallel:member-1:-",
-            "states": ["member-0", "member-1"], "group": "parallel", "kind": "parallel",
-            "job_id": "11", "attempt": 1, "status": aggregate.lower()}
-    result = build_actionable_run_status(manifest, runtime_waves=[wave], job_observations={"11": {
-        "status": aggregate, "task_rows": parse_task_statuses(queue_payload, "11"),
-    }})
+    manifest = RunManifest(
+        "parallel",
+        "run-test",
+        "npa.workflow/v0.0.1",
+        sky_job_id="11",
+        steps=[{"state": row["task_name"], "status": row["status"]} for row in rows],
+    )
+    wave = {
+        "key": "001|parallel|parallel:member-0:-,parallel:member-1:-",
+        "states": ["member-0", "member-1"],
+        "group": "parallel",
+        "kind": "parallel",
+        "job_id": "11",
+        "attempt": 1,
+        "status": aggregate.lower(),
+    }
+    result = build_actionable_run_status(
+        manifest,
+        runtime_waves=[wave],
+        job_observations={
+            "11": {
+                "status": aggregate,
+                "task_rows": parse_task_statuses(queue_payload, "11"),
+            }
+        },
+    )
     assert result["status"] == "FAILED"
     assert all(not stage["outcome_conflict"] for stage in result["stages"].values())
-    assert [stage["raw_task_scheduler_state"] for stage in result["stages"].values()] == states
+    assert [
+        stage["raw_task_scheduler_state"] for stage in result["stages"].values()
+    ] == states
 
 
-@pytest.mark.parametrize(("job_state", "task_state"), [
-    ("FAILED", "CANCELLED"), ("CANCELLED", "FAILED_SETUP"),
-    ("SUCCEEDED", "FAILED_CONTROLLER"), ("SUCCEEDED", "CANCELLED"),
-    ("FAILED", "SUCCEEDED"), ("CANCELLED", "SUCCEEDED"),
-])
-def test_single_task_terminal_disagreement_survives_actual_queue_parsers(job_state, task_state):
+@pytest.mark.parametrize(
+    ("job_state", "task_state"),
+    [
+        ("FAILED", "CANCELLED"),
+        ("CANCELLED", "FAILED_SETUP"),
+        ("SUCCEEDED", "FAILED_CONTROLLER"),
+        ("SUCCEEDED", "CANCELLED"),
+        ("FAILED", "SUCCEEDED"),
+        ("CANCELLED", "SUCCEEDED"),
+    ],
+)
+def test_single_task_terminal_disagreement_survives_actual_queue_parsers(
+    job_state, task_state
+):
     job_snapshot = json.dumps([{"job_id": "11", "task_id": 0, "status": job_state}])
-    task_snapshot = json.dumps([{"job_id": "11", "task_id": 0, "task_name": "prepare", "status": task_state}])
-    manifest = RunManifest("serial", "run-test", "npa.workflow/v0.0.1", sky_job_id="11",
-        steps=[{"state": "prepare", "status": task_state}])
-    result = build_actionable_run_status(manifest, job_observations={"11": {
-        "status": _status_from_queue_payload(job_snapshot, "11"),
-        "task_rows": parse_task_statuses(task_snapshot, "11"),
-    }})
+    task_snapshot = json.dumps(
+        [{"job_id": "11", "task_id": 0, "task_name": "prepare", "status": task_state}]
+    )
+    manifest = RunManifest(
+        "serial",
+        "run-test",
+        "npa.workflow/v0.0.1",
+        sky_job_id="11",
+        steps=[{"state": "prepare", "status": task_state}],
+    )
+    result = build_actionable_run_status(
+        manifest,
+        job_observations={
+            "11": {
+                "status": _status_from_queue_payload(job_snapshot, "11"),
+                "task_rows": parse_task_statuses(task_snapshot, "11"),
+            }
+        },
+    )
     assert result["status"] == "UNKNOWN"
     stage = result["stages"]["prepare"]
     assert stage["outcome_conflict"] is True

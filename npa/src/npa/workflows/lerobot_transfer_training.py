@@ -13,7 +13,12 @@ from npa.workbench.lerobot.policy_container import (
     build_lerobot_train_command,
     validate_lerobot_checkpoint,
 )
-from npa.workflows.lerobot_transfer_data import LEROBOT_VERSION, file_sha256, tree_hashes, write_json
+from npa.workflows.lerobot_transfer_data import (
+    LEROBOT_VERSION,
+    file_sha256,
+    tree_hashes,
+    write_json,
+)
 
 
 def training_command(prepared: Path, output: Path, arm: str) -> list[str]:
@@ -46,19 +51,31 @@ def training_command(prepared: Path, output: Path, arm: str) -> list[str]:
     overrides = [
         f"--dataset.revision={recipe['dataset_revision']}",
         f"--dataset.episodes={json.dumps(recipe['train_episodes'])}",
-        f"--dataset.video_backend={recipe['video_backend']}", "--dataset.use_imagenet_stats=true",
-        f"--seed={recipe['seed']}", "--cudnn_deterministic=true",
-        "--policy.chunk_size=16", "--policy.n_action_steps=8",
-        "--policy.optimizer_lr=0.0001", "--policy.optimizer_lr_backbone=0.00001",
+        f"--dataset.video_backend={recipe['video_backend']}",
+        "--dataset.use_imagenet_stats=true",
+        f"--seed={recipe['seed']}",
+        "--cudnn_deterministic=true",
+        "--policy.chunk_size=16",
+        "--policy.n_action_steps=8",
+        "--policy.optimizer_lr=0.0001",
+        "--policy.optimizer_lr_backbone=0.00001",
         "--policy.use_amp=true",
         f"--dataset.image_transforms.enable={str(arm == 'robust').lower()}",
         f"--dataset.image_transforms.tfs={json.dumps(transforms, sort_keys=True)}",
     ]
     return build_lerobot_train_command(
-        dataset_path=prepared / "dataset", dataset_repo_id=recipe["dataset_repo"],
-        output_dir=output, steps=recipe["train_steps"], batch_size=recipe["batch_size"],
-        policy_type="act", device="cuda", num_workers=4, eval_freq=0,
-        log_freq=100, extra_args=overrides, lerobot_version=recipe["lerobot_version"],
+        dataset_path=prepared / "dataset",
+        dataset_repo_id=recipe["dataset_repo"],
+        output_dir=output,
+        steps=recipe["train_steps"],
+        batch_size=recipe["batch_size"],
+        policy_type="act",
+        device="cuda",
+        num_workers=4,
+        eval_freq=0,
+        log_freq=100,
+        extra_args=overrides,
+        lerobot_version=recipe["lerobot_version"],
     )
 
 
@@ -87,19 +104,30 @@ def train_policy(prepared: Path, output: Path, arm: str) -> None:
     last = output / "training/checkpoints/last"
     if last.is_symlink():
         last.unlink()
-    write_json(output / "training.json", {
-        "schema": "npa.lerobot-transfer.training.v1", "arm": arm,
-        "recipe_sha256": file_sha256(prepared / "recipe.json"),
-        "checkpoint_hashes": tree_hashes(output / "checkpoint"),
-        "duration_seconds": time.monotonic() - started,
-        "runtime": runtime, "command": command,
-    })
+    write_json(
+        output / "training.json",
+        {
+            "schema": "npa.lerobot-transfer.training.v1",
+            "arm": arm,
+            "recipe_sha256": file_sha256(prepared / "recipe.json"),
+            "checkpoint_hashes": tree_hashes(output / "checkpoint"),
+            "duration_seconds": time.monotonic() - started,
+            "runtime": runtime,
+            "command": command,
+        },
+    )
 
 
 def _run_training(command: list[str], log_path: Path) -> None:
-    with log_path.open("w") as log, subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-    ) as process:
+    with (
+        log_path.open("w") as log,
+        subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        ) as process,
+    ):
         for line in process.stdout:
             log.write(line)
             log.flush()
@@ -122,10 +150,23 @@ def runtime_versions() -> dict:
 
     version = importlib.metadata.version("lerobot")
     if version != LEROBOT_VERSION or not torch.cuda.is_available():
-        raise RuntimeError(f"The transfer benchmark requires LeRobot {LEROBOT_VERSION} and working CUDA")
+        raise RuntimeError(
+            f"The transfer benchmark requires LeRobot {LEROBOT_VERSION} and working CUDA"
+        )
     return {
-        "lerobot": version, "torch": torch.__version__, "cuda": torch.version.cuda,
-        "gpu": torch.cuda.get_device_name(), "compute_capability": list(torch.cuda.get_device_capability()),
-        "lerobot_source": json.loads(importlib.metadata.distribution("lerobot").read_text("direct_url.json") or "{}"),
-        "packages": dict(sorted((d.metadata["Name"], d.version) for d in importlib.metadata.distributions())),
+        "lerobot": version,
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "gpu": torch.cuda.get_device_name(),
+        "compute_capability": list(torch.cuda.get_device_capability()),
+        "lerobot_source": json.loads(
+            importlib.metadata.distribution("lerobot").read_text("direct_url.json")
+            or "{}"
+        ),
+        "packages": dict(
+            sorted(
+                (d.metadata["Name"], d.version)
+                for d in importlib.metadata.distributions()
+            )
+        ),
     }

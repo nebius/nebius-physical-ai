@@ -75,9 +75,7 @@ def _render_worker(pool: WorkerPoolSpec) -> str:
         lines.append("    gpu_cluster = {")
         lines.append(f"      infiniband_fabric = {_tfstr(pool.fabric)}")
         lines.append("    }")
-    reservation_id = (
-        pool.resolved_capacity_block_group_id or pool.capacity_block_group
-    )
+    reservation_id = pool.resolved_capacity_block_group_id or pool.capacity_block_group
     if pool.capacity_block_group_name and not reservation_id:
         raise ValueError(
             f"worker pool {pool.name}: capacity block name must be provider-resolved "

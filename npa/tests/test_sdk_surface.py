@@ -87,7 +87,12 @@ def test_workbench_public_surface() -> None:
         "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
         "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
-        "retargeting": ["run_retargeting", "validate_motion_lib", "metadata_uri_for", "result_uri_for"],
+        "retargeting": [
+            "run_retargeting",
+            "validate_motion_lib",
+            "metadata_uri_for",
+            "result_uri_for",
+        ],
         "sonic": [
             "export_onnx",
             "evaluate_onnx_policy",
@@ -122,6 +127,89 @@ def test_sdk_compatibility_namespace_exposes_sonic_export() -> None:
     from npa.sdk.workbench.sonic import export_onnx
 
     assert callable(export_onnx)
+
+
+def test_encord_sdk_delegates_all_push_seams(mocker) -> None:
+    from npa.sdk.workbench import encord
+
+    sentinel = object()
+    run_push = mocker.patch("npa.workbench.encord.run_push", return_value=sentinel)
+    seams = {
+        name: object()
+        for name in (
+            "user_client",
+            "storage_client",
+            "artifact_store",
+            "clock",
+            "environ",
+        )
+    }
+
+    result = encord.push(
+        input_path="s3://bucket/input/",
+        integration="integration",
+        folder="folder",
+        output_path="s3://bucket/output/",
+        identity_sidecar_uri="s3://bucket/identity.json",
+        **seams,
+    )
+
+    assert result is sentinel
+    assert run_push.call_args.kwargs["transfer"] == "register"
+    assert (
+        run_push.call_args.kwargs["identity_sidecar_uri"] == "s3://bucket/identity.json"
+    )
+    for name, value in seams.items():
+        assert run_push.call_args.kwargs[name] is value
+
+
+def test_encord_sdk_delegates_pull_and_verify_seams(mocker) -> None:
+    from npa.sdk.workbench import encord
+
+    pull_result = object()
+    verify_result = object()
+    run_pull = mocker.patch("npa.workbench.encord.run_pull", return_value=pull_result)
+    run_verify = mocker.patch(
+        "npa.workbench.encord.verify_roundtrip", return_value=verify_result
+    )
+    pull_seams = {
+        name: object()
+        for name in (
+            "user_client",
+            "storage_client",
+            "artifact_store",
+            "downloader",
+            "clock",
+            "environ",
+        )
+    }
+    assert (
+        encord.pull(
+            source="project",
+            source_id="project-id",
+            output_path="s3://bucket/pull/",
+            **pull_seams,
+        )
+        is pull_result
+    )
+    assert run_pull.call_args.kwargs["label_export"] == "none"
+    for name, value in pull_seams.items():
+        assert run_pull.call_args.kwargs[name] is value
+
+    verify_seams = {
+        name: object() for name in ("storage_client", "artifact_store", "clock")
+    }
+    assert (
+        encord.verify_roundtrip(
+            receipt_uri="s3://bucket/push_receipt.json",
+            manifest_uri="s3://bucket/manifest.json",
+            output_path="s3://bucket/report.json",
+            **verify_seams,
+        )
+        is verify_result
+    )
+    for name, value in verify_seams.items():
+        assert run_verify.call_args.kwargs[name] is value
 
 
 def test_public_functions_have_docstrings_and_no_typer_signature_leaks() -> None:
@@ -219,9 +307,7 @@ def test_network_ensure_ingress_parses_cli_style_ports(mocker) -> None:
     mock_ensure = mocker.patch("npa.network._ensure_ingress", return_value="ok")
 
     assert (
-        network.ensure_ingress(
-            vm="vm-id", ports="5151,8080", source="203.0.113.50/32"
-        )
+        network.ensure_ingress(vm="vm-id", ports="5151,8080", source="203.0.113.50/32")
         == "ok"
     )
     mock_ensure.assert_called_once()

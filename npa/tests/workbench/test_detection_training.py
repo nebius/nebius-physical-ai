@@ -105,7 +105,9 @@ def test_model_construction_replaces_predictor(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setitem(sys.modules, "torchvision", torchvision)
     monkeypatch.setitem(sys.modules, "torchvision.models", models)
     monkeypatch.setitem(sys.modules, "torchvision.models.detection", detection)
-    monkeypatch.setitem(sys.modules, "torchvision.models.detection.faster_rcnn", faster_rcnn)
+    monkeypatch.setitem(
+        sys.modules, "torchvision.models.detection.faster_rcnn", faster_rcnn
+    )
 
     from npa.workbench.detection_training.models import build_fasterrcnn_resnet50_fpn_v2
 
@@ -116,7 +118,9 @@ def test_model_construction_replaces_predictor(monkeypatch: pytest.MonkeyPatch) 
     assert model.roi_heads.box_predictor.num_classes == 10
 
 
-def test_lance_detection_dataset_yields_expected_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lance_detection_dataset_yields_expected_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fake_torch(monkeypatch)
     from npa.workbench.detection_training.dataloader import LanceDetectionDataset
 
@@ -128,7 +132,9 @@ def test_lance_detection_dataset_yields_expected_shapes(monkeypatch: pytest.Monk
     assert target["labels"].shape == (1,)
 
 
-def test_lance_detection_dataset_maps_string_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lance_detection_dataset_maps_string_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fake_torch(monkeypatch)
     from npa.workbench.detection_training.dataloader import LanceDetectionDataset
 
@@ -144,7 +150,10 @@ def test_lance_detection_dataset_maps_string_labels(monkeypatch: pytest.MonkeyPa
     _image, target = dataset[0]
 
     assert target["labels"].array.tolist() == [0, 1]
-    assert target["boxes"].array.tolist() == [[1.0, 1.0, 5.0, 6.0], [2.0, 2.0, 6.0, 7.0]]
+    assert target["boxes"].array.tolist() == [
+        [1.0, 1.0, 5.0, 6.0],
+        [2.0, 2.0, 6.0, 7.0],
+    ]
 
 
 def test_lance_detection_dataset_filters_unknown_string_labels(
@@ -163,7 +172,9 @@ def test_lance_detection_dataset_filters_unknown_string_labels(
         ],
         label_map={"person": 0},
     )
-    with caplog.at_level("WARNING", logger="npa.workbench.detection_training.dataloader"):
+    with caplog.at_level(
+        "WARNING", logger="npa.workbench.detection_training.dataloader"
+    ):
         _image, target = dataset[0]
 
     assert target["labels"].array.tolist() == [0]
@@ -171,7 +182,9 @@ def test_lance_detection_dataset_filters_unknown_string_labels(
     assert "unknown label(s): unknown" in caplog.text
 
 
-def test_lance_detection_dataset_numeric_labels_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lance_detection_dataset_numeric_labels_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fake_torch(monkeypatch)
     from npa.workbench.detection_training.dataloader import LanceDetectionDataset
 
@@ -191,7 +204,9 @@ def test_training_loop_with_mock_model_has_finite_loss() -> None:
         def train(self) -> None:
             self.train_called = True
 
-        def __call__(self, images: list[Any], targets: list[dict[str, Any]]) -> dict[str, FakeLoss]:
+        def __call__(
+            self, images: list[Any], targets: list[dict[str, Any]]
+        ) -> dict[str, FakeLoss]:
             assert len(images) == 1
             assert targets[0]["labels"]
             return {"loss_classifier": FakeLoss(1.25), "loss_box_reg": FakeLoss(0.25)}
@@ -209,7 +224,9 @@ def test_training_loop_with_mock_model_has_finite_loss() -> None:
     model = Model()
     optimizer = Optimizer()
 
-    loss = train_one_epoch(model, [(["image"], [{"labels": [1]}])], optimizer, device="cpu")
+    loss = train_one_epoch(
+        model, [(["image"], [{"labels": [1]}])], optimizer, device="cpu"
+    )
 
     assert model.train_called
     assert optimizer.steps == 1
@@ -217,16 +234,23 @@ def test_training_loop_with_mock_model_has_finite_loss() -> None:
     assert loss == 1.5
 
 
-def test_checkpoint_writer_uses_expected_uri_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_checkpoint_writer_uses_expected_uri_pattern(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fake_torch(monkeypatch)
     captured: dict[str, bytes] = {}
 
     def fake_write(uri: str, payload: bytes) -> None:
         captured[uri] = payload
 
-    monkeypatch.setattr("npa.workbench.detection_training.training.write_bytes_uri", fake_write)
+    monkeypatch.setattr(
+        "npa.workbench.detection_training.training.write_bytes_uri", fake_write
+    )
 
-    from npa.workbench.detection_training.training import checkpoint_uri_pattern, save_checkpoint
+    from npa.workbench.detection_training.training import (
+        checkpoint_uri_pattern,
+        save_checkpoint,
+    )
 
     pattern = checkpoint_uri_pattern("s3://bucket/out", "run-1")
     save_checkpoint(
@@ -243,13 +267,20 @@ def test_checkpoint_writer_uses_expected_uri_pattern(monkeypatch: pytest.MonkeyP
     assert captured["s3://bucket/out/run-1/checkpoints/epoch_1.pt"]
 
 
-def test_evaluation_returns_expected_schema(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_evaluation_returns_expected_schema(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from npa.workbench.detection_training import evaluation
 
     monkeypatch.setattr(
         evaluation,
         "_evaluate_with_model",
-        lambda _request: {"mAP": 0.1, "mAP_50": 0.2, "mAP_75": 0.05, "per_category_AP": {"class_1": 0.1}},
+        lambda _request: {
+            "mAP": 0.1,
+            "mAP_50": 0.2,
+            "mAP_75": 0.05,
+            "per_category_AP": {"class_1": 0.1},
+        },
     )
     result = evaluation.evaluate_detector(
         EvalRequest(
@@ -266,14 +297,20 @@ def test_evaluation_returns_expected_schema(monkeypatch: pytest.MonkeyPatch, tmp
     assert result.manifest_sha256
 
 
-def test_evaluation_passes_label_map_to_dataloader(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_evaluation_passes_label_map_to_dataloader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.workbench.detection_training import evaluation
 
     fake_torch = types.ModuleType("torch")
     fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
     fake_torch.device = lambda value: value
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    monkeypatch.setattr(evaluation, "_load_checkpoint", lambda _uri: {"num_classes": 3, "model_state_dict": {"synthetic_weight": 1}})
+    monkeypatch.setattr(
+        evaluation,
+        "_load_checkpoint",
+        lambda _uri: {"num_classes": 3, "model_state_dict": {"synthetic_weight": 1}},
+    )
 
     class FakeModel:
         def load_state_dict(self, *_args: Any, **_kwargs: Any) -> None:
@@ -286,7 +323,9 @@ def test_evaluation_passes_label_map_to_dataloader(monkeypatch: pytest.MonkeyPat
             return None
 
     seen: dict[str, Any] = {}
-    monkeypatch.setattr(evaluation, "build_fasterrcnn_resnet50_fpn_v2", lambda **_kwargs: FakeModel())
+    monkeypatch.setattr(
+        evaluation, "build_fasterrcnn_resnet50_fpn_v2", lambda **_kwargs: FakeModel()
+    )
 
     def fake_make_dataloader(**kwargs: Any) -> list[Any]:
         seen.update(kwargs)
@@ -296,7 +335,12 @@ def test_evaluation_passes_label_map_to_dataloader(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         evaluation,
         "_compute_map_metrics",
-        lambda *_args, **_kwargs: {"mAP": 0.0, "mAP_50": 0.0, "mAP_75": 0.0, "per_category_AP": {}},
+        lambda *_args, **_kwargs: {
+            "mAP": 0.0,
+            "mAP_50": 0.0,
+            "mAP_75": 0.0,
+            "per_category_AP": {},
+        },
     )
 
     evaluation._evaluate_with_model(
@@ -318,9 +362,16 @@ def test_request_response_validation() -> None:
 
     assert request.num_classes is None
     assert resolve_num_classes(request) == 10
-    assert resolve_num_classes(
-        TrainRequest(view="bdd100k_rider_train", output_uri="s3://bucket/out", label_map={"person": 0, "rider": 1})
-    ) == 3
+    assert (
+        resolve_num_classes(
+            TrainRequest(
+                view="bdd100k_rider_train",
+                output_uri="s3://bucket/out",
+                label_map={"person": 0, "rider": 1},
+            )
+        )
+        == 3
+    )
     with pytest.raises(ValueError):
         TrainRequest(view="", output_uri="s3://bucket/out")
     with pytest.raises(ValueError):
@@ -334,19 +385,36 @@ def test_request_response_validation() -> None:
         label_map={"pedestrian": 0},
     ).label_map == {"pedestrian": 0}
     with pytest.raises(ValueError):
-        EvalRequest(checkpoint_uri="s3://bucket/ckpt.pt", eval_view="mv", output_uri="s3://bucket/eval", label_map={"": 1})
+        EvalRequest(
+            checkpoint_uri="s3://bucket/ckpt.pt",
+            eval_view="mv",
+            output_uri="s3://bucket/eval",
+            label_map={"": 1},
+        )
 
 
-def test_train_endpoint_accepts_label_map_without_num_classes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_train_endpoint_accepts_label_map_without_num_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import npa.workbench.detection_training.service as service_module
     from npa.workbench.detection_training.service import create_app
     from npa.workbench.detection_training.training import resolve_num_classes
 
     seen: dict[str, Any] = {}
 
-    def fake_train(request: TrainRequest, *, run_id: str | None = None, status_callback: Any = None, artifact_callback: Any = None):
+    def fake_train(
+        request: TrainRequest,
+        *,
+        run_id: str | None = None,
+        status_callback: Any = None,
+        artifact_callback: Any = None,
+    ):
         from npa.workbench.detection_training.schemas import TrainResponse
-        from npa.workbench.detection_training.training import checkpoint_uri_pattern, compute_manifest_sha256, metrics_uri
+        from npa.workbench.detection_training.training import (
+            checkpoint_uri_pattern,
+            compute_manifest_sha256,
+            metrics_uri,
+        )
 
         seen["num_classes"] = resolve_num_classes(request)
         seen["label_map"] = request.label_map
@@ -357,7 +425,9 @@ def test_train_endpoint_accepts_label_map_without_num_classes(monkeypatch: pytes
         return TrainResponse(
             run_id=resolved_run,
             status="completed",
-            checkpoint_uri_pattern=checkpoint_uri_pattern(request.output_uri, resolved_run),
+            checkpoint_uri_pattern=checkpoint_uri_pattern(
+                request.output_uri, resolved_run
+            ),
             metrics_uri=metrics_uri(request.output_uri, resolved_run),
             total_epochs=request.epochs,
             manifest_sha256=manifest,
@@ -383,14 +453,26 @@ def test_train_endpoint_accepts_label_map_without_num_classes(monkeypatch: pytes
     assert seen["label_map"] == {"person": 0, "rider": 1}
 
 
-def test_api_cli_sdk_service_mode_manifest_parity(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_cli_sdk_service_mode_manifest_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import npa.cli.workbench.detection_training as cli_module
     import npa.sdk.workbench.detection_training as sdk_module
     import npa.workbench.detection_training.service as service_module
     from npa.workbench.detection_training.service import create_app
 
-    def fake_train(request: TrainRequest, *, run_id: str | None = None, status_callback: Any = None, artifact_callback: Any = None):
-        from npa.workbench.detection_training.training import checkpoint_uri_pattern, compute_manifest_sha256, metrics_uri
+    def fake_train(
+        request: TrainRequest,
+        *,
+        run_id: str | None = None,
+        status_callback: Any = None,
+        artifact_callback: Any = None,
+    ):
+        from npa.workbench.detection_training.training import (
+            checkpoint_uri_pattern,
+            compute_manifest_sha256,
+            metrics_uri,
+        )
         from npa.workbench.detection_training.schemas import TrainResponse
 
         manifest = compute_manifest_sha256("train", request.model_dump(mode="json"))
@@ -400,7 +482,9 @@ def test_api_cli_sdk_service_mode_manifest_parity(monkeypatch: pytest.MonkeyPatc
         return TrainResponse(
             run_id=resolved_run,
             status="completed",
-            checkpoint_uri_pattern=checkpoint_uri_pattern(request.output_uri, resolved_run),
+            checkpoint_uri_pattern=checkpoint_uri_pattern(
+                request.output_uri, resolved_run
+            ),
             metrics_uri=metrics_uri(request.output_uri, resolved_run),
             total_epochs=request.epochs,
             manifest_sha256=manifest,
@@ -421,13 +505,21 @@ def test_api_cli_sdk_service_mode_manifest_parity(monkeypatch: pytest.MonkeyPatc
     api_response = client.post("/train", json=payload)
     assert api_response.status_code == 200, api_response.text
 
-    def fake_cli_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        response = client.request(method, path, json=kwargs.get("payload"), params=kwargs.get("params"))
+    def fake_cli_request(
+        method: str, endpoint: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        response = client.request(
+            method, path, json=kwargs.get("payload"), params=kwargs.get("params")
+        )
         assert response.status_code == 200, response.text
         return response.json()
 
-    def fake_sdk_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        response = client.request(method, path, json=kwargs.get("payload"), params=kwargs.get("params"))
+    def fake_sdk_request(
+        method: str, endpoint: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        response = client.request(
+            method, path, json=kwargs.get("payload"), params=kwargs.get("params")
+        )
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -457,7 +549,9 @@ def test_api_cli_sdk_service_mode_manifest_parity(monkeypatch: pytest.MonkeyPatc
     )
     assert cli_response.exit_code == 0, cli_response.output
 
-    sdk_response = sdk_module.train(service=True, endpoint="http://dt.example", **payload)
+    sdk_response = sdk_module.train(
+        service=True, endpoint="http://dt.example", **payload
+    )
 
     manifests = {
         api_response.json()["manifest_sha256"],
@@ -481,14 +575,20 @@ def test_cli_and_sdk_do_not_import_heavy_ml_dependencies_at_module_level() -> No
 def test_sdk_workbench_namespace_exports_sdk_module() -> None:
     from npa.sdk import workbench
 
-    assert workbench.detection_training.__name__ == "npa.sdk.workbench.detection_training"
+    assert (
+        workbench.detection_training.__name__ == "npa.sdk.workbench.detection_training"
+    )
     assert hasattr(workbench.detection_training, "train")
 
 
 def test_deploy_dry_run_contains_gpu_selector(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "npa.cli.workbench.detection_training.resolve_submit_credentials",
-        lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
+        lambda: types.SimpleNamespace(
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            s3_endpoint="https://storage.example",
+        ),
     )
     monkeypatch.setenv("DETECTION_TRAINING_TOKEN", "deploy-secret")
 
@@ -507,23 +607,48 @@ def test_deploy_dry_run_contains_gpu_selector(monkeypatch: pytest.MonkeyPatch) -
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     deployment = [item for item in payload["items"] if item["kind"] == "Deployment"][0]
-    assert deployment["spec"]["template"]["spec"]["nodeSelector"]["node.kubernetes.io/instance-type"] == "gpu-h100-sxm"
-    assert deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] == "1"
+    assert (
+        deployment["spec"]["template"]["spec"]["nodeSelector"][
+            "node.kubernetes.io/instance-type"
+        ]
+        == "gpu-h100-sxm"
+    )
+    assert (
+        deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"][
+            "nvidia.com/gpu"
+        ]
+        == "1"
+    )
     assert all(item["kind"] != "Secret" for item in payload["items"])
     assert "deploy-secret" not in result.output
-    assert deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"] == [{"secretRef": {"name": "npa-detection-training-env"}}]
+    assert deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"] == [
+        {"secretRef": {"name": "npa-detection-training-env"}}
+    ]
 
 
-def test_deploy_defaults_to_token_auth_and_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_deploy_defaults_to_token_auth_and_requires_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         "npa.cli.workbench.detection_training.resolve_submit_credentials",
-        lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
+        lambda: types.SimpleNamespace(
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            s3_endpoint="https://storage.example",
+        ),
     )
     monkeypatch.delenv("DETECTION_TRAINING_TOKEN", raising=False)
 
     result = runner.invoke(
         detection_training_app,
-        ["deploy", "--image", "registry/x:test", "--output-path", "s3://bucket/out", "--dry-run"],
+        [
+            "deploy",
+            "--image",
+            "registry/x:test",
+            "--output-path",
+            "s3://bucket/out",
+            "--dry-run",
+        ],
     )
     assert result.exit_code != 0
     assert "DETECTION_TRAINING_TOKEN is required" in result.output
@@ -532,13 +657,25 @@ def test_deploy_defaults_to_token_auth_and_requires_token(monkeypatch: pytest.Mo
 def test_deploy_insecure_no_auth_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "npa.cli.workbench.detection_training.resolve_submit_credentials",
-        lambda: types.SimpleNamespace(s3_access_key_id="", s3_secret_access_key="", s3_endpoint="https://storage.example"),
+        lambda: types.SimpleNamespace(
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            s3_endpoint="https://storage.example",
+        ),
     )
     monkeypatch.delenv("DETECTION_TRAINING_TOKEN", raising=False)
 
     result = runner.invoke(
         detection_training_app,
-        ["deploy", "--image", "registry/x:test", "--output-path", "s3://bucket/out", "--insecure-no-auth", "--dry-run"],
+        [
+            "deploy",
+            "--image",
+            "registry/x:test",
+            "--output-path",
+            "s3://bucket/out",
+            "--insecure-no-auth",
+            "--dry-run",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert all(item["kind"] != "Secret" for item in json.loads(result.output)["items"])
@@ -563,7 +700,9 @@ def test_deploy_uses_only_an_explicit_operator_managed_pull_secret() -> None:
 
     assert result.exit_code == 0, result.output
     deployment = next(
-        item for item in json.loads(result.output)["items"] if item["kind"] == "Deployment"
+        item
+        for item in json.loads(result.output)["items"]
+        if item["kind"] == "Deployment"
     )
     assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == [
         {"name": "operator-registry"}
@@ -576,7 +715,10 @@ def test_token_auth_rejects_missing_and_invalid_tokens() -> None:
     client = TestClient(create_app(auth_mode="token", token="s3cr3t"))
 
     assert client.get("/health").status_code == 401
-    assert client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert (
+        client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code
+        == 401
+    )
     assert client.get("/health", headers={"Authorization": "s3cr3t"}).status_code == 401
 
     ok = client.get("/health", headers={"Authorization": "Bearer s3cr3t"})
@@ -593,7 +735,10 @@ def test_token_auth_mode_without_token_is_misconfiguration() -> None:
     assert "not configured" in response.json()["detail"]
 
 
-@pytest.mark.skipif(os.environ.get("NPA_INTEGRATION_E2E") != "1", reason="Set NPA_INTEGRATION_E2E=1 to run detection-training e2e")
+@pytest.mark.skipif(
+    os.environ.get("NPA_INTEGRATION_E2E") != "1",
+    reason="Set NPA_INTEGRATION_E2E=1 to run detection-training e2e",
+)
 def test_detection_training_e2e_placeholder() -> None:
     assert os.environ["NPA_INTEGRATION_E2E"] == "1"
 
@@ -603,8 +748,12 @@ def _install_fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_torch.float32 = "float32"
     fake_torch.int64 = "int64"
     fake_torch.as_tensor = lambda value, dtype=None: FakeTensor(value)
-    fake_torch.empty = lambda shape, dtype=None: FakeTensor([[]] if shape == (0, 4) else [])
-    fake_torch.save = lambda payload, buffer: buffer.write(json.dumps(payload, default=str).encode("utf-8"))
+    fake_torch.empty = lambda shape, dtype=None: FakeTensor(
+        [[]] if shape == (0, 4) else []
+    )
+    fake_torch.save = lambda payload, buffer: buffer.write(
+        json.dumps(payload, default=str).encode("utf-8")
+    )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
 

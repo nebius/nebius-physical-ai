@@ -37,8 +37,14 @@ def _download(item: dict, destination: Path) -> None:
     url = item["url"]
     for _ in range(6):
         parsed = urllib.parse.urlsplit(url)
-        if (parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS
-                or parsed.username or parsed.password or parsed.port or parsed.fragment):
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname not in ALLOWED_HOSTS
+            or parsed.username
+            or parsed.password
+            or parsed.port
+            or parsed.fragment
+        ):
             raise ValueError("unapproved corresponding-source origin")
         connection = http.client.HTTPSConnection(parsed.hostname, timeout=120)
         try:
@@ -82,7 +88,10 @@ def _fetch(lock: dict, lock_path: Path, output: Path) -> dict:
         for future in futures:
             future.result()
     (output / "corresponding-source.lock.json").write_bytes(lock_path.read_bytes())
-    return {"archives": len(artifacts), "bytes": sum(x["size"] for x in artifacts.values())}
+    return {
+        "archives": len(artifacts),
+        "bytes": sum(x["size"] for x in artifacts.values()),
+    }
 
 
 def _inventory(archive: Path) -> dict:
@@ -97,15 +106,18 @@ def _inventory(archive: Path) -> dict:
 
 def _verify_packages(lock: dict, inventory: dict) -> None:
     parent_ids = lock["parent_diff_ids"]
-    if [row["diff_id"] for row in inventory["layers"][:len(parent_ids)]] != parent_ids:
+    if [row["diff_id"] for row in inventory["layers"][: len(parent_ids)]] != parent_ids:
         raise ValueError("image does not retain the inspected Python parent layers")
     expected = {tuple(sorted(package.items())) for package in lock["packages"]}
     observed = {
         tuple(sorted(package.items()))
-        for row in inventory["layers"] for package in row["debian_packages"]
+        for row in inventory["layers"]
+        for package in row["debian_packages"]
     }
     if observed != expected:
-        raise ValueError("distributed Debian package identities differ from source lock")
+        raise ValueError(
+            "distributed Debian package identities differ from source lock"
+        )
     sources = {(item["name"], item["version"]) for item in lock["sources"]}
     required = {(item["source"], item["source_version"]) for item in lock["packages"]}
     if sources != required:
@@ -122,8 +134,11 @@ def _verify(lock: dict, lock_path: Path, archive: Path) -> dict:
     }
     for relative, expected in artifacts.items():
         actual = inventory["final_files"].get(f"{SOURCE_ROOT}/{relative}", {})
-        if (actual.get("type") != "0" or actual.get("size") != expected["size"]
-                or actual.get("sha256") != expected["sha256"]):
+        if (
+            actual.get("type") != "0"
+            or actual.get("size") != expected["size"]
+            or actual.get("sha256") != expected["sha256"]
+        ):
             raise ValueError("image corresponding-source artifact is absent or changed")
     return {
         "schema": "npa.robomimic.source-delivery-verification.v1",
@@ -147,7 +162,9 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("fetch", "verify"))
-    parser.add_argument("--lock", type=Path, default=ROOT / "corresponding-source.lock.json")
+    parser.add_argument(
+        "--lock", type=Path, default=ROOT / "corresponding-source.lock.json"
+    )
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--image-archive", type=Path)
     args = parser.parse_args()

@@ -28,9 +28,7 @@ _SOURCE_ID = "debian:libbsd@0.11.7-2"
 _SOURCE_NAME = "libbsd"
 _SOURCE_VERSION = "0.11.7-2"
 _SOURCE_DIRECTORY = "pool/main/libb/libbsd"
-_COPYRIGHT_SHA256 = (
-    "00fd7be5d907a6bcc409a80f2d565f508673db4761d54623691f89ae3aa20fc7"
-)
+_COPYRIGHT_SHA256 = "00fd7be5d907a6bcc409a80f2d565f508673db4761d54623691f89ae3aa20fc7"
 _COPYRIGHT_SIZE = 23_960
 
 _SOURCE_FILES = (
@@ -436,9 +434,7 @@ def _proof_record(proof: _PublicProof) -> dict[str, Any]:
     return {"url": proof.url, "sha256": proof.sha256, "size": proof.size}
 
 
-def verify_public_license_lock(
-    lock: bytes, proof_directory: Path
-) -> dict[str, Any]:
+def verify_public_license_lock(lock: bytes, proof_directory: Path) -> dict[str, Any]:
     """Verify the exact lock against pinned, mutually confirming Debian bytes.
 
     Args:

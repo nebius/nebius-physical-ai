@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "antioch": [
+        "FastAPI service authentication boundary",
+        "CPU-only system-info contract",
+        "proprietary antioch-sim distribution absent",
+    ],
     "diffusers": [
         "hash-locked CUDA runtime and pinned CogVideoX-2B checkpoint load",
         "native GPU text-to-video pipeline generates and fully decodes an MP4",
@@ -20,6 +25,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "native camera-conditioned generation runs on four CUDA ranks",
         "each rank records positive attention and all-to-all execution",
         "generated MP4 fully decodes with camera and checkpoint provenance",
+    ],
+    "sam3": [
+        "exact SAM 3.1 checkpoint access and pinned source/runtime fetch",
+        "text-prompted masks propagate across the real source video on CUDA",
+        "nonempty masks and decoded overlay match the source frame count",
+        "source, checkpoint, compatibility-patch and output hashes are retained",
     ],
     "sam2": [
         "pinned SAM 2.1 Small checkpoint loads on CUDA",

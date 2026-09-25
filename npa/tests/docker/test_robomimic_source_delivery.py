@@ -11,7 +11,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE = ROOT / "npa/docker/workbench/robomimic"
-SPEC = importlib.util.spec_from_file_location("robomimic_source_delivery", IMAGE / "source_delivery.py")
+SPEC = importlib.util.spec_from_file_location(
+    "robomimic_source_delivery", IMAGE / "source_delivery.py"
+)
 assert SPEC and SPEC.loader
 delivery = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(delivery)
@@ -20,8 +22,11 @@ SPEC.loader.exec_module(delivery)
 def _material(tmp_path: Path):
     artifact = {"filename": "demo.tar.xz", "sha256": "a" * 64, "size": 5}
     package = {
-        "name": "demo-bin", "version": "1", "architecture": "amd64",
-        "source": "demo", "source_version": "1",
+        "name": "demo-bin",
+        "version": "1",
+        "architecture": "amd64",
+        "source": "demo",
+        "source_version": "1",
     }
     lock = {
         "parent_diff_ids": ["sha256:" + "b" * 64],
@@ -33,22 +38,30 @@ def _material(tmp_path: Path):
     path.write_text(json.dumps(lock))
     files = {
         f"{delivery.SOURCE_ROOT}/{'a' * 64}/demo.tar.xz": {
-            "type": "0", "sha256": "a" * 64, "size": 5,
+            "type": "0",
+            "sha256": "a" * 64,
+            "size": 5,
         },
         f"{delivery.SOURCE_ROOT}/corresponding-source.lock.json": {
-            "type": "0", "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "type": "0",
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "size": path.stat().st_size,
         },
     }
     inventory = {
-        "archive_sha256": "c" * 64, "final_files": files,
+        "archive_sha256": "c" * 64,
+        "final_files": files,
         "layers": [{"diff_id": "sha256:" + "b" * 64, "debian_packages": [package]}],
     }
     return lock, path, inventory
 
 
-@pytest.mark.parametrize("mutation", ["archive", "version", "parent", "source", "symlink"])
-def test_source_delivery_rejects_incomplete_correspondence(tmp_path, monkeypatch, mutation):
+@pytest.mark.parametrize(
+    "mutation", ["archive", "version", "parent", "source", "symlink"]
+)
+def test_source_delivery_rejects_incomplete_correspondence(
+    tmp_path, monkeypatch, mutation
+):
     lock, path, original = _material(tmp_path)
     inventory = copy.deepcopy(original)
     if mutation == "archive":
