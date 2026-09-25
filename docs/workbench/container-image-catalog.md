@@ -691,8 +691,8 @@ complete before promoting a replacement release.
 
 MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
 publication plan. A historical private CUDA 12.8 image completed native B200 and
-RTX PRO 6000 GPU qualification. The current CUDA 13.0 recipe replaces vulnerable
-Torch and setuptools pins and requires qualification of its own bytes;
-public promotion still requires the exact-image security,
+RTX PRO 6000 GPU qualification. The current CUDA 13.0 candidate replaces vulnerable
+Torch and setuptools pins and has separate [trained G1 rollout evidence](validation/mjlab-trained-g1-20260925.json)
+on RTX PRO 6000. Public promotion still requires the exact-image security,
 licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
 operator builds and workflow overrides.

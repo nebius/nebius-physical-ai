@@ -4,7 +4,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 REPO_ROOT="$(cd "$NPA_ROOT/.." && pwd)"
 MJLAB_PYTHON="${NPA_PYTHON_BIN:-$NPA_ROOT/.venv/bin/python}"
-QUALIFIED_IMAGE_TAG="dev-7ccb0e8cfbf97f414916b0f026b8f204f1277781"
+QUALIFIED_IMAGE_TAG="dev-0202f396fb23f7d066fd452b469578e67151d382"
 REGISTRY=""
 PUSH=0
 while [[ $# -gt 0 ]]; do

@@ -1,9 +1,11 @@
 # MJLab image inventory
 
-This image is **publication-quarantined**. An operator build has completed native
-B200 and RTX PRO 6000 GPU acceptance; the exact artifact and scope are recorded in
-`docs/workbench/mjlab.md`. GPU execution does not establish redistribution or
-security approval for the built dependency closure.
+This image is **publication-quarantined**. The current CUDA 13.0 operator build
+has executed G1 training, checkpoint resume and rendered evaluation on RTX PRO
+6000. Historical B200 and RTX acceptance uses a separate CUDA 12.8 build; exact
+artifacts and measured scope are recorded in `docs/workbench/mjlab.md`. GPU
+execution does not establish redistribution or security approval for the built
+dependency closure.
 
 MJLab 1.6.0 and MuJoCo are Apache-2.0; MuJoCo Warp and Warp carry their own
 upstream notices. The robot assets installed by MJLab retain the package's

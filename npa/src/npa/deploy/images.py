@@ -321,7 +321,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128-r3",
     "curobo": "0.8.0-cuda13-b300-unbuilt",
-    "mjlab": "dev-7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+    "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",

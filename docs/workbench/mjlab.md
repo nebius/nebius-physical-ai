@@ -8,8 +8,10 @@ Use a Nebius GPU workflow for training. The image recipe is
 `npa/docker/workbench/mjlab/Dockerfile`; its pinned dependency closure includes
 PyTorch 2.13.0's CUDA 13.0 wheels. **The MJLab image is not a published release.** Build
 an operator image and supply its complete reference in the workflow GPU resource
-profile (`image_id: docker:<your-image>`). A private operator image has passed
-native B200 and RTX PRO 6000 GPU qualification. Public promotion remains quarantined until the
+profile (`image_id: docker:<your-image>`). The current private CUDA 13.0 image
+has executed G1 training, checkpoint resume and rendered evaluation on RTX PRO
+6000. Earlier B200 and RTX acceptance uses a separate CUDA 12.8 image; its results
+remain bound to those bytes. Public promotion remains quarantined until the
 exact-image security, licensing and bootstrap gates pass.
 
 ```bash
@@ -176,7 +178,61 @@ For real S3 readback and hash verification, run
 runtime. The training workflow is registered in the live matrix but excluded
 from unattended rotation while the image is quarantined.
 
-### Measured GPU acceptance
+### Trained G1 rollout
+
+The [2026-09-25 trained-rollout record](validation/mjlab-trained-g1-20260925.json)
+covers a substantive G1 locomotion run on one reserved RTX PRO 6000 in an
+operator-owned Nebius project. Training used 4,096 environments and 24 steps per
+update: 2,000 initial PPO updates followed by 1,000 resumed updates, totaling
+294,912,000 environment transitions. Optimizer steps advanced from 40,000 to
+60,000 and actor weights changed. This run did not invoke the acceptance or
+golden smoke harness.
+
+The initial checkpoint used the historical CUDA 12.8 image. Resume, both
+evaluations, rendering and ONNX export used the current CUDA 13.0 image built
+from `0202f396fb23f7d066fd452b469578e67151d382`, with Torch 2.13.0. The record
+preserves both image identities and the checkpoint hash chain.
+
+| Evaluation seed | Complete episodes | Reached the 1,000-step horizon | Mean return | Mean episode length |
+|---|---:|---:|---:|---:|
+| 43 | 32 | 30 | 92.7224 | 950.4063 |
+| 44 | 32 | 31 | 99.5137 | 993.1875 |
+
+The first episode of seed 43 produced a **20-second, 1,000-frame H.264 video**
+at 50 fps and the native 320 × 240 render resolution. All frames decoded with
+FFmpeg. The published HTML embeds those unchanged MP4 bytes; its signed HTTP
+response matched the artifact hash, and Chrome playback and seeking passed.
+Workbench's live artifact discovery returned the MP4 as video, HTML as a
+downloadable text report, and the evaluation manifest as JSON.
+
+Both evaluations executed the native workflow runner with `--execute
+--persist-state` inside the GPU container, using the render template and
+`workbench.mjlab.render` for seed 43 and `workbench.mjlab.eval` for seed 44.
+This exercised catalog resolution, real CLI execution and durable S3 state on
+the reserved VM; it did not submit a SkyPilot or Kubernetes job. All **82 output
+artifact hashes** matched after S3 readback. The final checkpoint also produced
+a checked ONNX opset-18 policy. The runtime source passed all eight Python 3.12
+CI shards and the required security checks.
+
+To run the same training/resume sequence with your current operator image:
+
+```bash
+npa workbench mjlab train --task Mjlab-Velocity-Flat-Unitree-G1 \
+  --iterations 2000 --num-envs 4096 --seed 42 \
+  --output-path "s3://${NPA_S3_BUCKET}/runs/${RUN_ID}/train/"
+npa workbench mjlab train --task Mjlab-Velocity-Flat-Unitree-G1 \
+  --iterations 1000 --num-envs 4096 --seed 42 \
+  --checkpoint "s3://${NPA_S3_BUCKET}/runs/${RUN_ID}/train/checkpoint.pt" \
+  --output-path "s3://${NPA_S3_BUCKET}/runs/${RUN_ID}/train-resumed/"
+```
+
+Point the render workflow at the resumed checkpoint, use 32 episodes and seed
+43, and supply your storage prefix and explicit image. Run it inside the GPU
+runtime with `npa workbench workflow run-spec <your-render.yaml> --execute
+--persist-state --json`; repeat evaluation with seed 44 for a separate measured
+sample. Survival alone does not establish task success or policy convergence.
+
+### Historical GPU acceptance
 
 The 2026-09-24 operator qualification uses the immutable development image built
 from source `7ccb0e8cfbf97f414916b0f026b8f204f1277781`. Full reports and artifacts

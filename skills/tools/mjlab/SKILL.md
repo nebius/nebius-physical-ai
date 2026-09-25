@@ -59,7 +59,9 @@ fall back to unsafe pickle.
   The current recipe uses Torch 2.13.0/CUDA 13.0 and setuptools >=83 to replace
   vulnerable dependency pins. Historical CUDA 12.8 evidence covers B200 and
   RTX PRO 6000, including eight-GPU training; do not transfer that evidence to
-  different image bytes. See the guide for exact artifacts and measured scope.
+  different image bytes. The current CUDA 13.0 candidate has a separate trained
+  G1 RTX rollout record in `docs/workbench/validation/mjlab-trained-g1-20260925.json`.
+  See the guide for exact artifacts and measured scope.
   The image remains publication-quarantined.
   Require an explicit operator-built image override until exact-image security,
   license and bootstrap gates pass. Do not route to SONIC's image.
