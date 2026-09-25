@@ -64,7 +64,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.openarm": "openarm",
     "workbench.lerobot": "lerobot",
     "workbench.sonic": "sonic",
-    "workbench.mjlab": "sonic",
+    "workbench.mjlab": "mjlab",
     "workbench.retargeting": "retargeting",
     "workbench.sim2real": "lerobot-vlm-rl",
     "workbench.sim2real_envgen": "envgen",
@@ -242,6 +242,7 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workbench.mjlab": ("/usr/local/bin/python",),
     # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
     # creates a separate vendor venv before installing XR1's pinned packages.
     "workflow.xr1": ("/opt/conda/bin/python",),

@@ -526,6 +526,21 @@ images:
       mandatory before publication. The supported release must resolve to the
       exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
       runtime fetch and real GPU generation evidence are bound to the same bytes.
+  mjlab:
+    dockerfile: mjlab/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot bootstrap only; service deployment disables privilege escalation, no default SSH daemon or credentials."
+    redistribution: public
+    notes: >-
+      Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
+      No checkpoints, motion datasets, credentials or populated runtime caches.
+      Historical CUDA 12.8 operator image passed native B200 and RTX PRO 6000
+      train/eval/export and service qualification. The CUDA 13.0 candidate has
+      separate RTX PRO 6000 G1 training/resume, evaluation, MP4/HTML and ONNX
+      evidence in docs/workbench/validation/mjlab-trained-g1-20260925.json.
+      Public promotion still requires built-layer license/security and bootstrap
+      gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
   curobo:
     dockerfile: curobo/Dockerfile
     tier: service

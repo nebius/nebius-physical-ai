@@ -64,24 +64,32 @@ class CleanupResult:
         self.commands.extend(other.commands)
 
 
-NONTERMINAL_JOB_STATUSES = {
-    "PENDING",
-    # Pinned SkyPilot still parses legacy controller rows in this state.
-    "SUBMITTED",
-    "STARTING",
-    "RUNNING",
-    # Batch output is still being merged; teardown is not yet safe.
-    "WINDING_DOWN",
-    "RECOVERING",
-    "CANCELLING",
-}
+_TERMINAL_MANAGED_JOB_STATUSES = frozenset(
+    {
+        "SUCCEEDED",
+        "CANCELLED",
+        "FAILED",
+        "FAILED_SETUP",
+        "FAILED_PRECHECKS",
+        "FAILED_NO_RESOURCE",
+        "FAILED_CONTROLLER",
+    }
+)
 
 
-def _is_terminal_managed_job_status(value: object) -> bool:
-    """Return true only for terminal states in the pinned SkyPilot contract."""
+def is_terminal_managed_job_status(value: object) -> bool:
+    """Return true only for terminal states in the pinned SkyPilot contract.
+
+    Args:
+        value: Managed-job status returned by SkyPilot or durable state.
+    Returns:
+        Whether the status authoritatively proves terminal completion.
+    Raises:
+        None.
+    """
 
     status = str(value or "").strip().upper()
-    return status in {"SUCCEEDED", "CANCELLED"} or status.startswith("FAILED")
+    return status in _TERMINAL_MANAGED_JOB_STATUSES
 
 
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
@@ -907,7 +915,7 @@ def _verify_managed_job_convergence(
     if evidence.outcome == "unavailable":
         return f"unavailable:{evidence.error or 'provider unavailable'}"
     status = str(evidence.status or "").strip().upper()
-    if _is_terminal_managed_job_status(status):
+    if is_terminal_managed_job_status(status):
         return "terminal"
     return status or "UNKNOWN"
 
@@ -945,7 +953,7 @@ def cleanup_all_for_run(
         )
         return cleanup
     for job in matching_jobs:
-        if not _is_terminal_managed_job_status(job.get("status")):
+        if not is_terminal_managed_job_status(job.get("status")):
             job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
                 _cancel_job(
@@ -1119,7 +1127,7 @@ def wait_for_jobs_terminal(
         still_running = [
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if job_id in wanted and not _is_terminal_managed_job_status(status)
+            if job_id in wanted and not is_terminal_managed_job_status(status)
         ]
         if not still_running:
             return True, []
@@ -1139,7 +1147,7 @@ def _job_statuses(jobs: Sequence[dict[str, Any]]) -> dict[str, str]:
         status = str(job.get("status") or "").upper()
         # A job group reports one row per task; the job is only terminal once
         # every one of its rows is.
-        if job_id in statuses and not _is_terminal_managed_job_status(statuses[job_id]):
+        if job_id in statuses and not is_terminal_managed_job_status(statuses[job_id]):
             continue
         statuses[job_id] = status
     return statuses
@@ -1159,7 +1167,7 @@ def _nonterminal_job_ids(
     return sorted(
         job_id
         for job_id, status in _job_statuses(snapshot.jobs).items()
-        if not _is_terminal_managed_job_status(status)
+        if not is_terminal_managed_job_status(status)
     )
 
 

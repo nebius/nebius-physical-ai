@@ -716,7 +716,7 @@ skills:
         path: npa/docker/workbench/leisaac/REDISTRIBUTION.md
   - name: mjlab
     category: tools
-    when_to_use: "MJLab locomotion evaluation, SONIC checkpoint scoring, SkyPilot MJLab YAMLs, or CLI behavior."
+    when_to_use: "Native MJLab training, resume, measured evaluation, ONNX export, service deployment and GPU workflows."
     path: skills/tools/mjlab/SKILL.md
     smoke:
       - type: cli_help
@@ -725,6 +725,8 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/mjlab-eval.yaml
+          - workflows/testing/mjlab-train-eval.yaml
+          - workflows/testing/mjlab-render.yaml
   - name: development-desktop
     category: tools
     when_to_use: "Set up and operate an Ubuntu development desktop through npa tools desktop, with readable Retina rendering and authenticated public HTTPS access."
@@ -1263,6 +1265,7 @@ skills:
           - workflows/testing/isaac-lab-rl-sweep.yaml
           - workflows/testing/cosmos3-reason.yaml
           - workflows/testing/mjlab-eval.yaml
+          - workflows/testing/mjlab-train-eval.yaml
           - workflows/testing/token-factory-caption.yaml
           - workflows/testing/token-factory-generate.yaml
           - workflows/testing/token-factory-cosmos-reason.yaml

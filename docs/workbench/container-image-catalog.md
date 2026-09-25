@@ -46,10 +46,10 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including Habitat-Sim, has **54 packaging entries**
-(45 redistribution-eligible and nine restricted) and **46 mapped tools**:
-37 public-release members, two restricted tools, and seven quarantined tools
-(`antioch`, `curobo`, `habitat-sim`, `ncore`, `openpi`, `robocasa`, and `sam3`).
+The current source inventory, including Habitat-Sim, has **55 packaging entries**
+(46 redistribution-eligible and nine restricted) and **47 mapped tools**:
+37 public-release members, two restricted tools, and eight quarantined tools
+(`antioch`, `curobo`, `habitat-sim`, `mjlab`, `ncore`, `openpi`, `robocasa`, and `sam3`).
 These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -703,3 +703,11 @@ recipes use the same source revision and archive digest, retaining Pillow 12.3
 or newer. The published Genesis release tags above continue to identify their
 original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
+
+MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
+publication plan. A historical private CUDA 12.8 image completed native B200 and
+RTX PRO 6000 GPU qualification. The current CUDA 13.0 candidate replaces vulnerable
+Torch and setuptools pins and has separate [trained G1 rollout evidence](validation/mjlab-trained-g1-20260925.json)
+on RTX PRO 6000. Public promotion still requires the exact-image security,
+licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
+operator builds and workflow overrides.

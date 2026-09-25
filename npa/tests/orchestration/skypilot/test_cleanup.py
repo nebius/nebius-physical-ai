@@ -176,48 +176,41 @@ def test_cleanup_all_for_run_matches_run_id_patterns(
     assert cluster_name_patterns_for_run(run_id)[0] == run_tag(run_id)
 
 
-def test_cleanup_statuses_cover_pinned_skypilot_nonterminal_contract() -> None:
-    pinned_nonterminal = {
-        "PENDING",
-        "SUBMITTED",
-        "STARTING",
-        "RUNNING",
-        "WINDING_DOWN",
-        "RECOVERING",
-        "CANCELLING",
-    }
-    pinned_terminal = {
-        "SUCCEEDED",
-        "CANCELLED",
-        "FAILED",
-        "FAILED_SETUP",
-        "FAILED_PRECHECKS",
-        "FAILED_NO_RESOURCE",
-        "FAILED_CONTROLLER",
-    }
-
-    assert pinned_nonterminal <= cleanup_module.NONTERMINAL_JOB_STATUSES
-    assert pinned_terminal.isdisjoint(cleanup_module.NONTERMINAL_JOB_STATUSES)
-
-
 @pytest.mark.parametrize(
     ("status", "terminal"),
     [
         ("SUCCEEDED", True),
         ("CANCELLED", True),
         ("FAILED", True),
-        ("FAILED_FUTURE_REASON", True),
+        ("FAILED_SETUP", True),
+        ("FAILED_PRECHECKS", True),
+        ("FAILED_NO_RESOURCE", True),
+        ("FAILED_CONTROLLER", True),
+        ("FAILED_FUTURE_REASON", False),
+        ("FAILEDISH", False),
+        ("PENDING", False),
+        ("STARTING", False),
+        ("RUNNING", False),
         ("WINDING_DOWN", False),
         ("SUBMITTED", False),
+        ("RECOVERING", False),
+        ("CANCELLING", False),
         ("PAUSING", False),
+        ("DRAINING_V2", False),
+        ("PROVISIONING", False),
         ("UNKNOWN", False),
         ("", False),
+        (" ", False),
+        (None, False),
+        (0, False),
+        (False, False),
+        (["FAILED"], False),
     ],
 )
 def test_terminal_managed_job_status_is_closed_world(
-    status: str, terminal: bool
+    status: object, terminal: bool
 ) -> None:
-    assert cleanup_module._is_terminal_managed_job_status(status) is terminal
+    assert cleanup_module.is_terminal_managed_job_status(status) is terminal
 
 
 @pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])

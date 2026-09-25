@@ -44,7 +44,6 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #: stays green while making the gap visible; shrink this set by extending or
 #: authoring comprehensive workflows, never grow it to hide a regression.
 #:
-#:   sonic / retargeting : only appear in the 3-step SONIC locomotion chain.
 #:   cosmos3-reason      : single-step reason spec only.
 #:   alpamayo2-super     : dedicated single-step inference spec; covered by its
 #:                         own B200 and RTX PRO 6000 workflow validation.
@@ -64,8 +63,6 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #: it was removed rather than left standing as coverage it did not provide.
 EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
     {
-        "sonic",
-        "retargeting",
         "cosmos3-reason",
         "alpamayo2-super",
         "cosmos3-ray-serve",

@@ -52,6 +52,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "NVIDIA EGL renders on exactly one RTX PRO 6000 Blackwell, never B200",
         "pod digest, exit zero, artifact hashes, and storage readback all agree",
     ],
+    "mjlab": [
+        "native MJLab PPO training writes a loadable RSL-RL checkpoint",
+        "real complete-episode evaluation produces finite measured returns",
+        "native ONNX export passes the ONNX checker",
+    ],
     "curobo": [
         "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
         "finite interpolated joint trajectories and actual FK tool path",
