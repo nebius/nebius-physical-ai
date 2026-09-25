@@ -4193,8 +4193,17 @@ def test_runtime_supervisor_recovers_transient_once_without_duplicate(
 
 
 @pytest.mark.parametrize("drift", ["workflow", "source", "image"])
+@pytest.mark.parametrize(
+    ("scheduler_status", "outputs_present"),
+    [("PENDING", False), ("SUCCEEDED", True)],
+)
 def test_runtime_restart_blocks_each_immutable_identity_drift(
-    tmp_path: Path, mocker, monkeypatch: pytest.MonkeyPatch, drift: str
+    tmp_path: Path,
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    scheduler_status: str,
+    outputs_present: bool,
 ) -> None:
     from npa.orchestration.npa_workflow.runtime import (
         _image_identity,
@@ -4250,7 +4259,7 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
             preflight_evidence=_supervisor_preflight(),
         ),
         cancels=cancels,
-        output_checker=lambda _uri: False,
+        output_checker=lambda _uri: outputs_present,
     )
     record = restarted.ledger.latest_wave(prior.key)
     assert record is not None
@@ -4259,7 +4268,7 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
     )
 
     with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
-        restarted._supervise_pending(resumed, scheduler_status="PENDING")
+        restarted._supervise_pending(resumed, scheduler_status=scheduler_status)
 
     assert cancels == []
     assert resumed.recovery_decision == "block_relaunch"

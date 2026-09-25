@@ -205,6 +205,11 @@ npa workbench workflow status "$RUN_ID" --project "$PROJECT" \
   --workflow-s3-uri "s3://$BUCKET/<workflow>/$RUN_ID/npa-workflow"
 ```
 
+Valid outputs from a provider-succeeded attempt are reused only when the
+recorded workflow, source, and image identities still match the requested run.
+Missing or changed immutable identity evidence blocks reuse and requires the
+recorded identity to be restored or a new run ID to be started.
+
 ## Where the kubeconfig goes
 
 `provision-if-absent` writes the cluster kubeconfig to
