@@ -103,6 +103,7 @@ def _request(endpoint, goal, candidates, key, decision):
             extra=endpoint.model_options,
         )
         decision["usage"] = _usage(response)
+        decision["model_verified"] = response.get("model") == endpoint.model
         selected = _selection(response, endpoint.model, candidates)
         decision.update(
             selected_model=selected,
@@ -122,6 +123,7 @@ def _classify(endpoint, goal, candidates, *, api_key):
     decision = {
         "provider": "token_factory",
         "model": endpoint.model,
+        "model_verified": False,
         "prompt_revision": _REVISION,
         "status": "unavailable",
         "selected_model": None,

@@ -251,6 +251,7 @@ def _router_usage(receipts):
         counters = selection.get("usage", {})
         if attempted is not False and (
             attempted is not True
+            or selection.get("model_verified") is False
             or not isinstance(counters, dict)
             or any(
                 type(counters.get(key)) is not int or counters[key] < 0

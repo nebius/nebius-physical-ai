@@ -87,6 +87,8 @@ def _router_records(usage):
         if attempted is False:
             continue
         model = response.get("model") or "<unreported-router-model>"
+        if response.get("model_verified") is False:
+            model = "<unverified-router-model>"
         if not isinstance(model, str):
             raise ValueError("model identifiers must be strings")
         records.append(

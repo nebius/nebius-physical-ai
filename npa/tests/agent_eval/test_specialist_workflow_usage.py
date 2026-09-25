@@ -337,6 +337,29 @@ def test_router_acceptance_and_abstention_are_both_priced(
     assert "private-router-task" not in json.dumps(report)
 
 
+def test_unverified_router_model_keeps_tokens_without_inventing_price(
+    accounting, evidence, execution, prices
+):
+    evidence["router"] = {
+        "usage_complete": False,
+        "responses": [
+            _router_response(
+                "unavailable",
+                provider="token_factory",
+                model="specialist",
+                model_verified=False,
+                usage={"input_tokens": 100, "output_tokens": 2},
+            )
+        ],
+    }
+    report = _summarize(accounting, evidence, execution, prices)
+    assert report["estimated_cost_range_usd"] is None
+    unknown = report["models"]["<unverified-router-model>"]
+    assert unknown["tokens"]["input_tokens"] == 100
+    assert unknown["tokens"]["output_tokens"] == 2
+    assert report["totals"]["unpriced_records"] == 1
+
+
 def test_missing_jev_key_is_no_call_not_a_free_jev_response(
     accounting, evidence, execution, prices
 ):
