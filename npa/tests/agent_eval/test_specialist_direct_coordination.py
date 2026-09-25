@@ -412,14 +412,14 @@ def test_summary_rejects_undeclared_zero_even_with_specialist_tokens(
     assert set(report["models"]) == {"primary", "backup"}
 
 
-def _require_jev(setup):
+def _require_jev(setup, backend="jev"):
     from npa.agent_backend.specialists.config import Profile
 
     profiles = []
     for profile in setup.team.config.profiles:
         data = profile.model_dump()
         data.update(
-            model_router="jev",
+            model_router=backend,
             require_model_route=True,
             fallback_models=[{"model": "test/backup"}],
             model_criteria={
@@ -427,6 +427,8 @@ def _require_jev(setup):
                 "test/backup": "Deep diagnosis",
             },
         )
+        if backend == "token_factory":
+            data["routing_model"] = {"model": "test/classifier"}
         profiles.append(Profile.model_validate(data))
     setup.team.config.profiles = profiles
 
@@ -481,11 +483,15 @@ def test_required_jev_dispatch_routes_each_langgraph_worker(
         assert setup.team.task_report(task["id"])["required_operations_passed"] is True
 
 
-def test_unaccepted_required_route_never_wakes_astra(modules, setup, monkeypatch):
+@pytest.mark.parametrize("backend", ["jev", "token_factory"])
+def test_unaccepted_required_route_never_wakes_astra(
+    modules, setup, monkeypatch, backend
+):
     from npa.agent_backend.specialists import routing
 
-    _require_jev(setup)
+    _require_jev(setup, backend)
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_KEY", raising=False)
     monkeypatch.setattr(routing, "load_credentials", lambda: SimpleNamespace(tokens={}))
 
     def reject(identities):
@@ -503,9 +509,13 @@ def test_unaccepted_required_route_never_wakes_astra(modules, setup, monkeypatch
     assert all(client.calls == [] for client in setup.clients.values())
 
 
-def test_required_key_preflight_precedes_trial_creation(modules, setup, monkeypatch):
-    _require_jev(setup)
+@pytest.mark.parametrize("backend", ["jev", "token_factory"])
+def test_required_key_preflight_precedes_trial_creation(
+    modules, setup, monkeypatch, backend
+):
+    _require_jev(setup, backend)
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_KEY", raising=False)
     monkeypatch.setattr(
         modules.experiment, "load_credentials", lambda: SimpleNamespace(tokens={})
     )

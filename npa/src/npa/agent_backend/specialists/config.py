@@ -167,8 +167,9 @@ class Profile(ModelEndpoint):
         name, description, instructions: Specialist identity and role.
         model, base_url, key_env, model_options: Primary inference configuration.
         fallback_models: Ordered, opt-in endpoints for rejected generations.
-        model_router, model_criteria: Optional Jev endpoint selection within these same grants.
-        require_model_route: Require an accepted Jev decision before generation.
+        model_router, model_criteria: Optional endpoint selection within these same grants.
+        routing_model: Explicit classifier endpoint for token_factory routing.
+        require_model_route: Require an accepted routing decision before generation.
         compact_context: Omit superseded source content from model requests only.
         required_operations: Commands that must succeed after the latest edit.
         workspace, read_paths, write_paths, operations: Operator-owned grants.
@@ -182,7 +183,8 @@ class Profile(ModelEndpoint):
     description: str = Field(min_length=1)
     instructions: str = ""
     fallback_models: list[ModelEndpoint] = Field(default_factory=list)
-    model_router: Literal["explicit", "jev"] = "explicit"
+    model_router: Literal["explicit", "jev", "token_factory"] = "explicit"
+    routing_model: ModelEndpoint | None = None
     require_model_route: StrictBool = False
     model_criteria: dict[str, str] = Field(default_factory=dict)
     compact_context: StrictBool = False
@@ -212,20 +214,28 @@ class Profile(ModelEndpoint):
 
     @model_validator(mode="after")
     def _completion_policy(self):
-        if self.require_model_route and self.model_router != "jev":
-            raise ValueError("require_model_route requires model_router=jev")
+        if self.require_model_route and self.model_router == "explicit":
+            raise ValueError(
+                "require_model_route requires model_router=jev or token_factory"
+            )
+        if (self.routing_model is not None) != (self.model_router == "token_factory"):
+            raise ValueError(
+                "routing_model is required only for model_router=token_factory"
+            )
         if set(self.required_operations) - self.operations.keys():
             raise ValueError("required_operations must name configured operations")
-        if self.model_router == "jev":
+        if self.model_router != "explicit":
             models = [self.model, *(item.model for item in self.fallback_models)]
             if len(models) != len(set(models)) or "none" in models:
-                raise ValueError("Jev requires unique endpoint model IDs")
+                raise ValueError("model routing requires unique endpoint model IDs")
             if set(self.model_criteria) != set(models) or any(
                 not value.strip() for value in self.model_criteria.values()
             ):
                 raise ValueError("model_criteria must describe every eligible endpoint")
         elif self.model_criteria:
-            raise ValueError("model_criteria requires model_router=jev")
+            raise ValueError(
+                "model_criteria requires model_router=jev or token_factory"
+            )
         return self
 
 
@@ -319,6 +329,8 @@ def fingerprint(profile: Profile) -> str:
         del policy["compact_context"]
     if not policy["require_model_route"]:
         del policy["require_model_route"]
+    if policy["routing_model"] is None:
+        del policy["routing_model"]
     for operation in policy["operations"].values():
         if not operation["handoff_on_failure"]:
             del operation["handoff_on_failure"]

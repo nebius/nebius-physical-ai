@@ -9,6 +9,7 @@ from npa.agent_backend.trajectory import redact
 from npa.clients.credentials import load_credentials
 
 from .store import UncertainOperation
+from .token_router import _classify
 
 
 def _endpoints(profile, state):
@@ -31,7 +32,7 @@ def _model_order(profile, task):
 
 
 def _route_model(profile, task, store):
-    if profile.model_router != "jev":
+    if profile.model_router == "explicit":
         return task
     previous = task["route"].get("model_selection")
     if previous:
@@ -42,12 +43,11 @@ def _route_model(profile, task, store):
         _model_order(profile, task)
         _require_selection(profile, previous)
         return task
-    key = os.environ.get("TYPESAFE_API_KEY", "") or load_credentials().tokens.get(
-        "TYPESAFE_API_KEY", ""
-    )
+    provider, model, key_env = _router_settings(profile)
+    key = os.environ.get(key_env, "") or load_credentials().tokens.get(key_env, "")
     intent = {
-        "provider": "typesafe",
-        "model": JEV_MODEL,
+        "provider": provider,
+        "model": model,
         "status": "started",
         "api_call_attempted": "unknown",
         "usage": {},
@@ -55,13 +55,28 @@ def _route_model(profile, task, store):
     }
     if key:
         store._model_route(task["id"], intent)
-    decision = classify_generation_model(
-        redact(task["goal"]), profile.model_criteria, api_key=key
-    )
+    decision = _classify_task(profile, task["goal"], key)
     receipt = _route_receipt(profile, intent, decision, attempted=bool(key))
     store._model_route(task["id"], receipt)
     _require_selection(profile, receipt)
     return store._get(task["id"])
+
+
+def _router_settings(profile):
+    if profile.model_router == "jev":
+        return "typesafe", JEV_MODEL, "TYPESAFE_API_KEY"
+    endpoint = profile.routing_model
+    return "token_factory", endpoint.model, endpoint.key_env
+
+
+def _classify_task(profile, goal, key):
+    if profile.model_router == "jev":
+        return classify_generation_model(
+            redact(goal), profile.model_criteria, api_key=key
+        )
+    return _classify(
+        profile.routing_model, redact(goal), profile.model_criteria, api_key=key
+    )
 
 
 def _require_selection(profile, receipt):
@@ -72,8 +87,9 @@ def _require_selection(profile, receipt):
         and receipt.get("selected_model")
         in {profile.model, *(item.model for item in profile.fallback_models)}
     ):
+        name = "Jev" if profile.model_router == "jev" else "Token Factory"
         raise ValueError(
-            "Required Jev model selection was not accepted; generation blocked"
+            f"Required {name} model selection was not accepted; generation blocked"
         )
 
 

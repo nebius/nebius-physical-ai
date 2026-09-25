@@ -10,6 +10,15 @@ workspace's existing grants. Selecting a workspace explicitly does not bypass
 that endpoint policy. A live Jev result requires an accepted provider receipt;
 missing credentials or fallback are reported separately.
 
+To use an open-weight classifier through the existing inference provider, set
+`model_router: "token_factory"`, an explicit `routing_model`, and criteria for
+every eligible endpoint. With `require_model_route: true`, the same preflight
+and completion gates require an accepted decision before specialist generation
+or Astra recovery. No TypeSafe key is needed. Router usage, including failures,
+is included in `usage.json` and the usage summarizer; supply a price entry for
+the classifier as well as the workers. See the
+[routing configuration](../../../../docs/workbench/specialists.md#model-driven-routing-through-token-factory).
+
 For a required Jev run, set each profile's `model_router: "jev"` and
 `require_model_route: true`, with criteria for every declared endpoint. The
 hybrid preflight checks `TYPESAFE_API_KEY` before creating trial state or invoking

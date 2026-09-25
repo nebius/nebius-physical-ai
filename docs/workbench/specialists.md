@@ -323,7 +323,57 @@ repeated after a crash before their checkpoint. There are no default task-count,
 runtime or token-generation caps; `model_options.max_tokens` is optional and
 operator-controlled. Provider context limits still apply and surface as failures.
 
-## Jev routing
+## Model-driven routing through Token Factory
+
+Set a profile's `model_router` to `"token_factory"`, declare its `routing_model`
+endpoint, and describe every eligible worker in `model_criteria`. One structured
+classification request chooses an endpoint before the LangGraph worker begins.
+The classifier receives redacted task text and operator-authored criteria, with
+no source files, tools or additional workspace authority. For example:
+
+```json
+{
+  "model_router": "token_factory",
+  "routing_model": {"model": "nvidia/Nemotron-3_5-Lightning"},
+  "require_model_route": true,
+  "model_criteria": {
+    "zai-org/GLM-5.3-Flash": "Low-cost localized repairs with clear requirements and executable checks",
+    "zai-org/GLM-5.3": "Higher-cost ambiguous diagnosis across multiple components"
+  }
+}
+```
+
+Merge this fragment into a profile whose primary and fallback endpoints are
+exactly those model IDs. `routing_model` accepts the same endpoint, credential
+name and sampling options as a worker. Its default credential is
+`NEBIUS_TOKEN_FACTORY_KEY`; no TypeSafe credential is needed. Confirm all models
+are available to the account. The library supports an operator-owned compatible
+endpoint; choosing one does not establish the model's license or capabilities.
+
+Required routing blocks missing, invalid or abstained decisions before worker
+generation. The default `require_model_route: false` records fallback to the
+configured primary. Classification has no hidden retries. A crash after the
+recorded intent requires attention and never automatically repeats the paid
+request. Changing the classifier binds a different durable policy. Existing
+explicit and Jev profiles remain compatible.
+
+The receipt keeps the classifier model, actual usage, transport metadata and
+latency separately from worker generation, including unsuccessful decisions.
+It does not manufacture a calibrated confidence score. Required operations
+verify the worker's result; routing quality and total savings need task-level
+evaluation. Subsequent generation failures may use configured worker fallbacks.
+
+The live workflow-repair check is:
+
+```bash
+NPA_SPECIALISTS_LIVE=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_specialists_live.py -k token_factory_router -q
+```
+
+It repairs copied PAIDF and Sim2Real workflow specifications through real hosted
+models and Workbench validation/planning; it does not submit GPU workloads.
+
+## Optional Jev routing
 
 To choose a model while preserving an explicitly delegated workspace, set that
 profile's `model_router` to `"jev"` and provide `model_criteria` for its primary

@@ -15,6 +15,7 @@ import time
 from npa.agent_backend.specialists.config import load_config, private_directory
 from npa.agent_backend.specialists.team import SpecialistTeam
 from npa.agent_backend.specialists.worker import supervise
+from npa.agent_backend.specialists.routing import _router_settings
 from npa.clients.credentials import load_credentials
 
 from evidence import _granted_tools, _receipts, _snapshot, _write_json
@@ -145,17 +146,15 @@ def _prompt(common, team, arm):
 
 
 def _require_router_credentials(config, arm):
-    if arm != "astra-tofa" or not any(
-        profile.require_model_route for profile in config.profiles
-    ):
+    if arm != "astra-tofa":
         return
-    key = os.environ.get("TYPESAFE_API_KEY") or load_credentials().tokens.get(
-        "TYPESAFE_API_KEY"
-    )
-    if not key:
-        raise ValueError(
-            "Required Jev routing needs TYPESAFE_API_KEY; no inference started"
-        )
+    for profile in config.profiles:
+        if not profile.require_model_route:
+            continue
+        _, _, key_env = _router_settings(profile)
+        key = os.environ.get(key_env) or load_credentials().tokens.get(key_env)
+        if not key:
+            raise ValueError(f"Required routing needs {key_env}; no inference started")
 
 
 def _prepare(

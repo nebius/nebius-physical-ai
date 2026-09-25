@@ -101,6 +101,7 @@ def test_default_policy_hash_remains_compatible_and_flag_is_strict(team):
             "fallback_models",
             "model_router",
             "require_model_route",
+            "routing_model",
             "model_criteria",
             "compact_context",
         },

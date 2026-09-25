@@ -465,6 +465,12 @@ endpoints, optional Jev routing, scoped workspaces, durable restart, task contro
 and the required `NPA_SPECIALISTS_TOKEN` service credential. `NEBIUS_TOKEN_FACTORY_KEY`
 supplies hosted inference; `TYPESAFE_API_KEY` is needed only for optional Jev.
 Configuration contains credential environment names, never credential values.
+Profile `model_router: "token_factory"` uses a declared `routing_model` for one
+structured classification call among `model_criteria` endpoints. It uses the
+existing inference credential and requires no TypeSafe service. Set
+`require_model_route: true` to block generation on unavailable or invalid routing;
+default `false` records a primary-endpoint fallback. Routing usage and durable
+attempts are retained separately. See [model-driven routing](../docs/workbench/specialists.md#model-driven-routing-through-token-factory).
 Profile `model_router: "jev"` chooses among that profile's declared model endpoints
 without changing its workspace or tool grants. Add `require_model_route: true`
 to stop before generation when Jev is unavailable or abstains; the default

@@ -1,5 +1,11 @@
 # Jev + LangGraph + Token Factory specialists
 
+Jev is an optional hosted router, not a required open-source component. The
+[Token Factory classifier path](specialists.md#model-driven-routing-through-token-factory)
+uses a configured open-weight model instead, with no TypeSafe credential. The
+required-Jev configuration below remains available for operators choosing that
+external service.
+
 Jev selects a model from an operator-defined endpoint list. LangGraph runs the
 specialist's durable edit, command and verification loop. Token Factory hosts
 the selected model, and Workbench supplies scoped files, named operations and
