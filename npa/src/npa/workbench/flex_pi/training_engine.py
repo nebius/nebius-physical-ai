@@ -163,8 +163,11 @@ class VerifiedTrainer(Wan22Trainer):
         with self.accelerator.accumulate(self.model):
             with self.accelerator.autocast():
                 loss, components = self.model(sample)
-            if not torch.isfinite(loss):
-                raise RuntimeError("nonfinite training loss")
+            pending_losses = getattr(self, "_pending_losses", None)
+            if pending_losses is None:
+                pending_losses = self._pending_losses = []
+            observed_loss = loss.detach().reshape(())
+            pending_losses.append(observed_loss)
             recorder = getattr(self, "_fixture_recorder", None)
             if recorder is not None:
                 recorder._loss(loss, components)
@@ -172,11 +175,19 @@ class VerifiedTrainer(Wan22Trainer):
                 loss * (self.gradient_accumulation_steps / divisor)
             )
             if not self.accelerator.sync_gradients:
-                return float(loss.detach())
+                return observed_loss
             self._optimizer_update(recorder)
-            return float(loss.detach())
+            return observed_loss
 
     def _optimizer_update(self, recorder):
+        # Check every microbatch before mutating optimizer/model state, while
+        # allowing earlier backwards to overlap host preparation of the next
+        # microbatch. Reading a CUDA scalar after each backward serializes it.
+        finite = torch.isfinite(torch.stack(self._pending_losses)).all().int()
+        torch.distributed.all_reduce(finite, op=torch.distributed.ReduceOp.MIN)
+        if not finite:
+            raise RuntimeError("nonfinite training loss")
+        self._pending_losses.clear()
         if recorder is not None:
             recorder._gradients(self, "before_clip")
         norm = self.accelerator.clip_grad_norm_(
@@ -243,6 +254,10 @@ class VerifiedTrainer(Wan22Trainer):
         return indices
 
     def _record_update(self, start, losses, loader_wait):
+        # Keep reporting work inside the measured update. One transfer retains
+        # the original Python-float summation order without one CUDA wait per
+        # microbatch.
+        loss_values = torch.stack(losses).tolist()
         torch.cuda.synchronize()
         elapsed = torch.tensor(
             time.perf_counter() - start, device=self.accelerator.device
@@ -251,7 +266,7 @@ class VerifiedTrainer(Wan22Trainer):
         elapsed = float(elapsed.item())
         count = len(losses) * 4 * self.batch_size
         loss_sum = torch.tensor(
-            sum(losses) * self.batch_size, device=self.accelerator.device
+            sum(loss_values) * self.batch_size, device=self.accelerator.device
         )
         torch.distributed.all_reduce(loss_sum)
         measurement = {

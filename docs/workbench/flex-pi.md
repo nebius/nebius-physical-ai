@@ -440,6 +440,68 @@ and managed root disks. Artifact storage was retained. This cleanup does not
 resolve the earlier B200 resources whose ownership and provider access remain
 incomplete.
 
+On 2026-09-25, matched profiles on one dedicated reserved B200 node measured
+the larger-microbatch candidate. Each job exposed and used exactly four GPUs;
+the provider's available reserved shape allocated eight GPUs on that node.
+The two profiles used the same physical host, initial model, normalization,
+public data, image, private cuDNN 9.26 runtime and 19 training-source file hashes.
+Both retained eager BF16, the default AdamW optimizer, activation checkpointing
+off, memory fill off and effective batch 96.
+
+| Four-GPU single-node B200 profile | Aggregate samples/s, all 30 updates | Median steady samples/s |
+| --- | ---: | ---: |
+| Microbatch 1, accumulation 24 | 8.072713 | 8.990426 |
+| Microbatch 3, accumulation 8 | 17.563931 | 20.268646 |
+
+Microbatch three improved the steady median by **125.45%**, or **2.25447×**.
+Its three complete windows measured 20.449261, 20.004106 and 20.268646 samples/s;
+every window exceeded the baseline's maximum of 9.015391. The measurement used
+the same exclusion of six initial updates and three consecutive eight-update
+windows as the earlier profiles. Each profile processed 2,880 timed anchors.
+
+Both profiles passed all six initial/checkpoint numerical qualification phases
+and exact fresh continuation. For microbatch three, uninterrupted and fresh
+step 31 each processed 96 anchors with loss 1.1332216262817383; model, optimizer,
+scheduler and RNG checks also passed. All eight phases verified the selected
+compute runtime, activation policy and training source. Published JSON artifacts
+and the GPU trace passed independent readback. This establishes profile
+throughput and within-configuration reproducibility.
+
+The corresponding complete timed epoch recorded 115,620 anchors in 1,205 updates,
+including the 36-anchor tail, over 5,453.162401 measured training seconds:
+21.202376 aggregate samples/s and a 21.262443 steady median. Both held-out passes
+evaluated 12,390 anchors. Loss fell from 3.069524735095065 to
+0.47231008458883955, but exceeded the frozen quality ceiling of
+0.47188222932935736. This configuration is therefore **rejected by the quality
+gate**, despite its throughput gain. The ceiling is unchanged.
+
+All six numerical qualification phases passed. Fresh step 1,206 matched the
+uninterrupted continuation's 96 anchors, loss 0.44979333877563477, updated
+model/optimizer/scheduler state and current CUDA RNG state. Checkpoint restoration
+also verified every rank's saved cursor and complete RNG state. All six result
+objects passed readback; all eight phases verified source, runtime and activation
+policy. NPA reached live-verified terminal `SUCCEEDED`. These execution and
+resume checks do not override the held-out quality rejection. Initialization,
+qualification, validation, checkpoint I/O and separate continuation are excluded
+from the training rate.
+
+The candidate's instrumented rank-zero update recorded 216,066 GPU kernels,
+versus 501,165 in the baseline. NCCL kernel time remained about 0.044 seconds.
+These diagnostics support reduced per-microstep overhead; throughput comes
+from the independent steady windows, not profiler timestamps. Recorded peak
+allocated memory increased from 74,334,123,520 to 96,745,736,704 bytes.
+
+The baseline training job reached `SUCCEEDED`, but its NPA monitor failed when
+the native VM credential cache changed. A recovery bug briefly submitted a
+duplicate after the timed measurement; that duplicate was cancelled. The audit
+retains the failed monitor separately from the successful original workload and
+its verified artifacts. NPA now preserves the supported native metadata cache
+binding, restores an archived validation client configuration before retrying,
+and reconciles `block_relaunch` jobs by their recorded identity. The candidate
+used control source `e268b67cea39581cf2c1130765c7768528d054cb`, reached verified
+NPA terminal `SUCCEEDED`, and completed controller/API cleanup before the
+full-epoch attempt. The training-source bytes remained identical across profiles.
+
 The renderer sets `NPA_FLEX_PI_NODE_COUNT` from the resolved resource profile
 (one by default). The adapter cross-checks it against SkyPilot's node rank and
 peer addresses, allowing only one node with four GPUs or four nodes with one
@@ -493,8 +555,17 @@ tail updates, and fresh resume checks the next ordered anchors. Validation
 continues to use one sample per GPU with its original per-anchor seed.
 Larger microbatches can change floating-point reductions and random draws, so
 they require their own measured profile, exact within-configuration resume,
-and full held-out quality check. Microbatch three is a tuning candidate, not
-an established speedup or an execution-equivalent replacement for one.
+and full held-out quality check. The single-node B200 profile above establishes
+a throughput gain for microbatch three, but its complete epoch failed the frozen
+quality ceiling. It is not an accepted or execution-equivalent replacement for
+microbatch one.
+
+Training retains detached microbatch losses on the device until the optimizer
+boundary. A collective finite-loss check covers every microbatch on every rank
+before clipping or an optimizer update. Loss readback occurs once per update,
+before the update timer stops, and preserves the original Python-float summation order. This
+reduces scalar synchronization without changing finite-loss computation; its
+performance remains subject to a measured GPU profile and full-epoch acceptance.
 
 `--activation-checkpointing on|off` (`config.activation_checkpointing` in a
 workflow) selects recomputation for both experts and mixed attention together.
