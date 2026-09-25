@@ -125,7 +125,8 @@ def _probe_trace(adapter, env, wrapped, cases, actions, tolerance):
     for action in actions:
         batch = torch.zeros((len(cases), len(action)), device=env.unwrapped.device)
         batch[0] = torch.tensor(action, device=batch.device)
-        obs, _, done, _ = wrapped.step(batch)
+        with torch.inference_mode():
+            obs, _, done, _ = wrapped.step(batch)
         if bool(done.any()):
             raise ValueError("probe terminated/reset; choose nonterminal probe inputs")
         trace.append(

@@ -134,6 +134,31 @@ def test_probe_requires_motion_and_positive_obstacle_contact(recipe, monkeypatch
         )
 
 
+def test_probe_uses_inference_mode_for_native_low_level_actions(recipe, monkeypatch):
+    torch = pytest.importorskip("torch")
+    low_level_policy = torch.nn.Linear(3, 2).eval()
+
+    def step(actions):
+        targets = low_level_policy(actions)
+        assert not targets.requires_grad
+        assert torch.is_inference_mode_enabled()
+        return targets, None, torch.zeros(recipe.num_envs, dtype=torch.bool), {}
+
+    monkeypatch.setattr(measure, "verify_reset", lambda *args: None)
+    adapter = SimpleNamespace(measure=lambda _: state(recipe))
+    env = SimpleNamespace(unwrapped=SimpleNamespace(device="cpu"))
+    wrapped = SimpleNamespace(
+        get_observations=lambda: torch.zeros((recipe.num_envs, 2)), step=step
+    )
+    with torch.enable_grad():
+        trace = measure._probe_trace(
+            adapter, env, wrapped, recipe.eval_cases, [[0.6, 0.0, 0.0]], 1e-3
+        )
+        assert torch.is_grad_enabled()
+    assert len(trace) == 2
+    assert trace[-1]["observations"]["value"].shape == (recipe.num_envs, 2)
+
+
 def test_reset_pose_and_goal_are_independently_checked(recipe):
     data = state(recipe)
     data["goal_m"][0] += 1
