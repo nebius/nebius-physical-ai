@@ -367,6 +367,140 @@ def prepare_run_cmd(
         typer.echo(prepared.run_id)
 
 
+# Recovery argv is an explicit allowlist so a future CLI option cannot silently
+# copy a secret such as --registry-password into the durable operation journal.
+_WORKFLOW_RECOVERY_VALUE_OPTIONS = (
+    ("sky_bin", "--sky-bin"),
+    ("isolated_config_dir", "--isolated-config-dir"),
+    ("config_path", "--config-path"),
+    ("controller_backend", "--controller-backend"),
+    ("infra", "--infra"),
+    ("submit_timeout", "--submit-timeout"),
+    ("preset", "--preset"),
+    ("assume_decision", "--assume-decision"),
+    ("plan_migration_reason", "--plan-migration-reason"),
+    ("poll_seconds", "--poll-seconds"),
+    ("max_wait_seconds", "--max-wait-seconds"),
+    ("retries", "--retries"),
+    ("max_infrastructure_recoveries", "--max-infrastructure-recoveries"),
+    ("max_concurrency", "--max-concurrency"),
+    ("image_bootstrap_timeout_seconds", "--image-bootstrap-timeout-seconds"),
+    ("gpu_readiness_timeout", "--gpu-readiness-timeout"),
+    ("gpu_readiness_poll_interval", "--gpu-readiness-poll-interval"),
+    ("tool", "--tool"),
+    ("registry", "--registry"),
+    ("image", "--image"),
+    ("npa_image", "--npa-image"),
+    ("registry_username", "--registry-username"),
+    ("registry_server", "--registry-server"),
+    ("gpu_target", "--gpu-target"),
+    ("image_variant", "--image-variant"),
+    ("accelerators", "--accelerators"),
+    ("cloud", "--cloud"),
+    ("region", "--region"),
+    ("aws_profile", "--aws-profile"),
+    ("s3_endpoint", "--s3-endpoint"),
+    ("s3_bucket", "--s3-bucket"),
+    ("s3_prefix", "--s3-prefix"),
+    ("workflow_s3_uri", "--workflow-s3-uri"),
+    ("input_video", "--input-video"),
+    ("input_uri", "--input-uri"),
+    ("lerobot_uri", "--lerobot-uri"),
+    ("lerobot_camera", "--lerobot-camera"),
+    ("lerobot_episode", "--lerobot-episode"),
+    ("agent_name", "--agent-name"),
+    ("output_format", "--output-format"),
+)
+_WORKFLOW_RECOVERY_REPEATABLE_OPTIONS = (
+    ("var", "--var"),
+    ("image_override", "--image-override"),
+    ("secret_env", "--secret-env"),
+)
+_WORKFLOW_RECOVERY_BOOLEAN_OPTIONS = (
+    ("accept_eula", "--accept-eula", "--no-accept-eula"),
+    ("cancel_on_timeout", "--cancel-on-timeout", "--no-cancel-on-timeout"),
+    ("preflight_images", "--preflight-images", "--no-preflight-images"),
+    ("resolve_accelerators", "--resolve-accelerators", "--no-resolve-accelerators"),
+    ("deploy_if_absent", "--deploy-if-absent", "--no-deploy-if-absent"),
+    ("registry_auth", "--registry-auth", "--no-registry-auth"),
+    (
+        "require_controller_up",
+        "--require-controller-up",
+        "--skip-controller-health-guard",
+    ),
+    ("durable_s3", "--durable-s3", "--no-durable-s3"),
+    ("stage_src", "--stage-src", "--no-stage-src"),
+    ("use_spot", "--use-spot", "--no-use-spot"),
+    ("auto_load", "--auto-load", "--no-auto-load"),
+)
+_WORKFLOW_RECOVERY_ENABLED_FLAGS = (
+    ("retry_absent_in_flight", "--retry-absent-in-flight"),
+    ("allow_terminal_plan_migration", "--allow-terminal-plan-migration"),
+    ("adopt_absent_in_flight_outputs", "--adopt-absent-in-flight-outputs"),
+    ("bind_controller", "--bind-controller"),
+    ("require_explicit_lerobot_selection", "--require-explicit-lerobot-selection"),
+    ("seed_fixture", "--seed-fixture"),
+    ("skip_preflight", "--skip-preflight"),
+)
+_WORKFLOW_RECOVERY_ARGUMENT_NAMES = frozenset(
+    name
+    for group in (
+        _WORKFLOW_RECOVERY_VALUE_OPTIONS,
+        _WORKFLOW_RECOVERY_REPEATABLE_OPTIONS,
+        _WORKFLOW_RECOVERY_BOOLEAN_OPTIONS,
+        _WORKFLOW_RECOVERY_ENABLED_FLAGS,
+    )
+    for name, *_flags in group
+) | {"runtime"}
+
+
+def _workflow_submit_recovery_argv(
+    yaml_path: Path,
+    *,
+    alias: str,
+    run_id: str,
+    is_npa_spec: bool,
+    arguments: Mapping[str, object],
+) -> list[str]:
+    """Serialize the secret-free effective submit contract for exact recovery.
+
+    Values are captured after target/config resolution so replay pins the same
+    effective launch. Credential values remain outside the durable command.
+    """
+
+    argv = [
+        "npa",
+        "workbench",
+        "workflow",
+        "submit",
+        str(yaml_path),
+        "--project",
+        alias,
+    ]
+    argv.extend(
+        ["--resume-run", run_id] if is_npa_spec else ["--run-id", run_id, "--resume"]
+    )
+    for name, flag in _WORKFLOW_RECOVERY_VALUE_OPTIONS:
+        value = arguments.get(name)
+        if value not in (None, ""):
+            argv.extend([flag, str(getattr(value, "value", value))])
+    for name, flag in _WORKFLOW_RECOVERY_REPEATABLE_OPTIONS:
+        for value in arguments.get(name) or ():
+            argv.extend([flag, str(value)])
+    for name, enabled_flag, disabled_flag in _WORKFLOW_RECOVERY_BOOLEAN_OPTIONS:
+        value = arguments.get(name)
+        if value is not None:
+            argv.append(enabled_flag if bool(value) else disabled_flag)
+    argv.extend(
+        flag
+        for name, flag in _WORKFLOW_RECOVERY_ENABLED_FLAGS
+        if bool(arguments.get(name))
+    )
+    if is_npa_spec:
+        argv.append("--runtime" if bool(arguments.get("runtime")) else "--no-runtime")
+    return argv
+
+
 @app.command("submit")
 def submit_cmd(
     yaml_path: Path = typer.Argument(
@@ -855,6 +989,8 @@ def submit_cmd(
         write_manifest,
     )
 
+    recovery_yaml_path = yaml_path.resolve()
+    requested_secret_env = tuple(secret_env)
     if submit_timeout <= 0:
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
 
@@ -2366,6 +2502,31 @@ def submit_cmd(
             "attempt-1",
             hashlib.sha256(submitted_yaml_path.read_bytes()).hexdigest(),
         )
+        submit_arguments = locals()
+        recovery_arguments = {
+            name: value
+            for name, value in submit_arguments.items()
+            if name in _WORKFLOW_RECOVERY_ARGUMENT_NAMES
+        }
+        recovery_arguments["secret_env"] = tuple(dict.fromkeys(requested_secret_env))
+        if workflow_state is not None:
+            recovery_arguments["workflow_s3_uri"] = workflow_state.uri
+        from npa.provisioning_journal import operation_contains_secret
+
+        alias = str(project).strip() or "default"
+        recovery_argv = _workflow_submit_recovery_argv(
+            recovery_yaml_path,
+            alias=alias,
+            run_id=resolved_run_id,
+            is_npa_spec=is_npa_spec,
+            arguments=recovery_arguments,
+        )
+        if operation_contains_secret(recovery_argv):
+            _fail(
+                "The durable recovery command contains a secret-shaped option "
+                "value. Pass credentials with --secret-env or configured NPA "
+                "credentials; do not pass secrets through --var or URLs."
+            )
 
         def _record_transaction(payload: dict[str, object]) -> None:
             if prepared_npa is None:
@@ -2394,7 +2555,7 @@ def submit_cmd(
                     submission_warnings.append(warning)
 
         def _launch() -> WorkflowResult:
-            from npa.clients.config import default_project_name, resolve_environment
+            from npa.clients.config import resolve_environment
             from npa.provisioning_journal import (
                 ProvisioningOperation,
                 current_operation,
@@ -2422,7 +2583,6 @@ def submit_cmd(
 
             if current_operation() is not None:
                 return submit()
-            alias = str(project or default_project_name()).strip() or "default"
             environment = resolve_environment(alias)
             operation = ProvisioningOperation.prepare(
                 command="npa workbench workflow submit",
@@ -2434,17 +2594,7 @@ def submit_cmd(
                 requested_name=resolved_run_id,
                 ownership_source="workflow-submit-cli",
                 resume_command="",
-                resume_argv=[
-                    "npa",
-                    "workbench",
-                    "workflow",
-                    "submit",
-                    str(yaml_path),
-                    "--project",
-                    alias,
-                    "--resume-run",
-                    resolved_run_id,
-                ],
+                resume_argv=recovery_argv,
                 destroy_argv=[
                     "npa",
                     "workbench",
