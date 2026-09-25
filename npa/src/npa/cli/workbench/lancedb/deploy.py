@@ -118,10 +118,12 @@ def _run_container(
         "LANCEDB_PORT": str(port),
         "LANCEDB_AUTH_MODE": auth_mode,
         "LANCEDB_TOKEN": os.environ.get(token_env, "") if auth_mode == "token" else "",
-        # Arbitrary non-root uid mapping must not inherit /home/ubuntu as a
-        # potentially unwritable home directory.
-        "HOME": "/tmp",
     }
+    if local_storage:
+        # Arbitrary non-root uid mapping must not inherit /home/ubuntu as a
+        # potentially unwritable home directory. The bind mount was just proven
+        # writable by this uid and gives caches a private, persistent location.
+        env["HOME"] = container_storage_path
     if storage_endpoint and not local_storage:
         endpoint_url = storage_endpoint_url(storage_endpoint)
         env["AWS_ENDPOINT_URL"] = endpoint_url

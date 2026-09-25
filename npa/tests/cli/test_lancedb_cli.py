@@ -265,7 +265,7 @@ def test_lancedb_container_creates_and_mounts_local_storage(
     ] == command[command.index("--mount") : command.index("--mount") + 2]
     assert command[command.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
     assert "LANCEDB_STORAGE_PATH=/data/lancedb" in command
-    assert "HOME=/tmp" in command
+    assert "HOME=/data/lancedb" in command
     assert not any(token.startswith("AWS_ACCESS_KEY_ID=") for token in command)
     assert not any(token.startswith("AWS_SECRET_ACCESS_KEY=") for token in command)
     assert not any(token.startswith("LANCEDB_TOKEN=") for token in command)
@@ -348,6 +348,7 @@ def test_lancedb_container_s3_storage_is_not_bind_mounted(
     assert result.exit_code == 0, result.output
     assert "--mount" not in result.output
     assert "LANCEDB_STORAGE_PATH=s3://my-bucket/lancedb" in result.output
+    assert "HOME=" not in result.output
 
 
 def test_lancedb_kubernetes_rejects_ephemeral_local_storage(tmp_path: Path) -> None:
