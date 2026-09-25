@@ -17,9 +17,11 @@ fi
 case "${ID}:${VERSION_ID}" in
   ubuntu:22.04)
     suites="jammy jammy-updates jammy-backports jammy-security"
+    linux_libc_dev_version="5.15.0-190.200"
     ;;
   ubuntu:24.04)
     suites="noble noble-updates noble-backports noble-security"
+    linux_libc_dev_version="6.8.0-138.138"
     ;;
   *)
     echo "unsupported workflow runtime base: ${ID}:${VERSION_ID}" >&2
@@ -44,15 +46,16 @@ apt-get update
 # graph is broken.  Repair it from the same immutable snapshot first; this is
 # deliberately fail-closed and never falls back to a moving mirror.
 apt-get --fix-broken install -y --no-install-recommends
-# Genesis' Jammy base retains an older linux-libc-dev build. These are
-# userspace development headers rather than the cluster's kernel, but the
-# fixed build is available in this immutable snapshot, so do not publish the
-# avoidable critical CVEs inherited from the parent filesystem.
+# The inherited bases retain older linux-libc-dev builds. These are userspace
+# development headers rather than the cluster's kernel, but the fixed builds
+# are available in the immutable per-release snapshot. Keep the version tied to
+# /etc/os-release: a Jammy kernel-header version does not exist in Noble and
+# made clean LanceDB builds fail before installing any runtime prerequisites.
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
   ffmpeg \
-  linux-libc-dev=5.15.0-190.200 \
+  "linux-libc-dev=${linux_libc_dev_version}" \
   netcat-openbsd \
   openssh-client \
   openssh-server \
