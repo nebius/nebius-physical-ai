@@ -155,6 +155,22 @@ def _runtime_inventory(native, recipe):
         "scene_prim": recipe.scene_prim,
         "sensors": _inspect_sensors(native.scene.sensors, recipe),
         "reference_controller": controller_evidence(native, recipe),
+        "reference_physics": _reference_physics(native, recipe),
+    }
+
+
+def _reference_physics(native, recipe):
+    if recipe.adapter_module != "npa.workflows.navigation.reference":
+        return None
+    fields = (
+        "gpu_found_lost_pairs_capacity",
+        "gpu_found_lost_aggregate_pairs_capacity",
+        "gpu_total_aggregate_pairs_capacity",
+    )
+    return {
+        "gpu_buffers": {name: getattr(native.cfg.sim.physics, name) for name in fields},
+        "contact_sensor_count": native.npa_contacts.view.sensor_count,
+        "static_contact_filter_count": native.npa_contacts.view.filter_count,
     }
 
 

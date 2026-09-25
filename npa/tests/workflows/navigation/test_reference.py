@@ -101,6 +101,27 @@ def test_nonmetric_source_frame_is_rejected(tmp_path):
         validate_scene_frame(str(source))
 
 
+def test_contact_filters_broadcast_exact_enabled_scene_colliders():
+    pytest.importorskip("pxr")
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from npa.workflows.navigation.reference_contacts import _scene_filters
+
+    stage = Usd.Stage.CreateInMemory()
+    root = "/World/Warehouse"
+    for path, enabled in (
+        (root + "/Floor", True),
+        (root + "/Obstacles/Rack", True),
+        (root + "/Disabled", False),
+        ("/World/envs/env_0/Robot/base", True),
+    ):
+        prim = UsdGeom.Mesh.Define(stage, path).GetPrim()
+        UsdPhysics.CollisionAPI.Apply(prim).CreateCollisionEnabledAttr(enabled)
+    UsdGeom.Mesh.Define(stage, root + "/NpaRaycastMesh")
+    assert _scene_filters(stage, root) == [root + "/Floor", root + "/Obstacles/Rack"]
+    with pytest.raises(RuntimeError, match="no enabled collision filters"):
+        _scene_filters(stage, "/World/Absent")
+
+
 def test_contact_reduction_excludes_support_and_detects_obstacles(monkeypatch):
     torch = pytest.importorskip("torch")
     from npa.workflows.navigation import reference_contacts

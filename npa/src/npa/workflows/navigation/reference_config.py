@@ -64,9 +64,29 @@ def build_config(scene_file, scene_prim, num_envs, cases, training):
         collision_group=-1,
         spawn=UsdFileCfg(usd_path=scene_file, func=spawn_scene),
     )
+    _physics(config, num_envs)
     _perception(config, scene_prim)
     _task(config)
     return config
+
+
+def _physics(config, num_envs):
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    physics = resolve_presets(config.sim.physics)
+    # Coincident clones enter broadphase before peer collision filtering. Native
+    # 4,000-robot startup required 8,002,000 pairs and 44,008,192 aggregate pairs.
+    pairs = num_envs * (num_envs + 1) // 2
+    requirements = {
+        "gpu_found_lost_pairs_capacity": 2 * pairs,
+        "gpu_found_lost_aggregate_pairs_capacity": 12 * pairs,
+        "gpu_total_aggregate_pairs_capacity": 2 * pairs,
+    }
+    for name, required in requirements.items():
+        capacity = 1 << (max(1, required) - 1).bit_length()
+        setattr(physics, name, max(getattr(physics, name), capacity))
+    config.sim.physics = physics
+    config.sim.render_interval = config.decimation
 
 
 def _register():

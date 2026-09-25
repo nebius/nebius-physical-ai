@@ -7,6 +7,23 @@ def _tensor(value):
     return wp.to_torch(value) if isinstance(value, wp.array) else value
 
 
+def _scene_filters(stage, root):
+    from pxr import Sdf, Usd, UsdPhysics
+
+    paths = [
+        str(prim.GetPath())
+        for prim in stage.Traverse(Usd.TraverseInstanceProxies())
+        if prim.GetPath().HasPrefix(Sdf.Path(root))
+        and prim.HasAPI(UsdPhysics.CollisionAPI)
+        and bool(UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get())
+    ]
+    if not paths:
+        raise RuntimeError("shared scene has no enabled collision filters")
+    # PhysX broadcasts each single-prim filter to every sensor. A wildcard
+    # matching several scene prims instead requires one match per sensor.
+    return sorted(paths)
+
+
 class ContactMeasurements:
     """Accumulate physical contact evidence over each high-level control interval.
 
@@ -30,15 +47,15 @@ class ContactMeasurements:
         self.body_count = len(bodies)
         self.base_index = bodies.index("base")
         names = "(" + "|".join(bodies) + ")"
+        filters = _scene_filters(env.sim.stage, env.cfg.npa_scene_prim)
         self.view = physics.create_rigid_contact_view(
             f"/World/envs/env_*/Robot/{names}",
-            filter_patterns=[env.cfg.npa_scene_prim + "/*"],
+            filter_patterns=filters,
             max_contact_data_count=64 * len(bodies) * env.num_envs,
         )
-        if (
-            self.view.sensor_count != env.num_envs * len(bodies)
-            or self.view.filter_count == 0
-        ):
+        if self.view.sensor_count != env.num_envs * len(
+            bodies
+        ) or self.view.filter_count != len(filters):
             raise RuntimeError(
                 "reference contact view does not cover every robot and scene"
             )

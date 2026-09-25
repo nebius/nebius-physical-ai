@@ -54,3 +54,36 @@ def test_task_configuration_defers_all_mdp_implementation_imports(monkeypatch):
     assert cfg.rewards.progress.func == name + ":progress"
     assert cfg.terminations.base_contact.func == name + ":terminate"
     assert sys.modules[name] is None
+
+
+def test_physics_buffers_cover_observed_coincident_population(monkeypatch):
+    _stub_configuration_types(monkeypatch)
+    physics = SimpleNamespace(
+        gpu_found_lost_pairs_capacity=2**21,
+        gpu_found_lost_aggregate_pairs_capacity=2**25,
+        gpu_total_aggregate_pairs_capacity=2**21,
+    )
+    preset = object()
+    resolved = []
+
+    def resolve(value):
+        resolved.append(value)
+        return physics
+
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaclab_tasks.utils.hydra",
+        SimpleNamespace(resolve_presets=resolve),
+    )
+    path = Path(reference.__file__).with_name("reference_config.py")
+    spec = importlib.util.spec_from_file_location("isolated_reference_physics", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cfg = SimpleNamespace(sim=SimpleNamespace(physics=preset), decimation=40)
+    module._physics(cfg, 4000)
+    assert resolved == [preset]
+    assert cfg.sim.physics is physics
+    assert physics.gpu_found_lost_pairs_capacity > 8_002_000
+    assert physics.gpu_found_lost_aggregate_pairs_capacity > 44_008_192
+    assert physics.gpu_total_aggregate_pairs_capacity > 8_002_000
+    assert cfg.sim.render_interval == 40
