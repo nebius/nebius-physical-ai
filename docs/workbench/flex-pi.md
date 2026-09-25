@@ -502,6 +502,64 @@ used control source `e268b67cea39581cf2c1130765c7768528d054cb`, reached verified
 NPA terminal `SUCCEEDED`, and completed controller/API cleanup before the
 full-epoch attempt. The training-source bytes remained identical across profiles.
 
+The subsequent **accepted native CUDA graph configuration** retains microbatch
+one and accumulation 24 on the same reserved B200 node, with exactly four GPUs
+exposed to training. The provider shape still allocates eight GPUs. Its matched
+profile measures the combined MoT graph and deferred loss-readback policy,
+without changing initialization, ordered data, normalization, BF16, default
+AdamW, learning rate, effective batch or the cuDNN 9.26 runtime.
+
+| Four-GPU single-node B200 configuration | Aggregate samples/s | Median steady samples/s |
+| --- | ---: | ---: |
+| Eager control, 30-update profile | 8.072713 | 8.990426 |
+| Native MoT graphs, 30-update profile | 11.833972 | 13.306507 |
+| Native MoT graphs, complete accepted epoch | 13.748297 | 13.770491 |
+
+The matched profile's steady median improved by 48.01%.
+All three complete eight-update windows exceeded the eager control's maximum;
+the first six startup/profiler updates remain excluded from this comparison.
+All 31 profile step/sample/loss records, compared model/optimizer/scheduler/RNG
+states, all nine checkpoint files and all six numerical fixtures matched the
+eager control bit for bit.
+Each of eight phases verified actual native forward/backward graph replay on
+all four ranks. The independently read-back rank-zero GPU trace contained
+48 graph launches and 523,278 kernels.
+The frozen graph-aware audit checked actual launch ordering, complete replay
+groups and dropped-record diagnostics. It reconstructed graph/driver launch
+associations and reproduced the warnings from the [pinned timestamp checker](https://github.com/pytorch/kineto/blob/a054a4be0db117c579a21747debf19c863631f26/libkineto/src/CuptiActivityProfiler.cpp#L777).
+The separate [out-of-range counter](https://github.com/pytorch/kineto/blob/a054a4be0db117c579a21747debf19c863631f26/libkineto/src/CuptiActivityProfiler.cpp#L547)
+tracks records filtered outside the capture window. An earlier profile's
+failed original integrity gate remains retained; the corrected policy was
+frozen before this accepted repeat.
+
+The complete epoch processed all 115,620 anchors in 1,205 updates, including
+the actual 36-anchor tail. Both held-out passes covered 12,390 anchors;
+validation loss fell from 3.069524735095 to
+0.471328482697, passing the unchanged ceiling
+0.47188222932935736. All six initial/checkpoint qualifications and exact fresh
+step 1,206 passed. Its continuation loss was 0.42387064297993976,
+matching the uninterrupted continuation along with model, optimizer, scheduler
+and RNG state. Every phase verified the same 20 training-source file hashes;
+the measured source commit was `b377b5c015e1a419b41b84031dbcaa3d1f20d50e`.
+All six published result objects passed independent readback and full-epoch
+throughput/accounting recomputation. NPA reached live-verified terminal
+`SUCCEEDED` with a successful submit driver.
+
+The full-epoch aggregate is 98.62% above the earlier four-instance B300
+public-data aggregate of 6.921861 samples/s. Hardware and topology differ in
+that comparison; the matched B200 profiles establish the software gain.
+Aggregate training time includes loss readback and excludes initialization,
+qualification, validation, checkpoint I/O and the separate continuation.
+The historical 5.66 samples/s workload remains non-comparable.
+
+This acceptance uses the private complete cuDNN 9.26 runtime overlay, activation
+checkpointing off and qualified memory fill off, with the unchanged public base
+image. The graph policy remains explicit opt-in; this does not qualify the
+unmodified default workflow. The dedicated node, managed root disk, controller
+and owned local APIs were removed or stopped after the terminal audit. The
+project, artifact storage and referenced reservation were retained, and artifact
+readback passed again after compute teardown.
+
 The renderer sets `NPA_FLEX_PI_NODE_COUNT` from the resolved resource profile
 (one by default). The adapter cross-checks it against SkyPilot's node rank and
 peer addresses, allowing only one node with four GPUs or four nodes with one
