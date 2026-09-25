@@ -37,6 +37,17 @@ class S3Error(Exception):
         super().__init__("provider detail intentionally ignored")
 
 
+def test_project_destroy_reuses_shared_managed_job_terminal_classifier() -> None:
+    from npa import project_destroy
+    from npa.orchestration.skypilot import cleanup as cleanup_runtime
+
+    assert (
+        project_destroy.is_terminal_managed_job_status
+        is cleanup_runtime.is_terminal_managed_job_status
+    )
+    assert not hasattr(project_destroy, "_terminal_managed_job_status")
+
+
 class ExactBackendClient:
     def __init__(self, *, state_exists: bool = True, fail_list: bool = False) -> None:
         self.state_exists = state_exists
