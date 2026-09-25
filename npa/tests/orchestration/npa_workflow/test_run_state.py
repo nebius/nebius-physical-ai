@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from botocore.exceptions import ClientError
 import pytest
 
 from npa.orchestration.npa_workflow.run_state import (
@@ -300,6 +301,336 @@ def test_run_state_store_output_check_uses_explicit_storage_credentials(
         "Bucket": "project-bucket",
         "Key": "runs/demo/result.json",
     }
+
+
+def test_run_state_store_prefix_output_looks_past_zero_byte_marker(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    captured_credentials: dict[str, str] = {}
+
+    class FakeS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [{"Key": "runs/demo/output/result.json", "Size": 17}],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "runs/demo/output/", "Size": 0}],
+                "IsTruncated": True,
+                "NextContinuationToken": "page-2",
+            }
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    def fake_from_environment(**kwargs: str) -> FakeStorage:
+        captured_credentials.update(kwargs)
+        return FakeStorage()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        fake_from_environment,
+    )
+    state_store = RunStateStore(
+        bucket="project-bucket",
+        prefix="runs/demo",
+        endpoint_url="https://project-storage.example.invalid",
+        aws_access_key_id="synthetic-access",
+        aws_secret_access_key="synthetic-secret",
+    )
+
+    assert state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+    assert captured_credentials == {
+        "endpoint_url": "https://project-storage.example.invalid",
+        "aws_access_key_id": "synthetic-access",
+        "aws_secret_access_key": "synthetic-secret",
+    }
+    assert calls == [
+        {
+            "Bucket": "project-bucket",
+            "Prefix": "runs/demo/output/",
+            "MaxKeys": 1000,
+        },
+        {
+            "Bucket": "project-bucket",
+            "Prefix": "runs/demo/output/",
+            "MaxKeys": 1000,
+            "ContinuationToken": "page-2",
+        },
+    ]
+
+
+def test_run_state_store_prefix_output_rejects_stalled_pagination(
+    monkeypatch,
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "Contents": [{"Key": "runs/demo/output/", "Size": 0}],
+                "IsTruncated": True,
+            }
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="continuation token"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"Contents": []},
+        {"Contents": [], "NextContinuationToken": "page-2"},
+        {
+            "Contents": [],
+            "IsTruncated": False,
+            "NextContinuationToken": "page-2",
+        },
+        {"Contents": [], "IsTruncated": "false"},
+        {"Contents": [], "IsTruncated": True, "NextContinuationToken": 2},
+    ],
+)
+def test_run_state_store_prefix_output_rejects_malformed_pagination(
+    monkeypatch,
+    response: dict[str, object],
+) -> None:
+    calls = 0
+
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls > 2:
+                raise AssertionError("malformed pagination was followed")
+            return response
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="pagination|continuation token"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+    assert calls == 1
+
+
+@pytest.mark.parametrize("response", [None, [], "malformed"])
+def test_run_state_store_prefix_output_rejects_malformed_response(
+    monkeypatch,
+    response: object,
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> object:
+            return response
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="malformed response"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+
+
+def test_run_state_store_prefix_output_rejects_repeated_pagination_token(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls > 2:
+                raise AssertionError("pagination cycle was not rejected")
+            return {
+                "Contents": [{"Key": "runs/demo/output/", "Size": 0}],
+                "IsTruncated": True,
+                "NextContinuationToken": "same-page",
+            }
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="continuation token"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+    assert calls == 2
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        [],
+        [{"Key": "runs/demo/output/", "Size": 0}],
+        [
+            {"Key": "runs/demo/output/", "Size": 0},
+            {"Key": "runs/demo/output/empty.json", "Size": 0},
+        ],
+    ],
+)
+def test_run_state_store_prefix_output_requires_nonempty_content(
+    monkeypatch,
+    contents: list[dict[str, object]],
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            return {"Contents": contents, "IsTruncated": False}
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    assert not state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+
+
+def test_run_state_store_prefix_output_scans_all_zero_byte_pages(
+    monkeypatch,
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [{"Key": "runs/demo/output/empty.json", "Size": 0}],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "runs/demo/output/", "Size": 0}],
+                "IsTruncated": True,
+                "NextContinuationToken": "page-2",
+            }
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    assert not state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"Key": "runs/demo/output/missing-size.json"},
+        {"Key": "runs/demo/output/invalid-size.json", "Size": "invalid"},
+        {"Key": "runs/demo/output/negative-size.json", "Size": -1},
+        *(
+            {"Key": "runs/demo/output/invalid.json", "Size": size}
+            for size in [False, True, 0.5, 1.5, "0", None]
+        ),
+    ],
+)
+def test_run_state_store_prefix_output_rejects_malformed_size(
+    monkeypatch,
+    item: dict[str, object],
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            return {"Contents": [item], "IsTruncated": False}
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="valid Size"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"Size": 17},
+        {"Key": "runs/another/output.json", "Size": 17},
+    ],
+)
+def test_run_state_store_prefix_output_rejects_malformed_identity(
+    monkeypatch,
+    item: dict[str, object],
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            return {"Contents": [item], "IsTruncated": False}
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="requested prefix"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [("NoSuchKey", False), ("AccessDenied", "raises"), ("SlowDown", "raises")],
+)
+def test_run_state_store_prefix_output_preserves_provider_failures(
+    monkeypatch,
+    code: str,
+    expected: bool | str,
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            raise ClientError({"Error": {"Code": code}}, "ListObjectsV2")
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    if expected == "raises":
+        with pytest.raises(ClientError):
+            state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+    else:
+        assert (
+            state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+            is expected
+        )
 
 
 def test_completed_wave_ignores_failed_attempts() -> None:
@@ -942,3 +1273,16 @@ def test_malformed_recorded_run_prefix_is_rejected(uri: str) -> None:
 
     with pytest.raises(ValueError):
         store_for_recorded_run_prefix(uri)
+
+
+@pytest.mark.parametrize("contents", [None, {}, "", False, 0])
+def test_prefix_listing_rejects_falsey_malformed_contents(contents, mocker):
+    from npa.orchestration.npa_workflow.run_state import s3_prefix_has_nonempty_object
+
+    client = mocker.Mock()
+    client.list_objects_v2.return_value = {
+        "Contents": contents,
+        "IsTruncated": False,
+    }
+    with pytest.raises(RuntimeError, match="malformed object records"):
+        s3_prefix_has_nonempty_object(client, bucket="unit-bucket", prefix="runs/unit/")

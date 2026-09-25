@@ -285,6 +285,154 @@ def test_valid_completed_outputs_reuse_wave_without_launch() -> None:
     assert decision.action is RecoveryAction.REUSE_COMPLETED_WAVE
 
 
+@pytest.mark.parametrize(
+    ("state", "reason_code"),
+    [
+        (BackendState.ABSENT, "PROVIDER_INTERRUPTION"),
+        (BackendState.FAILED, "PREEMPTED"),
+        (BackendState.QUEUED, "NODE_NOT_READY"),
+    ],
+)
+def test_valid_outputs_are_reused_at_infrastructure_recovery_limit(
+    state: BackendState,
+    reason_code: str,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+    decision = decide_recovery(
+        identity(),
+        BackendObservation(state, reason_code=reason_code),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert decision.action is RecoveryAction.REUSE_COMPLETED_WAVE
+    assert decision.reason_code == "DECLARED_OUTPUTS_VALID"
+    assert not decision.relaunch_allowed
+
+
+def test_live_valid_outputs_cancel_exact_attempt_before_reuse() -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY")
+    )
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(
+        identity(),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert result["recovery"]["action"] == "reuse_completed_wave"
+    assert result["cancellation"]["status"] == "cancelled"
+    assert adapter.cancelled == ["job-1"]
+    assert adapter.launched == []
+
+
+def test_live_valid_outputs_block_when_exact_cancellation_is_unverified() -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY")
+    )
+    adapter.cancel_exact = lambda _attempt: {  # type: ignore[method-assign]
+        "provider_job_id": "job-1",
+        "status": "cancelling",
+        "exact": True,
+    }
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(
+        identity(),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert result["recovery"]["action"] == "block_relaunch"
+    assert result["recovery"]["reason_code"] == "CANCELLATION_UNVERIFIED"
+    assert adapter.launched == []
+
+
+def test_live_valid_outputs_require_exact_provider_job_id() -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    decision = decide_recovery(
+        identity(provider_job_id=""),
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY"),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert decision.action is RecoveryAction.BLOCK_RELAUNCH
+    assert decision.reason_code == "AMBIGUOUS_ATTEMPT_IDENTITY"
+
+
+@pytest.mark.parametrize(
+    ("state", "reason_code", "expected_action"),
+    [
+        (BackendState.QUEUED, "CAPACITY_OR_QUOTA", RecoveryAction.ADOPT_EXACT_ATTEMPT),
+        (BackendState.AMBIGUOUS, "", RecoveryAction.BLOCK_RELAUNCH),
+        (
+            BackendState.QUEUED,
+            "MISSING_CONFIGMAP",
+            RecoveryAction.CANCEL_AND_TERMINALIZE,
+        ),
+        (BackendState.FAILED, "PAYLOAD_EXIT_NONZERO", RecoveryAction.TERMINALIZE),
+    ],
+)
+def test_valid_outputs_do_not_override_stronger_recovery_evidence(
+    state: BackendState,
+    reason_code: str,
+    expected_action: RecoveryAction,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    decision = decide_recovery(
+        identity(),
+        BackendObservation(state, reason_code=reason_code),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert decision.action is expected_action
+
+
 def test_partial_output_evidence_blocks_transient_relaunch() -> None:
     decision = decide_recovery(
         identity(),

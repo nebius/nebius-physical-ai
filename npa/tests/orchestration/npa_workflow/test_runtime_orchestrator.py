@@ -28,6 +28,7 @@ from npa.orchestration.npa_workflow.run_state import (
     runtime_key,
 )
 from npa.orchestration.npa_workflow.runtime import (
+    CANCELLATION_VERIFY_ATTEMPTS,
     IMAGE_IDENTITY_VERSION,
     MAX_TERMINAL_PLAN_MIGRATIONS,
     SCHEDULER_OBSERVATION_SCHEMA,
@@ -46,6 +47,7 @@ from npa.orchestration.npa_workflow.runtime import (
     _wave_image_references,
     plan_fingerprint,
     run_workflow_runtime,
+    s3_artifact_exists,
     s3_trigger_waiter,
     wave_key,
 )
@@ -945,6 +947,80 @@ def test_declared_output_checker_receives_uri_and_ledger_keeps_schema(
             "schema": "npa.sim2real.threshold_decision.v1",
         }
     ]
+
+
+def test_prefix_marker_does_not_authorize_absent_output_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class PagedS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "IsTruncated": True,
+                "NextContinuationToken": "page-2",
+            }
+
+    client = PagedS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._outputs_exist([output])
+    assert executor._declared_outputs_absent([output]) == (False, "present")
+
+
+def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class MissingTruncationFlagS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "NextContinuationToken": "page-2",
+            }
+
+    client = MissingTruncationFlagS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._declared_outputs_absent([output]) == (False, "indeterminate")
+    assert calls == [
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "gate-loop/run/output/",
+            "MaxKeys": 1000,
+        }
+    ]
+    with pytest.raises(RuntimeError, match="malformed pagination"):
+        s3_artifact_exists(output)
 
 
 # ------------------------------------------------------------------- early exit
@@ -4564,6 +4640,201 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
     ]
     assert executor.attempts[-1].infrastructure_recovery_exhausted
     assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
+
+
+@pytest.mark.parametrize(
+    "terminal_provider_status",
+    ["CANCELLED", "FAILED", "FAILED_SETUP", "SUCCEEDED", "COMPLETED"],
+)
+def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+    terminal_provider_status: str,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-valid-output-limit", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    status = FakeStatus(["PENDING", "CANCELLED", "PENDING", terminal_provider_status])
+    store = MemoryStore()
+    executor = _executor(
+        spec,
+        run_id="rt-valid-output-limit",
+        submitter=FakeSubmitter(),
+        status_fn=status,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=store,
+    )
+    executor._submitter = None
+
+    result = executor.execute(gate)
+    attempt = executor.attempts[-1]
+
+    assert result["status"] == "ok"
+    assert attempt.status == "succeeded"
+    assert attempt.sky_status == terminal_provider_status
+    assert attempt.recovery_decision == "reuse_completed_wave"
+    assert attempt.infrastructure_recovery_count == 1
+    assert attempt.cancellation_state == "verified"
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
+    assert len(executor.attempts) == 2
+    assert len(status.calls) == 4
+    reuse_event = next(
+        event
+        for event in reversed(SupervisorLedger(store).events())
+        if event["phase"] == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+    )
+    assert (
+        reuse_event["cancellation"]["provider_terminal_status"]
+        == terminal_provider_status
+    )
+
+
+def test_runtime_preserves_unverified_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-unverified",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-unverified",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(
+            [
+                "PENDING",
+                "CANCELLED",
+                "PENDING",
+                *(["PENDING"] * CANCELLATION_VERIFY_ATTEMPTS),
+            ]
+        ),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "requested"
+    assert attempt.cancellation_error == ""
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
+
+
+def test_runtime_rejects_failed_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-cancel-failed",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancellation_calls: list[dict[str, Any]] = []
+
+    def cancel(**kwargs: Any) -> dict[str, Any]:
+        cancellation_calls.append(kwargs)
+        if len(cancellation_calls) == 1:
+            return {"cancel_returncode": 0}
+        return {
+            "cancel_returncode": 1,
+            "cancel_stderr": "controller unavailable",
+        }
+
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-cancel-failed",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING"]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._canceller = cancel
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "failed"
+    assert attempt.cancellation_error == "controller unavailable"
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancellation_calls) == 2
 
 
 @pytest.mark.parametrize(
