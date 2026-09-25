@@ -31,6 +31,7 @@ _ENDPOINT = "SKYPILOT_API_SERVER_ENDPOINT"
 _MARKER = "NPA_OWNED_SKYPILOT_API_ID"
 _METADATA_TOKEN_ROOT = Path("/mnt/cloud-metadata")
 _METADATA_CREDENTIAL_SOURCE = "instance_metadata"
+_NATIVE_METADATA_TOKEN_ENDPOINT = "http://metadata.nebius.internal/v1/iam/sa/token"
 _AGENT_RECOVERY_REBIND_ENV = "NPA_AGENT_ISOLATED_RECOVERY_REBIND"
 # These resolved values are private runtime configuration, never credentials.
 _RUNTIME_SETTINGS = {
@@ -287,6 +288,17 @@ def _supported_metadata_token_profile(selected):
         return False
 
 
+def _supported_native_metadata_profile(selected):
+    """Recognize the CLI's exact attached-VM metadata authentication profile."""
+    fields = {"endpoint", "parent-id", "tenant-id", "token-endpoint"}
+    return (
+        isinstance(selected, dict)
+        and set(selected) == fields
+        and all(isinstance(value, str) and value for value in selected.values())
+        and selected["token-endpoint"] == _NATIVE_METADATA_TOKEN_ENDPOINT
+    )
+
+
 def _nebius_profile_selection(config_path, profile, environment, profile_supported):
     if not config_path.is_absolute():
         return None
@@ -460,6 +472,31 @@ def _nebius_metadata_token_identity(
     return _metadata_token_binding(selection, provider_dir)
 
 
+def _nebius_native_metadata_identity(environment, home, execs):
+    """Bind native VM metadata auth to its selected immutable CLI configuration.
+
+    The provider-defined metadata endpoint selects the attached VM identity;
+    the CLI can still prune unrelated service-account tokens in its cache.
+    Arbitrary token endpoints and additional authentication fields stay strict.
+    """
+    resolved = _selected_nebius_identity(
+        environment,
+        home,
+        execs,
+        profile_supported=_supported_native_metadata_profile,
+    )
+    if resolved is None:
+        return {}
+    provider_dir, selection = resolved
+    config_name, config_hash, profile, selected = selection
+    binding = json.dumps([config_name, config_hash, profile, selected], sort_keys=True)
+    return {
+        Path(config_name): config_hash,
+        provider_dir / "credentials.yaml": "derived-nebius-native-metadata-cache-v1:"
+        + hashlib.sha256(binding.encode()).hexdigest(),
+    }
+
+
 def _derived_service_account_cache(contents: bytes | None) -> bool:
     """Recognize derived SA tokens, including creation/pruning of an empty cache.
 
@@ -470,7 +507,12 @@ def _derived_service_account_cache(contents: bytes | None) -> bool:
     if contents is None:
         return True
     data = _strict_mapping(contents)
-    if data is None or set(data) != {"tokens"} or not isinstance(data["tokens"], dict):
+    if data is None or set(data) != {"tokens"}:
+        return False
+    # The CLI serializes a pruned nil token map as YAML null.
+    if data["tokens"] is None:
+        return True
+    if not isinstance(data["tokens"], dict):
         return False
     for name, value in data["tokens"].items():
         if not isinstance(name, str) or not re.fullmatch(
@@ -665,6 +707,8 @@ def _identity_files(
         durable = _nebius_service_account_identity(environment, home, execs)
         if not durable:
             durable = _nebius_metadata_token_identity(environment, home, execs)
+        if not durable:
+            durable = _nebius_native_metadata_identity(environment, home, execs)
         cache = home / ".nebius" / "credentials.yaml"
         return _hash_identity_paths(paths, protected, designated_caches, durable, cache)
     except OSError:

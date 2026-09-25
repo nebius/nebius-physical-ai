@@ -238,6 +238,7 @@ class RuntimeRunState:
                 return None
             recovery = str(record.get("recovery_decision") or "")
             unresolved = recovery in {
+                "block_relaunch",
                 "block_indeterminate",
                 "block_after_uncertain_success",
                 "recovery_deadline_exhausted_verified_absent",

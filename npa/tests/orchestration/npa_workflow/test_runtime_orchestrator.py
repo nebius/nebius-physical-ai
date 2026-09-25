@@ -2037,6 +2037,53 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert report.waves[0]["cancellation"]["state"] == "requested"
 
 
+@pytest.mark.parametrize("recovered_status", ["RUNNING", "SUCCEEDED", "UNAVAILABLE"])
+def test_resume_after_status_outage_reconciles_original_job_without_resubmission(
+    tmp_path: Path, recovered_status: str
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    first = _executor(spec, store=store, status_fn=BoomStatus(failures=99))
+    failed = run_workflow_runtime(
+        spec, run_id="rt-1", executor=first, options=first.options
+    )
+    original = failed.waves[0]
+    assert failed.status == "failed"
+    assert original["job_id"] == "1"
+    assert original["recovery_decision"] == "block_relaunch"
+    reconciled = []
+
+    def reconcile(name: str, *, job_id: str = ""):
+        reconciled.append((name, job_id))
+        return SimpleNamespace(
+            outcome="unavailable" if recovered_status == "UNAVAILABLE" else "found",
+            job_id=job_id,
+            status=recovered_status,
+            workload_observable=True,
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        store=store,
+        submitter=submitter,
+        reconcile_fn=reconcile,
+        options=RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True),
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-1", executor=resumed, options=resumed.options
+    )
+    assert reconciled[0] == (original["job_name"], original["job_id"])
+    assert report.waves[0]["job_id"] == original["job_id"]
+    assert all(call["job_name"] != original["job_name"] for call in submitter.calls)
+    if recovered_status == "UNAVAILABLE":
+        assert report.status == "failed"
+        assert submitter.calls == []
+    else:
+        assert report.status == "succeeded"
+        assert report.waves[0]["adopted"] is True
+
+
 def test_unknown_status_result_is_counted_as_a_failed_query(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
