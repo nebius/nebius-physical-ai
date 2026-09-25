@@ -6,7 +6,7 @@ LABEL npa.antioch.live-transport="declared-port-double-wss-v1"
 # copied into this image; the policy implementation remains on the GPU side.
 RUN uv pip install --system --no-cache \
     "msgpack==1.1.1" \
-    "websockets==15.0.1"
+    "websockets==16.1.1"
 
 # Antioch syncs and bakes queued project files at this canonical path. Isaac's
 # runtime cache/document parents must also remain writable after dropping uid.

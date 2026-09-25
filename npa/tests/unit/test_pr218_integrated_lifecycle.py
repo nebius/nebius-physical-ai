@@ -37,6 +37,17 @@ class S3Error(Exception):
         super().__init__("provider detail intentionally ignored")
 
 
+def test_project_destroy_reuses_shared_managed_job_terminal_classifier() -> None:
+    from npa import project_destroy
+    from npa.orchestration.skypilot import cleanup as cleanup_runtime
+
+    assert (
+        project_destroy.is_terminal_managed_job_status
+        is cleanup_runtime.is_terminal_managed_job_status
+    )
+    assert not hasattr(project_destroy, "_terminal_managed_job_status")
+
+
 class ExactBackendClient:
     def __init__(self, *, state_exists: bool = True, fail_list: bool = False) -> None:
         self.state_exists = state_exists
@@ -947,6 +958,113 @@ def test_project_destroy_rejects_broadened_workflow_teardown_allowance(
     )
 
     assert _owned_workflow_teardown_allowance(completed) is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "accepted"),
+    [
+        pytest.param({}, True, id="canonical-absence-conflict"),
+        pytest.param(
+            {"owned_teardown_allowed": "false"},
+            False,
+            id="truthy-authorization-lookalike",
+        ),
+        pytest.param(
+            {
+                "durable_absence_conflict_job_ids": ["701", "701"],
+                "durable_absence_conflict_errors": [
+                    "durable state contradicts exact verified absence",
+                    "provider unavailable",
+                ],
+                "errors": [
+                    "durable state contradicts exact verified absence",
+                    "provider unavailable",
+                ],
+            },
+            False,
+            id="duplicate-conflict-identity",
+        ),
+        # Blank conflict IDs are also rejected by the later job-membership
+        # validator; retain the operator-facing behavior even though the early
+        # nonblank check is defense in depth.
+        pytest.param(
+            {"durable_absence_conflict_job_ids": [""]},
+            False,
+            id="blank-conflict-identity",
+        ),
+        pytest.param(
+            {
+                "outcome": "partial_cancellation",
+                "cancelled_job_ids": ["802", "802"],
+                "jobs": [
+                    {
+                        "job_id": "701",
+                        "live_outcome": "absent",
+                        "persisted_states": ["RUNNING"],
+                    },
+                    {
+                        "job_id": "802",
+                        "live_outcome": "found",
+                        "live_status": "RUNNING",
+                        "persisted_states": ["RUNNING"],
+                    },
+                ],
+            },
+            False,
+            id="duplicate-cancelled-identity",
+        ),
+        # Per-row validators also make one job's required "absent" conflict
+        # state incompatible with its required "found" cancelled state. This
+        # pins the rejection contract, not only the redundant early check.
+        pytest.param(
+            {"cancelled_job_ids": ["701"]},
+            False,
+            id="conflict-cancelled-overlap",
+        ),
+    ],
+)
+def test_project_destroy_teardown_allowance_rejects_identity_forgery(
+    overrides: dict[str, object], accepted: bool
+) -> None:
+    from npa.project_destroy import _owned_workflow_teardown_allowance
+
+    payload: dict[str, object] = {
+        "run_id": "stale-run",
+        "outcome": "verification_failed",
+        "detected_state": "VERIFICATION_UNAVAILABLE",
+        "owned_teardown_allowed": True,
+        "durable_absence_conflict_job_ids": ["701"],
+        "cancelled_job_ids": [],
+        "jobs": [
+            {
+                "job_id": "701",
+                "live_outcome": "absent",
+                "persisted_states": ["RUNNING"],
+            }
+        ],
+        "durable_absence_conflict_errors": [
+            "durable state contradicts exact verified absence"
+        ],
+        "errors": ["durable state contradicts exact verified absence"],
+    }
+    payload.update(overrides)
+    completed = subprocess.CompletedProcess(
+        ["npa", "workbench", "workflow", "cancel"],
+        2,
+        stdout=json.dumps(payload),
+        stderr="",
+    )
+
+    allowance = _owned_workflow_teardown_allowance(completed)
+    if accepted:
+        assert allowance == {
+            "run_id": "stale-run",
+            "outcome": "verification_failed",
+            "verified_absent_job_ids": ["701"],
+            "cancelled_job_ids": [],
+        }
+    else:
+        assert allowance is None
 
 
 def test_project_destroy_exact_empty_inventory_converges_despite_exit_race(

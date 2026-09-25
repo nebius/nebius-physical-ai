@@ -93,7 +93,10 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented --require-fiftyone` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` | no (real FiftyOne Brain uniqueness, similarity, duplicate detection, and PCA review; fails closed) |
 | `workbench.lerobot.eval` | `npa workbench lerobot eval` | `config.checkpoint_uri`, `config.env` | `config.eval_uri` | no |
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
-| `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
+| `workbench.mjlab.train` | `npa workbench mjlab train` | `config.mjlab_task`, `config.mjlab_iterations`, `config.mjlab_num_envs` | `config.training_uri` | no |
+| `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.mjlab_task`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
+| `workbench.mjlab.render` | `npa workbench mjlab eval --video` | `config.mjlab_task`, `config.checkpoint_uri` | `config.mjlab_uri` (MP4, HTML, measured report) | no |
+| `workbench.mjlab.export` | `npa workbench mjlab export` | `config.mjlab_task`, `config.checkpoint_uri` | `config.export_uri` | no |
 | `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint | no |
 | `workflow.groot.prepare_split` | `npa.workflows.groot_learning prepare-split` | source GR00T LeRobot dataset | hashed, episode-disjoint train/held-out datasets + split manifest with train-only statistics | no |
 | `workflow.xr1.finetune` | `python3 -m npa.workflows.xr1_antioch.training run` | verified Antioch robot episodes, pinned Xiaomi XR1 assets, SM120 runtime receipt | native policy checkpoints, held-out validation losses, parameter-change proof, and S3 readback manifest | yes (eight RTX PRO 6000 GPUs; closed-loop evaluation is a separate Antioch operation) |

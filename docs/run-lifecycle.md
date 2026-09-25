@@ -40,7 +40,9 @@ prints the exact build command for anything missing. It unions every declared
 decision outcome, and `--infra k8s/<cluster>` lets the pull check verify that
 exact cluster's declared pull-secret authority. `submit` uses the same complete
 image plan by default, so a branch-specific missing image surfaces before the
-run instead of as an `ImagePullBackOff` on the cluster.
+run instead of as an `ImagePullBackOff` on the cluster. If complete-path
+planning itself fails, `preflight-images` exits before any registry or
+Kubernetes probe; it never reports that failure as `images: none`.
 
 ### Quota is arithmetic, and it is checked first
 
@@ -126,7 +128,10 @@ submit still prints a `submission_warnings` entry only when the launch proves
 reconciled. Any weaker result remains a hard receipt error. Receipt warnings and
 optional post-success artifact-handoff diagnostics redact URL query strings,
 secret assignments, bearer tokens, and resolved credential values before JSON
-output or local persistence.
+output or local persistence. Every workflow CLI `Error:` boundary applies the
+same shape-based redaction before rendering, while preserving multiline
+recovery commands; credential-aware submit failures also redact the exact
+resolved values even when a provider quotes an opaque token.
 
 **A stale or ambiguous run is never selected silently.** Resume by naming it:
 
@@ -149,11 +154,24 @@ launch absence; a new lookup must still prove absence. Existing outputs,
 unreadable storage, missing output declarations, or uncertain scheduler status
 continue to block a new launch. Prior attempts remain in the run history.
 
+Directory-style output evidence scans every S3 list page for a non-empty
+descendant. Zero-byte directory markers do not prove completion or absence,
+and malformed/truncated pagination blocks recovery rather than authorizing
+duplicate work.
+
 ## Reading status
 
 ```bash
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 ```
+
+The finite infrastructure-recovery allowance limits relaunches, not reuse.
+When every declared durable output is valid, recovery marks the wave complete
+even at the allowance boundary. If the exact provider attempt is still live,
+its cancellation must reach a verified terminal state before that reuse is
+accepted.
+The workflow completion result is separate from the observed provider status.
+
 
 `status` resolves the exact run from the selected project's receipt, the
 canonical workflow prefix, or the pinned managed-job identity — even while the
@@ -169,6 +187,15 @@ text output identify every source they checked.
 | `CACHED` | The explicit offline mode (`--cached`). Not live-verified, and not automation-trustworthy |
 
 Unrelated nested S3 keys are never guessed as runs.
+
+Per-stage status reads use the same cause-aware boundary. A genuinely missing
+optional status object may fall back to manifest evidence; denied, throttled,
+or unreachable storage makes `status` return
+`VERIFICATION_UNAVAILABLE`/exit 2 while retaining the manifest's last-known
+state. `cancel` makes no cancellation call and records only a
+verification-failed receipt for the same uncertainty.
+Client setup and response-body failures also remain unavailable, even when
+their underlying exception resembles a missing file or key.
 
 If a shell cannot resolve the project storage location, point status at the
 prefix explicitly:

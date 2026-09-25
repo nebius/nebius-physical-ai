@@ -209,10 +209,16 @@ class PreflightEvidence:
 
     @property
     def relaunch_ready(self) -> bool:
-        return all(
-            str(self.checks.get(name) or "").lower() in {"pass", "not_required"}
-            for name in self.REQUIRED_RELAUNCH_CHECKS
-        )
+        for name in self.REQUIRED_RELAUNCH_CHECKS:
+            value = str(self.checks.get(name) or "").lower()
+            # Credential evidence is deliberately persisted only as the
+            # redacted marker.  It still proves the access check passed without
+            # putting a token or credential value into the durable receipt.
+            if name == "credentials_access" and value == "<redacted>":
+                continue
+            if value not in {"pass", "not_required"}:
+                return False
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -365,6 +371,17 @@ def decide_recovery(
             "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
         )
     if (
+        context.outputs.all_valid
+        and observation.state in {BackendState.QUEUED, BackendState.RUNNING}
+        and not identity.provider_job_id
+    ):
+        return RecoveryDecision(
+            RecoveryAction.BLOCK_RELAUNCH,
+            FailureClass.UNKNOWN,
+            "AMBIGUOUS_ATTEMPT_IDENTITY",
+            "Restore the exact provider job ID before cancelling a live output-complete attempt.",
+        )
+    if (
         observation.state in {BackendState.QUEUED, BackendState.RUNNING}
         and code in CAPACITY_REASON_CODES
     ):
@@ -373,6 +390,13 @@ def decide_recovery(
             failure_class,
             code,
             "Keep the exact provider attempt while its scheduler waits for capacity.",
+        )
+    if context.outputs.all_valid:
+        return RecoveryDecision(
+            RecoveryAction.REUSE_COMPLETED_WAVE,
+            failure_class,
+            "DECLARED_OUTPUTS_VALID",
+            "Every declared S3 output is valid; no provider relaunch is needed.",
         )
     if context.infrastructure_recoveries >= context.max_infrastructure_recoveries:
         action = (
@@ -386,13 +410,6 @@ def decide_recovery(
             failure_class,
             "INFRASTRUCTURE_RECOVERY_EXHAUSTED",
             "The finite infrastructure recovery policy is exhausted; cancel the exact live attempt when present, then inspect the durable attempt history before explicitly starting or resuming a run.",
-        )
-    if context.outputs.all_valid:
-        return RecoveryDecision(
-            RecoveryAction.REUSE_COMPLETED_WAVE,
-            failure_class,
-            "DECLARED_OUTPUTS_VALID",
-            "Every declared S3 output is valid; no provider relaunch is needed.",
         )
     if not context.outputs.all_absent:
         return RecoveryDecision(
@@ -528,6 +545,34 @@ class WorkflowRunSupervisor:
             },
         }
         base["event_uri"] = self.ledger.record(base)
+        if (
+            decision.action is RecoveryAction.REUSE_COMPLETED_WAVE
+            and observation.state in {BackendState.QUEUED, BackendState.RUNNING}
+        ):
+            cancellation = _sanitized_mapping(self.adapter.cancel_exact(identity))
+            result = {
+                **base,
+                "recorded_at": utc_now(),
+                "phase": "cancellation",
+                "cancellation": cancellation,
+            }
+            cancel_status = str(cancellation.get("status") or "").lower()
+            if not bool(cancellation.get("exact")) or cancel_status not in {
+                "cancelled",
+                "canceled",
+                "failed",
+                "succeeded",
+            }:
+                blocked = RecoveryDecision(
+                    RecoveryAction.BLOCK_RELAUNCH,
+                    FailureClass.UNKNOWN,
+                    "CANCELLATION_UNVERIFIED",
+                    "Verify terminal state for the exact provider attempt before reusing completed outputs.",
+                )
+                result["classification"] = blocked.failure_class.value
+                result["recovery"] = blocked.to_dict()
+            result["event_uri"] = self.ledger.record(result)
+            return result
         if decision.action is RecoveryAction.CANCEL_AND_TERMINALIZE:
             cancellation = _sanitized_mapping(self.adapter.cancel_exact(identity))
             result = {

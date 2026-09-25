@@ -269,6 +269,12 @@ def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
         if step.get("name") == "Pre-publication all-severity secret scan"
     )
     script = secret["run"]
+    assert (
+        secret["env"]["LIBERO_DOCKER_SOCKET"]
+        == "${{ steps.libero-docker.outputs.sock }}"
+    )
+    assert 'docker_socket="${LIBERO_DOCKER_SOCKET#unix://}"' in script
+    assert '-v "${docker_socket:-/var/run/docker.sock}:/var/run/docker.sock"' in script
     assert "--scanners secret" in script
     assert "--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL" in script
     assert "--exit-code 1" in script
@@ -517,3 +523,23 @@ def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expa
         )
         assert result.returncode != 0
     assert len(recorder.read_text().splitlines()) == 3
+
+
+LIBERO_DOC = ROOT / "docs/workbench/byof-libero.md"
+
+
+def test_libero_namespace_claim_requires_continuous_isolation_evidence() -> None:
+    """Sampled inventories must never be presented as run-long isolation proof."""
+
+    text = LIBERO_DOC.read_text(encoding="utf-8")
+    start = text.index("Before a future run,\n")
+    end = text.index("The execution and payload-proof kubeconfig contexts", start)
+    contract = text[start:end]
+    for required in (
+        "not a run-long isolation proof",
+        "admission-enforced exclusive-writer policy",
+        "gap-free Kubernetes watch or audit-log interval",
+        "Every unexpected\ncreate, update, or delete event fails qualification",
+        "must not claim run-long isolation",
+    ):
+        assert required in contract

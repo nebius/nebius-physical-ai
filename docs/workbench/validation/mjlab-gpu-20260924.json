@@ -1,0 +1,374 @@
+{
+  "schema_version": "npa.mjlab.gpu-qualification.v1",
+  "verified_on": "2026-09-24",
+  "image": {
+    "reference": "npa-mjlab:dev-7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+    "image_config_id": "sha256:f785b188a74ebca4eb6e79f633d4e663fd0bc67a60f7ba85f06bc8aa579c5a25",
+    "source_sha": "7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+    "archive_sha256": "8bbe7f36e6dce3e1007a0a3f422f43fc7e348d0c0fe092a2e9da13c1bd1de168",
+    "archive_bytes": 5331650312
+  },
+  "publication": "Private operator candidate; no registry manifest digest or public release is claimed.",
+  "harness": "npa/scripts/qualify_mjlab_gpu.py",
+  "harness_source_sha": "7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+  "training": {
+    "ppo_updates_per_training_call": 2,
+    "num_envs": 64,
+    "seed": 42,
+    "purpose": "Functional execution and artifact integrity; policy convergence and throughput were not measured."
+  },
+  "evaluation": {
+    "episodes_per_case": 8,
+    "num_envs": 4
+  },
+  "rtx_pro_6000": {
+    "schema_version": "npa.mjlab.gpu-acceptance.v1",
+    "passed": true,
+    "cases": {
+      "cartpole": {
+        "task": "Mjlab-Cartpole-Balance",
+        "gpu_count": 1,
+        "checkpoint_sha256": "bc385e16bcd720b3c3d9d4a6aafe420657da0452d441646feb47d757bdbc3f17",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 9.120156223576277,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "c7e69c3ada79cb0d29451d8e499587e71b8d071b50e579e8748011eba7e79c72",
+        "artifact_hash_readbacks": 11
+      },
+      "g1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-G1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "0169e2699de18961bbb18a0e5c258be2050d2ee55a1393e78ff536681541961d",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 2.793643232624163,
+        "survival_fraction": 0.0,
+        "video_frames": 68,
+        "onnx_sha256": "26faa22d881ea42dee16c123ece0896253d216790c02e0f80e069f19c0388991",
+        "artifact_hash_readbacks": 13
+      },
+      "go1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-Go1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "29fddf0922f370368432b3407be28dc446d43ee3e1f32cd9d270489c69ccda2a",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 77.10932347690687,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "247cc9e195f824b38a38d9c310d76cd59ca65692103c7315d902a50ed6be0ffd",
+        "artifact_hash_readbacks": 12
+      },
+      "yam": {
+        "task": "Mjlab-Lift-Cube-Yam",
+        "gpu_count": 1,
+        "checkpoint_sha256": "91b0f2e66eb084af0334a6b9983a0dd9085db1ffef1166386410ce5274f28a58",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 12.308130647958023,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "0c4f477e088eb9cd7205b75895ccb49b05093e193b529629d40c7cdf4a8abb1e",
+        "artifact_hash_readbacks": 12
+      }
+    },
+    "hardware": {
+      "devices": [
+        {
+          "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+          "capability": [
+            12,
+            0
+          ]
+        }
+      ],
+      "torch": "2.11.0+cu128",
+      "torch_cuda": "12.8",
+      "torch_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "image_source_sha": "7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+      "versions": {
+        "mjlab": "1.6.0",
+        "mujoco": "3.11.0",
+        "mujoco-warp": "3.11.0",
+        "warp-lang": "1.17.0",
+        "torch": "2.11.0+cu128",
+        "rsl-rl-lib": "5.4.2"
+      }
+    },
+    "service": {
+      "unauthenticated_status": 401,
+      "out_of_scope_status": 400,
+      "concurrent_status": 409,
+      "resumed_iteration": 2,
+      "resumed_optimizer_step": 80.0,
+      "episodes_completed": 8
+    },
+    "counts": {
+      "reports_read_back": 15,
+      "artifact_hashes_read_back": 58,
+      "measured_episodes": 40
+    },
+    "driver": "580.173.02",
+    "video": {
+      "sha256": "88aa3ba558d465826c482f59324dca3cd73e18a1bb705310625c36f25f84048f",
+      "bytes": 40448,
+      "frames": 68
+    },
+    "golden_smoke": {
+      "exit_code": 0,
+      "additional_measured_episodes": 2
+    },
+    "evidence_archive_sha256": "37fe1e924632eb38ba70c9b06a4d40e179e333f652829379ff852063f8265dc8"
+  },
+  "restricted_payload_scan": {
+    "source": "local-docker-stream",
+    "history_only": false,
+    "entries_scanned": 89322,
+    "verdict": "clean",
+    "source_sha": "7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+    "scope": "Every saved image layer and image history; this is not the complete public security/license/bootstrap gate."
+  },
+  "not_qualified": [
+    "Public image publication",
+    "Kubernetes deployment",
+    "Submitted SkyPilot workflow",
+    "Motion-tracking inputs",
+    "Camera-policy training",
+    "B300",
+    "Multi-node training",
+    "Converged policy quality"
+  ],
+  "execution": {
+    "cloud": "Nebius",
+    "region": "us-central1",
+    "capacity": "reserved",
+    "project_scope": "dedicated qualification project"
+  },
+  "unit_validation": {
+    "suite_source_sha": "b5844788a03f3c93bb8f776f7190a43691a274e2",
+    "passed": 27001,
+    "skipped": 183,
+    "xpassed": 1,
+    "failed_initially": 7,
+    "failed_cases_retested": 7,
+    "passed_after_optional_onnx_dependencies_and_rerun": 4,
+    "remaining_failures_reproduced_on_base": 3,
+    "base_sha": "c2142d9326f907910d7b6165a683363545b6519b",
+    "shared_failures": [
+      "tests/cli/test_leisaac_transport.py::test_runtime_retries_an_unexpected_clean_simulator_exit",
+      "tests/cli/test_skypilot_bootstrap.py::test_skypilot_bootstrap_reports_missing_python",
+      "tests/test_home_config_isolation.py::test_no_loaded_module_points_at_the_real_npa_directory"
+    ]
+  },
+  "b200": {
+    "schema_version": "npa.mjlab.gpu-acceptance.v1",
+    "passed": true,
+    "cases": {
+      "cartpole": {
+        "task": "Mjlab-Cartpole-Balance",
+        "gpu_count": 1,
+        "checkpoint_sha256": "34d62c022d1e54ed9e02d274d6a8a2db958d881fc5619baa640b6ea088e1dfbf",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 9.346174611744482,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "df0cfa4493282388006db97b7d54bb45cd5a12e1a2233067b093356920d6ef44",
+        "artifact_hash_readbacks": 11
+      },
+      "g1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-G1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "1920a0db6d44a91c2cf73cbe3d5931a1c4f171181352fcba93f4f749ee3a06f4",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 2.8336068116095703,
+        "survival_fraction": 0.0,
+        "video_frames": null,
+        "onnx_sha256": "5a083266a75e203c1b165444abd84dd3272f5cfc9c482e3e4b13e94d261719de",
+        "artifact_hash_readbacks": 12
+      },
+      "go1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-Go1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "5dfc0186bfff1a465cbbb18df03fcecdfaf3ac71d7ced34f9be73dd636253ae7",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 77.09745873278007,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "8a4a3359ceb19acb6fbf4b41a0e431909179632e0a16e8abdd1dc12ca998d246",
+        "artifact_hash_readbacks": 12
+      },
+      "yam": {
+        "task": "Mjlab-Lift-Cube-Yam",
+        "gpu_count": 1,
+        "checkpoint_sha256": "d7478fdbfeaf6f005e440ada7bcc81499b3db48bc9d6e8c68725a19adf7ee581",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 12.31076287117321,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "0d10e37f7d7b4bb1e85dd117c33aa4ed4cc608cb797500d8fc559c513bc9396d",
+        "artifact_hash_readbacks": 12
+      },
+      "multi-gpu": {
+        "task": "Mjlab-Cartpole-Balance",
+        "gpu_count": 8,
+        "checkpoint_sha256": "af5feef8e4d0f5fb829e7e514af8ef68eca918185d81d7276461f2d226965417",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 8.6280883701727,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "21e3d0e20117d2cac5ae2bdfe77e9ee1ede4d7ef1cf692f7064e2b7bfaaa47b8",
+        "artifact_hash_readbacks": 20
+      }
+    },
+    "hardware": {
+      "devices": [
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        },
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        },
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        },
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        },
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        },
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        },
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        },
+        {
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ]
+        }
+      ],
+      "torch": "2.11.0+cu128",
+      "torch_cuda": "12.8",
+      "torch_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "image_source_sha": "7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+      "versions": {
+        "mjlab": "1.6.0",
+        "mujoco": "3.11.0",
+        "mujoco-warp": "3.11.0",
+        "warp-lang": "1.17.0",
+        "torch": "2.11.0+cu128",
+        "rsl-rl-lib": "5.4.2"
+      }
+    },
+    "service": {
+      "unauthenticated_status": 401,
+      "out_of_scope_status": 400,
+      "concurrent_status": 409,
+      "resumed_iteration": 2,
+      "resumed_optimizer_step": 80.0,
+      "episodes_completed": 8
+    },
+    "counts": {
+      "reports_read_back": 18,
+      "artifact_hashes_read_back": 77,
+      "measured_episodes": 48
+    },
+    "driver": "580.173.02",
+    "multi_gpu_telemetry": {
+      "max_simultaneous_gpus_with_additional_compute_workers": 8,
+      "distinct_worker_processes_in_sample": 8,
+      "native_launcher_logged_worker_count": 8
+    },
+    "host_startup": {
+      "container_toolkit": "1.20.0",
+      "runc": "1.5.1",
+      "initial_container_start_exit_code": 125,
+      "initial_error": "create-symlinks hook: bad file descriptor",
+      "application_started_on_initial_attempt": false,
+      "retry_used_same_image_and_configuration": true,
+      "upstream_matching_fix": "https://github.com/NVIDIA/nvidia-container-toolkit/commit/9f4201be9e351fa560e5fc6623cdfbd31d3ec0bc"
+    },
+    "golden_smoke": {
+      "exit_code": 0,
+      "additional_measured_episodes": 2
+    },
+    "evidence_archive_sha256": "60e69dd6449ebe2e4eaca859ccb054166ac06ab5545d0adba9b92aa86d5761b1"
+  },
+  "totals": {
+    "measured_acceptance_episodes": 88,
+    "artifact_hashes_read_back": 135,
+    "additional_golden_smoke_episodes": 4
+  },
+  "packaging_fixes": [
+    {
+      "issue": "Missing HTTP service runtime",
+      "fix_commit": "16ccef6d3fd736491657a36fbdcc3e095fccafad"
+    },
+    {
+      "issue": "Wheel-bundled static FFmpeg executable in a committed layer",
+      "fix_commit": "7ccb0e8cfbf97f414916b0f026b8f204f1277781"
+    }
+  ]
+}

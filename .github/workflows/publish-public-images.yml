@@ -246,7 +246,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Both complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
@@ -258,6 +258,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$DEVELOPMENT_SHA"
           npa/.venv/bin/python -m pytest \
             npa/tests/docker/test_packaging_contract.py \
+            npa/tests/docker/test_libero_image_contract.py \
+            npa/tests/docker/test_libero_image_payload_scan.py \
+            npa/tests/docker/test_libero_runtime_bootstrap.py \
             npa/tests/docker/test_image_payload_scan.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
@@ -374,9 +377,39 @@ jobs:
             exit 1
           fi
 
+      - name: Use the verified LIBERO containerd image store
+        if: matrix.tool == 'libero'
+        id: libero-docker
+        uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          version: v29.1.3
+          set-host: true
+          daemon-config: |
+            {"features": {"containerd-snapshotter": true}}
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
+
+      - name: Fetch immutable LIBERO base provenance metadata
+        if: matrix.tool == 'libero'
+        run: |
+          set -euo pipefail
+          # Metadata only: this fetches Docker Official Images' published in-toto
+          # provenance blob, not an image layer or a runtime payload.
+          crane blob \
+            index.docker.io/library/python@sha256:0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b \
+            > "$RUNNER_TEMP/libero-base-provenance.intoto.json"
+          echo \
+            '0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b  '"$RUNNER_TEMP/libero-base-provenance.intoto.json" | \
+            sha256sum --check --strict
+          crane blob \
+            index.docker.io/library/python@sha256:b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb \
+            > "$RUNNER_TEMP/libero-base-sbom.intoto.json"
+          echo \
+            'b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb  '"$RUNNER_TEMP/libero-base-sbom.intoto.json" | \
+            sha256sum --check --strict
+
 
       # Some public workbench Dockerfiles inherit other immutable public NPA
       # packages. Authenticate pulls here because setup-crane installs an
@@ -404,6 +437,12 @@ jobs:
             --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT" \
             --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg"
 
+      - name: Install the LIBERO OCI archive importer
+        if: matrix.tool == 'libero'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally
@@ -418,19 +457,52 @@ jobs:
             }
             build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")
           fi
-          if [[ "$TOOL" == curobo ]]; then
-            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
-            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
-            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          if [[ "$TOOL" == curobo || "$TOOL" == libero ]]; then
+            source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
+          fi
+          metadata_args=()
+          export_args=(--load)
+          if [[ "$TOOL" == libero ]]; then
+            metadata_args+=(
+              --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
+              --provenance=mode=max
+              --sbom=true
+            )
+            export_args=(
+              --output "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar,tar=true,rewrite-timestamp=true,oci-artifact=true"
+            )
+            export BUILDX_METADATA_PROVENANCE=max
           fi
           docker buildx build \
-            --load \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
+            "${metadata_args[@]}" \
+            "${export_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
             npa
+          if [[ "$TOOL" == libero ]]; then
+            test -s "$RUNNER_TEMP/libero-build-metadata.json"
+            test -s "$RUNNER_TEMP/libero-build.oci.tar"
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --output "$RUNNER_TEMP/libero-build-attestations.json"
+            skopeo copy --override-os linux --override-arch amd64 \
+              "oci-archive:$RUNNER_TEMP/libero-build.oci.tar" \
+              "docker-archive:$RUNNER_TEMP/libero-build.docker.tar:$IMAGE"
+            docker load --input "$RUNNER_TEMP/libero-build.docker.tar"
+            expected_config_digest="$(jq -er '."containerimage.config.digest"' "$RUNNER_TEMP/libero-build-metadata.json")"
+            docker save --output "$RUNNER_TEMP/libero-imported.docker.tar" "$IMAGE"
+            observed_config_digest="$(PYTHONPATH=npa/scripts npa/.venv/bin/python -c \
+              'from pathlib import Path; import sys; from scan_image_libero_payload import _docker_save_config_digest; print(_docker_save_config_digest(Path(sys.argv[1])))' \
+              "$RUNNER_TEMP/libero-imported.docker.tar")"
+            test "$observed_config_digest" = "$expected_config_digest"
+            test "$(docker image inspect --format '{{.RepoTags}}' "$IMAGE")" != "[]"
+          fi
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
         if: matrix.tool != 'ncore'
@@ -439,6 +511,22 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
+          libero_export_container=""
+          cleanup_libero_export() {
+            primary_status=$?
+            trap - EXIT
+            cleanup_status=0
+            if [ -n "$libero_export_container" ] && \
+              ! docker container rm "$libero_export_container" >/dev/null; then
+              cleanup_status=1
+              echo "::error::LIBERO export-container cleanup failed"
+            fi
+            if [ "$primary_status" -ne 0 ]; then
+              exit "$primary_status"
+            fi
+            exit "$cleanup_status"
+          }
+          trap cleanup_libero_export EXIT
           npa/.venv/bin/python - <<'PY'
           import json
           import os
@@ -479,6 +567,35 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_flex_pi_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               > "$RUNNER_TEMP/${TOOL}-flex-pi-payload.json"
+          fi
+          if [ "$TOOL" = libero ]; then
+            libero_export_container="$(docker create "$IMAGE")"
+            docker export --output "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
+              "$libero_export_container"
+            docker container rm "$libero_export_container" >/dev/null
+            libero_export_container=""
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --record-image-inventory \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --exported-rootfs "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --image-inventory-output "$RUNNER_TEMP/${TOOL}-image-inventory.json" \
+              --output "$RUNNER_TEMP/${TOOL}-libero-payload.json"
+            npa/.venv/bin/python - <<'PYENV' >> "$GITHUB_ENV"
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads((Path(os.environ["RUNNER_TEMP"]) / "libero-libero-payload.json").read_text())
+          for key, field in {
+              "LIBERO_IMAGE_INVENTORY_SHA256": "image_inventory_sha256",
+              "LIBERO_CONFIG_DIGEST": "observed_config_digest",
+              "LIBERO_CANONICAL_BUILD_METADATA_SHA256": "canonical_build_metadata_sha256",
+              "LIBERO_BASE_PROVENANCE_SHA256": "base_provenance_sha256",
+          }.items():
+              print(f"{key}={report[field]}")
+          PYENV
+            rm -f "$RUNNER_TEMP/${TOOL}-rootfs.tar"
           fi
           if [ "$TOOL" = antioch ]; then
             npa/.venv/bin/python npa/scripts/scan_image_antioch_payload.py \
@@ -561,15 +678,17 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
+          LIBERO_DOCKER_SOCKET: ${{ steps.libero-docker.outputs.sock }}
         shell: bash
         run: |
           set -euo pipefail
+          docker_socket="${LIBERO_DOCKER_SOCKET#unix://}"
           # Trivy 0.70 always wraps scans in context.WithTimeout and a zero
           # duration expires immediately. Go's largest whole-second duration
           # gives this mandatory gate no practical analysis deadline.
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${docker_socket:-/var/run/docker.sock}:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
@@ -596,12 +715,14 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
+          LIBERO_DOCKER_SOCKET: ${{ steps.libero-docker.outputs.sock }}
         shell: bash
         run: |
           set -euo pipefail
+          docker_socket="${LIBERO_DOCKER_SOCKET#unix://}"
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${docker_socket:-/var/run/docker.sock}:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
               --cache-dir /tmp/trivy/cache \
@@ -616,12 +737,14 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
+          LIBERO_DOCKER_SOCKET: ${{ steps.libero-docker.outputs.sock }}
         shell: bash
         run: |
           set -euo pipefail
+          docker_socket="${LIBERO_DOCKER_SOCKET#unix://}"
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${docker_socket:-/var/run/docker.sock}:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$RUNNER_TEMP:/output" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
@@ -734,6 +857,22 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
+          libero_export_container=""
+          cleanup_libero_export() {
+            primary_status=$?
+            trap - EXIT
+            cleanup_status=0
+            if [ -n "$libero_export_container" ] && \
+              ! docker container rm "$libero_export_container" >/dev/null; then
+              cleanup_status=1
+              echo "::error::LIBERO export-container cleanup failed"
+            fi
+            if [ "$primary_status" -ne 0 ]; then
+              exit "$primary_status"
+            fi
+            exit "$cleanup_status"
+          }
+          trap cleanup_libero_export EXIT
           repository="${IMAGE%:*}"
           exact="${repository}@${DIGEST}"
           test "$(crane digest "$IMAGE")" = "$DIGEST"
@@ -766,6 +905,25 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = libero ]; then
+            libero_export_container="$(docker create "$exact")"
+            docker export --output "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
+              "$libero_export_container"
+            docker container rm "$libero_export_container" >/dev/null
+            libero_export_container=""
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --exported-rootfs "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --expected-image-inventory-sha256 "$LIBERO_IMAGE_INVENTORY_SHA256" \
+              --expected-config-digest "$LIBERO_CONFIG_DIGEST" \
+              --expected-canonical-build-metadata-sha256 "$LIBERO_CANONICAL_BUILD_METADATA_SHA256" \
+              --expected-base-provenance-sha256 "$LIBERO_BASE_PROVENANCE_SHA256" \
+              --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
+            rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
+          fi
           if [ "$TOOL" = antioch ]; then
             docker pull "$exact"
             docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
@@ -850,11 +1008,15 @@ jobs:
           fi
           test "$(gh api "$package_api" --jq .visibility)" = public
           anonymous_config="$(mktemp -d)"
+          anonymous_reference="$IMAGE"
           anonymous_attempt=1
           while true; do
             anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
-            if DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" \
-              >/dev/null 2>"$anonymous_log"; then
+            if {
+              anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$anonymous_reference")" &&
+              DOCKER_CONFIG="$anonymous_config" crane manifest "$anonymous_reference" >/dev/null &&
+              test "$anonymous_digest" = "$DIGEST"
+            } 2>"$anonymous_log"; then
               break
             fi
             cat "$anonymous_log" >&2
@@ -865,6 +1027,12 @@ jobs:
             anonymous_attempt=$((anonymous_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = libero ]; then
+            DOCKER_CONFIG="$anonymous_config" crane pull --format=oci \
+              "$exact" "$RUNNER_TEMP/libero-anonymous.oci"
+            test -s "$RUNNER_TEMP/libero-anonymous.oci/index.json"
+            rm -rf -- "$RUNNER_TEMP/libero-anonymous.oci"
+          fi
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"

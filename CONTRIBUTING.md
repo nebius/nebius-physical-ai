@@ -556,8 +556,10 @@ queue candidate has verified the new path. A timeout rejects, never merges, an
 unvalidated candidate. Optional timing reports run on PR/main validation only;
 their completion is not a prerequisite for reusing already-passed required jobs.
 
-Full suites collect smoke tests and run the CLI install check in the shards,
-avoiding duplicate smoke and subsystem jobs. Cypress runs once in its own job,
+Full suites collect smoke tests in the shards and run the CLI install check in
+the browser job, avoiding duplicate smoke and subsystem jobs. The install check
+runs on Python 3.12 before that job switches interpreters for compatibility tests;
+it no longer extends the last coverage shard. Cypress runs once in its own job,
 never inside a pytest shard. Cached constrained installs, xdist workers, and
 independent job scheduling retain fast feedback without deferring
 coverage until queue admission. Scheduled and manual audits retain four shards
@@ -572,12 +574,17 @@ or renamed files, mode changes, and edits to fenced/indented code, inline code,
 frontmatter, or templates keep full validation. Mixed merge groups use the full
 combined diff, so a prose PR cannot hide a preceding code change.
 
-The scope job executes `npa/scripts/ci_test_scope.py` from the trusted base
-commit, requesting its merge-candidate policy for both PR and queue events. This
+The existing `gitleaks` runner executes `npa/scripts/ci_test_scope.py` from the
+trusted base commit, requesting its merge-candidate policy for both PR and queue events. This
 also prevents the installing PR from inheriting an older base's narrower PR
-policy. A candidate cannot install its own shortcut. Missing base policy keeps
-the full suite; an invalid comparison fails the job. To inspect a selection
-locally with the candidate checked out, pass full commit SHAs:
+policy. Test selection overlaps the PR precheck and needs no additional runner
+before the shards start. The parent passes the prose exception only when all
+three scope outputs agree; missing outputs, standalone runs, and scheduled
+audits retain full coverage. Queue evidence accepts either the prior scope job
+or the successful trusted-selection step inside `gitleaks`. A candidate cannot
+install its own shortcut. Missing base policy keeps the full suite; an invalid
+comparison fails the job. To inspect a selection locally with the candidate
+checked out, pass full commit SHAs:
 
 ```bash
 npa/.venv/bin/python npa/scripts/ci_test_scope.py \
@@ -632,19 +639,27 @@ of the parent workflow can interrupt reporting.
 
 ### Validation concurrency
 
-Queue evidence verification and secret scanning share the `gitleaks` job and
-checkout. A failed verification restores full validation; a failed secret scan
-still blocks the required context. The other required context names are unchanged.
+Queue evidence verification, trusted test selection, and secret scanning share
+the `gitleaks` job and checkout. A failed verification restores full validation;
+a failed secret scan still blocks the required context. The other required
+context names are unchanged.
 
-Operators can configure two repository Actions variables after the organization
-has made approved Ubuntu x64 runner labels available to this repository:
+Operators can configure repository Actions variables after approved Ubuntu
+x64 runners are available to this repository. Repository-scoped disposable Nebius
+CPU runners can provide temporary capacity without organization runner-group
+administration; see the [CPU runner operations guide](.github/ci-runners/README.md)
+for setup, verification, routing rollback, and drain-and-delete commands.
 
 | Variable | Candidate jobs routed to that label | Default |
 | --- | --- | --- |
+| `NPA_CI_SECURITY_RUNNER` | Independent confidentiality and source/dependency scans | Priority label, then `ubuntu-latest` |
 | `NPA_CI_PRIORITY_RUNNER` | Precheck, queue evidence/secrets, confidentiality, source/dependency scans, scope and final aggregation | `ubuntu-latest` |
 | `NPA_CI_TEST_RUNNER` | Full Python/browser tests, docs, runtime and image validation | `ubuntu-latest` |
 
-Use separate capacity for these labels. Main, scheduled and manual audits keep
+For a small CPU pool, configure only `NPA_CI_SECURITY_RUNNER`. Leave admission,
+test shards, and final aggregation on hosted runners so VM replacement cannot
+hold up the merge path. Branches adopt the new security routing after refreshing
+their workflow files. Use separate capacity for configured labels. Main, scheduled and manual audits keep
 using standard runners, as do background image builds unless their existing
 `build_runner_label` input selects another pool. The priority pool must support
 the precheck's Python dependencies and ordinary GitHub Ubuntu tools; use approved
