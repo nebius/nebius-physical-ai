@@ -273,6 +273,19 @@ therefore records:
 The runner must call `inspect_rollout()` on preserved original bytes before it
 creates a case receipt. A self-declared digest is not verified evidence.
 
+## TRAIN semantic labels
+
+The [task-1 semantic monitor](../../npa/src/npa/workflows/behavior_challenge/semantic_monitor/README.md)
+provides an offline labeler for `picking_up_trash`. It derives persistent grasp,
+released placement, and failure labels from explicitly authorized TRAIN traces,
+and splits episodes deterministically for fitting and calibration. Delayed stage
+proposals use the current completion state; drops and re-grasping invalidate it.
+
+The package also defines an allowed-observation inference interface. It does not
+collect simulator traces, train a monitor, or modify policy execution. Real TRAIN
+predicate collection, stage-to-object bindings, model calibration, and transport
+integration are required before a learned monitor can be evaluated.
+
 ## Paired comparison and claim scope
 
 `compare_panels()` accepts only the complete baseline and candidate aggregates
