@@ -121,6 +121,11 @@ class _TrainingGraphs:
         if not self.module.training or not torch.is_grad_enabled():
             self.evaluation_calls += 1
             return self.original(*args, **kwargs)
+        # The eager trainer completes backward after each MoT invocation.
+        # State that boundary explicitly so lazy backward compilation cannot
+        # advance the graph manager's automatic iteration while saved forward
+        # tensors are still needed. Gradient accumulation remains in native DDP.
+        torch.compiler.cudagraph_mark_step_begin()
         # Dynamo's DDP optimizer can partition even a fullgraph compilation.
         # Keep this capture boundary whole: its saved forward tensors must stay
         # alive until its one AOT backward completes. Native DDP and no_sync

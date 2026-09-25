@@ -20,12 +20,14 @@ def compiled_model(monkeypatch):
     counters = {"skipped_cuda_graphs": 0, "compiled_graphs": 0}
     recorded = {"forward": 0, "backward": 0, "inference": 0}
     calls = []
+    boundaries = []
 
     def compile_forward(function, **options):
         assert options == {"backend": "cudagraphs", "fullgraph": True, "dynamic": False}
 
         def execute(*args, **kwargs):
             assert torch._dynamo.config.optimize_ddp is False
+            assert len(boundaries) == len(calls) + 1
             calls.append(True)
             counters["compiled_graphs"] = 1
             return function(*args, **kwargs)
@@ -33,6 +35,9 @@ def compiled_model(monkeypatch):
         return execute
 
     monkeypatch.setattr(torch, "compile", compile_forward)
+    monkeypatch.setattr(
+        torch.compiler, "cudagraph_mark_step_begin", lambda: boundaries.append(True)
+    )
     monkeypatch.setattr(graphs, "_check_runtime", lambda: None)
     monkeypatch.setattr(graphs, "_compiler_counters", lambda: counters.copy())
     monkeypatch.setattr(graphs, "_recorded_graphs", lambda: recorded.copy())
@@ -50,6 +55,7 @@ def compiled_model(monkeypatch):
         counters=counters,
         recorded=recorded,
         calls=calls,
+        boundaries=boundaries,
     )
 
 
@@ -74,6 +80,7 @@ def test_capture_wrapper_preserves_state_gradients_and_eager_evaluation(compiled
     with torch.no_grad():
         assert torch.equal(model.mot(sample), reference(sample))
     assert len(fixture.calls) == 3
+    assert len(fixture.boundaries) == 3
     fixture.recorded.update(forward=1, backward=1)
     receipt = model._npa_training_graphs.receipt()
     assert receipt["compiled_training_calls"] == 3
