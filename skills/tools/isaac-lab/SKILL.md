@@ -208,6 +208,8 @@ source-hashed task adapter, exact image digest, self-contained scene USDZ and
 deterministic train/evaluation/probe cases. Native RSL-RL trains and reloads an
 actual checkpoint; no stock task or CPU fallback proves this integration.
 GPU acceptance is unverified until the opt-in native test runs with those inputs.
+The development extra pins CPU OpenUSD so scene and visibility regressions run
+in CI; those checks do not substitute for native RTX sensor/physics acceptance.
 
 Validate peer-contact exclusion separately from observation isolation. The
 supported RGB-D mode is `all_robot_geometry_hidden`: hide every robot's render

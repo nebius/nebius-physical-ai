@@ -136,6 +136,8 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # Parse real USD scene and robot-visibility fixtures in CPU tests.
+    "usd-core==26.8",
     # Actual loopback HTTP regression coverage for deployed service boundaries.
     "uvicorn>=0.52.4",
     # The served agent audit explicitly selects Uvicorn's websockets protocol.
