@@ -14,6 +14,12 @@ demonstrate physical robot transfer. Prepared scenes keep simulation inputs
 identical when comparing different agents. The ordinary hosted scene-planning
 workflow remains available independently.
 
+`multimodel-scenes.json` extends the original matrix to six cases by varying
+seed, lighting and colors for both transfer layouts and the failed-grasp control.
+Use it with the same commands below. The
+[multi-model repair report](../../../../docs/workbench/specialists-multimodel-repair.md)
+records real Flash and full-GLM code changes, failed attempts and native validation.
+
 Install `npa[robot-sdg,adapter]` in the checkout's own virtualenv and provide
 `ffmpeg`. On headless Linux install `libosmesa6` and set `MUJOCO_GL=osmesa` and
 `PYOPENGL_PLATFORM=osmesa` before starting Python. Native dataset verification
