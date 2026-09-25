@@ -71,6 +71,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
+| `npa-mjlab` (unpublished) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |

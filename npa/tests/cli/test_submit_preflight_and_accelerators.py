@@ -357,6 +357,74 @@ def test_submit_accelerator_readiness_uses_resolved_config_overrides(
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
 
 
+def test_submit_accelerator_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-accelerator-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+
+    def reject_daemon(**_kwargs) -> None:  # noqa: ANN003 - test stub
+        raise ValueError(f"daemon rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        reject_daemon,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "daemon rejected <redacted>" in output
+    assert opaque_secret not in output
+
+
+def test_submit_accelerator_catalog_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-catalog-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        lambda **_kwargs: None,
+    )
+
+    def reject_catalog(*_args, **_kwargs) -> None:  # noqa: ANN002,ANN003
+        raise ValueError(f"catalog rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        reject_catalog,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "catalog rejected <redacted>" in output
+    assert opaque_secret not in output
+
+
 @pytest.mark.parametrize(
     ("config_overrides", "expected"),
     [({}, "B200:1"), ({"gpu_type": "H200", "gpu_count": "2"}, "H200:2")],

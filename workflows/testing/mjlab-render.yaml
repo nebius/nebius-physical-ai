@@ -1,0 +1,31 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: mjlab-render
+  description: Evaluate a trained native MJLab checkpoint and publish its actual
+    first-episode MP4 and self-contained HTML report.
+config:
+  bucket: example-bucket
+  prefix: runs/{{run.id}}/mjlab-render
+  mjlab_task: Mjlab-Velocity-Flat-Unitree-G1
+  checkpoint_uri: s3://{{config.bucket}}/mjlab/trained/checkpoint.pt
+  mjlab_uri: s3://{{config.bucket}}/{{config.prefix}}/
+  episodes: '32'
+  mjlab_seed: '43'
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+initial: render
+states:
+  render:
+    toolRef: workbench.mjlab.render
+    resources: gpu
+    outputs:
+    - uri: '{{config.mjlab_uri}}mjlab_eval.json'
+    - uri: '{{config.mjlab_uri}}episodes.json'
+    - uri: '{{config.mjlab_uri}}rollout.mp4'
+    - uri: '{{config.mjlab_uri}}rollout.html'
+    terminal: true
