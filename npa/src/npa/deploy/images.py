@@ -81,6 +81,7 @@ CONTAINER_IMAGE_NAMES = {
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
     "curobo": "npa-curobo",
+    "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
 }
@@ -178,7 +179,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {"openpi", "curobo", "ncore", "robomimic", "sam3"}
 )
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "robocasa"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
 NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
 # Neutral candidates have not yet established exact built-byte redistribution
 # eligibility. They are neither known-restricted nor eligible for public delivery.
@@ -332,6 +333,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128-r3",
     "curobo": "0.8.0-cuda13-b300-unbuilt",
+    "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
