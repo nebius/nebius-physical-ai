@@ -16,6 +16,12 @@ VERIFIED = "VERIFIED"
 VERIFICATION_UNAVAILABLE = "VERIFICATION_UNAVAILABLE"
 CACHED = "CACHED"
 
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)([\"']?[a-z0-9_-]*"
+    r"(?:token|password|secret|api[_-]?key|authorization)"
+    r"[a-z0-9_-]*[\"']?\s*[:=]\s*)"
+    r"(?:bearer\s+)?[\"']?([^\s,;}\]\"']+)"
+)
 _HORIZONTAL_WHITESPACE = r"[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]"
 _SECRET_ASSIGNMENT_PREFIX = re.compile(
     r"(?i)(?<![a-z0-9_-])"
