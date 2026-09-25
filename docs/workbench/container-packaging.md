@@ -617,12 +617,12 @@ build hook.
 ### Neutral robomimic candidate
 
 `npa-robomimic` is a quarantined example of a split runtime boundary. The
-intended image bakes pinned MIT robomimic source and the neutral Debian closure
+published development image bakes pinned MIT robomimic source and the neutral Debian closure
 on a digest-pinned Python base; its complete Python dependency map is fetched
 at runtime. It must contain no
 torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
 credential, or output. `scan_image_robomimic_payload.py` must inspect every
-layer and OCI history after a future authorized build.
+layer and OCI history for each build and publication.
 
 Its packaging class is `public` for the neutral bootstrap. The image delivers
 locked Debian and CPython source archives with the retained package notices.
@@ -636,12 +636,15 @@ only after the customer entitlement and credential checks, then independently
 verify installed files and `RECORD` before publishing a private runtime tree;
 it never accepts terms or logs the credential. Public PyPI/PyTorch requests are
 anonymous, while credentials are bound to their approved vendor origin. This
-packaging split does not supply distribution, use, or service rights. Until an
-unexpired customer-created run/manifest entitlement, transaction
-authorization, built-byte/security/SBOM/provenance gates, exact-digest
-B200 qualification, and anonymous pull proof all pass, the
-tool remains in `UNVALIDATED_PUBLICATION_TOOLS`, is included in
-`PUBLICATION_QUARANTINE_TOOLS`, and has no public catalog row.
+packaging split does not supply distribution, use, or service rights. The
+producer-bound development image passed its publication gates, anonymous blob
+readback, and managed B200 smoke. Its separately declared supplemental runtime
+also completed full Lift training and rollout evaluation on RTX PRO 6000; this
+does not replace the committed standard runtime contract. See the
+[development qualification and immutable digest](container-image-catalog.md#images-outside-the-supported-public-release-inventory).
+The tool remains in `UNVALIDATED_PUBLICATION_TOOLS` and
+`PUBLICATION_QUARANTINE_TOOLS` until a supported release is explicitly accepted;
+it has no supported public release row or default-image promotion.
 
 ## Platform scope
 

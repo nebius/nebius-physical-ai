@@ -615,25 +615,35 @@ And no published image has a recorded L40S capability run; those cells are
 supported, blocked, not routed, unverified, or CPU-only rather than verified or
 historical evidence.
 
-## Intentionally not published as separate images
+## Images outside the supported public release inventory
 
-- **`npa-robomimic`** is a quarantined, unbuilt Phase A neutral candidate, not a
-  published image. Its intended bytes are pinned MIT robomimic source plus the
-  Debian/bootstrap closure on a digest-pinned Python base; the historical
-  40-entry hash lock is verifier evidence only. The selected 62-entry
-  public/CUDA/PyTorch/vendor runtime map is fetched into the customer-owned
-  runtime volume after entitlement and exact inventory checks. PyTorch,
-  torchvision, Triton, NVIDIA CUDA/cuDNN/NCCL distributions, weights, official
-  Lift PH data, populated runtime cache, credentials, and outputs are excluded.
-  The CUDA runtime is a separate exact-inventory read-only operator mount. Its
-  access requires a customer-created record bound to the customer, run, exact
-  runtime lock and inventory, official terms, and expiry; that record does not
-  grant redistribution or publication. No accepted digest, built-byte scan, SBOM,
-  provenance, private B200 result, anonymous pull proof, or public availability
-  is claimed; `NEUTRAL_UNBUILT_CANDIDATE_TOOLS` and the composed
-  `PUBLICATION_QUARANTINE_TOOLS` mechanically preserve quarantine. Its packaging
-  class is `unvalidated`, so the source design does not prematurely assert public
-  redistribution eligibility before an exact selected-byte licence review.
+- **`npa-robomimic`** has a public neutral development image from producer
+  `7a66a3b604cb0740314bac76bead5fed0f54f293`, published as
+  `ghcr.io/nebius/nebius-physical-ai/npa-robomimic@sha256:6bdea3d866d07ac0661ff8ba585177e1bb2079501aaf46d7cbf0b13a8aa44a80`.
+  The [trusted build](https://github.com/nebius/nebius-physical-ai/actions/runs/35783662126)
+  enforced source delivery, payload, security, SBOM, and provenance gates.
+  Anonymous readback verified all 12 OCI blobs (516,425,997 bytes). The managed
+  B200 smoke completed four optimizer updates, heldout validation, checkpoint
+  reload, action inference, and verified artifact upload. These are development
+  qualification results; no supported release or default-image promotion has
+  been made. Its packaging class is `public`, while
+  `UNVALIDATED_PUBLICATION_TOOLS` and `PUBLICATION_QUARANTINE_TOOLS` keep it out
+  of the supported public release table.
+
+  The image contains pinned MIT robomimic source and a neutral Debian/bootstrap
+  closure. CUDA/PyTorch/vendor runtime wheels, weights, Lift PH data, populated
+  caches, credentials, and outputs remain outside the image. The standard
+  62-entry runtime is a separately authorized, exact-inventory read-only mount;
+  access records do not grant redistribution rights.
+
+  A supplemental qualification of that same image with a separately declared
+  runtime bundle completed 2,000 epochs and 200,000 CUDA optimizer updates on
+  RTX PRO 6000, then succeeded on 50/50 Lift episodes and decoded 2,244 frames.
+  Learning and inference used CUDA, rendering used NVIDIA EGL, and MuJoCo
+  physics used CPU. That external runner and expanded runtime bundle are not
+  the committed standard workflow or its original locked runtime. See
+  [the PR evidence](https://github.com/nebius/nebius-physical-ai/pull/452) for
+  their scope and artifact hashes.
 
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
