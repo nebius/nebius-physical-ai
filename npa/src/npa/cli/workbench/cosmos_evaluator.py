@@ -185,6 +185,22 @@ def evaluate_cmd(
             "holdout uses disjoint decoded frames for final validation."
         ),
     ),
+    attribute_evidence_mode: str = typer.Option(
+        "full-frame",
+        "--attribute-evidence-mode",
+        help=(
+            "Attribute image evidence: full-frame preserves upstream behavior; "
+            "source-relative-change uses a fail-closed changed-surface crop for "
+            "surface attributes while keeping lighting full-frame."
+        ),
+    ),
+    attribute_lighting_vlm_model: str = typer.Option(
+        "",
+        "--attribute-lighting-vlm-model",
+        help=(
+            "Optional VLM used only for the lighting question; empty uses --vlm-model."
+        ),
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.json, "--output", help="Output format."
     ),
@@ -223,6 +239,8 @@ def evaluate_cmd(
             vlm_model=vlm_model,
             max_clips=max_clips,
             attribute_sample_policy=attribute_sample_policy,
+            attribute_evidence_mode=attribute_evidence_mode,
+            attribute_lighting_vlm_model=attribute_lighting_vlm_model,
         )
     except CosmosEvaluatorError as exc:
         _fail(str(exc))

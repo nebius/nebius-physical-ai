@@ -51,6 +51,11 @@ reuses its loaded model between batches.
 | Use two GPUs, replace an actor, or stop active inference | [Distributed and recovery checks](distributed-checks.md) |
 | Resume an interrupted driver from verified shards | [Checkpoint resume](../../../../docs/testing/ray-clip-checkpoint-resume.md) |
 | Preserve results in private S3 and restore them | [Archive and restore](../../../../docs/testing/ray-clip-archive.md) |
+
+Archive validation supports the initial local tables written by LanceDB 0.30.2
+and 0.39.0, including the newer version-hint file and data format 2.2. It checks
+the complete local manifest and transaction before opening a Lance reader; see
+the archive guide for the supported format boundaries.
 | Review measured validation and its limits | [Recorded audit](../../../../docs/architecture/ray-fast-development-audit.md) |
 
 Save and verify outputs before cleanup. Follow the main guide's exact finish

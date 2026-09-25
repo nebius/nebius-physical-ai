@@ -50,9 +50,9 @@ def test_ppo_config_builds_independent_train_cfg(genesis_modules):
 
     ppo = train_teacher.PPOConfig()
     cfg = ppo.to_train_cfg()
-    cfg["policy"]["actor_hidden_dims"].append(64)
+    cfg["actor"]["hidden_dims"].append(64)
 
-    assert cfg["policy"]["class_name"] == "ActorCritic"
+    assert cfg["actor"]["class_name"] == "MLPModel"
     assert cfg["algorithm"]["class_name"] == "PPO"
     assert ppo.actor_hidden_dims == [256, 256, 128]
 

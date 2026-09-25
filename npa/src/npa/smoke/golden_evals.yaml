@@ -34,6 +34,33 @@
 format: npa_golden_evals_v1
 
 containers:
+  antioch:
+    image: npa-antioch
+    dockerfile: npa/docker/workbench/antioch/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        CPU-only control plane for durable Antioch simulation submission,
+        reconciliation, cancellation, collection, offline policy-data export,
+        and a same-pod tunnel/relay to a cluster-local policy Service.
+    safety:
+      runs_as: "10001"
+      base_image: python:3.12-slim-bookworm
+      network: authenticated FastAPI control plane on :8789
+      external_fetch: ["operator-authorized digest-pinned Antioch CLI at runtime"]
+      notes: >-
+        Contains no simulator engine, proprietary Antioch wheel, credentials, or
+        customer data. The smoke proves the token boundary, system-info route,
+        CPU-only classification, and absence of the proprietary distribution;
+        authenticated vendor health is covered by the separate live integration.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_antioch_functional
+      command: python -m npa.smoke.test_antioch_functional
+      gpu: none
+      timeout_seconds: 60
+      status: ready
+
   openpi:
     image: npa-openpi
     dockerfile: npa/docker/workbench/openpi/Dockerfile
@@ -983,6 +1010,27 @@ containers:
       timeout_seconds: unlimited
       status: gpu-gated
 
+  sam3:
+    image: npa-sam3
+    dockerfile: npa/docker/workbench/sam3/Dockerfile
+    physical_ai:
+      useful: true
+      role: SAM 3.1 text-prompted video segmentation with per-frame object masks.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm (digest pinned)
+      network: Operator-only pinned source, model and CUDA runtime fetch
+      external_fetch: [github, huggingface, pytorch-cu130]
+      notes: >-
+        Neutral bootstrap; no SAM source or weights are baked. HF_TOKEN and
+        operator-provided source video required. GPU acceptance is deferred.
+    golden_eval:
+      kind: container-smoke
+      command: python /opt/npa/sam3/runtime.py segment --input-path /inputs/video.mp4 --prompt person --output-path /tmp/npa-sam31-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
   sam2:
     image: npa-sam2
     dockerfile: npa/docker/workbench/sam2/Dockerfile
@@ -1087,6 +1135,27 @@ containers:
       gpu: none
       timeout_seconds: 120
       status: ready
+
+  mjlab:
+    image: npa-mjlab
+    dockerfile: npa/docker/workbench/mjlab/Dockerfile
+    physical_ai:
+      useful: true
+      role: GPU robot learning, measured policy evaluation and ONNX deployment artifacts.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm (digest pinned); CUDA provided by locked wheels
+      network: S3 artifacts only; no model download required for velocity or cartpole tasks
+      external_fetch: [s3]
+      notes: No checkpoints, motion datasets, credentials or populated caches baked.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_mjlab_functional
+      command: python -m npa.smoke.test_mjlab_functional
+      serverless_gpu: h100
+      gpu: required
+      timeout_seconds: 600
+      status: gpu-gated
 
   curobo:
     image: npa-curobo

@@ -1,0 +1,60 @@
+{
+  "format": "npa_sam31_public_development_v1",
+  "date": "2026-09-19",
+  "image": "ghcr.io/nebius/nebius-physical-ai/npa-sam3",
+  "development_sha": "f287041cffa5a703270413e1746348dccb8e7591",
+  "tag": "dev-f287041cffa5a703270413e1746348dccb8e7591",
+  "digest": "sha256:4a1572f2a3cbd9383ffbdc6e489a3282a1f027bbee1d1c446a1c3a82de75131f",
+  "publication_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/35462927253",
+  "architecture": "linux/amd64",
+  "runtime_user": "ubuntu",
+  "compressed_layer_bytes": 288515606,
+  "anonymous_full_pull": true,
+  "verification_archive_sha256": "ed18077aae365182cb820432cf2c6157346e8d62313b94f4d465023452260b8e",
+  "revision_matches_source": true,
+  "provenance_attestation_verified": true,
+  "sbom_attestation_verified": true,
+  "sam_payload_scan": {
+    "status": "pass",
+    "archives_scanned": 16,
+    "findings": 0
+  },
+  "general_payload_scan": {
+    "status": "clean",
+    "entries_scanned": 14414,
+    "findings": 0
+  },
+  "runtime_bootstrap": {
+    "health": "passed during Linux build",
+    "missing_token_refusal": "passed during Linux build",
+    "cache_populated": false
+  },
+  "model": {
+    "model": "facebook/sam3.1",
+    "model_revision": "daa63191845a41281374e725f4c9e51c7a824460",
+    "checkpoint": "sam3.1_multiplex.pt",
+    "checkpoint_sha256": "0567debeec80ba4ac6369540c6c248025283cb3ff2b92827509e57e2b3541cb6",
+    "source_url": "https://github.com/facebookresearch/sam3.git",
+    "source_revision": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+    "builder_original_sha256": "d71d6d3e485ec3eae48bbc2ba676f401b5853d65c4195a91d077b04da38121c2",
+    "builder_patched_sha256": "bde0602f9a3d9017ba258a1c24b618342c190b5c5b5c74621263d07634349fab"
+  },
+  "gpu_validation": {
+    "status": "deferred",
+    "reason": "Exact SAM 3.1 checkpoint access returns HTTP 403 GatedRepo; no model inference claimed."
+  },
+  "supported_release": false,
+  "independent_security_scan": {
+    "tool": "Trivy 0.74.0",
+    "scanners": [
+      "vulnerability",
+      "secret",
+      "license"
+    ],
+    "severity": "CRITICAL",
+    "ignore_unfixed": true,
+    "ignorefile": ".trivyignore",
+    "exit_code": 0,
+    "reported_vulnerability_or_secret_findings": 0
+  }
+}
