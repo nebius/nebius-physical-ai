@@ -589,3 +589,27 @@ def test_label_write_failure_preserves_prior_and_remaining_rows() -> None:
         "unattempted",
     ]
     assert payload["label_export_remote_mutation"] is True
+
+
+def test_download_preserves_rounded_catalog_size_separately_from_verified_bytes() -> (
+    None
+):
+    storage = FakeStorageClient()
+    descriptor = item("uuid-1", "clip.mp4", "https://external.example/clip", size=4)
+    row = _preallocate_media(descriptor, "s3://result-bucket/run")
+    _transfer_one(
+        descriptor,
+        row,
+        storage_client=storage,
+        downloader=BytesDownloader(b"video"),
+        endpoint_url="",
+    )
+    assert row.outcome == "successful"
+    assert row.source_size == row.destination_size == 5
+    # Revalidation is the checkpoint boundary that previously rejected the row.
+    type(row).model_validate(row.model_dump())
+    metadata = json.loads(
+        storage.s3.objects[("result-bucket", "run/items/uuid-1.json")]
+    )
+    assert metadata["provider_reported_size"] == 4
+    assert metadata["source_size"] == 5

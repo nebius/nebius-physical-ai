@@ -509,7 +509,8 @@ def _transfer_one(
             row.transfer = "download"
             row.destination_exists = True
             row.destination_size = destination.size
-            row.source_size = row.source_size or digest.size
+            # Encord's catalog size can be rounded; the downloaded stream is exact.
+            row.source_size = digest.size
             row.source_checksum = digest.sha256
             row.source_checksum_kind = "sha256"
             row.destination_checksum = destination.checksum
@@ -531,6 +532,7 @@ def _transfer_one(
                 "item_type": row.item_type,
                 "mime_type": row.mime_type,
                 "source_size": row.source_size,
+                "provider_reported_size": int(getattr(item, "file_size", 0) or 0),
                 "destination_uri": row.destination_uri,
             },
             filename=f"{row.item_uuid}.json",

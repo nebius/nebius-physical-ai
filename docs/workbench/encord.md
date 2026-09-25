@@ -20,6 +20,8 @@ Select `upload` explicitly with `--transfer upload` to create an Encord-managed
 copy with an independent retention and deletion lifecycle.
 Repeated uploads may create duplicates. A failed registration never activates
 upload as a fallback.
+Temporary upload files retain their media extension so the Encord SDK can
+identify image MIME types correctly.
 
 Strict client-only cloud integration access may limit Encord features that
 need server-side media access. Confirm the features your Encord project needs
@@ -62,6 +64,12 @@ metadata, stable item UUID, or an explicit identity sidecar establishes
 lineage. A basename never establishes identity. Conflicting exact assertions
 remain unresolved and fail the completed receipt contract.
 
+When S3 does not expose a full-object SHA-256, registration reads and hashes
+the source before changing Encord state. This requires `GetObject` access and
+transfers the source bytes once. A conditional GET and a second HEAD reject
+objects that change during hashing. The receipt retains the opaque ETag
+separately from the computed SHA-256 used by roundtrip verification.
+
 Exact `npa.source_uri` metadata identifies the object even when its HTTP host
 changes between pushes, provided the complete object path still agrees.
 URL-only views of the same UUID may use another host under that same condition.
@@ -90,6 +98,11 @@ Project pulls do not initialize or export labels by default. The explicit
 `--label-export initialize` option may create a label row or change remote
 label status in Encord. Its manifest records that mutation posture.
 
+Downloaded media records use the exact streamed byte count for `source_size`.
+The Encord catalog may report a rounded file size; item metadata retains that
+value separately as `provider_reported_size`. Destination size and SHA-256
+verification still use the actual media bytes.
+
 ## Verify a roundtrip
 
 ```bash
@@ -103,6 +116,14 @@ A roundtrip is verified only when this command consumes both final artifacts
 and passes exact item identity, destination existence, size, and compatible
 checksum checks.
 
+When the source receipt contains SHA-256 but the destination bucket exposes only
+an opaque ETag, verification streams the destination bytes and computes SHA-256.
+The GET is conditional on the observed ETag, its byte count must match, and a
+second HEAD checks that the object did not change during the read. ETags remain
+opaque version identifiers; they are never treated as content hashes. This path
+requires permission to read the destination object and transfers its full size.
+Read failures and changed or mismatched bytes produce a failed durable report.
+
 Three reference specs are available under
 `workflows/testing/`: `encord-push.yaml`,
 `encord-pull.yaml`, and `encord-roundtrip-smoke.yaml`. Each spec writes artifacts
@@ -111,6 +132,39 @@ the operation explicitly and confirm the target integration, folder, dataset or
 source, and S3 prefixes before submission. Pull with `--label-export none`
 leaves Encord label state unchanged; `--label-export initialize` explicitly
 initializes remote label state.
+
+## Run the workflow locally and retain an MP4 demo
+
+Install the `encord` and `adapter` extras, configure Encord and S3 credentials,
+and stage at least one valid MP4 under the selected source prefix. The Encord
+client runs on the local CPU; Encord and object storage remain real services.
+
+Create a private JSON file outside the repository containing config overrides
+for `encord-roundtrip-smoke.yaml`. Explicitly set `bucket`, `prefix`,
+`encord_media_uri`, and `encord_integration`. The prefix should include
+`{{run.id}}` so each run gets new artifacts. The default folder and dataset are
+also scoped to that run. Additional overrides use the spec's existing config
+keys. Set `encord_transfer` to `upload` explicitly and `encord_integration` to
+an empty string only when you want an Encord-managed media copy.
+
+After confirming those targets, run the opt-in live test:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_E2E_ENCORD_CONFIG=/private/encord-config.json \
+NPA_E2E_ENCORD_EVIDENCE_DIR=/private/encord-evidence \
+npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_encord_roundtrip_live.py -q
+```
+
+`NPA_E2E_ENCORD_CONFIG` is required; without it the test skips without contacting
+Encord. `NPA_E2E_ENCORD_EVIDENCE_DIR` is optional and defaults to pytest's temporary
+directory. Its run subdirectory holds private workflow evidence, unchanged
+`demo-*.mp4` returns, and `demo.json` with decoded frame counts and SHA-256 hashes.
+The test executes the shipped push → pull → verify graph, downloads the verified
+MP4 bytes, checks them against the report, and decodes every video frame.
+It preserves remote folders, datasets, and S3 artifacts for review. Keep the
+private workflow evidence out of Git and PRs; publish only sanitized measurements.
 
 ## Python SDK
 

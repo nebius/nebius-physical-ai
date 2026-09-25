@@ -127,6 +127,59 @@ def test_roundtrip_happy_path_persists_completed_report() -> None:
     assert REPORT_URI in store.payloads
 
 
+@pytest.mark.parametrize("returned_bytes", [b"video", b"wrong"])
+def test_opaque_destination_etag_requires_full_byte_sha256(returned_bytes) -> None:
+    receipt, manifest = artifacts()
+    store, storage = setup(receipt, manifest)
+    storage.s3.head_overrides.clear()
+    storage.s3.objects[("result-bucket", "run/media/uuid-1__clip.mp4")] = returned_bytes
+    kwargs = dict(
+        receipt_uri=RECEIPT_URI,
+        manifest_uri=MANIFEST_URI,
+        output_path=REPORT_URI,
+        artifact_store=store,
+        storage_client=storage,
+    )
+    if returned_bytes == b"video":
+        assert verify_roundtrip(**kwargs).passed
+    else:
+        with pytest.raises(EncordToolError, match="verification failed"):
+            verify_roundtrip(**kwargs)
+    report = json.loads(store.payloads[REPORT_URI])
+    assert report["passed"] is (returned_bytes == b"video")
+    assert report["items"][0]["observed_checksum_kind"] == "sha256"
+    assert (
+        report["items"][0]["observed_checksum"]
+        == hashlib.sha256(returned_bytes).hexdigest()
+    )
+    assert any(event[0] == "get" for event in storage.s3.events)
+
+
+def test_readback_failure_still_persists_a_failed_roundtrip(monkeypatch) -> None:
+    receipt, manifest = artifacts()
+    store, storage = setup(receipt, manifest)
+    storage.s3.head_overrides.clear()
+
+    def interrupted(**kwargs):
+        del kwargs
+        raise OSError("readback interrupted")
+
+    monkeypatch.setattr(storage.s3, "get_object", interrupted)
+    with pytest.raises(EncordToolError, match="verification failed"):
+        verify_roundtrip(
+            receipt_uri=RECEIPT_URI,
+            manifest_uri=MANIFEST_URI,
+            output_path=REPORT_URI,
+            artifact_store=store,
+            storage_client=storage,
+        )
+    report = json.loads(store.payloads[REPORT_URI])
+    assert report["passed"] is False
+    assert (
+        "destination content readback failed: OSError" in report["items"][0]["reasons"]
+    )
+
+
 def test_roundtrip_report_uri_for_accepts_prefix_or_exact_json() -> None:
     assert roundtrip_report_uri_for("s3://result-bucket/run") == REPORT_URI
     assert roundtrip_report_uri_for(REPORT_URI) == REPORT_URI
