@@ -30,8 +30,12 @@ from npa.workbench.lichtblick import (
 runner = CliRunner()
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DOCKERFILE_PATH = REPO_ROOT / "npa" / "docker" / "workbench" / "lichtblick" / "Dockerfile"
-PACKAGING_CONTRACT = REPO_ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+DOCKERFILE_PATH = (
+    REPO_ROOT / "npa" / "docker" / "workbench" / "lichtblick" / "Dockerfile"
+)
+PACKAGING_CONTRACT = (
+    REPO_ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+)
 
 
 def test_lichtblick_is_registered_everywhere() -> None:
@@ -112,13 +116,22 @@ def test_serve_plans_viewer_for_s3_mcap() -> None:
     assert payload["viewer_url"].startswith("http://127.0.0.1:8080/?")
     # The co-served artifact URL shares the viewer origin -> no CORS / no
     # mixed-content / no signed URL needed for the browser to fetch the MCAP.
-    assert "ds.url=http%3A%2F%2F127.0.0.1%3A8080%2Fdata%2Frecording.mcap" in payload["viewer_url"]
+    assert (
+        "ds.url=http%3A%2F%2F127.0.0.1%3A8080%2Fdata%2Frecording.mcap"
+        in payload["viewer_url"]
+    )
 
 
 def test_serve_rejects_unsupported_artifact() -> None:
     result = runner.invoke(
         app,
-        ["workbench", "lichtblick", "serve", "--input-path", "s3://bucket/run/notes.txt"],
+        [
+            "workbench",
+            "lichtblick",
+            "serve",
+            "--input-path",
+            "s3://bucket/run/notes.txt",
+        ],
     )
     assert result.exit_code == 1
     assert "unsupported artifact" in result.output.lower()
@@ -138,7 +151,9 @@ def test_build_launch_plan_requires_input() -> None:
 
 
 def test_build_launch_plan_local_path() -> None:
-    plan = build_launch_plan(input_path="/data/local.mcap", image="npa-lichtblick:test", port=9099)
+    plan = build_launch_plan(
+        input_path="/data/local.mcap", image="npa-lichtblick:test", port=9099
+    )
     assert isinstance(plan, LichtblickLaunchPlan)
     assert plan.artifact_name == "local.mcap"
     assert plan.image == "npa-lichtblick:test"
@@ -239,22 +254,33 @@ def _write_multi_schema_mcap(path: str) -> None:
     with open(path, "wb") as handle:
         writer = Writer(handle, compression=CompressionType.NONE)
         writer.start(profile="", library="test")
-        cam_schema = writer.register_schema("foxglove.CompressedImage", "jsonschema", b"{}")
+        cam_schema = writer.register_schema(
+            "foxglove.CompressedImage", "jsonschema", b"{}"
+        )
         cam_ch = writer.register_channel("/rollouts/camera", "json", cam_schema)
         writer.add_message(
-            cam_ch, log_time=0, publish_time=0,
-            data=json.dumps({"data": base64.b64encode(_PNG + b"x").decode(), "format": "png"}).encode(),
+            cam_ch,
+            log_time=0,
+            publish_time=0,
+            data=json.dumps(
+                {"data": base64.b64encode(_PNG + b"x").decode(), "format": "png"}
+            ).encode(),
         )
         log_schema = writer.register_schema("foxglove.Log", "jsonschema", b"{}")
         log_ch = writer.register_channel("/rollouts/critique", "json", log_schema)
         writer.add_message(
-            log_ch, log_time=100, publish_time=100,
+            log_ch,
+            log_time=100,
+            publish_time=100,
             data=json.dumps({"message": "drifted off target"}).encode(),
         )
         sc_schema = writer.register_schema("npa.sim2real.Scalar", "jsonschema", b"{}")
         sc_ch = writer.register_channel("/signal/reward", "json", sc_schema)
         writer.add_message(
-            sc_ch, log_time=200, publish_time=200, data=json.dumps({"value": 0.42}).encode(),
+            sc_ch,
+            log_time=200,
+            publish_time=200,
+            data=json.dumps({"value": 0.42}).encode(),
         )
         writer.finish()
 
@@ -276,7 +302,11 @@ class _FakeRerunSink:
         return None
 
     def EncodedImage(self, contents=None, media_type=None):  # noqa: N802
-        return {"kind": "encoded_image", "media_type": media_type, "bytes": len(contents or b"")}
+        return {
+            "kind": "encoded_image",
+            "media_type": media_type,
+            "bytes": len(contents or b""),
+        }
 
     def TextLog(self, text, **kwargs):  # noqa: N802
         return {"kind": "text_log", "text": text}
@@ -334,7 +364,9 @@ def test_build_rerun_rrd_from_mcap_rejects_bad_output(tmp_path: Path) -> None:
     mcap_path = tmp_path / "m.mcap"
     _write_multi_schema_mcap(str(mcap_path))
     with pytest.raises(LichtblickError):
-        build_rerun_rrd_from_mcap(str(mcap_path), str(tmp_path / "out.bin"), rr=_FakeRerunSink())
+        build_rerun_rrd_from_mcap(
+            str(mcap_path), str(tmp_path / "out.bin"), rr=_FakeRerunSink()
+        )
 
 
 def test_cli_to_rerun_plan() -> None:
@@ -412,7 +444,9 @@ def test_stage_frames_from_s3_builds_mcap(tmp_path: Path) -> None:
 def test_stage_local_mcap_copies_as_is(tmp_path: Path) -> None:
     src = tmp_path / "recording.mcap"
     src.write_bytes(b"\x89MCAP0\r\n")
-    out, count = stage_input_to_mcap(str(src), str(tmp_path / "work"), from_frames=False)
+    out, count = stage_input_to_mcap(
+        str(src), str(tmp_path / "work"), from_frames=False
+    )
     assert count is None
     assert Path(out).read_bytes() == b"\x89MCAP0\r\n"
 

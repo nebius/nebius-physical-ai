@@ -423,9 +423,7 @@ def test_robotwin_materialization_rollback_records_partial_write_receipt(
             raise OSError(errno.EIO, "injected rollback boundary")
         real_write_owner_file(path, raw, directory_fd=directory_fd)
 
-    monkeypatch.setattr(
-        robotwin_preflight, "write_owner_file", fail_after_first_write
-    )
+    monkeypatch.setattr(robotwin_preflight, "write_owner_file", fail_after_first_write)
 
     with pytest.raises(OSError, match="injected rollback boundary") as failure:
         robotwin_preflight._materialize_authorization(
@@ -434,9 +432,7 @@ def test_robotwin_materialization_rollback_records_partial_write_receipt(
 
     recovery = failure.value.recovery_context
     assert calls == 2
-    assert recovery.cleanup_outcomes == (
-        ("runtime-context.json", "removed"),
-    )
+    assert recovery.cleanup_outcomes == (("runtime-context.json", "removed"),)
     assert recovery.residual_names == ()
     assert recovery.directory_fsync == "synced"
     assert not any(materialized_dir.iterdir())

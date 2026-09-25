@@ -76,7 +76,12 @@ def test_destroy_remote_cluster_without_local_state(monkeypatch) -> None:
 
         def get_cluster(self, name, *, project_id=""):
             calls.append(("get", name))
-            return ClusterInfo(id="mk8scluster-a", name="cluster-a", project_id=project_id, status="READY")
+            return ClusterInfo(
+                id="mk8scluster-a",
+                name="cluster-a",
+                project_id=project_id,
+                status="READY",
+            )
 
         def delete_cluster(self, name, *, project_id=""):
             calls.append(("delete", name))

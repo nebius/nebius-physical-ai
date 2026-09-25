@@ -103,9 +103,9 @@ def is_neural_reconstruction_recording(key: str) -> bool:
     Matches the capability id as a path SEGMENT so an unrelated prefix that merely
     contains the phrase is not misclassified.
     """
-    return is_pipeline_recording(key) and (
-        NEURAL_RECONSTRUCTION_APP_ID + "/"
-    ) in str(key or "")
+    return is_pipeline_recording(key) and (NEURAL_RECONSTRUCTION_APP_ID + "/") in str(
+        key or ""
+    )
 
 
 def is_groot_training_recording(key: str) -> bool:

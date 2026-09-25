@@ -30,7 +30,9 @@ def test_workflow_status_sim2real_preempts_s3_bucket_monitor(
 
     def fail_durable(*args: object, **kwargs: object) -> dict:
         del args, kwargs
-        raise AssertionError("durable workflow monitor should not run for sim2real runs")
+        raise AssertionError(
+            "durable workflow monitor should not run for sim2real runs"
+        )
 
     monkeypatch.setattr(
         "npa.workflows.sim2real.monitor.sim2real_run_exists",

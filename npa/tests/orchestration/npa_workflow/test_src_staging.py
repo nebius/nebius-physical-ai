@@ -25,7 +25,9 @@ from npa.orchestration.npa_workflow.src_staging import (
 runner = CliRunner()
 PAIDF_SPEC = (
     Path(__file__).resolve().parents[4]
-    / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+    / "workflows"
+    / "testing"
+    / "physical-ai-data-factory.yaml"
 )
 
 
@@ -33,11 +35,10 @@ def _mock_paidf_submit_boundaries(mocker) -> None:
     """Keep staging tests explicit about earlier Kubernetes/storage gates."""
 
     mocker.patch(
-        "npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {})
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
     )
-    mocker.patch(
-        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True
-    )
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
     mocker.patch(
         "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
         return_value=[],
@@ -457,6 +458,36 @@ def test_stage_src_command_requires_a_bucket() -> None:
 
     assert result.exit_code == 1
     assert "No bucket to stage into" in result.output
+
+
+def test_stage_src_reports_unverifiable_receipt_without_traceback(mocker) -> None:
+    mocker.patch(
+        "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
+        return_value="s3://unit-bucket/custom/fingerprint/",
+    )
+    mocker.patch("npa.clients.config.persist_workflow_src_s3_uri")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=ValueError("existing workflow submission receipt is unavailable"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "stage-src",
+            "--bucket",
+            "unit-bucket",
+            "--prefix",
+            "custom",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.output.startswith("Error:")
+    assert "existing workflow submission receipt is unavailable" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_plan_only_stage_src_plans_without_uploading(

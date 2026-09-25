@@ -51,6 +51,13 @@ on:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
         default: ""
+  push:
+    branches: [main]
+    paths:
+      - "npa/docker/workbench/**"
+  schedule:
+    # Weekly dev image refresh so dev-<sha> tags track HEAD automatically
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -74,11 +81,11 @@ jobs:
       cleanup_matrix: ${{ steps.plan.outputs.cleanup_matrix }}
       cleanup_count: ${{ steps.plan.outputs.cleanup_count }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
@@ -95,6 +102,8 @@ jobs:
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
           CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
           LEROBOT_VERSION: ${{ inputs.lerobot_version }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -105,7 +114,12 @@ jobs:
 
           import yaml
 
-          from npa.deploy.images import development_image_for_tool, development_tag
+          from npa.deploy.image_build_scope import select_public_image_builds
+          from npa.deploy.images import (
+              CONTAINER_IMAGE_NAMES,
+              development_image_for_tool,
+              development_tag,
+          )
 
           target = os.environ["TARGET"].strip().rstrip("/")
           sha = os.environ["DEVELOPMENT_SHA"].strip().lower()
@@ -118,9 +132,28 @@ jobs:
                   raise SystemExit(f"duplicate tool in {name}")
               return values
 
+          def _automatic_build_tools(event_name: str, entries: dict, sha: str) -> list[str]:
+              if event_name == "schedule":
+                  return sorted(
+                      key for key, entry in entries.items()
+                      if entry.get("redistribution") == "public" and key in CONTAINER_IMAGE_NAMES
+                  )
+              if event_name != "push":
+                  return []
+              return select_public_image_builds(
+                  Path.cwd(), os.environ.get("EVENT_BEFORE", ""), sha
+              )
+
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
+          # #504: automatic triggers (push/schedule) must build dev images so
+          # dev-<sha> tags track HEAD; `inputs.*` is undefined on those events,
+          # so derive the tool list instead of resolving an empty matrix.
+          if not build_tools:
+              build_tools = _automatic_build_tools(
+                  os.environ.get("EVENT_NAME", ""), entries, sha
+              )
           lerobot_version = os.environ.get("LEROBOT_VERSION", "").strip()
           if lerobot_version:
               manifest = json.loads(Path("npa/src/npa/deploy/lerobot_version_manifest.json").read_text())
@@ -208,11 +241,11 @@ jobs:
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # The complete-byte paths require the verified CPython 3.12 wheel.
           python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robotwin') && '3.12' || '3.11' }}
@@ -249,6 +282,8 @@ jobs:
             npa/tests/docker/test_image_payload_scan.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
+            npa/tests/docker/test_sam3_runtime.py \
+            npa/tests/docker/test_sam3_image_payload_scan.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
@@ -377,16 +412,16 @@ jobs:
             exit 1
           fi
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
       # Some public workbench Dockerfiles inherit other immutable public NPA
       # packages. Authenticate pulls here because setup-crane installs an
       # intentionally invalid placeholder credential; no registry write occurs
       # until the separately gated push step below.
       - name: Authenticate immutable public base pulls
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -484,6 +519,11 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = antioch ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_antioch_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-antioch-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -514,6 +554,11 @@ jobs:
           if [ "$TOOL" = robotwin ]; then
             # robotwin-publication-gate: payload and complete-byte results are both mandatory.
             bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE" pre
+          fi
+          if [ "$TOOL" = sam3 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_sam3_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-sam3-payload.json"
           fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
@@ -581,6 +626,35 @@ jobs:
               --format table \
               "$IMAGE"
 
+      # Trivy applies --severity to every enabled scanner and has no per-scanner
+      # option, so the CRITICAL policy scan above cannot fail on a private key:
+      # Trivy ranks those HIGH, and it reports an empty secret section rather
+      # than an error. Secrets are therefore rejected in their own scan at every
+      # severity. --ignorefile is omitted deliberately, and that omission is
+      # load-bearing: an ignorefile entry suppresses matching secret findings by
+      # rule ID regardless of severity, so inheriting the vulnerability
+      # ignorefile here would reopen the hole this step exists to close. This is
+      # the split the NCore gate already uses, which is why NCore skips it.
+      - name: Pre-publication all-severity secret scan
+        if: matrix.tool != 'ncore'
+        env:
+          TRIVY_TEMP_DIR: /mnt/npa-trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e TMPDIR=/tmp/trivy \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
+              --scanners secret \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --exit-code 1 \
+              --format table \
+              "$IMAGE"
+
       - name: Generate pre-publication SBOM
         if: matrix.tool != 'ncore'
         env:
@@ -616,14 +690,14 @@ jobs:
 
       - name: Retain only the public FiftyOne validation summary
         if: always() && matrix.tool == 'fiftyone' && steps.fiftyone-validation.outcome != 'skipped'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fiftyone-validation-summary
           path: ${{ runner.temp }}/fiftyone-validation/public-summary.json
           if-no-files-found: error
           # Original logs and raw receipts stay on the runner and are not public artifacts.
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -667,7 +741,7 @@ jobs:
       - name: Attest exact pushed digest provenance
         if: matrix.tool != 'ncore'
         id: provenance-attestation
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -676,7 +750,7 @@ jobs:
       - name: Attest exact pushed digest SBOM
         if: matrix.tool != 'ncore'
         id: sbom-attestation
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -741,6 +815,13 @@ jobs:
           if [ "$TOOL" = robotwin ]; then
             bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" post
           fi
+          if [ "$TOOL" = antioch ]; then
+            docker pull "$exact"
+            docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
+            npa/.venv/bin/python npa/scripts/scan_image_antioch_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-antioch-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
@@ -767,6 +848,11 @@ jobs:
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
+          fi
+          if [ "$TOOL" = sam3 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_sam3_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-sam3-payload.json"
           fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
@@ -836,9 +922,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.cleanup_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -897,9 +983,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -955,7 +1041,7 @@ jobs:
     # acceptance. A build or cleanup dispatch must never fall through into an
     # unrelated all-image release preflight (or a release write when dry_run is
     # false).
-    if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.build_count == '0' && needs.resolve.outputs.cleanup_count == '0' && (needs.build-development.result == 'success' || needs.build-development.result == 'skipped') }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.resolve.result == 'success' && needs.resolve.outputs.build_count == '0' && needs.resolve.outputs.cleanup_count == '0' && (needs.build-development.result == 'success' || needs.build-development.result == 'skipped') }}
     runs-on: ubuntu-latest
     env:
       TARGET: ${{ needs.resolve.outputs.target }}
@@ -965,11 +1051,11 @@ jobs:
       EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
@@ -978,9 +1064,9 @@ jobs:
           python -m venv npa/.venv
           npa/.venv/bin/pip install -e npa
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1002,7 +1088,9 @@ jobs:
           fi
 
       - name: Promote exact validated digests and verify public parity
-        if: ${{ inputs.dry_run == false }}
+        # Manual dispatch only: inputs.* is undefined on push/schedule events,
+        # so automatic runs can never satisfy this condition.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then

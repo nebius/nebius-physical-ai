@@ -65,7 +65,9 @@ class TriggerSpec:
     min_objects: int = 1
     # Parse provenance for reapplying config overrides; resolved fields above remain
     # the runtime contract. Exclude this metadata from durable workflow identity.
-    config_expressions: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+    config_expressions: dict[str, str] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
 
 @dataclass
@@ -231,7 +233,9 @@ def _parse_state(
                     ("maxPolls", "max_polls"),
                     ("minObjects", "min_objects"),
                 )
-                if isinstance(value := trigger_raw.get(key, trigger_raw.get(snake)), str)
+                if isinstance(
+                    value := trigger_raw.get(key, trigger_raw.get(snake)), str
+                )
                 and "{{" in value
             },
         )
@@ -275,7 +279,8 @@ def _parse_state(
     ]
     outputs = [
         ArtifactSpec(
-            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or ""),
+            uri=str(item.get("uri") or ""),
+            schema=str(item.get("schema") or ""),
             kind=str(item.get("kind") or ""),
         )
         for item in (entry.get("outputs") or [])
@@ -517,10 +522,13 @@ def _validate_appearance_profiles(spec: NpaWorkflowSpec) -> None:
 def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
     """Fail before provisioning when a workflow opts into the SAM2 contract."""
 
-    if not any(
-        state.tool_ref == "workbench.cosmos2.transfer_execute"
-        for state in spec.states.values()
-    ) or "segmentation_mode" not in spec.config:
+    if (
+        not any(
+            state.tool_ref == "workbench.cosmos2.transfer_execute"
+            for state in spec.states.values()
+        )
+        or "segmentation_mode" not in spec.config
+    ):
         return
     mode = str(spec.config.get("segmentation_mode") or "off").strip().lower()
     if mode == "off":
@@ -536,15 +544,9 @@ def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
             predicted_iou_threshold=float(
                 spec.config.get("sam2_predicted_iou_threshold") or 0
             ),
-            stability_threshold=float(
-                spec.config.get("sam2_stability_threshold") or 0
-            ),
-            min_area_fraction=float(
-                spec.config.get("sam2_min_area_fraction") or 0
-            ),
-            max_area_fraction=float(
-                spec.config.get("sam2_max_area_fraction") or 0
-            ),
+            stability_threshold=float(spec.config.get("sam2_stability_threshold") or 0),
+            min_area_fraction=float(spec.config.get("sam2_min_area_fraction") or 0),
+            max_area_fraction=float(spec.config.get("sam2_max_area_fraction") or 0),
             max_objects=int(spec.config.get("sam2_max_objects") or 0),
         )
     except (TypeError, ValueError) as exc:
@@ -736,8 +738,12 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
             )
         except TokenError as exc:
             raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
-        if not isinstance(resolved_params, Mapping):  # defensive: params is typed mapping
-            raise NpaWorkflowError(f"state {state.name}: params must resolve to a mapping")
+        if not isinstance(
+            resolved_params, Mapping
+        ):  # defensive: params is typed mapping
+            raise NpaWorkflowError(
+                f"state {state.name}: params must resolve to a mapping"
+            )
         effective_config.update(resolved_params)
         if nodes > 1 and entry.shard_activation_config:
             activation = str(
@@ -759,7 +765,27 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
                     f"{entry.shard_output_config!r} to be a durable s3:// URI; "
                     "without it workers cannot publish and join fenced shards"
                 )
-        if entry.semantic_contract == "cosmos_transfer_control":
+        if entry.semantic_contract == "paidf_direct_translation":
+            from npa.workflows.paidf_upstream import (
+                validate_direct_generation_model,
+                validate_token_factory_endpoint,
+            )
+
+            try:
+                validate_token_factory_endpoint(
+                    str(effective_config.get("vlm_url") or ""), "VLM"
+                )
+                validate_token_factory_endpoint(
+                    str(effective_config.get("llm_url") or ""), "LLM"
+                )
+                validate_direct_generation_model(
+                    str(effective_config.get("paidf_workflow") or ""),
+                    str(effective_config.get("generation_model") or ""),
+                    str(effective_config.get("generation_revision") or ""),
+                )
+            except ValueError as exc:
+                raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+        elif entry.semantic_contract == "cosmos_transfer_control":
             from npa.workbench.cosmos.control_contract import (
                 ControlContractError,
                 validate_control_request,

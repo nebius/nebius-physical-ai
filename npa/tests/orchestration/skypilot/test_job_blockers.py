@@ -146,9 +146,7 @@ def test_pod_initializing_is_progress_not_an_init_container_failure() -> None:
     # A main container waiting with reason PodInitializing means init containers
     # completed and the main container is starting -- normal progress, not the
     # fatal INIT_CONTAINER_FAILED a substring match used to manufacture.
-    runner = _runner(
-        _pods(_waiting_pod("sky-abc-worker-0", "PodInitializing"))
-    )
+    runner = _runner(_pods(_waiting_pod("sky-abc-worker-0", "PodInitializing")))
 
     report = inspect_job_blockers(cluster_name="sky-abc", runner=runner)
 
@@ -448,8 +446,11 @@ def test_kubernetes_diagnostic_failures_are_typed_and_sanitized(
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
-        ("0/4 nodes: 1 Insufficient cpu, 2 Insufficient nvidia.com/gpu, "
-         "2 node(s) did not match Pod's node affinity/selector", "CAPACITY_OR_QUOTA"),
+        (
+            "0/4 nodes: 1 Insufficient cpu, 2 Insufficient nvidia.com/gpu, "
+            "2 node(s) did not match Pod's node affinity/selector",
+            "CAPACITY_OR_QUOTA",
+        ),
         ("Insufficient nvidia.com/gpu", "CAPACITY_OR_QUOTA"),
         ("Insufficient cpu", "CAPACITY_OR_QUOTA"),
         ("GPU capacity temporarily unavailable", "CAPACITY_OR_QUOTA"),
@@ -462,6 +463,8 @@ def test_kubernetes_diagnostic_failures_are_typed_and_sanitized(
     ],
 )
 def test_scheduler_shortage_is_distinct_from_accelerator_mismatch(
-    reason: str, message: str, expected: str,
+    reason: str,
+    message: str,
+    expected: str,
 ) -> None:
     assert classify_pending_reason(reason, message, source="scheduler") == expected

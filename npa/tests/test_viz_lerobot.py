@@ -41,7 +41,9 @@ def _write_lerobot_dataset(root: Path, *, frames: int = 6, fps: int = 30) -> Pat
     )
 
 
-def test_load_render_inputs_reads_dataset_and_caps_default_duration(tmp_path: Path) -> None:
+def test_load_render_inputs_reads_dataset_and_caps_default_duration(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=20, fps=1)
 
     loaded = load_render_inputs(dataset, output_fps=2)
@@ -54,7 +56,10 @@ def test_load_render_inputs_reads_dataset_and_caps_default_duration(tmp_path: Pa
 
 
 def test_resolve_duration_uses_requested_duration_without_cap() -> None:
-    assert resolve_duration_s(frame_count=100, source_fps=10, requested_duration_s=5.0) == 5.0
+    assert (
+        resolve_duration_s(frame_count=100, source_fps=10, requested_duration_s=5.0)
+        == 5.0
+    )
 
 
 def test_select_frames_subsamples_evenly_when_source_is_longer() -> None:
@@ -140,14 +145,18 @@ def test_load_render_inputs_preserves_short_prediction_horizon(tmp_path: Path) -
     assert loaded.predictions_data.shape == (3, G1_STATE_DIM, 3)
 
 
-def test_load_render_inputs_rejects_predictions_longer_than_input(tmp_path: Path) -> None:
+def test_load_render_inputs_rejects_predictions_longer_than_input(
+    tmp_path: Path,
+) -> None:
     dataset = _write_lerobot_dataset(tmp_path, frames=4, fps=4)
     pred_dir = tmp_path / "predictions"
     pred_dir.mkdir()
     actions = np.zeros((5, REAL_G1_ACTION_DIM), dtype=np.float32)
     np.savez_compressed(pred_dir / "predicted_actions.npz", trajectory_0=actions)
 
-    with pytest.raises(VizDataError, match="Prediction frame count cannot exceed input frame count"):
+    with pytest.raises(
+        VizDataError, match="Prediction frame count cannot exceed input frame count"
+    ):
         load_render_inputs(
             dataset,
             predictions_path=pred_dir,

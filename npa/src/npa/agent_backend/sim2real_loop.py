@@ -95,6 +95,7 @@ def gate_with_config_threshold(
     from the drive config when the report omits it, so the documented
     ``config.threshold`` knob actually gates.
     """
+
     def _gate(run_id: str, iteration: int) -> dict[str, Any]:
         raw = gate_fn(run_id, iteration)
         metrics = dict(raw) if isinstance(raw, dict) else {}
@@ -201,6 +202,7 @@ def drive_sim2real_loop(
     cfg = dict(config) if isinstance(config, dict) else {}
     gate_ok = confirmation_ok
     if gate_ok is None:
+
         def gate_ok(token: str, expected: str) -> bool:  # noqa: ANN001
             token = str(token or "").strip()
             expected = str(expected or "").strip()
@@ -301,14 +303,14 @@ def drive_sim2real_loop(
         # No real gate metrics yet: do NOT loop back and relaunch another GPU run
         # on a fabricated/absent signal. Stop and report insufficient signal.
         if require_gate_signal and not evaluation.get("has_signal"):
-            record["reason"] = "no gate success_rate available — stopping (no fabricated loop-back)"
+            record["reason"] = (
+                "no gate success_rate available — stopping (no fabricated loop-back)"
+            )
             iterations.append(record)
             stopped_reason = STOP_INSUFFICIENT_SIGNAL
             break
 
-        record["reason"] = (
-            f"success_rate={sr} < threshold={th}: loop back and adjust"
-        )
+        record["reason"] = f"success_rate={sr} < threshold={th}: loop back and adjust"
         # Diagnose the failure mode and adjust config for the next iteration.
         diagnosis: dict[str, Any] = {}
         if diagnose is not None:
@@ -336,7 +338,9 @@ def drive_sim2real_loop(
             stopped_reason = STOP_ERROR
             break
         if not isinstance(new_cfg, dict) or new_cfg == cfg:
-            record["reason"] = record["reason"] + " (adjustment produced no change — stopping)"
+            record["reason"] = (
+                record["reason"] + " (adjustment produced no change — stopping)"
+            )
             iterations.append(record)
             stopped_reason = STOP_NO_ADJUSTMENT
             break
@@ -386,9 +390,13 @@ def _summarize(
     if stopped_reason == STOP_PROMOTED:
         lines.append("- Checkpoint promoted — gate threshold met on a confirmed run.")
     elif stopped_reason == STOP_UNCONFIRMED_STATUS:
-        lines.append("- Stopped: live status did not confirm the launched run (no fabricated progress).")
+        lines.append(
+            "- Stopped: live status did not confirm the launched run (no fabricated progress)."
+        )
     elif stopped_reason == STOP_INSUFFICIENT_SIGNAL:
-        lines.append("- Stopped: no gate success_rate on the confirmed run yet (no fabricated loop-back / relaunch).")
+        lines.append(
+            "- Stopped: no gate success_rate on the confirmed run yet (no fabricated loop-back / relaunch)."
+        )
     elif stopped_reason == STOP_EXHAUSTED:
         lines.append("- Exhausted outer iterations without meeting the gate threshold.")
     return "\n".join(lines)

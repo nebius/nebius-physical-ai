@@ -61,9 +61,15 @@ def fetch_source(target: Path) -> Path:
     """
     if target.exists():
         raise FileExistsError(target)
-    subprocess.run(["git", "clone", "--no-checkout", SOURCE_URL, str(target)], check=True)
-    subprocess.run(["git", "checkout", "--detach", SOURCE_REVISION], cwd=target, check=True)
-    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=target, text=True).strip()
+    subprocess.run(
+        ["git", "clone", "--no-checkout", SOURCE_URL, str(target)], check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "--detach", SOURCE_REVISION], cwd=target, check=True
+    )
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=target, text=True
+    ).strip()
     if revision != SOURCE_REVISION:
         raise ValueError("XR1 source differs from the reviewed revision")
     return target / "xr1"
@@ -84,7 +90,9 @@ def fetch_checkpoint(target: Path) -> dict:
     if target.exists() or target.with_suffix(".partial").exists():
         raise FileExistsError(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    url = f"https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_REVISION}/model_states.pt"
+    url = (
+        f"https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_REVISION}/model_states.pt"
+    )
     temporary, digest, size = target.with_suffix(".partial"), hashlib.sha256(), 0
     with requests.get(url, stream=True, timeout=(30, 120)) as response:
         response.raise_for_status()
@@ -94,9 +102,16 @@ def fetch_checkpoint(target: Path) -> dict:
                 digest.update(chunk)
                 size += len(chunk)
     if digest.hexdigest() != MODEL_SHA256:
-        raise ValueError("XR1 checkpoint SHA-256 disagrees with the pinned upstream release")
+        raise ValueError(
+            "XR1 checkpoint SHA-256 disagrees with the pinned upstream release"
+        )
     temporary.rename(target)
-    return {"repo": MODEL_REPO, "revision": MODEL_REVISION, "sha256": MODEL_SHA256, "bytes": size}
+    return {
+        "repo": MODEL_REPO,
+        "revision": MODEL_REVISION,
+        "sha256": MODEL_SHA256,
+        "bytes": size,
+    }
 
 
 def fetch_processor(target: Path) -> dict:

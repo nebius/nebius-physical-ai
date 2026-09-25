@@ -27,11 +27,25 @@ def test_source_archive_is_deterministic_and_rejects_changed_cached_bytes(
     tmp_path, monkeypatch
 ):
     source = b"official source bytes"
-    lock = {"artifacts": [{"path": "pool/source.tar.gz", "url": "https://example.org/source",
-                           "size": len(source), "sha256": hashlib.sha256(source).hexdigest()}]}
+    lock = {
+        "artifacts": [
+            {
+                "path": "pool/source.tar.gz",
+                "url": "https://example.org/source",
+                "size": len(source),
+                "sha256": hashlib.sha256(source).hexdigest(),
+            }
+        ]
+    }
     (tmp_path / "corresponding-sources.json").write_text(json.dumps(lock))
     monkeypatch.setattr(ANNEX, "ROOT", tmp_path)
-    monkeypatch.setattr(ANNEX.httpx, "get", lambda url, **kwargs: httpx.Response(200, content=source, request=httpx.Request("GET", url)))
+    monkeypatch.setattr(
+        ANNEX.httpx,
+        "get",
+        lambda url, **kwargs: httpx.Response(
+            200, content=source, request=httpx.Request("GET", url)
+        ),
+    )
     first = ANNEX.build(tmp_path / "first")
     second = ANNEX.build(tmp_path / "second")
     assert first == second
@@ -49,8 +63,12 @@ def test_anonymous_source_verification_rejects_changed_public_bytes(
 ):
     source = b"source bundle"
     source_sha = "a" * 40
-    expected = {"archive": ANNEX.ARCHIVE_NAME, "bytes": len(source),
-                "sha256": hashlib.sha256(source).hexdigest(), "source_lock_sha256": "b" * 64}
+    expected = {
+        "archive": ANNEX.ARCHIVE_NAME,
+        "bytes": len(source),
+        "sha256": hashlib.sha256(source).hexdigest(),
+        "source_lock_sha256": "b" * 64,
+    }
     (tmp_path / "source-bundle.json").write_text(json.dumps(expected))
     manifest = {**expected, "source_revision": source_sha}
     if mutation == "manifest":
@@ -66,7 +84,13 @@ def test_anonymous_source_verification_rejects_changed_public_bytes(
         assert isinstance(url, str)
         assert "auth" not in kwargs and "headers" not in kwargs
         urls.append(url)
-        return httpx.Response(200, content=json.dumps(manifest).encode() if url.endswith(".json") else public_source, request=httpx.Request("GET", url))
+        return httpx.Response(
+            200,
+            content=json.dumps(manifest).encode()
+            if url.endswith(".json")
+            else public_source,
+            request=httpx.Request("GET", url),
+        )
 
     @contextmanager
     def anonymous_stream(method, url, **kwargs):

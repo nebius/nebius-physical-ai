@@ -62,6 +62,8 @@ making architecture, review, or domain judgments.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
  and query production sensor data as a versioned, lineage-tracked dataset
  (FiftyOne curation + LanceDB query index).
+- `skills/tools/encord/SKILL.md`: stateless Encord SaaS register, pull, and exact
+ roundtrip verification with S3-backed lineage artifacts.
 - `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the
  `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings
  (convert/inspect/publish), and the `npa-foxglove-embed` container.
@@ -87,10 +89,6 @@ making architecture, review, or domain judgments.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: deploy and operate persistent
  Cosmos3-Nano generation through NVIDIA Cosmos Framework's native dynamically
  batched Ray Serve path, with guarded runtime weight fetch and S3 provenance.
-- `skills/tools/cosmos3-super-benchmark/SKILL.md`: reproduce the fixed
- Cosmos3-Super vLLM-Omni primary sweep on one eight-GPU B200 or H200 node across the
- 1x8, 2x4, 4x2, and 8x1 arrangements with strict MP4 validity and shared-window
- throughput accounting.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with
  torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator
@@ -124,11 +122,16 @@ making architecture, review, or domain judgments.
  toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workflows/physical-ai-data-factory/SKILL.md`: author, run, submit, or
  view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no
- OSMO): annotate → Cosmos Transfer augment → Cosmos Evaluator gate → re-label →
- Cosmos Curator + FiftyOne curate → Rerun visualize. The evaluator and curator
- are the real Apache-2.0 NVIDIA projects, wrapped as
- `npa workbench cosmos-evaluator` and `npa workbench cosmos-curate`; see
- `skills/NOTICE-NVIDIA-COSMOS-OSS` for which upstream code runs where.
+ OSMO/Airflow): annotate → Cosmos Transfer augment → Cosmos Evaluator gate →
+ re-label → Cosmos Curator + FiftyOne curate → Rerun visualize. The official
+ ecosystem and scaled-orchestration relationship is recorded in
+ `skills/NOTICE-NVIDIA-PAIDF`; executable evaluator/curator boundaries are in
+ `skills/NOTICE-NVIDIA-COSMOS-OSS`.
+- `skills/workflows/nvidia-osmo-to-npa-workflow/SKILL.md`: translate pinned
+ NVIDIA OSMO workflow definitions, or related authoritative Airflow DAGs, into
+ semantic `npa.workflow/v0.0.1` graphs while preserving real components, typed
+ handoffs, retry/failure behavior, evidence, licensing, and attribution without
+ claiming control-plane equivalence.
 - `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural
  reconstruction on Nebius — NCore V4 capture (including deriving the
  `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable
@@ -159,7 +162,7 @@ create a new split skill tree.
 
 ### Partner Capability Roadmap
 
-Onboarding NVIDIA Physical AI / Omniverse capabilities (CAD-to-SimReady, USD tooling, defect-image SDG, SDG infrastructure) is tracked in `docs/architecture/partner-skills-roadmap.md`; those are not yet implemented in the workbench. **NuRec/NRE has landed** (`skills/workflows/neural-reconstruction/SKILL.md`), as has video data augmentation (`skills/workflows/physical-ai-data-factory/SKILL.md`). Add each remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
+Onboarding NVIDIA Physical AI / Omniverse capabilities is tracked in `docs/architecture/partner-skills-roadmap.md`. **NuRec/NRE and video data augmentation have landed**, and the PAIDF skill now covers native DIG Day-1 manual-ROI, IAA, and EVG specs. Their Workbench guide distinguishes implementation from completed live acceptance. Remaining DIG Day-0/PCBA alignment, CAD-to-SimReady, USD tooling, and SDG infrastructure capabilities retain their documented roadmap scope. Add a remaining capability as a real skill only when its solution lands on Nebius + SkyPilot, with tests.
 
 ## Project Instructions
 

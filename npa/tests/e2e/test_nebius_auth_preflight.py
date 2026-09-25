@@ -21,8 +21,16 @@ pytestmark = pytest.mark.e2e
 def _preflight(*options: str, env: dict[str, str]) -> tuple[int, dict]:
     result = subprocess.run(
         [
-            sys.executable, "-m", "npa", "workbench", "health", "preflight",
-            "--checks", "nebius", "--json", *options,
+            sys.executable,
+            "-m",
+            "npa",
+            "workbench",
+            "health",
+            "preflight",
+            "--checks",
+            "nebius",
+            "--json",
+            *options,
         ],
         env=env,
         stdin=subprocess.DEVNULL,
@@ -46,8 +54,15 @@ def test_authenticated_profile_ignores_stale_ambient_tokens() -> None:
     assert payload["ok"] is True
     # Exact public shape rules out leaked identity, token or profile metadata.
     assert payload["checks"] in [
-        [{"name": "nebius", "status": "PASS", "details": [], "remedy": "",
-          "summary": f"{source} Nebius CLI profile is authenticated."}]
+        [
+            {
+                "name": "nebius",
+                "status": "PASS",
+                "details": [],
+                "remedy": "",
+                "summary": f"{source} Nebius CLI profile is authenticated.",
+            }
+        ]
         for source in ("Configured", "Default")
     ]
 

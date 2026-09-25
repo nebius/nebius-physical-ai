@@ -288,7 +288,9 @@ def _iter_crane_export(image: str, *, max_attempts: int = 4):
             return
         if attempt == max_attempts:
             if returncode != 0:
-                raise subprocess.CalledProcessError(returncode, command) from archive_error
+                raise subprocess.CalledProcessError(
+                    returncode, command
+                ) from archive_error
             assert archive_error is not None
             raise archive_error
 
@@ -333,12 +335,16 @@ def _iter_saved_member(handle, name, documents, scanned_layers):
 
 def _require_saved_config(name, documents):
     if not isinstance(documents.get(name), dict):
-        raise RuntimeError(f"Incomplete image archive: missing or invalid config {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing or invalid config {name}"
+        )
 
 
 def _require_saved_layer(name, scanned_layers):
     if name not in scanned_layers:
-        raise RuntimeError(f"Incomplete image archive: missing or unreadable layer {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing or unreadable layer {name}"
+        )
 
 
 def _check_docker_manifest(manifest, documents, scanned_layers):
@@ -349,7 +355,9 @@ def _check_docker_manifest(manifest, documents, scanned_layers):
             raise RuntimeError("Invalid Docker image archive config reference")
         _require_saved_config(image["Config"], documents)
         layers = image.get("Layers")
-        if not isinstance(layers, list) or not all(isinstance(item, str) for item in layers):
+        if not isinstance(layers, list) or not all(
+            isinstance(item, str) for item in layers
+        ):
             raise RuntimeError("Invalid Docker image archive layer references")
         for name in layers:
             _require_saved_layer(name, scanned_layers)
@@ -359,17 +367,24 @@ def _saved_descriptor_path(descriptor, sizes):
     if not isinstance(descriptor, dict):
         raise RuntimeError("Invalid OCI image archive descriptor")
     digest = descriptor.get("digest", "")
-    if not isinstance(digest, str) or re.fullmatch(r"[a-z0-9]+:[a-f0-9]+", digest) is None:
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"[a-z0-9]+:[a-f0-9]+", digest) is None
+    ):
         raise RuntimeError("Invalid OCI image archive descriptor digest")
     name = "blobs/" + digest.replace(":", "/", 1)
     if name not in sizes:
-        raise RuntimeError(f"Incomplete image archive: missing referenced member {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing referenced member {name}"
+        )
     if descriptor.get("size") != sizes[name]:
         raise RuntimeError(f"Incomplete image archive: referenced size mismatch {name}")
     return name
 
 
-def _check_saved_attestation(name, descriptor, document, documents, scanned_layers, sizes, ancestors):
+def _check_saved_attestation(
+    name, descriptor, document, documents, scanned_layers, sizes, ancestors
+):
     """Validate non-filesystem BuildKit metadata without treating JSON as a tar."""
     manifest_type = "application/vnd.oci.image.manifest.v1+json"
     annotations = descriptor.get("annotations", {})
@@ -394,67 +409,98 @@ def _check_saved_attestation(name, descriptor, document, documents, scanned_laye
             or subject.get("mediaType") != manifest_type
             or subject.get("digest") != target
         ):
-            raise RuntimeError("Invalid OCI image archive: attestation artifact binding")
+            raise RuntimeError(
+                "Invalid OCI image archive: attestation artifact binding"
+            )
         target_name = _saved_descriptor_path(subject, sizes)
     else:
         if (
             "subject" in document
-            or config_descriptor.get("mediaType") != "application/vnd.oci.image.config.v1+json"
+            or config_descriptor.get("mediaType")
+            != "application/vnd.oci.image.config.v1+json"
             or config.get("architecture") != "unknown"
             or config.get("os") != "unknown"
-            or config.get("rootfs") != {
-                "type": "layers", "diff_ids": [layer.get("digest") for layer in document["layers"]]
+            or config.get("rootfs")
+            != {
+                "type": "layers",
+                "diff_ids": [layer.get("digest") for layer in document["layers"]],
             }
         ):
             raise RuntimeError("Invalid OCI image archive: attestation config binding")
         target_name = "blobs/sha256/" + target[7:]
     # The subject must itself have readable filesystem layers. Its JSON cannot
     # recursively opt into metadata handling through an attestation annotation.
-    _check_oci_manifest(target_name, documents, scanned_layers, sizes, (*ancestors, name))
+    _check_oci_manifest(
+        target_name, documents, scanned_layers, sizes, (*ancestors, name)
+    )
     for layer in document["layers"]:
         layer_name = _saved_descriptor_path(layer, sizes)
         statement = documents.get(layer_name)
         if (
             layer.get("mediaType") != "application/vnd.in-toto+json"
             or not isinstance(statement, dict)
-            or statement.get("_type") not in {
-                "https://in-toto.io/Statement/v0.1", "https://in-toto.io/Statement/v1"
+            or statement.get("_type")
+            not in {
+                "https://in-toto.io/Statement/v0.1",
+                "https://in-toto.io/Statement/v1",
             }
             or not isinstance(statement.get("predicate"), dict)
             or not isinstance(statement.get("predicateType"), str)
             or not statement["predicateType"]
-            or statement["predicateType"] != layer.get("annotations", {}).get("in-toto.io/predicate-type")
+            or statement["predicateType"]
+            != layer.get("annotations", {}).get("in-toto.io/predicate-type")
             or not isinstance(statement.get("subject"), list)
             or not statement["subject"]
-            or not all(isinstance(subject, dict) and isinstance(subject.get("name"), str)
-                       and subject.get("digest") == {"sha256": target[7:]}
-                       for subject in statement["subject"])
+            or not all(
+                isinstance(subject, dict)
+                and isinstance(subject.get("name"), str)
+                and subject.get("digest") == {"sha256": target[7:]}
+                for subject in statement["subject"]
+            )
         ):
-            raise RuntimeError("Invalid OCI image archive: attestation statement binding")
+            raise RuntimeError(
+                "Invalid OCI image archive: attestation statement binding"
+            )
 
 
-def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=(), *, descriptor=None):
+def _check_oci_manifest(
+    name, documents, scanned_layers, sizes, ancestors=(), *, descriptor=None
+):
     if name in ancestors:
         raise RuntimeError("Invalid OCI image archive: cyclic index reference")
     document = documents.get(name)
     if not isinstance(document, dict) or document.get("schemaVersion") != 2:
-        raise RuntimeError(f"Incomplete image archive: missing or invalid manifest {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing or invalid manifest {name}"
+        )
     if "manifests" in document:
         children = document["manifests"]
         if not isinstance(children, list) or not children:
             raise RuntimeError(f"Invalid OCI image archive: empty index {name}")
         for descriptor in children:
             child = _saved_descriptor_path(descriptor, sizes)
-            _check_oci_manifest(child, documents, scanned_layers, sizes, (*ancestors, name),
-                                descriptor=descriptor)
+            _check_oci_manifest(
+                child,
+                documents,
+                scanned_layers,
+                sizes,
+                (*ancestors, name),
+                descriptor=descriptor,
+            )
         return
     config = _saved_descriptor_path(document.get("config"), sizes)
     _require_saved_config(config, documents)
     layers = document.get("layers")
     if not isinstance(layers, list):
         raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
-    if descriptor and descriptor.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest":
-        _check_saved_attestation(name, descriptor, document, documents, scanned_layers, sizes, ancestors)
+    if (
+        descriptor
+        and descriptor.get("annotations", {}).get("vnd.docker.reference.type")
+        == "attestation-manifest"
+    ):
+        _check_saved_attestation(
+            name, descriptor, document, documents, scanned_layers, sizes, ancestors
+        )
         return
     for descriptor in layers:
         layer = _saved_descriptor_path(descriptor, sizes)
@@ -469,7 +515,9 @@ def _check_saved_image(documents, scanned_layers, sizes):
     if "index.json" in documents:
         layout = documents.get("oci-layout")
         if not isinstance(layout, dict) or layout.get("imageLayoutVersion") != "1.0.0":
-            raise RuntimeError("Incomplete image archive: missing or invalid oci-layout")
+            raise RuntimeError(
+                "Incomplete image archive: missing or invalid oci-layout"
+            )
         _check_oci_manifest("index.json", documents, scanned_layers, sizes)
 
 
@@ -515,7 +563,14 @@ def _iter_docker_save(image: str):
 
 def _local_image_history(image: str) -> list[str]:
     docker = _require("docker")
-    command = [docker, "history", "--no-trunc", "--format", "{{json .CreatedBy}}", image]
+    command = [
+        docker,
+        "history",
+        "--no-trunc",
+        "--format",
+        "{{json .CreatedBy}}",
+        image,
+    ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, command)
@@ -638,7 +693,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    selected = sum(bool(value) for value in (args.image, args.tarball, args.docker_image))
+    selected = sum(
+        bool(value) for value in (args.image, args.tarball, args.docker_image)
+    )
     if selected != 1:
         parser.error("pass exactly one image reference, --tarball, or --docker-image")
 

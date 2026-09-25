@@ -93,11 +93,15 @@ def test_skypilot_failed_upgrade_preserves_existing_version_byte_for_byte(
     assert after == before
 
 
-def test_skypilot_path_can_come_from_flag_or_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_skypilot_path_can_come_from_flag_or_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     flag_venv = _fake_installed_venv(tmp_path / "flag-venv")
     env_venv = _fake_installed_venv(tmp_path / "env-venv")
 
-    flag_result = runner.invoke(app, ["skypilot", "status", "--path", str(flag_venv), "--bin-path"])
+    flag_result = runner.invoke(
+        app, ["skypilot", "status", "--path", str(flag_venv), "--bin-path"]
+    )
     monkeypatch.setenv(skypilot_cli.VENV_PATH_ENV, str(env_venv))
     env_result = runner.invoke(app, ["skypilot", "status", "--bin-path"])
 
@@ -115,9 +119,7 @@ def _assert_missing_python_diagnostic(exit_code: int, output: str) -> None:
 
 
 @pytest.mark.parametrize("width", [40, 100])
-def test_skypilot_bootstrap_reports_missing_python(
-    tmp_path: Path, width: int
-) -> None:
+def test_skypilot_bootstrap_reports_missing_python(tmp_path: Path, width: int) -> None:
     missing_python = tmp_path / "missing-python"
 
     result = runner.invoke(
@@ -174,7 +176,9 @@ def test_skypilot_bootstrap_reports_network_failure_from_pip(
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if cmd[1:4] == ["-m", "pip", "install"]:
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Temporary failure in name resolution")
+            return subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr="Temporary failure in name resolution"
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(skypilot_cli.subprocess, "run", fake_run)
@@ -204,7 +208,9 @@ def test_skypilot_install_package_pins_runtime_dependencies_after_install(
     skypilot_cli._install_package(state, "skypilot==0.12.2")
 
     assert any(cmd[-1] == "click>=8.1,<8.2" for cmd in installs), installs
-    assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), installs
+    assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), (
+        installs
+    )
 
 
 def test_skypilot_bootstrap_can_install_local_tiny_package(
@@ -258,7 +264,9 @@ def test_skypilot_bootstrap_can_install_local_tiny_package(
     assert result.installed is True
     assert result.reused is False
     assert result.sky_bin.is_file()
-    assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(encoding="utf-8")
+    assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.fixture
@@ -354,7 +362,10 @@ def test_verify_rejects_zero_exit_when_kubernetes_is_disabled(
     def fake_run(cmd, *, env=None, cwd=None):  # noqa: ANN001
         if cmd[-1] == "check":
             return subprocess.CompletedProcess(
-                cmd, 0, stdout="Kubernetes: disabled\nNo infra to check/enabled.", stderr=""
+                cmd,
+                0,
+                stdout="Kubernetes: disabled\nNo infra to check/enabled.",
+                stderr="",
             )
         return original(cmd, env=env, cwd=cwd)
 
@@ -562,7 +573,9 @@ def test_is_supported_python_range() -> None:
     assert skypilot_cli._is_supported_python(None) is False
 
 
-def test_resolve_python_bin_rejects_explicit_unsupported(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_python_bin_rejects_explicit_unsupported(
+    monkeypatch, tmp_path: Path
+) -> None:
     fake = _write_executable(tmp_path / "py314", '#!/bin/sh\necho "3 14"\n')
     with pytest.raises(skypilot_cli.SkyPilotBootstrapError) as exc:
         skypilot_cli._resolve_python_bin(str(fake))
@@ -570,7 +583,9 @@ def test_resolve_python_bin_rejects_explicit_unsupported(monkeypatch, tmp_path: 
     assert "supported range" in str(exc.value)
 
 
-def test_resolve_python_bin_autoselects_supported_when_default_too_new(monkeypatch) -> None:
+def test_resolve_python_bin_autoselects_supported_when_default_too_new(
+    monkeypatch,
+) -> None:
     # Default interpreter reports 3.14; a supported python3.12 is on PATH.
     def fake_detect(executable):
         return (3, 14) if str(executable) == sys.executable else (3, 12)
@@ -705,9 +720,9 @@ def test_skypilot_install_package_pins_kubernetes_client(
 
     skypilot_cli._install_package(state, "skypilot==0.12.2")
 
-    assert any(
-        cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs
-    ), installs
+    assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), (
+        installs
+    )
     assert "<36" in skypilot_cli.KUBERNETES_CLIENT_SPEC
 
 
@@ -744,7 +759,9 @@ def test_skypilot_uninstall_removes_venv_and_clears_saved_bin(tmp_path: Path) ->
     boot = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
     assert boot.exit_code == 0, boot.output
     assert venv.exists()
-    assert yaml.safe_load(_config_path().read_text(encoding="utf-8"))["skypilot"]["sky_bin"]
+    assert yaml.safe_load(_config_path().read_text(encoding="utf-8"))["skypilot"][
+        "sky_bin"
+    ]
 
     result = runner.invoke(app, ["skypilot", "uninstall", "--path", str(venv), "--yes"])
 
@@ -773,8 +790,10 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
     calls: list[object] = []
     monkeypatch.setattr(
         "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[]),
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[])
+        ),
     )
 
     plan = runner.invoke(app, ["skypilot", "cleanup-controller", "--json"])
@@ -806,11 +825,93 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
         "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("controller unavailable")),
     )
-    failed = runner.invoke(
-        app, ["skypilot", "cleanup-controller", "--yes", "--json"]
-    )
+    failed = runner.invoke(app, ["skypilot", "cleanup-controller", "--yes", "--json"])
     assert failed.exit_code == 2
     assert json.loads(failed.output)["outcome"] == "verification_failed"
+
+
+@pytest.mark.parametrize(
+    ("owner_mismatch", "expected_outcome", "expected_local_verified"),
+    [
+        (False, "cleaned", True),
+        (True, "degraded_local_metadata", False),
+    ],
+)
+def test_skypilot_controller_cleanup_reports_exact_owner_convergence(
+    monkeypatch: pytest.MonkeyPatch,
+    owner_mismatch: bool,
+    expected_outcome: str,
+    expected_local_verified: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.controller_ownership import ClusterOwnerIdentityMismatchError
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
+        lambda **_kwargs: SimpleNamespace(
+            ok=True,
+            outcome="cleaned",
+            remote_absence_verified=True,
+            verified=True,
+            resources_removed=["controller"],
+            errors=[],
+            commands=[["sky", "down"]],
+            project_alias="demo",
+            project_id="project-demo",
+            cluster_id="cluster-current",
+            context="context-demo",
+        ),
+    )
+    clear_calls: list[dict[str, str]] = []
+
+    def reject_mismatched_owner(project: str, **identity: str) -> bool:
+        clear_calls.append({"project": project, **identity})
+        if owner_mismatch:
+            raise ClusterOwnerIdentityMismatchError(
+                "Refusing to clear controller ownership for a different cluster id."
+            )
+        return True
+
+    monkeypatch.setattr(
+        "npa.controller_ownership.clear_controller_owner", reject_mismatched_owner
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "cleanup-controller",
+            "--project",
+            "demo",
+            "--context",
+            "context-demo",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == expected_outcome
+    assert payload["remote_absence_verified"] is True
+    assert payload["local_metadata_cleared"] is expected_local_verified
+    assert payload["verified"] is expected_local_verified
+    assert payload["overall_verified"] is expected_local_verified
+    if owner_mismatch:
+        assert (
+            "exact local ownership record could not be cleared" in payload["errors"][0]
+        )
+    else:
+        assert payload["errors"] == []
+    assert clear_calls == [
+        {
+            "project": "demo",
+            "project_id": "project-demo",
+            "cluster_id": "cluster-current",
+            "context": "context-demo",
+        }
+    ]
 
 
 def test_skypilot_controller_cleanup_forwards_explicit_orphan_recovery_attestation(
@@ -821,8 +922,10 @@ def test_skypilot_controller_cleanup_forwards_explicit_orphan_recovery_attestati
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
-        lambda **kwargs: calls.append(kwargs)
-        or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[]),
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(ok=True, resources_removed=[], errors=[], commands=[])
+        ),
     )
 
     result = runner.invoke(
@@ -954,7 +1057,11 @@ def test_bootstrap_recovers_interrupted_exchange(tmp_path: Path) -> None:
     _fake_installed_venv(previous)
     skypilot_cli._write_bootstrap_journal(
         journal,
-        {"target": str(target), "staging": ".sky.staging-dead", "previous": previous.name},
+        {
+            "target": str(target),
+            "staging": ".sky.staging-dead",
+            "previous": previous.name,
+        },
     )
 
     result = runner.invoke(

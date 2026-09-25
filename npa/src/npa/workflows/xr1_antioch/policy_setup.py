@@ -19,9 +19,13 @@ def _main() -> None:
     import torch
 
     if sys.version_info[:2] != (3, 11) or torch.__version__ != "2.8.0+cu128":
-        raise ValueError("The policy runtime requires Python 3.11 and PyTorch 2.8.0+cu128")
+        raise ValueError(
+            "The policy runtime requires Python 3.11 and PyTorch 2.8.0+cu128"
+        )
     receipt = json.loads((args.wheel_root / "input-receipt.json").read_text())
-    wheels = {name: identity for name, identity in receipt.items() if name.endswith(".whl")}
+    wheels = {
+        name: identity for name, identity in receipt.items() if name.endswith(".whl")
+    }
     if len(wheels) != 1:
         raise ValueError("Expected one verified FlashAttention SM120 wheel")
     for name, identity in wheels.items():
@@ -29,7 +33,10 @@ def _main() -> None:
             raise ValueError("Runtime wheel differs from its S3 input receipt")
     args.work_path.mkdir(parents=True, exist_ok=False)
     _install(args.work_path, args.wheel_root / "wheels")
-    proof = {"scope": "policy inference runtime", **_cuda_proof(require_optimizer=False)}
+    proof = {
+        "scope": "policy inference runtime",
+        **_cuda_proof(require_optimizer=False),
+    }
     (args.work_path / "runtime-proof.json").write_text(json.dumps(proof, indent=2))
     print(json.dumps(proof), flush=True)
 

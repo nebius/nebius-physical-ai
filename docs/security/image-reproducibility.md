@@ -98,11 +98,31 @@ preserves that identity across direct and reusable invocation. No additional
 branch-protection context is needed when `security-regression` is already required.
 
 The workflow scans Dockerfile/config issues and the digest-pinned public base
-image lineages. Seven bases are dynamically distributed inside one runner across
-three bounded workers. One Trivy database download is hard-linked into
-worker-private caches, so parallel scans cannot contend on mutable cache state,
-slow images do not strand work in a static lane, and the inventory does not
-create seven queued jobs. Dockerfile/config misconfigurations fail on HIGH
+image lineages. Every validated inventory entry receives its own standard
+runner. Isolating image working sets replaces the earlier single-runner
+consolidation, which accumulated image/build caches and overlapping layer exports.
+The matrix does not cancel sibling scans when one fails. Its required aggregate
+accepts only a complete successful deep inventory or a verified irrelevant-change
+fast path. Each runner downloads the Trivy database for its private entry cache. Each entry removes its
+archive, mutable Trivy cache, and temporary layer files on completion or failure.
+Patched targets export directly from an isolated Buildx `docker-container`
+builder, which is removed before the archive scan begins. Unmodified digest
+references use Trivy's remote source, avoiding the shared Docker image store.
+No global image, builder, or volume pruning occurs. A builder-removal failure
+fails validation and retains its private `builder.json` and Buildx configuration
+for recovery; it is never reported as successful cleanup.
+
+The isolated build tool is Apache-2.0 Moby BuildKit v0.33.0, pinned by OCI digest
+in `scan_base_images.py`; Docker with the Buildx plugin is required for patched
+entries. The tool image may remain cached, but completed base-image build state
+is not retained. Concurrent active images still require disk space: per-entry
+cleanup prevents accumulated old images, not arbitrary image-size exhaustion.
+The workflow records actual runner free space before and after each scan.
+Per-image isolation removes contention between inventory entries; it does not
+prove that any arbitrarily large image fits a standard runner. No vulnerability
+threshold, preparation flag, or inventory entry is removed.
+
+Dockerfile/config misconfigurations fail on HIGH
 and CRITICAL findings. Base-image CVE jobs are intentionally OS-package only,
 use `--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
 CUDA base contains a fixable CRITICAL in a build-only OS package that consuming
@@ -122,6 +142,7 @@ Run the deterministic update and CI wiring regressions locally:
 ```bash
 npa/.venv/bin/python -m pytest \
   npa/tests/docker/test_base_image_scan.py \
+  npa/tests/docker/test_base_image_scan_cleanup.py \
   npa/tests/guardrails/test_image_security_gate.py \
   npa/tests/guardrails/test_security_gate.py -q
 ```

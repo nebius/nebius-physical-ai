@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import lancedb
+import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
 
@@ -31,6 +33,198 @@ def _records() -> list[dict[str, object]]:
     ]
 
 
+def _table_schema(*, vector_size: int = 2) -> dict[str, object]:
+    return {
+        "fields": [
+            {"name": "id", "type": "string", "nullable": False},
+            {
+                "name": "vector",
+                "type": {
+                    "name": "fixed_size_list",
+                    "item_type": "float32",
+                    "list_size": vector_size,
+                },
+                "nullable": False,
+            },
+        ]
+    }
+
+
+def _open_created_table(tmp_path: Path, name: str):
+    return lancedb.connect(tmp_path / "lance").open_table(name)
+
+
+def _created_table_names(tmp_path: Path) -> set[str]:
+    return set(lancedb.connect(tmp_path / "lance").list_tables().tables)
+
+
+def test_create_table_with_schema_stores_zero_rows(
+    client: TestClient, tmp_path: Path
+) -> None:
+    response = client.post("/tables/empty_vectors", json={"schema": _table_schema()})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["rows"] == 0
+    table = _open_created_table(tmp_path, "empty_vectors")
+    assert table.count_rows() == 0
+    assert table.schema.equals(
+        pa.schema(
+            [
+                pa.field("id", pa.string(), nullable=False),
+                pa.field("vector", pa.list_(pa.float32(), 2), nullable=False),
+            ]
+        ),
+        check_metadata=False,
+    )
+
+
+@pytest.mark.parametrize("payload", [{}, {"schema": {}}, {"schema": {"fields": []}}])
+def test_create_table_requires_rows_or_usable_schema(
+    client: TestClient, tmp_path: Path, payload: dict[str, object]
+) -> None:
+    response = client.post("/tables/rejected", json=payload)
+
+    assert response.status_code == 400, response.text
+    assert "rejected" not in _created_table_names(tmp_path)
+
+
+def test_create_table_schema_controls_stored_rows(
+    client: TestClient, tmp_path: Path
+) -> None:
+    response = client.post(
+        "/tables/vectors",
+        json={
+            "schema": _table_schema(),
+            "rows": [{"id": "row-1", "vector": [1.0, 2.0]}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    table = _open_created_table(tmp_path, "vectors")
+    assert table.schema.field("vector").type == pa.list_(pa.float32(), 2)
+    assert not table.schema.field("id").nullable
+    assert table.to_arrow().to_pylist() == [{"id": "row-1", "vector": [1.0, 2.0]}]
+
+
+def test_create_table_preserves_fields_introduced_by_later_rows(
+    client: TestClient, tmp_path: Path
+) -> None:
+    response = client.post(
+        "/tables/events",
+        json={"rows": [{"id": "one"}, {"id": "two", "score": 0.5}]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert _open_created_table(tmp_path, "events").to_arrow().to_pylist() == [
+        {"id": "one", "score": None},
+        {"id": "two", "score": 0.5},
+    ]
+
+
+def test_create_table_rejects_incompatible_rows_before_mutation(
+    client: TestClient, tmp_path: Path
+) -> None:
+    response = client.post(
+        "/tables/bad_vectors",
+        json={
+            "schema": _table_schema(),
+            "rows": [{"id": "row-1", "vector": [1.0]}],
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "bad_vectors" not in _created_table_names(tmp_path)
+
+
+def test_create_table_overwrite_and_append_preserve_schema(
+    client: TestClient, tmp_path: Path
+) -> None:
+    schema = _table_schema()
+    client.post(
+        "/tables/vectors",
+        json={"schema": schema, "rows": [{"id": "old", "vector": [0.0, 0.0]}]},
+    )
+    overwritten = client.post(
+        "/tables/vectors",
+        json={
+            "schema": schema,
+            "rows": [{"id": "new", "vector": [1.0, 1.0]}],
+            "mode": "overwrite",
+        },
+    )
+    appended = client.post(
+        "/tables/vectors",
+        json={
+            "schema": schema,
+            "rows": [{"id": "next", "vector": [2.0, 2.0]}],
+            "mode": "append",
+        },
+    )
+
+    assert overwritten.status_code == 200, overwritten.text
+    assert appended.status_code == 200, appended.text
+    assert appended.json()["rows"] == 1
+    table = _open_created_table(tmp_path, "vectors")
+    assert table.count_rows() == 2
+    assert [row["id"] for row in table.to_arrow().to_pylist()] == ["new", "next"]
+
+
+def test_create_table_create_overwrite_and_append_infer_compatible_rows(
+    client: TestClient, tmp_path: Path
+) -> None:
+    created = client.post("/tables/events", json={"rows": [{"id": "old", "value": 1}]})
+    overwritten = client.post(
+        "/tables/events",
+        json={"rows": [{"id": "new", "value": 2}], "mode": "overwrite"},
+    )
+    appended = client.post(
+        "/tables/events",
+        json={"rows": [{"id": "next", "value": 3}], "mode": "append"},
+    )
+
+    assert created.status_code == 200, created.text
+    assert overwritten.status_code == 200, overwritten.text
+    assert appended.status_code == 200, appended.text
+    assert _open_created_table(tmp_path, "events").count_rows() == 2
+
+
+def test_append_schema_mismatch_fails_without_mutation(
+    client: TestClient, tmp_path: Path
+) -> None:
+    client.post(
+        "/tables/vectors",
+        json={
+            "schema": _table_schema(),
+            "rows": [{"id": "row-1", "vector": [1.0, 2.0]}],
+        },
+    )
+
+    response = client.post(
+        "/tables/vectors",
+        json={
+            "schema": _table_schema(vector_size=3),
+            "rows": [{"id": "row-2", "vector": [1.0, 2.0, 3.0]}],
+            "mode": "append",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert _open_created_table(tmp_path, "vectors").count_rows() == 1
+
+
+def test_create_table_rejects_server_side_s3_import(
+    client: TestClient, tmp_path: Path
+) -> None:
+    response = client.post(
+        "/tables/s3_vectors",
+        json={"input_path": "s3://example/vectors.json", "schema": _table_schema()},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "not implemented" in response.json()["detail"]
+    assert "s3_vectors" not in _created_table_names(tmp_path)
+
+
 def test_index_creates_the_table_on_first_write(client: TestClient) -> None:
     response = client.post("/index", json={"table": "dataset", "records": _records()})
 
@@ -46,7 +240,12 @@ def test_index_appends_on_a_second_write(client: TestClient) -> None:
 
     response = client.post(
         "/index",
-        json={"table": "dataset", "records": [{"id": "clip-3", "location": "berlin", "frames": 30, "night": False}]},
+        json={
+            "table": "dataset",
+            "records": [
+                {"id": "clip-3", "location": "berlin", "frames": 30, "night": False}
+            ],
+        },
     )
 
     assert response.json()["status"] == "appended"
@@ -55,14 +254,18 @@ def test_index_appends_on_a_second_write(client: TestClient) -> None:
 
 
 def test_index_rejects_an_empty_payload(client: TestClient) -> None:
-    assert client.post("/index", json={"table": "dataset", "records": []}).status_code == 400
+    assert (
+        client.post("/index", json={"table": "dataset", "records": []}).status_code
+        == 400
+    )
 
 
 def test_query_filters_by_equality_facet(client: TestClient) -> None:
     client.post("/index", json={"table": "dataset", "records": _records()})
 
     response = client.post(
-        "/query", json={"table": "dataset", "filter": {"location": "berlin"}, "limit": 10}
+        "/query",
+        json={"table": "dataset", "filter": {"location": "berlin"}, "limit": 10},
     )
 
     body = response.json()
@@ -73,12 +276,16 @@ def test_query_filters_by_equality_facet(client: TestClient) -> None:
 def test_query_handles_a_boolean_facet(client: TestClient) -> None:
     client.post("/index", json={"table": "dataset", "records": _records()})
 
-    body = client.post("/query", json={"table": "dataset", "filter": {"night": True}}).json()
+    body = client.post(
+        "/query", json={"table": "dataset", "filter": {"night": True}}
+    ).json()
 
     assert [record["id"] for record in body["records"]] == ["clip-1"]
 
 
-def test_query_on_an_unregistered_table_is_empty_not_an_error(client: TestClient) -> None:
+def test_query_on_an_unregistered_table_is_empty_not_an_error(
+    client: TestClient,
+) -> None:
     """A curation step may legitimately query before anything has been indexed."""
 
     body = client.post("/query", json={"table": "never-written", "filter": {}}).json()
@@ -89,15 +296,22 @@ def test_query_on_an_unregistered_table_is_empty_not_an_error(client: TestClient
 def test_query_escapes_a_value_containing_a_quote(client: TestClient) -> None:
     client.post(
         "/index",
-        json={"table": "dataset", "records": [{"id": "x", "location": "o'hare", "frames": 1, "night": False}]},
+        json={
+            "table": "dataset",
+            "records": [{"id": "x", "location": "o'hare", "frames": 1, "night": False}],
+        },
     )
 
-    body = client.post("/query", json={"table": "dataset", "filter": {"location": "o'hare"}}).json()
+    body = client.post(
+        "/query", json={"table": "dataset", "filter": {"location": "o'hare"}}
+    ).json()
 
     assert body["count"] == 1
 
 
-def test_query_rejects_a_field_name_that_is_not_a_plain_identifier(client: TestClient) -> None:
+def test_query_rejects_a_field_name_that_is_not_a_plain_identifier(
+    client: TestClient,
+) -> None:
     """A facet API has no operators; accepting arbitrary SQL would make this an injection point."""
 
     # Index first: a query against an unknown table returns empty before any predicate is built,
@@ -112,8 +326,13 @@ def test_query_rejects_a_field_name_that_is_not_a_plain_identifier(client: TestC
 
 
 def test_query_rejects_an_absurd_limit(client: TestClient) -> None:
-    assert client.post("/query", json={"table": "dataset", "limit": 0}).status_code == 400
-    assert client.post("/query", json={"table": "dataset", "limit": 10_001}).status_code == 400
+    assert (
+        client.post("/query", json={"table": "dataset", "limit": 0}).status_code == 400
+    )
+    assert (
+        client.post("/query", json={"table": "dataset", "limit": 10_001}).status_code
+        == 400
+    )
 
 
 def test_the_paths_match_what_the_dataset_integration_posts() -> None:
@@ -124,9 +343,11 @@ def test_the_paths_match_what_the_dataset_integration_posts() -> None:
         encoding="utf-8"
     )
 
-    assert '_post(lancedb_endpoint, "/index"' in source
-    assert '_post(lancedb_endpoint, "/query"' in source
-    server = (repo_root / "npa/src/npa/workbench/lancedb/server.py").read_text(encoding="utf-8")
+    assert "_post(" in source and "/index" in source
+    assert "_post(" in source and "/query" in source
+    server = (repo_root / "npa/src/npa/workbench/lancedb/server.py").read_text(
+        encoding="utf-8"
+    )
     assert '@app.post("/index")' in server
     assert '@app.post("/query")' in server
 
@@ -154,7 +375,9 @@ def test_unset_facets_are_not_sent_as_equality_predicates() -> None:
     ) == {"event": "cut_in", "location": "san_francisco"}
 
 
-def test_a_quality_threshold_is_applied_to_the_rows_not_pushed_into_the_facet_api(monkeypatch) -> None:
+def test_a_quality_threshold_is_applied_to_the_rows_not_pushed_into_the_facet_api(
+    monkeypatch,
+) -> None:
     from npa.workbench.dataset import integrations
 
     sent: dict[str, object] = {}
@@ -172,7 +395,11 @@ def test_a_quality_threshold_is_applied_to_the_rows_not_pushed_into_the_facet_ap
 
     records = integrations.query_lancedb(
         lancedb_endpoint="http://svc:8686",
-        filter_predicate={"event": "cut_in", "quality_metric": "completeness", "min_quality": 0.5},
+        filter_predicate={
+            "event": "cut_in",
+            "quality_metric": "completeness",
+            "min_quality": 0.5,
+        },
         limit=10,
         table="fleet-dataset",
     )

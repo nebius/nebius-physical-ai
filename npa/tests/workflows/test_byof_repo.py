@@ -162,7 +162,9 @@ def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
     receipt.chmod(0o600)
     monkeypatch.delenv(module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV, raising=False)
     monkeypatch.setenv(MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV, str(receipt))
-    monkeypatch.setenv(MATERIALIZED_KUBECONFIG_ENV, str(materialized_paths["kubeconfig"]))
+    monkeypatch.setenv(
+        MATERIALIZED_KUBECONFIG_ENV, str(materialized_paths["kubeconfig"])
+    )
     monkeypatch.setenv(
         MATERIALIZED_SKYPILOT_CONFIG_ENV,
         str(materialized_paths["skypilot_config_path"]),
@@ -550,10 +552,14 @@ def test_robotwin_authorized_verifier_failure_is_not_reported_success(
     summary: dict[str, object] = {}
     authorization = SimpleNamespace(redactions=(), bootstrap_image="private-image")
     monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "_scan_robotwin_image", lambda *_a, **_k: {
-        "report_sha256": "b" * 64,
-        "archives_scanned": 2,
-    })
+    monkeypatch.setattr(
+        module,
+        "_scan_robotwin_image",
+        lambda *_a, **_k: {
+            "report_sha256": "b" * 64,
+            "archives_scanned": 2,
+        },
+    )
     monkeypatch.setattr(
         module,
         "_authorized_live_env",
@@ -614,7 +620,7 @@ def test_robotwin_authorized_verifier_malformed_receipt_fails_closed(
         module,
         "_run_robotwin_container_verify",
         lambda cmd, **_kwargs: subprocess.CompletedProcess(
-            cmd, 0, stdout="{\n  \"status\": \"succeeded\",\n", stderr=""
+            cmd, 0, stdout='{\n  "status": "succeeded",\n', stderr=""
         ),
     )
 
@@ -669,8 +675,11 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         monkeypatch.setenv("NPA_WORKFLOW_RUN_ID", "synthetic-outer-run")
         monkeypatch.setenv("NPA_WORKFLOW_STATE", "synthetic-cpu-launcher")
     monkeypatch.setattr(
-        module, "_run_worker",
-        lambda *_args, **_kwargs: pytest.fail("RoboTwin entered generic capability worker"),
+        module,
+        "_run_worker",
+        lambda *_args, **_kwargs: pytest.fail(
+            "RoboTwin entered generic capability worker"
+        ),
     )
     monkeypatch.setattr(
         module, "validate_repository_url", lambda *_args, **_kwargs: None
@@ -706,9 +715,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         assert authorization.bootstrap_image == payload["bootstrap_image"]
         assert scan_evidence["report_sha256"] == "b" * 64
         assert image.endswith("@sha256:" + "a" * 64)
-        return real_live_env(
-            authorization, scan_evidence, project=project, image=image
-        )
+        return real_live_env(authorization, scan_evidence, project=project, image=image)
 
     def fake_container_verify(cmd, *, authorization, environment):
         events.append("runner")

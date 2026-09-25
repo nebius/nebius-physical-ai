@@ -63,9 +63,7 @@ class ImageReference:
 
     @property
     def manifest_url(self) -> str:
-        return (
-            f"https://{self.api_registry}/v2/{self.repository}/manifests/{self.reference}"
-        )
+        return f"https://{self.api_registry}/v2/{self.repository}/manifests/{self.reference}"
 
     @property
     def pull_scope(self) -> str:
@@ -231,9 +229,7 @@ def fetch_image_config_metadata(
     config_digest = str(config.get("digest") or "") if isinstance(config, dict) else ""
     if not config_digest:
         raise RegistryPreflightError("image manifest contains no config digest")
-    config_url = (
-        f"https://{reference.api_registry}/v2/{reference.repository}/blobs/{config_digest}"
-    )
+    config_url = f"https://{reference.api_registry}/v2/{reference.repository}/blobs/{config_digest}"
     status, _, config_body = fetch(config_url, headers, timeout)
     if not 200 <= status < 300:
         raise RegistryPreflightError(f"image config fetch failed with HTTP {status}")

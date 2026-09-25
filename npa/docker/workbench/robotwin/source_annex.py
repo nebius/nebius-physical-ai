@@ -60,9 +60,12 @@ def build(destination):
         for row in sorted(lock["artifacts"], key=lambda item: item["path"]):
             _tar_member(archive, row["path"], (destination / row["path"]).read_bytes())
         _tar_member(archive, "source-lock.json", lock_bytes)
-    return {"archive": ARCHIVE_NAME, "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
-            "bytes": output.stat().st_size,
-            "source_lock_sha256": hashlib.sha256(lock_bytes).hexdigest()}
+    return {
+        "archive": ARCHIVE_NAME,
+        "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+        "bytes": output.stat().st_size,
+        "source_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+    }
 
 
 def verify_public(source_sha):

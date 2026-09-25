@@ -43,9 +43,14 @@ class _RecordedStorage:
     def put_bytes_conditional(self, payload, uri, *, if_none_match):
         if uri not in self.owned:
             assert self.client.read_bytes_with_etag(uri) is None
-            self.owned[uri] = {"intent_sha256": hashlib.sha256(payload).hexdigest(), "created": False}
+            self.owned[uri] = {
+                "intent_sha256": hashlib.sha256(payload).hexdigest(),
+                "created": False,
+            }
             _write(self.evidence, self.owned)
-        token = self.client.put_bytes_conditional(payload, uri, if_none_match=if_none_match)
+        token = self.client.put_bytes_conditional(
+            payload, uri, if_none_match=if_none_match
+        )
         self.owned[uri]["created"] = True
         _write(self.evidence, self.owned)
         return token
@@ -60,7 +65,9 @@ def _cleanup_created(storage):
         if record["created"]:
             try:
                 parsed = urlsplit(uri)
-                storage.client.s3.delete_object(Bucket=parsed.netloc, Key=parsed.path[1:])
+                storage.client.s3.delete_object(
+                    Bucket=parsed.netloc, Key=parsed.path[1:]
+                )
                 assert storage.client.read_bytes_with_etag(uri) is None
                 record["deleted_and_absent"] = True
                 record.pop("cleanup_error_type", None)
@@ -69,7 +76,9 @@ def _cleanup_created(storage):
                 failed = True
             _write(storage.evidence, storage.owned)
     if failed:
-        raise RuntimeError("Owned object cleanup incomplete; reconcile the private ledger")
+        raise RuntimeError(
+            "Owned object cleanup incomplete; reconcile the private ledger"
+        )
 
 
 def _refuse_conflicting_tree(module, storage, source, prefix, conflict):
@@ -79,17 +88,26 @@ def _refuse_conflicting_tree(module, storage, source, prefix, conflict):
     value = json.loads(report.read_text())
     value["archive_conflict_probe"] = True
     _write(report, value)
-    files = {str(p.relative_to(conflict)): hashlib.sha256(p.read_bytes()).hexdigest()
-             for p in conflict.rglob("*") if p.is_file() and p.name not in {"SHA256SUMS", "sha256.json"}}
+    files = {
+        str(p.relative_to(conflict)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in conflict.rglob("*")
+        if p.is_file() and p.name not in {"SHA256SUMS", "sha256.json"}
+    }
     if (conflict / "sha256.json").exists():
         _write(conflict / "sha256.json", files)
-        files["sha256.json"] = hashlib.sha256((conflict / "sha256.json").read_bytes()).hexdigest()
-    (conflict / "SHA256SUMS").write_text("".join(f"{v}  {k}\n" for k, v in sorted(files.items())))
+        files["sha256.json"] = hashlib.sha256(
+            (conflict / "sha256.json").read_bytes()
+        ).hexdigest()
+    (conflict / "SHA256SUMS").write_text(
+        "".join(f"{v}  {k}\n" for k, v in sorted(files.items()))
+    )
     with pytest.raises(ValueError, match="conflicting"):
         module.archive(conflict, prefix, storage)
 
 
-def _refuse_corrupt_payload(module, storage, client, source, prefix, receipt, evidence, index):
+def _refuse_corrupt_payload(
+    module, storage, client, source, prefix, receipt, evidence, index
+):
     # Deliberately corrupt only a proven test-owned object, with its current ETag.
     uri = prefix + "/files/preview.png"
     assert storage.owned[uri]["created"]
@@ -105,21 +123,39 @@ def _refuse_corrupt_payload(module, storage, client, source, prefix, receipt, ev
 
 def _exercise_source(module, storage, client, source_path, evidence, config, index):
     source = Path(source_path)
-    original = {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in source.rglob("*") if p.is_file()}
+    original = {
+        str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in source.rglob("*")
+        if p.is_file()
+    }
     prefix = config["archive_prefix"].rstrip("/") + "/" + uuid.uuid4().hex
     receipt = module.archive(source, prefix, storage)
     assert module.archive(source, prefix, storage) == receipt
     for repetition in range(2):
         restored = evidence / f"restored-{index}-{repetition}"
-        assert module.restore(prefix, restored, receipt["manifest_sha256"], storage) == receipt
-        observed = {str(p.relative_to(restored)): hashlib.sha256(p.read_bytes()).hexdigest()
-                    for p in restored.rglob("*") if p.is_file()}
+        assert (
+            module.restore(prefix, restored, receipt["manifest_sha256"], storage)
+            == receipt
+        )
+        observed = {
+            str(p.relative_to(restored)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in restored.rglob("*")
+            if p.is_file()
+        }
         assert observed == original
-    _refuse_conflicting_tree(module, storage, source, prefix, evidence / f"conflict-{index}")
-    _refuse_corrupt_payload(module, storage, client, source, prefix, receipt, evidence, index)
-    return {**receipt, "identical_retry": True, "verified_restores": 2,
-            "conflict_refused": True, "corruption_refused": True}
+    _refuse_conflicting_tree(
+        module, storage, source, prefix, evidence / f"conflict-{index}"
+    )
+    _refuse_corrupt_payload(
+        module, storage, client, source, prefix, receipt, evidence, index
+    )
+    return {
+        **receipt,
+        "identical_retry": True,
+        "verified_restores": 2,
+        "conflict_refused": True,
+        "corruption_refused": True,
+    }
 
 
 def test_actual_s3_archive_restore_and_corruption(monkeypatch):
@@ -134,7 +170,9 @@ def test_actual_s3_archive_restore_and_corruption(monkeypatch):
         Exception: Source, storage or cleanup operations fail.
     """
     if not (config_path := os.environ.get("NPA_RAY_CLIP_ARCHIVE_LIVE_CONFIG")):
-        pytest.skip("requires private source provenance and preflighted owned workload storage")
+        pytest.skip(
+            "requires private source provenance and preflighted owned workload storage"
+        )
     path = Path(config_path)
     assert path.stat().st_uid == os.getuid() and path.stat().st_mode & 0o077 == 0
     config = json.loads(path.read_text())
@@ -151,7 +189,11 @@ def test_actual_s3_archive_restore_and_corruption(monkeypatch):
     receipts = []
     try:
         for index, source_path in enumerate(config["source_paths"]):
-            receipts.append(_exercise_source(module, storage, client, source_path, evidence, config, index))
+            receipts.append(
+                _exercise_source(
+                    module, storage, client, source_path, evidence, config, index
+                )
+            )
         _write(evidence / "result.json", {"receipts": receipts})
     finally:
         try:

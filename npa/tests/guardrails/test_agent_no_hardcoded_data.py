@@ -16,7 +16,13 @@ _INSIGHTS_DIR = _SRC / "workbench" / "insights"
 
 # Demo run names that were only ever seeded into an S3 store / used as test
 # fixtures. They must never appear in production source.
-_SEEDED_RUN_NAMES = ("candidate-4gpu", "hardened-4gpu", "baseline-2gpu", "run-4gpu", "run-h100")
+_SEEDED_RUN_NAMES = (
+    "candidate-4gpu",
+    "hardened-4gpu",
+    "baseline-2gpu",
+    "run-4gpu",
+    "run-h100",
+)
 
 
 def _agent_sources() -> list[Path]:
@@ -63,9 +69,13 @@ def test_no_hardcoded_insights_endpoint_or_port_in_agent() -> None:
     for path in _agent_sources():
         text = path.read_text(encoding="utf-8")
         assert ":8793" not in text, f"{path.name} hardcodes the insights port"
-        assert not re.search(r"https?://[^\"'\s]*insights", text, re.IGNORECASE), path.name
+        assert not re.search(r"https?://[^\"'\s]*insights", text, re.IGNORECASE), (
+            path.name
+        )
         # No embedded long token/secret literal.
-        assert not re.search(r"INSIGHTS_TOKEN\s*=\s*[\"'][A-Za-z0-9._-]{12,}[\"']", text), path.name
+        assert not re.search(
+            r"INSIGHTS_TOKEN\s*=\s*[\"'][A-Za-z0-9._-]{12,}[\"']", text
+        ), path.name
 
 
 def test_insights_endpoint_and_token_are_env_resolved() -> None:
@@ -82,11 +92,17 @@ def test_which_runs_used_4_gpus_still_routes_to_insights() -> None:
     from npa.cli import agent_chat
     from npa.cli import agent_semantic_router as sr
 
-    assert agent_chat.match_chat_intent("which runs used 4 gpus") not in agent_chat._RUN_LISTING_INTENTS
+    assert (
+        agent_chat.match_chat_intent("which runs used 4 gpus")
+        not in agent_chat._RUN_LISTING_INTENTS
+    )
     result = sr.classify_intent_semantic(
         "which runs used 4 gpus",
         known_intents=frozenset(agent_chat.INTENT_APIS.keys()),
-        model_call=lambda *a, **k: {"choices": [{"message": {"content": "{}"}}], "usage": {}},
+        model_call=lambda *a, **k: {
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {},
+        },
     )
     assert result["mode"] == sr.MODE_ACTION
     assert result["tokens"] == 0

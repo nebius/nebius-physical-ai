@@ -274,7 +274,10 @@ class _SubmissionCleanup:
 
     def _lookup(self) -> ReconciliationEvidence:
         if self.native_result is not None:
-            if self.context_check is None or self.context_check() != self.native_result.context:
+            if (
+                self.context_check is None
+                or self.context_check() != self.native_result.context
+            ):
                 return ReconciliationEvidence(ReconciliationState.AMBIGUOUS)
         return _reconcile_managed_job_env(
             self.run_id,
@@ -284,7 +287,9 @@ class _SubmissionCleanup:
             redactions=self.redactions,
             require_all_terminal=True,
             expected_job_id=self.job_id if self.native_result is not None else "",
-            expected_task_ids=self.native_result.task_ids if self.native_result is not None else (),
+            expected_task_ids=self.native_result.task_ids
+            if self.native_result is not None
+            else (),
         )
 
     def _same_job(self, evidence: ReconciliationEvidence) -> bool:
@@ -296,7 +301,9 @@ class _SubmissionCleanup:
 
     def _cancel_exact(self) -> CleanupResult:
         if self.native_result is not None and not self.native_verified:
-            return CleanupResult(errors=["native transaction incomplete; recovery state retained"])
+            return CleanupResult(
+                errors=["native transaction incomplete; recovery state retained"]
+            )
         if not self.job_id.isdigit():
             return CleanupResult(
                 errors=["owned launch receipt unavailable; recovery state retained"]
@@ -972,7 +979,6 @@ def _selected_kube_context(
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-
 @dataclass
 class _PreparedWorkflowSubmission:
     runtime_config: Any
@@ -988,13 +994,16 @@ class _PreparedWorkflowSubmission:
 def _submission_global_config(runtime, controller_backend, infra):
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
-        controller_backend=controller_backend, infra=infra,
+        controller_backend=controller_backend,
+        infra=infra,
     )
     context = _controller_region_from_infra(infra, controller_backend)
     if context:
         kubernetes = config.setdefault("kubernetes", {})
         if not isinstance(kubernetes, dict):
-            raise ValueError("SkyPilot global config kubernetes section must be a mapping")
+            raise ValueError(
+                "SkyPilot global config kubernetes section must be a mapping"
+            )
         # The selected workload and controller share this exact context; other
         # operator settings, including pod configuration, retain their values.
         kubernetes["allowed_contexts"] = [context]
@@ -1013,13 +1022,19 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
         api_server = prepared.global_config.setdefault("api_server", {})
         if not isinstance(api_server, dict):
-            raise ValueError("SkyPilot global config api_server section must be a mapping")
+            raise ValueError(
+                "SkyPilot global config api_server section must be a mapping"
+            )
         api_server["endpoint"] = isolated_endpoint
     env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
     try:
         selected, _report, injected = _execution_preflight(
-            prepared.docs, project=project, infra=infra, extra_env=env,
-            target=target, global_config=prepared.global_config,
+            prepared.docs,
+            project=project,
+            infra=infra,
+            extra_env=env,
+            target=target,
+            global_config=prepared.global_config,
             sky_bin=prepared.sky_executable,
             cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
         )
@@ -1029,19 +1044,34 @@ def _preflight_prepared_submission(prepared, *, project, infra, extra_env, targe
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
     prepared.env = env
-    prepared.config_path.write_text(yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8")
+    prepared.config_path.write_text(
+        yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8"
+    )
     _chmod_owner_only(prepared.config_path)
-    prepared.yaml_path.write_text(yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8")
+    prepared.yaml_path.write_text(
+        yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8"
+    )
     _chmod_owner_only(prepared.yaml_path)
 
 
 def _prepare_workflow_submission(
-    yaml_path, run_id, *, isolated_config_dir=None, config_path=None, sky_bin=None,
-    controller_backend=DEFAULT_CONTROLLER_BACKEND, infra="", extra_env=None,
-    project="", execution_target=None,
+    yaml_path,
+    run_id,
+    *,
+    isolated_config_dir=None,
+    config_path=None,
+    sky_bin=None,
+    controller_backend=DEFAULT_CONTROLLER_BACKEND,
+    infra="",
+    extra_env=None,
+    project="",
+    execution_target=None,
 ):
-    runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
-                             isolated_config_dir=isolated_config_dir)
+    runtime = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
     docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
@@ -1053,12 +1083,20 @@ def _prepare_workflow_submission(
         executable = str(ensure_skypilot_version(runtime.sky_bin))
         global_config = _submission_global_config(runtime, controller_backend, infra)
         generated = directory / "skypilot-config.yaml"
-        generated.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        generated.write_text(
+            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        )
         _chmod_owner_only(generated)
-        prepared = _PreparedWorkflowSubmission(runtime, docs, directory, rendered,
-                                                generated, executable, global_config)
-        _preflight_prepared_submission(prepared, project=project, infra=infra,
-                                      extra_env=extra_env, target=execution_target)
+        prepared = _PreparedWorkflowSubmission(
+            runtime, docs, directory, rendered, generated, executable, global_config
+        )
+        _preflight_prepared_submission(
+            prepared,
+            project=project,
+            infra=infra,
+            extra_env=extra_env,
+            target=execution_target,
+        )
         return prepared
     except BaseException:
         if runtime.isolated_config_dir is None:
@@ -1525,10 +1563,16 @@ def submit_workflow(
     try:
         if robotwin_authorization is None:
             prepared = _prepare_workflow_submission(
-                yaml_path, run_id, isolated_config_dir=isolated_config_dir,
-                config_path=config_path, sky_bin=sky_bin,
-                controller_backend=controller_backend, infra=infra,
-                extra_env=extra_env, project=project, execution_target=execution_target,
+                yaml_path,
+                run_id,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+                controller_backend=controller_backend,
+                infra=infra,
+                extra_env=extra_env,
+                project=project,
+                execution_target=execution_target,
             )
             runtime_config = prepared.runtime_config
             docs, env = prepared.docs, prepared.env
@@ -1537,7 +1581,9 @@ def submit_workflow(
             sky_executable = prepared.sky_executable
             global_config = prepared.global_config
             control_env = env
-            owned_submission_dir = submission_dir if runtime_config.isolated_config_dir is None else None
+            owned_submission_dir = (
+                submission_dir if runtime_config.isolated_config_dir is None else None
+            )
         else:
             runtime_config = resolve_config(
                 sky_bin=sky_bin,
@@ -1562,7 +1608,9 @@ def submit_workflow(
                 # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
                 _chmod_owner_only(prepared_yaml)
             sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
-            controller_context = _controller_region_from_infra(infra, controller_backend)
+            controller_context = _controller_region_from_infra(
+                infra, controller_backend
+            )
             base_config = (
                 _load_validated_robotwin_config(
                     robotwin_authorization.skypilot_config_bytes
@@ -1572,7 +1620,8 @@ def submit_workflow(
             )
             global_config = _controller_config_for_execution(
                 base_config,
-                controller_backend=controller_backend, infra=infra,
+                controller_backend=controller_backend,
+                infra=infra,
             )
             if controller_context:
                 # ``--infra k8s/<context>`` is an exact target, not merely a
@@ -1643,9 +1692,9 @@ def submit_workflow(
                 robotwin_submit_context is not None
                 and robotwin_submit_context.layer == "outer"
             ):
-                env["NPA_SRC_S3_URI"] = dict(robotwin_submit_context.private_environment)[
-                    "NPA_SRC_S3_URI"
-                ]
+                env["NPA_SRC_S3_URI"] = dict(
+                    robotwin_submit_context.private_environment
+                )["NPA_SRC_S3_URI"]
             control_env = env
             if robotwin_authorization is not None:
                 from npa.orchestration.npa_workflow.robotwin_preflight import (
@@ -1670,7 +1719,9 @@ def submit_workflow(
             ):
                 inner_environment = docs[1].setdefault("envs", {})
                 for name in ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"):
-                    if inner_environment.get(name) != f"${{{name}}}" or not env.get(name):
+                    if inner_environment.get(name) != f"${{{name}}}" or not env.get(
+                        name
+                    ):
                         raise SkyPilotSubmitError(
                             "RoboTwin confidential storage endpoint is unavailable"
                         )
@@ -1700,8 +1751,12 @@ def submit_workflow(
                     )
                 else:
                     _target, _target_report, injected = _execution_preflight(
-                        docs, project=project, infra=infra, extra_env=control_env,
-                        target=execution_target, global_config=global_config,
+                        docs,
+                        project=project,
+                        infra=infra,
+                        extra_env=control_env,
+                        target=execution_target,
+                        global_config=global_config,
                         sky_bin=sky_executable,
                         cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
                     )
@@ -1748,7 +1803,8 @@ def submit_workflow(
                     if robotwin_submit_context.layer == "outer"
                     and any(
                         isinstance(document.get("envs"), dict)
-                        and document["envs"].get("NPA_SRC_S3_URI") == "${NPA_SRC_S3_URI}"
+                        and document["envs"].get("NPA_SRC_S3_URI")
+                        == "${NPA_SRC_S3_URI}"
                         for document in docs
                     )
                     else (),
@@ -1765,7 +1821,9 @@ def submit_workflow(
                     task["resources"].pop("kubernetes")
             # Native preflight pins the exact project/region in this per-submit
             # configuration; persist the verified version before any controller.
-            generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+            generated_config_path.write_text(
+                yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+            )
             _chmod_owner_only(generated_config_path)
             prepared_yaml.write_text(
                 yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8"
@@ -1930,16 +1988,28 @@ def submit_workflow(
             _enable_cleanup()
             if cleanup_state is not None:
                 return _launch_with_native_cleanup(
-                    cleanup_state, yaml_path=prepared_yaml, run_id=run_id,
+                    cleanup_state,
+                    yaml_path=prepared_yaml,
+                    run_id=run_id,
                     isolated_dir=runtime_config.isolated_config_dir,
-                    controller=controller_health.name, context=selected_context,
-                    sky_executable=sky_executable, secret_envs=secret_envs,
-                    environment=env, timeout=timeout, cwd=stable_cwd,
-                    log_dir=submission_dir, controller_backend=controller_backend,
-                    controller_absent=(controller_health.state is ControllerState.ABSENT),
+                    controller=controller_health.name,
+                    context=selected_context,
+                    sky_executable=sky_executable,
+                    secret_envs=secret_envs,
+                    environment=env,
+                    timeout=timeout,
+                    cwd=stable_cwd,
+                    log_dir=submission_dir,
+                    controller_backend=controller_backend,
+                    controller_absent=(
+                        controller_health.state is ControllerState.ABSENT
+                    ),
                     robotwin_image_sha256=(
-                        hashlib.sha256(robotwin_authorization.bootstrap_image.encode()).hexdigest()
-                        if robotwin_submit_context.layer == "inner" else ""
+                        hashlib.sha256(
+                            robotwin_authorization.bootstrap_image.encode()
+                        ).hexdigest()
+                        if robotwin_submit_context.layer == "inner"
+                        else ""
                     ),
                 )
             try:
@@ -2036,8 +2106,8 @@ def submit_workflow(
             }:
                 exc.result.operator_remedy = (
                     "Preserve the original private context; do not resubmit or adopt by name."
-                    if cleanup_state is not None else
-                    f"Re-run the identical submit arguments with `--resume-run {run_id}` "
+                    if cleanup_state is not None
+                    else f"Re-run the identical submit arguments with `--resume-run {run_id}` "
                     "for this exact logical launch; do not choose a new run ID or cancel "
                     "by name."
                 )
@@ -2066,8 +2136,13 @@ def submit_workflow(
                     "launch receipt and transaction identity differ"
                 )
             if cleanup_state.native_result is not None:
-                if cleanup_state.requested or transaction.identity_source != "native_request_result":
-                    raise SkyPilotSubmitError("native transaction interrupted or unverified; context retained")
+                if (
+                    cleanup_state.requested
+                    or transaction.identity_source != "native_request_result"
+                ):
+                    raise SkyPilotSubmitError(
+                        "native transaction interrupted or unverified; context retained"
+                    )
                 cleanup_state.native_verified = True
             cleanup_state.finish_submit(failed=False)
             if cleanup_state.requested:
@@ -2121,7 +2196,10 @@ def submit_workflow(
         if robotwin_authorization is not None:
             message = _redact_private_text(message, private_redactions)
             _raise_sanitized_submit_error(message)
-        raise SkyPilotSubmitError(message) from exc
+        raise SkyPilotSubmitError(
+            message,
+            launch_attempted=False if prepared_yaml is None else None,
+        ) from exc
     except Exception as exc:
         _finish_failed_submission(owned_submission_dir, cleanup_state)
         if robotwin_authorization is not None:
@@ -2556,7 +2634,9 @@ def _reconcile_managed_job_env(
             )
         rows = parsed_rows
     if expected_job_id:
-        return _reconcile_native_tasks(rows, job_name, expected_job_id, expected_task_ids)
+        return _reconcile_native_tasks(
+            rows, job_name, expected_job_id, expected_task_ids
+        )
     matching: set[str] = set()
     statuses: dict[str, str] = {}
     task_statuses: dict[str, set[str]] = {}
@@ -2613,14 +2693,21 @@ def _reconcile_managed_job_env(
 
 
 def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
-    selected = [row for row in rows if str(row.get("job_id", row.get("id", ""))) == job_id]
+    selected = [
+        row for row in rows if str(row.get("job_id", row.get("id", ""))) == job_id
+    ]
     expected = list(task_ids)
     observed = [row.get("task_id") for row in selected]
-    if (not expected or any(type(value) is not int for value in observed)
-            or sorted(observed) != sorted(expected)
-            or any(row.get("job_name", row.get("name")) != job_name for row in selected)):
-        return ReconciliationEvidence(ReconciliationState.AMBIGUOUS,
-                                      error="native job task coverage is incomplete or conflicting")
+    if (
+        not expected
+        or any(type(value) is not int for value in observed)
+        or sorted(observed) != sorted(expected)
+        or any(row.get("job_name", row.get("name")) != job_name for row in selected)
+    ):
+        return ReconciliationEvidence(
+            ReconciliationState.AMBIGUOUS,
+            error="native job task coverage is incomplete or conflicting",
+        )
     statuses = {
         normalize_native_job_status(str(row.get("status", "UNKNOWN")))
         for row in selected
@@ -2634,7 +2721,8 @@ def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
     statuses = {status for status in statuses if status is not None}
     active_statuses = {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING"}
     known_terminal = {
-        status for status in statuses
+        status
+        for status in statuses
         if status == "SUCCEEDED" or is_terminal_failure_job_status(status)
     }
     if statuses - active_statuses - known_terminal:
@@ -2644,7 +2732,10 @@ def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
         # task is still active.  Keep the launch-owned job in normal polling
         # until every expected task reaches a terminal state.
         status = "RUNNING"
-    elif all(status == "SUCCEEDED" or is_terminal_failure_job_status(status) for status in statuses):
+    elif all(
+        status == "SUCCEEDED" or is_terminal_failure_job_status(status)
+        for status in statuses
+    ):
         status = "SUCCEEDED" if statuses == {"SUCCEEDED"} else "CANCELLED"
     else:
         status = "UNKNOWN"
@@ -2653,7 +2744,8 @@ def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
         job_id=job_id,
         status=status,
         workload_observable=True,
-        workload_evidence="controller_task_ids:" + ",".join(str(value) for value in expected),
+        workload_evidence="controller_task_ids:"
+        + ",".join(str(value) for value in expected),
         observed_task_ids=tuple(expected),
     )
 
@@ -2923,25 +3015,41 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _native_launch_payload(*, yaml_path, run_id, isolated_dir, controller, context,
-                           sky_executable, secret_envs, environment, controller_cloud_name=""):
+def _native_launch_payload(
+    *,
+    yaml_path,
+    run_id,
+    isolated_dir,
+    controller,
+    context,
+    sky_executable,
+    secret_envs,
+    environment,
+    controller_cloud_name="",
+):
     from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
 
     if isolated_dir is None or not controller:
-        raise NativeResultUnavailable("native launch needs an existing verified owned controller")
+        raise NativeResultUnavailable(
+            "native launch needs an existing verified owned controller"
+        )
     documents = _load_yaml_documents(yaml_path)
     header = bool(documents and set(documents[0]) <= {"name", "execution"})
     task_count = len(documents) - int(header)
     if task_count < 1:
         raise NativeResultUnavailable("complete rendered DAG is unavailable")
-    for document in documents[int(header):]:
+    for document in documents[int(header) :]:
         _require_native_kubernetes_resources(document.get("resources"), context)
     return {
-        "attempt": uuid.uuid4().hex, "name": run_id,
-        "yaml": Path(yaml_path).read_text(encoding="utf-8"), "task_count": task_count,
-        "isolated_dir": str(Path(isolated_dir).absolute()), "controller": controller,
+        "attempt": uuid.uuid4().hex,
+        "name": run_id,
+        "yaml": Path(yaml_path).read_text(encoding="utf-8"),
+        "task_count": task_count,
+        "isolated_dir": str(Path(isolated_dir).absolute()),
+        "controller": controller,
         "controller_cloud_name": controller_cloud_name,
-        "kube_context": context, "sky_executable": sky_executable,
+        "kube_context": context,
+        "sky_executable": sky_executable,
         "secrets": [name for name in secret_envs or () if environment.get(name)],
     }
 
@@ -2950,31 +3058,56 @@ def _require_native_kubernetes_resources(resources, context):
     from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
 
     if not isinstance(resources, dict):
-        raise NativeResultUnavailable("native launch requires explicitly rendered Kubernetes resources")
+        raise NativeResultUnavailable(
+            "native launch requires explicitly rendered Kubernetes resources"
+        )
     if resources.get("cloud") not in {"kubernetes", "k8s"}:
         raise NativeResultUnavailable("native launch cannot infer an infra override")
     if context and resources.get("region") not in {None, context}:
-        raise NativeResultUnavailable("native launch target differs from the verified context")
+        raise NativeResultUnavailable(
+            "native launch target differs from the verified context"
+        )
     if "any_of" in resources or "ordered" in resources:
-        raise NativeResultUnavailable("native resource alternatives need explicit compatibility proof")
+        raise NativeResultUnavailable(
+            "native resource alternatives need explicit compatibility proof"
+        )
 
 
 def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
     from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
 
     if controller_backend != "kubernetes":
-        raise NativeResultUnavailable("native cleanup has no verified non-Kubernetes context")
+        raise NativeResultUnavailable(
+            "native cleanup has no verified non-Kubernetes context"
+        )
     if kwargs.get("controller_absent"):
-        kwargs["controller"], kwargs["controller_cloud_name"] = _ensure_native_controller(
-            yaml_path=kwargs["yaml_path"], isolated_dir=kwargs["isolated_dir"],
-            controller=kwargs["controller"], context=kwargs["context"],
-            sky_executable=kwargs["sky_executable"], environment=cleanup.environment,
-            log_dir=kwargs["log_dir"], timeout=kwargs["timeout"], cwd=kwargs["cwd"],
+        kwargs["controller"], kwargs["controller_cloud_name"] = (
+            _ensure_native_controller(
+                yaml_path=kwargs["yaml_path"],
+                isolated_dir=kwargs["isolated_dir"],
+                controller=kwargs["controller"],
+                context=kwargs["context"],
+                sky_executable=kwargs["sky_executable"],
+                environment=cleanup.environment,
+                log_dir=kwargs["log_dir"],
+                timeout=kwargs["timeout"],
+                cwd=kwargs["cwd"],
+            )
         )
         if cleanup.requested:
-            raise NativeResultUnavailable("interrupted controller ensure; recovery context retained")
-    payload_keys = ("yaml_path", "run_id", "isolated_dir", "controller", "context",
-                    "sky_executable", "secret_envs", "environment")
+            raise NativeResultUnavailable(
+                "interrupted controller ensure; recovery context retained"
+            )
+    payload_keys = (
+        "yaml_path",
+        "run_id",
+        "isolated_dir",
+        "controller",
+        "context",
+        "sky_executable",
+        "secret_envs",
+        "environment",
+    )
     payload = _native_launch_payload(
         **{key: kwargs[key] for key in payload_keys},
         controller_cloud_name=kwargs.get("controller_cloud_name", ""),
@@ -2982,38 +3115,70 @@ def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
     if kwargs.get("robotwin_image_sha256"):
         payload["robotwin_image_sha256"] = kwargs["robotwin_image_sha256"]
     result, context_check = _run_native_launch(
-        payload, environment=kwargs["environment"], control_environment=cleanup.environment,
-        log_dir=kwargs["log_dir"], timeout=kwargs["timeout"], cwd=kwargs["cwd"],
+        payload,
+        environment=kwargs["environment"],
+        control_environment=cleanup.environment,
+        log_dir=kwargs["log_dir"],
+        timeout=kwargs["timeout"],
+        cwd=kwargs["cwd"],
     )
     if cleanup.requested:
-        raise NativeResultUnavailable("interrupted native launch; recovery context retained")
+        raise NativeResultUnavailable(
+            "interrupted native launch; recovery context retained"
+        )
     cleanup.native_result = result
     cleanup.context_check = context_check
     cleanup.job_id = result.job_id
     return result
 
 
-def _ensure_native_controller(*, yaml_path, isolated_dir, controller, context,
-                              sky_executable, environment, log_dir, timeout, cwd):
+def _ensure_native_controller(
+    *,
+    yaml_path,
+    isolated_dir,
+    controller,
+    context,
+    sky_executable,
+    environment,
+    log_dir,
+    timeout,
+    cwd,
+):
     """Provision a controller through the owned API before binding its incarnation."""
     from npa.orchestration.skypilot import _managed_job_api as native
 
     binding = _native_api_context_digest(
-        isolated_dir=isolated_dir, sky_executable=sky_executable, environment=environment
+        isolated_dir=isolated_dir,
+        sky_executable=sky_executable,
+        environment=environment,
     )
     payload = {
-        "mode": "ensure_controller", "attempt": uuid.uuid4().hex, "context": binding,
-        "yaml": Path(yaml_path).read_text(), "isolated_dir": str(isolated_dir),
-        "controller": controller, "kube_context": context,
-        "sky_executable": sky_executable, "secrets": [],
+        "mode": "ensure_controller",
+        "attempt": uuid.uuid4().hex,
+        "context": binding,
+        "yaml": Path(yaml_path).read_text(),
+        "isolated_dir": str(isolated_dir),
+        "controller": controller,
+        "kube_context": context,
+        "sky_executable": sky_executable,
+        "secrets": [],
     }
     path = log_dir / f"controller-ensure-{payload['attempt']}.jsonl"
-    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(
+        path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600
+    )
     try:
-        _invoke_native_bridge({**payload, "descriptor": descriptor}, environment, cwd, timeout)
-        if _native_api_context_digest(
-            isolated_dir=isolated_dir, sky_executable=sky_executable, environment=environment
-        ) != binding:
+        _invoke_native_bridge(
+            {**payload, "descriptor": descriptor}, environment, cwd, timeout
+        )
+        if (
+            _native_api_context_digest(
+                isolated_dir=isolated_dir,
+                sky_executable=sky_executable,
+                environment=environment,
+            )
+            != binding
+        ):
             raise native.NativeResultUnavailable("controller ensure API changed")
         os.lseek(descriptor, 0, os.SEEK_SET)
         data = os.read(descriptor, native.MAX_OBSERVATION_BYTES + 1)
@@ -3021,40 +3186,59 @@ def _ensure_native_controller(*, yaml_path, isolated_dir, controller, context,
             data, attempt=payload["attempt"], context=binding
         )
         actual = _native_context_digest(
-            isolated_dir=isolated_dir, controller=name, controller_cloud_name=cloud_name,
+            isolated_dir=isolated_dir,
+            controller=name,
+            controller_cloud_name=cloud_name,
             context=context,
-            sky_executable=sky_executable, environment=environment,
+            sky_executable=sky_executable,
+            environment=environment,
         )
         if actual != incarnation or (controller and name != controller):
-            raise native.NativeResultUnavailable("controller ensure incarnation changed")
+            raise native.NativeResultUnavailable(
+                "controller ensure incarnation changed"
+            )
         return name, cloud_name
     finally:
         os.close(descriptor)
 
 
-def _run_native_launch(payload, *, environment, control_environment, log_dir, timeout, cwd):
+def _run_native_launch(
+    payload, *, environment, control_environment, log_dir, timeout, cwd
+):
     from npa.orchestration.skypilot import _managed_job_api as native
 
     def context_check():
         return _native_context_digest(
-            isolated_dir=Path(payload["isolated_dir"]), controller=payload["controller"],
+            isolated_dir=Path(payload["isolated_dir"]),
+            controller=payload["controller"],
             controller_cloud_name=payload.get("controller_cloud_name", ""),
-            context=payload["kube_context"], sky_executable=payload["sky_executable"],
+            context=payload["kube_context"],
+            sky_executable=payload["sky_executable"],
             environment=control_environment,
         )
 
     context = context_check()
     payload = {**payload, "context": context}
     path = log_dir / f"native-{payload['attempt']}.jsonl"
-    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(
+        path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600
+    )
     try:
-        _invoke_native_bridge({**payload, "descriptor": descriptor}, environment, cwd, timeout)
+        _invoke_native_bridge(
+            {**payload, "descriptor": descriptor}, environment, cwd, timeout
+        )
         if context_check() != context:
-            raise native.NativeResultUnavailable("native API/controller context changed")
+            raise native.NativeResultUnavailable(
+                "native API/controller context changed"
+            )
         os.lseek(descriptor, 0, os.SEEK_SET)
         data = os.read(descriptor, native.MAX_OBSERVATION_BYTES + 1)
-        observed = native.decode_observation(data, attempt=payload["attempt"],
-                                             context=context, task_count=payload["task_count"])
+        observed = native.decode_observation(
+            data,
+            attempt=payload["attempt"],
+            context=context,
+            task_count=payload["task_count"],
+        )
         return observed, context_check
     finally:
         os.close(descriptor)
@@ -3066,12 +3250,21 @@ def _invoke_native_bridge(payload, environment, cwd, timeout):
     interpreter = Path(payload["sky_executable"]).absolute().parent / "python"
     command = [str(interpreter), str(Path(native.__file__).resolve())]
     completed = subprocess.run(
-        command, input=json.dumps(payload), text=True, env=dict(environment), cwd=cwd,
-        pass_fds=(payload["descriptor"],), stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, timeout=timeout, check=False,
+        command,
+        input=json.dumps(payload),
+        text=True,
+        env=dict(environment),
+        cwd=cwd,
+        pass_fds=(payload["descriptor"],),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=timeout,
+        check=False,
     )
     if completed.returncode:
-        raise native.NativeResultUnavailable("native request did not yield a complete successful result")
+        raise native.NativeResultUnavailable(
+            "native request did not yield a complete successful result"
+        )
 
 
 def _probe_kubernetes_controller_cwd(
@@ -3252,9 +3445,16 @@ def _controller_incarnation(pod: Mapping[str, Any]) -> str:
             return ""
         if not item.get("state", {}).get("running", {}).get("startedAt"):
             return ""
-        containers.append({key: item[key] for key in ("name", "containerID", "imageID")})
-    return observation_digest({"uid": metadata["uid"], "namespace": metadata["namespace"],
-                               "containers": sorted(containers, key=lambda row: row["name"])})
+        containers.append(
+            {key: item[key] for key in ("name", "containerID", "imageID")}
+        )
+    return observation_digest(
+        {
+            "uid": metadata["uid"],
+            "namespace": metadata["namespace"],
+            "containers": sorted(containers, key=lambda row: row["name"]),
+        }
+    )
 
 
 _CONTROLLER_PROBE_ENV_KEYS = (
@@ -3281,7 +3481,10 @@ def _controller_probe_environment(environment: Mapping[str, str]) -> dict[str, s
 
 def _native_api_context_digest(*, isolated_dir, sky_executable, environment):
     from npa.orchestration.skypilot import local_api
-    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable, observation_digest
+    from npa.orchestration.skypilot._managed_job_api import (
+        NativeResultUnavailable,
+        observation_digest,
+    )
 
     root = Path(isolated_dir).absolute() / "local-api"
     with local_api._locked(root):
@@ -3296,15 +3499,21 @@ def _native_api_context_digest(*, isolated_dir, sky_executable, environment):
         # ~/.sky/api_server/requests.db against HOME, not SKY_RUNTIME_DIR.
         home = Path(str(environment.get("HOME") or ""))
         if not home.is_absolute() or home.resolve() != home:
-            raise NativeResultUnavailable("native request store home is not owner-bound")
+            raise NativeResultUnavailable(
+                "native request store home is not owner-bound"
+            )
         store = home / ".sky" / "api_server" / "requests.db"
         metadata = store.lstat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
             raise NativeResultUnavailable("native request store is not owner-bound")
-        api = {"marker": record["marker"], "process": process,
-               "store": [metadata.st_dev, metadata.st_ino],
-               "config": record["config_sha256"], "files": record.get("identity_files"),
-               "endpoint": local_api._endpoint(record)}
+        api = {
+            "marker": record["marker"],
+            "process": process,
+            "store": [metadata.st_dev, metadata.st_ino],
+            "config": record["config_sha256"],
+            "files": record.get("identity_files"),
+            "endpoint": local_api._endpoint(record),
+        }
     return observation_digest(api)
 
 
@@ -3313,24 +3522,52 @@ def _native_controller_namespace_empty(*, context, environment, runner=subproces
     command = [shutil.which("kubectl") or "kubectl"]
     if context:
         command += ["--context", context]
-    command += ["get", "pods", "--selector", "skypilot-cluster-name", "--output", "json"]
+    command += [
+        "get",
+        "pods",
+        "--selector",
+        "skypilot-cluster-name",
+        "--output",
+        "json",
+    ]
     try:
         result = runner(
-            command, env=_controller_probe_environment(environment), text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False,
+            command,
+            env=_controller_probe_environment(environment),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
         )
         payload = json.loads(result.stdout)
-        return result.returncode == 0 and isinstance(payload, dict) and payload.get("items") == []
+        return (
+            result.returncode == 0
+            and isinstance(payload, dict)
+            and payload.get("items") == []
+        )
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return False
 
 
-def _native_context_digest(*, isolated_dir, controller, context, sky_executable, environment,
-                           controller_cloud_name=""):
-    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable, observation_digest
+def _native_context_digest(
+    *,
+    isolated_dir,
+    controller,
+    context,
+    sky_executable,
+    environment,
+    controller_cloud_name="",
+):
+    from npa.orchestration.skypilot._managed_job_api import (
+        NativeResultUnavailable,
+        observation_digest,
+    )
 
     api = _native_api_context_digest(
-        isolated_dir=isolated_dir, sky_executable=sky_executable, environment=environment
+        isolated_dir=isolated_dir,
+        sky_executable=sky_executable,
+        environment=environment,
     )
     probe = _probe_kubernetes_controller_cwd(
         controller_cloud_name or controller,
@@ -3339,7 +3576,9 @@ def _native_context_digest(*, isolated_dir, controller, context, sky_executable,
         use_current_context=not context,
     )
     if not probe.healthy or not probe.identity:
-        raise NativeResultUnavailable("controller incarnation is unverified; context retained")
+        raise NativeResultUnavailable(
+            "controller incarnation is unverified; context retained"
+        )
     return observation_digest({"api": api, "controller": probe.identity})
 
 
@@ -3348,7 +3587,10 @@ def _check_native_environment(record, environment, sky_executable):
 
     interpreter = str(Path(sky_executable).absolute().parent / "python")
     endpoint = f"http://127.0.0.1:{record['port']}"
-    if record.get("interpreter") != interpreter or environment.get("SKYPILOT_API_SERVER_ENDPOINT") != endpoint:
+    if (
+        record.get("interpreter") != interpreter
+        or environment.get("SKYPILOT_API_SERVER_ENDPOINT") != endpoint
+    ):
         raise NativeResultUnavailable("native API selection changed")
     if environment.get("SKYPILOT_DB_CONNECTION_URI"):
         raise NativeResultUnavailable("native API cannot use a different request store")
@@ -3356,7 +3598,9 @@ def _check_native_environment(record, environment, sky_executable):
     if hashlib.sha256(config.read_bytes()).hexdigest() != record.get("config_sha256"):
         raise NativeResultUnavailable("native API configuration changed")
     for key in ("HOME", "SKYPILOT_USER_ID", "KUBECONFIG"):
-        if hashlib.sha256(environment.get(key, "").encode()).hexdigest() != record["environment_binding"].get(key):
+        if hashlib.sha256(environment.get(key, "").encode()).hexdigest() != record[
+            "environment_binding"
+        ].get(key):
             raise NativeResultUnavailable("native API executing context changed")
 
 
@@ -3774,7 +4018,9 @@ def _load_base_config(config_path: Path | None) -> dict[str, Any]:
     if config_path is None:
         return {}
     if not config_path.exists():
-        return {}
+        raise SkyPilotConfigError(
+            f"SkyPilot global config does not exist: {config_path}"
+        )
     with config_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):
@@ -3880,7 +4126,9 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _submit_failure_prefix(result: subprocess.CompletedProcess[str], detail: str) -> str:
+def _submit_failure_prefix(
+    result: subprocess.CompletedProcess[str], detail: str
+) -> str:
     state, _category = classify_failure(
         phase="launch", stdout=result.stdout or "", stderr=result.stderr or ""
     )

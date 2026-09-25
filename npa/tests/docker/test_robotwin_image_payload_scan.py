@@ -205,7 +205,9 @@ def test_multiline_build_history_fetches_are_refused(
     assert kind in _kinds(scanner.scan(rootfs, {"history": [{"created_by": history}]}))
 
 
-def test_payload_cli_scans_neutral_bytes_without_a_prebuild_policy_hold(tmp_path: Path) -> None:
+def test_payload_cli_scans_neutral_bytes_without_a_prebuild_policy_hold(
+    tmp_path: Path,
+) -> None:
     rootfs = _tar(tmp_path / "rootfs.tar", {"opt/npa/robotwin/notice.txt": b"neutral"})
     output = tmp_path / "report.json"
     assert scanner.main(["--rootfs-tar", str(rootfs), "--output", str(output)]) == 0

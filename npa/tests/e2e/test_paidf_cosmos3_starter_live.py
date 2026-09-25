@@ -36,8 +36,11 @@ def test_completed_fresh_default_starter_pipeline() -> None:
     _assert_default_batch(client, selected.netloc, prefix)
     _assert_fresh_objects(client, selected.netloc, run_id)
     _assert_paidf_live_artifacts(
-        spec="paidf-cosmos3.yaml", waves=runtime["waves"], bucket=selected.netloc,
-        run_id=run_id, e2e_project=project,
+        spec="paidf-cosmos3.yaml",
+        waves=runtime["waves"],
+        bucket=selected.netloc,
+        run_id=run_id,
+        e2e_project=project,
     )
     _assert_recording_identity(client, selected.netloc, prefix, run_id)
 
@@ -58,7 +61,10 @@ def _assert_starter_input(client, bucket, run_id) -> None:
     assert provenance["source_kind"] == "upstream_sample"
     assert provenance["immutable_revision"] == contract["source"]["immutable_revision"]
     assert provenance["sha256"] == contract["integrity"]["sha256"]
-    keys = [input_prefix + "source.mp4", f"paidf-cosmos3/{run_id}/input/original_source.mp4"]
+    keys = [
+        input_prefix + "source.mp4",
+        f"paidf-cosmos3/{run_id}/input/original_source.mp4",
+    ]
     for key in keys:
         response = client.get_object(Bucket=bucket, Key=key)
         with response["Body"] as body:
@@ -81,13 +87,17 @@ def _assert_default_batch(client, bucket, prefix) -> None:
 
 
 def _assert_fresh_objects(client, bucket, run_id) -> None:
-    fresh_after = datetime.fromisoformat(os.environ["NPA_E2E_PAIDF_STARTER_FRESH_AFTER"])
+    fresh_after = datetime.fromisoformat(
+        os.environ["NPA_E2E_PAIDF_STARTER_FRESH_AFTER"]
+    )
     assert fresh_after.tzinfo is not None, "Freshness timestamp must include UTC offset"
     paginator = client.get_paginator("list_objects_v2")
     for root in ("paidf-cosmos3", "physical-ai-data-factory"):
         count = 0
         for page in paginator.paginate(Bucket=bucket, Prefix=f"{root}/{run_id}/"):
             for item in page.get("Contents", []):
-                assert item["LastModified"] >= fresh_after, "Object predates this submission"
+                assert item["LastModified"] >= fresh_after, (
+                    "Object predates this submission"
+                )
                 count += 1
         assert count > 0, f"Missing {root} artifacts"

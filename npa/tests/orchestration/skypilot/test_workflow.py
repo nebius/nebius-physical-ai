@@ -37,23 +37,32 @@ _REAL_RUN_LAUNCH_TRANSACTION = workflow_module.run_launch_transaction
 
 @pytest.mark.parametrize("task_ids", ([0], [0, 0], [0, 1, 2], [False, 1]))
 def test_native_cleanup_requires_exact_complete_task_membership(task_ids):
-    rows = [{"job_id": 41, "job_name": "synthetic", "task_id": task,
-             "status": "SUCCEEDED"} for task in task_ids]
+    rows = [
+        {"job_id": 41, "job_name": "synthetic", "task_id": task, "status": "SUCCEEDED"}
+        for task in task_ids
+    ]
     evidence = workflow_module._reconcile_native_tasks(rows, "synthetic", "41", (0, 1))
     assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
 
 
 def test_native_cleanup_terminal_is_all_tasks_not_first_task():
-    rows = [{"job_id": 41, "job_name": "synthetic", "task_id": task,
-             "status": status} for task, status in enumerate(("SUCCEEDED", "RUNNING"))]
+    rows = [
+        {"job_id": 41, "job_name": "synthetic", "task_id": task, "status": status}
+        for task, status in enumerate(("SUCCEEDED", "RUNNING"))
+    ]
     evidence = workflow_module._reconcile_native_tasks(rows, "synthetic", "41", (0, 1))
     assert evidence.status == "RUNNING"
     rows[1]["status"] = "SUCCEEDED"
-    assert workflow_module._reconcile_native_tasks(rows, "synthetic", "41", (0, 1)).status == "SUCCEEDED"
+    assert (
+        workflow_module._reconcile_native_tasks(rows, "synthetic", "41", (0, 1)).status
+        == "SUCCEEDED"
+    )
 
 
 @pytest.mark.parametrize("confidential", (False, True))
-def test_native_cleanup_changed_context_refuses_before_queue_or_cancel(monkeypatch, tmp_path, confidential):
+def test_native_cleanup_changed_context_refuses_before_queue_or_cancel(
+    monkeypatch, tmp_path, confidential
+):
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 
     directory = tmp_path / "private-recovery"
@@ -62,52 +71,110 @@ def test_native_cleanup_changed_context_refuses_before_queue_or_cancel(monkeypat
     if confidential:
         env["SYNTHETIC_SECRET"] = "synthetic-private-value"
     cleanup = workflow_module._SubmissionCleanup(
-        "synthetic", env, "/synthetic-sky", str(directory), 0, directory / "config",
-        job_id="41", active=True, submitting=False,
-        native_result=NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64),
+        "synthetic",
+        env,
+        "/synthetic-sky",
+        str(directory),
+        0,
+        directory / "config",
+        job_id="41",
+        active=True,
+        submitting=False,
+        native_result=NativeLaunchResult(
+            "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+        ),
         context_check=lambda: "d" * 64,
         native_verified=True,
     )
-    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", lambda *_a, **_k: pytest.fail("queue reached"))
-    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("provider mutation reached"))
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: pytest.fail("queue reached"),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("provider mutation reached")
+    )
     assert not cleanup.request().verified
     workflow_module._finish_failed_submission(directory, cleanup)
     assert directory.exists()
 
 
 @pytest.mark.parametrize("confidential", (False, True))
-def test_native_result_without_completed_transaction_retains_context(monkeypatch, tmp_path, confidential):
+def test_native_result_without_completed_transaction_retains_context(
+    monkeypatch, tmp_path, confidential
+):
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 
     directory = tmp_path / "private-recovery"
     directory.mkdir(mode=0o700)
     cleanup = workflow_module._SubmissionCleanup(
-        "synthetic", {"SYNTHETIC_SECRET": "synthetic-value"} if confidential else {},
-        "/synthetic-sky", str(directory), 0, directory / "config",
-        job_id="41", active=True, submitting=False,
-        native_result=NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0,), "c" * 64),
+        "synthetic",
+        {"SYNTHETIC_SECRET": "synthetic-value"} if confidential else {},
+        "/synthetic-sky",
+        str(directory),
+        0,
+        directory / "config",
+        job_id="41",
+        active=True,
+        submitting=False,
+        native_result=NativeLaunchResult(
+            "attempt", "00000000-0000-4000-8000-000000000001", "41", (0,), "c" * 64
+        ),
         context_check=lambda: "c" * 64,
     )
-    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", lambda *_a, **_k: pytest.fail("incomplete transaction queried"))
-    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("provider mutation reached"))
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: pytest.fail("incomplete transaction queried"),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("provider mutation reached")
+    )
     assert not cleanup.request().verified
     workflow_module._finish_failed_submission(directory, cleanup)
     assert directory.exists()
 
 
 def test_native_pending_signal_does_not_bind_returned_result(monkeypatch, tmp_path):
-    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult, NativeResultUnavailable
+    from npa.orchestration.skypilot._managed_job_api import (
+        NativeLaunchResult,
+        NativeResultUnavailable,
+    )
 
-    cleanup = workflow_module._SubmissionCleanup("synthetic", {}, "/synthetic-sky", None, 0,
-                                                 tmp_path / "config", active=True, requested=True)
-    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic",
+        {},
+        "/synthetic-sky",
+        None,
+        0,
+        tmp_path / "config",
+        active=True,
+        requested=True,
+    )
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
     monkeypatch.setattr(workflow_module, "_native_launch_payload", lambda **_k: {})
-    monkeypatch.setattr(workflow_module, "_run_native_launch", lambda *_a, **_k: (native, lambda: "c" * 64))
+    monkeypatch.setattr(
+        workflow_module,
+        "_run_native_launch",
+        lambda *_a, **_k: (native, lambda: "c" * 64),
+    )
     with pytest.raises(NativeResultUnavailable, match="interrupted"):
         workflow_module._launch_with_native_cleanup(
-            cleanup, controller_backend="kubernetes", yaml_path=None, run_id="synthetic",
-            isolated_dir=tmp_path, controller="synthetic", context="synthetic", sky_executable="synthetic",
-            secret_envs=(), environment={}, log_dir=tmp_path, timeout=0, cwd=None,
+            cleanup,
+            controller_backend="kubernetes",
+            yaml_path=None,
+            run_id="synthetic",
+            isolated_dir=tmp_path,
+            controller="synthetic",
+            context="synthetic",
+            sky_executable="synthetic",
+            secret_envs=(),
+            environment={},
+            log_dir=tmp_path,
+            timeout=0,
+            cwd=None,
         )
     assert not cleanup.job_id and cleanup.native_result is None
 
@@ -124,7 +191,9 @@ def _fake_sky(tmp_path: Path) -> Path:
 def _terminal_native_submit_options(monkeypatch, tmp_path, confidential):
     options = {}
     if confidential:
-        path, bridge, target, report, env = _robotwin_bridge_fixture(monkeypatch, tmp_path)
+        path, bridge, target, report, env = _robotwin_bridge_fixture(
+            monkeypatch, tmp_path
+        )
         authorization = bridge.authorization
 
         def preflight(documents, **_kwargs):
@@ -133,10 +202,13 @@ def _terminal_native_submit_options(monkeypatch, tmp_path, confidential):
 
         monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
         options.update(
-            robotwin_submit_context=bridge, extra_env=env,
+            robotwin_submit_context=bridge,
+            extra_env=env,
             config_path=Path(authorization.skypilot_config_source),
-            infra=f"k8s/{authorization.kubernetes_context}", project=authorization.project,
-            execution_target=target, execution_preflight_report=report,
+            infra=f"k8s/{authorization.kubernetes_context}",
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
             secret_envs=_robotwin_secret_envs(env),
         )
     else:
@@ -148,7 +220,9 @@ def _terminal_native_submit_options(monkeypatch, tmp_path, confidential):
 def _terminal_native_boundaries(monkeypatch, sky, statuses, handles):
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 
-    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
     launches, queue_calls = [], []
 
     def launch(*_args, **_kwargs):
@@ -163,47 +237,85 @@ def _terminal_native_boundaries(monkeypatch, sky, statuses, handles):
         rows = []
         if launches:
             assert kwargs["env"] == handles[0].environment
-            rows = [{"job_id": 41, "job_name": "synthetic-terminal", "task_id": task,
-                     "status": status} for task, status in enumerate(statuses)]
+            rows = [
+                {
+                    "job_id": 41,
+                    "job_name": "synthetic-terminal",
+                    "task_id": task,
+                    "status": status,
+                }
+                for task, status in enumerate(statuses)
+            ]
         queue_calls.append(rows)
         return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
 
-    monkeypatch.setattr(workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
     monkeypatch.setattr(workflow_module, "_run_native_launch", launch)
-    monkeypatch.setattr(workflow_module, "_wait_for_healthy_jobs_controller", lambda *_a, **_k:
-                        workflow_module.ControllerHealthResult(workflow_module.ControllerState.UP,
-                                                               "synthetic-controller"))
+    monkeypatch.setattr(
+        workflow_module,
+        "_wait_for_healthy_jobs_controller",
+        lambda *_a, **_k: workflow_module.ControllerHealthResult(
+            workflow_module.ControllerState.UP, "synthetic-controller"
+        ),
+    )
     monkeypatch.setattr(subprocess, "run", command_run)
     return native, launches, queue_calls
 
 
 @pytest.mark.parametrize("confidential", (True,))
 @pytest.mark.parametrize("mixed_success", (False, True))
-@pytest.mark.parametrize("failure", (
-    "FAILED", "FAIL", "FAILED_PRECHECKS", "FAILED_SETUP", "FAILED_RUNTIME",
-    "FAILED_CONTROLLER", "FAILED_NO_RESOURCE", "CANCELLED", "CANCELED", "STOPPED",
-    "failed_runtime",
-))
-def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch, tmp_path, confidential, failure, mixed_success):
-    from npa.orchestration.skypilot.launch_transaction import EvidenceState, ProbeObservation, StabilityPolicy
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "FAILED",
+        "FAIL",
+        "FAILED_PRECHECKS",
+        "FAILED_SETUP",
+        "FAILED_RUNTIME",
+        "FAILED_CONTROLLER",
+        "FAILED_NO_RESOURCE",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+        "failed_runtime",
+    ),
+)
+def test_native_terminal_tasks_fail_submit_without_cleanup_authority(
+    monkeypatch, tmp_path, confidential, failure, mixed_success
+):
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        StabilityPolicy,
+    )
 
     statuses = ("SUCCEEDED" if mixed_success else failure, failure)
     path, options = _terminal_native_submit_options(monkeypatch, tmp_path, confidential)
     sky, handles, records = _fake_sky(tmp_path), [], []
-    native, launches, queue_calls = _terminal_native_boundaries(monkeypatch, sky, statuses, handles)
+    native, launches, queue_calls = _terminal_native_boundaries(
+        monkeypatch, sky, statuses, handles
+    )
 
     def ready(handle):
         handle.cleanup_on_failure = True
         handles.append(handle)
 
-    with pytest.raises(SkyPilotSubmitError, match="terminally failed or cancelled") as caught:
+    with pytest.raises(
+        SkyPilotSubmitError, match="terminally failed or cancelled"
+    ) as caught:
         submit_workflow(
-            path, "synthetic-terminal", sky_bin=sky,
-            isolated_config_dir=tmp_path / "sky-state", on_launch_ready=ready,
+            path,
+            "synthetic-terminal",
+            sky_bin=sky,
+            isolated_config_dir=tmp_path / "sky-state",
+            on_launch_ready=ready,
             transaction_recorder=records.append,
             stability_probe=lambda: ProbeObservation(EvidenceState.READY),
             stability_policy=StabilityPolicy(2, 0, 0, 1),
-            launch_lock_root=tmp_path / "locks", **options,
+            launch_lock_root=tmp_path / "locks",
+            **options,
         )
     transaction, cleanup = caught.value.transaction, handles[0]
     assert transaction.state is LaunchState.TERMINAL_FAILURE and not transaction.ok
@@ -218,28 +330,45 @@ def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch
     assert all(record["state"] not in {"submitted", "adopted"} for record in records)
 
 
-@pytest.mark.parametrize("statuses,task_ids,expected_status,expected_state", (
-    (("SUCCEEDED", "SUCCEEDED"), (0, 1), "SUCCEEDED", LaunchState.SUBMITTED),
-    (("SUCCEEDED", "RUNNING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
-    (("PENDING", "STARTING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
-    (("RECOVERING", "CANCELLING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
-    (("FAILED_RUNTIME", "RUNNING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
-    (("CANCELED", "PENDING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
-    (("FAILED_RUNTIME", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
-    (("SUCCEEDED", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
-    (("FAILED_NO_RESOURCE", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
-    (("SUCCEEDED", "UNRECOGNIZED"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
-    (("FAILED_RUNTIME",), (0,), "", LaunchState.INDETERMINATE),
-    (("STOPPED", "STOPPED"), (0, 2), "", LaunchState.INDETERMINATE),
-    (("CANCELED", "CANCELED"), (0, 0), "", LaunchState.INDETERMINATE),
-))
-def test_native_task_mapping_finalizer_controls(monkeypatch, tmp_path, statuses, task_ids, expected_status, expected_state):
+@pytest.mark.parametrize(
+    "statuses,task_ids,expected_status,expected_state",
+    (
+        (("SUCCEEDED", "SUCCEEDED"), (0, 1), "SUCCEEDED", LaunchState.SUBMITTED),
+        (("SUCCEEDED", "RUNNING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("PENDING", "STARTING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("RECOVERING", "CANCELLING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("FAILED_RUNTIME", "RUNNING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("CANCELED", "PENDING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("FAILED_RUNTIME", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+        (("SUCCEEDED", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+        (
+            ("FAILED_NO_RESOURCE", "UNKNOWN"),
+            (0, 1),
+            "UNKNOWN",
+            LaunchState.INDETERMINATE,
+        ),
+        (("SUCCEEDED", "UNRECOGNIZED"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+        (("FAILED_RUNTIME",), (0,), "", LaunchState.INDETERMINATE),
+        (("STOPPED", "STOPPED"), (0, 2), "", LaunchState.INDETERMINATE),
+        (("CANCELED", "CANCELED"), (0, 0), "", LaunchState.INDETERMINATE),
+    ),
+)
+def test_native_task_mapping_finalizer_controls(
+    monkeypatch, tmp_path, statuses, task_ids, expected_status, expected_state
+):
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
-    from npa.orchestration.skypilot.launch_transaction import EvidenceState, StabilityResult
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        StabilityResult,
+    )
 
-    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
-    rows = [{"job_id": 41, "job_name": "synthetic", "task_id": task, "status": status}
-            for task, status in zip(task_ids, statuses, strict=True)]
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    rows = [
+        {"job_id": 41, "job_name": "synthetic", "task_id": task, "status": status}
+        for task, status in zip(task_ids, statuses, strict=True)
+    ]
     launches, records = [], []
 
     def launch():
@@ -248,15 +377,28 @@ def test_native_task_mapping_finalizer_controls(monkeypatch, tmp_path, statuses,
 
     def reconcile():
         if not launches:
-            return workflow_module.ReconciliationEvidence(workflow_module.ReconciliationState.ABSENT)
-        return workflow_module._reconcile_native_tasks(rows, "synthetic", native.job_id, native.task_ids)
+            return workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            )
+        return workflow_module._reconcile_native_tasks(
+            rows, "synthetic", native.job_id, native.task_ids
+        )
 
-    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached"))
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached")
+    )
     try:
         result = _REAL_RUN_LAUNCH_TRANSACTION(
-            logical_id="synthetic", readiness=lambda: StabilityResult(EvidenceState.READY, FailureCategory.NONE),
-            launch=launch, reconcile=reconcile, classify_launch_error=lambda _e: pytest.fail("retry reached"),
-            require_native_result=True, lock_root=tmp_path, record=records.append,
+            logical_id="synthetic",
+            readiness=lambda: StabilityResult(
+                EvidenceState.READY, FailureCategory.NONE
+            ),
+            launch=launch,
+            reconcile=reconcile,
+            classify_launch_error=lambda _e: pytest.fail("retry reached"),
+            require_native_result=True,
+            lock_root=tmp_path,
+            record=records.append,
         )
     except LaunchTransactionError as error:
         result = error.result
@@ -267,7 +409,9 @@ def test_native_task_mapping_finalizer_controls(monkeypatch, tmp_path, statuses,
     if expected_state is LaunchState.SUBMITTED:
         assert result.launch_result is native and result.job_id == "41"
     else:
-        assert not result.ok and all(record["state"] != "submitted" for record in records)
+        assert not result.ok and all(
+            record["state"] != "submitted" for record in records
+        )
 
 
 @pytest.mark.parametrize(
@@ -307,20 +451,32 @@ def test_native_finalizer_independently_rejects_unobservable_or_incomplete_found
     monkeypatch, tmp_path, evidence
 ):
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
-    from npa.orchestration.skypilot.launch_transaction import EvidenceState, StabilityResult
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        StabilityResult,
+    )
 
     native = NativeLaunchResult(
         "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
     )
     observations = iter(
-        [workflow_module.ReconciliationEvidence(workflow_module.ReconciliationState.ABSENT), evidence]
+        [
+            workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            ),
+            evidence,
+        ]
     )
     records = []
-    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached"))
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached")
+    )
     with pytest.raises(LaunchTransactionError) as caught:
         _REAL_RUN_LAUNCH_TRANSACTION(
             logical_id="native-independent-evidence",
-            readiness=lambda: StabilityResult(EvidenceState.READY, FailureCategory.NONE),
+            readiness=lambda: StabilityResult(
+                EvidenceState.READY, FailureCategory.NONE
+            ),
             launch=lambda: native,
             reconcile=lambda: next(observations),
             classify_launch_error=lambda _error: pytest.fail("retry reached"),
@@ -532,7 +688,9 @@ def _healthy_status(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # This module isolates launch transactions/argv. The actual SDK-to-provider
     # execution gate is covered in unit/test_execution_preflight.py.
-    monkeypatch.setattr(workflow_module, "_execution_preflight", lambda *args, **kwargs: (None, {}, {}))
+    monkeypatch.setattr(
+        workflow_module, "_execution_preflight", lambda *args, **kwargs: (None, {}, {})
+    )
     # Host rejection is covered by test_local_api_host.py. These fake-Sky
     # transaction/argv tests do not operate a real host control plane.
     monkeypatch.setattr(local_api_module, "_require_linux_host", lambda: None)
@@ -653,14 +811,17 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
     }
     # A task-owned API has a dynamic endpoint.  SkyPilot reads that endpoint
     # from the submitted config, not only SKYPILOT_API_SERVER_ENDPOINT.
-    assert config["api_server"]["endpoint"] == kwargs["env"][
-        "SKYPILOT_API_SERVER_ENDPOINT"
-    ]
+    assert (
+        config["api_server"]["endpoint"]
+        == kwargs["env"]["SKYPILOT_API_SERVER_ENDPOINT"]
+    )
 
 
 def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> None:
     from npa.execution_preflight import ExecutionPreflightError
-    from npa.orchestration.skypilot.k8s_gpu_catalog import TemporarilyUnavailableAcceleratorError
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        TemporarilyUnavailableAcceleratorError,
+    )
 
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\nresources: {cloud: kubernetes}\n")
@@ -670,15 +831,99 @@ def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> No
         raise ExecutionPreflightError("gpu", "capacity occupied") from capacity
 
     monkeypatch.setattr(workflow_module, "_execution_preflight", reject)
-    monkeypatch.setattr(workflow_module, "run_launch_transaction",
-                        lambda **kwargs: pytest.fail("must not start a provider launch"))
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must not start a provider launch"),
+    )
     with pytest.raises(SkyPilotSubmitError) as caught:
-        submit_workflow(yaml_path, "capacity-unit", sky_bin=_fake_sky(tmp_path),
-                        isolated_config_dir=tmp_path / "sky-state")
+        submit_workflow(
+            yaml_path,
+            "capacity-unit",
+            sky_bin=_fake_sky(tmp_path),
+            isolated_config_dir=tmp_path / "sky-state",
+        )
 
     assert caught.value.launch_attempted is False
     assert caught.value.transaction is None
     assert caught.value.__cause__.__cause__ is capacity
+
+
+def test_load_base_config_distinguishes_omitted_from_explicit_missing(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "selected-but-missing.yaml"
+
+    assert workflow_module._load_base_config(None) == {}
+    with pytest.raises(bin_module.SkyPilotConfigError, match=re.escape(str(missing))):
+        workflow_module._load_base_config(missing)
+
+
+def test_submit_rejects_explicit_missing_config_before_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    missing = tmp_path / "selected-but-missing.yaml"
+    monkeypatch.setattr(
+        workflow_module,
+        "_preflight_prepared_submission",
+        lambda *args, **kwargs: pytest.fail("must fail before SkyPilot preflight"),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must fail before provider launch"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match=re.escape(str(missing))) as caught:
+        submit_workflow(
+            yaml_path,
+            "run-missing-global-config",
+            config_path=missing,
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert caught.value.launch_attempted is False
+    assert caught.value.transaction is None
+    assert isinstance(caught.value.__cause__, bin_module.SkyPilotConfigError)
+
+
+def test_submit_keeps_launch_unknown_for_failure_after_preparation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+
+    def fail_after_preparation(*args, **kwargs):
+        raise ValueError("post-preparation failure")
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_local_api_daemon_cwd_locked",
+        fail_after_preparation,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must not start a provider launch"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="post-preparation failure") as caught:
+        submit_workflow(
+            yaml_path,
+            "run-post-preparation-failure",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert caught.value.launch_attempted is None
+    assert caught.value.transaction is None
 
 
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
@@ -2233,7 +2478,9 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         assert prepared_document["envs"]["AWS_SESSION_TOKEN"] == "${AWS_SESSION_TOKEN}"
     else:
         assert "AWS_SESSION_TOKEN" not in prepared_document["envs"]
-    assert all(private not in result.stdout + result.stderr for private in private_values)
+    assert all(
+        private not in result.stdout + result.stderr for private in private_values
+    )
     # Confidential launches deliberately disable persisted/streamed raw logs.
     for name in ("sky-launch.stdout.log", "sky-launch.stderr.log"):
         log_path = Path(result.log_paths["submission_dir"]) / name
@@ -2525,11 +2772,17 @@ def test_submission_cleanup_retains_unknown_acceptance_with_bound_runtime(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     sky = _fake_sky(tmp_path)
-    monkeypatch.setattr(workflow_module, "_native_context_digest", lambda **_k: "c" * 64)
+    monkeypatch.setattr(
+        workflow_module, "_native_context_digest", lambda **_k: "c" * 64
+    )
     monkeypatch.setattr(workflow_module, "_invoke_native_bridge", launch)
-    monkeypatch.setattr(workflow_module, "_wait_for_healthy_jobs_controller", lambda *_a, **_k:
-                        workflow_module.ControllerHealthResult(workflow_module.ControllerState.UP,
-                                                               "synthetic-controller"))
+    monkeypatch.setattr(
+        workflow_module,
+        "_wait_for_healthy_jobs_controller",
+        lambda *_a, **_k: workflow_module.ControllerHealthResult(
+            workflow_module.ControllerState.UP, "synthetic-controller"
+        ),
+    )
     monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", reconcile)
     monkeypatch.setattr(subprocess, "run", run)
     if real_transaction:
@@ -2670,7 +2923,10 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
     monkeypatch.setattr(
         workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
     )
-    monkeypatch.setattr(workflow_module, "_native_context_digest", lambda **_k: "c" * 64)
+    monkeypatch.setattr(
+        workflow_module, "_native_context_digest", lambda **_k: "c" * 64
+    )
+
     # Outer subprocess text is never the native IPC channel.  The
     # receipt-exception case must first provide the complete bound native
     # observation so the recorder callback, rather than observation decoding,
@@ -2702,12 +2958,17 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
         return completed
 
     monkeypatch.setattr(
-        workflow_module, "_invoke_native_bridge",
+        workflow_module,
+        "_invoke_native_bridge",
         invoke_native_bridge,
     )
-    monkeypatch.setattr(workflow_module, "_wait_for_healthy_jobs_controller", lambda *_a, **_k:
-                        workflow_module.ControllerHealthResult(workflow_module.ControllerState.UP,
-                                                               "synthetic-controller"))
+    monkeypatch.setattr(
+        workflow_module,
+        "_wait_for_healthy_jobs_controller",
+        lambda *_a, **_k: workflow_module.ControllerHealthResult(
+            workflow_module.ControllerState.UP, "synthetic-controller"
+        ),
+    )
     monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", reconcile)
     monkeypatch.setattr(subprocess, "run", command_run)
     with pytest.raises(RuntimeError) as caught:
@@ -2725,7 +2986,9 @@ def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
         )
     if scenario == "receipt-exception" and kind == "successful":
         assert str(caught.value) == "synthetic post-acknowledgment failure"
-        native_receipts = [record for record in record_calls if record.get("job_id") == "42"]
+        native_receipts = [
+            record for record in record_calls if record.get("job_id") == "42"
+        ]
         assert len(native_receipts) == 1
         assert native_receipts[0]["state"] == "submitted"
     else:
@@ -3316,6 +3579,28 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     assert isolated_kubeconfig.is_symlink()
     assert isolated_kubeconfig.resolve() == selected_kubeconfig.resolve()
     assert env["HOME"] == str(isolated / "home")
+
+
+def test_sky_environment_links_default_kubeconfig_when_unset(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    operator_home = tmp_path / "operator"
+    default_kubeconfig = operator_home / ".kube" / "config"
+    default_kubeconfig.parent.mkdir(parents=True)
+    default_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+
+    isolated = tmp_path / "isolated"
+    sky_environment(isolated)
+
+    isolated_kubeconfig = isolated / "home" / ".kube" / "config"
+    assert isolated_kubeconfig.is_symlink()
+    assert isolated_kubeconfig.resolve() == default_kubeconfig.resolve()
 
 
 def test_submit_workflow_require_controller_up_uses_canonical_preflight(
@@ -3942,7 +4227,9 @@ def test_native_context_digest_sanitizes_kubectl_environment(
 
 
 @pytest.mark.parametrize("changed", ("", "api", "incarnation"))
-def test_cold_controller_ensure_rechecks_owned_api_and_real_incarnation(monkeypatch, tmp_path, changed):
+def test_cold_controller_ensure_rechecks_owned_api_and_real_incarnation(
+    monkeypatch, tmp_path, changed
+):
     from npa.orchestration.skypilot import _managed_job_api as native
 
     path = tmp_path / "workflow.yaml"
@@ -3957,31 +4244,52 @@ def test_cold_controller_ensure_rechecks_owned_api_and_real_incarnation(monkeypa
         assert payload["mode"] == "ensure_controller" and payload["secrets"] == []
         assert environment == {"KUBECONFIG": "synthetic-private-binding"}
         request = {
-            "event": "controller_request", "attempt": payload["attempt"],
-            "context": payload["context"], "request_id": "00000000-0000-4000-8000-000000000001",
+            "event": "controller_request",
+            "attempt": payload["attempt"],
+            "context": payload["context"],
+            "request_id": "00000000-0000-4000-8000-000000000001",
             "controller": "sky-jobs-controller-synthetic",
         }
         native._append_observation(payload["descriptor"], request)
-        native._append_observation(payload["descriptor"], {
-            **request, "event": "controller_result", "incarnation": "e" * 64,
-            "controller_cloud_name": "sky-jobs-controller-provider-synthetic",
-        })
+        native._append_observation(
+            payload["descriptor"],
+            {
+                **request,
+                "event": "controller_result",
+                "incarnation": "e" * 64,
+                "controller_cloud_name": "sky-jobs-controller-provider-synthetic",
+            },
+        )
 
     monkeypatch.setattr(workflow_module, "_native_api_context_digest", api)
     monkeypatch.setattr(workflow_module, "_invoke_native_bridge", invoke)
+
     def incarnation(**kwargs):
         assert kwargs["controller"] == "sky-jobs-controller-synthetic"
-        assert kwargs["controller_cloud_name"] == "sky-jobs-controller-provider-synthetic"
+        assert (
+            kwargs["controller_cloud_name"] == "sky-jobs-controller-provider-synthetic"
+        )
         return "f" * 64 if changed == "incarnation" else "e" * 64
 
     monkeypatch.setattr(workflow_module, "_native_context_digest", incarnation)
-    kwargs = dict(yaml_path=path, isolated_dir=tmp_path, controller="", context="", sky_executable="/synthetic/sky", environment={"KUBECONFIG": "synthetic-private-binding"}, log_dir=tmp_path, timeout=1, cwd=tmp_path)
+    kwargs = dict(
+        yaml_path=path,
+        isolated_dir=tmp_path,
+        controller="",
+        context="",
+        sky_executable="/synthetic/sky",
+        environment={"KUBECONFIG": "synthetic-private-binding"},
+        log_dir=tmp_path,
+        timeout=1,
+        cwd=tmp_path,
+    )
     if changed:
         with pytest.raises(native.NativeResultUnavailable):
             workflow_module._ensure_native_controller(**kwargs)
     else:
         assert workflow_module._ensure_native_controller(**kwargs) == (
-            "sky-jobs-controller-synthetic", "sky-jobs-controller-provider-synthetic"
+            "sky-jobs-controller-synthetic",
+            "sky-jobs-controller-provider-synthetic",
         )
     assert len(list(tmp_path.glob("controller-ensure-*.jsonl"))) == 1
 
@@ -5117,12 +5425,20 @@ def test_submit_does_not_create_an_empty_init_controller_before_first_launch(
         if cmd[1:3] == ["jobs", "queue"]:
             # Querying before launch is the SkyPilot 0.12 behavior that creates
             # a no-pod INIT controller and makes the first launch fail.
-            assert launched, "initial reconciliation must not query an absent controller"
+            assert launched, (
+                "initial reconciliation must not query an absent controller"
+            )
             return subprocess.CompletedProcess(
                 cmd,
                 0,
                 stdout=json.dumps(
-                    [{"job_id": 701, "job_name": "first-controller-run", "status": "PENDING"}]
+                    [
+                        {
+                            "job_id": 701,
+                            "job_name": "first-controller-run",
+                            "status": "PENDING",
+                        }
+                    ]
                 ),
                 stderr="",
             )
@@ -5190,14 +5506,24 @@ def test_submit_treats_cached_controller_without_a_pod_as_absent(
     def fake_run(cmd, **_kwargs):
         nonlocal launched
         if _is_status_cmd(cmd):
-            raise AssertionError("podless controller preflight must not read SkyPilot status")
+            raise AssertionError(
+                "podless controller preflight must not read SkyPilot status"
+            )
         if cmd[1:3] == ["jobs", "queue"]:
-            assert launched, "initial reconciliation must not query a podless controller"
+            assert launched, (
+                "initial reconciliation must not query a podless controller"
+            )
             return subprocess.CompletedProcess(
                 cmd,
                 0,
                 stdout=json.dumps(
-                    [{"job_id": 702, "job_name": "stale-controller-run", "status": "PENDING"}]
+                    [
+                        {
+                            "job_id": 702,
+                            "job_name": "stale-controller-run",
+                            "status": "PENDING",
+                        }
+                    ]
                 ),
                 stderr="",
             )
@@ -5229,55 +5555,108 @@ def test_submit_treats_cached_controller_without_a_pod_as_absent(
     assert result.launch_transaction["controller"]["state"] == "absent"
 
 
-@pytest.mark.parametrize("response,returncode,empty", (
-    ({"items": []}, 0, True),
-    ({"items": [{"metadata": {"labels": {"skypilot-cluster-name": "shortened-controller"}}}]}, 0, False),
-    ({}, 0, False),
-    ({"items": None}, 0, False),
-    ({"items": []}, 1, False),
-    ([], 0, False),
-))
-def test_native_controller_absence_uses_selected_namespace_not_logical_label(response, returncode, empty):
+@pytest.mark.parametrize(
+    "response,returncode,empty",
+    (
+        ({"items": []}, 0, True),
+        (
+            {
+                "items": [
+                    {
+                        "metadata": {
+                            "labels": {"skypilot-cluster-name": "shortened-controller"}
+                        }
+                    }
+                ]
+            },
+            0,
+            False,
+        ),
+        ({}, 0, False),
+        ({"items": None}, 0, False),
+        ({"items": []}, 1, False),
+        ([], 0, False),
+    ),
+)
+def test_native_controller_absence_uses_selected_namespace_not_logical_label(
+    response, returncode, empty
+):
     def run(command, **kwargs):
         assert command[1:] == [
-            "--context", "synthetic-context", "get", "pods", "--selector",
-            "skypilot-cluster-name", "--output", "json",
+            "--context",
+            "synthetic-context",
+            "get",
+            "pods",
+            "--selector",
+            "skypilot-cluster-name",
+            "--output",
+            "json",
         ]
         assert kwargs["env"] == {"KUBECONFIG": "synthetic-binding"}
-        return subprocess.CompletedProcess(command, returncode, json.dumps(response), "")
+        return subprocess.CompletedProcess(
+            command, returncode, json.dumps(response), ""
+        )
 
-    assert workflow_module._native_controller_namespace_empty(
-        context="synthetic-context", environment={
-            "KUBECONFIG": "synthetic-binding", "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
-        }, runner=run,
-    ) is empty
+    assert (
+        workflow_module._native_controller_namespace_empty(
+            context="synthetic-context",
+            environment={
+                "KUBECONFIG": "synthetic-binding",
+                "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+            },
+            runner=run,
+        )
+        is empty
+    )
 
 
 def test_native_cleanup_rechecks_actual_provider_incarnation(monkeypatch, tmp_path):
     from npa.orchestration.skypilot import _managed_job_api as native
 
     checks = []
+
     def context(**kwargs):
         assert kwargs["controller"] == "sky-jobs-controller-logical-synthetic"
-        assert kwargs["controller_cloud_name"] == "sky-jobs-controller-provider-synthetic"
+        assert (
+            kwargs["controller_cloud_name"] == "sky-jobs-controller-provider-synthetic"
+        )
         checks.append(kwargs)
         return "c" * 64
 
     def invoke(payload, *_args):
-        base = {"attempt": payload["attempt"], "context": payload["context"],
-                "request_id": "00000000-0000-4000-8000-000000000001"}
+        base = {
+            "attempt": payload["attempt"],
+            "context": payload["context"],
+            "request_id": "00000000-0000-4000-8000-000000000001",
+        }
         native._append_observation(payload["descriptor"], {**base, "event": "request"})
-        native._append_observation(payload["descriptor"], {
-            **base, "event": "result", "job_id": 42, "task_ids": [0],
-        })
+        native._append_observation(
+            payload["descriptor"],
+            {
+                **base,
+                "event": "result",
+                "job_id": 42,
+                "task_ids": [0],
+            },
+        )
 
     monkeypatch.setattr(workflow_module, "_native_context_digest", context)
     monkeypatch.setattr(workflow_module, "_invoke_native_bridge", invoke)
-    result, cleanup_check = workflow_module._run_native_launch({
-        "attempt": "synthetic-attempt", "isolated_dir": str(tmp_path),
-        "controller": "sky-jobs-controller-logical-synthetic",
-        "controller_cloud_name": "sky-jobs-controller-provider-synthetic",
-        "kube_context": "", "sky_executable": "/synthetic/sky", "task_count": 1,
-    }, environment={}, control_environment={}, log_dir=tmp_path, timeout=1, cwd=tmp_path)
+    result, cleanup_check = workflow_module._run_native_launch(
+        {
+            "attempt": "synthetic-attempt",
+            "isolated_dir": str(tmp_path),
+            "controller": "sky-jobs-controller-logical-synthetic",
+            "controller_cloud_name": "sky-jobs-controller-provider-synthetic",
+            "kube_context": "",
+            "sky_executable": "/synthetic/sky",
+            "task_count": 1,
+        },
+        environment={},
+        control_environment={},
+        log_dir=tmp_path,
+        timeout=1,
+        cwd=tmp_path,
+    )
     assert result.job_id == "42" and len(checks) == 2
     assert cleanup_check() == "c" * 64 and len(checks) == 3

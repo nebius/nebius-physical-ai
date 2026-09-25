@@ -868,7 +868,6 @@ def _is_public_image_reference(value: str) -> bool:
     )
 
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")

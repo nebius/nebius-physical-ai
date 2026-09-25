@@ -39,7 +39,9 @@ def main() -> int:
 
     source_sha = os.environ.get("NPA_IMAGE_SOURCE_SHA", "")
     if len(source_sha) != 40 or any(ch not in "0123456789abcdef" for ch in source_sha):
-        raise RuntimeError("NPA_IMAGE_SOURCE_SHA must be an exact lowercase 40-hex commit")
+        raise RuntimeError(
+            "NPA_IMAGE_SOURCE_SHA must be an exact lowercase 40-hex commit"
+        )
 
     output_dir = Path(os.environ.get("NPA_SMOKE_OUTPUT_DIR", "/tmp/npa-golden"))
     output_dir.mkdir(parents=True, exist_ok=True)

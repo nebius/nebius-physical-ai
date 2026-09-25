@@ -1512,7 +1512,10 @@ def validate_fetch_provenance(
         errors.append(
             f"variant observed={observed_variant!r} != requested={requested_variant!r}"
         )
-    if requested_dataset_id and str(fetched.get("dataset_id") or "") != requested_dataset_id:
+    if (
+        requested_dataset_id
+        and str(fetched.get("dataset_id") or "") != requested_dataset_id
+    ):
         errors.append("dataset_id mismatch")
     return (not errors), errors
 
@@ -1636,6 +1639,7 @@ def reconstruct_scene(
     runner: RunCallable | None = None,
     dry_run: bool = False,
     export_gt: bool = True,
+    gt_frame_step: int = DEFAULT_GT_FRAME_STEP_CAMERA,
     timeout: float | None = None,
 ) -> NurecReconstructResult:
     """Train a 3DGUT Gaussian reconstruction and collect its USDZ + metrics."""
@@ -1712,6 +1716,7 @@ def reconstruct_scene(
         gt_args = build_nre_export_gt_args(
             ncore_json=ncore_json,
             output_dir=str(gt_target),
+            frame_step_camera=gt_frame_step,
         )
         gt_result = _run(
             nre_command(
@@ -1870,7 +1875,9 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
                 for name, entry in aggregated.items():
                     if isinstance(entry, dict):
                         value = entry.get("value")
-                        if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        if isinstance(value, (int, float)) and not isinstance(
+                            value, bool
+                        ):
                             metrics[str(name)] = float(value)
             return metrics
     except ImportError:

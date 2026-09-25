@@ -66,7 +66,9 @@ def test_robotwin_real_wrapper_preserves_the_strict_file_and_environment_bridge(
         project=authorization.project,
         image=authorization.bootstrap_image,
     )
-    workflow = yaml.safe_load((ROOT / "workflows/testing/byof-robotwin.yaml").read_text())
+    workflow = yaml.safe_load(
+        (ROOT / "workflows/testing/byof-robotwin.yaml").read_text()
+    )
     checked = []
 
     class BoundaryChecked(Exception):
@@ -79,16 +81,18 @@ def test_robotwin_real_wrapper_preserves_the_strict_file_and_environment_bridge(
 
     def submit(path, _run_id, **kwargs):
         documents = module._load_yaml_documents(path)
-        checked.append(validate_confidential_submit_bridge(
-            kwargs["robotwin_submit_context"],
-            documents=documents,
-            infra=kwargs["infra"],
-            config_path=kwargs["config_path"],
-            secret_envs=kwargs["secret_envs"],
-            extra_env=kwargs["extra_env"],
-            execution_target=kwargs["execution_target"],
-            execution_report=kwargs["execution_preflight_report"],
-        ))
+        checked.append(
+            validate_confidential_submit_bridge(
+                kwargs["robotwin_submit_context"],
+                documents=documents,
+                infra=kwargs["infra"],
+                config_path=kwargs["config_path"],
+                secret_envs=kwargs["secret_envs"],
+                extra_env=kwargs["extra_env"],
+                execution_target=kwargs["execution_target"],
+                execution_report=kwargs["execution_preflight_report"],
+            )
+        )
         assert len(documents) == 2
         assert not {"HOME", "PATH", "LANG", "LC_ALL"} & kwargs["extra_env"].keys()
         raise BoundaryChecked
@@ -101,14 +105,20 @@ def test_robotwin_real_wrapper_preserves_the_strict_file_and_environment_bridge(
     with pytest.raises(BoundaryChecked):
         module.run_authorized_robotwin(
             [
-                "--yaml", str(
-                    ROOT / "npa/src/npa/workflows/byof/profiles"
+                "--yaml",
+                str(
+                    ROOT
+                    / "npa/src/npa/workflows/byof/profiles"
                     / (workflow["config"]["resource_profile_yaml"] + ".yaml")
                 ),
-                "--solution-name", "robotwin",
-                "--smoke-command", workflow["config"]["smoke_command"],
-                "--capability-name", workflow["config"]["capability_name"],
-                "--smoke-artifact-name", "robotwin-smoke.json",
+                "--solution-name",
+                "robotwin",
+                "--smoke-command",
+                workflow["config"]["smoke_command"],
+                "--capability-name",
+                workflow["config"]["capability_name"],
+                "--smoke-artifact-name",
+                "robotwin-smoke.json",
             ],
             authorization=authorization,
             environment=environment,

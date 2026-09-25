@@ -15,7 +15,18 @@ CONTEXT = "c" * 64
 
 
 @pytest.mark.parametrize(
-    "failure", ("", "present", "api-drift", "wrong-handle", "job-id", "no-incarnation", "request-failure", "missing-provider", "invalid-provider")
+    "failure",
+    (
+        "",
+        "present",
+        "api-drift",
+        "wrong-handle",
+        "job-id",
+        "no-incarnation",
+        "request-failure",
+        "missing-provider",
+        "invalid-provider",
+    ),
 )
 def test_controller_provision_receipt_never_grants_managed_job_ownership(failure):
     name = "sky-jobs-controller-synthetic"
@@ -27,8 +38,11 @@ def test_controller_provision_receipt_never_grants_managed_job_ownership(failure
     def launch(value, **kwargs):
         assert value is task
         assert kwargs == {
-            "cluster_name": name, "retry_until_up": True, "fast": True,
-            "_disable_controller_check": True, "_need_confirmation": False,
+            "cluster_name": name,
+            "retry_until_up": True,
+            "fast": True,
+            "_disable_controller_check": True,
+            "_need_confirmation": False,
         }
         calls.append("controller-launch")
         return REQUEST
@@ -42,24 +56,41 @@ def test_controller_provision_receipt_never_grants_managed_job_ownership(failure
             1 if failure == "job-id" else None,
             SimpleNamespace(
                 cluster_name="foreign" if failure == "wrong-handle" else name,
-                cluster_name_on_cloud=(None if failure == "missing-provider" else "bad/name" if failure == "invalid-provider" else provider),
+                cluster_name_on_cloud=(
+                    None
+                    if failure == "missing-provider"
+                    else "bad/name"
+                    if failure == "invalid-provider"
+                    else provider
+                ),
             ),
         )
 
     sky = SimpleNamespace(
-        __version__=bridge.SKY_VERSION, __commit__=bridge.SKY_SOURCE_COMMIT,
-        launch=launch, get=get,
+        __version__=bridge.SKY_VERSION,
+        __commit__=bridge.SKY_SOURCE_COMMIT,
+        launch=launch,
+        get=get,
     )
-    payload = {"attempt": "synthetic-ensure", "context": CONTEXT, "controller": "", "yaml": "synthetic"}
+    payload = {
+        "attempt": "synthetic-ensure",
+        "context": CONTEXT,
+        "controller": "",
+        "yaml": "synthetic",
+    }
+
     def incarnation(logical, cloud):
         assert logical == name and cloud == provider
         return "" if failure == "no-incarnation" else "e" * 64
 
     kwargs = dict(
-        sky=sky, load_dag=lambda _text: dag,
+        sky=sky,
+        load_dag=lambda _text: dag,
         prepare_controller=lambda value: (name, task) if value is dag else None,
         verify_absent=lambda _name: failure != "present",
-        verify_context=lambda: "d" * 64 if failure == "api-drift" and calls else CONTEXT,
+        verify_context=lambda: (
+            "d" * 64 if failure == "api-drift" and calls else CONTEXT
+        ),
         verify_incarnation=incarnation,
         observe=rows.append,
     )
@@ -67,24 +98,41 @@ def test_controller_provision_receipt_never_grants_managed_job_ownership(failure
         with pytest.raises((bridge.NativeResultUnavailable, RuntimeError)):
             bridge._ensure_controller_native(payload, **kwargs)
         assert not any(row["event"] == "controller_result" for row in rows)
-        assert calls == ([] if failure == "present" else ["controller-launch"] if failure == "api-drift" else ["controller-launch", "get"])
+        assert calls == (
+            []
+            if failure == "present"
+            else ["controller-launch"]
+            if failure == "api-drift"
+            else ["controller-launch", "get"]
+        )
         return
     bridge._ensure_controller_native(payload, **kwargs)
     raw = b"".join(json.dumps(row).encode() + b"\n" for row in rows)
-    assert bridge.decode_controller_observation(raw, attempt=payload["attempt"], context=CONTEXT) == (name, provider, "e" * 64)
+    assert bridge.decode_controller_observation(
+        raw, attempt=payload["attempt"], context=CONTEXT
+    ) == (name, provider, "e" * 64)
     missing_provider = [dict(row) for row in rows]
     missing_provider[1].pop("controller_cloud_name")
     with pytest.raises(bridge.NativeResultUnavailable):
         bridge.decode_controller_observation(
             b"".join(json.dumps(row).encode() + b"\n" for row in missing_provider),
-            attempt=payload["attempt"], context=CONTEXT,
+            attempt=payload["attempt"],
+            context=CONTEXT,
         )
     with pytest.raises(bridge.NativeResultUnavailable):
-        bridge.decode_observation(raw, attempt=payload["attempt"], context=CONTEXT, task_count=1)
+        bridge.decode_observation(
+            raw, attempt=payload["attempt"], context=CONTEXT, task_count=1
+        )
     with pytest.raises(bridge.NativeResultUnavailable):
-        bridge.decode_controller_observation(raw, attempt="other-attempt", context=CONTEXT)
+        bridge.decode_controller_observation(
+            raw, attempt="other-attempt", context=CONTEXT
+        )
     with pytest.raises(bridge.NativeResultUnavailable):
-        bridge.decode_controller_observation(raw.splitlines(keepends=True)[0], attempt=payload["attempt"], context=CONTEXT)
+        bridge.decode_controller_observation(
+            raw.splitlines(keepends=True)[0],
+            attempt=payload["attempt"],
+            context=CONTEXT,
+        )
 
 
 def _payload():
@@ -268,7 +316,10 @@ def test_initial_id_loss_retains_empty_observation_and_never_gets(tmp_path):
     assert not (tmp_path / "observation").read_bytes()
 
 
-@pytest.mark.parametrize("mutation", ("", "missing", "duplicate", "wrong", "mutable", "wrong-task", "wrong-placeholder"))
+@pytest.mark.parametrize(
+    "mutation",
+    ("", "missing", "duplicate", "wrong", "mutable", "wrong-task", "wrong-placeholder"),
+)
 def test_robotwin_native_image_is_bound_before_any_launch(mutation):
     image = "registry.example/team/npa-robotwin@sha256:" + "a" * 64
     secret_name = "NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE"
@@ -288,10 +339,12 @@ def test_robotwin_native_image_is_bound_before_any_launch(mutation):
     dag = SimpleNamespace(tasks=[task])
     sky, _loader, calls = _fixture()
     sky.jobs.launch = lambda loaded, **kwargs: (
-        calls.append(("launch", next(iter(loaded.tasks[0].resources)).image_id)) or REQUEST
+        calls.append(("launch", next(iter(loaded.tasks[0].resources)).image_id))
+        or REQUEST
     )
     payload = {
-        **_payload(), "task_count": 1,
+        **_payload(),
+        "task_count": 1,
         "secrets": [(secret_name, image)],
         "robotwin_image_sha256": hashlib.sha256(image.encode()).hexdigest(),
     }
@@ -302,7 +355,9 @@ def test_robotwin_native_image_is_bound_before_any_launch(mutation):
     elif mutation == "wrong":
         payload["secrets"] = [(secret_name, image[:-1] + "b")]
     elif mutation == "mutable":
-        payload["secrets"] = [(secret_name, "registry.example/team/npa-robotwin:latest")]
+        payload["secrets"] = [
+            (secret_name, "registry.example/team/npa-robotwin:latest")
+        ]
     elif mutation == "wrong-task":
         task.name = "another-task"
     elif mutation == "wrong-placeholder":
@@ -311,14 +366,20 @@ def test_robotwin_native_image_is_bound_before_any_launch(mutation):
     if mutation:
         with pytest.raises(bridge.NativeResultUnavailable):
             bridge._launch_native(
-                payload, sky=sky, load_dag=lambda *args, **kwargs: dag,
-                observe=observations.append, verify_context=lambda: CONTEXT,
+                payload,
+                sky=sky,
+                load_dag=lambda *args, **kwargs: dag,
+                observe=observations.append,
+                verify_context=lambda: CONTEXT,
             )
         assert calls == [] and observations == []
     else:
         bridge._launch_native(
-            payload, sky=sky, load_dag=lambda *args, **kwargs: dag,
-            observe=observations.append, verify_context=lambda: CONTEXT,
+            payload,
+            sky=sky,
+            load_dag=lambda *args, **kwargs: dag,
+            observe=observations.append,
+            verify_context=lambda: CONTEXT,
         )
         assert calls[0] == ("launch", {None: "docker:" + image})
         assert image not in json.dumps(observations)

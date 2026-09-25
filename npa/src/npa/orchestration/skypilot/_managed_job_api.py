@@ -45,7 +45,7 @@ _SOURCE_HASHES = {
     "skylet/services.py": "c181b243b58a3ace56646d527e2a8d8577443956b7f54444b27d01957db7a02e",
     "server/constants.py": "1e88b0b837500c9bcfb886422db53b5c7049af02aeb4eaf5230b3a58678290f5",
     "utils/controller_utils.py": (
-        "e00b1e4ac2" "49a32763b9ae3c5a4e970f40098a7b671100818e90ced6f1fa186c"
+        "e00b1e4ac249a32763b9ae3c5a4e970f40098a7b671100818e90ced6f1fa186c"
     ),
     "utils/common.py": "b2604e6629d52d36c7837b5968b4e55c642839b2490aa230e8865091a4f7df46",
     "templates/jobs-controller-provision.yaml.j2": "d04fd84bce03559968227beab07235707d025f8481d24fa015afdfe7b17c7249",
@@ -168,26 +168,50 @@ def _append_observation(descriptor: int, record: Mapping[str, Any]) -> None:
     os.fsync(descriptor)
 
 
-def decode_controller_observation(data: bytes, *, attempt: str, context: str) -> tuple[str, str, str]:
+def decode_controller_observation(
+    data: bytes, *, attempt: str, context: str
+) -> tuple[str, str, str]:
     """Decode a controller provision request; it conveys no managed-job ownership."""
     _require(0 < len(data) <= MAX_OBSERVATION_BYTES and data.endswith(b"\n"))
     try:
-        rows = [json.loads(line, object_pairs_hook=_unique_mapping) for line in data.splitlines()]
+        rows = [
+            json.loads(line, object_pairs_hook=_unique_mapping)
+            for line in data.splitlines()
+        ]
         _require(len(rows) == 2 and all(type(row) is dict for row in rows))
         request, result = rows
         fields = {"event", "attempt", "context", "request_id", "controller"}
-        _require(set(request) == fields and set(result) == fields | {"incarnation", "controller_cloud_name"})
-        _require(request["event"] == "controller_request" and result["event"] == "controller_result")
+        _require(
+            set(request) == fields
+            and set(result) == fields | {"incarnation", "controller_cloud_name"}
+        )
+        _require(
+            request["event"] == "controller_request"
+            and result["event"] == "controller_result"
+        )
         _require(re.fullmatch(r"[a-f0-9]{64}", context) is not None)
         _require(_request_id(request["request_id"]) == result["request_id"])
-        for key, value in (("attempt", attempt), ("context", context), ("controller", request["controller"])):
+        for key, value in (
+            ("attempt", attempt),
+            ("context", context),
+            ("controller", request["controller"]),
+        ):
             _require(request[key] == result[key] == value)
-        _require(re.fullmatch(r"sky-jobs-controller-[a-z0-9-]+", request["controller"]) is not None)
+        _require(
+            re.fullmatch(r"sky-jobs-controller-[a-z0-9-]+", request["controller"])
+            is not None
+        )
         _require(re.fullmatch(r"[a-f0-9]{64}", result["incarnation"]) is not None)
         _controller_cloud_name(result["controller_cloud_name"])
-        return request["controller"], result["controller_cloud_name"], result["incarnation"]
+        return (
+            request["controller"],
+            result["controller_cloud_name"],
+            result["incarnation"],
+        )
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
-        raise NativeResultUnavailable("controller ensure result incomplete; context retained") from None
+        raise NativeResultUnavailable(
+            "controller ensure result incomplete; context retained"
+        ) from None
 
 
 def _controller_cloud_name(value):
@@ -214,19 +238,37 @@ def _controller_provision_task(dag):
         "job_controller_indicator_file": constants.JOB_CONTROLLER_INDICATOR_FILE,
         **controller_utils.controller_only_vars_to_fill(controller),
     }
-    path = Path(constants.JOBS_CONTROLLER_YAML_PREFIX).expanduser() / "npa-ensure-controller.yaml"
+    path = (
+        Path(constants.JOBS_CONTROLLER_YAML_PREFIX).expanduser()
+        / "npa-ensure-controller.yaml"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
-    with skypilot_config.local_active_workspace_ctx(skylet_constants.SKYPILOT_DEFAULT_WORKSPACE):
+    with skypilot_config.local_active_workspace_ctx(
+        skylet_constants.SKYPILOT_DEFAULT_WORKSPACE
+    ):
         with common.with_server_user():
-            common_utils.fill_template(constants.JOBS_CONTROLLER_PROVISION_TEMPLATE, variables, output_path=str(path))
+            common_utils.fill_template(
+                constants.JOBS_CONTROLLER_PROVISION_TEMPLATE,
+                variables,
+                output_path=str(path),
+            )
             task = Task.from_yaml(str(path))
             task.set_resources(resources)
     _require(task.run is None)
     return name, task
 
 
-def _ensure_controller_native(payload, *, sky, load_dag, prepare_controller,
-                              verify_absent, verify_context, verify_incarnation, observe):
+def _ensure_controller_native(
+    payload,
+    *,
+    sky,
+    load_dag,
+    prepare_controller,
+    verify_absent,
+    verify_context,
+    verify_incarnation,
+    observe,
+):
     _require(sky.__version__ == SKY_VERSION and sky.__commit__ == SKY_SOURCE_COMMIT)
     _require(verify_context() == payload["context"])
     dag = load_dag(payload["yaml"])
@@ -234,23 +276,42 @@ def _ensure_controller_native(payload, *, sky, load_dag, prepare_controller,
     _require(not payload["controller"] or name == payload["controller"])
     _require(verify_absent(name))
     _require(verify_context() == payload["context"])
-    request_id = _request_id(sky.launch(
-        task, cluster_name=name, retry_until_up=True, fast=True,
-        _disable_controller_check=True, _need_confirmation=False,
-    ))
-    request = {"event": "controller_request", "attempt": payload["attempt"],
-               "context": payload["context"], "request_id": request_id, "controller": name}
+    request_id = _request_id(
+        sky.launch(
+            task,
+            cluster_name=name,
+            retry_until_up=True,
+            fast=True,
+            _disable_controller_check=True,
+            _need_confirmation=False,
+        )
+    )
+    request = {
+        "event": "controller_request",
+        "attempt": payload["attempt"],
+        "context": payload["context"],
+        "request_id": request_id,
+        "controller": name,
+    }
     observe(request)
     _require(verify_context() == payload["context"])
     result = sky.get(request_id)
     _require(type(result) is tuple and len(result) == 2 and result[0] is None)
     _require(getattr(result[1], "cluster_name", None) == name)
     _require(verify_context() == payload["context"])
-    cloud_name = _controller_cloud_name(getattr(result[1], "cluster_name_on_cloud", None))
+    cloud_name = _controller_cloud_name(
+        getattr(result[1], "cluster_name_on_cloud", None)
+    )
     incarnation = verify_incarnation(name, cloud_name)
     _require(re.fullmatch(r"[a-f0-9]{64}", incarnation) is not None)
-    observe({**request, "event": "controller_result", "incarnation": incarnation,
-             "controller_cloud_name": cloud_name})
+    observe(
+        {
+            **request,
+            "event": "controller_result",
+            "incarnation": incarnation,
+            "controller_cloud_name": cloud_name,
+        }
+    )
 
 
 def _launch_native(payload, *, sky, load_dag, observe, verify_context) -> None:
@@ -295,7 +356,9 @@ def _bind_robotwin_image(dag, secrets, expected_sha256: str) -> None:
     values = [value for key, value in secrets if key == name]
     _require(len(values) == 1 and isinstance(values[0], str))
     image = values[0]
-    _require(re.fullmatch(r"[^@\s]+/npa-robotwin@sha256:[0-9a-f]{64}", image) is not None)
+    _require(
+        re.fullmatch(r"[^@\s]+/npa-robotwin@sha256:[0-9a-f]{64}", image) is not None
+    )
     _require(hashlib.sha256(image.encode()).hexdigest() == expected_sha256)
     _require(len(dag.tasks) == 1)
     task = dag.tasks[0]
@@ -382,7 +445,8 @@ def _main() -> int:
         if payload.get("mode") == "ensure_controller":
             return _native_api_context_digest(
                 isolated_dir=Path(payload["isolated_dir"]),
-                sky_executable=payload["sky_executable"], environment=os.environ,
+                sky_executable=payload["sky_executable"],
+                environment=os.environ,
             )
         return _native_context_digest(
             isolated_dir=Path(payload["isolated_dir"]),
@@ -403,23 +467,32 @@ def _main() -> int:
 
     _require(Path(sky.__file__).parent == root)
     if payload.get("mode") == "ensure_controller":
+
         def absent(_name):
             return _native_controller_namespace_empty(
-                context=payload["kube_context"], environment=os.environ,
+                context=payload["kube_context"],
+                environment=os.environ,
             )
 
         def incarnation(name, cloud_name):
             return _native_context_digest(
-                isolated_dir=Path(payload["isolated_dir"]), controller=name,
-                controller_cloud_name=cloud_name, context=payload["kube_context"],
-                sky_executable=payload["sky_executable"], environment=os.environ,
+                isolated_dir=Path(payload["isolated_dir"]),
+                controller=name,
+                controller_cloud_name=cloud_name,
+                context=payload["kube_context"],
+                sky_executable=payload["sky_executable"],
+                environment=os.environ,
             )
 
         with contextlib.redirect_stdout(sys.stderr):
             _ensure_controller_native(
-                payload, sky=sky, load_dag=load_dag_from_yaml_str,
-                prepare_controller=_controller_provision_task, verify_absent=absent,
-                verify_context=verify_context, verify_incarnation=incarnation,
+                payload,
+                sky=sky,
+                load_dag=load_dag_from_yaml_str,
+                prepare_controller=_controller_provision_task,
+                verify_absent=absent,
+                verify_context=verify_context,
+                verify_incarnation=incarnation,
                 observe=lambda row: _append_observation(payload["descriptor"], row),
             )
         _verify_native_sources(root)

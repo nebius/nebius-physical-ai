@@ -12,7 +12,12 @@ import tarfile
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from image_byte_scan import core as W, prepare as P, oci_graph as G, ncore_verification as N
+from image_byte_scan import (
+    core as W,
+    prepare as P,
+    oci_graph as G,
+    ncore_verification as N,
+)
 
 SCHEMA = "npa.robotwin.image-verification.v1"
 
@@ -29,8 +34,9 @@ def inspect(fd, length, expected_id):
     Raises:
         W.ScanError: The graph or compatibility view is inconsistent.
     """
-    return G.inspect(fd, length, expected_id, platform=N.PLATFORM,
-                     allow_docker_manifest=True)
+    return G.inspect(
+        fd, length, expected_id, platform=N.PLATFORM, allow_docker_manifest=True
+    )
 
 
 bind = N.bind
@@ -46,7 +52,9 @@ def _layer_population(fd, row):
     reader = decoded()
     while data := reader.read(W.CHUNK):
         digest.update(data)
-    W.require("sha256:" + digest.hexdigest() == row["diff_id"], "robotwin_layer_diff_id")
+    W.require(
+        "sha256:" + digest.hexdigest() == row["diff_id"], "robotwin_layer_diff_id"
+    )
     files = size = 0
     with tarfile.open(fileobj=decoded(), mode="r|") as layer:
         for member in layer:
@@ -77,16 +85,23 @@ def verify(archive_binding, expected_id):
         result = inspect(fd, info.st_size, expected_id)
         layers = result["layers"]
         counts = [_layer_population(fd, row) for row in layers]
-        W.require(W.descriptor_digest(fd) == archive_binding["sha256"], "robotwin_archive_changed")
-        return {"schema_version": SCHEMA, "valid": True,
-                "expected_image_id": expected_id, "image_index_digest": expected_id,
-                "archive_sha256": archive_binding["sha256"],
-                "image_manifest_digest": result["image_manifest_digest"],
-                "image_config_digest": result["image_config_digest"],
-                "verified_layer_diff_ids": [row["diff_id"] for row in layers],
-                "layer_count": len(layers),
-                "regular_files_read": sum(row[0] for row in counts),
-                "content_bytes_read": sum(row[1] for row in counts)}
+        W.require(
+            W.descriptor_digest(fd) == archive_binding["sha256"],
+            "robotwin_archive_changed",
+        )
+        return {
+            "schema_version": SCHEMA,
+            "valid": True,
+            "expected_image_id": expected_id,
+            "image_index_digest": expected_id,
+            "archive_sha256": archive_binding["sha256"],
+            "image_manifest_digest": result["image_manifest_digest"],
+            "image_config_digest": result["image_config_digest"],
+            "verified_layer_diff_ids": [row["diff_id"] for row in layers],
+            "layer_count": len(layers),
+            "regular_files_read": sum(row[0] for row in counts),
+            "content_bytes_read": sum(row[1] for row in counts),
+        }
 
 
 def main():

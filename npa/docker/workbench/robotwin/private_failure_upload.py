@@ -43,9 +43,13 @@ def upload_failure(phase: Path, url: str) -> None:
         OSError, httpx.HTTPError: Evidence preparation or transport failed.
     """
     destination = urlsplit(url)
-    if (destination.scheme != "https" or not destination.hostname
-            or destination.username is not None or destination.password is not None
-            or destination.fragment):
+    if (
+        destination.scheme != "https"
+        or not destination.hostname
+        or destination.username is not None
+        or destination.password is not None
+        or destination.fragment
+    ):
         raise ValueError("Invalid private upload destination")
     with tempfile.TemporaryFile(dir=phase) as bundle:
         with tarfile.open(fileobj=bundle, mode="w") as archive:
@@ -53,10 +57,17 @@ def upload_failure(phase: Path, url: str) -> None:
                 _add_evidence(archive, phase, name)
         size = bundle.tell()
         bundle.seek(0)
-        with httpx.Client(verify=True, follow_redirects=False, trust_env=False) as client:
+        with httpx.Client(
+            verify=True, follow_redirects=False, trust_env=False
+        ) as client:
             with client.stream(
-                "PUT", url, content=iter(lambda: bundle.read(1024 * 1024), b""),
-                headers={"Content-Type": "application/x-tar", "Content-Length": str(size)},
+                "PUT",
+                url,
+                content=iter(lambda: bundle.read(1024 * 1024), b""),
+                headers={
+                    "Content-Type": "application/x-tar",
+                    "Content-Length": str(size),
+                },
             ) as response:
                 response.raise_for_status()
 

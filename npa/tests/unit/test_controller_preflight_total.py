@@ -20,7 +20,9 @@ def _owner(alias: str = "demo", suffix: str = "a") -> ControllerOwner:
     )
 
 
-def test_multiple_legacy_owners_return_blocked(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_multiple_legacy_owners_return_blocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(
         yaml.safe_dump(
@@ -39,7 +41,9 @@ def test_multiple_legacy_owners_return_blocked(monkeypatch: pytest.MonkeyPatch, 
     assert "Multiple legacy controller owners" in reason
 
 
-def test_corrupt_owner_yaml_returns_blocked(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_corrupt_owner_yaml_returns_blocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("projects: [unterminated", encoding="utf-8")
     monkeypatch.setattr(ownership, "CONFIG_PATH", path)
@@ -48,13 +52,19 @@ def test_corrupt_owner_yaml_returns_blocked(monkeypatch: pytest.MonkeyPatch, tmp
     assert "could not be read" in reason
 
 
-def test_explicit_candidate_disagreement_returns_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_explicit_candidate_disagreement_returns_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     existing = _owner("other", "b")
     candidate = _owner("demo", "a")
     monkeypatch.setattr(ownership, "controller_owner", lambda **_kwargs: existing)
     monkeypatch.setattr(ownership, "load_cluster_state", lambda _context: object())
-    monkeypatch.setattr(ownership, "resolve_controller_candidate", lambda *_args: candidate)
-    monkeypatch.setattr(ownership, "verify_live_controller_candidate", lambda value: value)
+    monkeypatch.setattr(
+        ownership, "resolve_controller_candidate", lambda *_args: candidate
+    )
+    monkeypatch.setattr(
+        ownership, "verify_live_controller_candidate", lambda value: value
+    )
     status, reason = ownership.controller_preflight("demo", "ctx-a")
     assert status == "blocked"
     assert "shared controller belongs" in reason
@@ -64,8 +74,12 @@ def test_valid_unique_owner_returns_ready(monkeypatch: pytest.MonkeyPatch) -> No
     candidate = _owner("demo", "a")
     monkeypatch.setattr(ownership, "controller_owner", lambda **_kwargs: candidate)
     monkeypatch.setattr(ownership, "load_cluster_state", lambda _context: object())
-    monkeypatch.setattr(ownership, "resolve_controller_candidate", lambda *_args: candidate)
-    monkeypatch.setattr(ownership, "verify_live_controller_candidate", lambda value: value)
+    monkeypatch.setattr(
+        ownership, "resolve_controller_candidate", lambda *_args: candidate
+    )
+    monkeypatch.setattr(
+        ownership, "verify_live_controller_candidate", lambda value: value
+    )
     status, reason = ownership.controller_preflight("demo", "ctx-a")
     assert status == "ready"
     assert candidate.cluster_id in reason

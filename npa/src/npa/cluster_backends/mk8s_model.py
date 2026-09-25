@@ -115,7 +115,8 @@ class MK8sDesired:
 
     def __post_init__(self) -> None:
         validate_driver_package_repositories(
-            self.gpu_driver_package_repositories, profile=self.gpu_workload_profile,
+            self.gpu_driver_package_repositories,
+            profile=self.gpu_workload_profile,
         )
         gpu = self.gpu_nodes
         selection = resolve_gpu_workload_profile(

@@ -308,7 +308,9 @@ def _write_yaml_documents(
     path: Path, docs: list[dict[str, Any]], preserve_metadata: bool = False
 ) -> None:
     path.write_text(
-        yaml.safe_dump_all(docs if preserve_metadata else _task_docs(docs), sort_keys=False),
+        yaml.safe_dump_all(
+            docs if preserve_metadata else _task_docs(docs), sort_keys=False
+        ),
         encoding="utf-8",
     )
 
@@ -827,9 +829,7 @@ def _submit_and_wait(
             os.environ.get("KUBECONFIG") if robotwin_submit_context is None else None
         )
         robotwin_control_env = (
-            _robotwin_control_environment(
-                robotwin_submit_context, authorized_env or {}
-            )
+            _robotwin_control_environment(robotwin_submit_context, authorized_env or {})
             if robotwin_submit_context is not None
             else None
         )
@@ -853,7 +853,9 @@ def _submit_and_wait(
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
             # The confidential bridge recognizes the complete frozen profile,
             # including its metadata document, before native SDK normalization.
-            _write_yaml_documents(rendered_yaml, docs, robotwin_submit_context is not None)
+            _write_yaml_documents(
+                rendered_yaml, docs, robotwin_submit_context is not None
+            )
             infra = args.infra or _default_infra()
             config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
             if robotwin_submit_context is None:

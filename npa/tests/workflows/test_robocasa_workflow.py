@@ -90,11 +90,7 @@ def test_data_policy_workflow_expands_all_states() -> None:
 
 def test_data_policy_uses_real_toolrefs() -> None:
     spec = load_spec(DATA_POLICY)
-    tool_refs = {
-        state.tool_ref
-        for state in spec.states.values()
-        if state.tool_ref
-    }
+    tool_refs = {state.tool_ref for state in spec.states.values() if state.tool_ref}
     assert "workbench.robocasa.trajectory_export" in tool_refs
     assert "workbench.lerobot.policy_train" in tool_refs
     assert "workbench.robocasa.policy_eval" in tool_refs
