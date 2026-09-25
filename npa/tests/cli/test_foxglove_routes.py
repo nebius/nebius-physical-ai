@@ -8,8 +8,9 @@ against a real FastAPI app with fakes — no agent VM, no object storage, no SSH
 
 from __future__ import annotations
 
-import json
+from copy import deepcopy
 import hashlib
+import json
 import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -321,6 +322,63 @@ def test_export_converts_active_run_when_no_mcap_is_published(harness) -> None:
     assert body["summary"]["message_count"] == 6
     assert body["export"]["available"] is True
     assert harness["convert_calls"]
+
+
+@pytest.mark.parametrize("field", ["force_convert", "open_web", "cloud_import"])
+@pytest.mark.parametrize("value", ["false", 0, None, []])
+def test_export_rejects_malformed_boolean_flags_before_side_effects(
+    harness, field: str, value: object
+) -> None:
+    harness["data_dir"].mkdir()
+    active = harness["data_dir"] / "active.mcap"
+    active.write_bytes(b"\x89MCAP0\r\nbody")
+    harness["state"]["sim_viz"].update(
+        {
+            "foxglove_url": "/foxglove/data/active.mcap",
+            "foxglove_ready": True,
+        }
+    )
+    state_before = deepcopy(harness["state"])
+    bytes_before = active.read_bytes()
+
+    response = harness["client"].post("/foxglove/export", json={field: value})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"{field} must be a JSON boolean"
+    assert harness["state"] == state_before
+    assert active.read_bytes() == bytes_before
+    assert harness["saved"] == []
+    assert harness["recorded"] == []
+    assert harness["convert_calls"] == []
+    assert harness["loaded"] == []
+    assert harness["layout_calls"] == []
+    assert harness["cloud_calls"] == []
+
+
+@pytest.mark.parametrize("field", ["force_convert", "open_web", "cloud_import"])
+@pytest.mark.parametrize("value", [True, False, "omitted"])
+def test_export_accepts_boolean_flags_and_preserves_omitted_behavior(
+    harness, field: str, value: bool | str
+) -> None:
+    harness["data_dir"].mkdir()
+    active = harness["data_dir"] / "active.mcap"
+    active.write_bytes(b"\x89MCAP0\r\nbody")
+    harness["state"]["sim_viz"].update(
+        {
+            "foxglove_url": "/foxglove/data/active.mcap",
+            "foxglove_ready": True,
+        }
+    )
+    (harness["runs_dir"] / "run-1").mkdir()
+    payload = {} if value == "omitted" else {field: value}
+
+    response = harness["client"].post("/foxglove/export", json=payload)
+
+    assert response.status_code == 200
+    enabled = value is True
+    assert bool(harness["convert_calls"]) is (field == "force_convert" and enabled)
+    assert bool(harness["layout_calls"]) is (field == "open_web" and enabled)
+    assert bool(harness["cloud_calls"]) is (field == "cloud_import" and enabled)
 
 
 def test_cloud_timeout_maps_to_504_and_releases_export_lock(harness) -> None:
