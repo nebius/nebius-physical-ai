@@ -48,11 +48,10 @@ NVIDIA_CDI_DEVICE_PREFIX = "nvidia.com/"
 BACKENDS = {REFERENCE_BACKEND, CONTAINER_BACKEND}
 BUILTIN_REFERENCE_ENVS = {"locomotion-smoke", "sonic-locomotion-smoke"}
 BUILTIN_REFERENCE_STEPS = 32
-_EPISODE_BOOLEAN_FIELDS = ("fall", "terminated", "truncated")
 _EPISODE_DERIVED_RATE_METRICS = {
-    "fall_rate",
-    "termination_rate",
-    "truncation_rate",
+    "fall_rate": "fall",
+    "termination_rate": "terminated",
+    "truncation_rate": "truncated",
 }
 
 EVAL_RESULT_SCHEMA: dict[str, Any] = {
@@ -844,15 +843,7 @@ def _normalize_container_result(
         if isinstance(payload.get("warnings"), list)
         else [],
     )
-    if isinstance(payload.get("metrics"), dict):
-        external_metrics = _jsonable(payload["metrics"])
-        if episode_metrics:
-            external_metrics = {
-                key: value
-                for key, value in external_metrics.items()
-                if key not in _EPISODE_DERIVED_RATE_METRICS
-            }
-        base["metrics"].update(external_metrics)
+    base["metrics"] = _container_metrics(base["metrics"], episode_metrics, payload)
     if isinstance(payload.get("status"), str):
         base["status"] = payload["status"]
     base["container"] = {
@@ -877,18 +868,57 @@ def _normalize_container_result(
 
 
 def _validated_container_episodes(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
+    if value is None:
         return []
+    if not isinstance(value, list):
+        raise SonicEvalError("container episodes must be an array")
     for episode_index, episode in enumerate(value):
         if not isinstance(episode, dict):
             raise SonicEvalError(f"container episode {episode_index} must be an object")
-        for field in _EPISODE_BOOLEAN_FIELDS:
+        for field in _EPISODE_DERIVED_RATE_METRICS.values():
             if field in episode and not isinstance(episode[field], bool):
                 raise SonicEvalError(
                     f"container episode {episode_index} field {field!r} "
                     "must be a JSON boolean"
                 )
     return value
+
+
+def _container_metrics(
+    aggregate: dict[str, Any],
+    episodes: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    summary = payload.get("metrics", {})
+    if not isinstance(summary, dict):
+        raise SonicEvalError("container metrics must be an object")
+    for metric in (*_EPISODE_DERIVED_RATE_METRICS, "valid_action_rate"):
+        if metric in summary:
+            _validate_container_rate(metric, summary[metric])
+    result = {**aggregate, **_jsonable(summary)}
+    for metric, field in _EPISODE_DERIVED_RATE_METRICS.items():
+        if episodes and all(field in episode for episode in episodes):
+            result[metric] = _rate(episodes, field)
+        elif metric in summary:
+            result[metric] = summary[metric]
+        elif metric == "truncation_rate":
+            result.pop(metric, None)
+        else:
+            raise SonicEvalError(
+                f"container {metric} requires complete episode flags or a summary"
+            )
+    return result
+
+
+def _validate_container_rate(metric: str, value: Any) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not 0 <= value <= 1
+    ):
+        raise SonicEvalError(
+            f"container metric {metric!r} must be a finite number in [0, 1]"
+        )
 
 
 def _result_payload(
