@@ -257,14 +257,13 @@ def test_no_cluster_and_no_job_id_is_an_error() -> None:
     assert "no cluster name or job id" in report.error
 
 
-def test_the_lookup_is_not_limited_to_the_context_default_namespace() -> None:
-    # SkyPilot's namespace is configurable, so a default-namespace-only query
-    # would silently report a healthy job.
+def test_the_lookup_uses_the_context_namespace() -> None:
+    # Querying every namespace would require unrelated teams' Pod permissions.
     runner = _runner(_pods())
 
     inspect_job_blockers(job_id="333", runner=runner)
 
-    assert "--all-namespaces" in _pod_call(runner)
+    assert "--all-namespaces" not in _pod_call(runner)
 
 
 def test_an_explicit_namespace_is_honored() -> None:
