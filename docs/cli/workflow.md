@@ -28,6 +28,7 @@ run-spec  Run or plan an NPA workflow spec.
 preflight-images  Prove every image this spec pulls is pullable, with the run's own credentials.
 gpus  Print advertised GPU names using an owned API for a selected context.
 reconcile-controller  Reconcile an orphaned workflow against its original exclusive controller.
+reconcile-absent  Verify original native absence without inferring historical job success.
 trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 ```
 
@@ -59,6 +60,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `preflight-images` | Prove every image this spec pulls is pullable, with the run's own credentials. |
 | `gpus` | Print advertised GPU names using an owned API for a selected context. |
 | `reconcile-controller` | Reconcile an orphaned workflow against its original exclusive controller. |
+| `reconcile-absent` | Verify original native absence without inferring historical job success. |
 | `trigger` | Watch S3-compatible data prefixes and retrigger Workbench workflows. |
 
 ## Examples

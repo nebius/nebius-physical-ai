@@ -132,6 +132,22 @@ chosen specification, prepare its data and resources, submit it, then inspect
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
 
+If an original failed Sky submit still holds a project lease after its controller
+was removed, the [absence-only recovery contract](../docs/architecture/skypilot-absence-recovery.md)
+requires original producer identities and fresh complete Kubernetes reads.
+`npa workbench workflow reconcile-absent --evidence-file /private/evidence.json`
+retains an audit; add `--apply` to commit the bound local lease transition.
+Historical workload outcome remains unknown. This does not delete resources or
+replace the normal preflight and cleanup gates for a new workflow.
+
+[Read-only Sky absence regression](../docs/architecture/skypilot-absence-recovery.md#read-only-live-regression)
+uses `NPA_SKY_ABSENCE_PREVIEW_LIVE_CONFIG` only when an exact original-operation
+preview is explicitly selected; it never applies recovery.
+The separate [never-accepted attempt evidence schema](../docs/architecture/skypilot-absence-recovery.md#issued-attempt-with-no-accepted-managed-id)
+also covers an original single failed launch with no managed ID, while retaining
+its controller-derived first absence decision and missing historical queue-output
+limit. Fresh provider and complete metadata absence remain required.
+
 The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
 retains invalid hosted visual judgments as failed audit evidence. Its
 `npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts
