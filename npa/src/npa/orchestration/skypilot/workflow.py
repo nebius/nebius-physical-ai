@@ -835,7 +835,15 @@ def _submission_global_config(runtime, controller_backend, infra):
         # The selected workload and controller share this exact context; other
         # operator settings, including pod configuration, retain their values.
         kubernetes["allowed_contexts"] = [context]
-        config["allowed_clouds"] = ["kubernetes"]
+        # SkyPilot also uses allowed_clouds for storage discovery, and does not
+        # apply client-side allowed_clouds overrides to a running API server.
+        # Keep this server config stable across submissions while limiting
+        # Nebius to the storage capability for the explicit Kubernetes target.
+        config["allowed_clouds"] = ["kubernetes", "nebius"]
+        nebius = config.setdefault("nebius", {})
+        if not isinstance(nebius, dict):
+            raise ValueError("SkyPilot global config nebius section must be a mapping")
+        nebius["capabilities"] = ["storage"]
     return config
 
 
