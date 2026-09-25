@@ -7,6 +7,11 @@ import subprocess
 import numpy as np
 
 from npa.workflows.navigation.artifacts import write_json
+from npa.workflows.navigation.render_evidence import (
+    capture_settings,
+    frozen_physics,
+    renderer_evidence,
+)
 
 
 @contextmanager
@@ -25,23 +30,30 @@ def recording(env, recipe, output):
     if recipe.adapter_module != "npa.workflows.navigation.reference":
         yield lambda state, step: None
         return
-    capture = _Capture(env, recipe, output)
-    try:
-        yield capture.frame
-    finally:
-        capture.close()
+    with capture_settings():
+        capture = _Capture(env, recipe, output)
+        try:
+            with frozen_physics(capture.env):
+                capture.setup()
+            yield capture.frame
+        finally:
+            capture.close()
 
 
 class _Capture:
     def __init__(self, env, recipe, output):
-        import omni.replicator.core as rep
-        from pxr import UsdGeom
-
         self.env, self.recipe, self.output = env.unwrapped, recipe, output
         self.frames = output / "rendered-rollout"
         self.frames.mkdir()
         self.rows = []
         self.hidden = []
+        self.annotators = {}
+        self.product = None
+
+    def setup(self):
+        import omni.replicator.core as rep
+        from pxr import UsdGeom
+
         for path in self.env.scene.env_prim_paths[1:]:
             imageable = UsdGeom.Imageable(self.env.sim.stage.GetPrimAtPath(path))
             attribute = imageable.GetVisibilityAttr()
@@ -51,10 +63,15 @@ class _Capture:
         self.camera.CreateFocalLengthAttr(18.0)
         self.camera.CreateClippingRangeAttr((0.1, 100.0))
         self.transform = UsdGeom.Xformable(self.camera).AddTransformOp()
-        rep.orchestrator.set_capture_on_play(False)
+        self.camera.CreateHorizontalApertureAttr(20.955)
+        self.camera.CreateVerticalApertureAttr(15.71625)
+        self.camera.CreateHorizontalApertureOffsetAttr(0.0)
+        self.camera.CreateVerticalApertureOffsetAttr(0.0)
         self.product = rep.create.render_product(str(self.camera.GetPath()), (640, 480))
-        self.annotator = rep.AnnotatorRegistry.get_annotator("rgb")
-        self.annotator.attach([self.product])
+        for name in ("rgb", "CameraParams", "ReferenceTime"):
+            annotator = rep.AnnotatorRegistry.get_annotator(name, device="cpu")
+            self.annotators[name] = annotator
+            annotator.attach([self.product])
 
     def frame(self, state, step):
         import omni.replicator.core as rep
@@ -66,20 +83,26 @@ class _Capture:
         self.transform.Set(
             Gf.Matrix4d().SetLookAt(eye, target, Gf.Vec3d(0, 0, 1)).GetInverse()
         )
-        before = self.env.scene["robot"].data.root_pos_w.torch.clone()
-        rep.orchestrator.step(
-            delta_time=0.0, pause_timeline=False, wait_for_render=True
-        )
-        if not before.equal(self.env.scene["robot"].data.root_pos_w.torch):
-            raise RuntimeError("recording unexpectedly advanced native robot physics")
-        pixels = np.asarray(self.annotator.get_data())
-        if (
-            pixels.shape != (480, 640, 4)
-            or pixels.dtype != np.uint8
-            or not pixels[..., :3].any()
-        ):
-            raise RuntimeError("native rollout renderer returned an invalid RGB frame")
-        row = {
+        with frozen_physics(self.env) as native:
+            # PhysX's manual step does not flush its current transforms to Fabric.
+            self.env.sim.forward()
+            for _ in range(2):
+                rep.orchestrator.step(
+                    delta_time=0.0, pause_timeline=False, wait_for_render=True
+                )
+            evidence = renderer_evidence(
+                self.annotators, self.camera, self.transform.Get(), native
+            )
+            pixels = np.asarray(self.annotators["rgb"].get_data()).copy()
+            _validate_pixels(pixels)
+        row = self._row(state, step)
+        row["render_evidence"] = evidence
+        self.rows.append(row)
+        self._write_frame(pixels[..., :3], row)
+
+    def _row(self, state, step):
+        position = state["position_m"][0]
+        return {
             "step": step,
             "simulation_seconds": step * self.env.step_dt,
             "position_m": position.tolist(),
@@ -91,8 +114,6 @@ class _Capture:
             "upright_cosine": float(state["upright_cosine"][0]),
             "ground_clearance_m": float(state["ground_clearance_m"][0]),
         }
-        self.rows.append(row)
-        self._write_frame(pixels[..., :3], row)
 
     def _write_frame(self, pixels, row):
         from PIL import Image, ImageDraw
@@ -110,8 +131,10 @@ class _Capture:
         frame.save(self.frames / f"{row['step']:06d}.png")
 
     def close(self):
-        self.annotator.detach([self.product])
-        self.product.destroy()
+        for annotator in self.annotators.values():
+            annotator.detach([self.product])
+        if self.product is not None:
+            self.product.destroy()
         for attribute, value in self.hidden:
             attribute.Set(value)
         write_json(
@@ -120,9 +143,18 @@ class _Capture:
                 "renderer": "isaac-replicator-rgb",
                 "robot_index": 0,
                 "peers_hidden_for_visualization_only": True,
+                "render_clock": "native_physx_fabric",
+                "native_time_origin_seconds": (
+                    self.rows[0]["render_evidence"]["native_clocks"]["physics_seconds"]
+                    if self.rows
+                    else None
+                ),
                 "frames": self.rows,
             },
         )
+        self._encode_video()
+
+    def _encode_video(self):
         encoder = shutil.which("ffmpeg")
         if encoder and self.rows:
             subprocess.run(
@@ -142,3 +174,12 @@ class _Capture:
                 check=True,
                 capture_output=True,
             )
+
+
+def _validate_pixels(pixels):
+    if (
+        pixels.shape != (480, 640, 4)
+        or pixels.dtype != np.uint8
+        or not pixels[..., :3].any()
+    ):
+        raise RuntimeError("native rollout renderer returned an invalid RGB frame")

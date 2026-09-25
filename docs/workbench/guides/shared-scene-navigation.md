@@ -5,7 +5,8 @@ built-in public reference or an operator's registered Isaac Lab navigation task:
 prepare inputs → native RSL-RL train → reload checkpoint and evaluate held-out
 goals. It requires a self-contained collision USDZ and explicit reset/probe cases.
 The public bundle builder supplies a cluttered warehouse and reviewed native task;
-custom robots retain the BYOF adapter boundary. **Native GPU qualification is pending.**
+custom robots retain the BYOF adapter boundary. **Full learning and held-out acceptance
+remain pending; native 4000-robot physical controls have passed.**
 Proprietary robot and scene integration remains operator input.
 
 The reference extends the pinned public
@@ -82,6 +83,13 @@ subtracting static-scene forces are reported as peer contacts. Values below
 require real GPU validation; local tensor and USD tests do not prove runtime
 throughput or learning convergence.
 
+A native RTX PRO 6000 qualification constructed all 4000 robots in one warehouse
+and passed repeated-reset and coincident-peer controls with zero measured focal
+state/observation deltas and zero peer contact. The obstacle positive control
+produced actual contact. Sustained native PPO execution has begun; these controls
+do not establish completed training, held-out performance or video acceptance.
+The readiness record retains those outstanding gates.
+
 Native training retains `reference_checkpoint.pt` before the first update,
 `policy.pt` after learning, TensorBoard logs and exported `learning-curves.json`.
 The training record reports measured wall time, native control-transition
@@ -92,11 +100,25 @@ checkpoints on the identical held-out inputs and publishes the measured gain.
 The initial reference is an untrained high-level navigation policy above the
 public pretrained low-level controller; it is not a customer's existing policy.
 
+Raw training curves retain upstream metric names. `Metrics/success_rate` is
+updated after automatic goal resets in this reference and is not held-out success.
+`Episode_Termination/base_contact` includes goal arrival and physical failure;
+it is not a collision rate. Derive success, obstacle contact and physical failure
+from the separately reloaded evaluation trajectories and `episode_rows` metrics.
+
 Public reference evaluation captures the actual Isaac Replicator RGB renderer
 while the focal robot follows its native policy. The video overlays measured
 goal distance, contact forces and simulated time. Peer visuals are hidden only
 for this recording; their physics remain active, and render steps use zero
-simulation delta. Artifacts include `rendered-rollout/*.png`, frame measurements,
+simulation delta. Capture temporarily enables the scheduler disabled by the pinned
+Lab headless rendering preset and restores settings afterward. Two frozen render
+passes flush annotations. Each accepted frame must match its authored camera
+pose, intrinsics and resolution, and its rational renderer time must match actual
+native PhysX time. Uncached native root transforms, root velocities, joint state,
+physics step count and clocks must remain unchanged across rendering. The native
+time origin follows the preceding controls; it is distinct from the video's
+relative rollout time. Native qualification of this capture correction is pending.
+Artifacts include `rendered-rollout/*.png`, frame measurements,
 and `rollout.mp4` when the runtime supplies FFmpeg. The PNG sequence can be encoded
 later without rerunning or reconstructing the simulation. Custom BYOF tasks
 retain their own visualization integration.
@@ -232,6 +254,11 @@ fail closed. Articulation placement and measured resets share world coordinates;
 a spacing configuration is not accepted as isolation evidence.
 
 ## RGB-D: all robot geometry hidden
+
+This optional BYOF path remains unqualified on the pinned Lab preset, including
+its disabled Replicator scheduler. The public range-sensor reference and its
+rollout video qualification do not validate this separate RGB-D probe path or
+camera-conditioned policy throughput.
 
 Set `sensor_mode=rgbd` and supply a `camera` object with:
 

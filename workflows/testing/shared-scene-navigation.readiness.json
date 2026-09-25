@@ -21,31 +21,39 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "No live S3 writes were authorized or performed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Native qualification materialized sealed input/source objects and wrote prepared publications through configured storage; final learned/evaluation publication remains pending.",
+      "evidence": [
+        "docs/workbench/guides/shared-scene-navigation.md"
+      ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "The public native reference and collision-scene/reset bundle builder are implemented and locally tested. Native behavior and learning require GPU validation; proprietary task inputs remain operator-owned.",
+      "status": "verified",
+      "reason": "The public procedural scene and sealed 4000-robot cases were materialized and executed by the native worker. Proprietary task and robot inputs remain operator-owned.",
       "evidence": [
-        "npa/src/npa/workflows/navigation/reference_bundle.py"
+        "docs/workbench/guides/shared-scene-navigation.md"
       ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Runtime storage and operator asset access have not been checked.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Configured operator storage and required public runtime/asset access succeeded for the native qualification. No credentials or infrastructure identities are published.",
+      "evidence": [
+        "docs/workbench/guides/shared-scene-navigation.md"
+      ]
     },
     "source_image": {
-      "status": "blocked",
-      "reason": "An exact native image digest plus matching reviewed reference source overlay, or an operator BYOF image, must replace the planning placeholder.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Native qualification used a digest-pinned runtime and content-addressed reviewed source overlay; the public workflow template still requires an operator-supplied exact image.",
+      "evidence": [
+        "docs/workbench/guides/shared-scene-navigation.md"
+      ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Native Isaac Sim 6.0.1 / Isaac Lab 3, PhysX contact filtering and RTX camera probes have not been executed. CPU USD visibility and image-contract tests are not GPU acceptance.",
-      "evidence": []
+      "reason": "Isaac Sim 6.0.1 / Isaac Lab 3 executed all 4000 robots in one scene. Repeated-reset/peer-isolation controls passed with zero state/observation deltas and peer contact; the obstacle contact control passed and sustained PPO began. Full 1500-iteration training, reloaded held-out comparison, corrected rollout video and optional RGB-D task probes remain pending.",
+      "evidence": [
+        "docs/workbench/guides/shared-scene-navigation.md"
+      ]
     }
   }
 }
