@@ -1,0 +1,50 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "cb2f6534eb64010a0d6b76e0646879c3a418635c6a064d23c0c9258a329f4ab3",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec --run-id preview pass with six executable stages.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/field-failure-policy-improvement.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/field-failure-policy-improvement.yaml --run-id preview --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The graph invokes real operator adapters for reconstruction, fine-tuning, and paired navigation evaluation; contract tests verify evidence checks and fail-closed missing inputs. No navigation workload has run.",
+      "evidence": [
+        "npa/tests/workflows/field_failure/test_workflow.py",
+        "npa/tests/workflows/field_failure/test_evidence.py",
+        "docs/workbench/cookbooks/field-failure-policy-improvement.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Operator must supply writable run-scoped S3 with conditional-write support; default bucket is a placeholder.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "No field captures, existing navigation checkpoint, sealed held-out cohort, protocol, or adapter bundle was supplied.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Storage and any vendor/model authorizations were not accessed; no live operations were authorized for this implementation.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "Operator must supply scanned immutable BYOF adapter images matching sealed callable/source/image identities; default images are unresolved placeholders.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Declared RTX Kubernetes runtime, native simulator compatibility, and GPU acceptance have not been tested. Use committed opt-in live coverage.",
+      "evidence": []
+    }
+  }
+}

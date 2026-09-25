@@ -1,0 +1,140 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: field-failure-policy-improvement
+  executionMode: runtime
+  description: >-
+    Validate field navigation failures, reconstruct training scenarios through an
+    operator adapter, fine-tune the existing policy, evaluate both checkpoints on
+    sealed held-out scenes and seeds, and recommend promotion only from complete
+    verified evidence. Requires real operator navigation adapters and data; no
+    built-in navigation policy, fabricated metrics, or production deployment.
+config:
+  bucket: example-bucket
+  prefix: "field-failure/{{run.id}}"
+  source_overlay: true
+  reconstruction_image: "operator-required"
+  training_image: "operator-required"
+  evaluation_image: "operator-required"
+  reconstruct_adapter: ""
+  train_adapter: ""
+  evaluate_adapter: ""
+  bundle_sha256: ""
+
+  bundle_uri: "s3://{{config.bucket}}/inputs/failure-bundle.json"
+  output_root: "s3://{{config.bucket}}/{{config.prefix}}"
+  decision_uri: "{{config.output_root}}/decision.json"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  reconstruction:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 8
+    memory: 64Gi
+    image: "{{config.reconstruction_image}}"
+  training:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 8
+    memory: 64Gi
+    image: "{{config.training_image}}"
+  evaluation:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 8
+    memory: 64Gi
+    image: "{{config.evaluation_image}}"
+initial: validate
+states:
+  validate:
+    description: Verify the pinned bundle, capture bytes, baseline checkpoint, and held-out separation.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.field_failure, validate,
+             --bundle-uri, "{{config.bundle_uri}}", --bundle-sha256, "{{config.bundle_sha256}}",
+             --output-root, "{{config.output_root}}", --run-id, "{{run.id}}"]
+    inputs:
+      - uri: "{{config.bundle_uri}}"
+        schema: npa.field-failure.bundle.v1
+    outputs:
+      - uri: "{{config.output_root}}/validated.json"
+        schema: npa.field-failure.validated.v1
+    next: reconstruct
+  reconstruct:
+    description: Execute the configured reconstruction adapter and verify navigable scene provenance.
+    resources: reconstruction
+    run:
+      argv: [python3, -m, npa.workflows.field_failure, reconstruct,
+             --bundle-uri, "{{config.bundle_uri}}", --bundle-sha256, "{{config.bundle_sha256}}",
+             --output-root, "{{config.output_root}}", --run-id, "{{run.id}}",
+             --adapter, "{{config.reconstruct_adapter}}",
+             --runtime-image, "{{config.reconstruction_image}}"]
+    inputs:
+      - uri: "{{config.output_root}}/validated.json"
+    outputs:
+      - uri: "{{config.output_root}}/reconstruction.json"
+        schema: npa.field-failure.reconstruction.v1
+    next: train
+  train:
+    description: Execute navigation fine-tuning from the exact baseline using only reconstructed training scenes.
+    resources: training
+    run:
+      argv: [python3, -m, npa.workflows.field_failure, train,
+             --bundle-uri, "{{config.bundle_uri}}", --bundle-sha256, "{{config.bundle_sha256}}",
+             --output-root, "{{config.output_root}}", --run-id, "{{run.id}}",
+             --adapter, "{{config.train_adapter}}",
+             --runtime-image, "{{config.training_image}}"]
+    inputs:
+      - uri: "{{config.output_root}}/reconstruction.json"
+    outputs:
+      - uri: "{{config.output_root}}/training.json"
+        schema: npa.field-failure.training.v1
+    next: baseline-evaluate
+  baseline-evaluate:
+    description: Execute the baseline on every sealed held-out scenario and seed with the pinned evaluator.
+    resources: evaluation
+    run:
+      argv: [python3, -m, npa.workflows.field_failure, baseline-evaluate,
+             --bundle-uri, "{{config.bundle_uri}}", --bundle-sha256, "{{config.bundle_sha256}}",
+             --output-root, "{{config.output_root}}", --run-id, "{{run.id}}",
+             --adapter, "{{config.evaluate_adapter}}",
+             --runtime-image, "{{config.evaluation_image}}"]
+    inputs:
+      - uri: "{{config.output_root}}/validated.json"
+    outputs:
+      - uri: "{{config.output_root}}/baseline-evaluation.json"
+        schema: npa.field-failure.evaluation.v1
+    next: candidate-evaluate
+  candidate-evaluate:
+    description: Execute the candidate on the identical held-out scenes, seeds, and protocol.
+    resources: evaluation
+    run:
+      argv: [python3, -m, npa.workflows.field_failure, candidate-evaluate,
+             --bundle-uri, "{{config.bundle_uri}}", --bundle-sha256, "{{config.bundle_sha256}}",
+             --output-root, "{{config.output_root}}", --run-id, "{{run.id}}",
+             --adapter, "{{config.evaluate_adapter}}",
+             --runtime-image, "{{config.evaluation_image}}"]
+    inputs:
+      - uri: "{{config.output_root}}/training.json"
+    outputs:
+      - uri: "{{config.output_root}}/candidate-evaluation.json"
+        schema: npa.field-failure.evaluation.v1
+    next: compare
+  compare:
+    description: Reverify all evidence and write a direction-aware recommendation with per-episode regression checks.
+    resources: cpu
+    writesDecision: true
+    run:
+      argv: [python3, -m, npa.workflows.field_failure, compare,
+             --bundle-uri, "{{config.bundle_uri}}", --bundle-sha256, "{{config.bundle_sha256}}",
+             --output-root, "{{config.output_root}}", --run-id, "{{run.id}}"]
+    inputs:
+      - uri: "{{config.output_root}}/baseline-evaluation.json"
+      - uri: "{{config.output_root}}/candidate-evaluation.json"
+    outputs:
+      - uri: "{{config.decision_uri}}"
+        schema: npa.field-failure.decision.v1
+    terminal: true
