@@ -59,6 +59,16 @@ def _parse_timeout_seconds(value: Any) -> int | float:
         ) from exc
 
 
+def _parse_classification_flag(value: Any, *, container: str, field_name: str) -> bool:
+    """Reject ambiguous values for a container classification flag."""
+
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"Container {container!r} field {field_name!r} must be a boolean"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class GoldenEval:
     """The minimal tested rerun that proves a container works."""
@@ -186,10 +196,22 @@ def load_manifest() -> dict[str, ContainerSpec]:
             physical_ai=dict(raw.get("physical_ai") or {}),
             safety=dict(raw.get("safety") or {}),
             golden_eval=golden_eval,
-            foundation=bool(raw.get("foundation", False)),
-            internal=bool(raw.get("internal", False)),
+            foundation=_parse_classification_flag(
+                raw.get("foundation", False),
+                container=name,
+                field_name="foundation",
+            ),
+            internal=_parse_classification_flag(
+                raw.get("internal", False),
+                container=name,
+                field_name="internal",
+            ),
             default_tag=raw.get("default_tag"),
-            external_build=bool(raw.get("external_build", False)),
+            external_build=_parse_classification_flag(
+                raw.get("external_build", False),
+                container=name,
+                field_name="external_build",
+            ),
             variant_of=raw.get("variant_of"),
             image_variant=raw.get("image_variant"),
         )

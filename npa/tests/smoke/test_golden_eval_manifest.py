@@ -9,15 +9,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import json
 import re
 import shlex
+
+import pytest
+import yaml
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
+from npa.smoke import manifest as manifest_module
 from npa.smoke.manifest import (
     VALID_GPU,
     VALID_KINDS,
@@ -28,6 +31,103 @@ from npa.smoke.manifest import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 runner = CliRunner()
+
+
+def _manifest_payload(*, flags_by_container: dict[str, dict[str, object]]) -> str:
+    containers = {}
+    for name, flags in flags_by_container.items():
+        containers[name] = {
+            "image": f"npa-{name}",
+            "dockerfile": "npa/docker/workbench/example/Dockerfile",
+            "golden_eval": {
+                "kind": "container-smoke",
+                "command": "true",
+                "gpu": "none",
+                "timeout_seconds": 30,
+                "status": "ready",
+            },
+            **flags,
+        }
+    return yaml.safe_dump(
+        {"format": manifest_module.MANIFEST_FORMAT, "containers": containers}
+    )
+
+
+def _load_manifest_text(
+    monkeypatch: pytest.MonkeyPatch, text: str
+) -> dict[str, manifest_module.ContainerSpec]:
+    monkeypatch.setattr(manifest_module, "_manifest_text", lambda: text)
+    return manifest_module.load_manifest.__wrapped__()
+
+
+def test_classification_flags_preserve_booleans_and_default_to_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = _manifest_payload(
+        flags_by_container={
+            "enabled": {
+                "foundation": True,
+                "internal": True,
+                "external_build": True,
+            },
+            "disabled": {
+                "foundation": False,
+                "internal": False,
+                "external_build": False,
+            },
+            "omitted": {},
+        }
+    )
+
+    specs = _load_manifest_text(monkeypatch, text)
+
+    assert (
+        specs["enabled"].foundation,
+        specs["enabled"].internal,
+        specs["enabled"].external_build,
+    ) == (True, True, True)
+    for name in ("disabled", "omitted"):
+        assert (
+            specs[name].foundation,
+            specs[name].internal,
+            specs[name].external_build,
+        ) == (False, False, False)
+
+
+@pytest.mark.parametrize("field_name", ["foundation", "internal", "external_build"])
+@pytest.mark.parametrize(
+    "invalid_value",
+    ["false", "true", 0, 1, [], {}, None],
+    ids=["false-string", "true-string", "zero", "one", "list", "mapping", "null"],
+)
+def test_classification_flags_reject_non_boolean_values(
+    monkeypatch: pytest.MonkeyPatch, field_name: str, invalid_value: object
+) -> None:
+    text = _manifest_payload(
+        flags_by_container={"malformed": {field_name: invalid_value}}
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Container 'malformed' field '{field_name}' must be a boolean",
+    ):
+        _load_manifest_text(monkeypatch, text)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["foundation", "external_build", "internal"],
+    ids=["known-image", "Dockerfile", "variant"],
+)
+def test_false_string_cannot_enable_validation_bypass(
+    monkeypatch: pytest.MonkeyPatch, field_name: str
+) -> None:
+    text = _manifest_payload(
+        flags_by_container={"bypass-attempt": {field_name: "false"}}
+    )
+
+    with pytest.raises(ValueError, match=rf"field '{field_name}' must be a boolean"):
+        _load_manifest_text(monkeypatch, text)
 
 
 def test_manifest_loads_and_is_valid() -> None:
