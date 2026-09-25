@@ -391,9 +391,52 @@ def test_goal_boundary_records_success_tool_failure_refusal_and_grounded_zero_to
     assert result == response
     payload = _episode_payloads(s3)[0]
     assert payload["outcome"]["status"] == expected_status
-    if response.get("grounded"):
+    if response.get("grounded") is True:
         assert payload["routing"]["input_tokens"] == 0
         assert payload["routing"]["output_tokens"] == 0
+    elif "usage" in response:
+        assert payload["routing"]["grounded"] is False
+        assert payload["routing"]["input_tokens"] == 2
+        assert payload["routing"]["output_tokens"] == 3
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"ok": True},
+        {"ok": True, "grounded": False},
+        {"ok": True, "grounded": "false"},
+        {"ok": True, "grounded": 1},
+        {"ok": True, "grounded": 0},
+        {"ok": True, "grounded": []},
+        {"ok": True, "grounded": {}},
+        {"ok": True, "grounded": None},
+    ],
+)
+def test_grounded_lookalikes_remain_model_routed_with_observed_usage(
+    dataset_env: None, response: dict
+) -> None:
+    s3 = FakeS3()
+    response["usage"] = {"prompt_tokens": 2, "completion_tokens": 3}
+
+    @goal_episode_boundary(
+        storage_factory=lambda: FakeStorage(s3),
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
+    )
+    def endpoint(payload: dict) -> dict:
+        return dict(response)
+
+    assert endpoint({}) == response
+    payload = _episode_payloads(s3)[0]
+    assert payload["outcome"]["status"] == "succeeded"
+    assert payload["routing"] == {
+        "grounded": False,
+        "tier": "",
+        "model": "",
+        "input_tokens": 2,
+        "output_tokens": 3,
+    }
 
 
 def test_goal_boundary_records_cancellation(dataset_env: None) -> None:
