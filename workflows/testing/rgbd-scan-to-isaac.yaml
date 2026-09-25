@@ -12,7 +12,7 @@ config:
   prefix: rgbd-scan-to-isaac/{{run.id}}
   source_overlay: true
   input_path: ''
-  assembly_image: tool://content-agents
+  assembly_image: tool://sonic
   isaac_image: tool://isaac-lab
   run_uri: s3://{{config.bucket}}/{{config.prefix}}
   assembled_uri: '{{config.run_uri}}/assembled'
@@ -33,8 +33,8 @@ resources:
     image: '{{config.isaac_image}}'
   reconstruction:
     cloud: kubernetes
-    cpus: 8
-    memory: 32Gi
+    cpus: 4
+    memory: 16Gi
     image: '{{config.reconstruction_image}}'
 initial: reconstruct
 states:
@@ -44,7 +44,7 @@ states:
     resources: reconstruction
     run:
       argv:
-      - /opt/npa/sim/venv/bin/python
+      - /opt/npa/venv/bin/python
       - -m
       - npa.workbench.nurec.navigation_reconstruction
       - --input-path
@@ -64,7 +64,16 @@ states:
     resources: cpu
     run:
       argv:
-      - /opt/venv/bin/python
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python -c 'from pxr import Usd; assert Usd.GetVersion() == (0, 26, 8); print("OpenUSD:", Usd.GetVersion())'
+        /opt/npa/venv/bin/python "$@"
+      - scan-assemble
       - -m
       - npa.workbench.nurec.navigation_scene
       - --input-path

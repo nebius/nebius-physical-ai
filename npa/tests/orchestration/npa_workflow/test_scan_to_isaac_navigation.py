@@ -125,15 +125,18 @@ def test_metric_capture_workflow_uses_real_reconstruction_and_surface_handoff():
     spec = load_spec(path)
     reconstruct, prepare, physics = build_plan(spec, run_id="metric-capture").steps
     assert reconstruct.argv[:3] == [
-        "/opt/npa/sim/venv/bin/python",
+        "/opt/npa/venv/bin/python",
         "-m",
         "npa.workbench.nurec.navigation_reconstruction",
     ]
-    assert prepare.argv[:3] == [
-        "/opt/venv/bin/python",
+    assert prepare.argv[:2] == ["/bin/bash", "-euc"]
+    assert prepare.argv[3:6] == [
+        "scan-assemble",
         "-m",
         "npa.workbench.nurec.navigation_scene",
     ]
+    assert '--no-deps --target "$usd_site" usd-core==26.8' in prepare.argv[2]
+    assert 'PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"' in prepare.argv[2]
     assert prepare.argv[prepare.argv.index("--input-path") + 1] == reconstruct.argv[-1]
     assert physics.argv[physics.argv.index("--input-path") + 1] == prepare.argv[-1]
     assert {item["uri"] for item in reconstruct.outputs} == {
@@ -170,10 +173,10 @@ def test_metric_capture_render_retains_cpu_dependency_interpreters(monkeypatch):
     tasks = [task for task in yaml.safe_load_all(rendered) if task and "run" in task]
     assert "npa-sonic" in tasks[0]["resources"]["image_id"]
     assert (
-        "/opt/npa/sim/venv/bin/python -m npa.workbench.nurec.navigation_reconstruction"
+        "/opt/npa/venv/bin/python -m npa.workbench.nurec.navigation_reconstruction"
         in tasks[0]["run"]
     )
-    assert "npa-content-agents" in tasks[1]["resources"]["image_id"]
+    assert "npa-sonic" in tasks[1]["resources"]["image_id"]
     for task in tasks[:2]:
         assert "accelerators" not in task["resources"]
     assert tasks[2]["resources"]["accelerators"] == "RTXPRO6000:1"

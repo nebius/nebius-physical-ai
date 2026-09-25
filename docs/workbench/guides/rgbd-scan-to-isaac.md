@@ -8,11 +8,13 @@ with matching static collision geometry. Open3D integrates observed surfaces;
 OpenUSD packages them; Isaac Sim checks native PhysX intersections on an RTX
 PRO 6000 GPU. It does not require a separately authored collision mesh.
 
-The geometry stages run on CPU. The first uses the existing SONIC image's
-Open3D runtime directly, without starting SONIC or downloading Isaac. The second
-uses the existing Content Agents image's OpenUSD runtime. The GPU stage uses
-the Isaac image. Override the three image settings with independently verified
-immutable images when qualifying a run. This adds no image or baked dataset.
+The geometry stages run on CPU using the existing SONIC image's
+`/opt/npa/venv/bin/python`, without starting SONIC or downloading Isaac. The first
+uses its Open3D runtime. Assembly installs `usd-core==26.8` without dependencies
+into a fresh temporary directory, appends it after the selected source overlay,
+and removes it after the stage. The image's Python environment stays intact.
+The GPU stage uses the Isaac image. Pin the three image settings to independently
+verified immutable images when qualifying a run. This adds no image or baked dataset.
 
 Reconstruction covers measured surfaces only. Missing surfaces and unseen space
 stay unknown; the workflow does not invent floors, close holes, reconstruct from
@@ -21,37 +23,40 @@ navigation task can consume the resulting `scene.usdz` through the
 [verified training handoff](#continue-into-native-navigation-training), but robot
 clearance, policy learning, and held-out navigation success require separate native runs.
 An indoor public capture does not establish industrial-scene or customer-data
-quality. A public reference has passed native collision queries inside the RTX
-Isaac runtime; the complete three-stage recipe and learned navigation remain
-unqualified. See the [readiness record](../../../workflows/testing/rgbd-scan-to-isaac.readiness.json).
+quality. A complete public capture has passed the three-stage managed workflow
+and native collision queries inside the RTX Isaac runtime. Learned navigation
+remains a separate qualification. See the
+[readiness record](../../../workflows/testing/rgbd-scan-to-isaac.readiness.json).
 
 ## Measured public reference
 
 On September 25, 2026, the complete associated TUM RGB-D
-`fr3/long_office_household` capture produced the following results. CPU
-reconstruction and local OpenUSD assembly preceded a standard workflow native
-Isaac stage on an RTX PRO 6000 Blackwell Server Edition with driver 580.173.02.
-The actual worker image digest matched the report's declared immutable image.
+`fr3/long_office_household` capture completed reconstruction, assembly and native
+Isaac validation as one standard managed workflow. Both CPU stages used the
+pinned SONIC image below; assembly added OpenUSD 26.8 in an isolated target.
+The native stage used an RTX PRO 6000 Blackwell Server Edition with driver
+580.173.02. Actual image digests were independently verified on all three workers.
 
 | Check | Measured result |
 | --- | --- |
 | Capture split | 1,984 integration frames; 501 held-out frames |
 | Excluded source frames | 100, with missing bounded pose or RGB/depth association recorded |
-| Reconstructed geometry | 513,594 vertices; 921,553 triangles |
-| CPU reconstruction | Open3D 0.19.0; 89.33 seconds |
+| Reconstructed geometry | 513,598 vertices; 921,561 triangles |
+| CPU reconstruction | Open3D 0.19.0; 56.97 seconds |
 | Held-out depth | 80,703 rays; 99.903% coverage; 94.118% within 10 cm |
 | Depth error over hits | Mean 4.12 cm; 95th percentile 12.25 cm |
 | Native collision handoff | All 501 measured-depth probes passed in Isaac Sim 6.0.1 / PhysX 110.1.13 |
 
 The verified scene SHA-256 is
-`7c31f87b1e714961792bb361954f76dfe937e02703bfc8d3be04f09900d823c2`;
+`cdd2744ce8cc4c2ca6fa7b5a0ec457344f76793fca91a8d1d155ac0bdd36011b`;
 the native physics report SHA-256 is
-`8871e6a29b60ff37524ecd17849b81531655e34013aaa1223ccb968bf1e6111c`.
-The completion seal, exact scene/provenance hashes, and every probe's measured
-distance interval were independently checked. Operational evidence remains
+`22f8cc9a0d53d193be34f3041ab330b714ea4f0f3e60f8a511465256be0ca81f`.
+All three completion seals, original capture and reconstruction report bytes,
+exact scene/provenance hashes, and every probe's measured distance interval were
+independently checked. The public assembly bootstrap also passed an exact-image
+CPU check against the full published reconstruction. Operational evidence remains
 private. These are CPU PhysX scene queries inside the RTX Isaac runtime; this
-qualification contains no rendered image or learned-policy result. The three
-stages were not executed together as one workflow.
+qualification contains no rendered image or learned-policy result.
 
 Reference attribution: J. Sturm, N. Engelhard, F. Endres, W. Burgard, D. Cremers,
 *A Benchmark for the Evaluation of RGB-D SLAM Systems*, IROS 2012;
@@ -113,16 +118,22 @@ these modules. Replace all example values with private operator settings:
 npa workbench workflow validate-spec workflows/testing/rgbd-scan-to-isaac.yaml --json
 npa workbench workflow plan-spec workflows/testing/rgbd-scan-to-isaac.yaml --run-id preview --json
 export NPA_SRC_S3_URI="s3://example-bucket/npa-src/npa/<verified-source-fingerprint>/"
+export NPA_SCAN_CPU_IMAGE="ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
+export NPA_SCAN_ISAAC_IMAGE="ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6"
 npa workbench workflow submit workflows/testing/rgbd-scan-to-isaac.yaml \
-  --runtime --project example-project --infra example-rtx-runtime \
+  --runtime --no-stage-src --project example-project --infra example-rtx-runtime \
   --var bucket=example-bucket \
   --var input_path=s3://example-bucket/captures/metric-room \
-  --var isaac_image=registry.example.invalid/isaac@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --var "reconstruction_image=$NPA_SCAN_CPU_IMAGE" \
+  --var "assembly_image=$NPA_SCAN_CPU_IMAGE" \
+  --var "isaac_image=$NPA_SCAN_ISAAC_IMAGE" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Optional `reconstruction_image` and `assembly_image` overrides must retain their
-interpreter/dependency contracts. The workflow overlays the selected source URI;
+Optional `reconstruction_image` and `assembly_image` overrides must retain the
+`/opt/npa/venv/bin/python` interpreter, Open3D and Python dependency contracts.
+Assembly also requires package-index access for the pinned OpenUSD wheel.
+The workflow overlays the selected source URI;
 enabling the overlay alone does not select or verify a particular checkout.
 Retain its content fingerprint and verify the required module bytes before GPU
 submission. Keep the control CLI checkout, Python import path, and configuration
@@ -211,11 +222,13 @@ navigation publisher's conditional claim and readback. The returned
 bundle; use that URI, not its logical publication parent, for workflow preparation.
 This operation seals inputs; `navigation_learning_verified` remains false.
 
-Local handoff validation used the complete qualified public scene above, its 501
-native probe results, and 4,000 measured training plus 4,000 held-out cases. The
-real companion recipe builder and preparation stage preserved the exact scene
-and report bytes. This CPU preparation check supplies no navigation learning or
-GPU population acceptance result.
+The public handoff was exercised against these exact managed outputs using live
+S3 publication and independent readback, all 501 native probe results, and 4,000
+measured training plus 4,000 held-out cases. The real companion recipe builder
+and preparation stage preserved the exact scene and report bytes. Its recipe
+SHA-256 is `197f4e05fe273cf9d9348896d27fc5738b46c52107fd5694a36b3f33f40c73e4`.
+This CPU input-preparation check supplies no navigation learning or GPU population
+acceptance result; its native-runtime and learning verification flags remain false.
 
 With PR #805 installed, set `NPA_NAVIGATION_WORKFLOW` to its checked-in
 `shared-scene-navigation.yaml` in the testing workflow catalog. This specification
