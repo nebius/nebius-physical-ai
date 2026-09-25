@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The graph invokes real operator adapters for reconstruction, fine-tuning, and paired navigation evaluation; contract tests verify evidence checks and fail-closed missing inputs. No navigation workload has run.",
+      "reason": "The graph invokes reconstruction, fine-tuning and paired navigation adapters. Native reference implementations join the metric RGB-D and shared-scene Isaac components, with separate training-exposed replay. Contract tests pass; full native GPU acceptance remains pending.",
       "evidence": [
         "npa/tests/workflows/field_failure/test_field_failure_workflow.py",
         "npa/tests/workflows/field_failure/test_evidence.py",
@@ -33,12 +33,12 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Storage and any vendor/model authorizations were not accessed; no live operations were authorized for this implementation.",
+      "reason": "Credentials and vendor access are deployment-specific and must be verified privately for the selected execution target.",
       "evidence": []
     },
     "source_image": {
       "status": "blocked",
-      "reason": "Operator must supply scanned immutable BYOF adapter images matching sealed callable/source/image identities; default images are unresolved placeholders.",
+      "reason": "Select immutable compatible runtimes and verified adapter/source inventories. The native reference also requires metric reconstruction and shared-scene navigation in one reviewed source distribution; default images remain unresolved placeholders.",
       "evidence": []
     },
     "target_runtime": {

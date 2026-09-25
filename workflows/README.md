@@ -12,7 +12,7 @@ artifacts. Start with a runbook that matches the result you want.
 | --- | --- |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
-| Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [adapter contract and runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — operator data/adapters required; GPU acceptance pending |
+| Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |

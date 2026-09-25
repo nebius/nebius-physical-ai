@@ -11,9 +11,64 @@ There is no deployment stage or additional orchestration service.
 
 **GPU acceptance has not been run.** Proprietary robot/scan integration remains
 operator input. The repository supplies executable validation, adapter invocation,
-durable handoffs, and comparison; it supplies no ready-made navigation policy,
-robot dynamics, or reconstruction-to-navigation conversion. Missing adapters or
-invalid evidence fail the stage. Schema validity does not establish readiness.
+durable handoffs, comparison, and native reference adapters described below.
+The reference requires the metric RGB-D reconstruction and shared-scene Isaac
+navigation components in the same reviewed source distribution. It does not
+establish compatibility with a proprietary robot or trainer. Missing components,
+adapters or invalid evidence fail the stage. Schema validity does not establish readiness.
+
+## Native metric-capture and Isaac reference
+
+The concrete adapter entrypoints are
+`npa.workflows.field_failure.native_reconstruction:reconstruct`,
+`npa.workflows.field_failure.native_policy:train`, and
+`npa.workflows.field_failure.native_policy:evaluate`.
+They call the actual metric RGB-D reconstruction, OpenUSD scene assembly and
+native Isaac Lab learner; they do not substitute fixture scores. This draft
+integration depends on the scan and shared-scene navigation implementations
+being included together. Their absence is an import failure, never a fallback.
+
+Reconstruction needs Open3D 0.19, Pillow, NumPy and OpenUSD in its selected
+Python runtime. This TSDF stage runs on CPU. The training and evaluation image
+must provide the pinned Isaac Sim 6.0.1 / Isaac Lab 3 beta runtime at
+`/isaac-sim/python.sh`, with an RTX GPU for native simulation and rendering.
+Use a reviewed content-addressed NPA source overlay containing all three
+components, or bake that exact source into an immutable operator image.
+Source overlay bytes are separate from the base-image digest. The protocol
+additionally pins the navigation module inventory digest, and every recipe must
+match it before native adapter import. Preserve the standard submission's full
+source-archive identity alongside the run evidence.
+
+Each capture artifact is a regular-file-only tar bundle containing `capture.json`,
+its hash-bound RGB/depth files, and `recipe.json`. The recipe selects training
+cases and native hyperparameters; reconstruction replaces its scene filename and
+digest with the actually derived USDZ. Each untouched held-out artifact is a tar
+bundle containing `scene.usdz` and `recipe.json`. Its `eval_cases` must contain
+exactly the declared held-out seeds, one per robot. Archive links, traversal,
+duplicate members and caller-selected initial checkpoints are rejected.
+
+The common protocol is a JSON artifact with exactly these fields:
+`schema_version: npa.field-failure.native-protocol.v1`, `navigation_image`,
+`task`, `adapter_module`, `adapter_sha256`, and `source_bundle_sha256`.
+The last field is the exact installed navigation-module inventory digest, not
+the full source archive. Pin identical protocol bytes for both policy arms.
+The scene recipes separately seal the training/evaluation settings, sensor mode,
+physical controls and reset cases; paired arms consume identical held-out bytes.
+
+Training loads the supplied baseline checkpoint before native PPO. With multiple
+training scenes, each subsequent scene continues from the previous result. Each
+scene also receives a baseline and candidate diagnostic replay of its declared
+training cases, with complete native artifacts retained. These replays are
+explicitly **training-exposed** and never contribute to promotion. Supply one
+training case per robot so the original scenarios can be replayed exactly.
+
+Held-out evaluation reloads each exact checkpoint and recomputes outcomes from
+the measured native trajectories. Supported metric names are `success`,
+`collision_steps`, `peer_collision_steps`, `path_length_m` and `goal_distance_m`.
+Failed and timed-out rollouts remain completed comparison evidence. The native
+standalone quality threshold does not discard a losing baseline arm; the sealed
+paired comparison determines the recommendation. Both the original failure
+replay and the untouched held-out comparison must be shown when claiming improvement.
 
 ## Required runtime and adapters
 
