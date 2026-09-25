@@ -58,6 +58,29 @@ COSMOS2_TRANSFER = ROOT / "workflows" / "testing" / "cosmos2-transfer.yaml"
 COSMOS3_REASON = ROOT / "workflows" / "testing" / "cosmos3-reason.yaml"
 
 
+@pytest.fixture(autouse=True)
+def _operator_images_for_quarantined_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep algorithm tests independent of publication acceptance state."""
+
+    from npa.deploy.images import PUBLICATION_QUARANTINE_TOOLS
+    from npa.workflows.sim2real import models
+
+    resolve = models.container_image_for_tool
+
+    def resolve_for_test(tool: str, **kwargs):  # noqa: ANN003, ANN202
+        if (
+            tool in PUBLICATION_QUARANTINE_TOOLS
+            and not kwargs.get("registry")
+            and not kwargs.get("tag")
+        ):
+            kwargs["registry"] = "registry.example.invalid/operator/workbench"
+        return resolve(tool, **kwargs)
+
+    monkeypatch.setattr(models, "container_image_for_tool", resolve_for_test)
+
+
 def _component_command(tmp_path: Path) -> str:
     script = tmp_path / "component_contract.py"
     script.write_text(
