@@ -66,11 +66,16 @@ def test_native_bundle_preserves_nested_measured_bytes(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "success,contacts,termination",
-    [(True, 0, "success"), (False, 4, "failure"), (False, 0, "timeout")],
+    "success,contacts,physical_failures,termination",
+    [
+        (True, 0, 0, "success"),
+        (False, 4, 0, "failure"),
+        (False, 0, 1, "failure"),
+        (False, 0, 0, "timeout"),
+    ],
 )
 def test_measured_episode_keeps_failures_in_the_comparison(
-    success, contacts, termination
+    success, contacts, physical_failures, termination
 ):
     scene = {"scenario_id": "held-room", "asset": {"sha256": "a" * 64}}
     row = {
@@ -79,14 +84,41 @@ def test_measured_episode_keeps_failures_in_the_comparison(
         "success": success,
         "collision_steps": contacts,
         "peer_collision_steps": 0,
+        "physical_failure_steps": physical_failures,
         "path_length_m": 5.25,
         "goal_distance_m": 0.2 if success else 1.4,
     }
     record = _episode_metrics(
-        scene, row, [{"name": "success"}, {"name": "path_length_m"}]
+        scene,
+        row,
+        [
+            {"name": "success"},
+            {"name": "path_length_m"},
+            {"name": "physical_failure_steps"},
+        ],
     )
     assert record["termination"] == termination
     assert record["status"] == "completed"
-    assert record["metrics"] == {"success": float(success), "path_length_m": 5.25}
+    assert record["metrics"] == {
+        "success": float(success),
+        "path_length_m": 5.25,
+        "physical_failure_steps": float(physical_failures),
+    }
     assert record["scene_sha256"] == "a" * 64
     assert record["seed"] == 29
+
+
+def test_native_success_cannot_mask_measured_physical_failure():
+    scene = {"scenario_id": "held-room", "asset": {"sha256": "a" * 64}}
+    row = dict(
+        seed=29,
+        steps=2,
+        success=True,
+        collision_steps=0,
+        peer_collision_steps=0,
+        physical_failure_steps=1,
+        path_length_m=1.0,
+        goal_distance_m=0.0,
+    )
+    with pytest.raises(ValueError, match="success after physical failure"):
+        _episode_metrics(scene, row, [{"name": "success"}])

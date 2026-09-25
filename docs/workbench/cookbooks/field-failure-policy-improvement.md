@@ -64,7 +64,11 @@ training case per robot so the original scenarios can be replayed exactly.
 
 Held-out evaluation reloads each exact checkpoint and recomputes outcomes from
 the measured native trajectories. Supported metric names are `success`,
-`collision_steps`, `peer_collision_steps`, `path_length_m` and `goal_distance_m`.
+`collision_steps`, `peer_collision_steps`, `physical_failure_steps`,
+`path_length_m` and `goal_distance_m`. Physical failures such as falling or losing
+measured floor support remain failed episodes even when the robot reaches the
+goal's horizontal coordinates. Their raw upright and ground-clearance
+measurements remain in the retained native trajectories.
 Failed and timed-out rollouts remain completed comparison evidence. The native
 standalone quality threshold does not discard a losing baseline arm; the sealed
 paired comparison determines the recommendation. Both the original failure

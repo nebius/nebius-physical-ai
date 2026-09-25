@@ -249,6 +249,7 @@ def _episode_metrics(scene, row, metrics):
             "success",
             "collision_steps",
             "peer_collision_steps",
+            "physical_failure_steps",
             "path_length_m",
             "goal_distance_m",
         )
@@ -256,7 +257,13 @@ def _episode_metrics(scene, row, metrics):
     names = {metric["name"] for metric in metrics}
     if not names.issubset(measured):
         raise ValueError("native evaluator received an unsupported metric")
-    collision = row["collision_steps"] or row["peer_collision_steps"]
+    failure = (
+        row["collision_steps"]
+        or row["peer_collision_steps"]
+        or row["physical_failure_steps"]
+    )
+    if row["success"] and failure:
+        raise ValueError("native episode reports success after physical failure")
     return {
         "scenario_id": scene["scenario_id"],
         "scene_sha256": scene["asset"]["sha256"],
@@ -266,7 +273,7 @@ def _episode_metrics(scene, row, metrics):
         "termination": "success"
         if row["success"]
         else "failure"
-        if collision
+        if failure
         else "timeout",
         "metrics": {key: measured[key] for key in names},
     }
