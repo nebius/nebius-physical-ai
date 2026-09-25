@@ -678,6 +678,7 @@ def _iter_s3_objects(s3_client: Any, *, bucket: str, prefix: str):
         return
 
     token = None
+    seen_tokens: set[str] = set()
     while True:
         kwargs = {"Bucket": bucket, "Prefix": prefix}
         if token:
@@ -686,9 +687,17 @@ def _iter_s3_objects(s3_client: Any, *, bucket: str, prefix: str):
         yield from page.get("Contents", [])
         if not page.get("IsTruncated"):
             return
-        token = page.get("NextContinuationToken")
-        if not token:
-            return
+        next_token = page.get("NextContinuationToken")
+        if not isinstance(next_token, str) or not next_token.strip():
+            raise SimToRealTriggerError(
+                "truncated S3 object listing did not provide a continuation token"
+            )
+        if next_token in seen_tokens:
+            raise SimToRealTriggerError(
+                "S3 object listing repeated a continuation token"
+            )
+        seen_tokens.add(next_token)
+        token = next_token
 
 
 def _relative_key(key: str, prefix: str) -> str:
