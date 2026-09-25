@@ -84,9 +84,17 @@ def external_checks(monkeypatch):
         observed["pulls"].append(list(images))
         return [ImagePullCheck(image=image, status="ok") for image in images]
 
-    def bootstrap(*, images, **_kwargs):
+    def bootstrap(*, images, bind_requested_images, **_kwargs):
+        assert bind_requested_images is True
         observed["bootstrap"].append(list(images))
-        return [{"image": PINS[image], "state": "compatible"} for image in images]
+        return [
+            {
+                "_requested_image": image,
+                "image": PINS[image],
+                "state": "compatible",
+            }
+            for image in images
+        ]
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
