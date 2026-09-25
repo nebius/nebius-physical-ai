@@ -10,17 +10,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 VERIFIED = "VERIFIED"
 VERIFICATION_UNAVAILABLE = "VERIFICATION_UNAVAILABLE"
 CACHED = "CACHED"
 
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b([a-z0-9_-]*(?:token|password|secret|api[_-]?key|authorization)[a-z0-9_-]*)"
-    r"\s*[:=]\s*(?:bearer\s+)?([^\s,;]+)"
+    r"(?i)([\"']?[a-z0-9_-]*"
+    r"(?:token|password|secret|api[_-]?key|authorization)"
+    r"[a-z0-9_-]*[\"']?\s*[:=]\s*)"
+    r"(?:bearer\s+)?[\"']?([^\s,;}\]\"']+)"
 )
-_PRESIGNED_QUERY = re.compile(r"(?i)(https?://[^\s?]+)\?[^\s]+")
+_PRESIGNED_QUERY = re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^\s?]+)\?[^\s]+")
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _URL_USERINFO = re.compile(r"(?i)(https?://)[^/@\s]+@")
 
@@ -38,11 +40,34 @@ def sanitize_reason(reason: object, *, limit: int = 600) -> str:
     """Return a concise diagnostic without secrets or presigned query strings."""
 
     text = " ".join(str(reason or "").split())
-    text = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}=<redacted>", text)
+    text = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}<redacted>", text)
     text = _PRESIGNED_QUERY.sub(r"\1?<redacted>", text)
     text = _BEARER_TOKEN.sub("Bearer <redacted>", text)
     text = _URL_USERINFO.sub(r"\1<redacted>@", text)
     return text[:limit]
+
+
+def sanitize_failure_reason(
+    reason: object,
+    *,
+    secrets: Sequence[str],
+    limit: int = 600,
+) -> str:
+    """Redact explicit and patterned secrets from one failure diagnostic.
+
+    Args:
+        reason: Exception or provider diagnostic to make safe for persistence.
+        secrets: Resolved credential values known at the call boundary.
+        limit: Maximum number of returned characters.
+    Returns:
+        A single-line diagnostic safe for operator-visible state.
+    Raises:
+        None.
+    """
+
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    return sanitize_reason(redact_text(str(reason or ""), secrets), limit=limit)
 
 
 def classify_verification_failure(reason: object) -> tuple[str, str]:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 
 from npa.viz.backends import rerun as backend
 
