@@ -207,6 +207,37 @@ the operator passes `--replace` and confirms with `--yes` for automation.
 
 ## Workflows
 
+### Calibrated RGB-D sensor rigs
+
+Use `workflows/testing/multicamera-rgbd-capture.yaml` for a supplied static USD
+scene plus calibrated camera rig and sampled trajectory. It calls
+`npa.workflows.isaac_rgbd.cli capture` in the supported Isaac interpreter and
+validates decoded S3 RGB/depth/masks/optional world points in a separate CPU
+stage. The graph stays in the standard workflow runtime; no robot is needed.
+The default four-camera procedural room is a sensor qualification fixture, not
+evidence of an industrial scan, navigation task, or encoder-training quality.
+GPU acceptance has not been run for this adapter.
+
+Keep `config.source_overlay: true` and submit with `--stage-src` (or a verified
+`NPA_SRC_S3_URI`) so both workers receive the new adapter even when the selected
+Isaac image already contains an older NPA package. Before opening any supplied
+stage in Kit, inspect every hashed USD layer through raw Sdf traversal, including
+inactive and unselected variants. Reject scripting APIs/properties, graph
+content, time samples and value clips, then reject composition errors after
+opening. Reject package/USDZ dependencies throughout the bundle, including
+package-relative paths and renamed packages detected by USD file-format/ZIP
+inspection; do not skip an opaque dependency merely because its suffix is not
+USD. Preserve ordinary textures. Do not describe these checks as a sandbox for
+arbitrary USD plugins.
+
+The contract requires Z-up meter scenes, finite rigid transforms, zero-skew
+pinhole calibration, and strictly increasing sampled timestamps. Depth is
+axial optical Z in meters; invalid values become zero with a boolean mask.
+Never publish successful capture evidence without decoding actual artifacts,
+matching all camera render reference times, and verifying calibration and
+backprojection. See `docs/workbench/multicamera-rgbd-capture.md` for S3 schemas,
+limits, pinned API references and opt-in live acceptance.
+
 - Single RL job: `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`.
 - Parameter sweep: `workflows/testing/isaac-lab-rl-sweep.yaml`.
 - Runner: `npa/scripts/run_isaac_lab_rl.py`.

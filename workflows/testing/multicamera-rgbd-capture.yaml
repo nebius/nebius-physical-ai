@@ -1,0 +1,55 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: multicamera-rgbd-capture
+  description: >
+    Render synchronized calibrated RGB-D cameras along a supplied rig trajectory
+    in a static USD scene using Isaac Sim 6.0.1. Validate decoded S3 data and
+    optional world-frame colored point clouds. The default procedural room is
+    a sensor qualification fixture; GPU execution has not yet been qualified.
+
+config:
+  bucket: example-bucket
+  prefix: "multicamera-rgbd/{{run.id}}"
+  source_overlay: true
+  # Replace with an S3 request.json containing calibration, trajectory and asset hashes.
+  capture_input_uri: "procedural://four-camera-room"
+  capture_uri: "s3://{{config.bucket}}/{{config.prefix}}/capture"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation.json"
+
+resources:
+  rtx:
+    cloud: kubernetes
+    accelerators: L40S:1
+    cpus: 16
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: capture
+states:
+  capture:
+    description: Render all cameras at each frozen trajectory time and commit verified RGB-D bytes.
+    toolRef: workbench.isaac_lab.capture_rgbd
+    resources: rtx
+    inputs:
+      - uri: "{{config.capture_input_uri}}"
+        schema: npa.isaac.rgbd.request.v1
+    outputs:
+      - uri: "{{config.capture_uri}}/manifest.json"
+        schema: npa.isaac.rgbd.dataset.v1
+    next: validate
+  validate:
+    description: Download all committed data, decode images and arrays, and verify geometry and synchronization.
+    toolRef: workflow.rgbd.validate
+    resources: cpu
+    inputs:
+      - uri: "{{config.capture_uri}}/manifest.json"
+        schema: npa.isaac.rgbd.dataset.v1
+    outputs:
+      - uri: "{{config.validation_uri}}"
+        schema: npa.isaac.rgbd.validation.v1
+    terminal: true

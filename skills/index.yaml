@@ -660,12 +660,15 @@ skills:
           - workflows/testing/groot-1-7-finetune.yaml
   - name: isaac-lab
     category: tools
-    when_to_use: "Isaac Lab RL simulation, deployment, SkyPilot workflows, or custom fork support."
+    when_to_use: "Isaac Lab RL simulation, deployment, calibrated USD RGB-D sensor rigs, SkyPilot workflows, or custom fork support."
     path: skills/tools/isaac-lab/SKILL.md
     smoke:
       - type: cli_help
         args: ["workbench", "isaac-lab", "train", "--help"]
         contains: "task"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/multicamera-rgbd-capture.yaml
   - name: isaac-arena
     category: tools
     when_to_use: "Package, run, validate, or troubleshoot Isaac Lab-Arena policy evaluation, its public runtime-fetch image, zero/replay/RSL-RL modes, and independent B200/RTX PRO 6000 evidence."

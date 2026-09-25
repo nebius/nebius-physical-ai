@@ -72,6 +72,21 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "multicamera-rgbd-capture.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "The pinned Isaac Sim 6.0.1 renderer has not completed this rig's live "
+            "acceptance; requires an operator-qualified runtime and staged source."
+        ),
+        notes=(
+            "Executable calibrated four-camera procedural room capture and separate "
+            "S3 decode/geometry validation. Industrial USD and calibration are "
+            "operator inputs. Dedicated opt-in live coverage verifies retained data."
+        ),
+    ),
+    SubmitLiveCase(
         "xr1-antioch-finetune.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
