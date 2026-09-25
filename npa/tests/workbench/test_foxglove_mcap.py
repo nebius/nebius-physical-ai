@@ -35,6 +35,7 @@ from npa.workbench.foxglove.mcap_writer import (
     LogInput,
     McapWriteError,
     MetricsInput,
+    _run_phase,
     collect_run_inputs,
     convert_run_directory,
     safe_topic,
@@ -42,6 +43,34 @@ from npa.workbench.foxglove.mcap_writer import (
 )
 
 pytest.importorskip("PIL", reason="Pillow is required to build image fixtures")
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["placement_stable", "stable_grasp", "gripper_closed", "contact"],
+)
+@pytest.mark.parametrize("malformed", ["false", 1, None, [True], {"value": True}])
+def test_run_phase_ignores_non_boolean_ground_truth(
+    field: str, malformed: object
+) -> None:
+    assert _run_phase({field: malformed}, 0.5) == "tracking"
+
+
+@pytest.mark.parametrize(
+    ("ground_truth", "expected"),
+    [
+        ({"contact": True}, "contact"),
+        ({"gripper_closed": True}, "grasp"),
+        ({"stable_grasp": True}, "lift"),
+        ({"placement_stable": True}, "complete"),
+        ({"termination_reason": "success"}, "complete"),
+        ({"termination_reason": "complete"}, "complete"),
+    ],
+)
+def test_run_phase_accepts_literal_true_and_explicit_completion_reason(
+    ground_truth: dict[str, object], expected: str
+) -> None:
+    assert _run_phase(ground_truth, 0.5) == expected
 
 
 def _run_fixture(tmp_path: Path, *, frames: int = 3) -> Path:
