@@ -959,15 +959,15 @@ containers:
         LanceDB vector store for AV/perception data (BDD100K import, CLIP
         embeddings, materialized views) feeding curation + detection training.
     safety:
-      runs_as: root
-      base_image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
-      network: FastAPI server on :8686 (/health, /tables, /query)
+      runs_as: ubuntu
+      base_image: ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
+      network: FastAPI server on :8686 (/readyz, /health, /tables, /query)
       external_fetch: [pypi, s3]
       notes: >-
         Server smoke runs entirely on a temp table; no external data required for
-        the health/roundtrip golden eval. The image flattens the server modules
-        into /app, so the smoke ships there as a standalone script and targets
-        npa_lancedb_server:app via LANCEDB_SMOKE_APP.
+        the readiness/health/roundtrip golden eval. The image flattens the server
+        modules into /app, so the smoke ships there as a standalone script and
+        launches the real non-root entrypoint via LANCEDB_SMOKE_ENTRYPOINT.
     golden_eval:
       kind: server-smoke
       module: npa.smoke.test_lancedb_functional

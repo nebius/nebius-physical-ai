@@ -303,6 +303,58 @@ def _rows_as_arrow_table(
         ) from exc
 
 
+def _normalize_inferred_vector(table: pa.Table, *, vector_column: str) -> pa.Table:
+    """Make LanceDB's implicit vector conversion explicit and verifiable.
+
+    LanceDB stores an inferred ``list<double>`` vector as a fixed-size
+    ``float32`` vector. Comparing the stored schema with the pre-conversion
+    Arrow schema therefore reported HTTP 500 after a successful write. Cast
+    the designated vector before mutation so the schema we verify is the
+    schema we asked LanceDB to store.
+    """
+
+    if not vector_column or vector_column not in table.schema.names:
+        return table
+    field = table.schema.field(vector_column)
+    if not (pa.types.is_list(field.type) or pa.types.is_large_list(field.type)):
+        return table
+    if not (
+        pa.types.is_integer(field.type.value_type)
+        or pa.types.is_floating(field.type.value_type)
+    ):
+        raise HTTPException(
+            status_code=400, detail=f"{vector_column} must contain numeric vectors"
+        )
+    vectors = [
+        value for value in table.column(vector_column).to_pylist() if value is not None
+    ]
+    sizes = {len(value) for value in vectors}
+    if not sizes or len(sizes) != 1 or 0 in sizes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{vector_column} vectors must have one consistent positive size",
+        )
+    vector_size = sizes.pop()
+    fields = [
+        pa.field(
+            candidate.name,
+            pa.list_(pa.float32(), vector_size)
+            if candidate.name == vector_column
+            else candidate.type,
+            nullable=candidate.nullable,
+            metadata=candidate.metadata,
+        )
+        for candidate in table.schema
+    ]
+    try:
+        return table.cast(pa.schema(fields, metadata=table.schema.metadata))
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{vector_column} is incompatible with a float32 vector: {exc}",
+        ) from exc
+
+
 def _schemas_equal(actual: pa.Schema, expected: pa.Schema) -> bool:
     return actual.equals(expected, check_metadata=False)
 
@@ -427,6 +479,10 @@ def _mutate_table(
         status = "appended"
     else:
         incoming = _rows_as_arrow_table(body.rows, requested_schema)
+        if requested_schema is None:
+            incoming = _normalize_inferred_vector(
+                incoming, vector_column=body.vector_column
+            )
         mode = "overwrite" if body.mode == "overwrite" else "create"
         db.create_table(table_name, data=incoming, mode=mode)
         expected_rows = len(body.rows)
@@ -469,6 +525,17 @@ def create_app(
             )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
+
+    @app.get("/readyz")
+    async def readyz() -> dict[str, str]:
+        """Unauthenticated storage readiness for container and Kubernetes probes."""
+
+        try:
+            known_tables.update(_list_tables(db))
+        except Exception as exc:
+            LOGGER.exception("LanceDB storage readiness check failed")
+            raise HTTPException(status_code=503, detail="storage is not ready") from exc
+        return {"status": "ok"}
 
     @app.get("/health")
     async def health(

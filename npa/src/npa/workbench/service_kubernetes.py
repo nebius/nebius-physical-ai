@@ -141,13 +141,13 @@ def build_manifests(
         # Readiness gates the Service's endpoints, so a stage never resolves the DNS name to a
         # pod that is still opening its storage.
         "readinessProbe": {
-            "httpGet": {"path": "/health", "port": port},
+            "httpGet": {"path": "/readyz", "port": port},
             "initialDelaySeconds": 5,
             "periodSeconds": 5,
             "failureThreshold": 12,
         },
         "livenessProbe": {
-            "httpGet": {"path": "/health", "port": port},
+            "httpGet": {"path": "/readyz", "port": port},
             "initialDelaySeconds": 30,
             "periodSeconds": 30,
             "failureThreshold": 6,

@@ -125,8 +125,8 @@ def test_readiness_gates_the_service_endpoints() -> None:
     deployment, _ = _manifests()
     container = deployment["spec"]["template"]["spec"]["containers"][0]
 
-    assert container["readinessProbe"]["httpGet"]["path"] == "/health"
-    assert container["livenessProbe"]["httpGet"]["path"] == "/health"
+    assert container["readinessProbe"]["httpGet"]["path"] == "/readyz"
+    assert container["livenessProbe"]["httpGet"]["path"] == "/readyz"
     assert container["readinessProbe"]["httpGet"]["port"] == 8686
 
 

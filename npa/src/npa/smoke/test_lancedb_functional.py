@@ -80,18 +80,40 @@ def _base_url(state: SmokeState) -> str:
 
 
 def check_start_server(state: SmokeState) -> CheckResult:
-    uvicorn = shutil.which("uvicorn")
-    if uvicorn is None:
-        return CheckResult("start LanceDB server", False, "uvicorn not found on PATH")
+    smoke_entrypoint = os.environ.get("LANCEDB_SMOKE_ENTRYPOINT", "").strip()
+    if smoke_entrypoint:
+        entrypoint = Path(smoke_entrypoint)
+        if not entrypoint.is_file() or not os.access(entrypoint, os.R_OK | os.X_OK):
+            return CheckResult(
+                "start LanceDB server",
+                False,
+                f"entrypoint is not readable and executable: {entrypoint}",
+            )
+        command = [str(entrypoint)]
+    else:
+        uvicorn = shutil.which("uvicorn")
+        if uvicorn is None:
+            return CheckResult(
+                "start LanceDB server", False, "uvicorn not found on PATH"
+            )
+        command = [
+            uvicorn,
+            SERVER_TARGET,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(state.port),
+        ]
 
     env = {
         **os.environ,
         "LANCEDB_STORAGE_PATH": str(state.storage_path),
         "LANCEDB_AUTH_MODE": "none",
+        "LANCEDB_PORT": str(state.port),
     }
     log_handle = state.server_log.open("w")
     state.process = subprocess.Popen(
-        [uvicorn, SERVER_TARGET, "--host", "127.0.0.1", "--port", str(state.port)],
+        command,
         env=env,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
@@ -108,9 +130,12 @@ def check_start_server(state: SmokeState) -> CheckResult:
                 f"server exited with {state.process.returncode}; log:\n{_tail(state.server_log)}",
             )
         try:
+            readiness = _request_json("GET", f"{_base_url(state)}/readyz", timeout=5)
             health = _request_json("GET", f"{_base_url(state)}/health", timeout=5)
             return CheckResult(
-                "start LanceDB server", True, json.dumps(health, sort_keys=True)
+                "start LanceDB server",
+                True,
+                json.dumps({"readiness": readiness, "health": health}, sort_keys=True),
             )
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = _format_exception(exc)
