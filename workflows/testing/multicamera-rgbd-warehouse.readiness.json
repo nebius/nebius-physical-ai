@@ -40,14 +40,14 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The pinned image started native Isaac Sim 6.0.1 and rendered all 265 four-camera poses on an RTX GPU. Temporal validation rejected the dataset; the corrected external renderer-clock adapter needs a fresh full run.",
+      "reason": "The pinned image and staged source started Isaac Sim 6.0.1, loaded the public warehouse, and rendered calibrated views on an RTX GPU. Strict acceptance rejected stale native pose metadata despite a current render clock; the frozen-pose settling correction still requires a full native run.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd_runtime.py::test_render_stages_branch_source_in_gpu_and_cpu_tasks"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Native rendering completed but ReferenceTime did not advance with the paused USD timeline. The corrected static external Fabric clock and early timestamp checks remain live acceptance gates.",
+      "reason": "Native evidence measured a camera pose exactly one 0.25 m sample behind at the correct current ReferenceTime. Pose tolerances remain unchanged; a second paused, same-time rendering pass settles annotation buffers before capture, and full decoded acceptance remains pending.",
       "evidence": [
         "npa/tests/e2e/test_multicamera_rgbd_live.py"
       ]

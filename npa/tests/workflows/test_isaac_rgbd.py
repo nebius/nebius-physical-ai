@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from npa.workflows.isaac_rgbd import contract, dataset, geometry, reference, transport
+from npa.workflows.isaac_rgbd import (
+    contract,
+    dataset,
+    geometry,
+    reference,
+    runtime,
+    transport,
+)
 from npa.workflows.isaac_rgbd.fixture import write_fixture
 from npa.workflows.isaac_rgbd.render_time import _reference_time
 
@@ -103,6 +111,33 @@ def test_camera_pose_failure_preserves_exact_native_diagnostics(tmp_path, rig_re
         "render_reference_time=",
     ):
         assert detail in message
+    assert not list(tmp_path.glob("frames/*"))
+
+
+def test_current_clock_cannot_hide_one_sample_old_camera_pose(tmp_path, rig_request):
+    previous, current = rig_request["trajectory"][:2]
+    current["T_world_rig"] = copy.deepcopy(previous["T_world_rig"])
+    current["T_world_rig"][0][3] += 0.25
+    snapshots = {
+        camera["id"]: _snapshot(camera, current, 1) for camera in rig_request["cameras"]
+    }
+    camera = next(
+        camera for camera in rig_request["cameras"] if camera["id"] == "front"
+    )
+    snapshots["front"]["render_calibration"] = _snapshot(camera, previous, 0)[
+        "render_calibration"
+    ]
+    with pytest.raises(ValueError, match="max_abs_error=0.25") as failure:
+        runtime._write_captured_frame(
+            tmp_path, rig_request, 1, snapshots, current["timestamp_ns"] / 1e9
+        )
+    metadata = json.loads(str(failure.value).split("all_snapshot_metadata=", 1)[1])
+    assert set(metadata) == {"front", "left", "rear", "right"}
+    for camera_id, snapshot in snapshots.items():
+        assert metadata[camera_id] == {
+            key: snapshot[key]
+            for key in ("render_calibration", "render_reference_time")
+        }
     assert not list(tmp_path.glob("frames/*"))
 
 

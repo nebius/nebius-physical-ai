@@ -40,14 +40,14 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Offline rendering proves source_overlay plus staged source for the existing Isaac image and CPU worker. Actual worker installation and immutable-image availability were not exercised.",
+      "reason": "The pinned image and staged source started Isaac Sim 6.0.1, loaded the public warehouse, and rendered calibrated views on an RTX GPU. Strict acceptance rejected stale native pose metadata despite a current render clock; the frozen-pose settling correction still requires a full native run.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd_runtime.py::test_render_stages_branch_source_in_gpu_and_cpu_tasks"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Isaac Sim 6.0.1.0 on an RT-core GPU is required. This macOS authoring host did not execute capture; actual calibration/freshness and reference-time semantics remain live acceptance gates.",
+      "reason": "Native evidence measured a camera pose exactly one 0.25 m sample behind at the correct current ReferenceTime. Pose tolerances remain unchanged; a second paused, same-time rendering pass settles annotation buffers before capture, and full decoded acceptance remains pending.",
       "evidence": [
         "npa/tests/e2e/test_multicamera_rgbd_live.py"
       ]

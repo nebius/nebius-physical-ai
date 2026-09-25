@@ -8,8 +8,10 @@ implementation with CPU contract tests; **GPU acceptance is pending**. See the
 [readiness record](../../workflows/testing/multicamera-rgbd-capture.readiness.json).
 The public warehouse reference completed native preparation and rendered all
 265 four-camera poses on an RTX GPU. Its first complete dataset was rejected
-because the native render reference clock stayed fixed. The corrected clock
-adapter requires a fresh complete capture and decoded validation before acceptance.
+because the native render reference clock stayed fixed. A subsequent capture
+advanced that clock but rejected a camera pose exactly one sample behind.
+The corrected adapter settles every frozen pose before capture and requires a
+fresh complete capture and decoded validation before acceptance.
 
 The default `procedural://four-camera-room` input creates a repository-authored
 room with four walls, a floor, a crate, lighting, four outward-facing calibrated
@@ -198,9 +200,12 @@ Backprojection is `p_camera = depth * inverse(K) @ [u,v,1]`, then
 half-pixel conversion from this convention to the physical image window.
 
 Frames follow input trajectory order; cameras follow sorted IDs. Every camera's
-render product participates in one blocking Replicator step per sample, with
-`delta_time=0`, a paused timeline and four rendering subframes. All annotator
-buffers are copied before changing any pose. Isaac 6 reads sensor time from
+render product participates in two blocking Replicator steps per sample, with
+`delta_time=0`, a paused timeline and four rendering subframes per step. The first
+step settles the new pose; the second invokes the native paused, same-time
+render flush before copying annotator buffers. Camera poses and time remain
+unchanged across both steps. All buffers are copied before changing any pose.
+Isaac 6 reads sensor time from
 Fabric's `/ExternalSimulationTime.omni:time`, independently of the USD timeline.
 The static sensor-only adapter drives that native external clock from each
 trajectory timestamp while physics remains paused. It records
@@ -209,7 +214,9 @@ view, the actual returned `ReferenceTime` must be identical across cameras and
 match the requested timestamp within one nanosecond. The CPU validator repeats
 these checks and requires reference times to advance between samples. It also
 checks the observed USD timeline against the requested time. Renderer camera
-metadata must agree with the calibrated poses and intrinsics. Ordering and
+metadata must agree with the calibrated poses and intrinsics. Any rejection
+retains the frame, exact observed and expected pose matrices, and all cameras'
+clock/calibration metadata in the failure log. Ordering and
 sample times are deterministic; bit-identical RTX pixels across drivers or
 hardware are not promised.
 

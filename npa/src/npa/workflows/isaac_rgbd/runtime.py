@@ -132,6 +132,36 @@ def _snapshot(sensor):
     }
 
 
+def _render_frozen_pose(rep):
+    # A current ReferenceTime can still accompany the preceding camera pose.
+    # The second paused, same-time step flushes multi-tick annotation buffers
+    # while every camera transform and the external clock remain unchanged.
+    for _ in range(2):
+        rep.orchestrator.step(
+            delta_time=0.0, pause_timeline=True, rt_subframes=4, wait_for_render=True
+        )
+
+
+def _write_captured_frame(output, request, index, snapshots, simulation_time):
+    try:
+        _check_render_times(
+            snapshots.values(), request["trajectory"][index]["timestamp_ns"]
+        )
+        return _write_frame(output, request, index, snapshots, simulation_time)
+    except ValueError as error:
+        metadata = {
+            camera_id: {
+                key: snapshot[key]
+                for key in ("render_reference_time", "render_calibration")
+            }
+            for camera_id, snapshot in snapshots.items()
+        }
+        raise ValueError(
+            f"frame={index}: {error}; "
+            f"all_snapshot_metadata={_json_bytes(metadata).decode()}"
+        ) from error
+
+
 def _render_frames(app, root, request, output, rep):
     import omni.timeline
 
@@ -149,13 +179,12 @@ def _render_frames(app, root, request, output, rep):
         _set_poses(sensors, sample)
         _set_render_time(sample["timestamp_ns"])
         app.update()
-        rep.orchestrator.step(
-            delta_time=0.0, pause_timeline=True, rt_subframes=4, wait_for_render=True
-        )
+        _render_frozen_pose(rep)
         snapshots = {sensor["camera"]["id"]: _snapshot(sensor) for sensor in sensors}
-        _check_render_times(snapshots.values(), sample["timestamp_ns"])
         frames.append(
-            _write_frame(output, request, index, snapshots, timeline.get_current_time())
+            _write_captured_frame(
+                output, request, index, snapshots, timeline.get_current_time()
+            )
         )
     return frames
 
