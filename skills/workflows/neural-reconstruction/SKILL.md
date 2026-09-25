@@ -190,6 +190,19 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
 
 ## Static Navigation Scene Handoff
 
+For actual calibrated metric RGB-D rather than an existing Gaussian artifact,
+use `workflows/testing/rgbd-scan-to-isaac.yaml` and the
+`docs/workbench/guides/rgbd-scan-to-isaac.md` contract. Real Open3D TSDF integration
+derives colored visual and exact collision surfaces from measured depth/poses;
+held-out depth frames gate geometry before the existing USDZ/PhysX handoff.
+The manifest uses column-vector optical-camera poses in metric Z-up world,
+hashes every pair, and requires disjoint integration/validation membership.
+Unknown space stays unknown. CPU reconstruction uses the existing SONIC Open3D
+runtime without Isaac bootstrap, followed by Content Agents OpenUSD assembly and
+RTX Isaac physics. It needs no new weights or image. Runtime/data provenance and
+private capture attribution stay with the sealed artifacts. GPU, industrial
+scene, robot clearance, and policy learning qualification remain separate.
+
 Use `workflows/testing/scan-to-isaac-navigation.yaml` to combine an existing
 NuRec visual USD/USDZ with independently supplied, triangulated collision USD.
 The workflow reuses reconstruction outputs; it does not duplicate NCore or

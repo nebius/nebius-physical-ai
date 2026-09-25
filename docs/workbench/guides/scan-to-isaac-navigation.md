@@ -17,6 +17,12 @@ real GPU infrastructure. See its [readiness record](../../../workflows/testing/s
 
 ## Start from a capture
 
+For calibrated metric RGB-D with measured poses, use the new
+[RGB-D scan reconstruction workflow](rgbd-scan-to-isaac.md). It derives both
+colored appearance and collision geometry from real Open3D TSDF integration,
+checks held-out depth frames, and feeds the same portable USDZ/PhysX handoff.
+It does not require the separate visual/collision inputs described below.
+
 Use the existing [NCore reconstruction workflow](../../../workflows/main/nurec-reconstruct.yaml)
 or [COLMAP ingestion and reconstruction workflow](nurec-colmap-reconstruct.md).
 Both publish `reconstruction/last.usdz`. Retain the source capture and its
@@ -37,7 +43,8 @@ poses. That upstream route needs calibrated capture data beyond this workflow's
 existing NuRec USDZ input. This adapter therefore requires an explicit static USD
 triangle mesh; it does not infer walls or obstacles from splats. A mesh produced
 externally by the documented nvblox route can be converted to USD and supplied
-with its measured transform. Automatic RGB-D reconstruction is not integrated.
+with its measured transform. The metric RGB-D workflow is a separate direct
+surface route; it does not infer collision from a Gaussian splat artifact.
 
 ## Input contract
 

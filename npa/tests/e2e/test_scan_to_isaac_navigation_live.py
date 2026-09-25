@@ -18,6 +18,14 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows/testing/scan-to-isaac-navigation.yaml"
 
 
+def _spec():
+    kind = os.environ.get("NPA_SCAN_TO_ISAAC_INPUT_KIND", "usd")
+    assert kind in {"usd", "rgbd"}, "input kind must be usd or rgbd"
+    if kind == "rgbd":
+        return SPEC.with_name("rgbd-scan-to-isaac.yaml")
+    return SPEC
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -33,7 +41,7 @@ def _submit_scene(run_id: str, bucket: str, project: str) -> None:
         "workbench",
         "workflow",
         "submit",
-        str(SPEC),
+        str(_spec()),
         "--runtime",
         "--max-wait-seconds",
         "0",
@@ -54,7 +62,7 @@ def _submit_scene(run_id: str, bucket: str, project: str) -> None:
         "--secret-env",
         "AWS_SECRET_ACCESS_KEY",
     ]
-    for key in ("assembly_image",):
+    for key in ("assembly_image", "reconstruction_image"):
         value = os.environ.get(f"NPA_SCAN_TO_ISAAC_{key.upper()}", "").strip()
         if value:
             command.extend(["--var", f"{key}={value}"])
@@ -66,7 +74,7 @@ def _read_artifacts(client, bucket: str, prefix: str, output: Path) -> tuple:
     from npa.workbench.nurec.navigation_publication import verify_publication
 
     artifacts = {}
-    for relative in (
+    members = [
         "assembled/scene.usdz",
         "assembled/provenance.json",
         "assembled/.npa-navigation-claim.json",
@@ -74,7 +82,10 @@ def _read_artifacts(client, bucket: str, prefix: str, output: Path) -> tuple:
         "reports/physics_validation.json",
         "reports/.npa-navigation-claim.json",
         "reports/.npa-navigation-complete.json",
-    ):
+    ]
+    if _spec().stem == "rgbd-scan-to-isaac":
+        members.extend(["assembled/capture.json", "assembled/reconstruction.json"])
+    for relative in members:
         destination = output / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         client.download_file(bucket, f"{prefix}/{relative}", str(destination))
@@ -139,7 +150,7 @@ def test_scene_handoff_runs_real_isaac_physics(tmp_path: Path) -> None:
     _submit_scene(run_id, bucket, project)
     client = s3_client_for_project(project, allow_host_creds=True)
     scene, provenance, physics = _read_artifacts(
-        client, bucket, f"scan-to-isaac-navigation/{run_id}", tmp_path
+        client, bucket, f"{_spec().stem}/{run_id}", tmp_path
     )
     digest = hashlib.sha256(scene.read_bytes()).hexdigest()
     assert provenance["schema"] == "npa.nurec.navigation_scene.v1"
@@ -148,3 +159,26 @@ def test_scene_handoff_runs_real_isaac_physics(tmp_path: Path) -> None:
     assert provenance["physics_validated"] is False
     verify_scene(scene, provenance["colliders"])
     _assert_measured_probes(provenance, physics)
+    if _spec().stem == "rgbd-scan-to-isaac":
+        _assert_reconstructed_depth(tmp_path / "assembled", provenance)
+
+
+def _assert_reconstructed_depth(root: Path, provenance: dict) -> None:
+    report_path = root / "reconstruction.json"
+    report = json.loads(report_path.read_text())
+    assert (
+        provenance["reconstruction_report_sha256"]
+        == hashlib.sha256(report_path.read_bytes()).hexdigest()
+    )
+    assert (
+        report["capture_manifest_sha256"]
+        == hashlib.sha256((root / "capture.json").read_bytes()).hexdigest()
+    )
+    assert report["engine"] == "open3d.pipelines.integration.ScalableTSDFVolume"
+    assert report["integration_frames"] > 0 and report["validation_frames"] > 0
+    assert report["triangles"] == provenance["triangle_count"]
+    depth = report["depth_validation"]
+    thresholds = depth["thresholds"]
+    assert depth["coverage"] >= thresholds["min_coverage"]
+    assert depth["inlier_fraction"] >= thresholds["min_inlier_fraction"]
+    assert depth["mean_absolute_error_m"] <= thresholds["max_mean_error_m"]

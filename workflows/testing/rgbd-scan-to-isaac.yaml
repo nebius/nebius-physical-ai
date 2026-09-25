@@ -1,0 +1,105 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: rgbd-scan-to-isaac
+  executionMode: runtime
+  description: Fuse measured calibrated metric RGB-D and poses with real Open3D TSDF,
+    validate excluded depth frames, author a colored static USDZ with exact derived
+    triangle colliders, then verify native Isaac PhysX against measured-depth probes.
+    Unknown space stays unknown. Navigation learning is a downstream task.
+config:
+  bucket: example-bucket
+  prefix: rgbd-scan-to-isaac/{{run.id}}
+  source_overlay: true
+  input_path: ''
+  assembly_image: tool://content-agents
+  isaac_image: tool://isaac-lab
+  run_uri: s3://{{config.bucket}}/{{config.prefix}}
+  assembled_uri: '{{config.run_uri}}/assembled'
+  reports_uri: '{{config.run_uri}}/reports'
+  reconstruction_image: tool://sonic
+  reconstructed_uri: '{{config.run_uri}}/reconstructed'
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: '{{config.assembly_image}}'
+  rtx:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+    image: '{{config.isaac_image}}'
+  reconstruction:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    image: '{{config.reconstruction_image}}'
+initial: reconstruct
+states:
+  reconstruct:
+    description: Reconstruct observed surfaces with Open3D and enforce withheld depth
+      quality before immutable publication.
+    resources: reconstruction
+    run:
+      argv:
+      - /opt/npa/sim/venv/bin/python
+      - -m
+      - npa.workbench.nurec.navigation_reconstruction
+      - --input-path
+      - '{{config.input_path}}'
+      - --output-path
+      - '{{config.reconstructed_uri}}'
+    inputs:
+    - uri: '{{config.input_path}}'
+      schema: npa.navigation.rgbd_capture.v1
+    outputs:
+    - uri: '{{config.reconstructed_uri}}/reconstruction.json'
+    - uri: '{{config.reconstructed_uri}}/surface.npz'
+    next: prepare
+  prepare:
+    description: Use the same measured surface for colored visual geometry and exact
+      static triangle colliders.
+    resources: cpu
+    run:
+      argv:
+      - /opt/venv/bin/python
+      - -m
+      - npa.workbench.nurec.navigation_scene
+      - --input-path
+      - '{{config.reconstructed_uri}}'
+      - --output-path
+      - '{{config.assembled_uri}}'
+    inputs:
+    - uri: '{{config.reconstructed_uri}}/reconstruction.json'
+    - uri: '{{config.reconstructed_uri}}/surface.npz'
+    outputs:
+    - uri: '{{config.assembled_uri}}/scene.usdz'
+    - uri: '{{config.assembled_uri}}/provenance.json'
+    next: physics
+    needs:
+    - reconstruct
+  physics:
+    description: Open the packaged scene in Isaac Sim and require actual PhysX ray
+      hits at measured distances.
+    needs:
+    - prepare
+    resources: rtx
+    run:
+      argv:
+      - /isaac-sim/python.sh
+      - -m
+      - npa.workbench.nurec.navigation_probe
+      - --runtime-image
+      - '{{config.isaac_image}}'
+      - --input-path
+      - '{{config.assembled_uri}}'
+      - --output-path
+      - '{{config.reports_uri}}'
+    inputs:
+    - uri: '{{config.assembled_uri}}/scene.usdz'
+    - uri: '{{config.assembled_uri}}/provenance.json'
+    outputs:
+    - uri: '{{config.reports_uri}}/physics_validation.json'
+    terminal: true

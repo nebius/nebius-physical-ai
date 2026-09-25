@@ -917,6 +917,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "rgbd-scan-to-isaac.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a complete hash-bound calibrated metric RGB-D capture with "
+            "measured poses and held-out depth frames; use the scan reference runbook."
+        ),
+        notes=(
+            "Real Open3D TSDF reconstruction and held-out geometry qualification on "
+            "CPU, portable derived USD colliders, then native Isaac PhysX on RTX. "
+            "No navigation-policy or industrial-scene qualification is implied."
+        ),
+    ),
+    SubmitLiveCase(
         "scan-to-isaac-navigation.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

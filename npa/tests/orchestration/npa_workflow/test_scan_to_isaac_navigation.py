@@ -109,3 +109,73 @@ def test_scene_live_case_requires_operator_inputs_and_readiness_matches_bytes() 
     readiness = json.loads(SPEC.with_suffix(".readiness.json").read_text())
     assert readiness["workflow_sha256"] == hashlib.sha256(SPEC.read_bytes()).hexdigest()
     assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
+
+
+def test_metric_capture_workflow_uses_real_reconstruction_and_surface_handoff():
+    """Resolve the metric scan graph through the exact surface producer and reader.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Source-to-surface handoffs or live registration differ.
+    """
+    path = SPEC.with_name("rgbd-scan-to-isaac.yaml")
+    spec = load_spec(path)
+    reconstruct, prepare, physics = build_plan(spec, run_id="metric-capture").steps
+    assert reconstruct.argv[:3] == [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workbench.nurec.navigation_reconstruction",
+    ]
+    assert prepare.argv[:3] == [
+        "/opt/venv/bin/python",
+        "-m",
+        "npa.workbench.nurec.navigation_scene",
+    ]
+    assert prepare.argv[prepare.argv.index("--input-path") + 1] == reconstruct.argv[-1]
+    assert physics.argv[physics.argv.index("--input-path") + 1] == prepare.argv[-1]
+    assert {item["uri"] for item in reconstruct.outputs} == {
+        f"{reconstruct.argv[-1]}/reconstruction.json",
+        f"{reconstruct.argv[-1]}/surface.npz",
+    }
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == path.name)
+    assert case.runtime and case.tier == "gpu" and not case.plan_only
+    assert case.max_wait_seconds == 0
+    readiness = json.loads(path.with_suffix(".readiness.json").read_text())
+    assert readiness["workflow_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_metric_capture_render_retains_cpu_dependency_interpreters(monkeypatch):
+    """Keep native CPU surface engines separate from the RTX Isaac interpreter.
+
+    Args:
+        monkeypatch: Fixture supplying the source overlay location.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Image routing or interpreter selection changes.
+    """
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source-fixture")
+    spec = load_spec(SPEC.with_name("rgbd-scan-to-isaac.yaml"))
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="metric"),
+        run_id="metric",
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid", materialize_registry_secrets=False
+        ),
+    )
+    tasks = [task for task in yaml.safe_load_all(rendered) if task and "run" in task]
+    assert "npa-sonic" in tasks[0]["resources"]["image_id"]
+    assert (
+        "/opt/npa/sim/venv/bin/python -m npa.workbench.nurec.navigation_reconstruction"
+        in tasks[0]["run"]
+    )
+    assert "npa-content-agents" in tasks[1]["resources"]["image_id"]
+    for task in tasks[:2]:
+        assert "accelerators" not in task["resources"]
+    assert tasks[2]["resources"]["accelerators"] == "RTXPRO6000:1"
+    for task in tasks:
+        assert task["envs"]["NPA_SRC_OVERLAY"] == "1"

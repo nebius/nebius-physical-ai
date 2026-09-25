@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import shutil
 import tempfile
 
 import numpy as np
@@ -183,10 +184,20 @@ def _build(root: Path, output: Path, work: Path) -> dict:
             "collision": (collision_path, collision, collision_files),
         },
     )
+    _reconstruction_evidence(root, output, report)
     (output / "provenance.json").write_text(
         json.dumps(report, indent=2, allow_nan=False) + "\n"
     )
     return report
+
+
+def _reconstruction_evidence(root: Path, output: Path, report: dict) -> None:
+    if not (root / "reconstruction.json").is_file():
+        return
+    for name in ("capture.json", "reconstruction.json"):
+        shutil.copyfile(root / name, output / name)
+    report["reconstruction_report_sha256"] = sha256(output / "reconstruction.json")
+    report["reconstruction_engine"] = "open3d.pipelines.integration.ScalableTSDFVolume"
 
 
 def _provenance(root, contract, scene, colliders, sources) -> dict:
@@ -224,10 +235,10 @@ def _provenance(root, contract, scene, colliders, sources) -> dict:
 
 
 def prepare_scene(input_path: str, output_path: str) -> dict:
-    """Assemble and verify a portable static scene with explicit collision inputs.
+    """Assemble a portable scene from supplied USD or sealed metric scan surfaces.
 
     Args:
-        input_path: Directory or S3 prefix containing scene.json and its assets.
+        input_path: Directory or S3 prefix containing USD inputs or reconstructed surfaces.
         output_path: New local directory or run-scoped S3 output prefix.
     Returns:
         Measured geometry and provenance; native physics remains unverified.
@@ -241,6 +252,11 @@ def prepare_scene(input_path: str, output_path: str) -> dict:
     with tempfile.TemporaryDirectory(prefix="npa-navigation-") as temporary:
         work = Path(temporary).resolve()
         root = materialize(input_path, work / "input")
+        if (root / "reconstruction.json").is_file():
+            from npa.workbench.nurec.navigation_surface import surface_bundle
+
+            surface_bundle(root, work / "surface")
+            root = work / "surface"
         output = work / "output"
         output.mkdir()
         report = _build(root, output, work)

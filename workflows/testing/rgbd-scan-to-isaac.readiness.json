@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "02dd36fc04b53878bb8c1ef5525728f795cd3ca5a92af697c24b4553a5051563",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local schema validation and planning resolve real Open3D reconstruction, OpenUSD assembly, and native Isaac PhysX with run-scoped source and artifact handoffs.",
+      "evidence": [
+        "validate-spec: valid",
+        "plan-spec --run-id preview: 3 stages"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Local schema validation and planning resolve real Open3D reconstruction, OpenUSD assembly, and native Isaac PhysX with run-scoped source and artifact handoffs.",
+      "evidence": [
+        "validate-spec: valid",
+        "plan-spec --run-id preview: 3 stages"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Operator must select and verify a writable run-scoped storage prefix.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Supply a hash-bound calibrated metric RGB-D capture with explicit camera poses, scale, and excluded depth frames.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Storage credentials and run-scoped Isaac runtime access were not checked.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Verify existing SONIC Open3D, Content Agents OpenUSD, and immutable Isaac runtime images; no live image check is claimed.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No real RTX Isaac Sim PhysX execution was performed; committed live coverage requires explicit operator opt-in.",
+      "evidence": []
+    }
+  }
+}
