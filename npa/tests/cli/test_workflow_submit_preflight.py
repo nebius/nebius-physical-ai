@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
 runner = CliRunner()
 
@@ -1340,6 +1341,70 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
     assert checks.call_args.kwargs["pull_secrets_by_image"] == {
         image: ("operator-registry",) for image in checked_images
     }
+
+
+def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([], {}),
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output == "images: none pinned by this spec\n"
+    pulls.assert_not_called()
+    contracts.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [ValueError, NpaWorkflowError])
+def test_preflight_images_reports_planning_failure_before_pull_checks(
+    mocker,
+    error_type,
+) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        side_effect=error_type("synthetic complete-path planner failure"),
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.output == (
+        "Error: image preflight planning failed: "
+        "synthetic complete-path planner failure\n"
+    )
+    assert "images: none" not in result.output
+    pulls.assert_not_called()
+    contracts.assert_not_called()
 
 
 def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
