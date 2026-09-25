@@ -11,7 +11,7 @@
 # npa[sonic] (npa base + torch + onnx toolchain) is baked so the image is
 # self-contained; the workflow still overlays fresher npa source at runtime via
 # NPA_SRC_S3_URI. Build context is the repo root.
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

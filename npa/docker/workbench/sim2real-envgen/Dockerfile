@@ -1,4 +1,7 @@
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca
+# The legacy Genesis manifest is no longer addressable by its advertised digest.
+# Loop-eval retains that exact Genesis runtime and is digest-addressable; Envgen
+# removes its extra NPA/application payload and flattens the sanitized filesystem.
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-loop-eval@sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a
 FROM ${BASE_IMAGE} AS sanitized
 
 ARG NPA_SOURCE_SHA

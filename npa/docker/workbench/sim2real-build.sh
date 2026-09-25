@@ -6,8 +6,8 @@ NPA_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 REGISTRY=""
 PUSH=0
-BASE_IMAGE="${BASE_IMAGE:-npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest}"
-GENESIS_IMAGE="${GENESIS_IMAGE:-npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
+BASE_IMAGE="${BASE_IMAGE:-ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9}"
+SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-ghcr.io/nebius/nebius-physical-ai/npa-loop-eval@sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a}}"
 VLM_TAG="${VLM_TAG:-cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 ENVGEN_TAG="${ENVGEN_TAG:-cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 EVAL_TAG="${EVAL_TAG:-cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
@@ -32,9 +32,9 @@ Builds the Sim2Real reference images one at a time:
   npa-loop-eval:${EVAL_TAG}
   npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.38.1} (skipped when SKIP_RERUN_VIEWER=1)
 
-Set BASE_IMAGE and GENESIS_IMAGE to the pushed CUDA 13 /
-sm80-sm90-sm100-sm103-sm120 base
-and Genesis image tags before building. Set ENVGEN_TAG when the reference
+Set BASE_IMAGE and SIM2REAL_GPU_BASE_IMAGE to compatible immutable CUDA 13 /
+sm80-sm90-sm100-sm103-sm120 parents before building. GENESIS_IMAGE remains a
+compatibility alias for SIM2REAL_GPU_BASE_IMAGE. Set ENVGEN_TAG when the reference
 policy image should build from a non-default envgen tag. Set VLM_TAG and
 EVAL_TAG for additive component rebuilds.
 EOF
@@ -99,10 +99,10 @@ if [ -n "${SKIP_COSMOS3_REASON:-}" ]; then
 else
   build_one "npa-cosmos3-reason" "${VLM_TAG}" "${SCRIPT_DIR}/cosmos3-reason/Dockerfile" "BASE_IMAGE=${BASE_IMAGE}"
 fi
-build_one "npa-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
+build_one "npa-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile" "BASE_IMAGE=${SIM2REAL_GPU_BASE_IMAGE}"
 build_one "npa-reference-policy" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-reference-policy/Dockerfile" "BASE_IMAGE=npa-envgen:${ENVGEN_TAG}"
-build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
-build_one "npa-loop-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile" "BASE_IMAGE=${GENESIS_IMAGE}"
+build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${SIM2REAL_GPU_BASE_IMAGE}"
+build_one "npa-loop-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile" "BASE_IMAGE=${SIM2REAL_GPU_BASE_IMAGE}"
 if [ -n "${SKIP_RERUN_VIEWER:-}" ]; then
   echo "Skipping npa-rerun-viewer (SKIP_RERUN_VIEWER=${SKIP_RERUN_VIEWER})"
 else

@@ -1,8 +1,7 @@
-# Thin CLIP-embedding + LanceDB service layer on the shared CUDA/torch base.
-# NPA_CUDA_BASE defaults to the locally-built base tag; override with
-# --build-arg NPA_CUDA_BASE=<registry>/npa-workbench-cuda-base:<tag> to build
-# against a published base.
-ARG NPA_CUDA_BASE=npa-workbench-cuda-base:cuda13.0-torch2.12.1
+# Thin CLIP-embedding + LanceDB service layer on the accepted public CUDA/torch
+# foundation. Keep clean builds independent of a mutable builder-local base tag;
+# NPA_CUDA_BASE remains available for an explicitly selected compatible base.
+ARG NPA_CUDA_BASE=ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
 FROM ${NPA_CUDA_BASE}
 
 ARG UBUNTU_SNAPSHOT=20260820T000000Z

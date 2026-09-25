@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-envgen:0.1.1
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422
 FROM ${BASE_IMAGE}
 
 ARG NPA_SOURCE_SHA

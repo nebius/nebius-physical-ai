@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 REGISTRY="${REGISTRY:-}"
-BASE_IMAGE="${ROBOCASA_BASE_IMAGE:-nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04}"
+BASE_IMAGE="${ROBOCASA_BASE_IMAGE:-nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42}"
 ROBOCASA_VERSION="${ROBOCASA_VERSION:-0.1.0}"
 NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}" rev-parse HEAD)}"
 PUSH=0
