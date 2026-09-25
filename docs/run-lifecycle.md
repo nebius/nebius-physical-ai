@@ -221,6 +221,11 @@ recorded identity to be restored or a new run ID to be started.
 export KUBECONFIG="$HOME/.npa/clusters/<context>/kubeconfig"
 ```
 
+A reserved recovery successor retains the provider's verified terminal state
+when its outputs complete the workflow. Logical workflow success can coexist
+with a provider CANCELLED or FAILED state; a SUCCEEDED race remains SUCCEEDED.
+Adoption must not overwrite that provider evidence.
+
 ## Related
 
 - [Known footguns](workbench/troubleshooting/known-footguns.md) — the failures these gates are designed to catch
