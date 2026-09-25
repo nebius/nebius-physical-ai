@@ -57,10 +57,16 @@ def test_lancedb_deploy_vm_requires_storage_path() -> None:
     assert "--storage-path is required" in result.output
 
 
-def test_lancedb_deploy_vm_blocked_message_is_actionable() -> None:
+def test_lancedb_deploy_vm_blocked_message_is_actionable(tmp_path: Path) -> None:
     result = runner.invoke(
         lancedb_app,
-        ["deploy", "--runtime", "vm", "--storage-path", "/tmp/lancedb-smoke"],
+        [
+            "deploy",
+            "--runtime",
+            "vm",
+            "--storage-path",
+            str(tmp_path / "lancedb-smoke"),
+        ],
     )
 
     assert result.exit_code == 1
@@ -111,7 +117,7 @@ def test_lancedb_deploy_cloud_requires_endpoint_and_api_key_env(
     assert "LANCEDB_API_KEY is required" in result.output
 
 
-def test_lancedb_deploy_validates_port_range() -> None:
+def test_lancedb_deploy_validates_port_range(tmp_path: Path) -> None:
     result = runner.invoke(
         lancedb_app,
         [
@@ -119,7 +125,7 @@ def test_lancedb_deploy_validates_port_range() -> None:
             "--runtime",
             "container",
             "--storage-path",
-            "/tmp/lancedb",
+            str(tmp_path / "lancedb"),
             "--port",
             "99",
         ],
@@ -183,12 +189,13 @@ def test_lancedb_container_s3_path_ok_with_credentials(
 
 
 def test_lancedb_container_local_path_skips_s3_guard(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # A local storage path needs no S3 credentials, so the guard must not fire.
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
 
     monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    storage_path = tmp_path / "lancedb"
     result = runner.invoke(
         lancedb_app,
         [
@@ -196,13 +203,15 @@ def test_lancedb_container_local_path_skips_s3_guard(
             "--runtime",
             "container",
             "--storage-path",
-            "/tmp/lancedb",
+            str(storage_path),
             "--dry-run",
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert "--mount type=bind,source=/tmp/lancedb,target=/data/lancedb" in result.output
+    assert (
+        f"--mount type=bind,source={storage_path},target=/data/lancedb" in result.output
+    )
     assert "LANCEDB_STORAGE_PATH=/data/lancedb" in result.output
 
 
@@ -279,7 +288,7 @@ def test_lancedb_container_s3_storage_is_not_bind_mounted(
     assert "LANCEDB_STORAGE_PATH=s3://my-bucket/lancedb" in result.output
 
 
-def test_lancedb_kubernetes_rejects_ephemeral_local_storage() -> None:
+def test_lancedb_kubernetes_rejects_ephemeral_local_storage(tmp_path: Path) -> None:
     result = runner.invoke(
         lancedb_app,
         [
@@ -287,7 +296,7 @@ def test_lancedb_kubernetes_rejects_ephemeral_local_storage() -> None:
             "--runtime",
             "kubernetes",
             "--storage-path",
-            "/tmp/lancedb",
+            str(tmp_path / "lancedb"),
             "--dry-run",
         ],
     )
