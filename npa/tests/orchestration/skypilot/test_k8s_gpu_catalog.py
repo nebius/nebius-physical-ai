@@ -434,6 +434,18 @@ def test_known_b200_label_is_exact_context_scoped() -> None:
     ]
 
 
+def test_known_b200_label_value_is_lowercase_for_skypilot() -> None:
+    # SkyPilot's SkyPilotLabelFormatter derives the label value as
+    # accelerator.lower() and rejects any non-lowercase value, so an uppercase
+    # "B200" label is written to the node but never matches the optimizer and
+    # trips FAILED_PRECHECKS. Guard the lowercase invariant for every product
+    # alias NPA bridges.
+    from npa.orchestration.skypilot.k8s_gpu_catalog import _KNOWN_SKYPILOT_LABELS
+
+    for source, value in _KNOWN_SKYPILOT_LABELS.items():
+        assert value == value.lower(), (source, value)
+
+
 def test_known_gpu_label_rbac_failure_is_immediate_and_actionable() -> None:
     inventory = KubernetesGpuInventory(
         context="ctx",

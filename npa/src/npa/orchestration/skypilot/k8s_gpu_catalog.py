@@ -1257,6 +1257,12 @@ def discover_kubernetes_gpu_catalog(
     return parse_kubernetes_gpu_catalog(output, context=context)
 
 
+# Values are the SkyPilot ``skypilot.co/accelerator`` label value, which
+# SkyPilot's ``SkyPilotLabelFormatter`` derives as ``accelerator.lower()`` and
+# rejects unless it is all lowercase (``validate_label_value``). An uppercase
+# value such as "B200" is written to the node but never matches SkyPilot's
+# optimizer and fails ``FAILED_PRECHECKS``, so every value here must be
+# lowercase.
 _KNOWN_SKYPILOT_LABELS = {
     "b200": "b200",
     "nvidiab200": "b200",
@@ -1271,7 +1277,9 @@ def _known_skypilot_label(labels: dict[str, str]) -> str:
     for key in ("nvidia.com/gpu.product", "nebius.com/gpu-name"):
         normalized = _normalize(labels.get(key, ""))
         if normalized in _KNOWN_SKYPILOT_LABELS:
-            return _KNOWN_SKYPILOT_LABELS[normalized]
+            # Guard the SkyPilot lowercase invariant even if a future mapping
+            # entry is added in mixed case.
+            return _KNOWN_SKYPILOT_LABELS[normalized].lower()
     return ""
 
 
