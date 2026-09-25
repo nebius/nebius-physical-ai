@@ -10,11 +10,11 @@ from isaaclab.managers import (
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.sim import UsdFileCfg
 from isaaclab.utils.configclass import configclass
+from isaaclab.utils.string import ResolvableString
 from isaaclab_tasks.manager_based.navigation.config.anymal_c.navigation_env_cfg import (
     NavigationEnvCfg,
 )
 
-from npa.workflows.navigation import reference_mdp as mdp
 from npa.workflows.navigation.reference_geometry import spawn_scene
 
 
@@ -107,7 +107,7 @@ def _perception(config, scene_prim):
         ),
         update_period=config.sim.dt * config.decimation,
     )
-    config.observations.policy.ranges = ObservationTermCfg(func=mdp.static_ranges)
+    config.observations.policy.ranges = ObservationTermCfg(func=_mdp("static_ranges"))
     config.observations.policy.enable_corruption = False
     config.actions.pre_trained_policy_action.low_level_observations.enable_corruption = False
 
@@ -130,17 +130,24 @@ def _task(config):
     from npa.workflows.navigation.reference_controller import create_action
 
     config.actions.pre_trained_policy_action.class_type = create_action
-    config.events.reset_base = EventTermCfg(func=mdp.reset_cases, mode="reset")
-    config.commands.pose_command.class_type = mdp.FixedGoalCommand
+    config.events.reset_base = EventTermCfg(func=_mdp("reset_cases"), mode="reset")
+    config.commands.pose_command.class_type = _mdp("FixedGoalCommand")
     config.commands.pose_command.debug_vis = False
     config.commands.pose_command.resampling_time_range = (1.0e9, 1.0e9)
     config.episode_length_s = 30.0
-    config.rewards.progress = RewardTermCfg(func=mdp.progress, weight=3.0)
-    config.rewards.obstacle = RewardTermCfg(func=mdp.collision, weight=-25.0)
+    config.rewards.progress = RewardTermCfg(func=_mdp("progress"), weight=3.0)
+    config.rewards.obstacle = RewardTermCfg(func=_mdp("collision"), weight=-25.0)
     config.rewards.physical_failure = RewardTermCfg(
-        func=mdp.physical_failure, weight=-25.0
+        func=_mdp("physical_failure"), weight=-25.0
     )
-    config.rewards.termination_penalty.func = mdp.failure
+    config.rewards.termination_penalty.func = _mdp("failure")
     config.rewards.orientation_tracking = None
-    config.terminations.base_contact = TerminationTermCfg(func=mdp.terminate)
-    config.terminations.time_out = TerminationTermCfg(func=mdp.timeout, time_out=True)
+    config.terminations.base_contact = TerminationTermCfg(func=_mdp("terminate"))
+    config.terminations.time_out = TerminationTermCfg(
+        func=_mdp("timeout"), time_out=True
+    )
+
+
+def _mdp(name):
+    # Native command implementations import terrain/USD; resolve them after Kit.
+    return ResolvableString("npa.workflows.navigation.reference_mdp:" + name)
