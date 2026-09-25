@@ -52,7 +52,15 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
     text = PUBLISH.read_text(encoding="utf-8")
     spec = _spec(PUBLISH)
     triggers = spec.get("on") or spec[True]
-    assert set(triggers) == {"workflow_dispatch"}
+    # #504: the publisher also runs automatically on main-branch workbench
+    # docker changes and on a weekly refresh cadence. Both automatic triggers
+    # are narrowly scoped; dispatch remains for guarded manual promotion.
+    assert set(triggers) == {"workflow_dispatch", "push", "schedule"}
+    assert triggers["push"] == {
+        "branches": ["main"],
+        "paths": ["npa/docker/workbench/**"],
+    }
+    assert triggers["schedule"] == [{"cron": "0 6 * * 1"}]
     assert spec["permissions"]["packages"] == "write"
     assert spec["permissions"]["attestations"] == "write"
     assert "development_image_for_tool" in text
@@ -68,6 +76,59 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         "NPA_PUBLISH_TOOL",
     ):
         assert stale_variable not in text
+
+
+def test_automatic_triggers_build_dev_images_without_promoting() -> None:
+    """#504/#568: push/schedule runs must build dev images; never promote.
+
+    `inputs.*` is only populated for `workflow_dispatch`; on push and schedule
+    events every input is undefined. Tool selection therefore falls back to
+    `_automatic_build_tools`: the weekly schedule rebuilds every public tool
+    and a push rebuilds the tools whose workbench inputs changed, so
+    `dev-<sha>` tags track HEAD automatically. Promotion still requires an
+    explicit `workflow_dispatch` event with `dry_run: false`.
+    """
+    spec = _spec(PUBLISH)
+    jobs = spec["jobs"]
+
+    resolve = next(
+        step
+        for step in jobs["resolve"]["steps"]
+        if step.get("name") == "Resolve immutable public development plan"
+    )
+    # Dispatch inputs remain the explicit-selection path ...
+    assert resolve["env"]["BUILD_TOOLS"] == "${{ inputs.build_development_tools }}"
+    assert resolve["env"]["CLEANUP_TOOLS"] == "${{ inputs.cleanup_development_tools }}"
+    # ... but the plan script must also handle automatic events, where inputs
+    # are undefined, instead of resolving an empty matrix.
+    script = resolve["run"]
+    assert resolve["env"]["EVENT_NAME"] == "${{ github.event_name }}"
+    assert "_automatic_build_tools" in script
+    assert "select_public_image_builds" in script
+    assert 'os.environ.get("EVENT_BEFORE", "")' in script
+    assert 'os.environ.get("EVENT_NAME", "")' in script
+    assert '"schedule"' in script
+    assert "packaging-contract.yaml" in script
+    assert (
+        jobs["build-development"]["if"]
+        == "${{ needs.resolve.outputs.build_count != '0' }}"
+    )
+    assert "cleanup_count != '0'" in jobs["cleanup-requested"]["if"]
+    assert "build_count != '0'" in jobs["cleanup-failed-build"]["if"]
+
+    promote_step = next(
+        step
+        for step in jobs["promote"]["steps"]
+        if step.get("name")
+        == "Promote exact validated digests and verify public parity"
+    )
+    assert promote_step["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}"
+    )
+    # The promote job never runs after a build: automatic dev builds must not
+    # fall through into a release preflight or write.
+    assert "needs.resolve.outputs.build_count == '0'" in jobs["promote"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in jobs["promote"]["if"]
 
 
 def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
@@ -178,27 +239,59 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     push = text.index("Push only after every pre-publication gate passes")
     assert prepare < scan < sbom < push
     assert "docker buildx prune --all --force" in text[prepare:scan]
-    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 2
-    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 2
-    assert text[scan:push].count("--timeout 2562047h47m16s") == 2
-    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 2
+    # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
+    # the all-severity secret scan, and the SBOM. Every one of them must reuse
+    # the large volume, the shared cache and the unbounded timeout.
+    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 3
+    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 3
+    assert text[scan:push].count("--timeout 2562047h47m16s") == 3
+    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 3
     trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
-    assert text[scan:push].count(trivy) == 2
+    assert text[scan:push].count(trivy) == 3
     assert "docker image prune" not in text[scan:push]
+
+
+def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
+    """Trivy's --severity applies to every scanner, so secrets need their own scan.
+
+    The combined policy scan asks for CRITICAL, which silently drops the HIGH
+    private-key findings it is named for. A separate all-severity secret scan
+    must reach the push, and it must not inherit the vulnerability ignorefile.
+    """
+
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    names = [str(step.get("name") or "") for step in steps]
+    secret = next(
+        step
+        for step in steps
+        if step.get("name") == "Pre-publication all-severity secret scan"
+    )
+    script = secret["run"]
+    assert "--scanners secret" in script
+    assert "--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL" in script
+    assert "--exit-code 1" in script
+    # An ignorefile suppresses matching secret findings by rule ID whatever the
+    # severity filter says, so inheriting it here would reopen the hole.
+    assert "--ignorefile" not in script
+    assert "--ignore-unfixed" not in script
+    assert names.index("Pre-publication all-severity secret scan") < names.index(
+        "Push only after every pre-publication gate passes"
+    )
 
 
 def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
     script = (ROOT / "npa/scripts/scan_base_images.py").read_text()
     # Tokens, not one contiguous line: ruff format may split the arg list.
     assert '"--timeout"' in script and '"2562047h47m16s"' in script
-    job = _spec(SECURITY_SCAN)["jobs"]["base-image-cve-scan"]
+    job = _spec(SECURITY_SCAN)["jobs"]["base-image-entry"]
     command = next(
         step["run"]
         for step in job["steps"]
-        if step.get("name") == "Scan all pinned bases with three local workers"
+        if step.get("name") == "Scan the exact inventory entry"
     )
     assert "scan_base_images.py" in command
-    assert "--workers 3" in command
+    assert '--entry-name "$SCAN_ENTRY"' in command
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:

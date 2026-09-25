@@ -24,8 +24,8 @@ resources:
   h200-single-gpu:
     cloud: kubernetes
     accelerators: H200:1
-    cpus: 16
-    memory: 200Gi
+    cpus: 12
+    memory: 180Gi
     image: "{{config.runtime_image}}"
     disk_size: 500
     kubernetes:
