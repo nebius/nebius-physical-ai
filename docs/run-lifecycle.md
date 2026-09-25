@@ -126,7 +126,10 @@ submit still prints a `submission_warnings` entry only when the launch proves
 reconciled. Any weaker result remains a hard receipt error. Receipt warnings and
 optional post-success artifact-handoff diagnostics redact URL query strings,
 secret assignments, bearer tokens, and resolved credential values before JSON
-output or local persistence.
+output or local persistence. Every workflow CLI `Error:` boundary applies the
+same shape-based redaction before rendering, while preserving multiline
+recovery commands; credential-aware submit failures also redact the exact
+resolved values even when a provider quotes an opaque token.
 
 **A stale or ambiguous run is never selected silently.** Resume by naming it:
 

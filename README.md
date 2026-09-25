@@ -24,6 +24,9 @@
 </div>
 
 
+For shared Kubernetes clusters, use [team namespaces](docs/workbench/namespaces.md) to configure
+namespace selection and private SkyPilot contexts with `npa workbench namespace`.
+
 ## What is Workbench?
 
 Workbench is the agent-facing control plane for physical AI on Nebius. You

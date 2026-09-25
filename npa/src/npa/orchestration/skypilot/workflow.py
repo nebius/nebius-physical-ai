@@ -3308,7 +3308,6 @@ def _probe_kubernetes_controller_cwd(
                 *context_args,
                 "get",
                 "pods",
-                "--all-namespaces",
                 "--selector",
                 selector,
                 "--output",

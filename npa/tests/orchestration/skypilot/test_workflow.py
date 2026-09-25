@@ -4049,6 +4049,7 @@ def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
     assert result.healthy is False
     assert result.outcome == "cwd_unusable"
     assert "getcwd" in result.error
+    assert "--all-namespaces" not in calls[0]
     assert calls[0][-4:] == [
         "--selector",
         "skypilot-cluster-name=sky-jobs-controller-test",
