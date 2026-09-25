@@ -190,6 +190,14 @@ def _store(s3: FakeS3) -> EpisodeStore:
     )
 
 
+def _replace_timeline(s3: FakeS3, commit: dict, rows: list[dict]) -> None:
+    records_key = f"{PREFIX}/episodes/000000-uuid/records.jsonl"
+    body = ("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n").encode()
+    commit["objects"]["records"] = s3.put(records_key, body)
+    commit_key = f"{PREFIX}/commits/episode-000000.json"
+    s3.put(commit_key, (json.dumps(commit, sort_keys=True) + "\n").encode())
+
+
 @pytest.mark.parametrize(
     "header,expected",
     [
@@ -416,8 +424,51 @@ def test_episode_detail_timeline_two_camera_and_unknown_download_fallback() -> N
     assert fallback["kind"] == "download"
     assert "/download/calibration" in fallback["download_url"]
     timeline = store.timeline("0", version_id=VERSION_ID)
+    assert timeline["checksum_state"] == "verified"
+    assert timeline["rows"][0]["monotonic_ns"] == "1000000000"
+    assert timeline["rows"][0]["wall_clock_ns"] == "1800000000000000000"
+    assert timeline["rows"][0]["success"] is False
+    assert timeline["rows"][0]["terminated"] is False
+    assert timeline["rows"][0]["truncated"] is False
+    assert timeline["rows"][0]["done"] is False
     assert timeline["rows"][2]["success"] is True
+    assert timeline["rows"][2]["terminated"] is True
+    assert timeline["rows"][2]["truncated"] is False
+    assert timeline["rows"][2]["done"] is True
     assert timeline["rows"][2]["reset_reason"] == "success"
+
+
+def test_timeline_outcome_flags_default_to_false_when_omitted() -> None:
+    s3, commit, _version = _fixture()
+    rows = [json.loads(line) for line in _records().splitlines()]
+    for row in rows:
+        for name in ("success", "terminated", "truncated", "done"):
+            row.pop(name)
+    _replace_timeline(s3, commit, rows)
+
+    timeline = _store(s3).timeline("0")
+
+    for row in timeline["rows"]:
+        assert row["success"] is False
+        assert row["terminated"] is False
+        assert row["truncated"] is False
+        assert row["done"] is False
+
+
+@pytest.mark.parametrize("name", ["success", "terminated", "truncated", "done"])
+@pytest.mark.parametrize("value", ["false", 0, [], None])
+def test_timeline_rejects_non_boolean_outcome_flags(name: str, value: object) -> None:
+    s3, commit, _version = _fixture()
+    rows = [json.loads(line) for line in _records().splitlines()]
+    rows[0][name] = value
+    _replace_timeline(s3, commit, rows)
+
+    with pytest.raises(
+        EpisodeStoreError, match="episode timeline outcome flags are malformed"
+    ) as exc_info:
+        _store(s3).timeline("0")
+
+    assert exc_info.value.status_code == 502
 
 
 def test_legacy_single_camera_is_explicit_and_traversal_is_rejected() -> None:
