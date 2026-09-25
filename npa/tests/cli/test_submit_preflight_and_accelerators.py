@@ -261,6 +261,74 @@ def test_submit_accelerator_readiness_uses_resolved_config_overrides(
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
 
 
+def test_submit_accelerator_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-accelerator-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+
+    def reject_daemon(**_kwargs) -> None:  # noqa: ANN003 - test stub
+        raise ValueError(f"daemon rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        reject_daemon,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "daemon rejected <redacted>" in output
+    assert opaque_secret not in output
+
+
+def test_submit_accelerator_catalog_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-catalog-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        lambda **_kwargs: None,
+    )
+
+    def reject_catalog(*_args, **_kwargs) -> None:  # noqa: ANN002,ANN003
+        raise ValueError(f"catalog rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        reject_catalog,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "catalog rejected <redacted>" in output
+    assert opaque_secret not in output
+
+
 @pytest.mark.parametrize(
     ("config_overrides", "expected"),
     [({}, "B200:1"), ({"gpu_type": "H200", "gpu_count": "2"}, "H200:2")],
@@ -774,6 +842,108 @@ def test_pullable_images_pass(
     )
 
     assert "1 image(s) pullable" in capsys.readouterr().err
+
+
+def test_submit_image_preflight_checks_transition_free_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = REPO_ROOT / "workflows" / "testing" / "vlm-eval-single.yaml"
+    observed: dict[str, object] = {}
+
+    def pull(images, **_kwargs):
+        observed["images"] = list(images)
+        return [ImagePullCheck(image=image, status="ok") for image in images]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        pull,
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda **_kwargs: [],
+    )
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+            assume_decision="",
+            enabled=True,
+        )
+        == {}
+    )
+    assert observed["images"]
+
+
+def test_submit_image_preflight_keys_partial_contract_pins_by_requested_image(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    pull_only_image = "registry.example.invalid/operator/npa-retargeting:release"
+    contracted_image = "registry.example.invalid/operator/npa-cosmos-curate:release"
+    immutable_image = (
+        "registry.example.invalid/operator/npa-cosmos-curate@sha256:" + "a" * 64
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_plan_preflight_image_requirements",
+        lambda *_args, **_kwargs: (
+            [pull_only_image, contracted_image],
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda images, **_kwargs: [
+            ImagePullCheck(image=image, status="ok") for image in images
+        ],
+    )
+
+    def partial_contracts(*, bind_requested_images=False, **_kwargs):
+        assert bind_requested_images is True
+        return [
+            {
+                "_requested_image": contracted_image,
+                "image": immutable_image,
+                "state": "compatible",
+            }
+        ]
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        partial_contracts,
+    )
+
+    assert workflow_cli._preflight_submit_images(
+        spec_path,
+        options=object(),
+        assume_decision="",
+        enabled=True,
+    ) == {contracted_image: immutable_image}
+
+
+def test_submit_image_preflight_defers_image_resolution_value_error(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    def unsupported_image(*_args, **_kwargs):
+        raise ValueError("synthetic unsupported image")
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_plan_preflight_image_requirements",
+        unsupported_image,
+    )
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            enabled=True,
+        )
+        == {}
+    )
 
 
 def test_image_preflight_plans_with_submit_config_overrides(

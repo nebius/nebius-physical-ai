@@ -4,6 +4,7 @@ Choose the entry for the operation you want to run:
 
 | Operation | Entry | Execution |
 | --- | --- | --- |
+| Record Spot warehouse locomotion | [Warehouse patrol example](../../../npa/examples/antioch-warehouse-spot/README.md) | A pretrained locomotion policy drives a simulated quadruped; Workbench collects native video and physical-state checks. |
 | Live π0.5 cube pickup | [OpenPI live pickup runbook](openpi-live-pickup.md) | Antioch simulation sends current cameras and state to a pretrained OpenPI policy on Nebius and applies its actions. No weights are trained. |
 | Collect trajectories and train ACT | [ACT workflow YAML](antioch-offline-policy-train.yaml) | Collect an immutable dataset through the Antioch adapter, then train LeRobot ACT on Nebius. |
 | Fine-tune and evaluate XR1 | [XR1 training YAML](xr1-antioch-finetune.yaml) and the runbook below | Collect robot demonstrations, fine-tune XR1 on Nebius, then evaluate the selected checkpoint in Antioch. |

@@ -3,7 +3,8 @@
 Covers the safety contract from issue #525: dry-run is the default and never
 writes; only provably terminal, expired, unpinned runs are deleted; every
 ambiguous case (missing/unreadable manifest, live or unknown status, unknown
-age, pin marker) is kept; apply mode re-verifies liveness before deleting.
+age, pin marker) is kept; apply mode re-verifies liveness and pins before
+deleting.
 """
 
 from __future__ import annotations
@@ -350,6 +351,54 @@ def test_apply_rechecks_liveness_before_deleting() -> None:
     assert result.deleted_runs == []
     assert result.skipped_runs == [("wf/old-ok", "became-live")]
     assert ("bkt", "wf/old-ok/ckpt.bin") in s3.objects
+
+
+@pytest.mark.parametrize("pin_marker", [PIN_MARKER, ".custom-retain"])
+def test_apply_rechecks_configured_pin_before_deleting(pin_marker: str) -> None:
+    from npa.cli.workbench.artifacts_gc import build_gc_plan
+
+    s3 = FakeS3()
+    _seed_bucket(s3)
+    s3.add("bkt", "wf/unrelated/data.bin", b"unrelated")
+    policy = RetentionPolicy(retention_days=90, pin_marker=pin_marker)
+    decisions, _ = build_gc_plan(s3, "bkt", "wf", policy, max_depth=3)
+
+    # The run is pinned after planning but before apply.
+    s3.add("bkt", f"wf/old-ok/{pin_marker}", b"retain")
+    result = apply_plan(s3, "bkt", decisions, pin_marker)
+
+    assert result.deleted_runs == []
+    assert result.skipped_runs == [("wf/old-ok", "pinned")]
+    assert ("bkt", "wf/old-ok/ckpt.bin") in s3.objects
+    assert ("bkt", f"wf/old-ok/{pin_marker}") in s3.objects
+    assert ("bkt", "wf/unrelated/data.bin") in s3.objects
+    assert s3.delete_calls == []
+
+
+@pytest.mark.parametrize("error_code", ["AccessDenied", "NoSuchBucket"])
+def test_apply_pin_recheck_failure_prevents_deletion(error_code: str) -> None:
+    from npa.cli.workbench.artifacts_gc import build_gc_plan
+
+    s3 = FakeS3()
+    _seed_bucket(s3)
+    decisions, _ = build_gc_plan(s3, "bkt", "wf", POLICY, max_depth=3)
+    original_head_object = s3.head_object
+
+    def deny_pin_check(Bucket: str, Key: str) -> dict[str, Any]:
+        if Key == f"wf/old-ok/{PIN_MARKER}":
+            raise ClientError(
+                {"Error": {"Code": error_code, "Message": "pin check failed"}},
+                "HeadObject",
+            )
+        return original_head_object(Bucket=Bucket, Key=Key)
+
+    s3.head_object = deny_pin_check  # type: ignore[method-assign]
+    with pytest.raises(ClientError) as error:
+        apply_plan(s3, "bkt", decisions)
+
+    assert error.value.response["Error"]["Code"] == error_code
+    assert ("bkt", "wf/old-ok/ckpt.bin") in s3.objects
+    assert s3.delete_calls == []
 
 
 def test_delete_refuses_keys_outside_the_prefix() -> None:
