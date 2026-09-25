@@ -46,6 +46,12 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
+The [FA4 RTX PRO 6000 recipe update](flash-attention.md) changes the CUDA 13
+foundation source. `npa-base` is outside the 37-image public tool release plan;
+the locally built candidate does not replace any release listed here. On
+2026-09-25, anonymous verification confirmed all 37 current accepted release
+digests still matched. Historical aliases were not re-audited in that check.
+
 The current source inventory has **54 packaging entries** (45 redistribution-eligible
 and nine restricted) and **46 mapped tools**: 37 public-release members, two
 restricted tools, and seven quarantined tools (`antioch`, `curobo`, `libero`, `ncore`, `openpi`,

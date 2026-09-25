@@ -1,0 +1,715 @@
+{
+  "created_at": "2026-09-25T16:43:52.755201+00:00",
+  "model": "stabilityai/stable-diffusion-xl-base-1.0",
+  "model_revision": "462165984030d82259a11f4367a4eed129e94a7b",
+  "model_manifest": {
+    "model": "stabilityai/stable-diffusion-xl-base-1.0",
+    "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+    "license": "CreativeML Open RAIL++-M, 2023-07-26",
+    "files": {
+      "LICENSE.md": {
+        "sha256": "19b6998b569b53ac1fc2158a8a3202c8699a9a4605b47075715d9c96be7fb6d0",
+        "bytes": 14109
+      },
+      "model_index.json": {
+        "sha256": "6d7b93508390ab91ac5bfbe4aeb4dc2d83f7bb1b05fb069d714b5b0c75f70d44",
+        "bytes": 609
+      },
+      "scheduler/scheduler_config.json": {
+        "sha256": "af3e45a949aff8b8341ab8b811429ec03fee857a700a1d9477363e4fff9666e2",
+        "bytes": 479
+      },
+      "text_encoder/config.json": {
+        "sha256": "39b8b2e4b1949e36969caa425b6c81c68bace99198dd9078ce05d16ad401fe7f",
+        "bytes": 565
+      },
+      "text_encoder/model.fp16.safetensors": {
+        "sha256": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd",
+        "bytes": 246144152
+      },
+      "text_encoder_2/config.json": {
+        "sha256": "a892d1c3a69a7e9247a24de2bc1d5891e3109a54696e53be20093af671072c34",
+        "bytes": 575
+      },
+      "text_encoder_2/model.fp16.safetensors": {
+        "sha256": "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4",
+        "bytes": 1389382176
+      },
+      "tokenizer/merges.txt": {
+        "sha256": "9fd691f7c8039210e0fced15865466c65820d09b63988b0174bfe25de299051a",
+        "bytes": 524619
+      },
+      "tokenizer/special_tokens_map.json": {
+        "sha256": "c4864a9376a8401918425bed71fc14fc0e81f9b59ec45c1cf96cccb2df508eac",
+        "bytes": 472
+      },
+      "tokenizer/tokenizer_config.json": {
+        "sha256": "19d7b034cb0cc3ce9766c2231373ab8aa8991fc72e2c8f76558bfaae3de0d563",
+        "bytes": 737
+      },
+      "tokenizer/vocab.json": {
+        "sha256": "e089ad92ba36837a0d31433e555c8f45fe601ab5c221d4f607ded32d9f7a4349",
+        "bytes": 1059962
+      },
+      "tokenizer_2/merges.txt": {
+        "sha256": "9fd691f7c8039210e0fced15865466c65820d09b63988b0174bfe25de299051a",
+        "bytes": 524619
+      },
+      "tokenizer_2/special_tokens_map.json": {
+        "sha256": "f118ab3a983206e4f32583448de6bd6aae4ee21869135cef1f5848a753cdaab6",
+        "bytes": 460
+      },
+      "tokenizer_2/tokenizer_config.json": {
+        "sha256": "c9d23941f76a41cbd50eda9290f57be7828f0a7a677939e9ef181f7e12bd1bdf",
+        "bytes": 725
+      },
+      "tokenizer_2/vocab.json": {
+        "sha256": "e089ad92ba36837a0d31433e555c8f45fe601ab5c221d4f607ded32d9f7a4349",
+        "bytes": 1059962
+      },
+      "unet/config.json": {
+        "sha256": "30ebc70750223e59006f7f2b4e1e6c102570aa19a9c4ae3e1fbe7591332dbae6",
+        "bytes": 1680
+      },
+      "unet/diffusion_pytorch_model.fp16.safetensors": {
+        "sha256": "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139",
+        "bytes": 5135149760
+      },
+      "vae/config.json": {
+        "sha256": "0b331c8ac22ded5f9997a144a575c1d113d6169aff262c353f39015bd24a6264",
+        "bytes": 642
+      },
+      "vae/diffusion_pytorch_model.fp16.safetensors": {
+        "sha256": "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68",
+        "bytes": 167335342
+      }
+    }
+  },
+  "precision": "fp16; Diffusers upcasts VAE decoding to fp32",
+  "steps": 30,
+  "measured_repeats": 3,
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "capability": [
+    12,
+    0
+  ],
+  "packages": {
+    "torch": "2.13.0+cu130",
+    "diffusers": "0.35.2",
+    "transformers": "4.57.1",
+    "flash-attn-4": "4.0.0b33.dev10+geed1971",
+    "nvidia-cutlass-dsl": "4.6.2",
+    "quack-kernels": "0.6.4"
+  },
+  "unet_parameters": 2567463684,
+  "unet_attention_layers": 140,
+  "scheduler": "EulerDiscreteScheduler",
+  "guidance_scale": 5.0,
+  "fa4_scope": "all UNet self/cross attention; text encoders and VAE use stock backends",
+  "timing_scope": "full pipeline: text encoding, denoising, VAE decoding and watermark; excludes loading and PNG writes",
+  "memory_scope": "total PyTorch peak allocation; FA4 recorder also retains one QKV triple for profiling",
+  "script_sha256": "a3053ff2021d23287d665e3b5f0c8f29871ef2e595318f6d17c936096c739f2c",
+  "processor_sha256": "b3c578fb02946fe9c2010671a3899f859dd641ffe2498cd07651bcda8bc7a38b",
+  "cases": [
+    {
+      "name": "robot-workcell",
+      "prompt": "A professional photograph of an orange industrial robot arm in a clean robotics laboratory, holding a small metal component above a workbench, soft daylight, precise mechanical details, no people, no text",
+      "width": 1024,
+      "height": 1024,
+      "seed": 42,
+      "warmup": {
+        "sdpa": {
+          "seconds": 2.9276321309999958,
+          "peak_allocated_bytes": 11261131776,
+          "fa4_calls": 0,
+          "pixel_sha256": "92059b4072c23f02a0675f1ba86940f0aaa007a0beeb7e07ce55c305ba2b0aea"
+        },
+        "fa4": {
+          "seconds": 4.315676896000014,
+          "peak_allocated_bytes": 11293637632,
+          "fa4_calls": 4200,
+          "pixel_sha256": "2b41b6246f518502b1dcbe70fc33865a5dff767150843b6180c2700197b05fd5"
+        }
+      },
+      "runs": {
+        "fa4": [
+          {
+            "seconds": 2.348768562000032,
+            "peak_allocated_bytes": 11327192064,
+            "fa4_calls": 4200,
+            "pixel_sha256": "2b41b6246f518502b1dcbe70fc33865a5dff767150843b6180c2700197b05fd5",
+            "image": "robot-workcell-fa4.png",
+            "png_sha256": "77def4a8b8bc009cb9f53f550071ec99d5a4453e19b9253e05db006822cf0d45"
+          },
+          {
+            "seconds": 2.6052373810000518,
+            "peak_allocated_bytes": 11327716352,
+            "fa4_calls": 4200,
+            "pixel_sha256": "2b41b6246f518502b1dcbe70fc33865a5dff767150843b6180c2700197b05fd5"
+          },
+          {
+            "seconds": 2.3402109880000808,
+            "peak_allocated_bytes": 11328502784,
+            "fa4_calls": 4200,
+            "pixel_sha256": "2b41b6246f518502b1dcbe70fc33865a5dff767150843b6180c2700197b05fd5"
+          }
+        ],
+        "sdpa": [
+          {
+            "seconds": 2.1934719719999975,
+            "peak_allocated_bytes": 11295210496,
+            "fa4_calls": 0,
+            "pixel_sha256": "92059b4072c23f02a0675f1ba86940f0aaa007a0beeb7e07ce55c305ba2b0aea",
+            "image": "robot-workcell-sdpa.png",
+            "png_sha256": "eb6cd9c483813cfb180d0c0b3a75364364a9697026607b373d2c02c220b37ce0"
+          },
+          {
+            "seconds": 2.1170777139999473,
+            "peak_allocated_bytes": 11295210496,
+            "fa4_calls": 0,
+            "pixel_sha256": "92059b4072c23f02a0675f1ba86940f0aaa007a0beeb7e07ce55c305ba2b0aea"
+          },
+          {
+            "seconds": 2.093735137000067,
+            "peak_allocated_bytes": 11295210496,
+            "fa4_calls": 0,
+            "pixel_sha256": "92059b4072c23f02a0675f1ba86940f0aaa007a0beeb7e07ce55c305ba2b0aea"
+          }
+        ]
+      },
+      "shapes": [
+        {
+          "qkv": [
+            [
+              2,
+              4096,
+              10,
+              64
+            ],
+            [
+              2,
+              4096,
+              10,
+              64
+            ],
+            [
+              2,
+              4096,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              4096,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1024,
+              20,
+              64
+            ],
+            [
+              2,
+              1024,
+              20,
+              64
+            ],
+            [
+              2,
+              1024,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1024,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        }
+      ],
+      "profile": {
+        "input_shapes": [
+          [
+            2,
+            4096,
+            10,
+            64
+          ],
+          [
+            2,
+            4096,
+            10,
+            64
+          ],
+          [
+            2,
+            4096,
+            10,
+            64
+          ]
+        ],
+        "fa4_kernels": {
+          "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrf16gmemalign16oi64div81i64div8i64div8_tensorptrf16gmemalign16oi64div81i64div8i64div8_tens_0": 1
+        },
+        "sdpa_kernels": {
+          "void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, true, true, false, false>(pytorch_flash::Flash_fwd_params)": 1
+        }
+      },
+      "comparison": {
+        "pixel_mae": 0.0016099069632735906,
+        "pixel_psnr_db": 43.76757203204952,
+        "pixel_ssim": 0.9895007059988424,
+        "latent_relative_l2": 0.012751378118991852
+      },
+      "median_seconds": {
+        "fa4": 2.348768562000032,
+        "sdpa": 2.1170777139999473
+      },
+      "sdpa_over_fa4_speed_ratio": 0.901356458976616
+    },
+    {
+      "name": "warehouse",
+      "prompt": "A wide architectural photograph of an orderly automated warehouse, small mobile robots between tall shelves of boxes, polished concrete floor, warm overhead lighting, realistic industrial environment, no people, no text",
+      "width": 1536,
+      "height": 1024,
+      "seed": 123,
+      "warmup": {
+        "sdpa": {
+          "seconds": 3.227301456999953,
+          "peak_allocated_bytes": 13276560384,
+          "fa4_calls": 0,
+          "pixel_sha256": "b480faf96998f71144b34101307da403c052e3c31cae0fc83d3fb8a6d5ad1874"
+        },
+        "fa4": {
+          "seconds": 3.1588369930000226,
+          "peak_allocated_bytes": 13323484160,
+          "fa4_calls": 4200,
+          "pixel_sha256": "8d00c70187149d8ba741fc3fc2b8a131f3ba8f2337f0d220e75ca173b71e74b8"
+        }
+      },
+      "runs": {
+        "fa4": [
+          {
+            "seconds": 3.152804096999944,
+            "peak_allocated_bytes": 13370932224,
+            "fa4_calls": 4200,
+            "pixel_sha256": "8d00c70187149d8ba741fc3fc2b8a131f3ba8f2337f0d220e75ca173b71e74b8",
+            "image": "warehouse-fa4.png",
+            "png_sha256": "90fb10a00718ffa16c3f268bac4fa19e11c7811d3ac21c4f5626369744a52cd2"
+          },
+          {
+            "seconds": 3.1596771720001016,
+            "peak_allocated_bytes": 13371194368,
+            "fa4_calls": 4200,
+            "pixel_sha256": "8d00c70187149d8ba741fc3fc2b8a131f3ba8f2337f0d220e75ca173b71e74b8"
+          },
+          {
+            "seconds": 3.1439138140001432,
+            "peak_allocated_bytes": 13371194368,
+            "fa4_calls": 4200,
+            "pixel_sha256": "8d00c70187149d8ba741fc3fc2b8a131f3ba8f2337f0d220e75ca173b71e74b8"
+          }
+        ],
+        "sdpa": [
+          {
+            "seconds": 3.203884976000154,
+            "peak_allocated_bytes": 13322435584,
+            "fa4_calls": 0,
+            "pixel_sha256": "b480faf96998f71144b34101307da403c052e3c31cae0fc83d3fb8a6d5ad1874",
+            "image": "warehouse-sdpa.png",
+            "png_sha256": "edb9876b8186715f0bc0c90b58304c6eede2b6e263e8e59f32d4cb0b694bd71e"
+          },
+          {
+            "seconds": 3.208427712999992,
+            "peak_allocated_bytes": 13322435584,
+            "fa4_calls": 0,
+            "pixel_sha256": "b480faf96998f71144b34101307da403c052e3c31cae0fc83d3fb8a6d5ad1874"
+          },
+          {
+            "seconds": 3.202467272000149,
+            "peak_allocated_bytes": 13322959872,
+            "fa4_calls": 0,
+            "pixel_sha256": "b480faf96998f71144b34101307da403c052e3c31cae0fc83d3fb8a6d5ad1874"
+          }
+        ]
+      },
+      "shapes": [
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        }
+      ],
+      "profile": {
+        "input_shapes": [
+          [
+            2,
+            6144,
+            10,
+            64
+          ],
+          [
+            2,
+            6144,
+            10,
+            64
+          ],
+          [
+            2,
+            6144,
+            10,
+            64
+          ]
+        ],
+        "fa4_kernels": {
+          "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrf16gmemalign16oi64div81i64div8i64div8_tensorptrf16gmemalign16oi64div81i64div8i64div8_tens_0": 1
+        },
+        "sdpa_kernels": {
+          "void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, true, true, false, false>(pytorch_flash::Flash_fwd_params)": 1
+        }
+      },
+      "comparison": {
+        "pixel_mae": 0.0017274312204265385,
+        "pixel_psnr_db": 44.45657977760098,
+        "pixel_ssim": 0.992353980572514,
+        "latent_relative_l2": 0.009900427423417568
+      },
+      "median_seconds": {
+        "fa4": 3.152804096999944,
+        "sdpa": 3.203884976000154
+      },
+      "sdpa_over_fa4_speed_ratio": 1.0162017294537318
+    },
+    {
+      "name": "sensor-rig",
+      "prompt": "A detailed studio product photograph of a compact autonomous rover with cameras and a lidar sensor, four rugged wheels, blue metal body, neutral grey backdrop, soft rim lighting, no text",
+      "width": 1024,
+      "height": 1536,
+      "seed": 2026,
+      "warmup": {
+        "sdpa": {
+          "seconds": 3.257014505999905,
+          "peak_allocated_bytes": 13275249664,
+          "fa4_calls": 0,
+          "pixel_sha256": "1eeaef11d07144916d797cea4c645e91c1c15bb58b2168358d8a970214de5c0f"
+        },
+        "fa4": {
+          "seconds": 3.2024769909999122,
+          "peak_allocated_bytes": 13323746304,
+          "fa4_calls": 4200,
+          "pixel_sha256": "b9deb00e3531c5018e3c5678ba19e3f8c8394f598f496c84f8a7a92ebb364fdc"
+        }
+      },
+      "runs": {
+        "fa4": [
+          {
+            "seconds": 3.2129766640000526,
+            "peak_allocated_bytes": 13370932224,
+            "fa4_calls": 4200,
+            "pixel_sha256": "b9deb00e3531c5018e3c5678ba19e3f8c8394f598f496c84f8a7a92ebb364fdc",
+            "image": "sensor-rig-fa4.png",
+            "png_sha256": "1f9cfb047a24a08f99a72d3e07e2326853dae5fff7656c05ead6bb62724e640c"
+          },
+          {
+            "seconds": 3.19746021800006,
+            "peak_allocated_bytes": 13371456512,
+            "fa4_calls": 4200,
+            "pixel_sha256": "b9deb00e3531c5018e3c5678ba19e3f8c8394f598f496c84f8a7a92ebb364fdc"
+          },
+          {
+            "seconds": 3.2062857749999694,
+            "peak_allocated_bytes": 13371980800,
+            "fa4_calls": 4200,
+            "pixel_sha256": "b9deb00e3531c5018e3c5678ba19e3f8c8394f598f496c84f8a7a92ebb364fdc"
+          }
+        ],
+        "sdpa": [
+          {
+            "seconds": 3.2600298039999416,
+            "peak_allocated_bytes": 13324008448,
+            "fa4_calls": 0,
+            "pixel_sha256": "1eeaef11d07144916d797cea4c645e91c1c15bb58b2168358d8a970214de5c0f",
+            "image": "sensor-rig-sdpa.png",
+            "png_sha256": "5cf7a17904aa22cd7cbafd8fc2e0bf9fc4a302dba0d421ff68d9d80d3752ef9b"
+          },
+          {
+            "seconds": 3.257255991999955,
+            "peak_allocated_bytes": 13323746304,
+            "fa4_calls": 0,
+            "pixel_sha256": "1eeaef11d07144916d797cea4c645e91c1c15bb58b2168358d8a970214de5c0f"
+          },
+          {
+            "seconds": 3.2537400440000965,
+            "peak_allocated_bytes": 13324008448,
+            "fa4_calls": 0,
+            "pixel_sha256": "1eeaef11d07144916d797cea4c645e91c1c15bb58b2168358d8a970214de5c0f"
+          }
+        ]
+      },
+      "shapes": [
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        }
+      ],
+      "profile": {
+        "input_shapes": [
+          [
+            2,
+            6144,
+            10,
+            64
+          ],
+          [
+            2,
+            6144,
+            10,
+            64
+          ],
+          [
+            2,
+            6144,
+            10,
+            64
+          ]
+        ],
+        "fa4_kernels": {
+          "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrf16gmemalign16oi64div81i64div8i64div8_tensorptrf16gmemalign16oi64div81i64div8i64div8_tens_0": 1
+        },
+        "sdpa_kernels": {
+          "void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, true, true, false, false>(pytorch_flash::Flash_fwd_params)": 1
+        }
+      },
+      "comparison": {
+        "pixel_mae": 0.0008421480266097325,
+        "pixel_psnr_db": 47.930502476539345,
+        "pixel_ssim": 0.9948629524673943,
+        "latent_relative_l2": 0.006139867007732391
+      },
+      "median_seconds": {
+        "fa4": 3.2062857749999694,
+        "sdpa": 3.257255991999955
+      },
+      "sdpa_over_fa4_speed_ratio": 1.0158969663270223
+    }
+  ]
+}

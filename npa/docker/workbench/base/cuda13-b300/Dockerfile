@@ -9,16 +9,12 @@ ARG TORCH_VERSION=2.13.0
 ARG TORCHVISION_VERSION=0.28.0
 # TorchAudio 2.11 is forward-compatible with later Torch releases.
 ARG TORCHAUDIO_VERSION=2.11.0
-ARG FLASH_ATTN_COMMIT=0409f9adcbdebff6cc19eb95f370d40e896980bc
-# flash-attn-4 requires nvidia-cutlass-dsl>=4.4.2 and quack-kernels>=0.4.0, both
-# unbounded, so pip resolves to whatever is newest. CUTLASS DSL 4.6.x dropped
-# cutlass.cute.core.ThrMma, which this flash-attn commit still references, so an
-# unpinned build installs successfully and then fails on `import flash_attn`
-# with "module 'cutlass.cute.core' has no attribute 'ThrMma'". 4.5.3 is the
-# newest DSL that still exposes it; quack 0.5.0 is the newest quack that accepts
-# a 4.5.x DSL (0.5.3+ pin an exact 4.6 release). Bump all three together.
-ARG CUTLASS_DSL_VERSION=4.5.3
-ARG QUACK_KERNELS_VERSION=0.5.0
+# Includes SM120 dispatch/backward fixes (#2671) and varlen tile guards (#2763).
+# Quack 0.6.4 requires exactly CUTLASS DSL 4.6.2; update this trio together and
+# execute the forward/gradient smoke on each claimed GPU architecture.
+ARG FLASH_ATTN_COMMIT=eed1971f5132630dc296fe37601e834d4b57a248
+ARG CUTLASS_DSL_VERSION=4.6.2
+ARG QUACK_KERNELS_VERSION=0.6.4
 # SASS is per-arch with no cross-major compatibility, so every architecture a
 # source-compiled extension must run on has to be listed here explicitly:
 #   8.0  = A100 (sm_80)          9.0  = H100/H200 (sm_90)
@@ -181,8 +177,8 @@ import importlib.metadata as metadata
 import flash_attn
 from flash_attn import flash_attn_func
 
-# Import only: the flash-attn-4 CuTe kernel needs a GPU with TMA, so whether it
-# actually runs is decided by /npa/gpu_capability_smoke.py at deploy time.
+# Imports do not prove kernel execution or backward correctness. The baked
+# gpu_capability_smoke.py checks both on the actual target GPU.
 print("nvidia-nccl-cu13", metadata.version("nvidia-nccl-cu13"))
 print("flash-attn-4", flash_attn.__version__)
 print("flash_attn_func", flash_attn_func)

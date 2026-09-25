@@ -9,7 +9,6 @@
 #   NPA_TARGET_CAP     capability the device must report, e.g. 10.0
 #   NPA_CROSS_ARCH     a different CUDA major, e.g. sm_120 - the negative test
 #   NPA_CROSS_CAP      that architecture's capability, e.g. 12.0
-#   NPA_ALLOW_NO_TMA   "--allow-no-tma" on sm_120, empty on datacenter parts
 #
 # The job runs three checks so a pass means something:
 #   1. positive - the target architecture must pass with native SASS
@@ -78,7 +77,8 @@ spec:
 
               echo "### capability smoke"
               python /npa/gpu_capability_smoke.py \
-                --expect-capability "${NPA_TARGET_CAP}" ${NPA_ALLOW_NO_TMA}
+                --expect-capability "${NPA_TARGET_CAP}" \
+                --json-output /scratch/fa4-capability.json
               SMOKE=$?
 
               FAILED=0
@@ -96,8 +96,6 @@ spec:
               value: "NPA_CROSS_ARCH"
             - name: NPA_CROSS_CAP
               value: "NPA_CROSS_CAP"
-            - name: NPA_ALLOW_NO_TMA
-              value: "NPA_ALLOW_NO_TMA"
             # The root filesystem is read-only, but flash-attn-4's CuTe kernels
             # JIT-compile at runtime and need somewhere to cache. Point every
             # cache torch and CUDA use at the scratch volume below.

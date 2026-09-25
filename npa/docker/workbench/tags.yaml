@@ -39,5 +39,5 @@ tag_families:
       blackwell-dc-images.json.
     blockers:
       - Taichi missing stable sm_103 support
-      - flash-attn stable Blackwell wheels not yet available
+      - FA4 feature and shape restrictions require per-image GPU qualification
       - "CUDA 13 host driver requirement: >= 580"

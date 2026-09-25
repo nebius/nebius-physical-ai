@@ -136,24 +136,23 @@ containers:
     physical_ai:
       useful: true
       role: >-
-        Shared CUDA 13 / PyTorch 2.9 foundation image for B300 (Blackwell)
-        derivatives (cosmos3-reason, sim2real-*). Not a tool itself.
+        Shared CUDA 13 / PyTorch 2.13 foundation image for Blackwell
+        derivatives (cosmos3-reason, sim2real-*), including RTX PRO 6000.
+        Not a tool itself.
     safety:
       runs_as: ubuntu
       base_image: nvidia/cuda:13.0.1-cudnn-devel-ubuntu22.04
       network: none
       external_fetch: [pypi, pytorch-cu130, flash-attn-cute]
       notes: >-
-        No runtime entrypoint or open ports; build-time only. Pinned digestless
+        No runtime entrypoint or open ports; build-time only. Digest-pinned
         CUDA base tracked by the weekly Trivy base-image CVE scan.
     golden_eval:
-      # An import check passed on every Blackwell part for months while the
-      # flash-attn-4 CuTe forward kernel could not actually execute on sm_120.
-      # Execute the kernel instead, via the committed capability smoke: it also
-      # asserts the device architecture and that the wheel carries native SASS
-      # for it, with a bf16 matmul and torch SDPA as controls.
+      # Import-only checks miss dispatch and backward regressions. Execute FA4
+      # outputs and gradients against FP64 references on the resident GPU.
+      # Use --expect-capability explicitly when qualifying one specific SKU.
       kind: container-smoke
-      command: 'python /npa/gpu_capability_smoke.py --expect-capability 10.3'
+      command: 'python /npa/gpu_capability_smoke.py'
       script: npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py
       serverless_gpu: b300
       gpu: required

@@ -29,10 +29,10 @@ is forward compatible: sm_86 runs on sm_89 (L40S), and sm_100 runs on sm_103
 sm_100 SASS and no PTX reaches B200 natively and B300 by forward compatibility,
 while an extension whose highest entry is sm_90 reaches no Blackwell part at all.
 
-Coverage is a necessary condition, never a sufficient one. A kernel can be
-present and still fail - flash-attn-4 ships sm_120 SASS and its CuTe forward
-pass raises on sm_120 because the epilogue needs TMA. Only a real capability run
-on the part decides a cell.
+Coverage is a necessary condition, never a sufficient one. Torch wheel SASS
+coverage does not qualify a separate JIT kernel: historical FA4 CuTe builds
+failed on sm_120 because of an epilogue dispatch bug despite compatible Torch
+SASS. Only a real capability run on the part decides a cell.
 
 USAGE
   measure_extension_arches.py <wheel|.so|directory> [...] [--require sm_100]
