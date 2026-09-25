@@ -6,9 +6,12 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
+import sys
 import tempfile
+import traceback
 
 from npa.workbench.nurec.navigation_assets import (
     contained_file,
@@ -175,17 +178,16 @@ def _verify_and_publish(input_path: str, output_path: str, runtime_image: str) -
 def main() -> None:
     """Start Isaac, validate actual scene queries, and publish physics evidence.
 
+    Native runtime failures terminate with status 1 before Kit shutdown can
+    replace the failure status. Diagnostics are flushed to standard error.
+
     Args:
         None; input/output paths are parsed from the command line.
     Returns:
         None.
     Raises:
         SystemExit: Command-line arguments are invalid.
-        ImportError: Not running through the Isaac runtime interpreter.
-        ValueError: Image declaration, bundle, runtime metadata, or a query is invalid.
-        StorageError: Input download or conditional output publication fails.
-        ClientError: The S3 provider rejects an artifact write.
-        OSError: Storage fails.
+        ValueError: The runtime image declaration is invalid before Isaac starts.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-path", required=True)
@@ -193,12 +195,20 @@ def main() -> None:
     parser.add_argument("--runtime-image", required=True)
     args = parser.parse_args()
     _declared_image(args.runtime_image)
-    from isaacsim import SimulationApp
+    try:
+        from isaacsim import SimulationApp
 
-    app = SimulationApp({"headless": True})
-    _verify_and_publish(args.input_path, args.output_path, args.runtime_image)
-    # Isaac can terminate its interpreter during close; publish only after checks.
-    app.close()
+        app = SimulationApp({"headless": True})
+        _verify_and_publish(args.input_path, args.output_path, args.runtime_image)
+        # Isaac can terminate its interpreter during close; publish only after checks.
+        app.close()
+    except BaseException:
+        # Kit's atexit shutdown can replace a Python exception with exit status 0.
+        # Preserve failed validation even when native shutdown cannot be trusted.
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
 
 
 if __name__ == "__main__":
