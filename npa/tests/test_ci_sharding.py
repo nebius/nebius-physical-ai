@@ -29,11 +29,12 @@ def test_ci_shard_coordinates_are_optional(monkeypatch: pytest.MonkeyPatch) -> N
     assert suite_conftest._ci_shard_coordinates() is None
 
 
-def test_ci_shards_cover_every_item_once() -> None:
+@pytest.mark.parametrize("total", [4, 8])
+def test_ci_shards_cover_every_item_once(total: int) -> None:
     """Assign the complete collection without overlap between shards.
 
     Args:
-        None.
+        total: Shard count used by daily audits or PR validation.
     Returns:
         None.
     Raises:
@@ -42,8 +43,8 @@ def test_ci_shards_cover_every_item_once() -> None:
 
     items = [SimpleNamespace(nodeid=f"test_{index:02d}") for index in range(17)]
     shards = [
-        suite_conftest._items_for_ci_shard(items, shard_index, 4)
-        for shard_index in range(4)
+        suite_conftest._items_for_ci_shard(items, shard_index, total)
+        for shard_index in range(total)
     ]
     assigned = [item.nodeid for shard in shards for item in shard]
     assert sorted(assigned) == sorted(item.nodeid for item in items)
@@ -51,14 +52,16 @@ def test_ci_shards_cover_every_item_once() -> None:
     assert max(map(len, shards)) - min(map(len, shards)) <= 1
 
 
+@pytest.mark.parametrize("total", [4, 8])
 def test_ci_shards_balance_recorded_duration(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, total: int
 ) -> None:
     """Spread slow modules using measured work rather than test count.
 
     Args:
         monkeypatch: Replaces the committed timing manifest.
         tmp_path: Holds a public synthetic timing manifest.
+        total: Shard count used by daily audits or PR validation.
     Returns:
         None.
     Raises:
@@ -73,14 +76,14 @@ def test_ci_shards_balance_recorded_duration(
         *(SimpleNamespace(nodeid=f"tests/fast.py::test_{index}") for index in range(8)),
     ]
     shards = [
-        suite_conftest._items_for_ci_shard(items, shard_index, 4)
-        for shard_index in range(4)
+        suite_conftest._items_for_ci_shard(items, shard_index, total)
+        for shard_index in range(total)
     ]
     slow_counts = [
         sum(item.nodeid.startswith("tests/slow.py") for item in shard)
         for shard in shards
     ]
-    assert slow_counts == [2, 2, 2, 2]
+    assert slow_counts == [8 // total] * total
 
 
 def test_ci_timing_artifacts_merge_by_module(tmp_path: Path) -> None:

@@ -179,6 +179,7 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("LEISAAC_ASSETS_ROOT", "leisaac/assets/runtime"),
     ("WAN22_CACHE_DIR", "wan2.2"),
     ("NPA_LTX_MODEL_CACHE", "ltx-2.5"),
+    ("NPA_SAM3_CACHE", "sam3"),
     ("NPA_CONTENT_AGENTS_RUNTIME_CACHE", "runtimes/content-agents"),
 )
 

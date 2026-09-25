@@ -37,6 +37,7 @@ NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
+    "antioch": "npa-antioch",
     "openpi": "npa-openpi",
     "lerobot": "npa-lerobot",
     "sim2real-control": "npa-sim2real-control",
@@ -75,9 +76,11 @@ CONTAINER_IMAGE_NAMES = {
     "diffusers": "npa-diffusers",
     "lingbot-world": "npa-lingbot-world",
     "sam2": "npa-sam2",
+    "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
     "curobo": "npa-curobo",
+    "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
 }
@@ -89,6 +92,13 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-anomalygen-sky",
+        "paidf-attribute-search-sky",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
@@ -129,11 +139,20 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. The Cosmos3-Super
-# benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
-# remains build-your-own in an operator-controlled registry.
+# redistribution decision, not a particular vendor payload. Operator-built
+# PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-super-benchmark", "cosmos3-nano-video"}
+    {
+        "cosmos3-nano-video",
+        "cosmos3-super-benchmark",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-attribute-search-sky",
+        "paidf-anomalygen-sky",
+        "paidf-image-edit-sky",
+        "paidf-event-video-sky",
+    }
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
@@ -141,8 +160,10 @@ RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no accepted
-# built/GPU-validated artifact yet.
+# Tools that are licence-eligible for public redistribution but have not earned
+# every publication claim yet. Antioch is CPU-only and has a built-image payload
+# scan and local capability
+# smoke, but has not been published or anonymously pulled from the public mirror.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -153,8 +174,10 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {"openpi", "curobo", "ncore", "sam3"}
+)
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -244,6 +267,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "antioch": "0.1.0-cli0.4.289",
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
@@ -290,11 +314,14 @@ SUPPORTED_TOOL_VERSIONS = {
     "diffusers": "0.38.0-rtfetch-20260916",
     "lingbot-world": "a43bec7-rtfetch-20260916",
     "sam2": "2.1-rtfetch-20260916",
+    # Candidate only; excluded from the supported public release plan.
+    "sam3": "3.1-unbuilt",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128-r3",
     "curobo": "0.8.0-cuda13-b300-unbuilt",
+    "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
@@ -582,10 +609,22 @@ def public_release_manifest() -> dict[str, Any]:
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
         raise RuntimeError("Public release manifest inventories must be objects")
-    if set(releases) | set(pending) != set(publicly_publishable_tools()):
+    redistribution_eligible = {
+        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+    }
+    expected_releases = redistribution_eligible - PUBLICATION_QUARANTINE_TOOLS
+    if set(releases) != expected_releases:
         raise RuntimeError(
-            "Public release manifest must partition every publishable tool into "
-            "published or publication-pending"
+            "Public release manifest releases must match every currently publishable tool"
+        )
+    pending_tools = set(pending)
+    if (
+        pending_tools & set(releases)
+        or not pending_tools <= redistribution_eligible & PUBLICATION_QUARANTINE_TOOLS
+    ):
+        raise RuntimeError(
+            "Public release manifest pending tools must be distinct, "
+            "redistribution-eligible publication candidates"
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):

@@ -41,15 +41,6 @@ work lives).
   anything.
 
 
-#### [M] Add standalone LeRobot library validation test
-
-- **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
-- **Status**: Still active.
-- **Current issue**: Adapter tests validate parquet via pyarrow directly, which
-  misses failures that real `LeRobotDataset` loading would catch.
-- **Next step**: Add an optional `pytest.importorskip("lerobot")` smoke test that
-  loads an exported dataset with the LeRobot library and inspects one sample.
-
 #### [M] Lift remote-env upload pattern to shared storage module
 
 - **Surfaced by**: CC review on 2026-05-10.
@@ -69,6 +60,12 @@ work lives).
   document the API, and cover imports/behavior in tests.
 
 ## Resolved (recent)
+
+- 2026-09-23 - The Sim-to-LeRobot adapter has an optional native-reader smoke
+  that exports a compact synthetic dataset, loads the real directory through
+  `LeRobotDataset`, and checks native metadata, task and vector fields, and
+  decoded cameras. Environments without the optional `lerobot` dependency skip
+  this smoke and do not provide native-compatibility evidence.
 
 #### [H] Agent VM S3 credentials were readable from cloud-init user data
 

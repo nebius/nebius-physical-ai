@@ -22,13 +22,20 @@ import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
+from npa.orchestration.npa_workflow.run_state import (
+    RunStateStore,
+    RuntimeRunState,
+    runtime_key,
+)
 from npa.orchestration.npa_workflow.runtime import (
     MAX_TERMINAL_PLAN_MIGRATIONS,
+    SCHEDULER_OBSERVATION_SCHEMA,
+    SCHEDULER_OBSERVATION_SOURCE,
     RuntimeLedger,
     RuntimeOptions,
     SkyPilotWaveExecutor,
     WaveAttempt,
+    _record_reached_running,
     plan_fingerprint,
     run_workflow_runtime,
     s3_artifact_exists,
@@ -37,6 +44,138 @@ from npa.orchestration.npa_workflow.runtime import (
 )
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+
+def _typed_running_observation(
+    *,
+    wave_key: str,
+    job_id: str,
+    job_name: str,
+    logical_launch_id: str,
+    attempt: int = 1,
+    scheduler_fence_sequence: int = 1,
+    launch_sequence: int = 1,
+    scheduler_state: str = "RUNNING",
+) -> dict[str, object]:
+    return {
+        "schema": SCHEDULER_OBSERVATION_SCHEMA,
+        "source": SCHEDULER_OBSERVATION_SOURCE,
+        "observed_at": "2026-09-15T19:00:00+00:00",
+        "wave_key": wave_key,
+        "job_id": job_id,
+        "job_name": job_name,
+        "logical_launch_id": logical_launch_id,
+        "attempt": attempt,
+        "scheduler_fence_sequence": scheduler_fence_sequence,
+        "launch_sequence": launch_sequence,
+        "scheduler_state": scheduler_state,
+    }
+
+
+def test_typed_exact_scheduler_running_evidence_authorizes_adoption() -> None:
+    record = {
+        "key": "001|serial|state:-",
+        "job_id": "77",
+        "job_name": "typed-job",
+        "logical_launch_id": "logical-1",
+        "attempt": 2,
+        "scheduler_fence_sequence": 8,
+        "launch_sequence": 3,
+    }
+    record["observations"] = [
+        _typed_running_observation(
+            wave_key=record["key"],
+            job_id=record["job_id"],
+            job_name=record["job_name"],
+            logical_launch_id=record["logical_launch_id"],
+            attempt=record["attempt"],
+            scheduler_fence_sequence=record["scheduler_fence_sequence"],
+            launch_sequence=record["launch_sequence"],
+        )
+    ]
+
+    assert _record_reached_running(record) is True
+
+
+@pytest.mark.parametrize(
+    ("label", "observation"),
+    [
+        (
+            "queued",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="77",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=2,
+                scheduler_fence_sequence=8,
+                launch_sequence=3,
+                scheduler_state="PENDING",
+            ),
+        ),
+        (
+            "submitted",
+            {
+                "scheduler_state": "SUBMITTED",
+                "message": "job may be running soon",
+            },
+        ),
+        (
+            "ambiguous-running-text",
+            {"message": "submitted; worker running setup", "statuses": {}},
+        ),
+        (
+            "mismatched-job",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="different-job",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=2,
+                scheduler_fence_sequence=8,
+                launch_sequence=3,
+            ),
+        ),
+        (
+            "stale-launch",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="77",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=1,
+                scheduler_fence_sequence=7,
+                launch_sequence=2,
+            ),
+        ),
+        (
+            "unavailable",
+            {
+                "schema": SCHEDULER_OBSERVATION_SCHEMA,
+                "source": SCHEDULER_OBSERVATION_SOURCE,
+                "scheduler_state": "UNAVAILABLE",
+            },
+        ),
+    ],
+)
+def test_non_running_or_unbound_scheduler_evidence_cannot_authorize_adoption(
+    label: str, observation: dict[str, object]
+) -> None:
+    del label
+    record = {
+        "key": "001|serial|state:-",
+        "job_id": "77",
+        "job_name": "typed-job",
+        "logical_launch_id": "logical-1",
+        "attempt": 2,
+        "scheduler_fence_sequence": 8,
+        "launch_sequence": 3,
+        "observations": [observation],
+        "tasks": [{"status": "RUNNING", "log": "running"}],
+    }
+
+    assert _record_reached_running(record) is False
+
 
 GATE_LOOP_SPEC = """
 apiVersion: npa.workflow/v0.0.1
@@ -298,6 +437,7 @@ class MemoryStore(RunStateStore):
 
     def __init__(self, objects: dict[str, bytes] | None = None) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
+        self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
             prefix="unit-prefix",
@@ -312,6 +452,7 @@ class MemoryStore(RunStateStore):
         return self.objects[key].decode("utf-8")
 
     def _write_obj(self, bucket: str, key: str, body: bytes) -> None:
+        self.write_calls.append(key)
         self.objects[key] = body
 
     def _list_obj(self, _bucket: str, prefix: str) -> list[str]:
@@ -1338,6 +1479,104 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     # Successful waves replay, while a terminal workload failure remains terminal.
     assert second_submitter.calls == []
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
+
+
+SEMANTIC_RESUME_CORRUPTION_CASES = (
+    "truncated_json",
+    "empty_object",
+    "missing_run_id",
+    "missing_workflow",
+    "mismatched_run_id",
+    "mismatched_workflow",
+    "missing_schema_version",
+    "unsupported_schema_version",
+    "waves_string",
+    "waves_non_object_entry",
+    "stages_string",
+    "decisions_object",
+    "plan_migrations_string",
+    "watermarks_array",
+    "api_version_array",
+)
+
+
+def _semantic_resume_payload(
+    case: str,
+    *,
+    workflow: str,
+    run_id: str,
+) -> dict[str, object]:
+    payload = RuntimeRunState(workflow=workflow, run_id=run_id).to_dict()
+    if case == "empty_object":
+        return {}
+    if case.startswith("missing_"):
+        payload.pop(case.removeprefix("missing_"))
+    elif case == "mismatched_run_id":
+        payload["run_id"] = "other-run"
+    elif case == "mismatched_workflow":
+        payload["workflow"] = "other-workflow"
+    elif case == "unsupported_schema_version":
+        payload["schema_version"] = "npa.workflow.runtime.v999"
+    elif case == "waves_string":
+        payload["waves"] = "corrupt-but-valid-json"
+    elif case == "waves_non_object_entry":
+        payload["waves"] = [
+            {"key": "done", "status": "succeeded"},
+            "corrupt-entry",
+        ]
+    elif case == "stages_string":
+        payload["stages"] = "corrupt-but-valid-json"
+    elif case == "decisions_object":
+        payload["decisions"] = {"decision": "promote"}
+    elif case == "plan_migrations_string":
+        payload["plan_migrations"] = "corrupt-but-valid-json"
+    elif case == "watermarks_array":
+        payload["watermarks"] = []
+    elif case == "api_version_array":
+        payload["api_version"] = ["wrong-type"]
+    return payload
+
+
+@pytest.mark.parametrize("case", SEMANTIC_RESUME_CORRUPTION_CASES)
+def test_resume_rejects_corrupt_ledger_before_executor_creation(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    run_id = "rt-corrupt-ledger"
+    corrupt_bytes = (
+        b'{"schema_version":'
+        if case == "truncated_json"
+        else (
+            json.dumps(
+                _semantic_resume_payload(case, workflow=spec.name, run_id=run_id),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+    )
+    key = runtime_key("unit-prefix")
+    store = MemoryStore({key: corrupt_bytes})
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(resume=True)
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ) as error:
+        _executor(
+            spec,
+            run_id=run_id,
+            submitter=submitter,
+            options=options,
+            store=store,
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects[key] == corrupt_bytes
+    assert key in str(error.value)
+    assert "s3://unit-bucket" not in str(error.value)
 
 
 @pytest.mark.parametrize(
@@ -2484,13 +2723,16 @@ def test_explicit_resume_adopts_controller_lost_running_wave_with_valid_outputs(
             "attempt": 1,
             "sky_status": "RUNNING",
             "logical_launch_id": "logical-output-adopt",
+            "scheduler_fence_sequence": 1,
             "launch_sequence": 1,
             "recovery_decision": "submitted_and_reconciled",
             "observations": [
-                {
-                    "scheduler_state": "RUNNING",
-                    "statuses": {"rt-output-adopt-01-shards": "RUNNING"},
-                }
+                _typed_running_observation(
+                    wave_key="001|shards|shards:shard-a:-,shards:shard-b:-",
+                    job_id="77",
+                    job_name="rt-output-adopt-01-shards",
+                    logical_launch_id="logical-output-adopt",
+                )
             ],
         }
     )
@@ -2551,6 +2793,7 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
             "attempt": 1,
             "sky_status": "SUBMITTED",
             "logical_launch_id": "logical-output-interrupted",
+            "scheduler_fence_sequence": 1,
             "launch_sequence": 1,
             "recovery_decision": "adopt_exact_attempt",
             "error": "KeyboardInterrupt:",
@@ -2561,10 +2804,12 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
                 }
             ],
             "observations": [
-                {
-                    "scheduler_state": "RUNNING",
-                    "statuses": {"rt-output-interrupted-01-shards": "RUNNING"},
-                }
+                _typed_running_observation(
+                    wave_key="001|shards|shards:shard-a:-,shards:shard-b:-",
+                    job_id="77",
+                    job_name="rt-output-interrupted-01-shards",
+                    logical_launch_id="logical-output-interrupted",
+                )
             ],
             "cancellation": {"state": "failed", "error": "controller absent"},
         }
@@ -2600,6 +2845,72 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
     assert all(
         call["job_name"] != "rt-output-interrupted-01-shards-a2"
         for call in submitter.calls
+    )
+
+
+def test_explicit_resume_rejects_untyped_running_task_evidence(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-output-task-evidence")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "77",
+            "job_name": "rt-output-task-evidence-01-shards",
+            "attempt": 1,
+            "sky_status": "SUBMITTED",
+            "logical_launch_id": "logical-output-task-evidence",
+            "launch_sequence": 1,
+            "recovery_decision": "block_indeterminate",
+            "outputs": [
+                {
+                    "uri": "s3://bucket/prefix/shard-a.json",
+                    "schema": "test.output.v1",
+                }
+            ],
+            "tasks": [{"task_id": 0, "status": "RUNNING"}],
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        adopt_absent_in_flight_outputs=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-output-task-evidence",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-output-task-evidence", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert submitter.calls == []
+    assert not any(
+        item.get("recovery_decision") == "operator_authorized_absent_output_adoption"
+        for item in report.waves
     )
 
 

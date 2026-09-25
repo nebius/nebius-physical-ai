@@ -19,7 +19,9 @@ The training stage is the `workflow.xr1.finetune` toolRef in
 `workflows/partners/antioch/xr1-antioch-finetune.yaml`. It runs on Nebius and publishes
 checkpoints to S3. Antioch collection, transfers, and closed-loop evaluation
 are operator CLI/SDK steps around that YAML. Do not describe the entire loop as
-one submitted workflow. The NPA CLI has no separate Antioch subcommand.
+one submitted workflow. The separate `npa workbench antioch` commands operate
+the Workbench adapter and live OpenPI path; see the
+[partner catalog](../../../workflows/partners/antioch/README.md) to choose a flow.
 
 ## Authentication
 

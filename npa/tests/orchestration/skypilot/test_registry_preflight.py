@@ -469,6 +469,7 @@ def test_verified_target_pull_secret_can_satisfy_private_foreign_registry(
         mint=False,
         fetcher=operator_unreachable,
         pull_secret_names=("pull-secret",),
+        namespace="default",
         context="target-context",
         secret_runner=lambda *args, **kwargs: _docker_secret_result(registry),
     )
@@ -491,6 +492,7 @@ def test_missing_or_rbac_denied_pull_secret_is_not_target_pull_proof() -> None:
         mint=False,
         fetcher=operator_unreachable,
         pull_secret_names=("missing-secret",),
+        namespace="default",
         secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
             cmd, 1, stdout="", stderr="forbidden: cannot get secret"
         ),
@@ -546,3 +548,51 @@ def test_target_secret_with_empty_auth_entry_is_unverified() -> None:
 
     assert verified is False
     assert "contains no usable credential fields" in detail
+
+
+def test_pull_secret_uses_context_namespace(monkeypatch):
+    from npa.clients import kubernetes_namespace
+
+    calls = []
+    monkeypatch.setattr(
+        kubernetes_namespace, "context_namespace", lambda **kwargs: "team-a"
+    )
+
+    def unavailable(*args):
+        raise OSError("no registry route")
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return _docker_secret_result("ghcr.io")
+
+    checks = check_image_pulls_with_credentials(
+        ["ghcr.io/team/private:1"],
+        mint=False,
+        fetcher=unavailable,
+        pull_secret_names=("pull-secret",),
+        context="cluster",
+        secret_runner=runner,
+    )
+    assert checks[0].ok
+    assert calls[0][calls[0].index("--namespace") + 1] == "team-a"
+
+
+def test_unreadable_context_never_checks_default_namespace(monkeypatch):
+    from npa.clients import kubernetes_namespace
+
+    def unreadable(**kwargs):
+        raise ValueError("unreadable context")
+
+    def unavailable(*args):
+        raise OSError("no registry route")
+
+    monkeypatch.setattr(kubernetes_namespace, "context_namespace", unreadable)
+    checks = check_image_pulls_with_credentials(
+        ["ghcr.io/team/private:1"],
+        mint=False,
+        fetcher=unavailable,
+        pull_secret_names=("pull-secret",),
+        context="cluster",
+        secret_runner=lambda *args, **kwargs: pytest.fail("unsafe namespace fallback"),
+    )
+    assert checks[0].status == "target_pull_unverified"

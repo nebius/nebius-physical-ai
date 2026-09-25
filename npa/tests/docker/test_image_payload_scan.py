@@ -228,8 +228,8 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
         "'nvidia-nvshmem-cu12==3.2.5'",
     ):
         assert pin in dockerfile
-    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0314" in dockerfile
-    assert "'rerun-sdk==0.31.4'" in dockerfile
+    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0381" in dockerfile
+    assert "'rerun-sdk==0.38.1'" in dockerfile
     assert "'numpy==1.26.4'" in dockerfile
     assert "from transformers import GemmaForCausalLM" in dockerfile
     assert "NPA_OPENPI_RERUN_PYTHON=/opt/rerun-venv/bin/python" in dockerfile
@@ -253,7 +253,7 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "'numpy==1.26.4'" in trainer_addons
     assert "rerun-sdk" not in trainer_addons
     assert "'pyyaml==6.0.3'" in rerun_addons
-    assert "'rerun-sdk==0.31.4'" in rerun_addons
+    assert "'rerun-sdk==0.38.1'" in rerun_addons
     assert "pip check --python /opt/rerun-venv/bin/python" in rerun_addons
     assert "google-cloud-storage==3.13.1" in gcs_lock
     assert "--hash=sha256:" in gcs_lock
@@ -317,6 +317,21 @@ def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
     assert "-delete" in runtime_base_layer
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in runtime_base_layer
+
+
+def test_mjlab_removes_bundled_ffmpeg_before_the_dependency_layer_commits() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "mjlab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    dependency_layer = dockerfile.split("COPY pyproject.toml", 1)[0].rsplit("RUN ", 1)[
+        1
+    ]
+    assert "pip install --no-cache-dir --require-hashes" in dependency_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*' -delete" in dependency_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dependency_layer
+    assert "imageio_ffmpeg.write_frames" in dependency_layer
+    assert "imageio_ffmpeg.read_frames" in dependency_layer
 
 
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
