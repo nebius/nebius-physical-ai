@@ -225,6 +225,10 @@ class ScanReport:
     #: True when only the layer history was inspected. Recorded in the JSON report so a
     #: consumer can never mistake a fast gate result for a full-filesystem proof.
     history_only: bool = False
+    #: Metadata blobs referenced as layers that carry no filesystem, so there was
+    #: nothing to walk. Recorded rather than silently dropped: a reviewer needs to
+    #: see that something in the archive was present but not scanned as a layer.
+    skipped_metadata_layers: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -250,6 +254,10 @@ class ScanReport:
             "history_hits": self.history_hits,
             "allowlisted_paths_present": sorted(self.allowlisted_hits),
             "weight_shaped_paths": sorted(self.weight_shaped_paths),
+            # Build-metadata blobs that a manifest lists as layers. They were proved
+            # present at their declared size but carry no filesystem, so a reviewer can
+            # see exactly what the walk did not cover instead of having to infer it.
+            "skipped_metadata_layers": self.skipped_metadata_layers,
         }
 
 
@@ -340,6 +348,63 @@ def _require_saved_config(name, documents):
         )
 
 
+#: Layer media types that carry build metadata instead of filesystem content.
+#: BuildKit, which is the default builder, records SLSA provenance and SBOMs as
+#: in-toto statements in a separate attestation manifest alongside the platform
+#: image. Those blobs are JSON rather than tar, so nothing can walk them as a
+#: layer, and requiring them to have been scanned rejects the entire image and
+#: blocks the byte-level verification that gates publication.
+#:
+#: The exemption is narrow in two ways that matter, because this scanner gates a
+#: *redistribution* claim: what the image ships, not only what it can execute.
+#: An attestation blob ships with the image and is pulled by everyone who pulls
+#: it, so "cannot be extracted as a root filesystem" would not be sufficient
+#: grounds on its own.
+#:
+#: First, the exemption never suppresses a scan. A blob that parses as tar is
+#: walked by `_iter_saved_member` whatever the manifest calls it, so it lands in
+#: `scanned_layers` and takes the ordinary path below; a restricted payload in a
+#: tar wearing this label is still found. Second, for a blob that genuinely
+#: cannot be walked, the content is checked against the label rather than
+#: trusted: it must parse as an in-toto statement. Otherwise the media type,
+#: which the image builder controls, would be enough to turn "cannot be cleared"
+#: into "cleared" for arbitrary bytes.
+#:
+#: What this still does not do, stated so it is not mistaken for coverage: the
+#: statement's `predicate` is not inspected, so a well-formed statement carrying
+#: encoded content in its own fields is cleared. Scanning that text for restricted
+#: paths would be worse than leaving it: an SBOM's job is to enumerate every file
+#: in the image, so a legitimate attestation for a restricted image names those
+#: paths by design, and matching on them would fail every honest build while a
+#: base64 field slipped through anyway. Closing it properly needs a predicate-aware
+#: check against the declared predicateType, which is a larger change than the
+#: publication path needs today.
+NON_FILESYSTEM_LAYER_MEDIA_TYPES = frozenset({"application/vnd.in-toto+json"})
+
+#: Every in-toto statement carries this as its `_type`, versioned after the slash.
+IN_TOTO_STATEMENT_TYPE_PREFIX = "https://in-toto.io/Statement/"
+
+
+def _require_in_toto_statement(name, documents):
+    """Refuse a blob that claims to be build metadata but is not an in-toto statement."""
+
+    document = documents.get(name)
+    if not isinstance(document, dict):
+        raise RuntimeError(
+            f"Incomplete image archive: {name} is declared build metadata but does not "
+            "parse as a JSON document"
+        )
+    statement_type = document.get("_type")
+    if not isinstance(statement_type, str) or not statement_type.startswith(
+        IN_TOTO_STATEMENT_TYPE_PREFIX
+    ):
+        raise RuntimeError(
+            f"Incomplete image archive: {name} is declared build metadata but is not an "
+            f"in-toto statement (_type {statement_type!r})"
+        )
+    return statement_type
+
+
 def _require_saved_layer(name, scanned_layers):
     if name not in scanned_layers:
         raise RuntimeError(
@@ -382,7 +447,9 @@ def _saved_descriptor_path(descriptor, sizes):
     return name
 
 
-def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
+def _check_oci_manifest(
+    name, documents, scanned_layers, sizes, ancestors=(), attestations=None
+):
     if name in ancestors:
         raise RuntimeError("Invalid OCI image archive: cyclic index reference")
     document = documents.get(name)
@@ -397,7 +464,12 @@ def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
         for descriptor in children:
             child = _saved_descriptor_path(descriptor, sizes)
             _check_oci_manifest(
-                child, documents, scanned_layers, sizes, (*ancestors, name)
+                child,
+                documents,
+                scanned_layers,
+                sizes,
+                (*ancestors, name),
+                attestations,
             )
         return
     config = _saved_descriptor_path(document.get("config"), sizes)
@@ -407,10 +479,29 @@ def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
         raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
     for descriptor in layers:
         layer = _saved_descriptor_path(descriptor, sizes)
+        if (
+            descriptor.get("mediaType") in NON_FILESYSTEM_LAYER_MEDIA_TYPES
+            and layer not in scanned_layers
+        ):
+            # _saved_descriptor_path already proved the blob is present at the declared
+            # size, and the `scanned_layers` test above means the walk could not read it
+            # as a filesystem -- a tar would have been walked and would take the ordinary
+            # path regardless of what the manifest called it. So this is the only case
+            # where the label buys an exemption, and the content has to earn it.
+            statement_type = _require_in_toto_statement(layer, documents)
+            if attestations is not None:
+                attestations.append(
+                    {
+                        "member": layer,
+                        "media_type": descriptor["mediaType"],
+                        "statement_type": statement_type,
+                    }
+                )
+            continue
         _require_saved_layer(layer, scanned_layers)
 
 
-def _check_saved_image(documents, scanned_layers, sizes):
+def _check_saved_image(documents, scanned_layers, sizes, attestations=None):
     if "manifest.json" not in documents and "index.json" not in documents:
         raise RuntimeError("Incomplete image archive: no Docker or OCI manifest")
     if "manifest.json" in documents:
@@ -421,10 +512,12 @@ def _check_saved_image(documents, scanned_layers, sizes):
             raise RuntimeError(
                 "Incomplete image archive: missing or invalid oci-layout"
             )
-        _check_oci_manifest("index.json", documents, scanned_layers, sizes)
+        _check_oci_manifest(
+            "index.json", documents, scanned_layers, sizes, (), attestations
+        )
 
 
-def _iter_saved_image(fileobj, *, mode: str):
+def _iter_saved_image(fileobj, *, mode: str, attestations=None):
     """Stream layer paths and require complete Docker/OCI references before success."""
     documents, scanned_layers, sizes = {}, set(), {}
     with tarfile.open(fileobj=fileobj, mode=mode) as archive:
@@ -440,23 +533,25 @@ def _iter_saved_image(fileobj, *, mode: str):
             assert handle is not None
             with handle:
                 yield from _iter_saved_member(handle, name, documents, scanned_layers)
-    _check_saved_image(documents, scanned_layers, sizes)
+    _check_saved_image(documents, scanned_layers, sizes, attestations)
 
 
-def _iter_tarball(tarball: Path):
+def _iter_tarball(tarball: Path, *, attestations=None):
     """Yield member names from a `docker save` tarball, including inside layer blobs."""
     with tarball.open("rb") as handle:
-        yield from _iter_saved_image(handle, mode="r")
+        yield from _iter_saved_image(handle, mode="r", attestations=attestations)
 
 
-def _iter_docker_save(image: str):
+def _iter_docker_save(image: str, *, attestations=None):
     """Stream all local image layers without materialising a second image-sized file."""
     docker = _require("docker")
     command = [docker, "save", image]
     process = subprocess.Popen(command, stdout=subprocess.PIPE)  # noqa: S603
     assert process.stdout is not None
     try:
-        yield from _iter_saved_image(process.stdout, mode="r|*")
+        yield from _iter_saved_image(
+            process.stdout, mode="r|*", attestations=attestations
+        )
     finally:
         process.stdout.close()
         returncode = process.wait()
@@ -528,13 +623,18 @@ def scan(
     as a fast gate in front of an irreversible action, never as the proof itself -- the
     full scan is what the redistribution claim actually rests on.
     """
+    attestations: list[dict[str, str]] = []
     if docker_image is not None:
         report = ScanReport(image=docker_image, source="local-docker-stream")
-        entries = () if history_only else _iter_docker_save(docker_image)
+        entries = (
+            ()
+            if history_only
+            else _iter_docker_save(docker_image, attestations=attestations)
+        )
         history = _local_image_history(docker_image)
     elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")
-        entries = _iter_tarball(tarball)
+        entries = _iter_tarball(tarball, attestations=attestations)
         history: list[str] = []
     else:
         assert image is not None
@@ -566,6 +666,7 @@ def scan(
         if why:
             report.history_hits.append({"command": command.strip()[:400], "why": why})
 
+    report.skipped_metadata_layers = attestations
     return report
 
 
