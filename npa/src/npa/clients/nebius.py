@@ -559,24 +559,26 @@ def _restore_profile_values(previous: Mapping[str, str]) -> bool:
     return _profile_values_match(previous)
 
 
+def _rollback_profile_values(previous: Mapping[str, str]) -> ProfileMutationResult:
+    return (
+        ProfileMutationResult.RESTORED
+        if _restore_profile_values(previous)
+        else ProfileMutationResult.PARTIAL
+    )
+
+
 def set_profile_project(project_id: str, tenant_id: str = "") -> ProfileMutationResult:
-    """Point the active Nebius CLI profile at *project_id* / *tenant_id*.
+    """Rebind the active CLI profile with verified best-effort rollback.
 
-    ``npa`` shells out to the Nebius CLI with the operator's active profile, so a
-    profile whose ``parent-id``/``tenant-id`` are empty (or point somewhere else)
-    silently disables project discovery and makes later commands target the wrong
-    place. Writing the selected ids back onto the profile keeps the two in sync.
-
-    The two-field update is transactional from the caller's perspective. A
-    failed write leaves an unchanged profile alone or restores and verifies the
-    exact prior values, including values that were unset. The result distinguishes
-    a verified recovery from a profile that may still be partially mutated.
+    Separate CLI writes are not atomic across processes. Recovery restores the
+    observed prior values when possible, including unset values, and verifies
+    them by readback. Concurrent profile writers can race mutation or rollback.
 
     Args:
         project_id: Project to set as the active profile's parent.
         tenant_id: Optional tenant to set on the active profile.
     Returns:
-        A typed result describing success or the verified recovery state.
+        A typed result; compare explicitly with ProfileMutationResult.UPDATED.
     Raises:
         None. CLI and verification failures are represented by the result.
     """
@@ -595,18 +597,10 @@ def set_profile_project(project_id: str, tenant_id: str = "") -> ProfileMutation
         if not _try_write_profile_value(key, value):
             if _profile_values_match(previous):
                 return ProfileMutationResult.UNCHANGED
-            return (
-                ProfileMutationResult.RESTORED
-                if _restore_profile_values(previous)
-                else ProfileMutationResult.PARTIAL
-            )
+            return _rollback_profile_values(previous)
     if _profile_values_match(updates):
         return ProfileMutationResult.UPDATED
-    return (
-        ProfileMutationResult.RESTORED
-        if _restore_profile_values(previous)
-        else ProfileMutationResult.PARTIAL
-    )
+    return _rollback_profile_values(previous)
 
 
 # ── Tenant / project discovery ───────────────────────────────────────────

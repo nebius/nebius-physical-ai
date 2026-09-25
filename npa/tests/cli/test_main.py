@@ -1121,19 +1121,7 @@ def test_interactive_profile_binding_reports_recovery_state(
     assert expected in capsys.readouterr().out
 
 
-@pytest.mark.parametrize(
-    ("mutation_result", "expected"),
-    [
-        (
-            "restored",
-            "The previous profile values were restored and verified.",
-        ),
-        ("partial", "may be partially updated and requires repair"),
-    ],
-)
-def test_noninteractive_profile_binding_reports_recovery_state(
-    monkeypatch, tmp_path, mutation_result, expected
-) -> None:
+def _stub_noninteractive_profile_binding(monkeypatch, tmp_path, mutation_result):
     import npa.clients.nebius as nebius_module
 
     _fresh_configure_paths(monkeypatch, tmp_path)
@@ -1159,6 +1147,22 @@ def test_noninteractive_profile_binding_reports_recovery_state(
         lambda *_args: nebius_module.ProfileMutationResult(mutation_result),
     )
     monkeypatch.setattr(cli_main, "_saved_model_access_note", lambda: "access checked")
+
+
+@pytest.mark.parametrize(
+    ("mutation_result", "expected"),
+    [
+        (
+            "restored",
+            "The previous profile values were restored and verified.",
+        ),
+        ("partial", "may be partially updated and requires repair"),
+    ],
+)
+def test_noninteractive_profile_binding_reports_recovery_state(
+    monkeypatch, tmp_path, mutation_result, expected
+) -> None:
+    _stub_noninteractive_profile_binding(monkeypatch, tmp_path, mutation_result)
 
     result = runner.invoke(
         app,
