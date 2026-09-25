@@ -20,14 +20,20 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
+The Gymnasium-Robotics public candidate is a neutral development bootstrap with no
+upstream source, Shadow asset, MuJoCo/Python workload runtime, or populated
+cache in its layers. It has no accepted release build and remains release
+quarantined; it has no public image row, but now has a truthful immutable
+development-build path for byte and capability validation.
+
 The combined public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-17**. All **34 current release tags**
-matched their recorded digests; independent manifest and OCI config reads
+GHCR without credentials on **2026-09-17**. All **37 current release references**
+matched their recorded digests. Independent manifest and OCI config reads
 confirmed `linux/amd64` runtime metadata. This read-only audit includes both
-Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table references
-(33 then-current pins and 11 historical aliases); historical aliases were not
-re-audited on September 17. Capability results below remain tied to their
-original exact-digest evidence.
+Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table
+references (33 then-current pins and 11 historical aliases); historical aliases
+were not re-audited on September 17. Capability results below remain tied to
+their original exact-digest evidence.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -46,12 +52,23 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **54 packaging entries** (45 redistribution-eligible
-and nine restricted) and **46 mapped tools**: 37 public-release members, two
-restricted tools, and seven quarantined tools (`antioch`, `curobo`, `libero`, `ncore`, `openpi`,
-`robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+The current source inventory has **56 packaging entries** (47 redistribution-eligible
+and nine restricted) and **47 mapped tools**: 37 public-release members, two
+restricted tools, and eight quarantined tools (`antioch`, `curobo`, `libero`, `mjlab`, `ncore`,
+`openpi`, `robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
+
+Gymnasium-Robotics is selected by the immutable development-build matrix but
+remains separately tracked outside the mapped release inventory. It appears in the GPU
+compatibility matrix only as a development-candidate/no-accepted-image row. An
+owner-only reference build supplied the exact config and ordered 20-DiffID
+scanner anchors, but did not complete the product scan, SBOM, push, or
+immutable-digest gates and left no accepted artifact. Its Dockerfile refuses
+before package network access until the exact neutral-bootstrap package and
+corresponding-source closure exists. Runtime fetching later changes delivery
+only, not use, derivative, output, or service rights. No accepted release,
+anonymous pull, or current GPU capability is claimed.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
