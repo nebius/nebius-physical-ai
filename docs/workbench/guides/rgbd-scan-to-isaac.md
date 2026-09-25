@@ -20,8 +20,41 @@ unposed photographs, or infer metric scale from arbitrary COLMAP units. A
 navigation task can consume the resulting `scene.usdz`, but robot clearance,
 policy learning, and held-out navigation success require separate native runs.
 An indoor public capture does not establish industrial-scene or customer-data
-quality. Native GPU qualification remains pending in the
-[readiness record](../../../workflows/testing/rgbd-scan-to-isaac.readiness.json).
+quality. A public reference has passed native collision queries inside the RTX
+Isaac runtime; the complete three-stage recipe and learned navigation remain
+unqualified. See the [readiness record](../../../workflows/testing/rgbd-scan-to-isaac.readiness.json).
+
+## Measured public reference
+
+On September 25, 2026, the complete associated TUM RGB-D
+`fr3/long_office_household` capture produced the following results. CPU
+reconstruction and local OpenUSD assembly preceded a standard workflow native
+Isaac stage on an RTX PRO 6000 Blackwell Server Edition with driver 580.173.02.
+The actual worker image digest matched the report's declared immutable image.
+
+| Check | Measured result |
+| --- | --- |
+| Capture split | 1,984 integration frames; 501 held-out frames |
+| Excluded source frames | 100, with missing bounded pose or RGB/depth association recorded |
+| Reconstructed geometry | 513,594 vertices; 921,553 triangles |
+| CPU reconstruction | Open3D 0.19.0; 89.33 seconds |
+| Held-out depth | 80,703 rays; 99.903% coverage; 94.118% within 10 cm |
+| Depth error over hits | Mean 4.12 cm; 95th percentile 12.25 cm |
+| Native collision handoff | All 501 measured-depth probes passed in Isaac Sim 6.0.1 / PhysX 110.1.13 |
+
+The verified scene SHA-256 is
+`7c31f87b1e714961792bb361954f76dfe937e02703bfc8d3be04f09900d823c2`;
+the native physics report SHA-256 is
+`8871e6a29b60ff37524ecd17849b81531655e34013aaa1223ccb968bf1e6111c`.
+The completion seal, exact scene/provenance hashes, and every probe's measured
+distance interval were independently checked. Operational evidence remains
+private. These are CPU PhysX scene queries inside the RTX Isaac runtime; this
+qualification contains no rendered image or learned-policy result. The three
+stages were not executed together as one workflow.
+
+Reference attribution: J. Sturm, N. Engelhard, F. Endres, W. Burgard, D. Cremers,
+*A Benchmark for the Evaluation of RGB-D SLAM Systems*, IROS 2012;
+[TUM RGB-D benchmark](https://cvg.cit.tum.de/data/datasets/rgbd-dataset), CC-BY-4.0.
 
 ## Calibrated input
 

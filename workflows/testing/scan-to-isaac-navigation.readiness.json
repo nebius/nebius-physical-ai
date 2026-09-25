@@ -42,7 +42,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No real RTX Isaac Sim PhysX execution was performed; committed live coverage requires explicit operator opt-in.",
+      "reason": "This separate supplied visual/collision workflow remains unqualified end to end. The shared native probe passed all 501 measured-depth queries on the full public RGB-D reconstruction in Isaac Sim 6.0.1 / PhysX 110.1.13 on RTX PRO 6000; see the RGB-D readiness record for that narrower evidence.",
       "evidence": []
     }
   }

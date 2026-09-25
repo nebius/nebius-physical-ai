@@ -12,8 +12,10 @@ RTX PRO 6000 GPU; the scene assembly stage runs on CPU.
 This is a static scene handoff. It does not train or evaluate a navigation policy,
 construct a navigation map, qualify robot clearance, or prove safe navigation.
 CPU assembly does not establish physics or NuRec visual-rendering readiness.
-The committed live test is opt-in; this workflow has not yet been qualified on
-real GPU infrastructure. See its [readiness record](../../../workflows/testing/scan-to-isaac-navigation.readiness.json).
+The committed live test is opt-in. The shared native probe passed on a complete
+public RGB-D reconstruction in the RTX Isaac runtime; this separate supplied
+visual/collision workflow has not been qualified end to end. See its
+[readiness record](../../../workflows/testing/scan-to-isaac-navigation.readiness.json).
 
 ## Start from a capture
 

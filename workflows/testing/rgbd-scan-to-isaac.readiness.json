@@ -21,29 +21,43 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "Operator must select and verify a writable run-scoped storage prefix.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Private reference publication completed with conditional claim/seal; the collector independently verified the seal and artifact hashes. New operators must verify their own selected storage.",
+      "evidence": [
+        "Native physics report and completion seal verified on 2026-09-25."
+      ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Supply a hash-bound calibrated metric RGB-D capture with explicit camera poses, scale, and excluded depth frames.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Full associated public TUM fr3/long_office_household metric capture was reconstructed and assembled locally: 1984 integration frames, 501 held-out frames, and 100 source exclusions with recorded reasons.",
+      "evidence": [
+        "513594 vertices; 921553 triangles; 80703 measured held-out rays.",
+        "Capture manifest SHA-256: 8193b1590437c75cdb64cf5e25005076e044c7cc2b447f19dabddd5f571a1fdc"
+      ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Storage credentials and run-scoped Isaac runtime access were not checked.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The reference native stage fetched its sealed scene and published a verified result under the selected operator storage/runtime identity. New operators must verify their own credentials.",
+      "evidence": [
+        "Standard workflow native stage succeeded on 2026-09-25; no credentials are retained here."
+      ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Verify existing SONIC Open3D, Content Agents OpenUSD, and immutable Isaac runtime images; no live image check is claimed.",
-      "evidence": []
+      "reason": "The immutable Isaac image was pullability-checked and independently matched against the actual native worker. CPU reconstruction/assembly ran locally; the complete three-stage recipe with SONIC Open3D and Content Agents OpenUSD images was not run end to end.",
+      "evidence": [
+        "Native Isaac image SHA-256: e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+        "Selected scan payload fingerprint: 2a63c100ca2fc154d4e81aa4b62ea62d575c9cd812eaba992eb7a056303f5655"
+      ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "No real RTX Isaac Sim PhysX execution was performed; committed live coverage requires explicit operator opt-in.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The full reconstructed scene passed all 501 measured-depth probes in Isaac Sim 6.0.1 / PhysX 110.1.13 on RTX PRO 6000 Blackwell Server Edition, driver 580.173.02. These are CPU PhysX scene queries inside the RTX runtime, without rendering or learned navigation.",
+      "evidence": [
+        "Standard GPU health qualified both CUDA and graphics before submission.",
+        "Scene SHA-256: 7c31f87b1e714961792bb361954f76dfe937e02703bfc8d3be04f09900d823c2",
+        "Physics report SHA-256: 8871e6a29b60ff37524ecd17849b81531655e34013aaa1223ccb968bf1e6111c"
+      ]
     }
   }
 }
