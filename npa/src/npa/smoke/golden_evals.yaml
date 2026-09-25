@@ -1224,7 +1224,9 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_mjlab_functional
       command: python -m npa.smoke.test_mjlab_functional
-      serverless_gpu: h100
+      # The current CUDA 13 candidate was qualified on RTX PRO 6000, which is
+      # also available in the shared golden-eval project; H100 is not.
+      serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 600
       status: gpu-gated

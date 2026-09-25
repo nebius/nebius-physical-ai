@@ -282,11 +282,17 @@ def test_cosmos3_serving_requests_its_documented_eight_gpu_node() -> None:
     assert spec.golden_eval.serverless_gpu_count == 8
 
 
-def test_quarantined_images_are_not_reported_as_runnable() -> None:
-    from npa.deploy.images import PUBLICATION_QUARANTINE_TOOLS
+def test_non_candidate_quarantined_images_are_not_reported_as_runnable() -> None:
+    from npa.deploy.images import (
+        PUBLICATION_QUARANTINE_TOOLS,
+        VALIDATION_CANDIDATE_TOOLS,
+    )
 
     specs = load_manifest()
-    for name in PUBLICATION_QUARANTINE_TOOLS:
+    # Explicit dev-SHA candidates can remain GPU-gated so maintainers can run
+    # the acceptance workload that promotes them. Every other quarantined
+    # release must stay out of the runnable default batch.
+    for name in PUBLICATION_QUARANTINE_TOOLS - VALIDATION_CANDIDATE_TOOLS:
         assert specs[name].golden_eval.status == "needs-image-update", name
 
 
