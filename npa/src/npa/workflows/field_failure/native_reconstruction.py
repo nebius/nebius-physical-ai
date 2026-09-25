@@ -71,10 +71,9 @@ def _reconstruct_capture(request, protocol, capture, root, index):
         scene_sha256=_digest((prepared / "scene.usdz").read_bytes()),
     )
     (prepared / "recipe.json").write_text(json.dumps(recipe, allow_nan=False))
-    (prepared / "reconstruction.json").write_text(
-        json.dumps(reconstruction, allow_nan=False)
-    )
-    (prepared / "assembly.json").write_text(json.dumps(assembly, allow_nan=False))
+    # Assembly seals the report's bytes, so retain its original serialization.
+    shutil.copyfile(scene / "reconstruction.json", prepared / "reconstruction.json")
+    shutil.copyfile(scene / "provenance.json", prepared / "assembly.json")
     archive = root / f"navigation-{index}.tar"
     _archive(prepared, archive)
     asset = _upload(archive, request["output_prefix"] + f"scene-{index}.tar")

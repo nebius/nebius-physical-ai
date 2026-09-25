@@ -6,7 +6,9 @@ import io
 import hashlib
 import json
 import shutil
+import sys
 import tarfile
+from types import ModuleType
 
 import pytest
 
@@ -174,3 +176,61 @@ def test_native_evaluation_keeps_rendered_evidence_after_worker_cleanup(
         assert json.load(stream.extractfile("trajectory.json")) == [
             {"physical_failure": [1]}
         ]
+
+
+def test_reconstructed_scene_archive_preserves_hash_bound_report_bytes(
+    tmp_path, monkeypatch
+):
+    from npa.workflows.field_failure import native_reconstruction as native
+
+    # Stub geometry execution; exercise the real archive/lineage handoff.
+    report = {"scope": "synthetic unit fixture", "frames": 8}
+    raw = (json.dumps(report, indent=4) + "\n").encode()
+    assembly = {"reconstruction_report_sha256": hashlib.sha256(raw).hexdigest()}
+    assembly_bytes = (json.dumps(assembly, indent=2) + "\n").encode()
+    upstream = ModuleType("npa.workbench.nurec.navigation_reconstruction")
+    upstream.reconstruct_capture = lambda source, target: report
+    scene_module = ModuleType("npa.workbench.nurec.navigation_scene")
+
+    def prepare_scene(source, target):
+        from pathlib import Path
+
+        output = Path(target)
+        output.mkdir()
+        (output / "scene.usdz").write_bytes(b"synthetic scene fixture")
+        (output / "reconstruction.json").write_bytes(raw)
+        (output / "provenance.json").write_bytes(assembly_bytes)
+        return assembly
+
+    scene_module.prepare_scene = prepare_scene
+    monkeypatch.setitem(sys.modules, upstream.__name__, upstream)
+    monkeypatch.setitem(sys.modules, scene_module.__name__, scene_module)
+    monkeypatch.setattr(native, "_bundle", lambda *args: tmp_path)
+    monkeypatch.setattr(native, "_recipe", lambda *args: {})
+    uploaded = []
+
+    def upload(path, uri):
+        uploaded.append(path.read_bytes())
+        return {"uri": uri, "sha256": hashlib.sha256(uploaded[-1]).hexdigest()}
+
+    monkeypatch.setattr(native, "_upload", upload)
+    native._reconstruct_capture(
+        {"output_prefix": "s3://example-bucket/unit-scene/"},
+        {},
+        {
+            "scenario_id": "unit-room",
+            "group_id": "unit-site",
+            "asset": {"sha256": "a" * 64},
+        },
+        tmp_path,
+        0,
+    )
+    with tarfile.open(fileobj=io.BytesIO(uploaded[0])) as archive:
+        reconstruction = archive.extractfile("reconstruction.json").read()
+        provenance = archive.extractfile("assembly.json").read()
+    assert reconstruction == raw
+    assert provenance == assembly_bytes
+    assert (
+        hashlib.sha256(reconstruction).hexdigest()
+        == json.loads(provenance)["reconstruction_report_sha256"]
+    )
