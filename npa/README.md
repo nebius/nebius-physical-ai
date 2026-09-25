@@ -35,6 +35,13 @@ or `3`, with 24 or 8 accumulation steps respectively. Both keep effective
 batch 96 and the complete 36-sample epoch tail. Larger microbatches use more
 memory and can change numerical results; qualify the selected configuration
 with a profile, fresh resume and held-out validation before accepting it.
+`--cuda-graphs` (`config.cuda_graphs`) defaults to `off`. The experimental
+`mot` option captures mixed-attention training with the pinned Torch 2.7.1
+CUDA graph backend and requires `--activation-checkpointing off`. Input
+preparation, noise sampling, validation and optimizer updates remain eager.
+Compiler fallbacks are errors; every rank must report recorded forward and
+backward graphs. Qualify the GPU trace, numerical results, full held-out pass
+and fresh resume before accepting a performance claim.
 
 The four-host B300 workflow sets `config.training_nodes: "4"` and requests one
 GPU on each host. `NPA_FLEX_PI_NODE_COUNT` comes from the resolved workflow

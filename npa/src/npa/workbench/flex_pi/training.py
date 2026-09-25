@@ -34,6 +34,7 @@ class TrainingRequest:
         memory_fill: Keep deterministic allocation fills on, or qualify them off.
         activation_checkpointing: Recompute activations, or retain them in GPU memory.
         microbatch_per_rank: One or three samples per GPU; effective batch stays 96.
+        cuda_graphs: Off for eager execution or mot for training-only CUDA capture.
         run_id: Caller-assigned provenance identifier.
         runtime_image: Exact runtime image reference for provenance.
         dry_run: Return the frozen plan without executing it.
@@ -53,6 +54,7 @@ class TrainingRequest:
     memory_fill: str = "on"
     activation_checkpointing: str = "on"
     microbatch_per_rank: int = 1
+    cuda_graphs: str = "off"
     run_id: str = ""
     runtime_image: str = ""
     dry_run: bool = False
@@ -63,9 +65,11 @@ def _validate(request):
         activation_checkpointing_overrides,
     )
     from npa.workbench.flex_pi.training_normalization import validate_normalization
+    from npa.workbench.flex_pi.training_graphs import validate_cuda_graphs
 
     validate_normalization(request)
     activation_checkpointing_overrides(request.activation_checkpointing)
+    validate_cuda_graphs(request.cuda_graphs, request.activation_checkpointing)
     if type(
         request.microbatch_per_rank
     ) is not int or request.microbatch_per_rank not in {1, 3}:
@@ -226,6 +230,10 @@ def _run_phase(plan, root):
         result = _run_local_phase(plan, root)
     if result.get("reference_benchmark_beaten") is not False:
         raise FlexPiError("public training must remain non-comparable")
+    if plan["execution"].get("cuda_graphs", "off") == "mot":
+        from npa.workbench.flex_pi.training_graphs import validate_graphs_receipt
+
+        validate_graphs_receipt(result.get("training_graphs"), "mot", plan["gpu_count"])
     return result
 
 

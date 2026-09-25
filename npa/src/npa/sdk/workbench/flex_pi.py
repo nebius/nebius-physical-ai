@@ -71,6 +71,7 @@ def train(
     memory_fill: str = "on",
     activation_checkpointing: str = "on",
     microbatch_per_rank: int = 1,
+    cuda_graphs: str = "off",
     run_id: str = "",
     runtime_image: str = "",
     dry_run: bool = False,
@@ -88,6 +89,7 @@ def train(
         memory_fill: Deterministic allocation fills; off requires exact parity.
         activation_checkpointing: Recompute activations or retain them for backward.
         microbatch_per_rank: Samples per GPU; one by default, or three for tuning.
+        cuda_graphs: Off for eager execution or mot for training-only CUDA capture.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve without fetching data or executing a model.

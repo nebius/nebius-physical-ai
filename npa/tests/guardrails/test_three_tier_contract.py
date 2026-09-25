@@ -204,6 +204,7 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
                 "prefetch_factor",
                 "optimizer",
                 "activation_checkpointing",
+                "cuda_graphs",
                 "run_id",
                 "runtime_image",
                 "dry_run",

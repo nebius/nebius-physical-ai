@@ -860,6 +860,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.activation_checkpointing}}",
             "--microbatch-per-rank",
             "{{config.microbatch_per_rank}}",
+            "--cuda-graphs",
+            "{{config.cuda_graphs}}",
             "--runtime-image",
             "{{config.runtime_image}}",
             "--run-id",

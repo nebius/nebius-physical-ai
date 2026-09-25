@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "bd236c6e8d1bdd34639671fd7228fa00e593e70d180c677a71d2ed072ed82751",
+  "workflow_sha256": "124897e3fccaa63735a0f7856ba55fd52782358c8d51f1c5ddd40a8c3f73c22c",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec resolve the explicit microbatch default through the maintained four-GPU toolRef.",
+      "reason": "validate-spec and plan-spec resolve the explicit CUDA graph policy through the maintained four-GPU toolRef.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/flex-pi-b200-public-training.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/flex-pi-b200-public-training.yaml --json"

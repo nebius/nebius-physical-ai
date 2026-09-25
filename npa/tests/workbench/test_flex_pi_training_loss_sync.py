@@ -81,6 +81,7 @@ def _trainer(engine, width):
 
     torch.manual_seed(42)
     trainer = engine.VerifiedTrainer()
+    trainer.cfg = {"npa_cuda_graphs": "mot"}
     trainer.model = Model()
     trainer.batch_size = width
     trainer.gradient_accumulation_steps = 24 // width
@@ -97,11 +98,15 @@ def _trainer(engine, width):
 
 
 @pytest.mark.parametrize("width", [1, 3])
-def test_full_and_tail_updates_preserve_losses_gradients_and_optimizer(engine, width):
+@pytest.mark.parametrize("mode", ["off", "mot"])
+def test_full_and_tail_updates_preserve_losses_gradients_and_optimizer(
+    engine, width, mode
+):
     from npa.workbench.flex_pi.training_state import state_digest
 
     torch = engine.torch
     actual, reference = _trainer(engine, width), _trainer(engine, width)
+    actual.cfg["npa_cuda_graphs"] = mode
     generator = torch.Generator().manual_seed(17)
     seen = []
     expected = []
@@ -113,7 +118,11 @@ def test_full_and_tail_updates_preserve_losses_gradients_and_optimizer(engine, w
         divisor = (24 if position < 24 // width else 9) // width
         actual.accelerator.last_batch = position == 33 // width - 1
         loss = actual._backward_impl(sample, divisor)
-        assert isinstance(loss, torch.Tensor) and not loss.requires_grad
+        assert (
+            (isinstance(loss, torch.Tensor) and not loss.requires_grad)
+            if mode == "mot"
+            else isinstance(loss, float)
+        )
         seen.append(loss)
 
         original_loss, _ = reference.model(sample)
@@ -140,9 +149,9 @@ def test_full_and_tail_updates_preserve_losses_gradients_and_optimizer(engine, w
                 reference.optimizer.state_dict()
             )
             assert actual.scheduler.state_dict() == reference.scheduler.state_dict()
-            assert actual._pending_losses == []
+            assert not getattr(actual, "_pending_losses", [])
     assert actual.global_step == 2
-    assert torch.stack(seen).tolist() == expected
+    assert (torch.stack(seen).tolist() if mode == "mot" else seen) == expected
 
 
 def test_no_microbatch_scalar_reads_before_optimizer_boundary(engine, monkeypatch):

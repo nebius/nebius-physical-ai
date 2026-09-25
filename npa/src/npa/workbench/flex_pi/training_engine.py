@@ -65,6 +65,9 @@ class VerifiedTrainer(Wan22Trainer):
     """
 
     def _build_optimizer(self, parameters):
+        from npa.workbench.flex_pi.training_graphs import configure_training_graphs
+
+        configure_training_graphs(self.model, self.cfg)
         self._configure_ddp()
         mode = str(self.cfg.npa_optimizer)
         options = {} if mode == "default" else {mode: True}
@@ -160,34 +163,47 @@ class VerifiedTrainer(Wan22Trainer):
         return self._backward_impl(sample, divisor)
 
     def _backward_impl(self, sample, divisor):
+        from npa.workbench.flex_pi.training_graphs import check_training_graphs
+
         with self.accelerator.accumulate(self.model):
             with self.accelerator.autocast():
                 loss, components = self.model(sample)
-            pending_losses = getattr(self, "_pending_losses", None)
-            if pending_losses is None:
-                pending_losses = self._pending_losses = []
-            observed_loss = loss.detach().reshape(())
-            pending_losses.append(observed_loss)
+            deferred = self.cfg.get("npa_cuda_graphs", "off") == "mot"
+            observed_loss = self._observe_loss(loss, deferred)
             recorder = getattr(self, "_fixture_recorder", None)
             if recorder is not None:
                 recorder._loss(loss, components)
             self.accelerator.backward(
                 loss * (self.gradient_accumulation_steps / divisor)
             )
-            if not self.accelerator.sync_gradients:
-                return observed_loss
-            self._optimizer_update(recorder)
-            return observed_loss
+            check_training_graphs(self.model)
+            if self.accelerator.sync_gradients:
+                self._optimizer_update(recorder)
+            return observed_loss if deferred else float(observed_loss)
+
+    def _observe_loss(self, loss, deferred):
+        observed = loss.detach().reshape(())
+        if not deferred:
+            if not torch.isfinite(loss):
+                raise RuntimeError("nonfinite training loss")
+            return observed
+        pending = getattr(self, "_pending_losses", None)
+        if pending is None:
+            pending = self._pending_losses = []
+        pending.append(observed)
+        return observed
 
     def _optimizer_update(self, recorder):
         # Check every microbatch before mutating optimizer/model state, while
         # allowing earlier backwards to overlap host preparation of the next
         # microbatch. Reading a CUDA scalar after each backward serializes it.
-        finite = torch.isfinite(torch.stack(self._pending_losses)).all().int()
-        torch.distributed.all_reduce(finite, op=torch.distributed.ReduceOp.MIN)
-        if not finite:
-            raise RuntimeError("nonfinite training loss")
-        self._pending_losses.clear()
+        pending = getattr(self, "_pending_losses", None)
+        if pending:
+            finite = torch.isfinite(torch.stack(pending)).all().int()
+            torch.distributed.all_reduce(finite, op=torch.distributed.ReduceOp.MIN)
+            if not finite:
+                raise RuntimeError("nonfinite training loss")
+            pending.clear()
         if recorder is not None:
             recorder._gradients(self, "before_clip")
         norm = self.accelerator.clip_grad_norm_(
@@ -257,7 +273,11 @@ class VerifiedTrainer(Wan22Trainer):
         # Keep reporting work inside the measured update. One transfer retains
         # the original Python-float summation order without one CUDA wait per
         # microbatch.
-        loss_values = torch.stack(losses).tolist()
+        loss_values = (
+            torch.stack(losses).tolist()
+            if isinstance(losses[0], torch.Tensor)
+            else losses
+        )
         torch.cuda.synchronize()
         elapsed = torch.tensor(
             time.perf_counter() - start, device=self.accelerator.device

@@ -560,12 +560,26 @@ a throughput gain for microbatch three, but its complete epoch failed the frozen
 quality ceiling. It is not an accepted or execution-equivalent replacement for
 microbatch one.
 
-Training retains detached microbatch losses on the device until the optimizer
-boundary. A collective finite-loss check covers every microbatch on every rank
-before clipping or an optimizer update. Loss readback occurs once per update,
-before the update timer stops, and preserves the original Python-float summation order. This
-reduces scalar synchronization without changing finite-loss computation; its
-performance remains subject to a measured GPU profile and full-epoch acceptance.
+`--cuda-graphs off|mot` (`config.cuda_graphs`) defaults to eager execution.
+The experimental `mot` policy requires activation checkpointing off and the
+pinned CUDA Torch 2.7.1 runtime. It compiles only the mixed-attention module's
+training forward and backward using the `cudagraphs` backend, with a full,
+static graph. Input preparation, random sampling, loss calculation, optimizer
+updates, DDP reduction, and evaluation retain their eager paths. Parameter
+identities and checkpoint keys remain unchanged. Compiler graph breaks or CUDA
+capture fallbacks fail the run. Every phase must report recorded forward and
+backward CUDA graphs on all four ranks before publication; a flag or successful
+compiler invocation alone is insufficient evidence.
+
+This policy also retains detached microbatch losses on the device until the
+optimizer boundary. A collective finite-loss check covers every microbatch on
+every rank before clipping or an optimizer update. Loss readback occurs once
+per update, before the update timer stops, and preserves the original
+Python-float summation order. The eager default keeps its original per-microbatch
+checks and readback. Neither capture nor deferred readback establishes a speedup:
+acceptance requires measured GPU graph replay, a faster controlled profile,
+numerical qualification, a complete held-out quality check, and exact fresh
+checkpoint continuation.
 
 `--activation-checkpointing on|off` (`config.activation_checkpointing` in a
 workflow) selects recomputation for both experts and mixed attention together.

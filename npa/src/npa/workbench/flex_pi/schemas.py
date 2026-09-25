@@ -36,6 +36,7 @@ class TrainingBody(BaseModel):
     memory_fill: Literal["on", "off"] = "on"
     activation_checkpointing: Literal["on", "off"] = "on"
     microbatch_per_rank: Literal[1, 3] = 1
+    cuda_graphs: Literal["off", "mot"] = "off"
     dry_run: bool = False
 
 

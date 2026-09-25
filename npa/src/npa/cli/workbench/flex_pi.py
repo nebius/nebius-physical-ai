@@ -45,6 +45,9 @@ def train_cmd(
     microbatch_per_rank: int = typer.Option(
         1, "--microbatch-per-rank", help="1 or 3; accumulation keeps effective batch 96"
     ),
+    cuda_graphs: str = typer.Option(
+        "off", "--cuda-graphs", help="off or mot; mot captures mixed-attention training"
+    ),
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -63,6 +66,7 @@ def train_cmd(
         memory_fill: Deterministic allocation fills; off runs exact parity gates.
         activation_checkpointing: Recompute activations or retain them for backward.
         microbatch_per_rank: Samples per GPU; one by default, or three for tuning.
+        cuda_graphs: Off for eager execution or mot for training-only CUDA capture.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve the immutable contract without downloads or execution.

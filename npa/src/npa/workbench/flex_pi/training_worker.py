@@ -53,6 +53,8 @@ def _configuration(plan, root, assets):
         overrides.append("resume=" + plan["resume_directory"])
     if plan["execution"].get("memory_fill", "on") == "off":
         overrides.append('+npa_memory_fill="off"')
+    if plan["execution"].get("cuda_graphs", "off") == "mot":
+        overrides.append('+npa_cuda_graphs="mot"')
     return _compose_configuration(assets, overrides)
 
 
@@ -107,8 +109,10 @@ def _rank_main(request_path):
 
 def _phase_receipts(trainer, cfg, plan):
     from npa.workbench.flex_pi.training_memory import memory_fill_receipt
+    from npa.workbench.flex_pi.training_graphs import training_graphs_receipt
 
     result = {"runtime": _runtime_receipt(), "memory_fill": memory_fill_receipt(cfg)}
+    result["training_graphs"] = training_graphs_receipt(trainer.model, cfg)
     if getattr(trainer, "_profile_receipt", None) is not None:
         result["profiling"] = {
             **trainer._profile_receipt,
