@@ -48,6 +48,12 @@ The [campaign control plane](behavior-campaign.md) freezes policy identities,
 assigns complete task panels across workers, and preserves per-instance progress
 in S3. Recovery verifies the original metrics and videos before reusing results.
 
+The experimental [gripper-boundary sampler](behavior-boundary-sampling.md)
+compares uniform demonstration sampling with extra pickup and release command
+windows. It requires explicit fit and calibration episode membership and keeps
+the other tasks' sample draws matched. The sampler has no trained-policy or
+rollout performance result yet.
+
 Comet training qualification reproduced every byte of the original 256-example
 batch using explicit CPU sharding before native image normalization. The real
 eight-worker loader also delivered twelve shuffled batches, with every sample's
