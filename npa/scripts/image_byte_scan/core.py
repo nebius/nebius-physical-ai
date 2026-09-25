@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import collections
 import csv
 import fcntl
 import hashlib
@@ -14,6 +15,7 @@ import json
 import os
 import re
 import signal
+import select
 import stat
 import struct
 import subprocess
@@ -31,6 +33,46 @@ from . import confidentiality as C
 
 _ROOTS = ContextVar("image_byte_scan_authorized_roots", default=None)
 CHUNK = 1024 * 1024
+
+
+def schedulable_cpus():
+    """Report how many CPUs this process may be scheduled on.
+
+    Scans run on Linux, where the helper is a Go child whose default worker count
+    follows the same affinity mask. Other platforms only import this module to run
+    the hermetic tests and have no affinity call, so they fall back to the
+    machine's CPU count.
+
+    Args:
+        None.
+
+    Returns:
+        The affinity mask size, or the machine's CPU count where no mask is
+        exposed, and never less than one.
+
+    Raises:
+        None.
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
+# Records submitted to the helper before their results are collected. The helper
+# runs one detection worker per schedulable CPU, so it can only use more than one
+# core when more than one record is outstanding. Record sizes inside an image span
+# several orders of magnitude, so a depth of one record per worker leaves workers
+# idle whenever the outstanding set happens to be small records; several per worker
+# keeps them fed. Ledger output stays in stream order for every depth, so this
+# bounds resident memory and nothing else.
+PIPELINE_RECORDS = 4 * schedulable_cpus()
+# Payload bytes held for outstanding records, checked before the next record is
+# read. Confidentiality composition needs each complete record, so a run of large
+# records reduces the effective depth instead of growing resident memory. This
+# bounds the records this process holds for composition; the record being read,
+# the helper's own admitted bytes, and the detector's copies of them are separate
+# and are bounded on the helper side.
+PIPELINE_BYTES = 256 * 1024 * 1024
 _CANCEL_REQUESTED = False
 _SPAWNING = False
 POLICY = "exact-or-short-ascii-token-v1"
@@ -634,6 +676,14 @@ class Detector:
         self.process = self.stderr = None
         self.joined = False
         self.ordinal = self.bytes = self.findings = 0
+        # Submitted records awaiting their result, oldest first. Responses are
+        # buffered from the raw descriptor so that writing record bytes and
+        # reading results can never block on each other.
+        self.outstanding = collections.deque()
+        self.responses = bytearray()
+        self.stdout_fd = None
+        self.stdin_fd = None
+        self.stdout_closed = False
         try:
             parent_fd = directory_fd(stderr_path.parent)
             try:
@@ -679,6 +729,12 @@ class Detector:
                     _SPAWNING = False
             if _CANCEL_REQUESTED:
                 raise ScanError("scan_cancelled")
+            self.stdout_fd = self.process.stdout.fileno()
+            self.stdin_fd = self.process.stdin.fileno()
+            # Records go out through this descriptor rather than the buffered
+            # writer, so a full pipe returns to _transfer instead of parking this
+            # process inside a write while the helper waits to be read.
+            os.set_blocking(self.stdin_fd, False)
             self._validate_ready(authorization)
         except BaseException:
             self.abort()
@@ -727,37 +783,127 @@ class Detector:
             "helper_pkcs12_selector",
         )
 
+    def _absorb(self):
+        """Read one batch of helper output into the response buffer.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        chunk = os.read(self.stdout_fd, CHUNK)
+        if not chunk:
+            self.stdout_closed = True
+            return
+        self.responses += chunk
+
+    def _transfer(self, data):
+        """Write one buffer to the helper while continuing to read its output.
+
+        With several records outstanding, both directions are live at once: the
+        helper is writing results for earlier records while this process is still
+        writing the bytes of a later one. Draining what is already readable and
+        then making a blocking write is not enough, because output that appears
+        during that write is never collected and both pipes fill: the helper
+        blocks writing results, stops reading records, and this process blocks
+        writing records. Waiting for either direction and servicing whichever is
+        ready means one side always progresses, so the pipes cannot deadlock
+        however few workers the helper actually runs.
+
+        Args:
+            data: Bytes to hand to the helper.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If the helper closed its input before the bytes landed.
+        """
+        view = memoryview(data)
+        while view:
+            readable, writable, _ = select.select(
+                [] if self.stdout_closed else [self.stdout_fd], [self.stdin_fd], ()
+            )
+            if readable:
+                self._absorb()
+            if writable:
+                try:
+                    view = view[os.write(self.stdin_fd, view) :]
+                except BlockingIOError:
+                    continue
+                except BrokenPipeError:
+                    require(False, "helper_unexpected_eof")
+
     def _response(self):
-        line = self.process.stdout.readline()
-        require(bool(line), "helper_unexpected_eof")
-        result = json_object(line)
-        require(isinstance(result, dict), "helper_response_schema")
-        return result
+        while True:
+            newline = self.responses.find(b"\n")
+            if newline >= 0:
+                line = bytes(self.responses[: newline + 1])
+                del self.responses[: newline + 1]
+                result = json_object(line)
+                require(isinstance(result, dict), "helper_response_schema")
+                return result
+            require(not self.stdout_closed, "helper_unexpected_eof")
+            chunk = os.read(self.stdout_fd, CHUNK)
+            if not chunk:
+                self.stdout_closed = True
+                require(False, "helper_unexpected_eof")
+            self.responses += chunk
 
     def begin(self, length):
         require(type(length) is int and 0 <= length < 2**64, "protocol_length")
-        self.process.stdin.write(struct.pack(">Q", length))
+        self._transfer(struct.pack(">Q", length))
 
     def write(self, data):
-        self.process.stdin.write(data)
+        self._transfer(data)
 
-    def end(self, length, digest):
-        self.process.stdin.flush()
-        result = self._response()
-        self.ordinal += 1
-        require(
-            result.get("type") == "result"
-            and type(result.get("ordinal")) is int
-            and result["ordinal"] == self.ordinal,
-            "helper_record_order",
-        )
-        require(
-            type(result.get("bytes")) is int
-            and result["bytes"] == length
-            and result.get("sha256") == digest,
-            "helper_record_byte_receipt",
-        )
-        findings = result.get("findings")
+    def submit(self, length, digest):
+        """Hand one completely written record over without awaiting its result.
+
+        Args:
+            length: The record's exact byte count, already written.
+            digest: The record's SHA-256, recomputed here for the receipt check.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.outstanding.append((length, digest))
+
+    def outstanding_records(self):
+        """Report how many submitted records have not been collected yet.
+
+        Args:
+            None.
+
+        Returns:
+            The number of outstanding records.
+
+        Raises:
+            None.
+        """
+        return len(self.outstanding)
+
+    @staticmethod
+    def _checked_findings(findings):
+        """Validate one record's findings against the accepted schema.
+
+        Args:
+            findings: The findings list the helper reported for one record.
+
+        Returns:
+            The same list, once every entry matches the schema.
+
+        Raises:
+            ScanError: If the list or any finding in it is not exactly the
+                accepted shape.
+        """
         require(isinstance(findings, list), "helper_findings_schema")
         allowed = {"rule_id", "start_line", "end_line"}
         for finding in findings:
@@ -774,11 +920,44 @@ class Detector:
                 type(finding["start_line"]) is int and type(finding["end_line"]) is int,
                 "helper_line_schema",
             )
+        return findings
+
+    def collect(self):
+        """Read and validate the oldest outstanding record's result.
+
+        Args:
+            None.
+
+        Returns:
+            The record's findings as reported by the helper.
+
+        Raises:
+            ScanError: If the helper's receipt does not match the submitted
+                record's ordinal, byte count, digest, or finding schema.
+        """
+        require(bool(self.outstanding), "helper_collect_without_record")
+        length, digest = self.outstanding.popleft()
+        result = self._response()
+        self.ordinal += 1
+        require(
+            result.get("type") == "result"
+            and type(result.get("ordinal")) is int
+            and result["ordinal"] == self.ordinal,
+            "helper_record_order",
+        )
+        require(
+            type(result.get("bytes")) is int
+            and result["bytes"] == length
+            and result.get("sha256") == digest,
+            "helper_record_byte_receipt",
+        )
+        findings = self._checked_findings(result.get("findings"))
         self.bytes += length
         self.findings += len(findings)
         return findings
 
     def finish(self):
+        require(not self.outstanding, "helper_unfinished_records")
         self.process.stdin.close()
         result = self._response()
         require(
@@ -791,7 +970,8 @@ class Detector:
             },
             "helper_summary_receipt",
         )
-        require(self.process.stdout.read(1) == b"", "helper_extra_response")
+        require(not self.responses, "helper_extra_response")
+        require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
         code = self.process.wait()
         self.joined = True
         self.process.stdout.close()
@@ -817,6 +997,77 @@ class Detector:
         self.joined = True
         if self.stderr is not None and not self.stderr.closed:
             self.stderr.close()
+
+
+class PendingRecord:
+    """One submitted record whose ledger lines are held until its result lands.
+
+    Ledger bytes must stay identical to scanning one record at a time, so every
+    line produced while a record is outstanding is buffered here and written
+    only when that record is finalized, in stream order.
+    """
+
+    def __init__(self, ordinal, length, kind, context, raw_parts):
+        """Open a buffer for one record.
+
+        Args:
+            ordinal: The record's one-based position in the scan.
+            length: The record's exact byte count.
+            kind: The ledger record kind for this content.
+            context: Scope fields repeated on every line for this record.
+            raw_parts: Accumulated record bytes when confidentiality
+                composition needs the complete record, otherwise ``None``.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.ordinal = ordinal
+        self.length = length
+        self.kind = kind
+        self.context = context
+        self.raw_parts = raw_parts
+        self.literal_matches = []
+        self.digest = None
+        # Lines belonging to the record itself, and lines the scan produced
+        # after it moved past the record. Keeping them apart is what lets the
+        # record's own result line land between them, exactly where scanning one
+        # record at a time would have written it.
+        self.lines = []
+        self.trailing = []
+        self.sealed = False
+        self.held_bytes = length if raw_parts is not None else 0
+
+    def append(self, serialized):
+        """Buffer one ledger line in this record's correct position.
+
+        Args:
+            serialized: The line, newline included.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        target = self.trailing if self.sealed else self.lines
+        target.append(serialized)
+
+    def ordered_lines(self):
+        """Return every buffered line in final ledger order.
+
+        Args:
+            None.
+
+        Returns:
+            The record's own lines followed by the lines that came after it.
+
+        Raises:
+            None.
+        """
+        return self.lines + self.trailing
 
 
 class Ledger:
@@ -887,9 +1138,29 @@ class Ledger:
         self.zero_run = None
         self.records = self.findings = self.scan_bytes = self.zero_bytes = 0
         self.regular_files = self.regular_bytes = 0
+        self.pending = collections.deque()
+        self.open_record = None
+        self.held_bytes = 0
 
     def write(self, record):
         serialized = json.dumps(record, sort_keys=True) + "\n"
+        if self.open_record is not None:
+            self.open_record.append(serialized)
+            return
+        self.emit(serialized)
+
+    def emit(self, serialized):
+        """Write one already-serialized ledger line through to the stream.
+
+        Args:
+            serialized: The line, newline included, in final ledger order.
+
+        Returns:
+            None.
+
+        Raises:
+            OSError: If the ledger stream cannot be written or flushed.
+        """
         self.stream.write(serialized)
         self.stream.flush()
         if self.record_observer is not None:
@@ -902,11 +1173,61 @@ class Ledger:
     def send(self, reader, length, kind, context):
         self.flush_zeros()
         self.records += 1
-        ordinal = self.records
+        self.make_room(length)
+        pending = self.stream_record(reader, length, kind, context)
+        pending.sealed = True
+        self.pending.append(pending)
+        self.held_bytes += pending.held_bytes
+        return pending.digest
+
+    def make_room(self, length):
+        """Collect outstanding records until the next one fits within the bounds.
+
+        Draining before the record is read keeps ``PIPELINE_BYTES`` a bound on
+        the bytes held at once rather than a target the next whole record
+        overshoots. A record larger than the whole bound is still held alone, so
+        no record is ever skipped or truncated for its size.
+
+        Args:
+            length: Byte count of the record about to be read.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If a collected record fails its receipt checks.
+        """
+        held = length if self.confidentiality is not None else 0
+        while self.pending and (
+            len(self.pending) >= PIPELINE_RECORDS
+            or self.held_bytes + held > PIPELINE_BYTES
+        ):
+            self.finalize_head()
+
+    def stream_record(self, reader, length, kind, context):
+        """Read one complete record, hand it to the helper, and hold its lines.
+
+        Every byte still reaches the detector, the record digest, the literal
+        matcher and, when configured, the confidentiality buffer. Only the wait
+        for the helper's result is deferred.
+
+        Args:
+            reader: Source positioned at the record's first byte.
+            length: The record's exact byte count.
+            kind: The ledger record kind for this content.
+            context: Scope fields repeated on every line for this record.
+
+        Returns:
+            The :class:`PendingRecord` awaiting its detector result.
+
+        Raises:
+            ScanError: If the source ends before the declared byte count.
+        """
         digest = hashlib.sha256()
         matcher = self.new_matcher()
         raw_parts = [] if self.confidentiality is not None else None
-        literal_matches = []
+        pending = PendingRecord(self.records, length, kind, context, raw_parts)
+        self.open_record = pending
         self.detector.begin(length)
         remaining = length
         while remaining:
@@ -916,76 +1237,156 @@ class Ledger:
             digest.update(data)
             if raw_parts is not None:
                 raw_parts.append(data)
-            for finding in matcher.feed(data):
-                literal_matches.append(finding)
-                self.findings += 1
-                self.write(
-                    {"type": "finding", "record_ordinal": ordinal, **context, **finding}
-                )
+            self.issue_literals(pending, matcher.feed(data))
             remaining -= len(data)
-        for finding in matcher.feed(b"", final=True):
-            literal_matches.append(finding)
+        self.issue_literals(pending, matcher.feed(b"", final=True))
+        pending.digest = digest.hexdigest()
+        self.detector.submit(length, pending.digest)
+        return pending
+
+    def issue_literals(self, pending, findings):
+        """Record literal matches found in one chunk of a record.
+
+        Args:
+            pending: The record the matches belong to.
+            findings: Literal matches produced by the matcher.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        for finding in findings:
+            pending.literal_matches.append(finding)
             self.findings += 1
             self.write(
-                {"type": "finding", "record_ordinal": ordinal, **context, **finding}
-            )
-        value = digest.hexdigest()
-        found = self.detector.end(length, value)
-        if self.confidentiality is not None:
-            raw_record = b"".join(raw_parts)
-            literal_scan = (
-                C.LiteralScan(
-                    self.typed_literal_binding,
-                    value,
-                    length,
-                    tuple(
-                        C.LiteralMatch(
-                            row["literal_index"], row["byte_start"], row["byte_end"]
-                        )
-                        for row in literal_matches
-                    ),
-                    True,
-                )
-                if self.typed_literal_binding is not None
-                else None
-            )
-            receipt = self.confidentiality.scan_record(
-                raw_record, literal_scan=literal_scan
-            )
-            require(
-                receipt.record_sha256 == value and receipt.byte_count == length,
-                "confidentiality_record_binding",
-            )
-            # Literal findings already have durable standalone receipts. The typed
-            # composition verifies them; append only the additive regex findings.
-            for item in receipt.findings:
-                if "external_literal" not in item.views:
-                    found.append(asdict(item))
-            self.write(
                 {
-                    "type": "confidentiality_record",
-                    "record_ordinal": ordinal,
-                    "policy_sha256": receipt.policy_sha256,
-                    "sha256": value,
-                    "bytes": length,
-                    "line_count": receipt.line_count,
-                    "composed_findings": len(receipt.findings),
+                    "type": "finding",
+                    "record_ordinal": pending.ordinal,
+                    **pending.context,
+                    **finding,
                 }
             )
-        self.findings += len(found)
-        self.scan_bytes += length
+
+    def literal_scan(self, pending):
+        """Build the typed literal evidence the confidentiality policy verifies.
+
+        Args:
+            pending: The finalized record, holding its literal matches.
+
+        Returns:
+            The record's :class:`LiteralScan`, or ``None`` when no literal
+            inventory is bound.
+
+        Raises:
+            None.
+        """
+        if self.typed_literal_binding is None:
+            return None
+        return C.LiteralScan(
+            self.typed_literal_binding,
+            pending.digest,
+            pending.length,
+            tuple(
+                C.LiteralMatch(row["literal_index"], row["byte_start"], row["byte_end"])
+                for row in pending.literal_matches
+            ),
+            True,
+        )
+
+    def compose_confidentiality(self, pending, found):
+        """Add the confidentiality policy's findings to a record's results.
+
+        Args:
+            pending: The finalized record, holding its complete bytes.
+            found: Helper findings for the record, extended in place.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If the composed receipt does not bind the same record.
+        """
+        raw_record = b"".join(pending.raw_parts)
+        receipt = self.confidentiality.scan_record(
+            raw_record, literal_scan=self.literal_scan(pending)
+        )
+        require(
+            receipt.record_sha256 == pending.digest
+            and receipt.byte_count == pending.length,
+            "confidentiality_record_binding",
+        )
+        # Literal findings already have durable standalone receipts. The typed
+        # composition verifies them; append only the additive regex findings.
+        for item in receipt.findings:
+            if "external_literal" not in item.views:
+                found.append(asdict(item))
         self.write(
             {
-                "type": "record",
-                "record_ordinal": ordinal,
-                "kind": kind,
-                "bytes": length,
-                "sha256": value,
-                "findings": found,
-                **context,
+                "type": "confidentiality_record",
+                "record_ordinal": pending.ordinal,
+                "policy_sha256": receipt.policy_sha256,
+                "sha256": pending.digest,
+                "bytes": pending.length,
+                "line_count": receipt.line_count,
+                "composed_findings": len(receipt.findings),
             }
         )
-        return value
+
+    def finalize_head(self):
+        """Collect the oldest outstanding record and release its ledger lines.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If the helper's receipt does not match the record.
+        """
+        pending = self.pending.popleft()
+        self.held_bytes -= pending.held_bytes
+        previous, self.open_record = self.open_record, pending
+        pending.sealed = False
+        try:
+            found = self.detector.collect()
+            if self.confidentiality is not None:
+                self.compose_confidentiality(pending, found)
+            self.findings += len(found)
+            self.scan_bytes += pending.length
+            self.write(
+                {
+                    "type": "record",
+                    "record_ordinal": pending.ordinal,
+                    "kind": pending.kind,
+                    "bytes": pending.length,
+                    "sha256": pending.digest,
+                    "findings": found,
+                    **pending.context,
+                }
+            )
+        finally:
+            pending.sealed = True
+            self.open_record = None if previous is pending else previous
+        for line in pending.ordered_lines():
+            self.emit(line)
+
+    def flush_pending(self):
+        """Finalize every outstanding record so the ledger is complete.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If a collected record fails its receipt checks.
+        """
+        while self.pending:
+            self.finalize_head()
 
     def data(self, data, kind, context):
         return self.send(io.BytesIO(data), len(data), kind, context)
@@ -1690,6 +2091,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             "verifier_regular_population_disagreement",
         )
         sink.flush_zeros()
+        sink.flush_pending()
         report["helper_summary"] = detector.finish()
         recheck_snapshots(snapshots)
         require(

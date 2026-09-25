@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sort"
+	"sync"
 	"syscall"
 
 	"github.com/rs/zerolog"
@@ -290,6 +291,470 @@ func failure(stderr io.Writer, code string) int {
 	return 2
 }
 
+// inFlightByteBudget bounds the payload bytes admitted to the detection pool at
+// one time. Detection allocates roughly three copies of a record (the string
+// conversion, the lowercased prefilter copy, and match state), so bounding
+// admitted bytes bounds the detector heap independently of archive size. A
+// record larger than the entire budget is admitted alone rather than refused:
+// coverage never depends on a size threshold.
+const inFlightByteBudget = 512 << 20
+
+// inFlightJobsPerWorker bounds outstanding records per worker so that a stream
+// of empty or tiny records cannot accumulate without limit under the byte
+// budget, which such records barely consume.
+const inFlightJobsPerWorker = 4
+
+// reclaimIntervalBytes is how many completed payload bytes trigger one forced
+// heap reclamation. Reclaiming after every record measured 0.54% of wall time
+// on a representative corpus and would serialise the pool on a stop-the-world
+// pause per record; reclaiming per budget-sized batch keeps the resident set
+// bounded at a fraction of that cost.
+const reclaimIntervalBytes = inFlightByteBudget
+
+// byteBudget is a weighted semaphore over payload bytes admitted for detection.
+// A reservation is taken before the payload is allocated, so the budget bounds
+// the bytes this process allocates for records rather than only the bytes it has
+// already read.
+type byteBudget struct {
+	mutex     sync.Mutex
+	returned  *sync.Cond
+	available int64
+	capacity  int64
+	cancelled bool
+}
+
+// newByteBudget builds a budget holding capacity bytes.
+//
+// Args:
+//
+//	capacity: Maximum payload bytes admitted for detection at one time.
+//
+// Returns:
+//
+//	A budget with its whole capacity available.
+func newByteBudget(capacity int64) *byteBudget {
+	budget := &byteBudget{available: capacity, capacity: capacity}
+	budget.returned = sync.NewCond(&budget.mutex)
+	return budget
+}
+
+// acquire reserves room for one record, blocking until it is available.
+//
+// Args:
+//
+//	want: Payload bytes the record is about to allocate.
+//
+// Returns:
+//
+//	The reserved amount, clamped to the whole capacity so an oversized record
+//	runs alone instead of deadlocking, and whether the reservation was granted.
+//	Release exactly the returned amount. A cancelled budget grants nothing, so a
+//	reader waiting for room stops instead of outliving a failed pipeline.
+func (b *byteBudget) acquire(want int64) (int64, bool) {
+	if want > b.capacity {
+		want = b.capacity
+	}
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	for b.available < want && !b.cancelled {
+		b.returned.Wait()
+	}
+	if b.cancelled {
+		return 0, false
+	}
+	b.available -= want
+	return want, true
+}
+
+// cancel makes every current and future acquire return without a reservation.
+//
+// Args:
+//
+//	None.
+//
+// Returns:
+//
+//	None.
+func (b *byteBudget) cancel() {
+	b.mutex.Lock()
+	b.cancelled = true
+	b.mutex.Unlock()
+	b.returned.Broadcast()
+}
+
+// release returns a previously reserved amount to the budget.
+//
+// Args:
+//
+//	amount: The exact value a matching acquire returned.
+//
+// Returns:
+//
+//	None.
+func (b *byteBudget) release(amount int64) {
+	b.mutex.Lock()
+	b.available += amount
+	b.mutex.Unlock()
+	b.returned.Broadcast()
+}
+
+// scanJob is one complete record moving through the detection pool. The
+// collector emits jobs in ordinal order, so output never depends on the number
+// of workers or on which worker finished first.
+type scanJob struct {
+	ordinal  uint64
+	length   uint64
+	payload  []byte
+	reserved int64
+	digest   string
+	findings []finding
+	panicked bool
+	done     chan struct{}
+}
+
+// recordPath builds the controlled path a record is detected under.
+//
+// Args:
+//
+//	ordinal: The record's one-based position in the stream.
+//
+// Returns:
+//
+//	A fixed-width extensionless label that carries no archive path.
+func recordPath(ordinal uint64) string {
+	return fmt.Sprintf("record-%020d", ordinal)
+}
+
+// controlledPathCode reports the failure code when a controlled record label
+// would collide with the configuration path or activate a path allowlist.
+//
+// Args:
+//
+//	detector: The configured detector whose policy is checked.
+//	ordinal: The record's one-based position in the stream.
+//
+// Returns:
+//
+//	A controlled failure code, or "" when the label is safe to detect under.
+func controlledPathCode(detector *detect.Detector, ordinal uint64) string {
+	controlledPath := recordPath(ordinal)
+	if controlledPath == detector.Config.Path {
+		return "controlled_path_matches_config"
+	}
+	for _, allow := range detector.Config.Allowlists {
+		if allow.PathAllowed(controlledPath) {
+			return "controlled_path_allowlisted"
+		}
+	}
+	for _, rule := range detector.Config.Rules {
+		for _, allow := range rule.Allowlists {
+			if allow.PathAllowed(controlledPath) {
+				return "controlled_path_allowlisted"
+			}
+		}
+	}
+	return ""
+}
+
+// sortFindings orders findings so identical detections serialise identically.
+//
+// Args:
+//
+//	findings: Findings for one record, reordered in place.
+//
+// Returns:
+//
+//	None.
+func sortFindings(findings []finding) {
+	sort.Slice(findings, func(i, j int) bool {
+		if findings[i].RuleID != findings[j].RuleID {
+			return findings[i].RuleID < findings[j].RuleID
+		}
+		if findings[i].StartLine != findings[j].StartLine {
+			return findings[i].StartLine < findings[j].StartLine
+		}
+		return findings[i].EndLine < findings[j].EndLine
+	})
+}
+
+// detectRecord hashes and scans one complete record, then releases its budget.
+// A panic is contained and reported on the job so the collector can fail closed
+// rather than losing the whole process.
+//
+// Args:
+//
+//	job: The record to scan; its results are written back onto the job.
+//	detector: The shared configured detector, which upstream invokes
+//	  concurrently and which holds no mutable per-scan state.
+//	budget: The budget holding this job's reservation.
+//
+// Returns:
+//
+//	None.
+func detectRecord(job *scanJob, detector *detect.Detector, budget *byteBudget) {
+	defer close(job.done)
+	defer func() {
+		if recover() != nil {
+			job.panicked = true
+		}
+	}()
+	defer budget.release(job.reserved)
+	digest := sha256.Sum256(job.payload)
+	job.digest = hex.EncodeToString(digest[:])
+	// One call, one complete file. No MIME decision, source chunker, overlap,
+	// archive traversal, baseline, ignore file, or AddFinding accumulation.
+	matches := detector.Detect(detect.Fragment{Raw: string(job.payload), FilePath: recordPath(job.ordinal)})
+	job.payload = nil
+	findings := make([]finding, 0, len(matches))
+	for _, match := range matches {
+		findings = append(findings, finding{match.RuleID, match.StartLine, match.EndLine})
+	}
+	sortFindings(findings)
+	job.findings = findings
+}
+
+// startDetectionPool runs the detection workers until dispatch closes or the
+// pipeline aborts. Workers watch abort directly rather than waiting for the
+// reader to close dispatch, because the reader may be parked in a read on an
+// input the caller has not ended.
+//
+// Args:
+//
+//	workers: Number of concurrent detections.
+//	dispatch: Jobs to scan; closed by the reader at end of input.
+//	detector: The shared configured detector.
+//	budget: The budget each finished job releases into.
+//	abort: Closed once the collector has already failed.
+//
+// Returns:
+//
+//	A group that completes once every worker has stopped, which is the point at
+//	which no detection is still running.
+func startDetectionPool(workers int, dispatch <-chan *scanJob, detector *detect.Detector,
+	budget *byteBudget, abort <-chan struct{}) *sync.WaitGroup {
+	var pool sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		pool.Add(1)
+		go func() {
+			defer pool.Done()
+			for {
+				select {
+				case job, open := <-dispatch:
+					if !open {
+						return
+					}
+					detectRecord(job, detector, budget)
+				case <-abort:
+					return
+				}
+			}
+		}()
+	}
+	return &pool
+}
+
+// readLength reads one record's framing header.
+//
+// Args:
+//
+//	input: The framed record stream, positioned at a header.
+//	files: How many records have already been admitted.
+//	consumed: How many payload bytes have already been admitted.
+//
+// Returns:
+//
+//	The record's payload length, or -1 with "" at clean end of input, and the
+//	controlled failure code when the framing itself is unusable.
+func readLength(input io.Reader, files, consumed uint64) (int64, string) {
+	var header [8]byte
+	count, err := io.ReadFull(input, header[:])
+	if err == io.EOF && count == 0 {
+		return -1, ""
+	}
+	if err != nil {
+		return -1, "truncated_header"
+	}
+	length := binary.BigEndian.Uint64(header[:])
+	if length > uint64(int(^uint(0)>>1)) || consumed > math.MaxUint64-length || files == math.MaxUint64 {
+		return -1, "length_overflow"
+	}
+	return int64(length), ""
+}
+
+// admitOne reserves room for one record, reads it, and checks its path policy.
+// The reservation is taken before the payload is allocated and is released again
+// on every path that does not produce a job, so admitted bytes bound the payload
+// bytes this process holds rather than trailing them by one whole record.
+//
+// Args:
+//
+//	input: The framed record stream, positioned at a payload.
+//	detector: The shared configured detector, consulted for path policy.
+//	budget: The byte budget gating admission.
+//	ordinal: This record's one-based position in the stream.
+//	length: This record's exact payload length.
+//
+// Returns:
+//
+//	The admitted job, or nil with the controlled failure code, which is "" when
+//	the budget was cancelled because the pipeline had already failed.
+func admitOne(input io.Reader, detector *detect.Detector, budget *byteBudget,
+	ordinal uint64, length int64) (*scanJob, string) {
+	reserved, granted := budget.acquire(length)
+	if !granted {
+		return nil, ""
+	}
+	payload := make([]byte, int(length))
+	if _, err := io.ReadFull(input, payload); err != nil {
+		budget.release(reserved)
+		return nil, "truncated_payload"
+	}
+	if code := controlledPathCode(detector, ordinal); code != "" {
+		budget.release(reserved)
+		return nil, code
+	}
+	return &scanJob{
+		ordinal:  ordinal,
+		length:   uint64(length),
+		payload:  payload,
+		reserved: reserved,
+		done:     make(chan struct{}),
+	}, ""
+}
+
+// admitRecords reads framed records in stream order and hands them to the pool.
+// Records admitted before a failure are still emitted, which keeps output on
+// every failure path identical to scanning one record at a time.
+//
+// Args:
+//
+//	input: The framed record stream.
+//	detector: The shared configured detector, consulted for path policy.
+//	budget: The byte budget gating admission, reserved before each allocation
+//	  and released again on every path that does not hand the job to a worker.
+//	dispatch: Channel the workers consume.
+//	ordered: Channel the collector consumes, written in ordinal order.
+//	abort: Closed by the caller when the collector has already failed.
+//
+// Returns:
+//
+//	The controlled failure code that stopped the stream, or "" at clean EOF or
+//	when the pipeline aborted.
+func admitRecords(input io.Reader, detector *detect.Detector, budget *byteBudget,
+	dispatch chan<- *scanJob, ordered chan<- *scanJob, abort <-chan struct{}) string {
+	var files, consumed uint64
+	for {
+		length, code := readLength(input, files, consumed)
+		if code != "" || length < 0 {
+			return code
+		}
+		files++
+		consumed += uint64(length)
+		job, code := admitOne(input, detector, budget, files, length)
+		if job == nil {
+			return code
+		}
+		select {
+		case ordered <- job:
+		case <-abort:
+			budget.release(job.reserved)
+			return ""
+		}
+		select {
+		case dispatch <- job:
+		case <-abort:
+			// The job reached ordered but no worker took it, so this goroutine
+			// still owns the reservation.
+			budget.release(job.reserved)
+			return ""
+		}
+	}
+}
+
+// emitRecords writes one result per record in ordinal order.
+//
+// Args:
+//
+//	ordered: Jobs in stream order; closed by the reader.
+//	emit: Serialises one protocol value and flushes it.
+//
+// Returns:
+//
+//	The running summary and the controlled failure code that stopped emission,
+//	or "" when every admitted record was emitted.
+func emitRecords(ordered <-chan *scanJob, emit func(any) bool) (summary, string) {
+	totals := summary{Type: "summary"}
+	var sinceReclaim int64
+	for job := range ordered {
+		<-job.done
+		if job.panicked {
+			return totals, "internal_panic"
+		}
+		if totals.Findings > math.MaxUint64-uint64(len(job.findings)) {
+			return totals, "finding_count_overflow"
+		}
+		totals.Files++
+		totals.Bytes += job.length
+		totals.Findings += uint64(len(job.findings))
+		if !emit(result{Type: "result", Ordinal: job.ordinal, Bytes: job.length, SHA256: job.digest, Findings: job.findings}) {
+			return totals, "output_error"
+		}
+		sinceReclaim += int64(job.length)
+		if sinceReclaim >= reclaimIntervalBytes {
+			sinceReclaim = 0
+			runtime.GC()
+		}
+	}
+	return totals, ""
+}
+
+// runPipeline scans the whole stream through the detection pool.
+//
+// Detection of distinct records overlaps, but emission is strictly ordinal, so
+// the protocol bytes are identical to scanning one record at a time. Worker
+// count follows GOMAXPROCS, which in production is the schedulable CPU count:
+// the scanner starts this helper with only PATH in its environment, so a shell
+// GOMAXPROCS reaches a hand-run helper but never the one the scanner owns.
+//
+// Args:
+//
+//	input: The framed record stream.
+//	detector: The shared configured detector.
+//	emit: Serialises one protocol value and flushes it.
+//
+// Returns:
+//
+//	The summary and the controlled failure code, or "" when the stream ended
+//	cleanly and every record was emitted.
+func runPipeline(input io.Reader, detector *detect.Detector, emit func(any) bool) (summary, string) {
+	workers := runtime.GOMAXPROCS(0)
+	budget := newByteBudget(inFlightByteBudget)
+	dispatch := make(chan *scanJob, workers)
+	ordered := make(chan *scanJob, workers*inFlightJobsPerWorker)
+	abort := make(chan struct{})
+	pool := startDetectionPool(workers, dispatch, detector, budget, abort)
+	admitted := make(chan string, 1)
+	go func() {
+		code := admitRecords(input, detector, budget, dispatch, ordered, abort)
+		close(dispatch)
+		close(ordered)
+		admitted <- code
+	}()
+	totals, emitCode := emitRecords(ordered, emit)
+	if emitCode != "" {
+		// Stop every worker and free the reader from any wait this process
+		// controls, then report the failure. The reader may still be parked in a
+		// read on input only the caller can end; waiting for it here would make a
+		// contained failure depend on the caller sending more bytes or closing.
+		close(abort)
+		budget.cancel()
+		pool.Wait()
+		return totals, emitCode
+	}
+	pool.Wait()
+	return totals, <-admitted
+}
+
 func process(input io.Reader, output, stderr io.Writer, detector *detect.Detector, info ready) (exit int) {
 	defer func() {
 		if recover() != nil {
@@ -302,78 +767,17 @@ func process(input io.Reader, output, stderr io.Writer, detector *detect.Detecto
 	if !emit(info) {
 		return failure(stderr, "output_error")
 	}
-	totals := summary{Type: "summary"}
-	for {
-		var header [8]byte
-		count, err := io.ReadFull(input, header[:])
-		if err == io.EOF && count == 0 {
-			if !emit(totals) {
-				return failure(stderr, "output_error")
-			}
-			if totals.Findings != 0 {
-				return 1
-			}
-			return 0
-		}
-		if err != nil {
-			return failure(stderr, "truncated_header")
-		}
-		length := binary.BigEndian.Uint64(header[:])
-		if length > uint64(int(^uint(0)>>1)) || totals.Bytes > math.MaxUint64-length || totals.Files == math.MaxUint64 {
-			return failure(stderr, "length_overflow")
-		}
-		fragment := make([]byte, int(length))
-		if _, err := io.ReadFull(input, fragment); err != nil {
-			return failure(stderr, "truncated_payload")
-		}
-		ordinal := totals.Files + 1
-		digest := sha256.Sum256(fragment)
-		// One call, one complete file. No MIME decision, source chunker, overlap,
-		// archive traversal, baseline, ignore file, or AddFinding accumulation.
-		controlledPath := fmt.Sprintf("record-%020d", ordinal)
-		if controlledPath == detector.Config.Path {
-			return failure(stderr, "controlled_path_matches_config")
-		}
-		for _, allow := range detector.Config.Allowlists {
-			if allow.PathAllowed(controlledPath) {
-				return failure(stderr, "controlled_path_allowlisted")
-			}
-		}
-		for _, rule := range detector.Config.Rules {
-			for _, allow := range rule.Allowlists {
-				if allow.PathAllowed(controlledPath) {
-					return failure(stderr, "controlled_path_allowlisted")
-				}
-			}
-		}
-		matches := detector.Detect(detect.Fragment{Raw: string(fragment), FilePath: controlledPath})
-		findings := make([]finding, 0, len(matches))
-		for _, match := range matches {
-			findings = append(findings, finding{match.RuleID, match.StartLine, match.EndLine})
-		}
-		sort.Slice(findings, func(i, j int) bool {
-			if findings[i].RuleID != findings[j].RuleID {
-				return findings[i].RuleID < findings[j].RuleID
-			}
-			if findings[i].StartLine != findings[j].StartLine {
-				return findings[i].StartLine < findings[j].StartLine
-			}
-			return findings[i].EndLine < findings[j].EndLine
-		})
-		if totals.Findings > math.MaxUint64-uint64(len(findings)) {
-			return failure(stderr, "finding_count_overflow")
-		}
-		totals.Files++
-		totals.Bytes += length
-		totals.Findings += uint64(len(findings))
-		if !emit(result{Type: "result", Ordinal: ordinal, Bytes: length, SHA256: hex.EncodeToString(digest[:]), Findings: findings}) {
-			return failure(stderr, "output_error")
-		}
-		fragment = nil
-		matches = nil
-		findings = nil
-		runtime.GC()
+	totals, code := runPipeline(input, detector, emit)
+	if code != "" {
+		return failure(stderr, code)
 	}
+	if !emit(totals) {
+		return failure(stderr, "output_error")
+	}
+	if totals.Findings != 0 {
+		return 1
+	}
+	return 0
 }
 
 func run(args []string, input io.Reader, output, stderr io.Writer) (exit int) {

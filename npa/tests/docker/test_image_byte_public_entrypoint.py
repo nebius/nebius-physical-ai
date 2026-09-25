@@ -81,11 +81,10 @@ def prepared(tmp_path, monkeypatch):
                 super().__init__(*args, **kwargs)
                 self.findings = 0
 
-            def end(self, length, value):
-                super().end(length, value)
+            def findings_for(self, record):
                 result = (
                     [copy.deepcopy(native), copy.deepcopy(native)]
-                    if self.current == body
+                    if record == body
                     else []
                 )
                 self.findings += len(result)
