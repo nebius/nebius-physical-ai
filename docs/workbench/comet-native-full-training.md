@@ -115,9 +115,16 @@ checkpoint has logical update 10,002 and Orbax manager step 10,001. This creates
 a separate training lineage; it does not establish bitwise equivalence to
 single-GPU continuation.
 
-One warmed four-GPU update took 3.255 seconds for a global batch of 256.
-That single update does not establish sustained throughput. Longer four-GPU
-continuation and action-expert recovery remain unqualified. No selected
+A separate four-GPU action-expert qualification imported its 5,000-update donor,
+saved logical update 5,002, restored in a fresh process, and matched update 5,003.
+Independent readback verified all 46 objects, including 15 evidence files and
+30 checkpoint files totaling 15,637,235,240 bytes. The frozen parameter partition,
+trainable optimizer state, and committed data cursor passed the restore checks.
+
+One warmed four-GPU update took 3.255 seconds for full-model training and
+2.148 seconds for action-expert training, each with a global batch of 256.
+These individual updates do not establish sustained throughput. Longer
+four-GPU continuation remains unqualified. No selected
 candidate, current-version task score, serving-parity result, completed
 20,000-update run, or physical-24-GB qualification is established by this
 evidence. Exact operator bindings and evidence remain outside Git.
