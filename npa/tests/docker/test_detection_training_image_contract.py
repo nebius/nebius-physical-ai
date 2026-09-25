@@ -12,8 +12,9 @@ DOCKERFILE = ROOT / "npa/docker/workbench/detection-training/Dockerfile"
 def test_detection_training_uses_an_immutable_ubuntu_snapshot() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text
-    assert "ARG LINUX_LIBC_DEV_VERSION=6.8.0-138.138" in text
+    assert "ARG UBUNTU_SNAPSHOT=20260910T000000Z" in text
+    assert "ARG LINUX_LIBC_DEV_VERSION=6.8.0-139.139" in text
+    assert "6.8.0-138.138" not in text
     assert "configure_ubuntu_snapshot.sh" in text
     assert 'configure-ubuntu-snapshot "${UBUNTU_SNAPSHOT}"' in text
     assert "archive.ubuntu.com" not in text

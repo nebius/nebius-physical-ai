@@ -25,7 +25,8 @@
 #          python3.11 venv and its cu130 torch (NPA_ISAAC_SKIP_TORCH=1).
 #
 ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01
-FROM ${BASE_IMAGE}
+ARG NPA_BUILD_PLATFORM=linux/amd64
+FROM --platform=${NPA_BUILD_PLATFORM} ${BASE_IMAGE}
 
 ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01
 ARG ISAAC_LAB_VERSION=2.3.2.post1

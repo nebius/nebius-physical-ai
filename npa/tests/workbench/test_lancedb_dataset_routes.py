@@ -16,6 +16,7 @@ import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
 
+from npa.workbench.lancedb import server
 from npa.workbench.lancedb.server import CreateTableRequest, create_app
 
 
@@ -299,6 +300,32 @@ def test_readiness_is_public_while_health_remains_authenticated(tmp_path: Path) 
         client.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code
         == 200
     )
+
+
+def test_readiness_fails_when_local_storage_is_not_writable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = TestClient(
+        create_app(storage_path=str(tmp_path / "lance"), auth_mode="none")
+    )
+    monkeypatch.setattr(
+        server,
+        "_verify_local_storage_writable",
+        lambda _path: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "storage is not ready"}
+
+
+def test_local_readiness_probe_leaves_no_sentinel(tmp_path: Path) -> None:
+    storage = tmp_path / "lance"
+    server._verify_local_storage_writable(str(storage))
+
+    assert storage.is_dir()
+    assert list(storage.glob(".npa-ready-*")) == []
 
 
 def test_index_appends_on_a_second_write(client: TestClient) -> None:

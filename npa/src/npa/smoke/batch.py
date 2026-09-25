@@ -53,6 +53,54 @@ class BatchResult:
         return json.dumps(payload, indent=2, sort_keys=True)
 
 
+@dataclass(frozen=True)
+class ContainerSelection:
+    """Runnable names plus every status-based exclusion made by the defaults."""
+
+    included: list[str]
+    excluded: list[ContainerRunResult]
+
+
+def select_containers(
+    *,
+    include_blocked: bool = False,
+    include_needs_image_update: bool = False,
+    include_foundation: bool = True,
+    tools_only: bool = False,
+) -> ContainerSelection:
+    specs = load_manifest()
+    names: list[str] = []
+    excluded: list[ContainerRunResult] = []
+    for name in sorted(specs):
+        spec = specs[name]
+        if tools_only and name not in CONTAINER_IMAGE_NAMES:
+            continue
+        if not include_foundation and spec.foundation:
+            continue
+        status = spec.golden_eval.status
+        option = ""
+        if not include_blocked and status == "blocked-on-upstream":
+            option = "--include-blocked"
+        elif not include_needs_image_update and status == "needs-image-update":
+            option = "--include-needs-image-update"
+        if option:
+            excluded.append(
+                ContainerRunResult(
+                    name=name,
+                    mode="selection",
+                    ok=True,
+                    skipped=True,
+                    skip_reason=f"status={status}; pass {option} to include",
+                    status=status,
+                    gpu=spec.golden_eval.gpu,
+                    command=spec.golden_eval.command,
+                )
+            )
+            continue
+        names.append(name)
+    return ContainerSelection(included=names, excluded=excluded)
+
+
 def iter_containers(
     *,
     include_blocked: bool = False,
@@ -60,25 +108,14 @@ def iter_containers(
     include_foundation: bool = True,
     tools_only: bool = False,
 ) -> list[str]:
-    specs = load_manifest()
-    names: list[str] = []
-    for name in sorted(specs):
-        if tools_only and name not in CONTAINER_IMAGE_NAMES:
-            continue
-        if not include_foundation and specs[name].foundation:
-            continue
-        if (
-            not include_blocked
-            and specs[name].golden_eval.status == "blocked-on-upstream"
-        ):
-            continue
-        if (
-            not include_needs_image_update
-            and specs[name].golden_eval.status == "needs-image-update"
-        ):
-            continue
-        names.append(name)
-    return names
+    """Return selected names; use ``select_containers`` to retain exclusions."""
+
+    return select_containers(
+        include_blocked=include_blocked,
+        include_needs_image_update=include_needs_image_update,
+        include_foundation=include_foundation,
+        tools_only=tools_only,
+    ).included
 
 
 def run_container_eval(

@@ -1949,7 +1949,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     require(isinstance(payload, dict), "manifest object")
     equal(payload, "format", "npa_ncore_accepted_image_manifest_v1")
     equal(payload, "status", "accepted")
-    equal(payload, "tag", public_release_tag_for_tool("ncore"))
+    equal(payload, "tag", _configured_public_release_tag_for_tool("ncore"))
     match(payload, "development_sha", r"[0-9a-f]{40}")
     for field in ("oci_digest", "amd64_manifest", "config_digest"):
         match(payload, field, r"sha256:[0-9a-f]{64}")
@@ -2204,6 +2204,14 @@ def supported_tool_version(tool: str) -> str:
         ) from exc
 
 
+def _configured_public_release_tag_for_tool(tool: str) -> str:
+    """Return the configured release tag without applying consumption policy."""
+
+    if tool == "sonic":
+        return SUPPORTED_TOOL_VERSIONS[tool]
+    return PUBLIC_RELEASE_TAG_OVERRIDES.get(tool, supported_tool_version(tool))
+
+
 def public_release_tag_for_tool(tool: str) -> str:
     """Return the exact repository pin that the public release channel must carry.
 
@@ -2211,9 +2219,14 @@ def public_release_tag_for_tool(tool: str) -> str:
     variant. The public inventory contract pins that validated cross-architecture
     runtime from ``SUPPORTED_TOOL_VERSIONS`` rather than either quarantined tag.
     """
-    if tool == "sonic":
-        return SUPPORTED_TOOL_VERSIONS[tool]
-    return PUBLIC_RELEASE_TAG_OVERRIDES.get(tool, supported_tool_version(tool))
+    if tool in PUBLICATION_QUARANTINE_TOOLS:
+        raise ValueError(
+            f"{tool!r} has no consumable public release: its configured release is "
+            "quarantined pending a rebuilt and accepted image. Use an explicit "
+            "operator-controlled registry/image, or validate an official immutable "
+            "dev-<full-source-sha> candidate before promotion."
+        )
+    return _configured_public_release_tag_for_tool(tool)
 
 
 def supported_lerobot_versions() -> tuple[str, ...]:
@@ -2388,10 +2401,11 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
+    public_registry = is_public_registry(resolved_registry)
     if (
         tool == "robomimic"
         and tool in PUBLICATION_QUARANTINE_TOOLS
-        and is_public_registry(resolved_registry)
+        and public_registry
         and not re.fullmatch(r"dev-[0-9a-f]{40}", tag or "")
     ):
         raise ValueError(
@@ -2415,6 +2429,36 @@ def container_image_for_tool(
             f"{tool!r} has no accepted release image. Supply a validated immutable "
             "image or explicitly select a dev-<full-source-sha> tag for validation."
         )
+    if tool in PENDING_REDISTRIBUTION_TOOLS and public_registry:
+        raise ValueError(
+            f"{tool!r} has pending corresponding-source closure and no accepted "
+            "public image. Use only a separately byte-qualified operator-private "
+            "image after its source/delivery gates pass; see "
+            "docs/workbench/byof-habitat-sim.md."
+        )
+    if not is_publicly_redistributable(tool) and public_registry:
+        raise ValueError(
+            f"{tool!r} is not publicly redistributable and is never distributed from a "
+            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
+            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
+            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
+            f"docs/workbench/container-packaging.md."
+        )
+    if (
+        tool != "sonic"
+        and tool in PUBLICATION_QUARANTINE_TOOLS
+        and public_registry
+    ):
+        if tag is None:
+            # Centralize the actionable error shared by direct release-tag callers.
+            public_release_tag_for_tool(tool)
+        if re.fullmatch(r"dev-[0-9a-f]{40}", str(tag)) is None:
+            raise ValueError(
+                f"{tool!r} public release metadata is quarantined, so public tag "
+                f"{tag!r} cannot be consumed. Only an immutable "
+                "dev-<full-source-sha> candidate may be selected for validation; "
+                "otherwise use an explicit operator-controlled registry or --image."
+            )
     if tool == "sonic":
         entry = sonic_image_entry(
             gpu_target=gpu_target,
@@ -2443,28 +2487,13 @@ def container_image_for_tool(
             image_name = CONTAINER_IMAGE_NAMES[tool]
             resolved_tag = tag or (
                 public_release_tag_for_tool(tool)
-                if is_public_registry(resolved_registry)
+                if public_registry
                 else supported_tool_version(tool)
             )
-    if tool in PENDING_REDISTRIBUTION_TOOLS and is_public_registry(resolved_registry):
-        raise ValueError(
-            f"{tool!r} has pending corresponding-source closure and no accepted "
-            "public image. Use only a separately byte-qualified operator-private "
-            "image after its source/delivery gates pass; see "
-            "docs/workbench/byof-habitat-sim.md."
-        )
-    if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
-        raise ValueError(
-            f"{tool!r} is not publicly redistributable and is never distributed from a "
-            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
-            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
-            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
-            f"docs/workbench/container-packaging.md."
-        )
     if (
         tool == "ncore"
-        and is_public_registry(resolved_registry)
-        and resolved_tag == public_release_tag_for_tool("ncore")
+        and public_registry
+        and resolved_tag == _configured_public_release_tag_for_tool("ncore")
     ):
         ncore_accepted_image_manifest()
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"

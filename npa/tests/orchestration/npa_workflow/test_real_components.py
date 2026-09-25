@@ -198,7 +198,10 @@ def test_blueprint_overlays_reviewed_source_on_baked_component_images(
         spec,
         plan,
         run_id="overlay-contract",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     tasks = [
         task
