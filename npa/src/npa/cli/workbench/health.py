@@ -119,6 +119,16 @@ def _token_factory_verifier() -> list[str]:
     return TokenFactoryClient(config=config).list_models()
 
 
+def _encord_verifier() -> str:
+    """Authenticate and make the cheapest read-only Encord call."""
+
+    from npa.workbench.encord.client import _default_user_client
+
+    client = _default_user_client()
+    next(iter(client.list_storage_folders(page_size=1)), None)
+    return "storage folders listable"
+
+
 def _ngc_auth_verifier(api_key: str) -> str:
     """Authenticate through NGC token exchange without implying all entitlements."""
 
@@ -204,6 +214,7 @@ def _credential_probes(
             aws_secret_access_key=credentials.s3_secret_access_key,
         ),
         token_factory_verifier=_token_factory_verifier,
+        encord_verifier=_encord_verifier,
         nebius_profile_verifier=_nebius_profile_verifier,
     )
 

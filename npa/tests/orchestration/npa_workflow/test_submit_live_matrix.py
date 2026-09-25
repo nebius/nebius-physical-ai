@@ -6,6 +6,7 @@ import importlib.util
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -40,6 +41,28 @@ def _load_live_argv():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_live_credential_markers_include_saved_encord_values(monkeypatch) -> None:
+    import npa.clients.credentials as credential_module
+
+    helpers = _load_live_helpers()
+    monkeypatch.setattr(
+        credential_module,
+        "load_credentials",
+        lambda: SimpleNamespace(
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            tokens={
+                "ENCORD_SSH_KEY": "saved-encord-private-key",
+                "ENCORD_SSH_KEY_B64": "saved-encord-base64-key",
+            },
+        ),
+    )
+
+    markers = helpers.live_credential_markers()
+    assert "saved-encord-private-key" in markers
+    assert "saved-encord-base64-key" in markers
 
 
 @pytest.mark.parametrize(
@@ -259,7 +282,6 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
-        "av-night-scene-hardening.yaml",
         "byof-droid-policy-learning.yaml",
         "byof-maniskill.yaml",
         "byof-mujoco-playground.yaml",
@@ -275,6 +297,21 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         assert case.plan_only, (
             f"{name} must retain its reviewed plan-only classification"
         )
+
+
+def test_av_night_scene_rotation_skip_names_real_prerequisites() -> None:
+    case = next(
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.spec == "av-night-scene-hardening.yaml"
+    )
+
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert "LanceDB" in case.skip_reason
+    assert "detection-training" in case.skip_reason
+    assert "BDD100K night subset" in case.skip_reason
+    assert "FiftyOne inspection" in case.notes
 
 
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
