@@ -1,6 +1,7 @@
 """A repair reuses only exact, authoritative capacity already provisioned."""
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 from subprocess import CompletedProcess
 from unittest.mock import Mock
@@ -124,6 +125,63 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     kwargs, _, groups, *_ = existing
     groups[-1]["spec"]["template"]["preemptible"] = {}
     assert not E._is_verified_unchanged_target(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "",
+        "missing-state",
+        "wrong-parent",
+        "wrong-id",
+        "wrong-shape",
+        "reserved-cpu",
+        "extra",
+        "gpu-growth",
+    ],
+)
+def test_cpu_pool_removal_reuses_only_proven_unchanged_gpu_capacity(existing, failure):
+    kwargs, _, groups, _, workdir = existing
+    original = kwargs["cluster"]
+    kwargs["cluster"] = replace(
+        original, cpu_nodes=replace(original.cpu_nodes, count=0)
+    )
+    cpu = groups[0]
+    cpu["metadata"] = {
+        "id": "nodegroup-cpu",
+        "parent_id": "cluster-test",
+        "name": "render-ng-cpu",
+    }
+    cpu["status"]["state"] = "PROVISIONING"
+    attributes = {**cpu["metadata"], "template": deepcopy(cpu["spec"]["template"])}
+    state = {
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "name": "cpu-only",
+                "instances": [{"attributes": attributes}],
+            }
+        ]
+    }
+    (workdir / "terraform.tfstate").write_text(json.dumps(state))
+    if failure == "missing-state":
+        (workdir / "terraform.tfstate").unlink()
+    elif failure == "wrong-parent":
+        cpu["metadata"]["parent_id"] = "cluster-other"
+    elif failure == "wrong-id":
+        cpu["metadata"]["id"] = "nodegroup-other"
+    elif failure == "wrong-shape":
+        cpu["spec"]["template"]["resources"]["preset"] = "32vcpu-128gb"
+    elif failure == "reserved-cpu":
+        cpu["spec"]["template"]["reservation_policy"] = {"policy": "STRICT"}
+    elif failure == "extra":
+        groups.append(deepcopy(groups[-1]))
+    elif failure == "gpu-growth":
+        kwargs["cluster"] = replace(
+            kwargs["cluster"], gpu_nodes=replace(original.gpu_nodes, count=4)
+        )
+    assert E._is_verified_unchanged_target(**kwargs) is (not failure)
 
 
 @pytest.mark.parametrize(

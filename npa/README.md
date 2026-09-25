@@ -50,6 +50,12 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+Fleet recovery can remove a failed CPU pool without charging unchanged reserved
+GPUs against free capacity again. The requested CPU count must be zero, every
+other rendered capacity setting must match, and fresh provider evidence must
+verify the retained pools and the removed CPU group's Terraform ownership.
+Unknown identity or GPU growth still requires the normal capacity preflight.
+
 For [Isaac Arena footage](../docs/workbench/isaac-arena.md#supported-policies),
 `npa workbench isaac-arena evaluate --record-video --video-profile film`
 requests native 4K capture with additional physics-frozen settling renders.
