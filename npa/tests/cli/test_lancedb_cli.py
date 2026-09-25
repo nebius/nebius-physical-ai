@@ -202,6 +202,99 @@ def test_lancedb_container_local_path_skips_s3_guard(
     )
 
     assert result.exit_code == 0, result.output
+    assert "--mount type=bind,source=/tmp/lancedb,target=/data/lancedb" in result.output
+    assert "LANCEDB_STORAGE_PATH=/data/lancedb" in result.output
+
+
+def test_lancedb_container_creates_and_mounts_local_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    storage_path = tmp_path / "nested" / "lancedb"
+    seen: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return lancedb_deploy.subprocess.CompletedProcess(
+            command, 0, stdout="container-id\n", stderr=""
+        )
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(lancedb_deploy.subprocess, "run", fake_run)
+
+    container_id = lancedb_deploy._run_container(
+        image="npa-lancedb:test",
+        name="npa-lancedb-test",
+        port=8686,
+        storage_path=str(storage_path),
+        auth_mode="none",
+        token_env="LANCEDB_TOKEN",
+        storage_endpoint="",
+        detach=True,
+        replace=False,
+        dry_run=False,
+    )
+
+    assert container_id == "container-id"
+    assert storage_path.is_dir()
+    command = seen["command"]
+    assert isinstance(command, list)
+    assert [
+        "--mount",
+        f"type=bind,source={storage_path},target=/data/lancedb",
+    ] == command[command.index("--mount") : command.index("--mount") + 2]
+    assert "LANCEDB_STORAGE_PATH=/data/lancedb" in command
+
+
+def test_lancedb_container_s3_storage_is_not_bind_mounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(
+        lancedb_deploy,
+        "storage_env",
+        lambda: {
+            "AWS_ACCESS_KEY_ID": "AK",
+            "AWS_SECRET_ACCESS_KEY": "SK",
+            "AWS_ENDPOINT_URL": "https://storage.example.invalid",
+        },
+    )
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            "s3://my-bucket/lancedb",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--mount" not in result.output
+    assert "LANCEDB_STORAGE_PATH=s3://my-bucket/lancedb" in result.output
+
+
+def test_lancedb_kubernetes_rejects_ephemeral_local_storage() -> None:
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "kubernetes",
+            "--storage-path",
+            "/tmp/lancedb",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires an s3:// --storage-path" in result.output
+    assert "not persistent across rollouts or restarts" in result.output
 
 
 def test_lancedb_status_endpoint_required() -> None:
