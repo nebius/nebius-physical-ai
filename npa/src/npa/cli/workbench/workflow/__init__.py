@@ -30,6 +30,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
+    from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 
 app = typer.Typer(
@@ -230,7 +231,7 @@ def _enforce_workflow_access(
         blocked,
         probe_requirements,
     )
-    from npa.workbench.nurec.nurec import check_ngc_image_access
+    from npa.workbench.model_access import check_ngc_artifact_access
 
     credentials = load_credentials() if hf_token is None or ngc_key is None else None
     resolved_hf = (
@@ -251,7 +252,7 @@ def _enforce_workflow_access(
         hf_token=resolved_hf,
         ngc_key=resolved_ngc,
         hf_validator=validate_hf_access,
-        ngc_validator=check_ngc_image_access,
+        ngc_validator=check_ngc_artifact_access,
         state_path=state_path,
     )
     plan = approval_plan(evidence, resume_command=resume_command)
@@ -1754,12 +1755,32 @@ def submit_cmd(
                 plan_paidf_input,
                 prepare_paidf_input,
             )
+            from npa.orchestration.npa_workflow.run_state import (
+                NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+                PAIDF_COSMOS3_WORKFLOW_NAME,
+            )
+
+            paidf_input_artifact_prefix = ""
+            paidf_conditioning_policy = ""
+            if workflow_identity == NVIDIA_PAIDF_VDA_WORKFLOW_NAME:
+                from npa.orchestration.npa_workflow.runtime import _resolved_config
+
+                assert merged_npa_spec is not None
+                paidf_input_artifact_prefix = str(
+                    _resolved_config(merged_npa_spec, resolved_run_id).get("prefix")
+                    or ""
+                ).strip("/")
+                paidf_conditioning_policy = _paidf_conditioning_policy(
+                    workflow_identity,
+                    _resolved_config(merged_npa_spec, resolved_run_id),
+                )
 
             try:
                 if plan_only:
                     prepared_input = plan_paidf_input(
                         run_id=resolved_run_id,
                         bucket=bucket_for_source,
+                        artifact_prefix=paidf_input_artifact_prefix,
                         input_video=input_video,
                         input_uri=input_uri,
                         lerobot_uri=lerobot_uri,
@@ -1770,11 +1791,13 @@ def submit_cmd(
                         ),
                         lerobot_episode_was_explicit=lerobot_episode is not None,
                         seed_fixture=fixture_requested,
+                        conditioning_policy=paidf_conditioning_policy,
                     )
                 else:
                     prepared_input = prepare_paidf_input(
                         run_id=resolved_run_id,
                         bucket=bucket_for_source,
+                        artifact_prefix=paidf_input_artifact_prefix,
                         input_video=input_video,
                         input_uri=input_uri,
                         lerobot_uri=lerobot_uri,
@@ -1791,14 +1814,12 @@ def submit_cmd(
                             "AWS_SECRET_ACCESS_KEY", ""
                         ),
                         reporter=lambda message: typer.echo(message, err=True),
+                        conditioning_policy=paidf_conditioning_policy,
                     )
             except PaidfInputError as exc:
                 _fail(str(exc), secrets=submission_redaction_secrets)
                 return
             prepared_overrides = prepared_input.config_overrides()
-            from npa.orchestration.npa_workflow.run_state import (
-                PAIDF_COSMOS3_WORKFLOW_NAME,
-            )
 
             if workflow_identity == PAIDF_COSMOS3_WORKFLOW_NAME:
                 # The independent Cosmos3 spec owns its run-local provenance URI.
@@ -2888,10 +2909,15 @@ def _run_npa_workflow_runtime(
             _fail(str(exc), secrets=tuple(secret_env_values.values()))
             return
     artifact_load: dict[str, object] | None = None
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+
     if (
         report.status == "succeeded"
         and auto_load
-        and report.workflow == "physical-ai-data-factory"
+        and report.workflow
+        in {"physical-ai-data-factory", NVIDIA_PAIDF_VDA_WORKFLOW_NAME}
     ):
         artifact_load = _load_paidf_artifact(
             project=project,
@@ -3307,6 +3333,37 @@ def _resolve_submit_registry(registry: str, project: str) -> str:
     return explicit
 
 
+def _plan_preflight_image_requirements(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+    assume_decision: str,
+) -> tuple[list[str], dict[str, tuple[str, ...]]]:
+    """Plan image and pull-secret requirements across every reachable decision."""
+
+    from npa.orchestration.npa_workflow import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        plan_image_pull_secrets,
+        plan_images,
+    )
+
+    decisions = [str(assume_decision or "").strip()]
+    decisions.extend(
+        str(transition.when or "").strip()
+        for state in spec.states.values()
+        for transition in state.transitions
+    )
+    steps = []
+    for decision in dict.fromkeys(decisions):
+        plan = build_plan(spec, run_id=run_id, assume_decision=decision)
+        steps.extend(plan.steps)
+    return (
+        plan_images(spec, steps, run_id=run_id, options=options),
+        plan_image_pull_secrets(spec, steps, run_id=run_id, options=options),
+    )
+
+
 def _preflight_submit_images(
     yaml_path: Path,
     *,
@@ -3328,12 +3385,7 @@ def _preflight_submit_images(
     if not enabled:
         return {}
 
-    from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.skypilot_render import (
-        plan_image_pull_secrets,
-        plan_images,
-    )
     from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
     from npa.orchestration.skypilot.registry_preflight import (
         check_image_pulls_with_credentials,
@@ -3342,21 +3394,13 @@ def _preflight_submit_images(
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-preflight"
-        decisions = [assume_decision] if assume_decision.strip() else []
-        decisions.extend(
-            transition.when
-            for state in resolved_spec.states.values()
-            for transition in state.transitions
+        images, pull_secrets_by_image = _plan_preflight_image_requirements(
+            resolved_spec,
+            run_id=run_id,
+            options=options,
+            assume_decision=assume_decision,
         )
-        steps = []
-        for decision in dict.fromkeys(decisions):
-            plan = build_plan(resolved_spec, run_id=run_id, assume_decision=decision)
-            steps.extend(plan.steps)
-        images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
-        pull_secrets_by_image = plan_image_pull_secrets(
-            resolved_spec, steps, run_id=run_id, options=options
-        )
-    except NpaWorkflowError:
+    except (NpaWorkflowError, ValueError):
         # Planning problems are reported by the submit path itself with better context.
         return {}
     if not images:
@@ -3385,14 +3429,16 @@ def _preflight_submit_images(
         context=context_from_infra(infra),
         pull_secrets_by_image=pull_secrets_by_image,
         observation_timeout_seconds=image_bootstrap_timeout_seconds,
+        bind_requested_images=True,
     )
     typer.echo(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
         err=True,
     )
     return {
-        image: str(item.get("image") or "")
-        for image, item in zip(dict.fromkeys(images), contract_checks, strict=True)
+        str(item["_requested_image"]): str(item.get("image") or "")
+        for item in contract_checks
+        if str(item.get("_requested_image") or "").strip()
     }
 
 
@@ -3403,6 +3449,7 @@ def _preflight_image_bootstrap_contracts(
     context: str,
     pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
     observation_timeout_seconds: int = 1800,
+    bind_requested_images: bool = False,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
 
@@ -3540,7 +3587,10 @@ def _preflight_image_bootstrap_contracts(
                 ),
                 err=True,
             )
-        results.append(evidence.to_dict())
+        result = evidence.to_dict()
+        if bind_requested_images:
+            result["_requested_image"] = image
+        results.append(result)
     return results
 
 
@@ -3921,6 +3971,26 @@ def _parse_submit_vars(var: list[str]) -> dict[str, str]:
             _fail("Invalid --var format. Use KEY=VALUE.")
         substitutions[key] = value
     return substitutions
+
+
+def _paidf_conditioning_policy(
+    workflow_identity: str, resolved_config: dict[str, object]
+) -> str:
+    """Select explicit v3 while preserving the historical VDA v2 default."""
+
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+    from npa.workflows.data_factory_input import (
+        SOURCE_FIDELITY_CONDITIONING_POLICY_V2,
+    )
+
+    if workflow_identity != NVIDIA_PAIDF_VDA_WORKFLOW_NAME:
+        return ""
+    return str(
+        resolved_config.get("input_conditioning_policy")
+        or SOURCE_FIDELITY_CONDITIONING_POLICY_V2
+    ).strip()
 
 
 def _parse_image_overrides(items: list[str]) -> dict[str, str]:
@@ -7022,6 +7092,9 @@ def cancel_cmd(
             jobs_payload = [item.to_dict() for item in assessment.jobs]
             job_ids = [item.job_id for item in assessment.jobs]
             active_ids = [item.job_id for item in assessment.active_jobs]
+            absence_conflict_ids = [
+                item.job_id for item in assessment.absence_conflict_jobs
+            ]
             if not assessment.active_jobs and not assessment.errors:
                 terminal = is_terminal_workflow_state(assessment.detected_state)
                 result = {
@@ -7033,6 +7106,8 @@ def cancel_cmd(
                     "sky_job_ids": job_ids,
                     "cloud_calls": False,
                     "jobs": jobs_payload,
+                    "durable_absence_conflict_job_ids": [],
+                    "owned_teardown_allowed": False,
                     "message": (
                         "No cancellation was needed; authoritative workflow/stage "
                         f"state is {assessment.detected_state}."
@@ -7050,9 +7125,21 @@ def cancel_cmd(
                     "sky_job_ids": job_ids,
                     "cloud_calls": False,
                     "jobs": jobs_payload,
+                    "durable_absence_conflict_job_ids": absence_conflict_ids,
+                    "durable_absence_conflict_errors": (
+                        assessment.absence_conflict_errors
+                    ),
+                    "owned_teardown_allowed": (
+                        assessment.only_verified_absence_conflicts
+                    ),
                     "errors": assessment.errors,
                     "message": (
-                        "Cancellation was not attempted because one or more exact "
+                        "Cancellation remains non-terminal because durable state "
+                        "contradicts exact verified job absence. An explicit project "
+                        "destroy may continue run-owned teardown using this structured "
+                        "evidence."
+                        if assessment.only_verified_absence_conflicts
+                        else "Cancellation was not attempted because one or more exact "
                         "workflow/job records could not be verified."
                     ),
                 }
@@ -7073,6 +7160,11 @@ def cancel_cmd(
                         "sky_job_ids": job_ids,
                         "cloud_calls": False,
                         "jobs": jobs_payload,
+                        "durable_absence_conflict_job_ids": absence_conflict_ids,
+                        "durable_absence_conflict_errors": (
+                            assessment.absence_conflict_errors
+                        ),
+                        "owned_teardown_allowed": False,
                         "errors": reverify_errors,
                         "message": (
                             "Cancellation was not attempted because exact active-job "
@@ -7090,6 +7182,10 @@ def cancel_cmd(
                         sky_bin=sky_bin or None,
                     )
                     errors = [*assessment.errors, *cleanup.errors]
+                    owned_teardown_allowed = (
+                        assessment.only_verified_absence_conflicts
+                        and not cleanup.errors
+                    )
                     result = {
                         "run_id": resolved_run_id,
                         "outcome": "cancelled"
@@ -7102,12 +7198,21 @@ def cancel_cmd(
                         "cancelled_job_ids": active_ids,
                         "cloud_calls": True,
                         "jobs": jobs_payload,
+                        "durable_absence_conflict_job_ids": absence_conflict_ids,
+                        "durable_absence_conflict_errors": (
+                            assessment.absence_conflict_errors
+                        ),
+                        "owned_teardown_allowed": owned_teardown_allowed,
                         "resources_removed": cleanup.resources_removed,
                         "commands": cleanup.commands,
                         "errors": errors,
                         "message": (
                             f"Cancellation converged for {len(active_ids)} active managed job(s)."
                             if not errors
+                            else "Every live managed job converged; only contradictory "
+                            "durable state for exact verified-absent jobs remains. An "
+                            "explicit project destroy may continue run-owned teardown."
+                            if owned_teardown_allowed
                             else "Cancellation was only partial; retry after resolving the "
                             "reported exact job/provider failures."
                         ),
@@ -7166,6 +7271,11 @@ def cancel_cmd(
             result.setdefault("diagnostics", []).append(
                 f"teardown receipt unavailable: {exc}"
             )
+        result["owned_teardown_allowed"] = False
+    result.setdefault("durable_absence_conflict_job_ids", [])
+    result.setdefault("durable_absence_conflict_errors", [])
+    result.setdefault("cancelled_job_ids", [])
+    result.setdefault("owned_teardown_allowed", False)
     result["identity_source"] = (
         identity.source if identity is not None else "unavailable"
     )
@@ -7851,13 +7961,9 @@ def preflight_images_cmd(
     the actual manifest fetch a worker performs.
     """
 
-    from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
-    from npa.orchestration.npa_workflow.skypilot_render import (
-        SkypilotRenderOptions,
-        plan_image_pull_secrets,
-        plan_images,
-    )
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
     from npa.orchestration.skypilot.registry_preflight import (
         check_image_pulls_with_credentials,
     )
@@ -7884,10 +7990,11 @@ def preflight_images_cmd(
     if resolved_registry:
         typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
-    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
-    images = plan_images(spec, plan.steps, run_id=run_id, options=options)
-    pull_secrets_by_image = plan_image_pull_secrets(
-        spec, plan.steps, run_id=run_id, options=options
+    images, pull_secrets_by_image = _plan_preflight_image_requirements(
+        spec,
+        run_id=run_id,
+        options=options,
+        assume_decision=assume_decision,
     )
     if image_pull_secret:
         explicit = tuple(
@@ -7903,20 +8010,20 @@ def preflight_images_cmd(
         typer.echo("images: none pinned by this spec")
         return
 
+    context = context_from_infra(infra)
     checks = check_image_pulls_with_credentials(
         images,
         mint=True,
         pull_secrets_by_image=pull_secrets_by_image,
+        context=context,
     )
     failed = [check for check in checks if not check.ok]
     contract_checks: list[dict[str, object]] = []
     if not failed:
-        from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
-
         contract_checks = _preflight_image_bootstrap_contracts(
             images=images,
             pull_checks=checks,
-            context=context_from_infra(infra),
+            context=context,
             pull_secrets_by_image=pull_secrets_by_image,
             observation_timeout_seconds=image_bootstrap_timeout_seconds,
         )

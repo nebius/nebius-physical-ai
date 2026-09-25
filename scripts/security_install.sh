@@ -6,7 +6,8 @@ umask 077
 tool_directory="${1:?Pass a private tools directory}"
 mkdir -p "$tool_directory"
 tool_directory="$(cd "$tool_directory" && pwd)"
-curl --fail --silent --show-error --location \
+# GitHub release downloads can return transient 5xx responses during CI setup.
+curl --fail --silent --show-error --location --retry 5 \
   https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz \
   --output "$tool_directory/trivy.tar.gz"
 (

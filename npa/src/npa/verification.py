@@ -16,12 +16,6 @@ VERIFIED = "VERIFIED"
 VERIFICATION_UNAVAILABLE = "VERIFICATION_UNAVAILABLE"
 CACHED = "CACHED"
 
-_SECRET_ASSIGNMENT = re.compile(
-    r"(?i)([\"']?[a-z0-9_-]*"
-    r"(?:token|password|secret|api[_-]?key|authorization)"
-    r"[a-z0-9_-]*[\"']?\s*[:=]\s*)"
-    r"(?:bearer\s+)?[\"']?([^\s,;}\]\"']+)"
-)
 _HORIZONTAL_WHITESPACE = r"[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]"
 _SECRET_ASSIGNMENT_PREFIX = re.compile(
     r"(?i)(?<![a-z0-9_-])"
@@ -73,6 +67,32 @@ def _quoted_secret_end(text: str, start: int) -> tuple[int, bool]:
     return line_end, False
 
 
+def _secret_assignment_value(text: str, start: int) -> tuple[int, str, bool]:
+    quote = text[start] if text[start] in {'"', "'"} else ""
+    if quote:
+        end, closed = _quoted_secret_end(text, start)
+        return end, quote, closed
+    end = start
+    while end < len(text) and not text[end].isspace() and text[end] not in ",;}]\"'":
+        end += 1
+    return end, "", False
+
+
+def _is_workflow_token_reference(text: str, start: int, raw_value: str) -> bool:
+    prefix = text[max(0, start - _NON_SECRET_ASSIGNMENT_CONTEXT_WIDTH) : start].lower()
+    if not all(
+        character.isascii() and (character.isalnum() or character in "_.-")
+        for character in raw_value
+    ):
+        return False
+    return any(
+        prefix.endswith(context)
+        and raw_value.lower().startswith(value_prefix)
+        and len(raw_value) > len(value_prefix)
+        for context, value_prefix in _NON_SECRET_WORKFLOW_TOKEN_REFERENCES
+    )
+
+
 def _redact_secret_assignments(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
@@ -83,49 +103,85 @@ def _redact_secret_assignments(text: str) -> str:
         normalized_key = key.strip("\"'").lower()
         if not any(marker in normalized_key for marker in _SECRET_KEY_MARKERS):
             continue
-        prefix = text[
-            max(0, match.start() - _NON_SECRET_ASSIGNMENT_CONTEXT_WIDTH) : match.start()
-        ].lower()
-
         value_start = match.end()
         if value_start >= len(text) or text[value_start] == "\n":
             continue
-        quote = text[value_start] if text[value_start] in {'"', "'"} else ""
-        if quote:
-            value_end, closed_quote = _quoted_secret_end(text, value_start)
-        else:
-            value_end = value_start
-            while (
-                value_end < len(text)
-                and not text[value_end].isspace()
-                and text[value_end] not in ",;}]\"'"
-            ):
-                value_end += 1
-            closed_quote = False
+        value_end, quote, closed_quote = _secret_assignment_value(text, value_start)
         if value_end == value_start:
             continue
-        raw_value = text[value_start:value_end]
         if (
             normalized_key == "token"
             and not quote
-            and any(
-                prefix.endswith(context)
-                and raw_value.lower().startswith(value_prefix)
-                and len(raw_value) > len(value_prefix)
-                and all(
-                    character.isascii() and (character.isalnum() or character in "_.-")
-                    for character in raw_value
-                )
-                for context, value_prefix in _NON_SECRET_WORKFLOW_TOKEN_REFERENCES
+            and _is_workflow_token_reference(
+                text, match.start(), text[value_start:value_end]
             )
         ):
             continue
-
         pieces.append(text[cursor : match.start()])
         pieces.append(f"{key}{match.group('separator')}{quote}<redacted>")
         if closed_quote:
             pieces.append(quote)
         cursor = value_end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _url_schemes(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    urls: list[tuple[int, int]] = []
+    search_from = start
+    while True:
+        delimiter = text.find("://", search_from, end)
+        if delimiter < 0:
+            return urls
+        scheme_start = delimiter
+        while scheme_start > start:
+            candidate = text[scheme_start - 1]
+            if not (
+                candidate.isascii() and (candidate.isalnum() or candidate in "+.-")
+            ):
+                break
+            scheme_start -= 1
+        while scheme_start < delimiter and not (
+            text[scheme_start].isascii() and text[scheme_start].isalpha()
+        ):
+            scheme_start += 1
+        if scheme_start < delimiter:
+            urls.append((scheme_start, delimiter))
+        search_from = delimiter + 3
+
+
+def _url_secret_ranges(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    replacements: list[tuple[int, int]] = []
+    urls = _url_schemes(text, start, end)
+    for index, (_scheme_start, delimiter) in enumerate(urls):
+        url_end = urls[index + 1][0] if index + 1 < len(urls) else end
+        authority_start = delimiter + 3
+        authority_end = url_end
+        for boundary in "/?#":
+            boundary_index = text.find(boundary, authority_start, url_end)
+            if boundary_index >= 0:
+                authority_end = min(authority_end, boundary_index)
+        userinfo_end = text.find("@", authority_start, authority_end)
+        if userinfo_end >= 0:
+            replacements.append((authority_start, userinfo_end))
+        query_start = text.find("?", authority_start, url_end)
+        if 0 <= query_start < end - 1:
+            replacements.append((query_start + 1, end))
+    return replacements
+
+
+def _redact_ranges(text: str, replacements: list[tuple[int, int]]) -> str:
+    if not replacements:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for start, end in sorted(replacements):
+        if start < cursor:
+            cursor = max(cursor, end)
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append("<redacted>")
+        cursor = end
     pieces.append(text[cursor:])
     return "".join(pieces)
 
@@ -141,60 +197,9 @@ def _redact_url_credentials(text: str) -> str:
             token_end += 1
         if token_start == token_end:
             break
-
-        urls: list[tuple[int, int]] = []
-        search_from = token_start
-        while True:
-            delimiter = text.find("://", search_from, token_end)
-            if delimiter < 0:
-                break
-            scheme_start = delimiter
-            while scheme_start > token_start:
-                candidate = text[scheme_start - 1]
-                if not (
-                    candidate.isascii() and (candidate.isalnum() or candidate in "+.-")
-                ):
-                    break
-                scheme_start -= 1
-            while scheme_start < delimiter and not (
-                text[scheme_start].isascii() and text[scheme_start].isalpha()
-            ):
-                scheme_start += 1
-            if scheme_start < delimiter:
-                urls.append((scheme_start, delimiter))
-            search_from = delimiter + 3
-
-        for index, (scheme_start, delimiter) in enumerate(urls):
-            url_end = urls[index + 1][0] if index + 1 < len(urls) else token_end
-            authority_start = delimiter + 3
-            authority_end = url_end
-            for boundary in "/?#":
-                boundary_index = text.find(boundary, authority_start, url_end)
-                if boundary_index >= 0:
-                    authority_end = min(authority_end, boundary_index)
-            userinfo_end = text.find("@", authority_start, authority_end)
-            if userinfo_end >= 0:
-                replacements.append((authority_start, userinfo_end))
-
-            query_start = text.find("?", authority_start, url_end)
-            if 0 <= query_start < token_end - 1:
-                replacements.append((query_start + 1, token_end))
-
+        replacements.extend(_url_secret_ranges(text, token_start, token_end))
         token_start = token_end
-
-    if not replacements:
-        return text
-    pieces: list[str] = []
-    cursor = 0
-    for start, end in sorted(replacements):
-        if start < cursor:
-            cursor = max(cursor, end)
-            continue
-        pieces.append(text[cursor:start])
-        pieces.append("<redacted>")
-        cursor = end
-    pieces.append(text[cursor:])
-    return "".join(pieces)
+    return _redact_ranges(text, replacements)
 
 
 def redact_failure_text(reason: object, *, secrets: Sequence[str]) -> str:

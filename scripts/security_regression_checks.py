@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from security_dependencies import scan_dependencies
-from security_gate import regressions
+from security_gate import blocking_findings, regressions
 from security_source import scan_source
 
 
@@ -132,6 +132,21 @@ def _check_dependencies(root: Path, output: Path) -> dict:
     }
 
 
+def _check_current_dependencies(root: Path, output: Path) -> dict:
+    manifest = "npa/requirements-lock.txt"
+    _write_fixture(root, manifest, "requests==2.19.1\n")
+    vulnerable = scan_dependencies(
+        root, output / "current-vulnerable", output / "cache"
+    )
+    if not vulnerable or blocking_findings(vulnerable, vulnerable) != vulnerable:
+        raise AssertionError("Unchanged vulnerable application pins must fail")
+    _write_fixture(root, manifest, "anyio==4.14.2\n")
+    patched = scan_dependencies(root, output / "current-patched", output / "cache")
+    if blocking_findings(vulnerable, patched):
+        raise AssertionError("Patched application dependency fixture must pass")
+    return {"unchanged_rejected": True, "patched_accepted": True}
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -174,10 +189,12 @@ def main() -> int:
         root = Path(directory)
         source = _check_source(root / "source", output)
         dependencies = _check_dependencies(root / "dependencies", output)
+        current = _check_current_dependencies(root / "current", output)
         _check_parse_failure(root / "invalid", output)
     summary = {
         "source": source,
         "dependencies": dependencies,
+        "current_dependencies": current,
         "parse_failure_rejected": True,
         "fixtures_executed_or_installed": False,
     }

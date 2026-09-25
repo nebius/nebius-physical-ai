@@ -267,7 +267,7 @@ def test_rerun_viewer_is_exact_source_stage14_runtime() -> None:
         if line.strip() and not line.startswith("#")
     ]
     assert all(line.count("==") == 1 for line in lines)
-    for dependency in ("boto3==1.43.62", "mcap==1.4.0", "rerun-sdk==0.31.4"):
+    for dependency in ("boto3==1.43.62", "mcap==1.4.0", "rerun-sdk==0.38.1"):
         assert dependency in lines
 
 
@@ -295,6 +295,25 @@ def test_cosmos2_exact_source_image_uses_light_package_imports() -> None:
     ).read_text(encoding="utf-8")
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     assert "import npa.workflows.sim2real.runtime_attestation" in dockerfile
+
+
+def test_rerun_viewer_exact_source_image_selects_one_light_cli() -> None:
+    """The PAIDF visualization toolRef must be registered in the viewer image."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "rerun-viewer"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+    selectors = [
+        token
+        for token in dockerfile.split()
+        if token.startswith("NPA_LIGHT_WORKBENCH_TOOL=")
+    ]
+    assert selectors == ["NPA_LIGHT_WORKBENCH_TOOL=rerun-viewer"]
 
 
 @pytest.mark.parametrize(

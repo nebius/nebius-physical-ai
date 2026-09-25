@@ -24,6 +24,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
+    tool_vendor_interpreters,
     tool_requires_staged_npa_source,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
@@ -86,7 +87,10 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
 @pytest.mark.parametrize(
     ("name", "expected_image"),
     [
-        ("byof-openpi.yaml", "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04"),
+        (
+            "byof-openpi.yaml",
+            "docker:nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed",
+        ),
         (
             "byof-wan2.2.yaml",
             "docker:ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:",
@@ -245,6 +249,21 @@ def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
     candidate_loop = setup.split("for candidate in ", 1)[1].split("; do", 1)[0]
     assert candidate_loop.index('"${NPA_BAKED_PYTHON:-}"') < candidate_loop.index(
         "sys.executable"
+    )
+
+
+def test_paidf_dig_keeps_npa_out_of_the_vendor_environment() -> None:
+    for tool_ref in (
+        "workflow.paidf.dig_infer",
+        "workflow.paidf.dig_train",
+        "workflow.paidf.dig_prepare_pretrained",
+    ):
+        assert tool_vendor_interpreters(tool_ref) == ()
+
+    # Other tools that require one process to import vendor libraries retain
+    # the established vendor-interpreter setup behavior.
+    assert tool_vendor_interpreters("workbench.lerobot") == (
+        "/opt/lerobot/venv/bin/python",
     )
 
 
