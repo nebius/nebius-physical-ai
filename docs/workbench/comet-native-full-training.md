@@ -123,8 +123,16 @@ trainable optimizer state, and committed data cursor passed the restore checks.
 
 One warmed four-GPU update took 3.255 seconds for full-model training and
 2.148 seconds for action-expert training, each with a global batch of 256.
-These individual updates do not establish sustained throughput. Longer
-four-GPU continuation remains unqualified. No selected
-candidate, current-version task score, serving-parity result, completed
+These individual updates do not establish sustained throughput.
+
+The four-GPU full-model continuation subsequently published its 15,000-update
+milestone. An independent reader downloaded and hashed all 35 checkpoint
+members, totaling 32,222,827,800 bytes, and verified the native optimizer state,
+committed data cursor, normalization asset, and qualification lineage. The
+checkpoint has Orbax manager step 14,999. This verifies one durable milestone;
+training continues toward the frozen 20,000-update target. The reader retains
+the provider originals and removes only its own temporary download copies.
+
+No selected candidate, current-version task score, serving-parity result, completed
 20,000-update run, or physical-24-GB qualification is established by this
 evidence. Exact operator bindings and evidence remain outside Git.

@@ -75,3 +75,19 @@ persistence are fixed before reading any TRAIN-calibration result. The action
 horizon must come from the pinned trainer binding; the sampler has no default.
 Rollout outcomes and privileged simulator state are not accepted by the sampler
 API.
+
+## Live qualification
+
+The matched experiment prepared 96,000 ordered samples per arm from 540 fitting
+episodes and 60 disjoint TRAIN-calibration episodes across three tasks. The
+candidate changes focal-task sampling; both arms retain identical anchor-task
+samples and shared interleaving. Seven preparation artifacts passed independent
+readback.
+
+Both arms passed native GPU qualification with the real batch of 16, three RGB
+views, state, tokens, and 32-action targets. Each performed one discarded
+optimizer update and matched the reference flow calculation with zero measured
+difference. Independent readers verified all eight qualification originals per
+arm. The paired 6,000-update training runs have started and record the committed
+sample position with each update. Qualification does not establish a trained
+checkpoint, task-quality improvement, or a competitive score.
