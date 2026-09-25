@@ -198,10 +198,28 @@ def _evaluate_scene(request, protocol, scene, checkpoint, root, index):
         raise ValueError("native evaluation loaded a different checkpoint")
     trajectories = json.loads((output / "trajectory.json").read_text())
     rows = _measurements(recipe, trajectories, report)
+    _retain_evaluation(request, scene, output, report, root, index)
     return [
         _episode(request, scene, row, trajectories, root, index, i)
         for i, row in enumerate(rows)
     ]
+
+
+def _retain_evaluation(request, scene, output, report, root, index):
+    archive = root / f"evaluation-{index}.tar"
+    _archive(output, archive)
+    prefix = request["output_prefix"]
+    artifacts = _upload(archive, prefix + archive.name)
+    record = {
+        **_identity(request, "npa.field-failure.native-evaluation.v1"),
+        "scenario_id": scene["scenario_id"],
+        "policy": request["policy"],
+        "protocol_sha256": request["protocol"]["sha256"],
+        "native": report,
+        "artifacts": artifacts,
+    }
+    name = f"native-evaluation-{index}.json"
+    _upload_json(record, root / name, prefix + name)
 
 
 def _measurements(recipe, trajectory, report):

@@ -73,6 +73,11 @@ Failed and timed-out rollouts remain completed comparison evidence. The native
 standalone quality threshold does not discard a losing baseline arm; the sealed
 paired comparison determines the recommendation. Both the original failure
 replay and the untouched held-out comparison must be shown when claiming improvement.
+Each native held-out evaluation also retains its complete simulator output in
+`evaluation-<index>.tar` under that adapter attempt. Its companion
+`native-evaluation-<index>.json` binds the archive digest, policy, protocol,
+scenario and measured report. Native rendered frames/video and full trajectories
+therefore remain available after the worker's temporary directory is removed.
 
 ## Required runtime and adapters
 

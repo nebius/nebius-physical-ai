@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+import hashlib
+import json
+import shutil
 import tarfile
 
 import pytest
@@ -122,3 +125,52 @@ def test_native_success_cannot_mask_measured_physical_failure():
     )
     with pytest.raises(ValueError, match="success after physical failure"):
         _episode_metrics(scene, row, [{"name": "success"}])
+
+
+def test_native_evaluation_keeps_rendered_evidence_after_worker_cleanup(
+    tmp_path, monkeypatch
+):
+    from npa.workflows.field_failure import native_artifacts, native_policy
+
+    uploaded = {}
+
+    class Storage:
+        def put_bytes_conditional(self, data, uri, *, if_none_match):
+            assert if_none_match and uri not in uploaded
+            uploaded[uri] = data
+
+    monkeypatch.setattr(native_artifacts, "_storage", lambda: Storage())
+    output = tmp_path / "native-output"
+    (output / "rendered-rollout").mkdir(parents=True)
+    # Deliberately synthetic bytes: this checks retention, not renderer validity.
+    (output / "rendered-rollout/00001.png").write_bytes(b"synthetic frame")
+    (output / "trajectory.json").write_text('[{"physical_failure":[1]}]')
+    request = {
+        "bundle_sha256": "a" * 64,
+        "adapter": {"entrypoint": "example:evaluate"},
+        "attempt_id": "unit-attempt",
+        "inputs_sha256": "b" * 64,
+        "output_prefix": "s3://example-bucket/unit-evaluation/",
+        "policy": {"policy_id": "candidate", "checkpoint": {"sha256": "c" * 64}},
+        "protocol": {"sha256": "d" * 64},
+    }
+    report = {"checkpoint_sha256": "c" * 64, "success_rate": 0.0}
+    native_policy._retain_evaluation(
+        request, {"scenario_id": "untouched-scene"}, output, report, tmp_path, 0
+    )
+    shutil.rmtree(output)
+    prefix = request["output_prefix"]
+    record = json.loads(uploaded[prefix + "native-evaluation-0.json"])
+    archive = uploaded[record["artifacts"]["uri"]]
+    assert hashlib.sha256(archive).hexdigest() == record["artifacts"]["sha256"]
+    assert record["policy"] == request["policy"]
+    assert record["protocol_sha256"] == request["protocol"]["sha256"]
+    assert record["native"] == report
+    with tarfile.open(fileobj=io.BytesIO(archive)) as stream:
+        assert (
+            stream.extractfile("rendered-rollout/00001.png").read()
+            == b"synthetic frame"
+        )
+        assert json.load(stream.extractfile("trajectory.json")) == [
+            {"physical_failure": [1]}
+        ]
