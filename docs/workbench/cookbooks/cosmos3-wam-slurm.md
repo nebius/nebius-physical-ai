@@ -17,6 +17,12 @@ success result has been measured for this recipe. The [GPU evidence record](../e
 includes runtime versions, hashes, and the memory failure.
 Consult the [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json).
 
+For a visual look at the prepared setup, [play the actual B200 generation and
+source-data preview](../evidence/cosmos3-wam-b200-visual/README.md). That record
+contains the generated MP4, synchronized source cameras, reproduction settings
+and GPU telemetry. It demonstrates base-model inference; it does not establish
+post-training success.
+
 ## What the experiment measures
 
 Keep framework/model/data revisions, optimizer, precision, sample cap, action

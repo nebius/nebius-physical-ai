@@ -80,6 +80,24 @@ The live preparation test also found an operational issue: the native converter
 could resolve a moving processor revision. The recipe now selects the staged
 processor and VAE explicitly and pins the training tokenizer separately.
 
+## See what the prepared model generates
+
+Before training, we also rendered a [visual preview on the prepared B200](evidence/cosmos3-wam-b200-visual/README.md):
+the complete two-camera demonstration and a base-model image-to-video generation
+from its first front-camera frame.
+
+![Recorded demonstration and real Cosmos3-Nano B200 generation](evidence/cosmos3-wam-b200-visual/comparison.png)
+
+The generated MP4 contains 121 frames at 640×640 and 24 fps. Its native generation
+batch took 21.97 seconds after model setup; the whole process took 279.10 seconds,
+including guardrail downloads and checkpoint loading. Sampled GPU utilization
+reached 100% and memory reached 42.10 GiB. These are single-sample inference
+observations, with diffusion caching enabled, not WAM post-training timings.
+The generated arm has geometry and contact errors. This is a useful illustration
+of why a visually recognizable scene is not evidence of a successful robot
+policy. The linked record includes the videos, settings, hashes and actual GPU
+telemetry; the trained-policy evaluation remains pending.
+
 ## Change GPU count while preserving the experiment
 
 The proposed comparison starts with one eight-GPU B200 node, then moves to two

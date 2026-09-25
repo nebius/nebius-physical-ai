@@ -21,6 +21,8 @@
   "upstream_train_dryrun_executed": true,
   "b200_cuda_runtime_qualified": true,
   "native_checkpoint_conversion_completed": true,
+  "base_model_visual_generation_completed": true,
+  "visual_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-b200-visual/evidence.json",
   "single_gpu_wam_execution": "out-of-memory-at-first-optimizer-update",
   "gpu_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json",
   "b200_scaling_measured": false,
