@@ -140,6 +140,8 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
+    "usd-core==26.8",
     # Actual loopback HTTP regression coverage for deployed service boundaries.
     "uvicorn>=0.52.4",
     # The served agent audit explicitly selects Uvicorn's websockets protocol.
@@ -168,6 +170,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "usd-core==26.8",
     "uvicorn>=0.52.4",
     "websockets>=10,<18",
     "google-cloud-storage==3.14.1",

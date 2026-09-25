@@ -1,0 +1,376 @@
+# Calibrated multicamera RGB-D capture
+
+[The workflow](../../workflows/testing/multicamera-rgbd-capture.yaml) renders a
+camera rig in a static USD scene with **Isaac Sim 6.0.1.0**, then downloads and
+validates the resulting S3 dataset in a separate CPU stage. No robot is required.
+The existing Franka RGB capture adapter is unchanged. The public warehouse
+reference passed a full native RTX capture and a separate CPU worker's exhaustive
+decoded validation: **265 poses, four 1280×720 cameras, 1,060 RGB-D views and
+265 fused colored clouds**. See [native acceptance](#native-acceptance) and the
+[measured summary](evidence/multicamera-rgbd/native-validation.json).
+The default procedural room's known-wall-depth live test remains unrun.
+
+The default `procedural://four-camera-room` input creates a repository-authored
+room with four walls, a floor, a crate, lighting, four outward-facing calibrated
+cameras, and three sampled rig poses. It contains no vendor or proprietary
+assets. Its intended validation scope is camera synchronization and geometry.
+It does not represent an industrial scan, navigation task, robot policy, or
+encoder-training quality assessment. Supplied scenes never fall back to it.
+
+## Run the standard workflow
+
+Use a configured Workbench operator environment, staged branch source, S3
+credentials, and an RT-core GPU (L40S or RTX PRO 6000). The capture toolRef routes
+to the existing `isaac-lab` image and its `/isaac-sim/python.sh` interpreter.
+That image fetches the pinned Isaac runtime through the existing operator
+bootstrap; do not run this adapter with the system Python interpreter. The
+supported Isaac Lab image is generation 3 beta; this adapter calls Isaac Sim
+Replicator directly and does not instantiate a Lab robot environment.
+
+```bash
+npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-capture.yaml
+npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-capture.yaml --run-id preview
+npa workbench workflow submit workflows/testing/multicamera-rgbd-capture.yaml \
+  --run-id '<unique-run-id>' --stage-src \
+  --var 'bucket=<your-bucket>' \
+  --var 'capture_input_uri=s3://<your-bucket>/<input-prefix>/request.json' \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+Omit `capture_input_uri` to render the explicit procedural fixture. The YAML
+owns both stages; no custom outer orchestrator or workflow-specific CLI is
+required. The existing bootstrap acceptance/opt-out behavior applies. Set the
+storage endpoint through the normal Workbench credential configuration. Source
+staging, runtime cache, credentials, image availability, and GPU compatibility
+must be verified before a live submission. Schema validation does not prove any
+of those prerequisites. The submit matrix includes this executable GPU case
+and keeps the default procedural case out of automatic daily rotation until
+its separate known-wall-depth live check passes.
+
+`config.source_overlay: true` is required for this new adapter. `--stage-src`
+uploads the submitting checkout through the standard source staging path;
+an already verified `NPA_SRC_S3_URI` can be used instead. The rendered GPU task
+sets `NPA_SRC_OVERLAY=1`, installing that source into the Isaac interpreter even
+if the existing image already imports an older NPA. The CPU validator receives
+the same source URI. A baked image alone does not prove the new module exists.
+
+The only workflow-specific configuration keys are `capture_input_uri`,
+`capture_uri` (default run-scoped capture prefix), and `validation_uri` (default
+run-scoped report object). `bucket` and `prefix` select the usual S3 destination.
+Use a fresh run prefix for every capture; committed captures and validation
+reports cannot be overwritten.
+
+## Input bundle
+
+An S3 object named `request.json` contains the calibration and sampled
+trajectory. Every USD layer and texture it needs is another object relative to
+that manifest's prefix, declared by SHA256 in `files`. The input adapter fetches
+only those explicit objects and verifies every hash. It does not list buckets,
+extract archives, or fetch dependencies from arbitrary USD URLs.
+
+Generate an editable example locally, without Isaac or cloud access:
+
+```bash
+npa/.venv/bin/python -m npa.workflows.isaac_rgbd fixture --output-path rig-input
+```
+
+Replace its scene, cameras and trajectory, update the asset SHA256 values, and
+stage the complete bundle to your input prefix through normal S3 tooling.
+`validate_request` in `npa.workflows.isaac_rgbd.contract` validates the decoded
+request on CPU. Example shape with one camera (the generated fixture has four):
+
+```json
+{
+  "schema": "npa.isaac.rgbd.request.v1",
+  "scene": "scene.usda",
+  "files": {"scene.usda": "<lowercase SHA256 of the supplied layer>"},
+  "pointcloud": true,
+  "cameras": [{
+    "id": "front", "width": 320, "height": 240,
+    "intrinsics": [[240, 0, 159.5], [0, 240, 119.5], [0, 0, 1]],
+    "T_rig_camera": [[0, 0, 1, 0.15], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]],
+    "depth_range_m": [0.1, 20.0]
+  }],
+  "trajectory": [{
+    "timestamp_ns": 0,
+    "T_world_rig": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 1.5], [0, 0, 0, 1]]
+  }]
+}
+```
+
+There are no implicit calibration, timestamp, or missing-pose defaults. Unknown
+fields are rejected. IDs are unique lowercase identifiers. Transforms must be
+finite, right-handed rigid 4x4 matrices. Timestamps are nonnegative integer
+nanoseconds, strictly increasing and at most 2^53 for numeric representability.
+They are simulation time relative to the capture origin, not Unix time. Every
+sample is rendered; the adapter does not interpolate or check path feasibility.
+Camera counts and resolutions are configurable independently. Pinhole focal
+lengths must be positive; principal points must lie inside the image; skew and
+lens distortion are unsupported. Input focal lengths and principal points are
+in pixels. Non-square pixels and off-center principal points are supported.
+
+Scene layers must declare `metersPerUnit=1` and `upAxis="Z"`. Supported inputs
+are `.usd`, `.usda`, `.usdc`, and self-contained `.usdz` packages, including the
+scan-to-Isaac workflow's portable `scene.usdz`. Declare the complete package's
+SHA256 in `files`; its internal members need no separate request entries.
+Preflight extracts packages only into private audit directories and checks
+every member, including unused layers and nested packages, before opening the
+original package in Kit. Archive traversal, duplicates, case/prefix collisions,
+symlinks, special files, compression, encryption and renamed packages are rejected.
+Cameras are authored into the writable session layer, preserving package bytes.
+Explicit `archive.usdz[member.usd]` paths remain unsupported; reference the
+package root instead. Normal relative dependencies, including `./` and contained
+parent paths, are supported. They cannot escape their bundle/archive or use network
+locations, hidden components or expansion tokens. All referenced layers,
+payloads, value clips and textures must be declared. Time-sampled properties
+and executable OmniGraph nodes are rejected. Raw Sdf layer, prim and property
+preflight runs before Kit opens the scene, including inactive prims and all
+unselected variants. It rejects `OmniScriptingAPI`, `omni:scripting:*`, graph
+schemas/properties, time samples and value clips. The opened stage must also
+have no composition errors; a hash-valid layer referencing a missing prim is
+still invalid. These are supported-content checks, not evidence of a reproduced
+script exploit. This captures a static scene at
+explicit camera poses: no physics advancement, rolling shutter, motion blur,
+sensor noise, distortion, SLAM, robot controller or navigation evaluation is
+provided. Supply a trusted USD bundle; this is not a sandbox for arbitrary USD
+plugins or shaders. Existing lighting is used as authored.
+
+Kit's canonical native MDL modules, such as `OmniPBR.mdl`, are a separate,
+explicit runtime dependency. They retain the bare names required by NVIDIA's
+resolver. Optional `runtime_materials` declares the exact `isaac_sim_version`,
+immutable `image`, aggregate `library_sha256`, and a `modules` mapping from each
+bare MDL name to its relative Kit-library `path` and `sha256`. Preparation
+measures these values from the installed runtime; capture measures them again
+and requires equality before opening the scene. Every resolved module must be
+inside that installed Kit core library. Project files, including unused nested
+package members, cannot shadow declared module names. An undeclared missing
+MDL, texture, or USD layer still fails containment. The dataset preserves the
+measured descriptor, and CPU validation binds it to the input descriptor.
+The image field is operator-declared through `NPA_TASK_IMAGE`; retain the worker's
+actual imageID separately when qualifying a deployment. Library and module
+hashes are measured file bytes. No vendor material source is copied into Git.
+Select the descriptor's exact image digest in the capture resource profile;
+the warehouse workflow pins the same immutable image for preparation and capture.
+
+## Output and geometry contract
+
+`capture/manifest.json` is the commit marker. It records the complete request,
+input asset hashes, both source and canonical request hashes, Isaac and
+Replicator versions, procedural/supplied scope, and every frame/view record.
+Artifacts are under a unique `capture/captures/<attempt>/frames/` prefix. A
+failed or concurrent upload can leave uncommitted attempt objects, but cannot
+modify data belonging to an existing committed manifest. Remove those unused
+attempts using your normal retention policy. There is no success manifest until
+all local bytes decode and validate and every artifact upload completes.
+
+Each camera at every sample has:
+
+| Artifact or field | Meaning |
+| --- | --- |
+| `rgb.png` | Decoded RGB uint8 PNG, H×W×3 |
+| `depth.npy` | Float32 H×W optical-axis Z depth in **meters**, from `distance_to_image_plane` |
+| `mask.npy` | Boolean H×W; true only for finite depths inside the camera's inclusive near/far interval |
+| `points.npz` (optional) | `xyz_world_m`: float64 N×3; `rgb`: uint8 N×3; valid pixels in row-major order |
+| `T_world_camera` | Column-vector optical-to-world matrix, `T_world_rig @ T_rig_camera` |
+| `render_calibration` | Renderer-reported aperture, offset, focal length, view transform and resolution |
+| `render_reference_time` | Exact numerator/denominator from that render product's `ReferenceTime` annotator |
+
+With `pointcloud: true`, every frame also owns `fused.npz`. It concatenates all
+valid world-frame backprojections in sorted camera order; it performs no voxel
+averaging, deduplication, temporal fusion or learned encoding. Arrays are
+`xyz_world_m` (float64 N×3), `rgb` (uint8 N×3), `camera_index` (uint32 N) and
+`pixel_index` (uint64 N, row-major index in the original image). The frame's
+`fused_cloud` record supplies the camera-ID order, method and hashed artifact
+path. Its timestamp, render synchronization and calibrated transforms are the
+same frame's validated source records. The CPU validator independently decodes
+the original RGB/depth and checks every fused point, color and source index;
+updating the file hash cannot hide a changed cloud. `pointcloud: false` omits
+both per-view and fused points and records `fused_cloud: null`.
+
+Depth zero means invalid; NaN, infinity, negative, zero and out-of-range raw
+depths are masked to zero. A view with no valid depth pixels fails the capture.
+Axial depth is **not Euclidean ray range**. The optical frame is +X right, +Y
+down, +Z forward; the world frame is the supplied USD Z-up meter frame. The
+rig frame is operator-defined by its transforms. Pixel centers use integer
+coordinates `u=0..W-1`, `v=0..H-1`, with `(0,0)` at the first pixel center.
+Backprojection is `p_camera = depth * inverse(K) @ [u,v,1]`, then
+`p_world = T_world_camera @ [p_camera,1]`. USD camera film offsets include the
+half-pixel conversion from this convention to the physical image window.
+
+Frames follow input trajectory order; cameras follow sorted IDs. Every camera's
+render product participates in two blocking Replicator steps per sample, with
+`delta_time=0`, a paused timeline and four rendering subframes per step. The first
+step settles the new pose; the second invokes the native paused, same-time
+render flush before copying annotator buffers. Camera poses and time remain
+unchanged across both steps. All buffers are copied before changing any pose.
+Isaac 6 reads sensor time from
+Fabric's `/ExternalSimulationTime.omni:time`, independently of the USD timeline.
+The static sensor-only adapter drives that native external clock from each
+trajectory timestamp while physics remains paused. It records
+`renderer_clock: external_static_trajectory` in provenance. Before writing a
+view, the actual returned `ReferenceTime` must be identical across cameras and
+match the requested timestamp within one nanosecond. The CPU validator repeats
+these checks and requires reference times to advance between samples. It also
+checks the observed USD timeline against the requested time. Renderer camera
+metadata must agree with the calibrated poses and intrinsics. Any rejection
+retains the frame, exact observed and expected pose matrices, and all cameras'
+clock/calibration metadata in the failure log. Ordering and
+sample times are deterministic; bit-identical RTX pixels across drivers or
+hardware are not promised.
+
+The CPU stage downloads every declared object again, verifies hashes, decodes
+all images/arrays with NumPy pickle loading disabled, checks exhaustive unique
+frame ownership and cross-camera alignment, and independently recomputes every
+optional colored point cloud. It writes `validation.json` with actual frame,
+camera, view, valid-depth-pixel and fused-point counts plus the manifest SHA256. It does not
+train an encoder or qualify simulation-to-real performance. Missing or corrupt
+data, unsupported runtime versions and S3 failures propagate as nonzero stage
+failures. The shared Franka Kit lifecycle ensures shutdown cannot hide them.
+
+## Public warehouse workload
+
+[`multicamera-rgbd-warehouse.yaml`](../../workflows/testing/multicamera-rgbd-warehouse.yaml)
+prepares the complete public warehouse, captures it, and validates the uploaded
+data through the standard workflow runtime:
+
+```bash
+npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml
+npa workbench workflow submit workflows/testing/multicamera-rgbd-warehouse.yaml \
+  --run-id '<unique-run-id>' --stage-src --var 'bucket=<your-bucket>' \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+Preparation invokes `npa.workflows.isaac_rgbd.cli prepare-reference --output-path
+s3://<your-bucket>/<input-prefix>` in `/isaac-sim/python.sh`. The stage uses the
+native `omni.kit.usd.collect.Collector`, with missing USD and other assets treated
+as failures. It collects and remaps MDL module imports and their texture defaults,
+as well as USD references. Canonical built-in Kit materials are recorded through
+the explicit native dependency contract above. USD-only dependency extraction is insufficient for
+this asset. The complete collected tree passes the same static and containment
+audit as a supplied scene, and publication commits `request.json` only after all
+hashed files upload under a unique attempt prefix. Input `reference.json` records
+the public source-to-file mapping and source terms. No vendor assets are baked
+into an image or committed to this repository.
+
+The source is NVIDIA's Isaac 6.0
+[`full_warehouse.usd`](https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/Environments/Simple_Warehouse/full_warehouse.usd),
+under the [Isaac Sim Additional Software and Materials License](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/common/licenses.html)
+and the normal Isaac bootstrap terms. The URL identifies a vendor version tree;
+the downloaded file hashes identify the actual run's bytes. Keep collected vendor
+assets in operator-controlled storage; this workflow grants no redistribution rights.
+
+The reference rig has front/left/rear/right cameras, each 1280×720, 100° horizontal
+pinhole field of view, 0.15 m offset and 0.05–100 m depth range. It samples a 66 m
+warehouse aisle route every 0.25 m at 1.5 m height: **265 rig poses, 1,060 RGB-D
+views**, plus per-view clouds and 265 fused clouds. Virtual timestamps are 250 ms
+apart. The route turns at sampled waypoints; it does not model a robot controller
+or certify collision-free motion. The full point outputs can occupy tens of
+gigabytes, so both workers need corresponding staging space and storage access.
+This public authored environment demonstrates the capture workload; it is not
+a reconstructed site or a reproduction of any operator's camera calibration.
+The completed reference below qualifies this authored warehouse and calibrated
+rig on the recorded RTX target. Different inputs still need their own acceptance.
+
+## Native acceptance
+
+On September 25, 2026, the standard managed workflow captured the complete public
+warehouse route and a separate CPU worker downloaded and validated every object.
+The [sanitized measured summary](evidence/multicamera-rgbd/native-validation.json)
+records source, input, image, manifest, validation-report and preview hashes.
+Actual rendered contact sheets, a four-camera video containing all 265 samples,
+and a colored-cloud preview were derived from those hash-verified outputs and
+retained with the private run evidence. Raw storage and infrastructure identifiers
+are excluded from the repository.
+
+| Measurement | Observed result |
+| --- | --- |
+| Rig samples / cameras / views | 265 / 4 / 1,060 |
+| Source resolution | 1280×720 per camera |
+| Valid depth pixels and verified fused points | 976,895,672 each |
+| Fused clouds | 265, with source camera and pixel indices verified |
+| Published objects including manifest | 4,506 |
+| Published bytes including manifest | 70,451,048,116 |
+| Input files | 2,034, plus the exact native material descriptor |
+| GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition |
+| Driver / total device memory | 580.173.02 / 97,887 MiB |
+| Maximum sampled GPU utilization | 98%; sampled, not average utilization |
+| Capture stage wall time | 2,734 seconds |
+| First RGB file to last fused-cloud file | 547.760 seconds |
+| Virtual trajectory duration | 66 seconds |
+| Independent validator | CPU worker, no GPU resource requested |
+
+The capture stage wall time includes scheduling, runtime bootstrap, scene and
+shader startup, rendering, both local decoded validation passes, and publication.
+The artifact-write span excludes initial setup, work before the first completed
+RGB file, validation and upload; it is not an end-to-end rendering benchmark.
+The summary labels measured filesystem capacity and available space separately
+from device memory. No peak allocated GPU-memory measurement is claimed.
+
+The measured capture and CPU validator used payload
+`ab3180aa45cd02906be928e8ba793da2033c5cd5`; subsequent documentation changes were not
+part of that runtime. Native input preparation succeeded with source
+`58021a3bd132a00485d4d99b9a6bb62aed333e3c`. The corrected capture reused its immutable
+input without alteration, rechecking the original request and all assets plus the
+exact installed native material library. This qualification combines that earlier
+preparation with the successful capture/validation workflow; it does not claim a
+fresh three-stage preparation run at the final capture source revision.
+
+The actual worker image digest matched the requested immutable image recorded in
+the summary. Isaac Sim 6.0.1.0 and Replicator 1.13.27 produced
+the pixels. Every view passed the unchanged camera matrix/calibration tolerances,
+cross-camera rational-time equality and one-nanosecond timestamp comparison.
+The independent validator decoded RGB/depth/masks, recomputed every world point,
+and checked fused colors and source indices. Earlier attempts rejected a fixed
+render clock and a one-sample stale camera pose; they are not acceptance evidence.
+
+This proves static calibrated sensor capture in a public authored industrial
+environment. It does not qualify the default procedural known-depth test, L40S,
+an operator's reconstructed site, collision-free navigation, robot policies,
+encoder training, or simulation-to-real performance. Portable scan USDZ handoff
+has CPU coverage; a full scan-to-camera GPU round trip was not run here.
+
+## Opt-in live acceptance
+
+Run the procedural workflow through standard submit, then verify its retained
+S3 artifacts. This test checks all data and the known 4.75 m central wall depth
+for each camera, alongside non-flat fixture RGB. It does not launch additional
+infrastructure or grant model/software terms on the operator's behalf.
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_RGBD_LIVE_MANIFEST_URI='s3://<your-bucket>/<run-prefix>/capture/manifest.json' \
+NPA_RGBD_LIVE_REPORT_URI='s3://<your-bucket>/<run-prefix>/live-validation.json' \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_multicamera_rgbd_live.py -q
+```
+
+The first variable enables live tests; the second selects the procedural capture;
+the third must be a fresh report object. With no opt-in, the test skips without
+using storage. Retain GPU, driver, immutable-image and staged-source evidence
+externally. This known-depth fixture check is separate from the completed
+public-warehouse qualification above.
+
+## API sources
+
+The adapter uses original integration code against these official references;
+it does not vendor runtime code or assets:
+
+- [Isaac Sim v6.0.1 multicamera example](https://github.com/isaac-sim/IsaacSim/blob/045ca8b59622b99a408092124377c66346e8d9c2/source/standalone_examples/api/isaacsim.replicator.examples/multi_camera.py)
+  establishes SimulationApp-first startup and per-render-product annotators.
+- [The same pinned release's timed capture example](https://github.com/isaac-sim/IsaacSim/blob/045ca8b59622b99a408092124377c66346e8d9c2/source/standalone_examples/api/isaacsim.replicator.examples/custom_fps_writer_annotator.py)
+  demonstrates timeline control and frozen-time Replicator stepping.
+- [Versioned Replicator annotator API](https://docs.omniverse.nvidia.com/kit/docs/omni_replicator/1.13.30/source/extensions/omni.replicator.core/docs/API.html)
+  specifies `distance_to_image_plane`, `CameraParams` and `ReferenceTime`.
+  The installed extension version is recorded in every capture.
+- [Isaac Sim 6.0.1 multi-tick clock architecture](https://docs.isaacsim.omniverse.nvidia.com/6.0.1/sensors/isaacsim_sensors_multitick_rendering.html)
+  distinguishes USD timeline time from the renderer's external Fabric clock.
+- [OpenUSD dependency extraction](https://openusd.org/release/api/dependencies_8h.html)
+  documents nonrecursive enumeration of layer, payload and asset references.
+- [Native asset collector](https://docs.omniverse.nvidia.com/kit/docs/omni.kit.usd.collect/3.0.1/omni.kit.usd.collect/omni.kit.usd.collect.Collector.html)
+  documents collection of USD and material dependencies and explicit failure options.
+- [OmniUsdResolver MDL strategy](https://docs.omniverse.nvidia.com/kit/docs/usd_resolver/latest/docs/resolver-details.html)
+  explains why canonical native modules resolve from shared runtime libraries.
+- [OmniScripting schema 1.0.1](https://docs.omniverse.nvidia.com/kit/docs/omni.usd.schema.omniscripting/1.0.1/Overview.html)
+  documents the applied API and script asset attribute rejected by preflight.
+
+CPU regression tests parse actual USD fixtures with `usd-core==26.8`, included
+in `npa[dev]`; it is not added to the deployed runtime, which uses Isaac's USD.
