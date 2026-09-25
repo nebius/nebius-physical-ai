@@ -428,3 +428,36 @@ def test_display_failure_redactor_does_not_treat_next_line_as_secret_value() -> 
     message = "missing token:\n  run npa workbench health preflight"
 
     assert redact_failure_text(message, secrets=()) == message
+
+
+def test_quoted_secret_redaction_does_not_rescan_the_remaining_line() -> None:
+    from npa.verification import _redact_secret_assignments
+
+    class CountedSearch(str):
+        searched_characters = 0
+
+        def find(self, sub: str, start: int = 0, end: int | None = None) -> int:
+            stop = len(self) if end is None else end
+            self.searched_characters += stop - start
+            return super().find(sub, start, stop)
+
+    message = CountedSearch(
+        ", ".join(f'token="SYNTH-QUOTED-{index}"' for index in range(500))
+    )
+    sanitized = _redact_secret_assignments(message)
+
+    assert sanitized.count('token="<redacted>"') == 500
+    assert "SYNTH-QUOTED" not in sanitized
+    assert message.searched_characters <= len(message)
+
+
+@pytest.mark.parametrize("tail", ["\\", "\\\nretry: preserve", "\\\r\nretry: preserve"])
+def test_quoted_secret_redaction_preserves_escaped_line_endings(tail: str) -> None:
+    from npa.verification import redact_failure_text
+
+    message = 'token="SYNTH-SECRET' + tail
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert "SYNTH-SECRET" not in sanitized
+    if "\n" in tail:
+        assert sanitized.endswith("\nretry: preserve")
