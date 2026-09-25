@@ -2018,7 +2018,6 @@ def _probe_kubernetes_controller_cwd(
                 exact_context,
                 "get",
                 "pods",
-                "--all-namespaces",
                 "--selector",
                 selector,
                 "--output",
