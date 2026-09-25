@@ -10,7 +10,12 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.clients import config as config_module
 from npa.clients import credentials
-from npa.clients.config import DEFAULT_CONTAINER_REGISTRY, SSHConfig, StorageConfig, WorkbenchConfig
+from npa.clients.config import (
+    DEFAULT_CONTAINER_REGISTRY,
+    SSHConfig,
+    StorageConfig,
+    WorkbenchConfig,
+)
 from npa.clients.http import ServerError
 from npa.clients.ssh import SSHError
 
@@ -211,7 +216,10 @@ def test_lerobot_train_s3_input_and_output_syncs(mocker) -> None:
     train_cmd = next(cmd for cmd in run_cmds if "lerobot-train" in cmd)
     upload_cmd = next(cmd for cmd in run_cmds if "upload_file" in cmd)
     assert "download_file" in train_cmd
-    assert "--dataset.root=/opt/lerobot/dataset_cache/bucket_datasets_pick-place" in train_cmd
+    assert (
+        "--dataset.root=/opt/lerobot/dataset_cache/bucket_datasets_pick-place"
+        in train_cmd
+    )
     assert "upload_file" in upload_cmd
     assert "output_path: s3://bucket/checkpoints/job/" in result.output
 
@@ -342,7 +350,15 @@ def test_lerobot_eval_nonzero_exits(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["workbench", "lerobot", "eval", "--input-path", "repo/model", "--env", "aloha"],
+        [
+            "workbench",
+            "lerobot",
+            "eval",
+            "--input-path",
+            "repo/model",
+            "--env",
+            "aloha",
+        ],
     )
 
     assert result.exit_code == 1
@@ -398,9 +414,7 @@ def test_lerobot_serve_health_timeout_errors(mocker) -> None:
     assert "did not become healthy" in result.output
 
 
-def test_lerobot_infer_posts_observation(
-    tmp_path: Path, mocker
-) -> None:
+def test_lerobot_infer_posts_observation(tmp_path: Path, mocker) -> None:
     obs = tmp_path / "obs.json"
     obs.write_text(json.dumps({"observation.state": [1.0]}))
     http = mocker.MagicMock()
@@ -428,7 +442,9 @@ def test_lerobot_infer_writes_output_path(tmp_path: Path, mocker) -> None:
     store.upload_file.return_value = output_path
     mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=_cfg())
     mocker.patch("npa.clients.http.HTTPClient", return_value=http)
-    mocker.patch("npa.clients.storage.StorageClient.from_environment", return_value=store)
+    mocker.patch(
+        "npa.clients.storage.StorageClient.from_environment", return_value=store
+    )
 
     result = runner.invoke(
         app,
@@ -453,7 +469,13 @@ def test_lerobot_infer_missing_observation_errors(tmp_path: Path, mocker) -> Non
 
     result = runner.invoke(
         app,
-        ["workbench", "lerobot", "infer", "--observation", str(tmp_path / "missing.json")],
+        [
+            "workbench",
+            "lerobot",
+            "infer",
+            "--observation",
+            str(tmp_path / "missing.json"),
+        ],
     )
 
     assert result.exit_code == 1
@@ -468,8 +490,12 @@ def test_lerobot_list_checkpoints_lists_vm_and_storage(mocker) -> None:
         "",
     )
     store = mocker.MagicMock()
-    store.list_checkpoints.return_value = [{"name": "s3-job", "uri": "s3://bucket/checkpoints/s3-job/"}]
-    mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=_cfg(storage=True))
+    store.list_checkpoints.return_value = [
+        {"name": "s3-job", "uri": "s3://bucket/checkpoints/s3-job/"}
+    ]
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_config", return_value=_cfg(storage=True)
+    )
     mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
     mocker.patch("npa.clients.storage.StorageClient", return_value=store)
 
@@ -523,7 +549,9 @@ def test_lerobot_deploy_dry_run_avoids_infra(mocker) -> None:
     assert "http://<pending>:8080" in result.output
 
 
-def test_lerobot_deploy_runtime_vm_preserves_existing_behavior(tmp_path: Path, mocker) -> None:
+def test_lerobot_deploy_runtime_vm_preserves_existing_behavior(
+    tmp_path: Path, mocker
+) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")
 
@@ -543,7 +571,9 @@ def test_lerobot_deploy_runtime_vm_preserves_existing_behavior(tmp_path: Path, m
     write_config = mocker.patch("npa.clients.config.write_config")
     mocker.patch("npa.cli.workbench.lerobot.update_workbench_app_status")
     mocker.patch("npa.clients.ssh.SSHClient", return_value=ssh)
-    install_lerobot = mocker.patch("npa.deploy.configurator.install_lerobot", return_value=True)
+    install_lerobot = mocker.patch(
+        "npa.deploy.configurator.install_lerobot", return_value=True
+    )
     deploy_server = mocker.patch("npa.deploy.configurator.deploy_server")
     deploy_container = mocker.patch("npa.deploy.configurator.deploy_lerobot_container")
     mocker.patch("npa.deploy.configurator.health_check", return_value=True)
@@ -643,7 +673,9 @@ def test_lerobot_deploy_accepts_lerobot_version_060(tmp_path: Path, mocker) -> N
     assert tf_vars["lerobot_version"] == "0.6.0"
 
 
-def test_lerobot_deploy_runtime_container_uses_default_registry(tmp_path: Path, mocker) -> None:
+def test_lerobot_deploy_runtime_container_uses_default_registry(
+    tmp_path: Path, mocker
+) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")
     ssh.run_or_raise.return_value = (0, "true", "")
@@ -700,7 +732,9 @@ def test_lerobot_deploy_runtime_container_uses_default_registry(tmp_path: Path, 
     deploy_server.assert_not_called()
 
     image = f"{DEFAULT_CONTAINER_REGISTRY}/npa-lerobot:0.5.1"
-    remote_commands = "\n".join(call.args[0] for call in ssh.run_or_raise.call_args_list)
+    remote_commands = "\n".join(
+        call.args[0] for call in ssh.run_or_raise.call_args_list
+    )
     assert f"docker pull {image}" in remote_commands
     assert "docker run -d --gpus all --ipc=host --network host" in remote_commands
     assert image in remote_commands
@@ -822,7 +856,9 @@ def test_lerobot_deploy_runtime_container_ignores_saved_registry_override(
 
     assert result.exit_code == 0
     assert apply.call_args.kwargs["tf_vars"]["boot_disk_size_gb"] == "384"
-    remote_commands = "\n".join(call.args[0] for call in ssh.run_or_raise.call_args_list)
+    remote_commands = "\n".join(
+        call.args[0] for call in ssh.run_or_raise.call_args_list
+    )
     assert (
         "docker pull ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1"
         in remote_commands
@@ -981,12 +1017,16 @@ def test_lerobot_train_student_uses_input_and_output_path(
     storage = mocker.MagicMock()
     storage.download_directory.return_value = str(dataset)
     storage.upload_directory.return_value = output_uri
-    mocker.patch("npa.clients.storage.StorageClient.from_environment", return_value=storage)
+    mocker.patch(
+        "npa.clients.storage.StorageClient.from_environment", return_value=storage
+    )
     train_mock = mocker.patch(
         "npa.lerobot.train_student.train_student",
         return_value={
             "status": "success",
-            "checkpoint_path": str(tmp_path / "student" / "checkpoints" / "last" / "pretrained_model"),
+            "checkpoint_path": str(
+                tmp_path / "student" / "checkpoints" / "last" / "pretrained_model"
+            ),
             "output_dir": str(tmp_path / "student"),
         },
     )

@@ -14,7 +14,9 @@ from npa.orchestration.skypilot.controller_recovery import reconcile_controller
 @json_stdout_contract
 def reconcile_controller_cmd(
     record: Path = typer.Argument(help="Owner-only original controller recovery JSON."),
-    cancel: bool = typer.Option(False, help="Request exact-ID native cancellation after verification."),
+    cancel: bool = typer.Option(
+        False, help="Request exact-ID native cancellation after verification."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit sanitized JSON."),
 ) -> None:
     """Reconcile an orphaned workflow against its original exclusive controller.
@@ -30,9 +32,21 @@ def reconcile_controller_cmd(
     """
     try:
         result = reconcile_controller(record, cancel=cancel)
-    except (OSError, ValueError, RuntimeError, KeyError, TypeError, BotoCoreError, ClientError):
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        KeyError,
+        TypeError,
+        BotoCoreError,
+        ClientError,
+    ):
         result = {"status": "VERIFICATION_UNAVAILABLE", "cleanup_verified": False}
-        typer.echo(json.dumps(result) if json_output else "Exact controller verification failed.")
+        typer.echo(
+            json.dumps(result)
+            if json_output
+            else "Exact controller verification failed."
+        )
         raise typer.Exit(1) from None
     typer.echo(json.dumps(result) if json_output else str(result))
 

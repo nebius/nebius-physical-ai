@@ -98,7 +98,9 @@ def generate_fixture(
             "preset_edge_threshold": "medium",
         },
     }
-    spec.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    spec.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return {
         "video_path": str(video),
         "spec_path": str(spec),

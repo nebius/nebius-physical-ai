@@ -22,7 +22,9 @@ ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture(autouse=True)
 def _require_live_mode() -> None:
-    if _truthy(os.environ.get("NPA_DRY_RUN", "")) or _truthy(os.environ.get("DRY_RUN", "")):
+    if _truthy(os.environ.get("NPA_DRY_RUN", "")) or _truthy(
+        os.environ.get("DRY_RUN", "")
+    ):
         pytest.skip("live sim-to-real e2e tests require writes; DRY_RUN is enabled")
 
 
@@ -64,7 +66,9 @@ def test_e2e_data_sync_and_vlm_eval_write_real_s3_artifacts(
     sync_payload = json.loads(sync_result.stdout)
     assert sync_payload["status"] == "synced"
     assert sync_payload["object_count"] == 2
-    assert sorted(s3_helper.list_objects(e2e_test_bucket, "sim-to-real/run/imported/")) == [
+    assert sorted(
+        s3_helper.list_objects(e2e_test_bucket, "sim-to-real/run/imported/")
+    ) == [
         "sim-to-real/run/imported/episode-000.json",
         "sim-to-real/run/imported/nested/frame-000.json",
     ]
@@ -167,7 +171,10 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     assert retarget_payload["status"] == "retargeted"
     assert retarget_payload["artifact_kind"] == "robot_motion_lib"
     assert retarget_payload["artifact_uri"] == retargeted_uri
-    assert retarget_payload["metadata_written_uri"] == f"{retargeted_uri}retargeting_result.json"
+    assert (
+        retarget_payload["metadata_written_uri"]
+        == f"{retargeted_uri}retargeting_result.json"
+    )
     retarget_object = s3_helper.client.get_object(
         Bucket=e2e_test_bucket,
         Key="sonic-locomotion/retargeted/retargeting_result.json",

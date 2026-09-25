@@ -54,10 +54,7 @@ def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
     assert counts == {"public": 41, "restricted": 2, "unvalidated": 0}
     catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
     assert "43 packaging entries" in catalog
-    assert (
-        "41 redistribution-eligible and two restricted"
-        in catalog
-    )
+    assert "41 redistribution-eligible and two restricted" in catalog
     assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 
@@ -112,8 +109,8 @@ def test_habitat_diagram_keeps_unvalidated_candidate_out_of_gpu_gated_group() ->
 
 def test_habitat_optional_elf_stack_is_runtime_fetched_from_hash_locked_rows() -> None:
     lock_lines = (
-        PACKAGE / "requirements-runtime.lock"
-    ).read_text(encoding="utf-8").splitlines()
+        (PACKAGE / "requirements-runtime.lock").read_text(encoding="utf-8").splitlines()
+    )
     runtime_rows = {
         line.removeprefix("# runtime-fetch: ").split("==", 1)[0]
         for line in lock_lines
@@ -138,18 +135,18 @@ def test_habitat_optional_elf_stack_is_runtime_fetched_from_hash_locked_rows() -
     for required in (
         "runtime_fetch_optional_scientific_stack",
         "--require-hashes",
-        "--target \"$staging/payload\"",
+        '--target "$staging/payload"',
         ".ready",
         "payload-$lock_digest",
-        "mktemp -d \"${TMPDIR:-/tmp}/npa-habitat-runtime.XXXXXX\"",
+        'mktemp -d "${TMPDIR:-/tmp}/npa-habitat-runtime.XXXXXX"',
         "sha256sum -c ../payload.sha256",
-        "mv -- \"$staging\" \"$final_dir\"",
+        'mv -- "$staging" "$final_dir"',
         "trap cleanup_runtime_cache EXIT",
-        "rm -rf -- \"$runtime_cache_root\"",
+        'rm -rf -- "$runtime_cache_root"',
     ):
         assert required in entrypoint
     assert "${HOME}/.cache/npa-habitat-runtime" not in entrypoint
-    assert "mkdir \"$final_dir\"" not in entrypoint
+    assert 'mkdir "$final_dir"' not in entrypoint
     assert "--help" in entrypoint
     assert "credential" not in entrypoint.lower()
 
@@ -225,7 +222,10 @@ def _validate_habitat_root_exemption(
     dockerfile: str, exemption: dict[str, object]
 ) -> None:
     assert exemption["id"] == "habitat-sim-skypilot-0.12.2-v1"
-    assert exemption["sources"] == ["habitat-sim/Dockerfile", "habitat-sim/Dockerfile.bootstrap"]
+    assert exemption["sources"] == [
+        "habitat-sim/Dockerfile",
+        "habitat-sim/Dockerfile.bootstrap",
+    ]
     assert exemption["grants"] == [
         {
             "source": "habitat-sim/Dockerfile",

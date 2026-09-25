@@ -1326,8 +1326,7 @@ def _claim_runtime_cache(
     except BaseException as primary:
         diagnostics = _release_cache_descriptors(owner)
         _add_exception_note(
-            primary,
-            "Runtime cache claim incomplete; namespace preserved, not adopted."
+            primary, "Runtime cache claim incomplete; namespace preserved, not adopted."
         )
         for diagnostic in diagnostics:
             _add_exception_note(primary, diagnostic)
@@ -1414,7 +1413,9 @@ def _finish_runtime_cache(
         target = SmokeFailure("runtime cache descriptor release incomplete")
     if target is not None:
         if failure is not None and primary is not None:
-            _add_exception_note(target, f"Cache cleanup: {type(failure).__name__}: {failure}")
+            _add_exception_note(
+                target, f"Cache cleanup: {type(failure).__name__}: {failure}"
+            )
             diagnostics.extend(getattr(failure, "__notes__", []))
         for diagnostic in diagnostics:
             _add_exception_note(target, diagnostic)

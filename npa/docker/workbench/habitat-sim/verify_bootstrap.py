@@ -44,12 +44,23 @@ def inspect(archive_path: Path) -> dict:
                     path = member.name.removeprefix("./").lstrip("/")
                     parent, _, name = path.rpartition("/")
                     if name.startswith(".wh."):
-                        removed = parent if name == ".wh..wh..opq" else "/".join(
-                            part for part in (parent, name.removeprefix(".wh.")) if part
+                        removed = (
+                            parent
+                            if name == ".wh..wh..opq"
+                            else "/".join(
+                                part
+                                for part in (parent, name.removeprefix(".wh."))
+                                if part
+                            )
                         )
-                        if (not removed or DOC.startswith(removed.rstrip("/") + "/")
-                                or removed.startswith(DOC)):
-                            raise ValueError("whiteout affects delivered bootstrap source")
+                        if (
+                            not removed
+                            or DOC.startswith(removed.rstrip("/") + "/")
+                            or removed.startswith(DOC)
+                        ):
+                            raise ValueError(
+                                "whiteout affects delivered bootstrap source"
+                            )
                     if not (path.startswith(DOC) or path == "var/lib/dpkg/status"):
                         continue
                     if member.isdir():
@@ -65,12 +76,18 @@ def inspect(archive_path: Path) -> dict:
                         sha256.update(chunk)
                         if retain:
                             if count > 1024 * 1024:
-                                raise ValueError("bootstrap control member exceeds limit")
+                                raise ValueError(
+                                    "bootstrap control member exceeds limit"
+                                )
                             chunks.append(chunk)
                     if count != member.size:
                         raise ValueError("truncated source member")
                     identity = (count, sha256.hexdigest())
-                    if "/ubuntu-sources/" in path and path in files and files[path] != identity:
+                    if (
+                        "/ubuntu-sources/" in path
+                        and path in files
+                        and files[path] != identity
+                    ):
                         raise ValueError("changed source bytes in ancestor layer")
                     files[path] = identity
                     if retain:
@@ -84,17 +101,25 @@ def inspect(archive_path: Path) -> dict:
     expected_paths = set()
     for row in records:
         prefix = f"{DOC}ubuntu-sources/{row['source']}/{row['version']}/"
-        descriptors = [entry for entry in row["artifacts"] if entry["name"].endswith(".dsc")]
+        descriptors = [
+            entry for entry in row["artifacts"] if entry["name"].endswith(".dsc")
+        ]
         if len(descriptors) != 1:
             raise ValueError("one source descriptor required")
         descriptor = sources.fields(text[prefix + descriptors[0]["name"]])
-        if (descriptor.get("Source"), descriptor.get("Version")) != (row["source"], row["version"]):
+        if (descriptor.get("Source"), descriptor.get("Version")) != (
+            row["source"],
+            row["version"],
+        ):
             raise ValueError("source descriptor identity mismatch")
         for artifact in row["artifacts"]:
             if Path(artifact["name"]).name != artifact["name"]:
                 raise ValueError("invalid source artifact path")
             path = prefix + artifact["name"]
-            if path in expected_paths or files.get(path) != (artifact["bytes"], artifact["sha256"]):
+            if path in expected_paths or files.get(path) != (
+                artifact["bytes"],
+                artifact["sha256"],
+            ):
                 raise ValueError("source artifact identity mismatch")
             expected_paths.add(path)
         declared = {entry["name"] for entry in row["artifacts"]}
@@ -107,10 +132,14 @@ def inspect(archive_path: Path) -> dict:
     actual_paths = {path for path in files if path.startswith(DOC + "ubuntu-sources/")}
     if actual_paths != expected_paths:
         raise ValueError("unexpected corresponding source population")
-    return {"valid": not findings, "entries_read": entries,
-            "source_components": len(delivered), "source_artifacts": len(expected_paths),
-            "source_bytes": sum(files[path][0] for path in expected_paths),
-            "findings": findings}
+    return {
+        "valid": not findings,
+        "entries_read": entries,
+        "source_components": len(delivered),
+        "source_artifacts": len(expected_paths),
+        "source_bytes": sum(files[path][0] for path in expected_paths),
+        "findings": findings,
+    }
 
 
 def package_identities(status: str) -> set[tuple[str, str]]:
@@ -120,7 +149,10 @@ def package_identities(status: str) -> set[tuple[str, str]]:
         row = sources.fields(paragraph)
         if row.get("Status") != "install ok installed":
             continue
-        match = re.fullmatch(r"([a-z0-9][a-z0-9+.-]*)(?: \(([^)]+)\))?", row.get("Source", row["Package"]))
+        match = re.fullmatch(
+            r"([a-z0-9][a-z0-9+.-]*)(?: \(([^)]+)\))?",
+            row.get("Source", row["Package"]),
+        )
         if match is None:
             raise ValueError("invalid package source identity")
         result.add((match[1], match[2] or row["Version"]))

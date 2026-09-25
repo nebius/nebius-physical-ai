@@ -91,10 +91,18 @@ def test_habitat_report_uses_contract_runtime_closure_not_report_values(
     archive_path.write_bytes(b"immutable fixture")
     archive_path.chmod(0o600)
     expected = ("1" * 64, "2" * 64, "3" * 64)
-    contract = {"expected_runtime_closure": dict(zip(
-        ("dpkg_inventory_sha256", "python_venv_inventory_sha256", "native_closure_sha256"),
-        expected,
-    ))}
+    contract = {
+        "expected_runtime_closure": dict(
+            zip(
+                (
+                    "dpkg_inventory_sha256",
+                    "python_venv_inventory_sha256",
+                    "native_closure_sha256",
+                ),
+                expected,
+            )
+        )
+    }
     binding = {"revision": P._trusted_revision(CHECKOUT), "git_blob": "a" * 40}
     monkeypatch.setattr(P, "_trusted_contract", lambda *_: (contract, binding))
     observed = {}
@@ -140,8 +148,9 @@ def test_habitat_report_uses_contract_runtime_closure_not_report_values(
         P._verify_habitat_report(args, archive, report)
     assert observed["expected"] == expected
     report["expected_native_closure_sha256"] = "0" * 64
-    with W.authorized_roots(tmp_path, CHECKOUT), pytest.raises(
-        W.ScanError, match="habitat_verifier_receipt_mismatch"
+    with (
+        W.authorized_roots(tmp_path, CHECKOUT),
+        pytest.raises(W.ScanError, match="habitat_verifier_receipt_mismatch"),
     ):
         P._verify_habitat_report(args, archive, report)
 
@@ -157,9 +166,7 @@ def test_habitat_contract_binding_uses_committed_blob_and_rejects_drift(tmp_path
     contract_path.parent.mkdir(parents=True)
     contract_path.write_bytes(b'{"source":"committed"}\n')
     subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(
-        ["git", "-C", str(root), "add", P.HABITAT_CONTRACT], check=True
-    )
+    subprocess.run(["git", "-C", str(root), "add", P.HABITAT_CONTRACT], check=True)
     subprocess.run(
         [
             "git",

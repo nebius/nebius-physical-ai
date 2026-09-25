@@ -17,6 +17,7 @@ from npa.adapter.sim_to_lerobot import (
     AdapterError,
     _build_data_schema,
     _compute_feature_stats,
+    _numeric_feature_values,
     _write_episodes_parquet,
     _write_tasks_parquet,
     convert,
@@ -31,6 +32,11 @@ IMG_H, IMG_W = 480, 640
 N_STATE_DIM = 10  # 9 joint positions + 1 gripper state
 N_ACTIONS = 8
 FPS = 20
+NATIVE_EPISODES = 2
+NATIVE_TIMESTEPS = 3
+NATIVE_IMAGE_SHAPE = (16, 20, 3)
+NATIVE_STATE_DIM = 4
+NATIVE_ACTION_DIM = 2
 
 
 @pytest.fixture()
@@ -63,6 +69,38 @@ def output_dir(tmp_path: Path) -> Path:
     out = tmp_path / "dataset_output"
     out.mkdir()
     return out
+
+
+@pytest.fixture()
+def native_demo_dir(tmp_path: Path) -> Path:
+    """Create a compact dataset for the optional native-reader smoke."""
+    demo_root = tmp_path / "native_demo"
+    demo_root.mkdir()
+    for episode_index in range(NATIVE_EPISODES):
+        episode_dir = demo_root / f"episode_{episode_index:04d}"
+        episode_dir.mkdir()
+        camera_shape = (NATIVE_TIMESTEPS, *NATIVE_IMAGE_SHAPE)
+        np.save(
+            episode_dir / "obs_workspace.npy",
+            np.full(camera_shape, 32 + episode_index, dtype=np.uint8),
+        )
+        np.save(
+            episode_dir / "obs_wrist.npy",
+            np.full(camera_shape, 96 + episode_index, dtype=np.uint8),
+        )
+        np.save(
+            episode_dir / "state.npy",
+            np.arange(NATIVE_TIMESTEPS * NATIVE_STATE_DIM, dtype=np.float32).reshape(
+                NATIVE_TIMESTEPS, NATIVE_STATE_DIM
+            ),
+        )
+        np.save(
+            episode_dir / "actions.npy",
+            np.arange(NATIVE_TIMESTEPS * NATIVE_ACTION_DIM, dtype=np.float32).reshape(
+                NATIVE_TIMESTEPS, NATIVE_ACTION_DIM
+            ),
+        )
+    return demo_root
 
 
 def _has_ffmpeg() -> bool:
@@ -132,32 +170,44 @@ class TestAdapterHelpers:
         assert stats["max"][2][0][0] == 1.0
         assert stats["count"] == [1]
 
-    def test_video_stats_match_full_dataset_with_unequal_episode_lengths(self, monkeypatch):
+    def test_video_stats_match_full_dataset_with_unequal_episode_lengths(
+        self, monkeypatch
+    ):
         generator = np.random.default_rng(21)
-        arrays = [generator.integers(0, 256, (length, 6, 8, 3), dtype=np.uint8)
-                  for length in (1, 4, 2)]
+        arrays = [
+            generator.integers(0, 256, (length, 6, 8, 3), dtype=np.uint8)
+            for length in (1, 4, 2)
+        ]
         reference = np.concatenate(arrays).astype(np.float64) / 255.0
-        expected = {name: getattr(reference, name)(axis=(0, 1, 2))
-                    for name in ("min", "max", "mean", "std")}
+        expected = {
+            name: getattr(reference, name)(axis=(0, 1, 2))
+            for name in ("min", "max", "mean", "std")
+        }
+
         def reject_dataset_copy(*args, **kwargs):
             raise AssertionError("video statistics must not concatenate the dataset")
+
         monkeypatch.setattr(sim_to_lerobot.np, "concatenate", reject_dataset_copy)
 
         stats = _compute_feature_stats(arrays, is_video=True)
 
         assert stats["count"] == [7]
         for name, value in expected.items():
-            np.testing.assert_allclose(np.asarray(stats[name]).reshape(3), value, atol=1e-14)
+            np.testing.assert_allclose(
+                np.asarray(stats[name]).reshape(3), value, atol=1e-14
+            )
 
     def test_video_stats_preserve_small_variance_between_constant_frames(self):
-        arrays = [np.full((1, 2, 2, 3), 255.0),
-                  np.full((2, 2, 2, 3), 255.0 + 1e-5)]
+        arrays = [np.full((1, 2, 2, 3), 255.0), np.full((2, 2, 2, 3), 255.0 + 1e-5)]
         reference = np.concatenate(arrays).astype(np.float64) / 255.0
 
         stats = _compute_feature_stats(arrays, is_video=True)
 
-        np.testing.assert_allclose(np.asarray(stats["std"]).reshape(3),
-                                   reference.std(axis=(0, 1, 2)), rtol=1e-8)
+        np.testing.assert_allclose(
+            np.asarray(stats["std"]).reshape(3),
+            reference.std(axis=(0, 1, 2)),
+            rtol=1e-8,
+        )
 
     def test_build_data_schema_has_fixed_size_lists(self) -> None:
         schema = _build_data_schema(n_state=10, n_actions=8)
@@ -165,6 +215,15 @@ class TestAdapterHelpers:
         assert schema.field("observation.state").type.list_size == 10
         assert schema.field("action").type.list_size == 8
         assert schema.field("timestamp").type == pa.float32()
+
+    def test_build_data_schema_uses_lerobot_scalar_encoding_for_width_one(
+        self,
+    ) -> None:
+        schema = _build_data_schema(n_state=1, n_actions=1)
+
+        assert schema.field("observation.state").type == pa.float32()
+        assert schema.field("action").type == pa.float32()
+        assert _numeric_feature_values([{"action": [2.5]}], "action", 1) == [2.5]
 
     def test_write_tasks_parquet_creates_parent_dirs(self, tmp_path: Path) -> None:
         out = tmp_path / "nested" / "tasks.parquet"
@@ -227,6 +286,35 @@ class TestAdapterHelpers:
 
 @needs_ffmpeg
 class TestConvert:
+    def test_native_lerobot_reader_loads_exported_dataset(
+        self, native_demo_dir: Path, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("lerobot")
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+        task = "Move the test cube"
+        dataset_root = tmp_path / "native_dataset"
+        convert(native_demo_dir, dataset_root, fps=FPS, task=task)
+
+        dataset = LeRobotDataset(repo_id=dataset_root.name, root=dataset_root)
+        first_sample = dataset[0]
+        last_sample = dataset[len(dataset) - 1]
+
+        assert dataset.meta.total_episodes == NATIVE_EPISODES
+        assert dataset.meta.total_frames == NATIVE_EPISODES * NATIVE_TIMESTEPS
+        assert len(dataset) == NATIVE_EPISODES * NATIVE_TIMESTEPS
+        assert first_sample["task"] == task
+        assert int(last_sample["episode_index"]) == NATIVE_EPISODES - 1
+        assert tuple(first_sample["observation.state"].shape) == (NATIVE_STATE_DIM,)
+        assert tuple(first_sample["action"].shape) == (NATIVE_ACTION_DIM,)
+        for camera_key in (
+            "observation.images.workspace",
+            "observation.images.wrist",
+        ):
+            decoded_camera = np.asarray(first_sample[camera_key])
+            assert decoded_camera.shape == (3, *NATIVE_IMAGE_SHAPE[:2])
+            assert np.isfinite(decoded_camera).all()
+
     def test_output_structure(self, demo_dir: Path, output_dir: Path) -> None:
         convert(demo_dir, output_dir, fps=FPS, robot_type="franka_panda")
 
@@ -234,7 +322,9 @@ class TestConvert:
         assert (output_dir / "meta" / "info.json").exists()
         assert (output_dir / "meta" / "stats.json").exists()
         assert (output_dir / "meta" / "tasks.parquet").exists()
-        assert (output_dir / "meta" / "episodes" / "chunk-000" / "file-000.parquet").exists()
+        assert (
+            output_dir / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+        ).exists()
 
         # data/
         assert (output_dir / "data" / "chunk-000" / "file-000.parquet").exists()
@@ -242,7 +332,9 @@ class TestConvert:
         # videos/
         for cam in ["observation.images.workspace", "observation.images.wrist"]:
             for ep_idx in range(N_EPISODES):
-                vid = output_dir / "videos" / cam / "chunk-000" / f"file-{ep_idx:03d}.mp4"
+                vid = (
+                    output_dir / "videos" / cam / "chunk-000" / f"file-{ep_idx:03d}.mp4"
+                )
                 assert vid.exists(), f"Missing video: {vid}"
                 assert vid.stat().st_size > 0
 
@@ -333,6 +425,8 @@ class TestConvert:
         assert table.num_rows == 1
         assert table.column("task_index").to_pylist() == [0]
         assert table.column("task").to_pylist() == [task_str]
+        assert table.to_pandas().index.tolist() == [task_str]
+        assert table.to_pandas().iloc[0].name == task_str
 
     def test_tasks_from_robocasa_metadata_are_preserved(
         self, demo_dir: Path, output_dir: Path
@@ -340,7 +434,9 @@ class TestConvert:
         episode_records = [
             {
                 "episode_index": index,
-                "task": "PickPlaceCounterToCabinet" if index % 2 == 0 else "PickPlaceCounterToSink",
+                "task": "PickPlaceCounterToCabinet"
+                if index % 2 == 0
+                else "PickPlaceCounterToSink",
             }
             for index in range(N_EPISODES)
         ]

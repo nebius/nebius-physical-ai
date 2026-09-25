@@ -154,7 +154,8 @@ def _regular_hash(
             if len(prefix) == 4 and prefix == b"\x7fELF":
                 retaining = True
                 W.require(
-                    retained_bytes + (expected_size or size) <= RETAINED_CONTENT_MAX_BYTES,
+                    retained_bytes + (expected_size or size)
+                    <= RETAINED_CONTENT_MAX_BYTES,
                     "habitat_oci_retained_bytes_limit",
                 )
         if retaining:
@@ -519,12 +520,16 @@ def _package_inventory_row(
 ):
     package_lists = sorted(package_lists, key=lambda row: row["path"])
     if len(package_lists) != 1:
-        findings.append({"code": "runtime_package_file_list_population", "package": package})
+        findings.append(
+            {"code": "runtime_package_file_list_population", "package": package}
+        )
     copyright_path = f"usr/share/doc/{package}/copyright"
     resolved = _resolve_final_path(copyright_path, final_paths, final_links)
     copyright_sha256 = final_files.get(resolved or "", {}).get("sha256")
     if resolved is None or not isinstance(copyright_sha256, str):
-        findings.append({"code": "runtime_package_copyright_missing", "package": package})
+        findings.append(
+            {"code": "runtime_package_copyright_missing", "package": package}
+        )
     return {
         **identity,
         "file_lists": package_lists,
@@ -558,11 +563,15 @@ def _package_file_content_rows(
     return sorted(rows, key=lambda row: (row["path"], row["resolved_path"]))
 
 
-def _package_file_content_row(package, line, final_paths, final_links, final_files, findings):
+def _package_file_content_row(
+    package, line, final_paths, final_links, final_files, findings
+):
     try:
         declared = W.safe_name(line.lstrip("/"))
     except W.ScanError:
-        findings.append({"code": "runtime_package_file_list_invalid", "package": package})
+        findings.append(
+            {"code": "runtime_package_file_list_invalid", "package": package}
+        )
         return None
     resolved = _resolve_final_path(declared, final_paths, final_links)
     if resolved is None:
@@ -575,7 +584,9 @@ def _package_file_content_row(package, line, final_paths, final_links, final_fil
         if not isinstance(file_row.get("sha256"), str) or not isinstance(
             file_row.get("size"), int
         ):
-            findings.append({"code": "runtime_package_file_content_missing", "path": resolved})
+            findings.append(
+                {"code": "runtime_package_file_content_missing", "path": resolved}
+            )
             return None
         row.update(sha256=file_row["sha256"], size=file_row["size"])
     return row
@@ -618,12 +629,16 @@ def _package_owner_paths(package, payload, final_paths, final_links, findings):
     resolved_paths = []
     for line in payload.decode("utf-8", errors="strict").splitlines():
         if not line.startswith("/"):
-            findings.append({"code": "runtime_package_file_list_invalid", "package": package})
+            findings.append(
+                {"code": "runtime_package_file_list_invalid", "package": package}
+            )
             continue
         try:
             path = W.safe_name(line.lstrip("/"))
         except W.ScanError:
-            findings.append({"code": "runtime_package_file_list_invalid", "package": package})
+            findings.append(
+                {"code": "runtime_package_file_list_invalid", "package": package}
+            )
             continue
         resolved = _resolve_final_path(path, final_paths, final_links)
         if resolved is None:
@@ -1244,18 +1259,23 @@ def _layer_owner_rows(
             owners.add(identity)
         name = str(row.get("name", ""))
         actual_sha, _ = _payload_identity(state, path, payload, tracked)
-        if path == f"usr/share/doc/{name}/copyright" and row.get(
-            "copyright_sha256"
-        ) == actual_sha:
+        if (
+            path == f"usr/share/doc/{name}/copyright"
+            and row.get("copyright_sha256") == actual_sha
+        ):
             owners.add(identity)
         if row.get("ecosystem") == "python" and path == row.get("metadata_path"):
             if row.get("metadata_sha256") == actual_sha:
                 owners.add(identity)
     owners.update(
-        _layer_dpkg_owners(source_inventory, tracked, path, state=state, payload=payload)
+        _layer_dpkg_owners(
+            source_inventory, tracked, path, state=state, payload=payload
+        )
     )
     owners.update(
-        _layer_python_owners(source_inventory, tracked, path, state=state, payload=payload)
+        _layer_python_owners(
+            source_inventory, tracked, path, state=state, payload=payload
+        )
     )
     owners.update(
         _layer_contract_owners(
@@ -1407,7 +1427,9 @@ def _layer_dpkg_owners(
 ) -> set[str]:
     if state is None:
         content = tracked.get(path)
-        actual_sha = hashlib.sha256(content).hexdigest() if content is not None else None
+        actual_sha = (
+            hashlib.sha256(content).hexdigest() if content is not None else None
+        )
         actual_size = len(content) if content is not None else None
     else:
         actual_sha, actual_size = _payload_identity(state, path, payload, tracked)
@@ -1415,11 +1437,15 @@ def _layer_dpkg_owners(
         return set()
     owners = set()
     for list_path, payload in tracked.items():
-        if not list_path.startswith("var/lib/dpkg/info/") or not list_path.endswith(".list"):
+        if not list_path.startswith("var/lib/dpkg/info/") or not list_path.endswith(
+            ".list"
+        ):
             continue
         package = list_path.removeprefix("var/lib/dpkg/info/").removesuffix(".list")
         package = package.split(":", 1)[0]
-        paths = {line.lstrip("/") for line in payload.decode(errors="ignore").splitlines()}
+        paths = {
+            line.lstrip("/") for line in payload.decode(errors="ignore").splitlines()
+        }
         if path not in paths:
             continue
         for identity, row in source_inventory.items():
@@ -1446,7 +1472,9 @@ def _layer_python_owners(
 ) -> set[str]:
     if state is None:
         content = tracked.get(path)
-        actual_sha = hashlib.sha256(content).hexdigest() if content is not None else None
+        actual_sha = (
+            hashlib.sha256(content).hexdigest() if content is not None else None
+        )
         actual_size = len(content) if content is not None else None
     else:
         actual_sha, actual_size = _payload_identity(state, path, payload, tracked)
@@ -1458,7 +1486,8 @@ def _layer_python_owners(
             continue
         for identity, row in source_inventory.items():
             if (
-                row.get("metadata_path") == record_path.removesuffix("RECORD") + "METADATA"
+                row.get("metadata_path")
+                == record_path.removesuffix("RECORD") + "METADATA"
                 and row.get("record_sha256") == actual_sha
                 and path == record_path
             ):
@@ -1548,7 +1577,11 @@ def _debian_artifact_matches(
         name = PurePosixPath(path).name
         expected = checksums.get(name)
         actual_sha, actual_size = _payload_identity(state, path, payload, tracked)
-        if expected is not None and actual_sha == expected[1] and actual_size == expected[0]:
+        if (
+            expected is not None
+            and actual_sha == expected[1]
+            and actual_size == expected[0]
+        ):
             return True
         if path.endswith(".asc") and path.removesuffix(".asc") in {
             f"{PurePosixPath(dsc_path).parent}/{candidate}" for candidate in checksums
@@ -1616,7 +1649,9 @@ def _record_source_population(state: _ScanState) -> None:
     state.layer_inventory = _source_layer_inventory(state)
 
 
-def _dpkg_file_contents(state: _ScanState, package: str) -> dict[str, dict[str, object]]:
+def _dpkg_file_contents(
+    state: _ScanState, package: str
+) -> dict[str, dict[str, object]]:
     """Bind each listed package path to the observed bytes in this layer state."""
     contents: dict[str, dict[str, object]] = {}
     status_path = "var/lib/dpkg/status"
@@ -1691,15 +1726,38 @@ def _debian_artifact_filename_matches(source: str, version: str, name: str) -> b
         return False
     basename = name.removeprefix(f"{source}_")
     suffixes = (
-        ".orig.tar.gz", ".orig.tar.xz", ".orig.tar.bz2", ".orig.tar.lzma",
-        ".orig.tar.zst", ".orig.tar.lz", ".debian.tar.gz", ".debian.tar.xz",
-        ".debian.tar.bz2", ".debian.tar.lzma", ".debian.tar.zst", ".debian.tar.lz",
-        ".diff.gz", ".diff.xz", ".diff.bz2", ".diff.lzma", ".diff.zst", ".diff.lz",
-        ".orig.tar", ".tar.xz", ".tar.gz", ".tar.bz2", ".tar.zst", ".tar.lz", ".tar.lzma",
-        ".dsc", ".asc",
+        ".orig.tar.gz",
+        ".orig.tar.xz",
+        ".orig.tar.bz2",
+        ".orig.tar.lzma",
+        ".orig.tar.zst",
+        ".orig.tar.lz",
+        ".debian.tar.gz",
+        ".debian.tar.xz",
+        ".debian.tar.bz2",
+        ".debian.tar.lzma",
+        ".debian.tar.zst",
+        ".debian.tar.lz",
+        ".diff.gz",
+        ".diff.xz",
+        ".diff.bz2",
+        ".diff.lzma",
+        ".diff.zst",
+        ".diff.lz",
+        ".orig.tar",
+        ".tar.xz",
+        ".tar.gz",
+        ".tar.bz2",
+        ".tar.zst",
+        ".tar.lz",
+        ".tar.lzma",
+        ".dsc",
+        ".asc",
     )
     if basename.endswith(".asc"):
-        return _debian_artifact_filename_matches(source, version, f"{source}_{basename[:-4]}")
+        return _debian_artifact_filename_matches(
+            source, version, f"{source}_{basename[:-4]}"
+        )
     for suffix in suffixes:
         if basename.endswith(suffix):
             basename = basename[: -len(suffix)]
@@ -1758,7 +1816,9 @@ def _source_component_key(row: dict[str, object]) -> tuple[str, str, str]:
     return ("python", str(row.get("name")), str(row.get("version")))
 
 
-def _source_checksum_rows(value: object, width: int) -> dict[str, tuple[int, str]] | None:
+def _source_checksum_rows(
+    value: object, width: int
+) -> dict[str, tuple[int, str]] | None:
     if not isinstance(value, str) or not value.strip():
         return None
     rows: dict[str, tuple[int, str]] = {}
@@ -1901,8 +1961,11 @@ def _dsc_content_matches(state, dsc_path, files, checksums):
 
 
 def _safe_archive_name(name: str) -> bool:
-    return bool(name) and "\\" not in name and not name.startswith(("/", "\\")) and all(
-        part not in {"", ".", ".."} for part in PurePosixPath(name).parts
+    return (
+        bool(name)
+        and "\\" not in name
+        and not name.startswith(("/", "\\"))
+        and all(part not in {"", ".", ".."} for part in PurePosixPath(name).parts)
     )
 
 
@@ -1910,7 +1973,10 @@ def _archive_limits(payload: bytes) -> tuple[int, int, int]:
     return (
         SOURCE_ARCHIVE_MAX_MEMBERS,
         SOURCE_ARCHIVE_MAX_MEMBER_BYTES,
-        min(SOURCE_ARCHIVE_MAX_EXPANDED_BYTES, max(1, len(payload)) * SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO),
+        min(
+            SOURCE_ARCHIVE_MAX_EXPANDED_BYTES,
+            max(1, len(payload)) * SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO,
+        ),
     )
 
 
@@ -1926,7 +1992,8 @@ def _archive_root_identity(
         return False
     root_name, _, root_version = root.rpartition("-")
     return (
-        _normalize_distribution(root_name) == _normalize_distribution(str(row.get("name", "")))
+        _normalize_distribution(root_name)
+        == _normalize_distribution(str(row.get("name", "")))
         and root_version == str(row.get("version", ""))
         and _normalize_distribution(fields.get("Name", ""))
         == _normalize_distribution(str(row.get("name", "")))
@@ -2035,8 +2102,12 @@ def _tar_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | Non
     try:
         _, _, expanded_limit = _archive_limits(payload)
         state = {
-            "names": set(), "total": 0, "source_files": 0, "metadata": None,
-            "root": None, "row": row,
+            "names": set(),
+            "total": 0,
+            "source_files": 0,
+            "metadata": None,
+            "root": None,
+            "row": row,
         }
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
             for count, member in enumerate(archive, 1):
@@ -2053,8 +2124,12 @@ def _zip_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | Non
     try:
         _, _, expanded_limit = _archive_limits(payload)
         state = {
-            "names": set(), "total": 0, "source_files": 0, "metadata": None,
-            "root": None, "row": row,
+            "names": set(),
+            "total": 0,
+            "source_files": 0,
+            "metadata": None,
+            "root": None,
+            "row": row,
         }
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             infos = archive.infolist()
@@ -2155,10 +2230,9 @@ def _source_delivery_findings(state: _ScanState, contract: dict) -> list[dict]:
         findings.append({"code": "corresponding_source_inventory_mismatch"})
     if closure.get("status") == "complete-accompanying-source":
         expected_layers = state.layer_inventory
-        if (
-            closure.get("layer_inventory") != expected_layers
-            or closure.get("layer_inventory_sha256") != _source_identity(expected_layers)
-        ):
+        if closure.get("layer_inventory") != expected_layers or closure.get(
+            "layer_inventory_sha256"
+        ) != _source_identity(expected_layers):
             findings.append({"code": "corresponding_source_layer_inventory_mismatch"})
         findings.extend(
             {"code": "corresponding_source_layer_payload_unowned", "path": row["path"]}
@@ -2195,10 +2269,17 @@ def _source_delivery_record_findings(
         component_key = _source_component_key(row)
         for artifact in artifacts:
             path = artifact.get("path") if isinstance(artifact, dict) else None
-            if isinstance(path, str) and claimed_artifacts.setdefault(path, component_key) != component_key:
-                findings.append({"code": "corresponding_source_artifact_reused", "path": path})
+            if (
+                isinstance(path, str)
+                and claimed_artifacts.setdefault(path, component_key) != component_key
+            ):
+                findings.append(
+                    {"code": "corresponding_source_artifact_reused", "path": path}
+                )
     if not _delivered_source_matches(state, row, artifacts):
-        findings.append({"code": "corresponding_source_delivery_mismatch", "component": identity})
+        findings.append(
+            {"code": "corresponding_source_delivery_mismatch", "component": identity}
+        )
     if row.get("ecosystem") == "dpkg" and not row.get("copyright_sha256"):
         findings.append({"code": "corresponding_source_copyright_missing"})
     if row.get("ecosystem") == "python" and not row.get("record_sha256"):

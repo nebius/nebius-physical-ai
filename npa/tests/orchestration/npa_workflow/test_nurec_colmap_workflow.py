@@ -721,7 +721,7 @@ def _rrd_chunk(entity, batch):
 
 def _nurec_row_chunks(root):
     """Split real novel-view chunks into rows while preserving all other evidence."""
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     chunks = []
     for chunk in load_recording(root / "reports/sim2real.rrd").chunks():
@@ -747,7 +747,8 @@ def _damage_nurec_frame_rows(chunks, damage):
         return [chunk for chunk in chunks if chunk is not target]
     if damage == "one_per_camera":
         return [
-            chunk for chunk in chunks
+            chunk
+            for chunk in chunks
             if not str(chunk.entity_path).startswith("/novel_view/")
             or chunk.to_record_batch().column("frame").to_pylist() == [0]
         ]
@@ -881,7 +882,8 @@ def test_live_rrd_rejects_unsampled_source_frame(
     """
     _write_sampled_nurec_rrd(downstream_run, monkeypatch, 0)
     extra = next(
-        chunk for chunk in _nurec_row_chunks(downstream_run)
+        chunk
+        for chunk in _nurec_row_chunks(downstream_run)
         if str(chunk.entity_path) == "/novel_view/camera1"
         and chunk.to_record_batch().column("frame").to_pylist() == [1]
     )
@@ -889,7 +891,8 @@ def test_live_rrd_rejects_unsampled_source_frame(
     chunks = _nurec_row_chunks(downstream_run)
     if replace:
         chunks = [
-            chunk for chunk in chunks
+            chunk
+            for chunk in chunks
             if str(chunk.entity_path) != "/novel_view/camera1"
             or chunk.to_record_batch().column("frame").to_pylist() != [10]
         ]
@@ -910,7 +913,8 @@ def test_live_rrd_rejects_unsampled_source_frame(
     ],
 )
 def test_live_rrd_rejects_missing_decoded_entities(helpers, downstream_run, entity):
-    from rerun.recording import Recording, load_recording
+    from rerun.chunk import LazyChunkStream
+    from npa.viz.recordings import load_recording
 
     _write_proof_rrd(downstream_run)
     path = downstream_run / "reports/sim2real.rrd"
@@ -919,8 +923,8 @@ def test_live_rrd_rejects_missing_decoded_entities(helpers, downstream_run, enti
         for chunk in load_recording(path).chunks()
         if str(chunk.entity_path) != entity
     ]
-    Recording.from_chunks(chunks, "neural-reconstruction", downstream_run.name).save(
-        path
+    LazyChunkStream.from_iter(chunks).write_rrd(
+        path, application_id="neural-reconstruction", recording_id=downstream_run.name
     )
     frames = helpers._assert_nurec_novel_media(downstream_run)
     with pytest.raises(AssertionError):

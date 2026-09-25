@@ -42,7 +42,9 @@ def test_fiftyone_exports_reviewed_subtasks_to_lerobot() -> None:
         "--output-format",
         "json",
     ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=1800, check=False)
+    result = subprocess.run(
+        command, capture_output=True, text=True, timeout=1800, check=False
+    )
 
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)

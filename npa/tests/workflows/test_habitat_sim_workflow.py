@@ -1169,7 +1169,17 @@ def test_live_receipt_binds_private_image_and_strict_provider_readback(
             LIVE._assert_private_image(receipt)
 
 
-@pytest.mark.parametrize("changed", [None, "image", "development_image", "resolved_digest", "oci_revision", "anonymous_pull_succeeded"])
+@pytest.mark.parametrize(
+    "changed",
+    [
+        None,
+        "image",
+        "development_image",
+        "resolved_digest",
+        "oci_revision",
+        "anonymous_pull_succeeded",
+    ],
+)
 def test_public_live_image_requires_anonymous_exact_head_evidence(tmp_path, changed):
     receipt = _live_receipt(tmp_path)
     receipt["head"] = "b" * 40
@@ -1184,10 +1194,14 @@ def test_public_live_image_requires_anonymous_exact_head_evidence(tmp_path, chan
         "anonymous_pull_succeeded": True,
     }
     if changed:
-        evidence[changed] = False if changed == "anonymous_pull_succeeded" else "wrong-identity"
+        evidence[changed] = (
+            False if changed == "anonymous_pull_succeeded" else "wrong-identity"
+        )
     path = Path(receipt["registry_evidence"]["path"])
     path.write_text(json.dumps(evidence))
-    receipt["registry_evidence"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    receipt["registry_evidence"]["sha256"] = hashlib.sha256(
+        path.read_bytes()
+    ).hexdigest()
     if changed:
         with pytest.raises(AssertionError):
             LIVE._assert_image(receipt)
@@ -1667,7 +1681,9 @@ def test_ready_marker_race_preserves_the_unowned_object(tmp_path) -> None:
 
     storage = ReadyMarkerRace()
     ready_key = "run-owned/race/habitat-sim-publication-ready.json"
-    with pytest.raises(H.SmokeFailure, match="immutable object already exists") as raised:
+    with pytest.raises(
+        H.SmokeFailure, match="immutable object already exists"
+    ) as raised:
         H._upload_directory(
             tmp_path / "outputs",
             "s3://fixture-bucket/run-owned/race/",

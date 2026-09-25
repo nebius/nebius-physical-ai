@@ -133,7 +133,14 @@ def join_shards(
             payload = _download_json(uri)
         except Exception as exc:  # noqa: BLE001 - reported below as a hard failure
             missing.append(shard)
-            entries.append({"shard": shard, "uri": uri, "status": "missing", "error": str(exc)[:200]})
+            entries.append(
+                {
+                    "shard": shard,
+                    "uri": uri,
+                    "status": "missing",
+                    "error": str(exc)[:200],
+                }
+            )
             continue
         count = _count_items(payload, items_key)
         total += count
@@ -143,7 +150,9 @@ def join_shards(
                 "uri": uri,
                 "status": "ok",
                 "items": count,
-                "model": str(payload.get("model") or "") if isinstance(payload, dict) else "",
+                "model": str(payload.get("model") or "")
+                if isinstance(payload, dict)
+                else "",
             }
         )
 

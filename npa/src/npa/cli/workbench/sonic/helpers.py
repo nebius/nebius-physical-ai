@@ -149,19 +149,25 @@ def validate_port(value: int, name: str) -> int:
 
 def validate_checkpoint_args(source: CheckpointSource, checkpoint_path: str) -> None:
     if source in {CheckpointSource.local, CheckpointSource.s3} and not checkpoint_path:
-        fail(f"--checkpoint-path is required when --checkpoint-source is {source.value}.")
+        fail(
+            f"--checkpoint-path is required when --checkpoint-source is {source.value}."
+        )
 
 
 def validate_tensorrt_version(version: str) -> None:
     if not version:
         return
     if not (version.startswith("10.13") or version.startswith("10.7")):
-        fail("--tensorrt-version must be TensorRT 10.13.x for x86_64 or 10.7.x for Jetson.")
+        fail(
+            "--tensorrt-version must be TensorRT 10.13.x for x86_64 or 10.7.x for Jetson."
+        )
 
 
 def require_real_confirmation(mode: str, confirm_real: bool) -> None:
     if mode == "real" and not confirm_real:
-        fail("real robot mode requires --confirm-real; no automated real-robot launch is allowed.")
+        fail(
+            "real robot mode requires --confirm-real; no automated real-robot launch is allowed."
+        )
 
 
 def normalize_embodiment(value: str) -> str:
@@ -184,7 +190,9 @@ def is_sonic_workbench(name: str, wb_cfg: dict[str, Any]) -> bool:
 def sonic_workbenches() -> dict[str, dict[str, Any]]:
     filtered: dict[str, dict[str, Any]] = {}
     for project, project_cfg in list_projects().items():
-        workbenches = project_cfg.get("workbenches", {}) if isinstance(project_cfg, dict) else {}
+        workbenches = (
+            project_cfg.get("workbenches", {}) if isinstance(project_cfg, dict) else {}
+        )
         if not isinstance(workbenches, dict):
             continue
         sonic_entries = {
@@ -214,7 +222,8 @@ def serverless_job_env(
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
     s3_credentials = {
-        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_access_key_id": storage.aws_access_key_id
+        or shared_env.get("AWS_ACCESS_KEY_ID", ""),
         "aws_secret_access_key": storage.aws_secret_access_key
         or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
         "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
@@ -225,7 +234,9 @@ def serverless_job_env(
         fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
-        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        hf_token=shared_env.get("HF_TOKEN")
+        or shared_env.get("HUGGING_FACE_HUB_TOKEN")
+        or None,
         s3_credentials=s3_credentials,
         extra_env=extra_env,
     )
@@ -237,7 +248,9 @@ def resolve_project_id(explicit_project_id: str) -> str:
     env_cfg = resolve_environment(ctx.project)
     project_id = explicit_project_id or (env_cfg.project_id if env_cfg else "")
     if not project_id:
-        fail("SONIC --runtime serverless requires --project-id or a configured project.")
+        fail(
+            "SONIC --runtime serverless requires --project-id or a configured project."
+        )
     return project_id
 
 

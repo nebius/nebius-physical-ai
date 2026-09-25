@@ -58,7 +58,9 @@ try:
                 members = parts[3] if len(parts) > 3 else ""
                 results[f"gid_{target_gid}_name"] = parts[0]
                 results[f"gid_{target_gid}_members"] = members
-                print(f"GID {target_gid} = {parts[0]!r}, members: {members!r}", flush=True)
+                print(
+                    f"GID {target_gid} = {parts[0]!r}, members: {members!r}", flush=True
+                )
                 break
         else:
             results[f"gid_{target_gid}_name"] = None
@@ -73,7 +75,12 @@ section("/dev/dri")
 dri_listing = run_capture(["ls", "-la", "/dev/dri"])
 print((dri_listing.stdout or dri_listing.stderr).strip(), flush=True)
 results["dri_devices"] = {}
-for dev in ["/dev/dri/card0", "/dev/dri/card1", "/dev/dri/renderD128", "/dev/dri/renderD129"]:
+for dev in [
+    "/dev/dri/card0",
+    "/dev/dri/card1",
+    "/dev/dri/renderD128",
+    "/dev/dri/renderD129",
+]:
     if os.path.exists(dev):
         st = os.stat(dev)
         info: dict[str, Any] = {

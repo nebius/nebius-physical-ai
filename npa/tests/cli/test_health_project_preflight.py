@@ -142,8 +142,11 @@ def test_invalid_project_store_preserves_json_and_other_checks(project_files):
     before = credentials.CREDENTIALS_PATH.read_bytes()
     result = _invoke("--project", "target", "--checks", "s3,nebius", "--offline")
     assert result.exit_code == 1
-    assert [(item["name"], item["status"]) for item in json.loads(result.stdout)["checks"]] == [
-        ("s3", "FAIL"), ("nebius", "SKIP"),
+    assert [
+        (item["name"], item["status"]) for item in json.loads(result.stdout)["checks"]
+    ] == [
+        ("s3", "FAIL"),
+        ("nebius", "SKIP"),
     ]
     assert credentials.CREDENTIALS_PATH.read_bytes() == before
 
@@ -191,7 +194,9 @@ def test_project_storage_failure_preserves_other_requested_checks(project_files)
     assert result.exit_code == 1
     checks = json.loads(result.stdout)["checks"]
     assert [(check["name"], check["status"]) for check in checks] == [
-        ("hf", "WARN"), ("s3", "FAIL"), ("nebius", "SKIP"),
+        ("hf", "WARN"),
+        ("s3", "FAIL"),
+        ("nebius", "SKIP"),
     ]
 
 
@@ -214,7 +219,9 @@ def test_project_preserves_non_storage_credentials(project_files):
     assert resolved.s3_bucket != original.s3_bucket
 
 
-@pytest.mark.parametrize("section", ["storage", "object_storage", "object-storage", "terraform_state"])
+@pytest.mark.parametrize(
+    "section", ["storage", "object_storage", "object-storage", "terraform_state"]
+)
 def test_inline_project_storage_stays_read_only_without_legacy_migration(
     project_files, monkeypatch, host_storage_environment, section
 ):

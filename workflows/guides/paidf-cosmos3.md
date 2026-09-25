@@ -636,7 +636,8 @@ Choose an available vision model for the captioning and evaluator stages:
 export CAPTION_MODEL='<available-vision-model-id>'
 ```
 
-The workflow currently defaults to `MiniMaxAI/MiniMax-M3`; check the model list
+The generic workflow defaults to `MiniMaxAI/MiniMax-M3`; the NVIDIA VDA workflow
+uses `google/gemma-3-27b-it` for source-relative attribute evidence. Check the model list
 for availability at run time.
 Do not assume a historically working model is still offered.
 
@@ -1125,6 +1126,7 @@ Use a fresh run ID after changing inputs or settings.
 | `control_guidance` | `1.5` | Native structural-control strength, greater than 0 and at most 10. |
 | `transfer_edge_threshold` | `medium` | Native Canny preset: `very_low`, `low`, `medium`, `high`, or `very_high`. Lower thresholds preserve weaker source edges but may retain noise; inspect controls and generated task details. |
 | `transfer_rgb_weight` | `0.0` | Optional native RGB conditioning weight relative to edge weight 1. Finite and nonnegative; 0 disables it. Requires edge transfer. Uses the native `blur` hint with preset `none`, retaining complete source RGB pixels as conditioning, never blending them into output. |
+| `transfer_cfg_normalization` | `disabled` | `enabled` forwards native classifier-free guidance normalization. Requires edge transfer; the effective `normalize_cfg` boolean is retained in `transfer.json`. Compare matched output quality before adoption. |
 | `prompt`, `negative_prompt`, `augment_subject` | See YAML | Generation intent and appearance sampling. Each effective prompt also includes source captions and the sampled appearance profile. |
 | `seed`, `guidance`, `steps` | `17`, `5.0`, `24` | Generation sampling. |
 | `variant_count`, `variant_parallelism` | `2`, `1` | Number of variants and concurrent generation workers, limited by visible GPUs. |
@@ -1135,7 +1137,7 @@ Use a fresh run ID after changing inputs or settings.
 | `grade_threshold` | `0.2` | Exploratory evaluator and quality-gate threshold; required checks must also pass for every variant. |
 | `attribute_threshold` | `0.25` | Minimum fraction of requested appearance attributes correctly recognized per variant: at least 1 of the default 4 attributes. Every question must have a valid answer. |
 | `alignment_mode` | `required` | Decode and verify matching source/output timelines and generation hashes before quality scoring. |
-| `caption_model` | `MiniMaxAI/MiniMax-M3` | Hosted captioning model and evaluator visual-answer model; R1 selects an available model. |
+| `caption_model` | `MiniMaxAI/MiniMax-M3` (generic); `google/gemma-3-27b-it` (NVIDIA VDA) | Hosted captioning model and evaluator visual-answer model; R1 selects an available model. |
 | `caption_instruction` | Task-aware factual description | Source captioning instructions; resolves `augment_subject` as context and asks for uncertainty about unclear features. |
 | `attribute_sample_policy` | `ranking` | Evaluator attribute-observation policy. |
 | `temporal_consistency_mode`, `temporal_consistency_threshold` | `advisory`, `0.8` | Source-relative temporal diagnostic. Related `temporal_*` keys configure regions, noise floor, and blur. |

@@ -19,8 +19,7 @@ _MOUNTINFO = Path("/proc/self/mountinfo")
 
 
 def _file_identity(item: os.stat_result) -> tuple[int, ...]:
-    return (item.st_dev, item.st_ino, item.st_size,
-            item.st_mtime_ns, item.st_ctime_ns)
+    return (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
 
 
 def _payload_fingerprint(path: Path) -> dict[str, Any] | None:
@@ -39,8 +38,9 @@ def _payload_fingerprint(path: Path) -> dict[str, Any] | None:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
         after = os.fstat(stream.fileno())
-    if (_file_identity(before) != _file_identity(after)
-            or _file_identity(path.stat(follow_symlinks=False)) != _file_identity(after)):
+    if _file_identity(before) != _file_identity(after) or _file_identity(
+        path.stat(follow_symlinks=False)
+    ) != _file_identity(after):
         raise IsaacArenaError("OptiX weights changed during verification")
     return {"sha256": digest.hexdigest(), "bytes": before.st_size}
 
@@ -72,12 +72,15 @@ def _mounts() -> list[tuple[str, Path, str, str]]:
             fields = left.split()
             mountpoint = re.sub(
                 r"\\(040|011|012|134)",
-                lambda match: chr(int(match.group(1), 8)), fields[4],
+                lambda match: chr(int(match.group(1), 8)),
+                fields[4],
             )
             records.append((fields[0], Path(mountpoint), right.split()[0], fields[3]))
         return records
     except (OSError, ValueError, IndexError) as exc:
-        raise IsaacArenaError("OptiX placement requires readable mount ownership") from exc
+        raise IsaacArenaError(
+            "OptiX placement requires readable mount ownership"
+        ) from exc
 
 
 def _container_destination() -> Path:
@@ -89,8 +92,11 @@ def _container_destination() -> Path:
         raise IsaacArenaError("OptiX placement requires a private writable directory")
     mounts = _mounts()
     roots = [record for record in mounts if record[1] == Path("/")]
-    covering = [record for record in mounts
-                if record[1] == _WEIGHTS_PATH or record[1] in _WEIGHTS_PATH.parents]
+    covering = [
+        record
+        for record in mounts
+        if record[1] == _WEIGHTS_PATH or record[1] in _WEIGHTS_PATH.parents
+    ]
     if len(roots) != 1 or roots[0][2:] != ("overlay", "/") or not covering:
         raise IsaacArenaError("OptiX placement requires a private container overlay")
     effective = max(covering, key=lambda record: len(record[1].parts))
@@ -110,8 +116,10 @@ def _copy_verified_payload(source: Path, descriptor: int, fingerprint: dict) -> 
     digest = hashlib.sha256()
     for block in iter(lambda: os.read(descriptor, 1024 * 1024), b""):
         digest.update(block)
-    if (os.fstat(descriptor).st_size != fingerprint["bytes"]
-            or digest.hexdigest() != fingerprint["sha256"]):
+    if (
+        os.fstat(descriptor).st_size != fingerprint["bytes"]
+        or digest.hexdigest() != fingerprint["sha256"]
+    ):
         raise IsaacArenaError("OptiX weights copy failed hash verification")
     os.fchmod(descriptor, 0o444)
 
@@ -123,14 +131,21 @@ def _assert_destination(directory: int, parent: Path) -> None:
 
 def _link_payload(temporary: str, directory: int, fingerprint: dict) -> None:
     try:
-        os.link(temporary, _WEIGHTS_PATH.name, src_dir_fd=directory,
-                dst_dir_fd=directory, follow_symlinks=False)
+        os.link(
+            temporary,
+            _WEIGHTS_PATH.name,
+            src_dir_fd=directory,
+            dst_dir_fd=directory,
+            follow_symlinks=False,
+        )
     except FileExistsError:
         # Concurrent evaluations can reuse identical complete bytes, but
         # neither may replace a provider-mounted or different payload.
         pass
     if _payload_fingerprint(_WEIGHTS_PATH) != fingerprint:
-        raise IsaacArenaError("OptiX destination differs from the matching driver package")
+        raise IsaacArenaError(
+            "OptiX destination differs from the matching driver package"
+        )
 
 
 def _publish_payload(source: Path, parent: Path, fingerprint: dict) -> None:
@@ -138,8 +153,9 @@ def _publish_payload(source: Path, parent: Path, fingerprint: dict) -> None:
     temporary = f".npa-optix-{uuid.uuid4().hex}"
     try:
         _assert_destination(directory, parent)
-        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_RDWR,
-                             0o600, dir_fd=directory)
+        descriptor = os.open(
+            temporary, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600, dir_fd=directory
+        )
         try:
             _copy_verified_payload(source, descriptor, fingerprint)
         finally:
@@ -162,7 +178,9 @@ def _prepare_optix_weights(extracted: Path) -> dict[str, Any]:
     existing = _payload_fingerprint(_WEIGHTS_PATH)
     if existing is not None:
         if existing != fingerprint:
-            raise IsaacArenaError("OptiX destination differs from the matching driver package")
+            raise IsaacArenaError(
+                "OptiX destination differs from the matching driver package"
+            )
         return _payload_evidence(existing, "native_runtime")
     parent = _container_destination()
     try:

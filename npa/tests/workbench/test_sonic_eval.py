@@ -202,7 +202,11 @@ def test_sonic_eval_container_backend_uses_configured_io_contract(
         "metadata_path": "/contract/input/exported_policy.metadata.json",
         "output_path": "/contract/output/results.json",
     }
-    assert result["render"] == {"backend": "mock", "graphics_api": "vulkan", "frames": 8}
+    assert result["render"] == {
+        "backend": "mock",
+        "graphics_api": "vulkan",
+        "frames": 8,
+    }
     assert result["metrics"]["episode_return_mean"] == 1.25
     assert result["metrics"]["distance_mean"] == 2.5
     written = json.loads(result_path.read_text(encoding="utf-8"))

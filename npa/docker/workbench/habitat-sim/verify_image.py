@@ -361,7 +361,9 @@ def _record_provenance_directory(
 ) -> None:
     """Reject directories not required by the attested provenance files."""
     if relative not in expected_directories:
-        findings.append({"code": "source_provenance_unexpected_directory", "path": relative})
+        findings.append(
+            {"code": "source_provenance_unexpected_directory", "path": relative}
+        )
 
 
 def _is_provenance_whiteout(relative: str) -> bool:

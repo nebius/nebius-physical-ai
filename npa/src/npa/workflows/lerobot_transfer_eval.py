@@ -22,11 +22,17 @@ def shift_pixels(pixels: np.ndarray, condition: str) -> np.ndarray:
     Raises:
         ValueError: Condition is unsupported.
     """
-    gains = {"clean": (1, 1, 1), "dim": (0.45, 0.45, 0.45),
-             "warm": (1.25, 0.85, 0.6), "delay": (1, 1, 1)}
+    gains = {
+        "clean": (1, 1, 1),
+        "dim": (0.45, 0.45, 0.45),
+        "warm": (1.25, 0.85, 0.6),
+        "delay": (1, 1, 1),
+    }
     if condition not in gains:
         raise ValueError(f"Unknown transfer condition: {condition}")
-    return np.clip(pixels.astype(np.float32) * gains[condition], 0, 255).astype(np.uint8)
+    return np.clip(pixels.astype(np.float32) * gains[condition], 0, 255).astype(
+        np.uint8
+    )
 
 
 def make_shifted_env(condition: str):
@@ -59,14 +65,23 @@ def make_shifted_env(condition: str):
             return self._observation(observation), reward, terminated, truncated, info
 
         def _observation(self, observation):
-            return {**observation, "pixels": shift_pixels(observation["pixels"], condition)}
+            return {
+                **observation,
+                "pixels": shift_pixels(observation["pixels"], condition),
+            }
 
         def render(self):
             return shift_pixels(self.env.render(), condition)
 
-    env = gym.make("gym_pusht/PushT-v0", obs_type="pixels_agent_pos", render_mode="rgb_array",
-                   observation_width=96, observation_height=96,
-                   visualization_width=384, visualization_height=384)
+    env = gym.make(
+        "gym_pusht/PushT-v0",
+        obs_type="pixels_agent_pos",
+        render_mode="rgb_array",
+        observation_width=96,
+        observation_height=96,
+        visualization_width=384,
+        visualization_height=384,
+    )
     return ShiftedPushT(env)
 
 
@@ -92,18 +107,26 @@ def evaluate_pair(prepared: Path, baseline: Path, robust: Path, output: Path) ->
         provenance = json.loads((trained / "training.json").read_text())
         hashes = tree_hashes(trained / "checkpoint")
         if provenance["recipe_sha256"] != recipe_hash or provenance["arm"] != arm:
-            raise ValueError("Training provenance does not match evaluation recipe and arm")
+            raise ValueError(
+                "Training provenance does not match evaluation recipe and arm"
+            )
         if not hashes or hashes != provenance["checkpoint_hashes"]:
             raise ValueError("Checkpoint differs from the exact trained weights")
         checkpoints[arm] = hashes
         records.extend(_evaluate_arm(trained / "checkpoint", output, arm, recipe))
-    write_json(output / "evaluation.json", {
-        "schema": "npa.lerobot-transfer.evaluation.v1", "recipe": recipe,
-        "recipe_sha256": recipe_hash, "checkpoint_hashes": checkpoints,
-        "runtime": runtime, "trials": records,
-        "success_definition": "native gym-pusht coverage > 0.95 before episode termination",
-        "physical_robot_tested": False,
-    })
+    write_json(
+        output / "evaluation.json",
+        {
+            "schema": "npa.lerobot-transfer.evaluation.v1",
+            "recipe": recipe,
+            "recipe_sha256": recipe_hash,
+            "checkpoint_hashes": checkpoints,
+            "runtime": runtime,
+            "trials": records,
+            "success_definition": "native gym-pusht coverage > 0.95 before episode termination",
+            "physical_robot_tested": False,
+        },
+    )
 
 
 def _evaluate_arm(checkpoint: Path, output: Path, arm: str, recipe: dict) -> list[dict]:
@@ -112,23 +135,33 @@ def _evaluate_arm(checkpoint: Path, output: Path, arm: str, recipe: dict) -> lis
 
     policy = ACTPolicy.from_pretrained(checkpoint).to("cuda").eval()
     preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy.config, pretrained_path=checkpoint,
+        policy_cfg=policy.config,
+        pretrained_path=checkpoint,
         preprocessor_overrides={"device_processor": {"device": "cuda"}},
     )
     processors = (preprocessor, postprocessor)
     records = []
     for split in ("validation", "test"):
         for condition in recipe["conditions"]:
-            result = _evaluate_condition(policy, processors, output / arm / split / condition,
-                                         condition, split, recipe)
+            result = _evaluate_condition(
+                policy,
+                processors,
+                output / arm / split / condition,
+                condition,
+                split,
+                recipe,
+            )
             write_json(output / arm / split / condition / "metrics.json", result)
-            records.extend({**trial, "arm": arm, "split": split, "condition": condition}
-                           for trial in result["per_episode"])
+            records.extend(
+                {**trial, "arm": arm, "split": split, "condition": condition}
+                for trial in result["per_episode"]
+            )
     return records
 
 
-def _evaluate_condition(policy, processors, output: Path, condition: str,
-                        split: str, recipe: dict) -> dict:
+def _evaluate_condition(
+    policy, processors, output: Path, condition: str, split: str, recipe: dict
+) -> dict:
     import torch
     from lerobot.utils.random_utils import set_seed
 
@@ -137,15 +170,27 @@ def _evaluate_condition(policy, processors, output: Path, condition: str,
     set_seed(recipe["seed"])
     records = []
     for offset in range(0, count, recipe["eval_batch_size"]):
-        seeds = list(range(start + offset, start + min(count, offset + recipe["eval_batch_size"])))
+        seeds = list(
+            range(
+                start + offset, start + min(count, offset + recipe["eval_batch_size"])
+            )
+        )
         with torch.inference_mode():
-            records.extend(_evaluate_batch(policy, processors, condition, seeds,
-                                           output if offset == 0 else None))
+            records.extend(
+                _evaluate_batch(
+                    policy,
+                    processors,
+                    condition,
+                    seeds,
+                    output if offset == 0 else None,
+                )
+            )
     return {"per_episode": records}
 
 
-def _evaluate_batch(policy, processors, condition: str, seeds: list[int],
-                    output: Path | None) -> list[dict]:
+def _evaluate_batch(
+    policy, processors, condition: str, seeds: list[int], output: Path | None
+) -> list[dict]:
     import gymnasium as gym
     from lerobot.envs.configs import PushtEnv
     from lerobot.envs.factory import make_env_pre_post_processors
@@ -159,11 +204,18 @@ def _evaluate_batch(policy, processors, condition: str, seeds: list[int],
     frames = []
     render = (lambda env: frames.append(env.envs[0].render())) if output else None
     try:
-        result = rollout(environment, policy, env_before, env_after, *processors,
-                         seeds=seeds, render_callback=render)
+        result = rollout(
+            environment,
+            policy,
+            env_before,
+            env_after,
+            *processors,
+            seeds=seeds,
+            render_callback=render,
+        )
         records = summarize_rollout(result, seeds)
         if output:
-            _save_video(frames[:records[0]["steps"]], output / "videos/episode.mp4")
+            _save_video(frames[: records[0]["steps"]], output / "videos/episode.mp4")
         return records
     finally:
         environment.close()
@@ -180,18 +232,29 @@ def summarize_rollout(rollout: dict, seeds: list[int]) -> list[dict]:
     Raises:
         ValueError: Shapes differ or an episode has no termination boundary.
     """
-    rewards, successes, done = (np.asarray(rollout[key]) for key in ("reward", "success", "done"))
-    if rewards.ndim != 2 or rewards.shape != successes.shape or rewards.shape != done.shape:
+    rewards, successes, done = (
+        np.asarray(rollout[key]) for key in ("reward", "success", "done")
+    )
+    if (
+        rewards.ndim != 2
+        or rewards.shape != successes.shape
+        or rewards.shape != done.shape
+    ):
         raise ValueError("Native rollout arrays must have matching batch/time shapes")
     if len(seeds) != len(done) or not done.any(axis=1).all():
         raise ValueError("Every native rollout must have a first termination boundary")
     records = []
     for index, seed in enumerate(seeds):
         stop = int(done[index].argmax()) + 1
-        records.append({"seed": seed, "steps": stop,
-                        "sum_reward": float(rewards[index, :stop].sum()),
-                        "max_reward": float(rewards[index, :stop].max()),
-                        "success": bool(successes[index, :stop].any())})
+        records.append(
+            {
+                "seed": seed,
+                "steps": stop,
+                "sum_reward": float(rewards[index, :stop].sum()),
+                "max_reward": float(rewards[index, :stop].max()),
+                "success": bool(successes[index, :stop].any()),
+            }
+        )
     return records
 
 

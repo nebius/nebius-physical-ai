@@ -137,7 +137,10 @@ def _trusted_contract(root: Path, revision: str) -> tuple[dict, dict[str, object
     )
     W.require(oid.returncode == 0, "trusted_contract_blob_unreadable")
     blob_oid = oid.stdout.strip()
-    W.require(re.fullmatch(r"[0-9a-f]{40}", blob_oid) is not None, "trusted_contract_blob_invalid")
+    W.require(
+        re.fullmatch(r"[0-9a-f]{40}", blob_oid) is not None,
+        "trusted_contract_blob_invalid",
+    )
     blob = subprocess.run(
         ["git", "-C", str(root), "cat-file", "blob", spec],
         check=False,
@@ -146,7 +149,9 @@ def _trusted_contract(root: Path, revision: str) -> tuple[dict, dict[str, object
     W.require(blob.returncode == 0, "trusted_contract_blob_unreadable")
     committed = blob.stdout
     path = root / HABITAT_CONTRACT
-    W.require(path.is_file() and not path.is_symlink(), "trusted_contract_worktree_missing")
+    W.require(
+        path.is_file() and not path.is_symlink(), "trusted_contract_worktree_missing"
+    )
     W.require(path.read_bytes() == committed, "trusted_contract_worktree_mismatch")
     contract = json.loads(committed)
     W.require(isinstance(contract, dict), "trusted_contract_schema")
@@ -170,7 +175,10 @@ def _trusted_runtime_closure(contract: dict[str, object]) -> tuple[str, str, str
     )
     values = tuple(closure.get(key) for key in keys)
     W.require(
-        all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in values),
+        all(
+            isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in values
+        ),
         "trusted_runtime_closure_unavailable",
     )
     return values  # type: ignore[return-value]
@@ -185,7 +193,9 @@ def _habitat_verifier_module():
     return verifier
 
 
-def _habitat_verify_descriptor(args, archive, verifier, contract, source_revision, expected):
+def _habitat_verify_descriptor(
+    args, archive, verifier, contract, source_revision, expected
+):
     """Verify the held descriptor and close only the descriptor-owned handle."""
     _, fd, initial = W.open_private_fd(args.archive)
     try:

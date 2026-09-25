@@ -97,7 +97,9 @@ def validate_npa_spec(spec: Mapping[str, Any] | NPASpec) -> None:
     if normalized.backend not in {"nebius", "kubernetes"}:
         raise InvalidResourceSpecError("backend must be 'nebius' or 'kubernetes'")
     if normalized.region != DEFAULT_REGION:
-        raise InvalidResourceSpecError(f"unsupported region '{normalized.region}'. Supported: {DEFAULT_REGION}")
+        raise InvalidResourceSpecError(
+            f"unsupported region '{normalized.region}'. Supported: {DEFAULT_REGION}"
+        )
     if normalized.count <= 0:
         raise InvalidResourceSpecError("count must be positive")
     if normalized.cpus <= 0:
@@ -108,9 +110,16 @@ def validate_npa_spec(spec: Mapping[str, Any] | NPASpec) -> None:
         return
     if normalized.gpu not in NPA_GPU_TO_SKYPILOT_ACCELERATOR:
         allowed = ", ".join(sorted(NPA_GPU_TO_SKYPILOT_ACCELERATOR))
-        raise InvalidResourceSpecError(f"unsupported GPU type '{normalized.gpu}'. Supported: {allowed}")
-    if normalized.backend == "nebius" and normalized.count not in GPU_INSTANCE_TYPES_BY_COUNT[normalized.gpu]:
-        allowed = ", ".join(str(count) for count in sorted(GPU_INSTANCE_TYPES_BY_COUNT[normalized.gpu]))
+        raise InvalidResourceSpecError(
+            f"unsupported GPU type '{normalized.gpu}'. Supported: {allowed}"
+        )
+    if (
+        normalized.backend == "nebius"
+        and normalized.count not in GPU_INSTANCE_TYPES_BY_COUNT[normalized.gpu]
+    ):
+        allowed = ", ".join(
+            str(count) for count in sorted(GPU_INSTANCE_TYPES_BY_COUNT[normalized.gpu])
+        )
         raise InvalidResourceSpecError(
             f"unsupported count {normalized.count} for Nebius GPU '{normalized.gpu}'. Supported: {allowed}"
         )
@@ -136,7 +145,9 @@ def _normalize_spec(spec: Mapping[str, Any] | NPASpec) -> NPASpec:
     if unknown:
         keys = ", ".join(unknown)
         valid = ", ".join(sorted(_NPA_SPEC_KEYS))
-        raise InvalidResourceSpecError(f"unrecognized NPA SkyPilot resource key(s): {keys}. Valid keys: {valid}")
+        raise InvalidResourceSpecError(
+            f"unrecognized NPA SkyPilot resource key(s): {keys}. Valid keys: {valid}"
+        )
 
     gpu_raw = spec.get("gpu")
     gpu = str(gpu_raw).lower().strip() if gpu_raw not in {None, ""} else None

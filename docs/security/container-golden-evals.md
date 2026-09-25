@@ -108,6 +108,7 @@ flowchart TB
 | `base-cuda13-b300` | *(foundation)* | build-import | torch+CUDA; flash_attn import | required | blocked-on-upstream |
 | `diffusers` | `0.38.0-rtfetch-20260916` | container-smoke | native CogVideoX generation; decoded MP4 and hashes; separate workflows qualify Mochi, Wan and depth | required | gpu-gated |
 | `lingbot-world` | `a43bec7-rtfetch-20260916` | container-smoke | native camera-conditioned generation; positive attention/all-to-all on four ranks; decoded MP4 | required | gpu-gated |
+| `sam3` | `3.1-unbuilt` | container-smoke | SAM 3.1 text-prompted video masks; aligned decoded overlay; exact provenance; GPU proof pending | required | gpu-gated |
 | `sam2` | `2.1-rtfetch-20260916` | container-smoke | native video-mask propagation; retained arrays; color-checked, decoded overlay | required | gpu-gated |
 | `groot` | `0.1.0` | container-smoke | GR00T repo; uv; standalone inference | required | gpu-gated |
 | `lerobot` | `0.5.1` (default) | container-smoke | version; 50-step PushT train; checkpoint; eval; output | required | gpu-gated |

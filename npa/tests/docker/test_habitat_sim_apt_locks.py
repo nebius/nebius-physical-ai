@@ -239,7 +239,9 @@ def test_direct_verifier_uses_private_scratch_and_preserves_caller_names(
     archives = tmp_path / "archives"
     archives.mkdir()
     archive = _build_fixture_deb(archives, "private-package", "1.0-1")
-    rows = [("private-package", "1.0-1", hashlib.sha256(archive.read_bytes()).hexdigest())]
+    rows = [
+        ("private-package", "1.0-1", hashlib.sha256(archive.read_bytes()).hexdigest())
+    ]
     lock = tmp_path / "apt.lock"
     records = tmp_path / "records"
     _write_direct_lock(lock, rows)

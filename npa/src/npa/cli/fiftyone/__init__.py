@@ -25,7 +25,10 @@ from rich.console import Console
 from npa.clients.env import load_env_file_script, render_docker_env_file
 from npa.cli.fiftyone.forward import _wait_for_kubernetes_forward
 from npa.cli.fiftyone.review import register_review_augmented
-from npa.cli.fiftyone.subtasks import bundle_lerobot_importer, register_lerobot_subtask_export
+from npa.cli.fiftyone.subtasks import (
+    bundle_lerobot_importer,
+    register_lerobot_subtask_export,
+)
 from npa.cli.ingress import (
     register_byovm_alias,
     world_open_ack_option,
@@ -67,7 +70,11 @@ from npa.clients.credentials import (
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.network import NetworkIngressError
 from npa.clients.ssh import SSHClient, SSHError, format_remote_failure
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    ServerlessClient,
+    ServerlessClientError,
+)
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
     BYOVMTarget,
@@ -135,8 +142,12 @@ _workbench_name: str = ""
 
 FIFTYONE_VERSION = "1.22.0"
 FIFTYONE_MONGODB_VERSION = "7.0.40"
-FIFTYONE_MONGODB_SHA256 = "e4b3d7a11818f983d897ec9fcbf25779a6e122f0e7b7e25fa4ab8ac5d78a5a89"
-FIFTYONE_MONGOD_SHA256 = "3c9271a5dbcaa2adf7cebd7de65d524a780b463e5a9085106adcd140930fc696"
+FIFTYONE_MONGODB_SHA256 = (
+    "e4b3d7a11818f983d897ec9fcbf25779a6e122f0e7b7e25fa4ab8ac5d78a5a89"
+)
+FIFTYONE_MONGOD_SHA256 = (
+    "3c9271a5dbcaa2adf7cebd7de65d524a780b463e5a9085106adcd140930fc696"
+)
 FIFTYONE_HOME = "/opt/fiftyone"
 FIFTYONE_CONTAINER_DB_DIR = f"{FIFTYONE_HOME}/container-db"
 FIFTYONE_VENV = f"{FIFTYONE_HOME}/venv"
@@ -240,7 +251,9 @@ def _normalize_app_address(address: str) -> str:
     if not normalized:
         _fail("--address must not be empty")
     if normalized not in {"127.0.0.1", "localhost"}:
-        _fail("FiftyOne requires loopback binding; use --address 127.0.0.1 and `fiftyone open`.")
+        _fail(
+            "FiftyOne requires loopback binding; use --address 127.0.0.1 and `fiftyone open`."
+        )
     return "127.0.0.1"
 
 
@@ -317,7 +330,10 @@ def _suppress_transient_curl_errors(stderr: str) -> str:
         lower = line.lower()
         if "curl: (7)" in lower and "couldn't connect to server" in lower:
             continue
-        if "failed to connect to 127.0.0.1" in lower and "couldn't connect to server" in lower:
+        if (
+            "failed to connect to 127.0.0.1" in lower
+            and "couldn't connect to server" in lower
+        ):
             continue
         kept.append(line)
     return "\n".join(kept).strip()
@@ -344,7 +360,8 @@ def _serverless_job_env(
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
     s3_credentials = {
-        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_access_key_id": storage.aws_access_key_id
+        or shared_env.get("AWS_ACCESS_KEY_ID", ""),
         "aws_secret_access_key": storage.aws_secret_access_key
         or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
         "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
@@ -355,7 +372,9 @@ def _serverless_job_env(
         _fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
-        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        hf_token=shared_env.get("HF_TOKEN")
+        or shared_env.get("HUGGING_FACE_HUB_TOKEN")
+        or None,
         s3_credentials=s3_credentials,
         extra_env=extra_env,
     )
@@ -373,7 +392,12 @@ def _fiftyone_serverless_route(
             "FiftyOne curate/eval serverless supports --gpu-type h100 or rtx6000 only; "
             "L40S-family routing is intentionally excluded."
         )
-    return platform, preset, gpu_count, region or FIFTYONE_SERVERLESS_DEFAULT_REGIONS[platform]
+    return (
+        platform,
+        preset,
+        gpu_count,
+        region or FIFTYONE_SERVERLESS_DEFAULT_REGIONS[platform],
+    )
 
 
 def _fiftyone_serverless_submit_job(
@@ -400,9 +424,11 @@ def _fiftyone_serverless_submit_job(
         _fail("--timeout-minutes must be positive")
     try:
         validate_output_path(output_path)
-        platform, preset, resolved_gpu_count, resolved_region = _fiftyone_serverless_route(
-            gpu_type,
-            region=region,
+        platform, preset, resolved_gpu_count, resolved_region = (
+            _fiftyone_serverless_route(
+                gpu_type,
+                region=region,
+            )
         )
     except ValueError as exc:
         _fail(str(exc))
@@ -412,8 +438,12 @@ def _fiftyone_serverless_submit_job(
     env_cfg = resolve_environment(proj_alias)
     resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
     if not resolved_project_id:
-        _fail(f"FiftyOne {command_label} --runtime serverless requires --project-id or a configured project.")
-    name_for_job = job_name or _serverless_job_name(proj_alias, wb_name, f"fiftyone-{tool_suffix}")
+        _fail(
+            f"FiftyOne {command_label} --runtime serverless requires --project-id or a configured project."
+        )
+    name_for_job = job_name or _serverless_job_name(
+        proj_alias, wb_name, f"fiftyone-{tool_suffix}"
+    )
     out = output_path.rstrip("/") + "/"
     try:
         subnet = resolve_subnet(
@@ -800,11 +830,11 @@ print("NPA_FIFTYONE_CURATE_DONE", json.dumps({{"episodes": EPISODES, "seconds": 
 """.strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
     body = (
-        'set -euo pipefail\n'
-        'export PYTHONUNBUFFERED=1\n'
+        "set -euo pipefail\n"
+        "export PYTHONUNBUFFERED=1\n"
         'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+        f"\"$NPA_PYTHON_BIN\" <<'PY'\n{script}\nPY\n{upload}"
     )
     return f"bash -lc {shlex.quote(body)}"
 
@@ -922,11 +952,11 @@ print("NPA_FIFTYONE_EVAL_DONE", json.dumps(result, sort_keys=True), flush=True)
 """.strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
     body = (
-        'set -euo pipefail\n'
-        'export PYTHONUNBUFFERED=1\n'
+        "set -euo pipefail\n"
+        "export PYTHONUNBUFFERED=1\n"
         'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+        f"\"$NPA_PYTHON_BIN\" <<'PY'\n{script}\nPY\n{upload}"
     )
     return f"bash -lc {shlex.quote(body)}"
 
@@ -965,7 +995,7 @@ print("NPA_FIFTYONE_SERVERLESS_LOAD_DONE", os.environ.get("NPA_OUTPUT_PATH", "")
     body = (
         'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+        f"\"$NPA_PYTHON_BIN\" <<'PY'\n{script}\nPY\n{upload}"
     )
     return f"bash -lc {shlex.quote(body)}"
 
@@ -1002,7 +1032,9 @@ def _fiftyone_serverless_load_dataset(
     env_cfg = resolve_environment(proj_alias)
     resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
     if not resolved_project_id:
-        _fail("FiftyOne load-dataset --runtime serverless requires --project-id or a configured project.")
+        _fail(
+            "FiftyOne load-dataset --runtime serverless requires --project-id or a configured project."
+        )
     name_for_job = job_name or _serverless_job_name(proj_alias, wb_name, "fiftyone")
     out = output_path.rstrip("/") + "/"
     try:
@@ -1028,14 +1060,35 @@ def _fiftyone_serverless_load_dataset(
         existing = None
     try:
         if existing is not None:
-            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
-            _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+            info = (
+                existing
+                if submit_only
+                or existing.status in {"succeeded", "failed", "cancelled"}
+                else client.poll_job(
+                    existing.id,
+                    resolved_project_id,
+                    interval_s=poll_interval,
+                    ceiling_s=timeout,
+                )
+            )
+            _output(
+                {
+                    "status": "existing",
+                    "job_id": info.id,
+                    "job_name": info.name,
+                    "job_status": info.status,
+                    "output_path": out,
+                },
+                output,
+            )
             return
         info = client.create_job(
             project_id=resolved_project_id,
             name=name_for_job,
             image=image or container_image_for_tool("fiftyone"),
-            command=_fiftyone_serverless_load_dataset_command(name, dataset_source, dataset_format),
+            command=_fiftyone_serverless_load_dataset_command(
+                name, dataset_source, dataset_format
+            ),
             gpu_type=platform,
             gpu_count=resolved_gpu_count,
             preset=preset,
@@ -1045,14 +1098,27 @@ def _fiftyone_serverless_load_dataset(
             extra_env=extra_env,
         )
         if not submit_only:
-            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=timeout,
+            )
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
         _fail(f"Serverless Job failed: {exc}")
     except TimeoutError as exc:
         _fail(str(exc))
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+        },
+        output,
+    )
 
 
 def _container_exec(command: str) -> str:
@@ -1078,7 +1144,9 @@ def ensure_ingress_cmd(
         "-n",
         help="Workbench alias to repair. Defaults to the active workbench alias.",
     ),
-    source: str = typer.Option("", "--source", help="Legacy ingress option; FiftyOne requires SSH access."),
+    source: str = typer.Option(
+        "", "--source", help="Legacy ingress option; FiftyOne requires SSH access."
+    ),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Explain the authenticated local access route for FiftyOne."""
@@ -1087,15 +1155,25 @@ def ensure_ingress_cmd(
 
 @app.command("register-byovm")
 def register_byovm_cmd(
-    alias: str = typer.Option(..., "--alias", help="Workbench alias to create or update."),
-    instance_id: str = typer.Option(..., "--instance-id", help="Nebius compute instance ID."),
-    port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne HTTP app port."),
-    source: str = typer.Option("", "--source", help="Legacy ingress option; FiftyOne requires SSH access."),
+    alias: str = typer.Option(
+        ..., "--alias", help="Workbench alias to create or update."
+    ),
+    instance_id: str = typer.Option(
+        ..., "--instance-id", help="Nebius compute instance ID."
+    ),
+    port: int = typer.Option(
+        DEFAULT_APP_PORT, "--port", help="FiftyOne HTTP app port."
+    ),
+    source: str = typer.Option(
+        "", "--source", help="Legacy ingress option; FiftyOne requires SSH access."
+    ),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Register an existing VM for authenticated SSH access to FiftyOne."""
     if source or allow_world_open:
-        _fail("FiftyOne app ingress is disabled; register the VM and use `fiftyone open`.")
+        _fail(
+            "FiftyOne app ingress is disabled; register the VM and use `fiftyone open`."
+        )
     try:
         result = register_byovm_alias(
             tool="fiftyone",
@@ -1107,9 +1185,20 @@ def register_byovm_cmd(
             allow_world_open=allow_world_open,
             warn=console.print,
         )
-        write_config({"projects": {result.project_alias: {"workbenches": {
-            alias: {"endpoint_strategy": "ssh_fallback", "service_port": port},
-        }}}})
+        write_config(
+            {
+                "projects": {
+                    result.project_alias: {
+                        "workbenches": {
+                            alias: {
+                                "endpoint_strategy": "ssh_fallback",
+                                "service_port": port,
+                            },
+                        }
+                    }
+                }
+            }
+        )
     except (ConfigError, NetworkIngressError) as exc:
         _fail(str(exc))
 
@@ -1150,9 +1239,13 @@ def _terraform_state_config(merged_vars: dict[str, str]) -> dict[str, str]:
 
 def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
     if gpu_type and not gpu_preset:
-        _fail("Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type.")
+        _fail(
+            "Missing --gpu-preset. Provide the Nebius GPU preset that matches the selected GPU type."
+        )
     if gpu_preset and not gpu_type:
-        _fail("Missing --gpu-type. Provide the Nebius GPU platform for the selected GPU preset.")
+        _fail(
+            "Missing --gpu-type. Provide the Nebius GPU platform for the selected GPU preset."
+        )
 
 
 def _compute_selection(
@@ -1178,7 +1271,11 @@ def _endpoint_for_port(endpoint: str, host: str, port: int) -> str:
     hostname = parsed.hostname or host
     if not hostname:
         hostname = "localhost"
-    netloc_host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    netloc_host = (
+        f"[{hostname}]"
+        if ":" in hostname and not hostname.startswith("[")
+        else hostname
+    )
     return f"{scheme}://{netloc_host}:{port}"
 
 
@@ -1208,7 +1305,10 @@ def _browser_url_for_strategy(url: str, endpoint_strategy: str) -> str:
     frontend switches to the built-in polling event listener when the browser
     URL includes polling=true, which is more reliable through SSH forwards.
     """
-    if str(endpoint_strategy or "").lower().replace("-", "_") in {"ssh", "ssh_fallback"}:
+    if str(endpoint_strategy or "").lower().replace("-", "_") in {
+        "ssh",
+        "ssh_fallback",
+    }:
         return _url_with_query_param(_localhost_browser_url(url), "polling", "true")
     return url
 
@@ -1234,7 +1334,7 @@ def _is_fiftyone_workbench(name: str, wb_cfg: dict[str, Any]) -> bool:
 
 
 def _build_app_py() -> str:
-    return '''\
+    return """\
 from __future__ import annotations
 
 import os
@@ -1281,7 +1381,7 @@ try:
         time.sleep(1)
 finally:
     session.close()
-'''
+"""
 
 
 def _ensure_storage_env_permissions_script() -> str:
@@ -1303,10 +1403,10 @@ def _source_storage_env_script() -> str:
     return f"""\
 {_ensure_storage_env_permissions_script()}
 if [ -f /etc/npa-fiftyone/env ] && [ -r /etc/npa-fiftyone/env ]; then
-  {load_env_file_script('/etc/npa-fiftyone/env')}
+  {load_env_file_script("/etc/npa-fiftyone/env")}
 elif [ -f /opt/lerobot/.env ]; then
   if [ -r /opt/lerobot/.env ]; then
-    {load_env_file_script('/opt/lerobot/.env')}
+    {load_env_file_script("/opt/lerobot/.env")}
   else
     echo "WARNING: /opt/lerobot/.env exists but is not readable; S3 sources may fail" >&2
   fi
@@ -1339,18 +1439,22 @@ def _service_setup_script(
     if dataset_name is None:
         dataset_update = (
             'if [ -n "$current_dataset" ]; then\n'
-            '  printf \'%s\\n\' "FIFTYONE_DATASET_NAME=$current_dataset" | sudo tee -a /etc/npa-fiftyone/env >/dev/null\n'
+            "  printf '%s\\n' \"FIFTYONE_DATASET_NAME=$current_dataset\" | sudo tee -a /etc/npa-fiftyone/env >/dev/null\n"
             "else\n"
             "  printf '%s\\n' 'FIFTYONE_DATASET_NAME=' | sudo tee -a /etc/npa-fiftyone/env >/dev/null\n"
             "fi"
         )
     else:
-        dataset_env = render_docker_env_file({"FIFTYONE_DATASET_NAME": dataset_name}).rstrip("\n")
+        dataset_env = render_docker_env_file(
+            {"FIFTYONE_DATASET_NAME": dataset_name}
+        ).rstrip("\n")
         dataset_update = (
             f"printf '%s\\n' {shlex.quote(dataset_env)} "
             "| sudo tee -a /etc/npa-fiftyone/env >/dev/null"
         )
-    dataset_update = dataset_update.replace("/etc/npa-fiftyone/env", '"$fiftyone_env_stage/env"')
+    dataset_update = dataset_update.replace(
+        "/etc/npa-fiftyone/env", '"$fiftyone_env_stage/env"'
+    )
     return f"""\
 service_user="$(id -un)"
 service_group="$(id -gn "$service_user")"
@@ -1573,13 +1677,23 @@ def _build_load_dataset_command(
     source: str,
     dataset_format: DatasetFormat = DatasetFormat.auto,
 ) -> str:
-    format_value = dataset_format.value if isinstance(dataset_format, DatasetFormat) else str(dataset_format)
+    format_value = (
+        dataset_format.value
+        if isinstance(dataset_format, DatasetFormat)
+        else str(dataset_format)
+    )
     name_literal = json.dumps(name)
     source_literal = json.dumps(source)
     format_literal = json.dumps(format_value)
-    importer_source = _lerobot_importer_source() if format_value == DatasetFormat.lerobot.value else ""
+    importer_source = (
+        _lerobot_importer_source()
+        if format_value == DatasetFormat.lerobot.value
+        else ""
+    )
     importer_source_literal = json.dumps(importer_source)
-    env_line = shlex.quote(render_docker_env_file({"FIFTYONE_DATASET_NAME": name}).rstrip("\n"))
+    env_line = shlex.quote(
+        render_docker_env_file({"FIFTYONE_DATASET_NAME": name}).rstrip("\n")
+    )
     script = f"""\
 set -euo pipefail
 source {FIFTYONE_VENV}/bin/activate
@@ -1816,17 +1930,27 @@ def _build_container_load_dataset_command(
     source: str,
     dataset_format: DatasetFormat = DatasetFormat.auto,
 ) -> str:
-    format_value = dataset_format.value if isinstance(dataset_format, DatasetFormat) else str(dataset_format)
+    format_value = (
+        dataset_format.value
+        if isinstance(dataset_format, DatasetFormat)
+        else str(dataset_format)
+    )
     name_literal = json.dumps(name)
     source_literal = json.dumps(source)
     format_literal = json.dumps(format_value)
-    importer_source = _lerobot_importer_source() if format_value == DatasetFormat.lerobot.value else ""
+    importer_source = (
+        _lerobot_importer_source()
+        if format_value == DatasetFormat.lerobot.value
+        else ""
+    )
     importer_source_literal = json.dumps(importer_source)
-    env_line = shlex.quote(render_docker_env_file({"FIFTYONE_DATASET_NAME": name}).rstrip("\n"))
+    env_line = shlex.quote(
+        render_docker_env_file({"FIFTYONE_DATASET_NAME": name}).rstrip("\n")
+    )
     container_script = f"""\
 set -euo pipefail
 source {FIFTYONE_VENV}/bin/activate
-{load_env_file_script('/etc/npa-fiftyone/env')}
+{load_env_file_script("/etc/npa-fiftyone/env")}
 export FIFTYONE_DATABASE_DIR={FIFTYONE_CONTAINER_DB_DIR}
 export FIFTYONE_DEFAULT_DATASET_DIR={FIFTYONE_HOME}/datasets
 export FIFTYONE_DATASET_ZOO_DIR={FIFTYONE_HOME}/zoo/datasets
@@ -2077,15 +2201,23 @@ def _read_existing_outputs(
         work_dir = provisioner.working_dir_path(proj_alias, wb_name)
         if work_dir.exists():
             try:
-                provisioner.init(tf_dir=str(work_dir), backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=str(work_dir),
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
                 return provisioner.outputs(tf_dir=str(work_dir))
             except ProvisionerError:
                 pass
 
-    from npa.clients.config import _deep_get, _load_yaml, _resolve_project_section, _resolve_workbench_in_project
+    from npa.clients.config import (
+        _deep_get,
+        _load_yaml,
+        _resolve_project_section,
+        _resolve_workbench_in_project,
+    )
 
     try:
         yml = _load_yaml()
@@ -2176,13 +2308,17 @@ def _parse_dataset_edges(payload: dict[str, Any]) -> tuple[int, list[dict[str, A
         node = edge.get("node", {}) if isinstance(edge, dict) else {}
         if not isinstance(node, dict):
             continue
-        items.append({
-            "name": node.get("name", ""),
-            "samples": node.get("estimatedSampleCount", 0),
-            "media_type": node.get("mediaType", ""),
-            "persistent": node.get("persistent", False),
-        })
-    total = datasets.get("total", len(items)) if isinstance(datasets, dict) else len(items)
+        items.append(
+            {
+                "name": node.get("name", ""),
+                "samples": node.get("estimatedSampleCount", 0),
+                "media_type": node.get("mediaType", ""),
+                "persistent": node.get("persistent", False),
+            }
+        )
+    total = (
+        datasets.get("total", len(items)) if isinstance(datasets, dict) else len(items)
+    )
     return int(total or 0), items
 
 
@@ -2205,7 +2341,9 @@ def _app_health_check(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List configured FiftyOne workbenches."""
     projects = list_projects()
@@ -2216,26 +2354,35 @@ def list_cmd(
         filtered = {}
         for pname, pcfg in projects.items():
             wbs = {
-                k: v for k, v in pcfg.get("workbenches", {}).items()
+                k: v
+                for k, v in pcfg.get("workbenches", {}).items()
                 if _is_fiftyone_workbench(k, v)
             }
             if wbs:
                 filtered[pname] = {**pcfg, "workbenches": wbs}
-        typer.echo(json.dumps({
-            "projects": filtered,
-            "default_project": def_proj,
-            "default_workbench": def_wb,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "projects": filtered,
+                    "default_project": def_proj,
+                    "default_workbench": def_wb,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not projects:
-        typer.echo("No projects configured. Run 'npa workbench fiftyone deploy' to create one.")
+        typer.echo(
+            "No projects configured. Run 'npa workbench fiftyone deploy' to create one."
+        )
         return
 
     any_shown = False
     for proj_name, proj_cfg in projects.items():
         workbenches = {
-            k: v for k, v in proj_cfg.get("workbenches", {}).items()
+            k: v
+            for k, v in proj_cfg.get("workbenches", {}).items()
             if _is_fiftyone_workbench(k, v)
         }
         if not workbenches:
@@ -2255,7 +2402,9 @@ def list_cmd(
             )
 
     if not any_shown:
-        typer.echo("No FiftyOne workbenches configured. Run 'npa workbench fiftyone deploy' to create one.")
+        typer.echo(
+            "No FiftyOne workbenches configured. Run 'npa workbench fiftyone deploy' to create one."
+        )
 
 
 @app.command("cleanup-partial")
@@ -2270,13 +2419,19 @@ def cleanup_partial_cmd(
 
     state = classify_alias_state(proj_alias, wb_name)
     if state == "fresh":
-        typer.echo(f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up.")
+        typer.echo(
+            f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up."
+        )
         return
     if state == "byovm":
-        typer.echo(f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean."
+        )
         return
     if state == "fully_deployed":
-        typer.echo(f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead."
+        )
         raise typer.Exit(code=1)
 
     try:
@@ -2321,7 +2476,9 @@ def _kubectl(
     if shutil.which("kubectl") is None:
         _fail("kubectl is not installed or not on PATH")
     try:
-        result = subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=True)
+        result = subprocess.run(
+            cmd, input=stdin, text=True, capture_output=True, check=True
+        )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         _fail(f"kubectl command failed: {detail}")
@@ -2350,10 +2507,14 @@ def _resolve_required_kubeconfig(*, cluster_name: str, kubeconfig: str) -> str:
     return resolved
 
 
-def _k8s_get_json(kind: str, name: str, *, namespace: str, kubeconfig: str) -> dict[str, Any] | None:
+def _k8s_get_json(
+    kind: str, name: str, *, namespace: str, kubeconfig: str
+) -> dict[str, Any] | None:
     if shutil.which("kubectl") is None:
         return None
-    cmd = _kubectl_command(["get", kind, name, "-n", namespace, "-o", "json"], kubeconfig=kubeconfig)
+    cmd = _kubectl_command(
+        ["get", kind, name, "-n", namespace, "-o", "json"], kubeconfig=kubeconfig
+    )
     result = subprocess.run(cmd, text=True, capture_output=True, check=False)
     if result.returncode != 0:
         return None
@@ -2418,7 +2579,9 @@ def _kubernetes_manifest(
 ) -> dict[str, Any]:
     address = _normalize_app_address(address)
     if service_type != "ClusterIP":
-        _fail("FiftyOne supports ClusterIP with authenticated port-forward access only.")
+        _fail(
+            "FiftyOne supports ClusterIP with authenticated port-forward access only."
+        )
     labels = {
         "app": name,
         "app.kubernetes.io/name": name,
@@ -2439,30 +2602,62 @@ def _kubernetes_manifest(
                     "template": {
                         "metadata": {"labels": labels},
                         "spec": {
-                            **({"imagePullSecrets": [{"name": image_pull_secret}]} if image_pull_secret else {}),
+                            **(
+                                {"imagePullSecrets": [{"name": image_pull_secret}]}
+                                if image_pull_secret
+                                else {}
+                            ),
                             "containers": [
                                 {
                                     "name": "app",
                                     "image": image,
                                     "imagePullPolicy": "IfNotPresent",
-                                    "command": ["/bin/bash", "-lc", _k8s_app_command(port, address=address)],
+                                    "command": [
+                                        "/bin/bash",
+                                        "-lc",
+                                        _k8s_app_command(port, address=address),
+                                    ],
                                     "ports": [{"name": "http", "containerPort": port}],
                                     "env": [
-                                        {"name": "FIFTYONE_DEFAULT_APP_ADDRESS", "value": address},
-                                        {"name": "FIFTYONE_DEFAULT_APP_PORT", "value": str(port)},
-                                        {"name": "FIFTYONE_DATABASE_DIR", "value": f"{FIFTYONE_HOME}/db"},
-                                        {"name": "FIFTYONE_DEFAULT_DATASET_DIR", "value": f"{FIFTYONE_HOME}/datasets"},
-                                        {"name": "FIFTYONE_DATASET_ZOO_DIR", "value": f"{FIFTYONE_HOME}/zoo/datasets"},
-                                        {"name": "FIFTYONE_MODEL_ZOO_DIR", "value": f"{FIFTYONE_HOME}/zoo/models"},
-                                        {"name": "FIFTYONE_DO_NOT_TRACK", "value": "true"},
+                                        {
+                                            "name": "FIFTYONE_DEFAULT_APP_ADDRESS",
+                                            "value": address,
+                                        },
+                                        {
+                                            "name": "FIFTYONE_DEFAULT_APP_PORT",
+                                            "value": str(port),
+                                        },
+                                        {
+                                            "name": "FIFTYONE_DATABASE_DIR",
+                                            "value": f"{FIFTYONE_HOME}/db",
+                                        },
+                                        {
+                                            "name": "FIFTYONE_DEFAULT_DATASET_DIR",
+                                            "value": f"{FIFTYONE_HOME}/datasets",
+                                        },
+                                        {
+                                            "name": "FIFTYONE_DATASET_ZOO_DIR",
+                                            "value": f"{FIFTYONE_HOME}/zoo/datasets",
+                                        },
+                                        {
+                                            "name": "FIFTYONE_MODEL_ZOO_DIR",
+                                            "value": f"{FIFTYONE_HOME}/zoo/models",
+                                        },
+                                        {
+                                            "name": "FIFTYONE_DO_NOT_TRACK",
+                                            "value": "true",
+                                        },
                                     ],
                                     "readinessProbe": {
-                                        "exec": {"command": [
-                                            f"{FIFTYONE_VENV}/bin/python", "-c",
-                                            "import http.client; "
-                                            f"c=http.client.HTTPConnection('127.0.0.1',{port},timeout=4); "
-                                            "c.request('GET','/'); assert c.getresponse().status == 200",
-                                        ]},
+                                        "exec": {
+                                            "command": [
+                                                f"{FIFTYONE_VENV}/bin/python",
+                                                "-c",
+                                                "import http.client; "
+                                                f"c=http.client.HTTPConnection('127.0.0.1',{port},timeout=4); "
+                                                "c.request('GET','/'); assert c.getresponse().status == 200",
+                                            ]
+                                        },
                                         "initialDelaySeconds": 20,
                                         "periodSeconds": 15,
                                         "timeoutSeconds": 5,
@@ -2472,9 +2667,21 @@ def _kubernetes_manifest(
                                         "limits": {"cpu": "4", "memory": "16Gi"},
                                     },
                                     "volumeMounts": [
-                                        {"name": "fiftyone-data", "mountPath": f"{FIFTYONE_HOME}/datasets", "subPath": "datasets"},
-                                        {"name": "fiftyone-data", "mountPath": f"{FIFTYONE_HOME}/db", "subPath": "db"},
-                                        {"name": "fiftyone-data", "mountPath": f"{FIFTYONE_HOME}/zoo", "subPath": "zoo"},
+                                        {
+                                            "name": "fiftyone-data",
+                                            "mountPath": f"{FIFTYONE_HOME}/datasets",
+                                            "subPath": "datasets",
+                                        },
+                                        {
+                                            "name": "fiftyone-data",
+                                            "mountPath": f"{FIFTYONE_HOME}/db",
+                                            "subPath": "db",
+                                        },
+                                        {
+                                            "name": "fiftyone-data",
+                                            "mountPath": f"{FIFTYONE_HOME}/zoo",
+                                            "subPath": "zoo",
+                                        },
                                     ],
                                 }
                             ],
@@ -2503,7 +2710,9 @@ def _kubernetes_manifest(
 
 
 def _service_external_host(service: dict[str, Any]) -> str:
-    for item in service.get("status", {}).get("loadBalancer", {}).get("ingress", []) or []:
+    for item in (
+        service.get("status", {}).get("loadBalancer", {}).get("ingress", []) or []
+    ):
         host = str(item.get("ip") or item.get("hostname") or "").strip()
         if host:
             return host
@@ -2530,13 +2739,17 @@ def _wait_for_external_ip(
 ) -> tuple[str, str]:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
-        service = _k8s_get_json("service", name, namespace=namespace, kubeconfig=kubeconfig)
+        service = _k8s_get_json(
+            "service", name, namespace=namespace, kubeconfig=kubeconfig
+        )
         if service:
             host = _service_external_host(service)
             if host:
                 return host, f"http://{host}:{port}"
         time.sleep(5)
-    _fail(f"External IP for service/{name} did not become available within {timeout_sec} seconds")
+    _fail(
+        f"External IP for service/{name} did not become available within {timeout_sec} seconds"
+    )
 
 
 def _patch_k8s_service_type(
@@ -2555,7 +2768,16 @@ def _patch_k8s_service_type(
         "spec": {"type": service_type},
     }
     _kubectl(
-        ["patch", "service", name, "-n", namespace, "--type=merge", "-p", json.dumps(patch)],
+        [
+            "patch",
+            "service",
+            name,
+            "-n",
+            namespace,
+            "--type=merge",
+            "-p",
+            json.dumps(patch),
+        ],
         kubeconfig=kubeconfig,
     )
 
@@ -2626,12 +2848,32 @@ def _deploy_kubernetes_fiftyone(
     address = _normalize_app_address(address)
     service_type = "ClusterIP"
     if public_ip and not destroy:
-        _fail("FiftyOne does not permit unauthenticated public exposure; use `fiftyone open`.")
-    resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+        _fail(
+            "FiftyOne does not permit unauthenticated public exposure; use `fiftyone open`."
+        )
+    resolved_kubeconfig = _resolve_required_kubeconfig(
+        cluster_name=cluster_name, kubeconfig=kubeconfig
+    )
     if destroy:
-        _kubectl(["delete", "service", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _kubectl(["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"], dry_run=dry_run, kubeconfig=resolved_kubeconfig)
-        _output({"status": "deleted", "runtime": "kubernetes", "name": name, "namespace": namespace}, output)
+        _kubectl(
+            ["delete", "service", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _kubectl(
+            ["delete", "deployment", name, "-n", namespace, "--ignore-not-found=true"],
+            dry_run=dry_run,
+            kubeconfig=resolved_kubeconfig,
+        )
+        _output(
+            {
+                "status": "deleted",
+                "runtime": "kubernetes",
+                "name": name,
+                "namespace": namespace,
+            },
+            output,
+        )
         return
 
     manifest = _kubernetes_manifest(
@@ -2648,8 +2890,13 @@ def _deploy_kubernetes_fiftyone(
         return
 
     # Reconcile the pod command too: an old deployment may still bind publicly.
-    _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig)
-    _kubectl(["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"], kubeconfig=resolved_kubeconfig)
+    _kubectl(
+        ["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=resolved_kubeconfig
+    )
+    _kubectl(
+        ["rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=900s"],
+        kubeconfig=resolved_kubeconfig,
+    )
 
     public_url = ""
     _save_k8s_workbench_state(
@@ -2683,16 +2930,27 @@ def _k8s_status_payload(
     namespace: str,
     port: int,
 ) -> dict[str, Any] | None:
-    resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
-    service = _k8s_get_json("service", name, namespace=namespace, kubeconfig=resolved_kubeconfig)
+    resolved_kubeconfig = _resolve_required_kubeconfig(
+        cluster_name=cluster_name, kubeconfig=kubeconfig
+    )
+    service = _k8s_get_json(
+        "service", name, namespace=namespace, kubeconfig=resolved_kubeconfig
+    )
     if service is None:
         return None
-    deployment = _k8s_get_json("deployment", name, namespace=namespace, kubeconfig=resolved_kubeconfig)
+    deployment = _k8s_get_json(
+        "deployment", name, namespace=namespace, kubeconfig=resolved_kubeconfig
+    )
     service_type = str(service.get("spec", {}).get("type") or "ClusterIP")
     public_url = ""
     ready_replicas = int((deployment or {}).get("status", {}).get("readyReplicas") or 0)
     desired_replicas = int((deployment or {}).get("spec", {}).get("replicas") or 0)
-    status = "RUNNING" if ready_replicas > 0 and (desired_replicas == 0 or ready_replicas >= desired_replicas) else "PENDING"
+    status = (
+        "RUNNING"
+        if ready_replicas > 0
+        and (desired_replicas == 0 or ready_replicas >= desired_replicas)
+        else "PENDING"
+    )
     return {
         "status": status,
         "runtime": "kubernetes",
@@ -2713,12 +2971,13 @@ def _k8s_workbench_config() -> dict[str, Any]:
     project = _project_alias or default_project_name()
     workbench = _workbench_name or default_workbench_name()
     projects = list_projects()
-    wb = (
-        projects.get(project, {})
-        .get("workbenches", {})
-        .get(workbench, {})
+    wb = projects.get(project, {}).get("workbenches", {}).get(workbench, {})
+    return (
+        wb
+        if isinstance(wb, dict)
+        and wb.get("runtime") == WorkbenchRuntime.kubernetes.value
+        else {}
     )
-    return wb if isinstance(wb, dict) and wb.get("runtime") == WorkbenchRuntime.kubernetes.value else {}
 
 
 def _k8s_options_from_config(
@@ -2740,7 +2999,13 @@ def _k8s_options_from_config(
         resolved_port = int(raw_port)
     except (TypeError, ValueError):
         resolved_port = port
-    return resolved_cluster, resolved_kubeconfig, resolved_namespace, resolved_service, resolved_port
+    return (
+        resolved_cluster,
+        resolved_kubeconfig,
+        resolved_namespace,
+        resolved_service,
+        resolved_port,
+    )
 
 
 def _emit_k8s_status(payload: dict[str, Any], *, output: OutputFormat) -> None:
@@ -2750,7 +3015,9 @@ def _emit_k8s_status(payload: dict[str, Any], *, output: OutputFormat) -> None:
     service_type = payload["service_type"]
     if service_type != "ClusterIP":
         typer.echo(f"Service type:  {service_type}")
-        typer.echo("Redeploy required: replace legacy public exposure with loopback access.")
+        typer.echo(
+            "Redeploy required: replace legacy public exposure with loopback access."
+        )
     else:
         typer.echo("Service type:  ClusterIP (internal only)")
     typer.echo("Local access:  run `npa workbench fiftyone open`")
@@ -2759,15 +3026,31 @@ def _emit_k8s_status(payload: dict[str, Any], *, output: OutputFormat) -> None:
 
 @app.command("deploy")
 def deploy_cmd(
-    gpu_type: str = typer.Option("", "--gpu-type", help="Optional Nebius GPU platform."),
-    gpu_preset: str = typer.Option("", "--gpu-preset", help="Optional Nebius GPU preset."),
-    cpu_type: str = typer.Option(DEFAULT_CPU_PLATFORM, "--cpu-type", help="Nebius CPU platform used when no GPU flags are provided."),
-    cpu_preset: str = typer.Option(DEFAULT_CPU_PRESET, "--cpu-preset", help="Nebius CPU preset used when no GPU flags are provided."),
+    gpu_type: str = typer.Option(
+        "", "--gpu-type", help="Optional Nebius GPU platform."
+    ),
+    gpu_preset: str = typer.Option(
+        "", "--gpu-preset", help="Optional Nebius GPU preset."
+    ),
+    cpu_type: str = typer.Option(
+        DEFAULT_CPU_PLATFORM,
+        "--cpu-type",
+        help="Nebius CPU platform used when no GPU flags are provided.",
+    ),
+    cpu_preset: str = typer.Option(
+        DEFAULT_CPU_PRESET,
+        "--cpu-preset",
+        help="Nebius CPU preset used when no GPU flags are provided.",
+    ),
     region: str = typer.Option("", "--region", help="Nebius region."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    tf_dir: str = typer.Option("", "--tf-dir", help="Path to Terraform directory (default: bundled)."),
-    tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."),
+    tf_dir: str = typer.Option(
+        "", "--tf-dir", help="Path to Terraform directory (default: bundled)."
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."
+    ),
     storage_endpoint: str = typer.Option(
         "",
         "--storage-endpoint",
@@ -2776,10 +3059,18 @@ def deploy_cmd(
             "storage.eu-north1.nebius.cloud. Also settable with NPA_STORAGE_ENDPOINT."
         ),
     ),
-    skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only deploy the app."),
-    skip_app: bool = typer.Option(False, "--skip-app", help="Skip app installation, only provision infra."),
-    destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    skip_infra: bool = typer.Option(
+        False, "--skip-infra", help="Skip Terraform, only deploy the app."
+    ),
+    skip_app: bool = typer.Option(
+        False, "--skip-app", help="Skip app installation, only provision infra."
+    ),
+    destroy: bool = typer.Option(
+        False, "--destroy", help="Destroy infrastructure and clean up config."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would happen without doing it."
+    ),
     replace: bool = typer.Option(
         False,
         "--replace",
@@ -2794,7 +3085,11 @@ def deploy_cmd(
         "-y",
         help="Skip confirmation prompts (use with --replace or deploy --destroy for automation).",
     ),
-    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
+    no_shared_creds: bool = typer.Option(
+        False,
+        "--no-shared-creds",
+        help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
+    ),
     health_check_mode: HealthCheckMode = typer.Option(
         HealthCheckMode.auto,
         "--health-check-mode",
@@ -2805,13 +3100,17 @@ def deploy_cmd(
         "--verify-env/--no-verify-env",
         help="Audit deployed shared credentials after app deploy.",
     ),
-    port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port on the VM."),
+    port: int = typer.Option(
+        DEFAULT_APP_PORT, "--port", help="FiftyOne app port on the VM."
+    ),
     address: str = typer.Option(
         DEFAULT_APP_ADDRESS,
         "--address",
         help="FiftyOne loopback bind address; access it with `fiftyone open`.",
     ),
-    preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible GPU instance."),
+    preemptible: bool = typer.Option(
+        True, "--preemptible/--no-preemptible", help="Preemptible GPU instance."
+    ),
     runtime: WorkbenchRuntime = typer.Option(
         WorkbenchRuntime.vm,
         "--runtime",
@@ -2827,24 +3126,56 @@ def deploy_cmd(
         "--cluster-name",
         help="NPA cluster profile name for cached kubeconfig when using Kubernetes.",
     ),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override when using Kubernetes."),
-    namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
-    service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes deployment/service name."),
-    image_pull_secret: str = typer.Option("", "--image-pull-secret", help="Existing operator-managed Kubernetes imagePullSecret for a private registry."),
-    host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
-    ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
-    ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
-    gpu_count: int = typer.Option(0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."),
-    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
-    default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override when using Kubernetes."
+    ),
+    namespace: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
+    service_name: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_NAME,
+        "--service-name",
+        help="Kubernetes deployment/service name.",
+    ),
+    image_pull_secret: str = typer.Option(
+        "",
+        "--image-pull-secret",
+        help="Existing operator-managed Kubernetes imagePullSecret for a private registry.",
+    ),
+    host: str = typer.Option(
+        "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
+    ),
+    ssh_key: str = typer.Option(
+        "",
+        "--ssh-key",
+        help="BYOVM SSH private key path. Used only with --runtime byovm.",
+    ),
+    ssh_user: str = typer.Option(
+        "", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."
+    ),
+    gpu_count: int = typer.Option(
+        0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."
+    ),
+    disk_size: int | None = typer.Option(
+        None,
+        "--disk-size",
+        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+    ),
+    default: bool = typer.Option(
+        False, "--default", help="Set this workbench as the default."
+    ),
     image: str = typer.Option("", "--image", help="Container image reference."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy or destroy a FiftyOne dataset curation VM."""
     address = _normalize_app_address(address)
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
-        _fail("FiftyOne deploy does not use --runtime serverless; use `npa workbench fiftyone load-dataset --runtime serverless`.")
+        _fail(
+            "FiftyOne deploy does not use --runtime serverless; use `npa workbench fiftyone load-dataset --runtime serverless`."
+        )
     if public_ip or runtime == WorkbenchRuntime.kubernetes:
         image_ref = image.strip() or container_image_for_tool("fiftyone")
         _deploy_kubernetes_fiftyone(
@@ -2862,7 +3193,9 @@ def deploy_cmd(
             output=output,
         )
         return
-    platform, preset, uses_gpu = _compute_selection(gpu_type, gpu_preset, cpu_type, cpu_preset)
+    platform, preset, uses_gpu = _compute_selection(
+        gpu_type, gpu_preset, cpu_type, cpu_preset
+    )
     if byovm:
         uses_gpu = True
 
@@ -2878,8 +3211,14 @@ def deploy_cmd(
             _fail(f"Invalid --tf-var format: {item} (expected key=value)")
         k, v = item.split("=", 1)
         extra_vars[k] = v
-    storage_endpoint_override = storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
-    if storage_endpoint_override and "s3_endpoint" not in extra_vars and not use_remote_state:
+    storage_endpoint_override = (
+        storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
+    )
+    if (
+        storage_endpoint_override
+        and "s3_endpoint" not in extra_vars
+        and not use_remote_state
+    ):
         extra_vars["s3_endpoint"] = storage_endpoint_url(storage_endpoint_override)
     endpoint_warning = storage_endpoint_warning(
         storage_endpoint_override
@@ -2926,7 +3265,9 @@ def deploy_cmd(
             skip_infra = True
             use_remote_state = False
 
-    saved_wb_cfg = _saved_workbench_config(proj_alias, wb_name) if skip_infra or byovm else None
+    saved_wb_cfg = (
+        _saved_workbench_config(proj_alias, wb_name) if skip_infra or byovm else None
+    )
 
     nebius_creds: dict[str, str] = {}
     saved_state = resolve_terraform_state(proj_alias) if use_remote_state else None
@@ -2945,7 +3286,11 @@ def deploy_cmd(
         if dry_run:
             console.print("  [dry-run] Would reuse saved Terraform state credentials")
         else:
-            from npa.clients.nebius import NebiusError, ensure_service_account, get_iam_token
+            from npa.clients.nebius import (
+                NebiusError,
+                ensure_service_account,
+                get_iam_token,
+            )
 
             try:
                 nebius_creds = {
@@ -2987,15 +3332,17 @@ def deploy_cmd(
                 _fail(f"Nebius bootstrap failed: {exc}")
                 return
             console.print("  Environment ready")
-            write_config({
-                "projects": {
-                    proj_alias: {
-                        "project_id": env_project,
-                        "tenant_id": env_tenant,
-                        "region": env_region,
+            write_config(
+                {
+                    "projects": {
+                        proj_alias: {
+                            "project_id": env_project,
+                            "tenant_id": env_tenant,
+                            "region": env_region,
+                        },
                     },
-                },
-            })
+                }
+            )
 
     merged_vars: dict[str, str] = {**extra_vars}
     for key in (
@@ -3033,13 +3380,15 @@ def deploy_cmd(
             provisioner.apply_default_image_family(merged_vars, platform)
 
     if use_remote_state and nebius_creds and not dry_run:
-        write_config({
-            "projects": {
-                proj_alias: {
-                    "terraform_state": _terraform_state_config(merged_vars),
+        write_config(
+            {
+                "projects": {
+                    proj_alias: {
+                        "terraform_state": _terraform_state_config(merged_vars),
+                    },
                 },
-            },
-        })
+            }
+        )
 
     if not uses_gpu and "image_family" not in merged_vars:
         merged_vars["image_family"] = DEFAULT_CPU_IMAGE_FAMILY
@@ -3047,9 +3396,7 @@ def deploy_cmd(
     instance_name = f"fiftyone-{proj_alias}-{wb_name}"
     enable_preemptible = "true" if uses_gpu and preemptible else "false"
     cloud_init_workbench_type = (
-        "lerobot-container"
-        if runtime_uses_container(runtime)
-        else "fiftyone"
+        "lerobot-container" if runtime_uses_container(runtime) else "fiftyone"
     )
 
     if destroy:
@@ -3061,10 +3408,14 @@ def deploy_cmd(
             yes=yes,
         )
         if byovm:
-            console.print(f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
+            console.print(
+                f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."
+            )
             if not dry_run:
                 remove_workbench_config(proj_alias, wb_name)
-            console.print(f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified.")
+            console.print(
+                f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified."
+            )
             return
 
         console.print(f"  [1/2] Destroying {proj_alias}/{wb_name}...")
@@ -3074,19 +3425,26 @@ def deploy_cmd(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
             try:
-                provisioner.init(tf_dir=resolved_tf_dir, backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=resolved_tf_dir,
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -3135,19 +3493,25 @@ def deploy_cmd(
     if not skip_infra:
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias,
-                wb_name,
-                bucket=s3_bucket,
-                region=env_region,
-                endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
         else:
             resolved_tf_dir = tf_dir
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})...")
+        console.print(
+            f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})..."
+        )
         if dry_run:
             console.print("    [dry-run] Would run: terraform init")
         else:
@@ -3157,9 +3521,12 @@ def deploy_cmd(
                         "access_key": merged_vars.get("nebius_api_key", ""),
                         "secret_key": merged_vars.get("nebius_secret_key", ""),
                     }
-                    if use_remote_state else None
+                    if use_remote_state
+                    else None
                 )
-                provisioner.init(tf_dir=resolved_tf_dir or None, backend_config=backend_cfg)
+                provisioner.init(
+                    tf_dir=resolved_tf_dir or None, backend_config=backend_cfg
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -3176,7 +3543,9 @@ def deploy_cmd(
             **merged_vars,
         }
         compute_label = f"gpu={platform}" if uses_gpu else f"cpu={platform}"
-        console.print(f"  [{step}/{total_steps}] Applying Terraform ({compute_label}, region={env_region})...")
+        console.print(
+            f"  [{step}/{total_steps}] Applying Terraform ({compute_label}, region={env_region})..."
+        )
         if dry_run:
             tf_outputs = {
                 "vm_ip": "<pending>",
@@ -3187,7 +3556,9 @@ def deploy_cmd(
             }
         else:
             try:
-                plan_output = provisioner.plan(tf_dir=resolved_tf_dir or None, tf_vars=all_vars)
+                plan_output = provisioner.plan(
+                    tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                )
                 plan_analysis = analyze_terraform_plan(
                     plan_output, existing_state=existing_managed_alias
                 )
@@ -3202,10 +3573,14 @@ def deploy_cmd(
                         )
                     )
                 if plan_analysis.decision == PlanDecision.NO_CHANGES:
-                    console.print("    Terraform plan has no changes; deploy is a no-op.")
+                    console.print(
+                        "    Terraform plan has no changes; deploy is a no-op."
+                    )
                     tf_outputs = provisioner.outputs(tf_dir=resolved_tf_dir or None)
                 else:
-                    tf_outputs = provisioner.apply(tf_dir=resolved_tf_dir or None, tf_vars=all_vars)
+                    tf_outputs = provisioner.apply(
+                        tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                    )
             except ProvisionerError as exc:
                 _fail(f"Terraform plan/apply failed: {exc}")
                 return
@@ -3214,7 +3589,11 @@ def deploy_cmd(
         step += 1
         console.print(
             f"  [{step}/{total_steps}] "
-            + ("Using BYOVM target..." if byovm else "Skipping infra, reading existing config...")
+            + (
+                "Using BYOVM target..."
+                if byovm
+                else "Skipping infra, reading existing config..."
+            )
         )
         resolved_tf_dir = tf_dir
         if byovm:
@@ -3235,14 +3614,22 @@ def deploy_cmd(
                     or (saved_wb_cfg.storage.endpoint_url if saved_wb_cfg else "")
                     or os.environ.get("AWS_ENDPOINT_URL", "")
                 )
-                tf_outputs = workbench_storage_outputs(target=target, bucket=bucket, endpoint=storage_ep)
+                tf_outputs = workbench_storage_outputs(
+                    target=target, bucket=bucket, endpoint=storage_ep
+                )
                 if not dry_run:
-                    ssh = SSHClient(ssh_config_for_target(target, tokens=resolve_credentials().tokens))
+                    ssh = SSHClient(
+                        ssh_config_for_target(
+                            target, tokens=resolve_credentials().tokens
+                        )
+                    )
                     ssh.run_or_raise("echo connected")
                     byovm_gpu_info = detect_gpu_info(ssh)
-                    byovm_effective_gpu_count, byovm_visible_devices = select_visible_devices(
-                        byovm_gpu_info.count,
-                        gpu_count or None,
+                    byovm_effective_gpu_count, byovm_visible_devices = (
+                        select_visible_devices(
+                            byovm_gpu_info.count,
+                            gpu_count or None,
+                        )
                     )
                     console.print(
                         f"    Detected {byovm_gpu_info.count} GPU(s): "
@@ -3261,7 +3648,9 @@ def deploy_cmd(
                 merged_vars,
             )
         if not tf_outputs.get("vm_ip"):
-            _fail("No VM IP found. Run without --skip-infra first, or set config manually.")
+            _fail(
+                "No VM IP found. Run without --skip-infra first, or set config manually."
+            )
             return
 
     vm_ip = tf_outputs.get("vm_ip", "")
@@ -3270,7 +3659,11 @@ def deploy_cmd(
     bucket = tf_outputs.get("storage_bucket", "")
     storage_ep = tf_outputs.get("storage_endpoint", "")
     endpoint = f"http://{vm_ip}:{port}"
-    bucket_display = bucket if str(bucket).startswith("s3://") else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    bucket_display = (
+        bucket
+        if str(bucket).startswith("s3://")
+        else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    )
     byovm_fields = gpu_config_fields(
         byovm_gpu_info,
         effective_count=byovm_effective_gpu_count or None,
@@ -3340,7 +3733,9 @@ def deploy_cmd(
         )
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}...")
+        console.print(
+            f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}..."
+        )
         if not dry_run:
             ssh = SSHClient(ssh_cfg)
             try:
@@ -3356,7 +3751,9 @@ def deploy_cmd(
             step += 1
             console.print(f"  [{step}/{total_steps}] Starting FiftyOne container...")
             if dry_run:
-                console.print(f"    [dry-run] Would pull and run the FiftyOne container image on port {port}")
+                console.print(
+                    f"    [dry-run] Would pull and run the FiftyOne container image on port {port}"
+                )
             else:
                 from npa.deploy.configurator import (
                     deploy_workbench_container,
@@ -3375,7 +3772,9 @@ def deploy_cmd(
                         "FIFTYONE_DO_NOT_TRACK": "true",
                         "FIFTYONE_DATASET_NAME": "",
                         "AWS_ACCESS_KEY_ID": merged_vars.get("nebius_api_key", ""),
-                        "AWS_SECRET_ACCESS_KEY": merged_vars.get("nebius_secret_key", ""),
+                        "AWS_SECRET_ACCESS_KEY": merged_vars.get(
+                            "nebius_secret_key", ""
+                        ),
                         "AWS_ENDPOINT_URL": storage_ep,
                         "NEBIUS_S3_ENDPOINT": storage_ep,
                         "NEBIUS_S3_BUCKET": bucket,
@@ -3387,7 +3786,9 @@ def deploy_cmd(
                             visible_devices=byovm_visible_devices,
                         ),
                     }
-                    apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
+                    apply_shared_credential_env(
+                        service_env, credentials, include=not no_shared_creds
+                    )
                     write_remote_docker_env_file(
                         ssh,
                         "/etc/npa-fiftyone/env",
@@ -3401,7 +3802,9 @@ def deploy_cmd(
                         owner=ssh_user,
                     )
                     image_ref = image.strip() or container_image_for_tool("fiftyone")
-                    ssh.run("sudo systemctl stop npa-fiftyone-app >/dev/null 2>&1 || true")
+                    ssh.run(
+                        "sudo systemctl stop npa-fiftyone-app >/dev/null 2>&1 || true"
+                    )
                     deploy_workbench_container(
                         ssh,
                         image_ref=image_ref,
@@ -3422,7 +3825,9 @@ def deploy_cmd(
                         ],
                         command=(
                             "bash -lc "
-                            + shlex.quote(f"exec {FIFTYONE_VENV}/bin/python {FIFTYONE_HOME}/app.py")
+                            + shlex.quote(
+                                f"exec {FIFTYONE_VENV}/bin/python {FIFTYONE_HOME}/app.py"
+                            )
                         ),
                         gpu=uses_gpu,
                     )
@@ -3445,9 +3850,13 @@ def deploy_cmd(
                 mark_app_status(APP_STATUS_PROVISIONED)
         else:
             step += 1
-            console.print(f"  [{step}/{total_steps}] Installing FiftyOne {FIFTYONE_VERSION}...")
+            console.print(
+                f"  [{step}/{total_steps}] Installing FiftyOne {FIFTYONE_VERSION}..."
+            )
             if dry_run:
-                console.print(f"    [dry-run] Would create {FIFTYONE_VENV}, install FiftyOne, and start port {port}")
+                console.print(
+                    f"    [dry-run] Would create {FIFTYONE_VENV}, install FiftyOne, and start port {port}"
+                )
             else:
                 try:
                     _run_fiftyone_command(
@@ -3462,11 +3871,16 @@ def deploy_cmd(
                 mark_app_status(APP_STATUS_PROVISIONED)
 
         step += 1
-        console.print(f"  [{step}/{total_steps}] Checking loopback HTTP readiness over SSH...")
+        console.print(
+            f"  [{step}/{total_steps}] Checking loopback HTTP readiness over SSH..."
+        )
         app_ready = False
         if not dry_run:
             app_ready = health_check_ssh(
-                ssh, port, path="/", retries=FIFTYONE_HEALTH_RETRIES,
+                ssh,
+                port,
+                path="/",
+                retries=FIFTYONE_HEALTH_RETRIES,
                 backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
             )
             if app_ready:
@@ -3474,18 +3888,20 @@ def deploy_cmd(
                 console.print("    FiftyOne app is reachable")
                 endpoint_strategy = "ssh_fallback"
                 recorded_endpoint_strategy = endpoint_strategy
-                write_config({
-                    "projects": {
-                        proj_alias: {
-                            "workbenches": {
-                                wb_name: {
-                                    "endpoint_strategy": endpoint_strategy,
-                                    "service_port": port,
+                write_config(
+                    {
+                        "projects": {
+                            proj_alias: {
+                                "workbenches": {
+                                    wb_name: {
+                                        "endpoint_strategy": endpoint_strategy,
+                                        "service_port": port,
+                                    },
                                 },
                             },
                         },
-                    },
-                })
+                    }
+                )
             else:
                 timeout_sec = FIFTYONE_HEALTH_RETRIES * FIFTYONE_HEALTH_BACKOFF_SEC
                 console.print(
@@ -3498,40 +3914,56 @@ def deploy_cmd(
         console.print(f"  [{step}/{total_steps}] Writing deployment manifest...")
         if not dry_run:
             try:
-                write_manifest(ssh, tool="fiftyone", version=FIFTYONE_VERSION, deployed_by=f"npa deploy --runtime {runtime.value}")
+                write_manifest(
+                    ssh,
+                    tool="fiftyone",
+                    version=FIFTYONE_VERSION,
+                    deployed_by=f"npa deploy --runtime {runtime.value}",
+                )
             except SSHError:
                 pass
         if dry_run or app_ready:
             mark_app_status(APP_STATUS_HEALTHY)
 
     step += 1
-    console.print(f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})...")
+    console.print(
+        f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})..."
+    )
     if not dry_run:
         console.print("    Saved to ~/.npa/config.yaml")
 
     console.print("")
     console.print(f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})")
-    console.print(f"  FiftyOne: {_browser_url_for_strategy(endpoint, recorded_endpoint_strategy)}")
+    console.print(
+        f"  FiftyOne: {_browser_url_for_strategy(endpoint, recorded_endpoint_strategy)}"
+    )
     console.print(f"  SSH:      ssh -i {ssh_key} {ssh_user}@{vm_ip}")
     console.print("")
     console.print(f"  Try: npa workbench fiftyone -p {proj_alias} -n {wb_name} open")
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({
-            "project": proj_alias,
-            "name": wb_name,
-            "endpoint": endpoint,
-            "browser_url": _browser_url_for_strategy(endpoint, recorded_endpoint_strategy),
-            "vm_ip": vm_ip,
-            "ssh_user": ssh_user,
-            "gpu_platform": platform,
-            "gpu_preset": preset,
-            "uses_gpu": uses_gpu,
-            "runtime": runtime.value,
-            "app_port": port,
-            "app_address": address,
-            "tf_outputs": tf_outputs,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "project": proj_alias,
+                    "name": wb_name,
+                    "endpoint": endpoint,
+                    "browser_url": _browser_url_for_strategy(
+                        endpoint, recorded_endpoint_strategy
+                    ),
+                    "vm_ip": vm_ip,
+                    "ssh_user": ssh_user,
+                    "gpu_platform": platform,
+                    "gpu_preset": preset,
+                    "uses_gpu": uses_gpu,
+                    "runtime": runtime.value,
+                    "app_port": port,
+                    "app_address": address,
+                    "tf_outputs": tf_outputs,
+                },
+                indent=2,
+            )
+        )
 
 
 @app.command("launch")
@@ -3542,7 +3974,9 @@ def launch_cmd(
         "--address",
         help="FiftyOne loopback bind address; access it with `fiftyone open`.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Start the FiftyOne app over SSH and print the browser URL."""
     address = _normalize_app_address(address)
@@ -3587,7 +4021,9 @@ def curate_cmd(
         "--runtime",
         help="Runtime. Only serverless is supported for FiftyOne curate.",
     ),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless Jobs."
+    ),
     gpu_type: str = typer.Option(
         "h100",
         "--gpu-type",
@@ -3603,15 +4039,36 @@ def curate_cmd(
         "--input-path",
         help="Optional S3 URI for a source dataset. Empty generates a synthetic curated subset.",
     ),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI where the curated LeRobotDataset is written."),
-    num_episodes: int = typer.Option(4, "--num-episodes", min=1, help="Number of synthetic episodes to write."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
-    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
-    timeout_minutes: int = typer.Option(60, "--timeout-minutes", min=1, help="Minutes to wait for serverless completion."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
-    image: str = typer.Option("", "--image", help="Container image override for the serverless Job."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 URI where the curated LeRobotDataset is written."
+    ),
+    num_episodes: int = typer.Option(
+        4, "--num-episodes", min=1, help="Number of synthetic episodes to write."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
+    ),
+    job_name: str = typer.Option(
+        "", "--job-name", help="Explicit serverless Job name."
+    ),
+    timeout_minutes: int = typer.Option(
+        60,
+        "--timeout-minutes",
+        min=1,
+        help="Minutes to wait for serverless completion.",
+    ),
+    submit_only: bool = typer.Option(
+        False, "--submit-only", help="Submit serverless Job and return before polling."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless status checks."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image override for the serverless Job."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Curate a dataset and export a LeRobotDataset on Nebius Serverless."""
     if not _is_serverless_runtime(runtime):
@@ -3671,7 +4128,9 @@ def curate_augmented_cmd(
         "--require-fiftyone",
         help="Compatibility assertion that real FiftyOne Brain must complete; curation is always fail-closed.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Run REAL FiftyOne Brain curation over a Physical AI Data Factory run.
 
@@ -3709,8 +4168,7 @@ def curate_augmented_cmd(
     if require_fiftyone and engine != "fiftyone-brain":
         warning = str(report.get("curation_warn") or "FiftyOne Brain was unavailable")
         _fail(
-            "real FiftyOne Brain curation was required but did not complete: "
-            f"{warning}"
+            f"real FiftyOne Brain curation was required but did not complete: {warning}"
         )
         return
 
@@ -3750,7 +4208,9 @@ def eval_cmd(
         "--runtime",
         help="Runtime. Only serverless is supported for FiftyOne eval.",
     ),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless Jobs."
+    ),
     gpu_type: str = typer.Option(
         "h100",
         "--gpu-type",
@@ -3771,14 +4231,33 @@ def eval_cmd(
         "--predictions-path",
         help="Optional S3 URI for model predictions to summarize.",
     ),
-    output_path: str = typer.Option(..., "--output-path", help="S3 URI where eval curation results are written."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
-    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
-    timeout_minutes: int = typer.Option(30, "--timeout-minutes", min=1, help="Minutes to wait for serverless completion."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
-    image: str = typer.Option("", "--image", help="Container image override for the serverless Job."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 URI where eval curation results are written."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
+    ),
+    job_name: str = typer.Option(
+        "", "--job-name", help="Explicit serverless Job name."
+    ),
+    timeout_minutes: int = typer.Option(
+        30,
+        "--timeout-minutes",
+        min=1,
+        help="Minutes to wait for serverless completion.",
+    ),
+    submit_only: bool = typer.Option(
+        False, "--submit-only", help="Submit serverless Job and return before polling."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless status checks."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image override for the serverless Job."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Evaluate checkpoint outputs and write FiftyOne curation metrics."""
     if not _is_serverless_runtime(runtime):
@@ -3832,19 +4311,47 @@ def load_dataset_cmd(
         "--format",
         help="Dataset format parser.",
     ),
-    output_path: str = typer.Option("", "--output-path", help="S3 URI where serverless load artifacts are written."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
-    image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
-    gpu_type: str = typer.Option("l40s", "--gpu-type", help="GPU type for serverless Jobs."),
-    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
-    gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
-    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
-    timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output_path: str = typer.Option(
+        "", "--output-path", help="S3 URI where serverless load artifacts are written."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help="Runtime. serverless creates a Nebius AI Job.",
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless Jobs."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image for the serverless Job."
+    ),
+    gpu_type: str = typer.Option(
+        "l40s", "--gpu-type", help="GPU type for serverless Jobs."
+    ),
+    gpu_count: int = typer.Option(
+        1, "--gpu-count", help="GPU count for serverless Jobs."
+    ),
+    gpu_preset: str = typer.Option(
+        "", "--gpu-preset", help="Nebius GPU preset override."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
+    ),
+    job_name: str = typer.Option(
+        "", "--job-name", help="Explicit serverless Job name."
+    ),
+    submit_only: bool = typer.Option(
+        False, "--submit-only", help="Submit serverless Job and return before polling."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless status checks."
+    ),
+    timeout: float = typer.Option(
+        3600.0, "--timeout", help="Seconds to wait for serverless completion."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Load a dataset into FiftyOne on the VM."""
     if not name.strip():
@@ -3885,9 +4392,13 @@ def load_dataset_cmd(
     cfg = _get_ssh_config()
     ssh = SSHClient(cfg.ssh)
     command = (
-        _build_container_load_dataset_command(name.strip(), dataset_source.strip(), dataset_format)
+        _build_container_load_dataset_command(
+            name.strip(), dataset_source.strip(), dataset_format
+        )
         if _is_container_runtime(cfg)
-        else _build_load_dataset_command(name.strip(), dataset_source.strip(), dataset_format)
+        else _build_load_dataset_command(
+            name.strip(), dataset_source.strip(), dataset_format
+        )
     )
 
     try:
@@ -3909,13 +4420,19 @@ def load_dataset_cmd(
     if output == OutputFormat.json:
         filtered_err = _suppress_transient_curl_errors(err)
         parsed = _parse_first_json_object(out) if out.strip() else None
-        typer.echo(json.dumps(parsed or {
-            "status": "loaded",
-            "name": name.strip(),
-            "source": dataset_source.strip(),
-            "stdout_tail": out.strip()[-1000:],
-            "stderr_tail": filtered_err[-1000:] if filtered_err else "",
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                parsed
+                or {
+                    "status": "loaded",
+                    "name": name.strip(),
+                    "source": dataset_source.strip(),
+                    "stdout_tail": out.strip()[-1000:],
+                    "stderr_tail": filtered_err[-1000:] if filtered_err else "",
+                },
+                indent=2,
+            )
+        )
     else:
         if out.strip():
             typer.echo(out.strip())
@@ -3927,7 +4444,9 @@ def load_dataset_cmd(
 @app.command("restart")
 def restart_cmd(
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Restart the FiftyOne app or container without redeploying."""
     cfg = _get_ssh_config()
@@ -3941,7 +4460,9 @@ def restart_cmd(
     browser_url = _browser_url_for_config(cfg, url)
 
     try:
-        _, out, err = _run_fiftyone_command(ssh, command, stream=output != OutputFormat.json)
+        _, out, err = _run_fiftyone_command(
+            ssh, command, stream=output != OutputFormat.json
+        )
     except SSHError as exc:
         _fail(f"SSH error: {exc}")
         return
@@ -3969,15 +4490,21 @@ def restart_cmd(
 @datasets_app.command("list")
 def datasets_list_cmd(
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port."),
-    first: int = typer.Option(100, "--first", min=1, help="Maximum datasets to return."),
+    first: int = typer.Option(
+        100, "--first", min=1, help="Maximum datasets to return."
+    ),
     search: str = typer.Option("", "--search", help="Filter dataset names."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List FiftyOne datasets through the app GraphQL API."""
     cfg = _get_ssh_config()
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
     try:
-        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port, require_ssh=True) as active:
+        with service_endpoint(
+            cfg, default_port=port, endpoint=url, service_port=port, require_ssh=True
+        ) as active:
             resp = httpx.post(
                 _graphql_url(active.url),
                 json={
@@ -4031,19 +4558,37 @@ def datasets_list_cmd(
 
 @app.command("open")
 def open_app_cmd(
-    local_port: int = typer.Option(DEFAULT_APP_PORT, "--local-port", help="Local port to forward to."),
-    cluster_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_CLUSTER, "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
-    service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes service name."),
+    local_port: int = typer.Option(
+        DEFAULT_APP_PORT, "--local-port", help="Local port to forward to."
+    ),
+    cluster_name: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_CLUSTER,
+        "--cluster-name",
+        help="NPA cluster profile name for cached kubeconfig.",
+    ),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    namespace: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
+    service_name: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes service name."
+    ),
 ) -> None:
     """Port-forward the FiftyOne App to localhost and open it in the browser."""
     if local_port < 1024 or local_port > 65535:
         _fail("--local-port must be between 1024 and 65535")
     cfg = _try_get_ssh_config()
     if cfg is not None:
-        remote_port = int(cfg.service_port or urlparse(cfg.endpoint).port or DEFAULT_APP_PORT)
-        from npa.clients.endpoint import _close_process, _open_ssh_forward, _wait_for_ssh_forward
+        remote_port = int(
+            cfg.service_port or urlparse(cfg.endpoint).port or DEFAULT_APP_PORT
+        )
+        from npa.clients.endpoint import (
+            _close_process,
+            _open_ssh_forward,
+            _wait_for_ssh_forward,
+        )
 
         try:
             proc = _open_ssh_forward(cfg, local_port, remote_port)
@@ -4051,12 +4596,16 @@ def open_app_cmd(
                 _wait_for_ssh_forward(proc, local_port, remote_port)
                 if proc.poll() is not None:
                     raise EndpointError("The verified SSH forward did not start")
-                url = _browser_url_for_strategy(f"http://127.0.0.1:{local_port}", "ssh_fallback")
+                url = _browser_url_for_strategy(
+                    f"http://127.0.0.1:{local_port}", "ssh_fallback"
+                )
                 typer.echo(f"FiftyOne App: {url}")
                 try:
                     webbrowser.open(url)
                 except Exception:
-                    logging.getLogger(__name__).debug("Unable to open local browser", exc_info=True)
+                    logging.getLogger(__name__).debug(
+                        "Unable to open local browser", exc_info=True
+                    )
                 while proc.poll() is None:
                     time.sleep(0.25)
             finally:
@@ -4066,17 +4615,29 @@ def open_app_cmd(
         except EndpointError as exc:
             _fail(str(exc))
         return
-    cluster_name, kubeconfig, namespace, service_name, remote_port = _k8s_options_from_config(
-        cluster_name=cluster_name,
-        kubeconfig=kubeconfig,
-        namespace=namespace,
-        service_name=service_name,
-        port=DEFAULT_APP_PORT,
+    cluster_name, kubeconfig, namespace, service_name, remote_port = (
+        _k8s_options_from_config(
+            cluster_name=cluster_name,
+            kubeconfig=kubeconfig,
+            namespace=namespace,
+            service_name=service_name,
+            port=DEFAULT_APP_PORT,
+        )
     )
-    resolved_kubeconfig = _resolve_required_kubeconfig(cluster_name=cluster_name, kubeconfig=kubeconfig)
+    resolved_kubeconfig = _resolve_required_kubeconfig(
+        cluster_name=cluster_name, kubeconfig=kubeconfig
+    )
     url = f"http://localhost:{local_port}"
     cmd = _kubectl_command(
-        ["port-forward", "--address", "127.0.0.1", "-n", namespace, f"svc/{service_name}", f"{local_port}:{remote_port}"],
+        [
+            "port-forward",
+            "--address",
+            "127.0.0.1",
+            "-n",
+            namespace,
+            f"svc/{service_name}",
+            f"{local_port}:{remote_port}",
+        ],
         kubeconfig=resolved_kubeconfig,
     )
     try:
@@ -4089,7 +4650,9 @@ def open_app_cmd(
         try:
             webbrowser.open(url)
         except Exception:
-            logging.getLogger(__name__).debug("Unable to open local browser", exc_info=True)
+            logging.getLogger(__name__).debug(
+                "Unable to open local browser", exc_info=True
+            )
         while proc.poll() is None:
             time.sleep(0.25)
             # kubectl logs each forwarded connection; drain its pipe so a long
@@ -4111,21 +4674,35 @@ def open_app_cmd(
 @app.command("status")
 def status_cmd(
     port: int = typer.Option(DEFAULT_APP_PORT, "--port", help="FiftyOne app port."),
-    cluster_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_CLUSTER, "--cluster-name", help="NPA cluster profile name for cached kubeconfig."),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    namespace: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
-    service_name: str = typer.Option(FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes service name."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    cluster_name: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_CLUSTER,
+        "--cluster-name",
+        help="NPA cluster profile name for cached kubeconfig.",
+    ),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    namespace: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
+    service_name: str = typer.Option(
+        FIFTYONE_K8S_DEFAULT_NAME, "--service-name", help="Kubernetes service name."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Check whether the FiftyOne app responds on its web port."""
     cfg = _try_get_ssh_config()
     if cfg is None:
-        cluster_name, kubeconfig, namespace, service_name, port = _k8s_options_from_config(
-            cluster_name=cluster_name,
-            kubeconfig=kubeconfig,
-            namespace=namespace,
-            service_name=service_name,
-            port=port,
+        cluster_name, kubeconfig, namespace, service_name, port = (
+            _k8s_options_from_config(
+                cluster_name=cluster_name,
+                kubeconfig=kubeconfig,
+                namespace=namespace,
+                service_name=service_name,
+                port=port,
+            )
         )
         payload = _k8s_status_payload(
             cluster_name=cluster_name,
@@ -4135,24 +4712,33 @@ def status_cmd(
             port=port,
         )
         if payload is None:
-            _fail(f"FiftyOne Kubernetes service {namespace}/{service_name} was not found")
+            _fail(
+                f"FiftyOne Kubernetes service {namespace}/{service_name} was not found"
+            )
         _emit_k8s_status(payload, output=output)
         return
 
     url = _endpoint_for_port(cfg.endpoint, cfg.ssh.host, port)
 
     try:
-        with service_endpoint(cfg, default_port=port, endpoint=url, service_port=port, require_ssh=True) as active:
+        with service_endpoint(
+            cfg, default_port=port, endpoint=url, service_port=port, require_ssh=True
+        ) as active:
             resp = httpx.get(active.url, timeout=5.0)
             active_url = active.url
     except EndpointError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "url": url,
-                "app_status": "unreachable",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "url": url,
+                        "app_status": "unreachable",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  url: {url}")
             typer.echo("  app_status: unreachable")
@@ -4160,12 +4746,17 @@ def status_cmd(
         return
     except httpx.HTTPError as exc:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "url": url,
-                "app_status": "unreachable",
-                "server": "down",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "url": url,
+                        "app_status": "unreachable",
+                        "server": "down",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  url: {url}")
             typer.echo("  app_status: unreachable")
@@ -4174,12 +4765,17 @@ def status_cmd(
 
     if resp.status_code >= 400:
         if output == OutputFormat.json:
-            typer.echo(json.dumps({
-                "url": url,
-                "app_status": "unreachable",
-                "server": "error",
-                "status_code": resp.status_code,
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "url": url,
+                        "app_status": "unreachable",
+                        "server": "error",
+                        "status_code": resp.status_code,
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"  url: {url}")
             typer.echo("  app_status: unreachable")
@@ -4206,7 +4802,9 @@ def status_cmd(
 
 @app.command("system-info")
 def system_info_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Collect and display system hardware information from the FiftyOne VM."""
     cfg = _get_ssh_config()
@@ -4230,11 +4828,16 @@ def system_info_cmd(
         return
 
     if output == OutputFormat.json:
-        typer.echo(json.dumps({
-            "host": cfg.ssh.host,
-            "runtime": getattr(cfg, "runtime", "vm"),
-            "system_info": out.strip(),
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "host": cfg.ssh.host,
+                    "runtime": getattr(cfg, "runtime", "vm"),
+                    "system_info": out.strip(),
+                },
+                indent=2,
+            )
+        )
     else:
         if out:
             typer.echo(out.strip())

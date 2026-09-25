@@ -76,6 +76,21 @@ NON_CLI_ARGV = frozenset(
         "workbench.content_agents.physics",
         "workbench.content_agents.validate",
         "workbench.content_agents.package",
+        "workflow.paidf.prepare_images",
+        "workflow.paidf.build_configs",
+        "workflow.paidf.run_iaa_augmentation",
+        "workflow.paidf.run_evg_augmentation",
+        "workflow.paidf.validate_augmentation",
+        "workflow.paidf.postprocess_iaa",
+        "workflow.paidf.run_detection",
+        "workflow.paidf.run_captioning",
+        "workflow.paidf.run_visual_qa",
+        "workflow.paidf.run_attribute_search",
+        "workflow.paidf.finalize_dataset",
+        "workflow.paidf.validate_dataset",
+        "workflow.paidf.dig_infer",
+        "workflow.paidf.dig_train",
+        "workflow.paidf.dig_prepare_pretrained",
     }
 )
 
@@ -224,10 +239,19 @@ def _check_module_parser(tool_ref: str, argv: list[str]) -> None:
 
 def test_new_module_parser_audit_rejects_unknown_flags() -> None:
     with pytest.raises(SystemExit):
-        _check_module_parser("fixture", [
-            "python3", "-m", "npa.workflows.lerobot_transfer", "prepare",
-            "--output-path", "fixture", "--flag-that-does-not-exist", "value",
-        ])
+        _check_module_parser(
+            "fixture",
+            [
+                "python3",
+                "-m",
+                "npa.workflows.lerobot_transfer",
+                "prepare",
+                "--output-path",
+                "fixture",
+                "--flag-that-does-not-exist",
+                "value",
+            ],
+        )
 
 
 #: Options typed as a plain ``str`` whose value genuinely IS a format word. Verified by

@@ -10,8 +10,10 @@ import pytest
 import yaml
 
 
-WORKFLOW = Path(__file__).resolve().parents[3] / ".github/workflows/dev-vm-daily-tests.yml"
-FAKE_COMMAND = r'''
+WORKFLOW = (
+    Path(__file__).resolve().parents[3] / ".github/workflows/dev-vm-daily-tests.yml"
+)
+FAKE_COMMAND = r"""
 import json
 import os
 from pathlib import Path
@@ -38,7 +40,7 @@ if name == "ssh":
 elif name == "scp":
     shutil.copyfile(sys.argv[-2], sys.argv[-1].split(":", 1)[1])
     sys.exit(int(os.environ.get("COPY_FAILURE", "0")))
-'''
+"""
 
 
 def _workflow():
@@ -104,9 +106,15 @@ def test_daily_workflow_has_no_pr_trigger_and_always_cleans_credentials():
     assert steps.index(cleanup) < steps.index("Clean up SSH key")
 
 
-@pytest.mark.parametrize("missing", [
-    "DEV_VM_SSH_HOST", "DEV_VM_SSH_USER", "DEV_VM_SSH_PRIVATE_KEY", "DEV_VM_SSH_KNOWN_HOSTS",
-])
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "DEV_VM_SSH_HOST",
+        "DEV_VM_SSH_USER",
+        "DEV_VM_SSH_PRIVATE_KEY",
+        "DEV_VM_SSH_KNOWN_HOSTS",
+    ],
+)
 def test_missing_ssh_settings_fail_without_exposing_other_values(tmp_path, missing):
     environment = _environment(tmp_path)
     configured = {
@@ -138,10 +146,14 @@ def test_tcp_probe_reports_controls_without_exposing_endpoint(tmp_path, vm_reach
         "        raise OSError('private endpoint details')\n"
         "    return contextlib.nullcontext()\n"
     )
-    environment.update({
-        "PYTHONPATH": str(binaries), "DEV_VM_SSH_HOST": "private-endpoint.invalid",
-        "DEV_VM_SSH_PORT": "22", "VM_REACHABLE": vm_reachable,
-    })
+    environment.update(
+        {
+            "PYTHONPATH": str(binaries),
+            "DEV_VM_SSH_HOST": "private-endpoint.invalid",
+            "DEV_VM_SSH_PORT": "22",
+            "VM_REACHABLE": vm_reachable,
+        }
+    )
     result = _run("Check direct SSH reachability", environment)
     assert result.returncode == int(vm_reachable == "0")
     output = result.stdout + result.stderr
@@ -157,12 +169,17 @@ def staging_environment(tmp_path):
     environment = _environment(tmp_path)
     output = tmp_path / "outputs"
     allocations = tmp_path / "allocations"
-    environment.update({
-        "GITHUB_OUTPUT": str(output), "SSH_PORT": "22",
-        "STAGING_ALLOCATIONS": str(allocations),
-        "DEV_VM_SSH_HOST": "vm.invalid", "DEV_VM_SSH_USER": "runner",
-        "TIER": "unit", "REF": "main",
-    })
+    environment.update(
+        {
+            "GITHUB_OUTPUT": str(output),
+            "SSH_PORT": "22",
+            "STAGING_ALLOCATIONS": str(allocations),
+            "DEV_VM_SSH_HOST": "vm.invalid",
+            "DEV_VM_SSH_USER": "runner",
+            "TIER": "unit",
+            "REF": "main",
+        }
+    )
     yield environment
     if allocations.exists():
         for directory in allocations.read_text().splitlines():
@@ -174,7 +191,9 @@ def _last_staging_directory(environment):
     return Path(output[-1].split("=", 1)[1])
 
 
-def test_concurrent_staging_directories_do_not_overwrite_each_other(staging_environment):
+def test_concurrent_staging_directories_do_not_overwrite_each_other(
+    staging_environment,
+):
     environment = staging_environment
     assert _run("Copy runner script to the dev VM", environment).returncode == 0
     first = _last_staging_directory(environment)
@@ -209,10 +228,14 @@ def test_staging_cleanup_after_upload_or_test_failure(staging_environment, failu
 
 
 @pytest.mark.parametrize("invalid", ["root", "traversal", "command"])
-def test_invalid_remote_directory_never_reaches_copy_or_cleanup(staging_environment, tmp_path, invalid):
+def test_invalid_remote_directory_never_reaches_copy_or_cleanup(
+    staging_environment, tmp_path, invalid
+):
     environment = staging_environment
     directory = {
-        "root": tmp_path.anchor, "traversal": str(tmp_path / ".."), "command": "$(id)",
+        "root": tmp_path.anchor,
+        "traversal": str(tmp_path / ".."),
+        "command": "$(id)",
     }[invalid]
     environment["SSH_DIRECTORY_REPLY"] = directory
     assert _run("Copy runner script to the dev VM", environment).returncode == 1

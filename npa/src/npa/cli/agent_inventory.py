@@ -19,7 +19,9 @@ def agent_list_cmd(
     project: str = typer.Option(
         "", "--project", help="Only list agents recorded under this project alias."
     ),
-    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit JSON instead of a table."
+    ),
 ) -> None:
     """List agent deployments recorded in ~/.npa/config.yaml."""
     rows = agent_rows(project)
@@ -81,7 +83,9 @@ def _format_table(rows: list[dict[str, Any]]) -> str:
         max(len(headers[index]), *(len(value[index]) for value in values))
         for index in range(len(headers))
     ]
-    lines = ["  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))]
+    lines = [
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+    ]
     lines.append("  ".join("-" * width for width in widths))
     lines.extend(
         "  ".join(value[index].ljust(widths[index]) for index in range(len(headers)))

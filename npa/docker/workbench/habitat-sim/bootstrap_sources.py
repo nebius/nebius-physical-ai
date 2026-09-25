@@ -75,9 +75,15 @@ def source_files(directory: Path, source: str, version: str) -> list[dict]:
             raise ValueError("unexpected source artifact type")
         identity = (path.stat().st_size, digest(path))
         detached_signature = path.name.endswith(".asc") and path.name[:-4] in expected
-        if path != descriptor and not detached_signature and expected.get(path.name) != identity:
+        if (
+            path != descriptor
+            and not detached_signature
+            and expected.get(path.name) != identity
+        ):
             raise ValueError("source descriptor checksum mismatch")
-        observed.append({"name": path.name, "bytes": identity[0], "sha256": identity[1]})
+        observed.append(
+            {"name": path.name, "bytes": identity[0], "sha256": identity[1]}
+        )
     names = {entry["name"] for entry in observed}
     extras = names - set(expected) - {descriptor.name}
     if not set(expected) <= names or any(
@@ -96,11 +102,23 @@ def main(mode: str, root: Path) -> None:
         if mode == "fetch":
             directory.mkdir(parents=True, exist_ok=False)
             subprocess.run(
-                ["apt-get", "source", "--download-only", "--only-source", f"{source}={version}"],
-                cwd=directory, check=True,
+                [
+                    "apt-get",
+                    "source",
+                    "--download-only",
+                    "--only-source",
+                    f"{source}={version}",
+                ],
+                cwd=directory,
+                check=True,
             )
-        records.append({"source": source, "version": version,
-                        "artifacts": source_files(directory, source, version)})
+        records.append(
+            {
+                "source": source,
+                "version": version,
+                "artifacts": source_files(directory, source, version),
+            }
+        )
     manifest = root / "bootstrap-sources.json"
     if mode == "fetch":
         manifest.write_text(json.dumps(records, sort_keys=True, indent=2) + "\n")

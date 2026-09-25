@@ -60,6 +60,7 @@ def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
     names = list(explicit or DEFAULT_SECRET_ENVS)
     return [name for name in dict.fromkeys(names) if _os.environ.get(name)]
 
+
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
 DEFAULT_OUTPUT_ROOT = f"s3://{DEFAULT_BUCKET}/byof"
 TERMINAL_STATUSES = {
@@ -99,25 +100,38 @@ def render_workflow(
         if image:
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
-                resources["image_id"] = f"docker:{image}" if not image.startswith("docker:") else image
+                resources["image_id"] = (
+                    f"docker:{image}" if not image.startswith("docker:") else image
+                )
     return docs
 
 
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
-    docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc is not None]
+    docs = [
+        doc
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
     if not docs:
         raise ValueError(f"empty SkyPilot YAML: {path}")
     return docs
 
 
 def _task_docs(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if len(docs) > 1 and isinstance(docs[0], dict) and "execution" in docs[0] and "run" not in docs[0]:
+    if (
+        len(docs) > 1
+        and isinstance(docs[0], dict)
+        and "execution" in docs[0]
+        and "run" not in docs[0]
+    ):
         return docs[1:]
     return docs
 
 
 def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
-    path.write_text(yaml.safe_dump_all(_task_docs(docs), sort_keys=False), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump_all(_task_docs(docs), sort_keys=False), encoding="utf-8"
+    )
 
 
 def _default_run_id() -> str:
@@ -154,7 +168,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--poll-interval", type=int, default=60)
     parser.add_argument("--isolated-config-dir", default="")
     parser.add_argument("--render-only", action="store_true")
-    parser.add_argument("--cleanup", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--cleanup", action=argparse.BooleanOptionalAction, default=True
+    )
     return parser.parse_args(argv)
 
 
@@ -162,7 +178,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         return _submit_and_wait(args)
-    except (SkyPilotNotInstalledError, SkyPilotConfigError, SkyPilotVersionError) as exc:
+    except (
+        SkyPilotNotInstalledError,
+        SkyPilotConfigError,
+        SkyPilotVersionError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
@@ -189,13 +209,24 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         render_dir = Path(tempfile.mkdtemp(prefix=f"npa-byof-datagen-{run_id}-"))
         rendered_yaml = render_dir / "byof-datagen.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
-        print(json.dumps({"run_id": run_id, "rendered_yaml": str(rendered_yaml), "outputs": outputs}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "rendered_yaml": str(rendered_yaml),
+                    "outputs": outputs,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-datagen-{run_id}-") as tmp:
         rendered_yaml = Path(tmp) / "byof-datagen.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
-        sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
+        sky_bin = str(
+            resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
+        )
         teardown_guard = SignalTeardown(
             run_id=run_id,
             isolated_config_dir=args.isolated_config_dir,
@@ -216,7 +247,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 secret_envs=resolve_secret_envs(args.secret_env),
                 timeout=args.submit_timeout,
             )
-            config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
+            config_path = (
+                Path(result.log_paths["config"])
+                if result.log_paths.get("config")
+                else None
+            )
             teardown_guard.mark_launched(config_path=config_path)
             summary = {"run_id": run_id, "submit": result.__dict__, "outputs": outputs}
             deadline = time.time() + max(args.wait_timeout, 0)
@@ -226,7 +261,10 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 final = workflow_status(run_id, sky_bin=sky_bin)
             summary["final"] = final.__dict__
             return_code = 0 if final.status == "SUCCEEDED" else 1
-            if os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1" and final.status == "FAILED_PRECHECKS":
+            if (
+                os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
+                and final.status == "FAILED_PRECHECKS"
+            ):
                 return_code = 0
         finally:
             restore_signal_handlers(previous_handlers)

@@ -19,14 +19,20 @@ def case_grid(samples: list[int], seeds: list[int], steps: list[int]) -> list[di
     Raises:
         ValueError: A dimension is empty, duplicated, or invalid.
     """
-    for name, values, minimum in (("samples", samples, 0), ("seeds", seeds, 0), ("steps", steps, 1)):
+    for name, values, minimum in (
+        ("samples", samples, 0),
+        ("seeds", seeds, 0),
+        ("steps", steps, 1),
+    ):
         if not values or len(set(values)) != len(values):
             raise ValueError(f"{name} must be non-empty and contain no duplicates")
         if any(type(value) is not int or value < minimum for value in values):
             raise ValueError(f"{name} must contain integers >= {minimum}")
     return [
         {"sample_index": sample, "seed": seed, "diffusion_steps": count}
-        for sample in sorted(samples) for seed in sorted(seeds) for count in sorted(steps)
+        for sample in sorted(samples)
+        for seed in sorted(seeds)
+        for count in sorted(steps)
     ]
 
 
@@ -83,13 +89,19 @@ def summarize_sample(rows: list[dict]) -> list[dict]:
     summaries = []
     for steps, members in sorted(groups.items()):
         errors = [row["min_ade_m"] for row in members]
-        summaries.append({
-            "sample_index": members[0]["sample_index"], "diffusion_steps": steps,
-            "seed_count": len(members), "mean_ade_m": fmean(errors),
-            "seed_ade_std_m": pstdev(errors),
-            "mean_fde_m": fmean(row["min_fde_m"] for row in members),
-            "mean_elapsed_seconds": fmean(row["elapsed_seconds"] for row in members),
-        })
+        summaries.append(
+            {
+                "sample_index": members[0]["sample_index"],
+                "diffusion_steps": steps,
+                "seed_count": len(members),
+                "mean_ade_m": fmean(errors),
+                "seed_ade_std_m": pstdev(errors),
+                "mean_fde_m": fmean(row["min_fde_m"] for row in members),
+                "mean_elapsed_seconds": fmean(
+                    row["elapsed_seconds"] for row in members
+                ),
+            }
+        )
     return summaries
 
 
@@ -107,13 +119,18 @@ def select_hard_samples(report: dict, minimum_ade: float) -> list[int]:
     """
     if not math.isfinite(minimum_ade) or minimum_ade < 0:
         raise ValueError("minimum_ade must be finite and non-negative")
-    if report.get("schema") != "npa.alpamayo.ray-sweep.v1" or report.get("status") != "complete":
+    if (
+        report.get("schema") != "npa.alpamayo.ray-sweep.v1"
+        or report.get("status") != "complete"
+    ):
         raise ValueError("refinement requires a complete Alpamayo Ray sweep report")
     rows = validate_measurements(report["measurements"], report["cases"])
     groups = defaultdict(list)
     for row in rows:
         groups[row["sample_index"]].append(row["min_ade_m"])
-    return sorted(sample for sample, values in groups.items() if fmean(values) > minimum_ade)
+    return sorted(
+        sample for sample, values in groups.items() if fmean(values) > minimum_ade
+    )
 
 
 def matched_comparisons(baseline: list[dict], refined: list[dict]) -> list[dict]:
@@ -139,11 +156,14 @@ def matched_comparisons(baseline: list[dict], refined: list[dict]) -> list[dict]
         for before in previous:
             if before["sample"] != row["sample"]:
                 raise ValueError("baseline and refinement manifest identities differ")
-            comparisons.append({
-                "sample_index": row["sample_index"], "seed": row["seed"],
-                "baseline_steps": before["diffusion_steps"],
-                "refined_steps": row["diffusion_steps"],
-                "ade_change_m": row["min_ade_m"] - before["min_ade_m"],
-                "fde_change_m": row["min_fde_m"] - before["min_fde_m"],
-            })
+            comparisons.append(
+                {
+                    "sample_index": row["sample_index"],
+                    "seed": row["seed"],
+                    "baseline_steps": before["diffusion_steps"],
+                    "refined_steps": row["diffusion_steps"],
+                    "ade_change_m": row["min_ade_m"] - before["min_ade_m"],
+                    "fde_change_m": row["min_fde_m"] - before["min_fde_m"],
+                }
+            )
     return comparisons

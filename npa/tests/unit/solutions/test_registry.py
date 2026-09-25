@@ -19,8 +19,7 @@ CONFIGURED_SOLUTIONS = [
         "description": "Generic sim-to-real pipeline tools within the Workbench solution",
         # The canonical 14-stage path is an ordinary npa.workflow graph.
         "cli_command": (
-            "npa workbench workflow submit "
-            "workflows/main/sim2real.yaml --runtime"
+            "npa workbench workflow submit workflows/main/sim2real.yaml --runtime"
         ),
     },
     {

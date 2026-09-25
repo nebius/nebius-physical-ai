@@ -57,7 +57,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run(args, plan)
     except TriageRunError as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"status": "failed", "error": str(exc)}, indent=2, sort_keys=True
+            )
+        )
         return 1
 
 
@@ -79,11 +83,15 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     }
     if args.from_output_path:
         plan["artifacts_uri"] = args.from_output_path
-        plan["triage_root"] = args.triage_root or join_uri(args.from_output_path, "triage")
+        plan["triage_root"] = args.triage_root or join_uri(
+            args.from_output_path, "triage"
+        )
     else:
         plan["train_command"] = _train_command(args, job_name)
         plan["job_name"] = job_name
-        plan["triage_root_template"] = "<run output-path>/triage/ (resolved after the Job completes)"
+        plan["triage_root_template"] = (
+            "<run output-path>/triage/ (resolved after the Job completes)"
+        )
         if args.triage_root:
             plan["triage_root"] = args.triage_root
     return plan
@@ -164,7 +172,9 @@ def _run(args: argparse.Namespace, plan: dict[str, Any]) -> int:
             return 1
         artifacts_uri = train_result.get("output_path") or ""
         if not artifacts_uri:
-            raise TriageRunError("serverless train did not report an output_path to triage")
+            raise TriageRunError(
+                "serverless train did not report an output_path to triage"
+            )
         triage_root = args.triage_root or join_uri(artifacts_uri, "triage")
 
     summary["artifacts_uri"] = artifacts_uri
@@ -197,7 +207,10 @@ def _submit_serverless_train(train_command: list[str]) -> dict[str, Any]:
             "serverless lerobot train failed "
             f"(exit {proc.returncode}): {proc.stderr.strip()[-800:] or proc.stdout.strip()[-800:]}"
         )
-    return _parse_last_json(proc.stdout) or {"status": "succeeded", "raw_stdout": proc.stdout[-400:]}
+    return _parse_last_json(proc.stdout) or {
+        "status": "succeeded",
+        "raw_stdout": proc.stdout[-400:],
+    }
 
 
 def _triage_artifacts(
@@ -223,7 +236,9 @@ def _triage_artifacts(
         )
         prompts_file = tmp_path / "prompts.jsonl"
         prompts_file.write_text(
-            render_triage_prompts_jsonl([{"id": f"triage-{triage_job_name(job_name)}", "prompt": prompt}]),
+            render_triage_prompts_jsonl(
+                [{"id": f"triage-{triage_job_name(job_name)}", "prompt": prompt}]
+            ),
             encoding="utf-8",
         )
         result = generate_text(
@@ -273,30 +288,103 @@ def _parse_last_json(text: str) -> dict[str, Any] | None:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run-id", default="", help="Run ID; defaults to a timestamped value.")
-    parser.add_argument("--policy-type", default="act", help="LeRobot policy type for the GPU train Job.")
-    parser.add_argument("--dataset", default="lerobot/pusht", help="Public HF dataset repo ID for the train Job.")
-    parser.add_argument("--job-name", default="", help="Serverless Job name; derived from --run-id if omitted.")
-    parser.add_argument("--gpu-type", default="h200", help="Serverless GPU type (h200, b300, l40s, ...).")
-    parser.add_argument("--project-id", default="", help="Nebius project ID override (auto-resolved if omitted).")
-    parser.add_argument("--image", default="", help="Container image override for the serverless Job.")
-    parser.add_argument("--output-path", default="", help="S3 URI for train artifacts (auto-derived if omitted).")
-    parser.add_argument("--steps", type=int, default=0, help="Training steps (0 = tool default; --smoke overrides).")
-    parser.add_argument("--smoke", action="store_true", default=True, help="Use smoke training settings (default).")
-    parser.add_argument("--no-smoke", dest="smoke", action="store_false", help="Disable smoke settings (real run).")
-    parser.add_argument("--model", default="", help=f"Token Factory triage model (default {DEFAULT_TEXT_MODEL}).")
-    parser.add_argument("--max-tokens", type=int, default=1024, help="Max tokens for the triage report.")
-    parser.add_argument("--notes", default="", help="Optional operator context added to the triage prompt.")
-    parser.add_argument("--triage-root", default="", help="S3 URI for the triage report (default: <artifacts>/triage/).")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--run-id", default="", help="Run ID; defaults to a timestamped value."
+    )
+    parser.add_argument(
+        "--policy-type",
+        default="act",
+        help="LeRobot policy type for the GPU train Job.",
+    )
+    parser.add_argument(
+        "--dataset",
+        default="lerobot/pusht",
+        help="Public HF dataset repo ID for the train Job.",
+    )
+    parser.add_argument(
+        "--job-name",
+        default="",
+        help="Serverless Job name; derived from --run-id if omitted.",
+    )
+    parser.add_argument(
+        "--gpu-type",
+        default="h200",
+        help="Serverless GPU type (h200, b300, l40s, ...).",
+    )
+    parser.add_argument(
+        "--project-id",
+        default="",
+        help="Nebius project ID override (auto-resolved if omitted).",
+    )
+    parser.add_argument(
+        "--image", default="", help="Container image override for the serverless Job."
+    )
+    parser.add_argument(
+        "--output-path",
+        default="",
+        help="S3 URI for train artifacts (auto-derived if omitted).",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=0,
+        help="Training steps (0 = tool default; --smoke overrides).",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        default=True,
+        help="Use smoke training settings (default).",
+    )
+    parser.add_argument(
+        "--no-smoke",
+        dest="smoke",
+        action="store_false",
+        help="Disable smoke settings (real run).",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help=f"Token Factory triage model (default {DEFAULT_TEXT_MODEL}).",
+    )
+    parser.add_argument(
+        "--max-tokens", type=int, default=1024, help="Max tokens for the triage report."
+    )
+    parser.add_argument(
+        "--notes",
+        default="",
+        help="Optional operator context added to the triage prompt.",
+    )
+    parser.add_argument(
+        "--triage-root",
+        default="",
+        help="S3 URI for the triage report (default: <artifacts>/triage/).",
+    )
     parser.add_argument(
         "--from-output-path",
         default="",
         help="Skip the GPU Job and triage an existing artifacts S3 prefix instead.",
     )
-    parser.add_argument("--wait-timeout", type=int, default=3600, help="Max seconds to wait for the Job.")
-    parser.add_argument("--poll-interval", type=float, default=30.0, help="Seconds between Job status checks.")
-    parser.add_argument("--render-only", action="store_true", help="Print the plan and exit (no infrastructure).")
+    parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=3600,
+        help="Max seconds to wait for the Job.",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=30.0,
+        help="Seconds between Job status checks.",
+    )
+    parser.add_argument(
+        "--render-only",
+        action="store_true",
+        help="Print the plan and exit (no infrastructure).",
+    )
     return parser.parse_args(argv)
 
 

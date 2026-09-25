@@ -45,7 +45,9 @@ class FakeS3:
     def head_bucket(self, **kwargs: object) -> None:
         return None
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **kwargs: object) -> None:
+    def put_object(
+        self, *, Bucket: str, Key: str, Body: bytes, **kwargs: object
+    ) -> None:
         if self.fail_writes:
             raise RuntimeError("synthetic write failure")
         with self.lock:
@@ -102,7 +104,13 @@ def _outcome(status: str = "succeeded") -> dict:
     }
 
 
-def _emit(storage: FakeStorage, *, episode_id: str = "ep-1", request: str = "run", events: list | None = None):
+def _emit(
+    storage: FakeStorage,
+    *,
+    episode_id: str = "ep-1",
+    request: str = "run",
+    events: list | None = None,
+):
     return emit_trajectory(
         episode_id=episode_id,
         session_id="session-1",
@@ -136,9 +144,13 @@ def test_resolve_dataset_config_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_tenant_and_bucket_mismatch_fail_before_collection(dataset_env: None) -> None:
     with pytest.raises(AgentRunDataError, match="tenant does not match"):
-        resolve_dataset_config(active_tenant_id="other-tenant", active_bucket="test-bucket")
+        resolve_dataset_config(
+            active_tenant_id="other-tenant", active_bucket="test-bucket"
+        )
     with pytest.raises(AgentRunDataError, match="bucket does not match"):
-        resolve_dataset_config(active_tenant_id="tenant-test", active_bucket="other-bucket")
+        resolve_dataset_config(
+            active_tenant_id="tenant-test", active_bucket="other-bucket"
+        )
 
 
 def test_partial_or_signed_configuration_is_rejected(
@@ -177,13 +189,17 @@ def test_redaction_removes_secrets_infrastructure_and_signed_urls() -> None:
     assert redacted["nested"]["ok"] == "fine"
 
 
-def test_success_upload_is_collected_only_with_read_after_write(dataset_env: None) -> None:
+def test_success_upload_is_collected_only_with_read_after_write(
+    dataset_env: None,
+) -> None:
     s3 = FakeS3()
     status, episode_id = _emit(FakeStorage(s3))
     assert (status, episode_id) == (CollectionStatus.COLLECTED, "ep-1")
     payload = _episode_payloads(s3)[0]
     assert payload["collection"]["status"] == CollectionStatus.PENDING
-    receipts = [json.loads(body) for key, body in s3.objects.items() if "/receipts/" in key]
+    receipts = [
+        json.loads(body) for key, body in s3.objects.items() if "/receipts/" in key
+    ]
     assert receipts[0]["status"] == CollectionStatus.COLLECTED
     assert receipts[0]["content_sha256"] == payload["collection"]["content_sha256"]
     assert payload["collection"]["content_sha256"]
@@ -191,14 +207,17 @@ def test_success_upload_is_collected_only_with_read_after_write(dataset_env: Non
     assert "private-bucket" not in json.dumps(payload)
 
 
-@pytest.mark.parametrize("value", [
-    "docker run -p 127.0.0.1::8080 example",
-    "127.0.0.1:8080:8000",
-    "127.0.0.1::1",
-    "[2001:db8::1]:8080",
-    'command={"publish": "127.0.0.1::8080"}',
-    r'command={\"publish\": \"127.0.0.1::8080\"}',
-])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "docker run -p 127.0.0.1::8080 example",
+        "127.0.0.1:8080:8000",
+        "127.0.0.1::1",
+        "[2001:db8::1]:8080",
+        'command={"publish": "127.0.0.1::8080"}',
+        r"command={\"publish\": \"127.0.0.1::8080\"}",
+    ],
+)
 def test_address_redaction_reaches_a_fixed_point(value: str) -> None:
     result = redact({value: {"command": value}})
     assert redact(result) == result
@@ -212,7 +231,9 @@ def test_invalid_addresses_and_times_remain_data(value: str) -> None:
     assert redact(value) == value
 
 
-def test_docker_address_survives_outbox_delivery_privacy_check(dataset_env: None) -> None:
+def test_docker_address_survives_outbox_delivery_privacy_check(
+    dataset_env: None,
+) -> None:
     s3 = FakeS3()
     s3.fail_writes = True
     events = _trajectory()
@@ -225,15 +246,21 @@ def test_docker_address_survives_outbox_delivery_privacy_check(dataset_env: None
     assert b"127.0.0.1" not in frozen
     s3.fail_writes = False
     flushed = flush_outbox(
-        storage=FakeStorage(s3), active_tenant_id="tenant-test", active_bucket="test-bucket"
+        storage=FakeStorage(s3),
+        active_tenant_id="tenant-test",
+        active_bucket="test-bucket",
     )
     assert flushed == ["docker-address"]
     payload = _episode_payloads(s3)[0]
     assert redact(payload["trajectory"]) == payload["trajectory"]
-    assert payload["trajectory"][0]["arguments"]["command"].startswith("docker run -p <address-ref>")
+    assert payload["trajectory"][0]["arguments"]["command"].startswith(
+        "docker run -p <address-ref>"
+    )
 
 
-def test_deterministic_idempotent_key_uses_episode_start_date(dataset_env: None) -> None:
+def test_deterministic_idempotent_key_uses_episode_start_date(
+    dataset_env: None,
+) -> None:
     s3 = FakeS3()
     storage = FakeStorage(s3)
     _emit(storage, episode_id="same")
@@ -244,11 +271,15 @@ def test_deterministic_idempotent_key_uses_episode_start_date(dataset_env: None)
     assert "/episodes/2026/08/30/" in first_keys[0]
 
 
-def test_concurrent_episodes_produce_distinct_immutable_objects(dataset_env: None) -> None:
+def test_concurrent_episodes_produce_distinct_immutable_objects(
+    dataset_env: None,
+) -> None:
     s3 = FakeS3()
     storage = FakeStorage(s3)
     threads = [
-        threading.Thread(target=_emit, args=(storage,), kwargs={"episode_id": f"ep-{i}"})
+        threading.Thread(
+            target=_emit, args=(storage,), kwargs={"episode_id": f"ep-{i}"}
+        )
         for i in range(20)
     ]
     for thread in threads:
@@ -278,14 +309,22 @@ def test_s3_failure_outbox_then_flush_has_read_after_write_proof(
     assert "private-bucket" not in body
     envelope = json.loads(body)
     assert envelope["payload"]["collection"]["status"] == CollectionStatus.PENDING
-    expected_body = json.dumps(envelope["payload"], sort_keys=True, separators=(",", ":")).encode()
+    expected_body = json.dumps(
+        envelope["payload"], sort_keys=True, separators=(",", ":")
+    ).encode()
 
     s3.fail_writes = False
-    assert flush_outbox(storage=FakeStorage(s3), active_tenant_id="tenant-test", active_bucket="test-bucket") == ["pending"]
+    assert flush_outbox(
+        storage=FakeStorage(s3),
+        active_tenant_id="tenant-test",
+        active_bucket="test-bucket",
+    ) == ["pending"]
     assert not list((tmp_path / "outbox").glob("*.json"))
     uploaded = _episode_payloads(s3)[0]
     assert uploaded["collection"]["status"] == CollectionStatus.PENDING
-    uploaded_body = next(body for key, body in s3.objects.items() if "/episodes/" in key)
+    uploaded_body = next(
+        body for key, body in s3.objects.items() if "/episodes/" in key
+    )
     assert uploaded_body == expected_body
     assert hashlib.sha256(uploaded_body).hexdigest() == envelope["payload_sha256"]
 
@@ -320,7 +359,14 @@ def test_verify_destination_requires_read_after_write(dataset_env: None) -> None
 @pytest.mark.parametrize(
     ("response", "expected_status"),
     [
-        ({"ok": True, "grounded": False, "usage": {"prompt_tokens": 2, "completion_tokens": 3}}, "succeeded"),
+        (
+            {
+                "ok": True,
+                "grounded": False,
+                "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+            },
+            "succeeded",
+        ),
         ({"ok": False, "steps": [{"tool": "demo", "ok": False}]}, "failed"),
         ({"ok": False, "refused": True}, "refused"),
         ({"ok": True, "grounded": True, "usage": {"total_tokens": 0}}, "succeeded"),
@@ -333,12 +379,15 @@ def test_goal_boundary_records_success_tool_failure_refusal_and_grounded_zero_to
 
     @goal_episode_boundary(
         storage_factory=lambda: FakeStorage(s3),
-        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
     )
     def endpoint(payload: dict) -> dict:
         return dict(response)
 
-    result = endpoint({"session_id": "session-1", "messages": [{"role": "user", "content": "goal"}]})
+    result = endpoint(
+        {"session_id": "session-1", "messages": [{"role": "user", "content": "goal"}]}
+    )
     assert result == response
     payload = _episode_payloads(s3)[0]
     assert payload["outcome"]["status"] == expected_status
@@ -352,7 +401,8 @@ def test_goal_boundary_records_cancellation(dataset_env: None) -> None:
 
     @goal_episode_boundary(
         storage_factory=lambda: FakeStorage(s3),
-        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
     )
     def endpoint(payload: dict) -> dict:
         raise asyncio.CancelledError
@@ -376,7 +426,9 @@ class _StagingSSH:
         return ""
 
 
-def _stage_dataset_env(monkeypatch: pytest.MonkeyPatch, *, tenant: str, uri: str) -> list[str]:
+def _stage_dataset_env(
+    monkeypatch: pytest.MonkeyPatch, *, tenant: str, uri: str
+) -> list[str]:
     from npa.cli.agent_env_files import _write_agent_nebius_env
 
     monkeypatch.setenv("NPA_AGENT_DATASET_TENANT_ID", tenant)
@@ -415,7 +467,11 @@ def test_dataset_configuration_is_staged_in_owner_only_agent_env(
     ("tenant", "uri", "match"),
     [
         ("other-tenant", "s3://test-bucket/agent-dataset", "tenant does not match"),
-        ("tenant-test", "s3://other-bucket/agent-dataset", "deployment's unsigned S3 bucket"),
+        (
+            "tenant-test",
+            "s3://other-bucket/agent-dataset",
+            "deployment's unsigned S3 bucket",
+        ),
     ],
 )
 def test_dataset_configuration_mismatch_is_not_staged(
@@ -425,7 +481,9 @@ def test_dataset_configuration_mismatch_is_not_staged(
         _stage_dataset_env(monkeypatch, tenant=tenant, uri=uri)
 
 
-@pytest.mark.parametrize("scope", [{}, {"active_tenant_id": "tenant-test"}, {"active_bucket": "test-bucket"}])
+@pytest.mark.parametrize(
+    "scope", [{}, {"active_tenant_id": "tenant-test"}, {"active_bucket": "test-bucket"}]
+)
 def test_missing_active_identity_fails_closed(dataset_env: None, scope: dict) -> None:
     with pytest.raises(AgentRunDataError, match="verified active deployment"):
         resolve_dataset_config(**scope)
@@ -433,7 +491,9 @@ def test_missing_active_identity_fails_closed(dataset_env: None, scope: dict) ->
 
 @pytest.mark.parametrize("pending", [False, True])
 def test_private_payload_classes_removed_before_every_write(
-    dataset_env: None, tmp_path: Path, pending: bool,
+    dataset_env: None,
+    tmp_path: Path,
+    pending: bool,
 ) -> None:
     secret = "synthetic-secret-material"
     resource_id = "project-" + "z" * 20
@@ -453,29 +513,47 @@ def test_private_payload_classes_removed_before_every_write(
     s3 = FakeS3()
     s3.fail_writes = pending
     status, _ = _emit(FakeStorage(s3), events=[{"sequence": 0, "arguments": data}])
-    assert status == (CollectionStatus.PENDING if pending else CollectionStatus.COLLECTED)
+    assert status == (
+        CollectionStatus.PENDING if pending else CollectionStatus.COLLECTED
+    )
     if pending:
         serialized = next((tmp_path / "outbox").glob("*.json")).read_text()
     else:
-        serialized = next(body.decode() for key, body in s3.objects.items() if "/episodes/" in key)
+        serialized = next(
+            body.decode() for key, body in s3.objects.items() if "/episodes/" in key
+        )
     for forbidden in (
-        secret, "synthetic-environment-secret", "synthetic-inline-image", "synthetic-private-material",
-        "c3ludGhldGlj", "customer-bucket", "customer-sensitive-name", "private.invalid",
-        "203.0.113.50", "2001:db8::1", resource_id,
+        secret,
+        "synthetic-environment-secret",
+        "synthetic-inline-image",
+        "synthetic-private-material",
+        "c3ludGhldGlj",
+        "customer-bucket",
+        "customer-sensitive-name",
+        "private.invalid",
+        "203.0.113.50",
+        "2001:db8::1",
+        resource_id,
     ):
         assert forbidden not in serialized
     assert "safe-observation" in serialized
 
 
 def test_owner_only_literal_redaction_applies_to_keys_and_values(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "redaction.json"
     path.write_text(json.dumps({"literals": ["synthetic-customer-name"]}))
     path.chmod(0o600)
     monkeypatch.setenv("NPA_AGENT_DATASET_REDACTION_FILE", str(path))
     s3 = FakeS3()
-    _emit(FakeStorage(s3), request="synthetic-customer-name", events=[{"synthetic-customer-name": "metadata"}])
+    _emit(
+        FakeStorage(s3),
+        request="synthetic-customer-name",
+        events=[{"synthetic-customer-name": "metadata"}],
+    )
     assert "synthetic-customer-name" not in b"".join(s3.objects.values()).decode()
     path.chmod(0o644)
     with pytest.raises(AgentRunDataError, match="owner-only"):
@@ -483,23 +561,34 @@ def test_owner_only_literal_redaction_applies_to_keys_and_values(
 
 
 def test_wrapped_inline_image_cannot_leave_payload_fragments() -> None:
-    assert redact("data:image/png;base64,first-line\nsecond-line\nlast-line") == "<inline-data-ref>"
+    assert (
+        redact("data:image/png;base64,first-line\nsecond-line\nlast-line")
+        == "<inline-data-ref>"
+    )
 
 
 @pytest.mark.parametrize("length", [40, 64])
 @pytest.mark.parametrize("uppercase", [False, True])
-def test_hex_digests_that_resemble_resource_ids_are_preserved(length: int, uppercase: bool) -> None:
+def test_hex_digests_that_resemble_resource_ids_are_preserved(
+    length: int, uppercase: bool
+) -> None:
     digest = "e00" + "a" * (length - 3)
     if uppercase:
         digest = digest.upper()
-    assert redact({"sha256": digest, "version": digest}) == {"sha256": digest, "version": digest}
+    assert redact({"sha256": digest, "version": digest}) == {
+        "sha256": digest,
+        "version": digest,
+    }
     non_hex_identifier = "u00" + "a" * (length - 3)
     assert non_hex_identifier not in redact(non_hex_identifier)
 
 
 @pytest.mark.parametrize("dimension", ["tenant", "bucket", "prefix"])
 def test_outbox_never_crosses_original_destination(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dimension: str,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dimension: str,
 ) -> None:
     s3 = FakeS3()
     s3.fail_writes = True
@@ -517,9 +606,13 @@ def test_outbox_never_crosses_original_destination(
     assert s3.put_count == 0
 
 
-@pytest.mark.parametrize("corruption", ["payload", "digest", "filename", "tenant", "legacy"])
+@pytest.mark.parametrize(
+    "corruption", ["payload", "digest", "filename", "tenant", "legacy"]
+)
 def test_corrupt_or_unbound_outbox_is_retained_without_writes(
-    dataset_env: None, tmp_path: Path, corruption: str,
+    dataset_env: None,
+    tmp_path: Path,
+    corruption: str,
 ) -> None:
     s3 = FakeS3()
     s3.fail_writes = True
@@ -541,12 +634,19 @@ def test_corrupt_or_unbound_outbox_is_retained_without_writes(
         path = changed
     original = path.read_bytes()
     s3.fail_writes = False
-    assert flush_outbox(storage=s3, active_tenant_id="tenant-test", active_bucket="test-bucket") == []
+    assert (
+        flush_outbox(
+            storage=s3, active_tenant_id="tenant-test", active_bucket="test-bucket"
+        )
+        == []
+    )
     assert path.read_bytes() == original
     assert s3.put_count == 0
 
 
-def test_uncertain_upload_retries_identical_finalized_bytes(dataset_env: None, tmp_path: Path) -> None:
+def test_uncertain_upload_retries_identical_finalized_bytes(
+    dataset_env: None, tmp_path: Path
+) -> None:
     class UncertainS3(FakeS3):
         def __init__(self):
             super().__init__()
@@ -562,15 +662,26 @@ def test_uncertain_upload_retries_identical_finalized_bytes(dataset_env: None, t
     assert _emit(FakeStorage(s3))[0] == CollectionStatus.PENDING
     first = {key: body for key, body in s3.objects.items() if "/episodes/" in key}
     envelope = json.loads(next((tmp_path / "outbox").glob("*.json")).read_bytes())
-    assert next(iter(first.values())) == json.dumps(envelope["payload"], sort_keys=True, separators=(",", ":")).encode()
+    assert (
+        next(iter(first.values()))
+        == json.dumps(
+            envelope["payload"], sort_keys=True, separators=(",", ":")
+        ).encode()
+    )
     assert not any("/receipts/" in key for key in s3.objects)
-    assert flush_outbox(storage=s3, active_tenant_id="tenant-test", active_bucket="test-bucket") == ["ep-1"]
-    assert {key: body for key, body in s3.objects.items() if "/episodes/" in key} == first
+    assert flush_outbox(
+        storage=s3, active_tenant_id="tenant-test", active_bucket="test-bucket"
+    ) == ["ep-1"]
+    assert {
+        key: body for key, body in s3.objects.items() if "/episodes/" in key
+    } == first
     assert len([key for key in s3.objects if "/receipts/" in key]) == 1
 
 
 def test_divergent_episode_preserved_and_reported_as_conflict(
-    dataset_env: None, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    dataset_env: None,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     s3 = FakeS3()
     assert _emit(FakeStorage(s3), request="first")[0] == CollectionStatus.COLLECTED
@@ -604,7 +715,9 @@ def test_conditional_write_is_never_downgraded(dataset_env: None) -> None:
 
 
 @pytest.mark.parametrize("value", [b"synthetic-image-bytes", object(), float("nan")])
-def test_unsupported_values_never_reach_storage(dataset_env: None, value: object) -> None:
+def test_unsupported_values_never_reach_storage(
+    dataset_env: None, value: object
+) -> None:
     s3 = FakeS3()
     with pytest.raises((AgentRunDataError, ValueError)):
         _emit(FakeStorage(s3), events=[{"value": value}])
@@ -619,7 +732,9 @@ def test_episode_ids_cannot_escape_outbox(dataset_env: None, episode_id: str) ->
     assert s3.put_count == 0
 
 
-def test_storage_factory_failure_preserves_product_and_pending_record(dataset_env: None, tmp_path: Path) -> None:
+def test_storage_factory_failure_preserves_product_and_pending_record(
+    dataset_env: None, tmp_path: Path
+) -> None:
     calls = []
 
     def broken_factory():
@@ -627,7 +742,8 @@ def test_storage_factory_failure_preserves_product_and_pending_record(dataset_en
 
     @goal_episode_boundary(
         storage_factory=broken_factory,
-        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
     )
     def endpoint(payload):
         calls.append("executed")
@@ -638,15 +754,21 @@ def test_storage_factory_failure_preserves_product_and_pending_record(dataset_en
     assert len(list((tmp_path / "outbox").glob("*.json"))) == 1
 
 
-def test_malformed_usage_is_unknown_and_does_not_mask_product(dataset_env: None) -> None:
+def test_malformed_usage_is_unknown_and_does_not_mask_product(
+    dataset_env: None,
+) -> None:
     s3 = FakeS3()
 
     @goal_episode_boundary(
         storage_factory=lambda: s3,
-        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
     )
     def endpoint(payload):
-        return {"ok": True, "usage": {"prompt_tokens": None, "completion_tokens": "unknown"}}
+        return {
+            "ok": True,
+            "usage": {"prompt_tokens": None, "completion_tokens": "unknown"},
+        }
 
     assert endpoint({})["ok"]
     routing = _episode_payloads(s3)[0]["routing"]
@@ -654,7 +776,9 @@ def test_malformed_usage_is_unknown_and_does_not_mask_product(dataset_env: None)
     assert "output_tokens" not in routing
 
 
-def test_record_assembly_failure_preserves_original_exception(dataset_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_record_assembly_failure_preserves_original_exception(
+    dataset_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from npa.agent_backend import trajectory
 
     def broken_record(**kwargs):
@@ -671,7 +795,9 @@ def test_record_assembly_failure_preserves_original_exception(dataset_env: None,
 
 
 @pytest.mark.parametrize("same_payload", [True, False])
-def test_concurrent_same_episode_claim_is_atomic(dataset_env: None, same_payload: bool) -> None:
+def test_concurrent_same_episode_claim_is_atomic(
+    dataset_env: None, same_payload: bool
+) -> None:
     s3 = FakeS3()
     barrier = threading.Barrier(2)
     statuses = []
@@ -680,7 +806,11 @@ def test_concurrent_same_episode_claim_is_atomic(dataset_env: None, same_payload
     def write(index):
         try:
             barrier.wait()
-            statuses.append(_emit(FakeStorage(s3), request="same" if same_payload else str(index))[0])
+            statuses.append(
+                _emit(FakeStorage(s3), request="same" if same_payload else str(index))[
+                    0
+                ]
+            )
         except Exception as exc:
             errors.append(type(exc).__name__)
 
@@ -690,12 +820,18 @@ def test_concurrent_same_episode_claim_is_atomic(dataset_env: None, same_payload
     for worker in workers:
         worker.join()
     assert not errors
-    assert sorted(statuses) == ([CollectionStatus.COLLECTED] * 2 if same_payload else [CollectionStatus.COLLECTED, CollectionStatus.PENDING])
+    assert sorted(statuses) == (
+        [CollectionStatus.COLLECTED] * 2
+        if same_payload
+        else [CollectionStatus.COLLECTED, CollectionStatus.PENDING]
+    )
     assert len(_episode_payloads(s3)) == (1 if same_payload else 2)
     assert len([key for key in s3.objects if "/receipts/" in key]) == 1
 
 
-def test_receipt_readback_failure_cannot_report_collected(dataset_env: None, tmp_path: Path) -> None:
+def test_receipt_readback_failure_cannot_report_collected(
+    dataset_env: None, tmp_path: Path
+) -> None:
     class ReceiptReadFailure(FakeS3):
         def __init__(self):
             super().__init__()
@@ -711,13 +847,19 @@ def test_receipt_readback_failure_cannot_report_collected(dataset_env: None, tmp
     assert list((tmp_path / "outbox").glob("*.json"))
     original = dict(s3.objects)
     s3.fail_receipt = False
-    assert flush_outbox(storage=s3, active_tenant_id="tenant-test", active_bucket="test-bucket") == ["ep-1"]
+    assert flush_outbox(
+        storage=s3, active_tenant_id="tenant-test", active_bucket="test-bucket"
+    ) == ["ep-1"]
     assert s3.objects == original
 
 
 def test_tenant_survives_only_authorized_scope_field(dataset_env: None) -> None:
     s3 = FakeS3()
-    _emit(FakeStorage(s3), request="tenant-test test-bucket", events=[{"tenant-test": "tenant-test"}])
+    _emit(
+        FakeStorage(s3),
+        request="tenant-test test-bucket",
+        events=[{"tenant-test": "tenant-test"}],
+    )
     row = _episode_payloads(s3)[0]
     assert row["scope"]["tenant_id"] == "tenant-test"
     serialized = json.dumps(row)
@@ -726,7 +868,9 @@ def test_tenant_survives_only_authorized_scope_field(dataset_env: None) -> None:
 
 
 def test_outbox_publication_cannot_replace_concurrent_destination(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from npa.agent_backend import trajectory
 
@@ -748,7 +892,10 @@ def test_outbox_publication_cannot_replace_concurrent_destination(
 
 @pytest.mark.parametrize("pending", [False, True])
 def test_secret_aliases_and_bracketed_private_literals_never_serialize(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pending: bool,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pending: bool,
 ) -> None:
     private_literal = "synthetic-customer-northern"
     marker_suffix_literal = "abc" * 4
@@ -765,26 +912,43 @@ def test_secret_aliases_and_bracketed_private_literals_never_serialize(
     s3 = FakeS3()
     s3.fail_writes = pending
     _emit(
-        FakeStorage(s3), request=f"<{private_literal}> <private-ref>-{marker_suffix_literal}",
-        events=[{"arguments": aliases, "observation": "client_secret=synthetic-assigned-secret"}],
+        FakeStorage(s3),
+        request=f"<{private_literal}> <private-ref>-{marker_suffix_literal}",
+        events=[
+            {
+                "arguments": aliases,
+                "observation": "client_secret=synthetic-assigned-secret",
+            }
+        ],
     )
     body = (
         next((tmp_path / "outbox").glob("*.json")).read_text()
-        if pending else b"".join(s3.objects.values()).decode()
+        if pending
+        else b"".join(s3.objects.values()).decode()
     )
-    for forbidden in [private_literal, marker_suffix_literal, "synthetic-assigned-secret", *aliases.values()]:
+    for forbidden in [
+        private_literal,
+        marker_suffix_literal,
+        "synthetic-assigned-secret",
+        *aliases.values(),
+    ]:
         assert forbidden not in body
 
 
 @pytest.mark.parametrize("parent_link", [False, True])
 def test_outbox_rejects_symlink_components_before_creating_files(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parent_link: bool,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    parent_link: bool,
 ) -> None:
     target = tmp_path / "elsewhere"
     target.mkdir()
     link = tmp_path / "linked"
     link.symlink_to(target, target_is_directory=True)
-    monkeypatch.setenv("NPA_AGENT_DATASET_OUTBOX", str(link / "outbox" if parent_link else link))
+    monkeypatch.setenv(
+        "NPA_AGENT_DATASET_OUTBOX", str(link / "outbox" if parent_link else link)
+    )
     s3 = FakeS3()
     s3.fail_writes = True
     with pytest.raises(AgentRunDataError, match="symlink"):
@@ -792,11 +956,16 @@ def test_outbox_rejects_symlink_components_before_creating_files(
     assert list(target.iterdir()) == []
 
 
-@pytest.mark.parametrize("uuid_text", [
-    "01234567-89ab-4cde-8fab-0123456789ab",
-    "e0012345-6789-4abc-8def-0123456789ab",
-])
-def test_generated_episode_uuid_retains_verified_delivery(dataset_env, monkeypatch, uuid_text):
+@pytest.mark.parametrize(
+    "uuid_text",
+    [
+        "01234567-89ab-4cde-8fab-0123456789ab",
+        "e0012345-6789-4abc-8def-0123456789ab",
+    ],
+)
+def test_generated_episode_uuid_retains_verified_delivery(
+    dataset_env, monkeypatch, uuid_text
+):
     from npa.agent_backend import trajectory as emitter
 
     identifier = uuid.UUID(uuid_text)
@@ -806,26 +975,35 @@ def test_generated_episode_uuid_retains_verified_delivery(dataset_env, monkeypat
 
     @goal_episode_boundary(
         storage_factory=lambda: s3,
-        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
     )
     def endpoint(payload):
         observed.append(emitter.current_episode_id())
         return {"ok": True}
 
     private_id = "e00" + "a" * 17
-    assert endpoint({"messages": [{"role": "user", "content": f"inspect {private_id}"}]}) == {"ok": True}
+    assert endpoint(
+        {"messages": [{"role": "user", "content": f"inspect {private_id}"}]}
+    ) == {"ok": True}
     bodies = [body for key, body in s3.objects.items() if "/episodes/" in key]
     assert len(bodies) == 1
     row = json.loads(bodies[0])
     assert row["episode_id"] == f"episode-{uuid_text}" == observed[0]
     assert row["request"]["content"] == "inspect <infra-ref>"
     assert row["outcome"]["verified"] is False
-    receipts = [json.loads(body) for key, body in s3.objects.items() if "/receipts/" in key]
-    assert receipts == [{
-        "schema_version": "npa.agent.trajectory-receipt.v1", "episode_id": row["episode_id"],
-        "content_sha256": row["collection"]["content_sha256"],
-        "payload_sha256": hashlib.sha256(bodies[0]).hexdigest(), "status": "collected",
-    }]
+    receipts = [
+        json.loads(body) for key, body in s3.objects.items() if "/receipts/" in key
+    ]
+    assert receipts == [
+        {
+            "schema_version": "npa.agent.trajectory-receipt.v1",
+            "episode_id": row["episode_id"],
+            "content_sha256": row["collection"]["content_sha256"],
+            "payload_sha256": hashlib.sha256(bodies[0]).hexdigest(),
+            "status": "collected",
+        }
+    ]
     assert private_id not in b"".join(s3.objects.values()).decode()
 
 
@@ -836,9 +1014,16 @@ def test_caller_native_identifiers_remain_rejected(dataset_env, tmp_path, field)
     identity[field] = "e00" + "a" * 17
     with pytest.raises(AgentRunDataError, match="safe stable identifiers"):
         emit_trajectory(
-            **identity, request_content="inspect", intent="inspect", trajectory=_trajectory(),
-            outcome=_outcome(), routing={}, versions={}, storage=s3,
-            active_tenant_id="tenant-test", active_bucket="test-bucket",
+            **identity,
+            request_content="inspect",
+            intent="inspect",
+            trajectory=_trajectory(),
+            outcome=_outcome(),
+            routing={},
+            versions={},
+            storage=s3,
+            active_tenant_id="tenant-test",
+            active_bucket="test-bucket",
         )
     assert not s3.objects
     assert s3.put_count == 0
@@ -846,15 +1031,22 @@ def test_caller_native_identifiers_remain_rejected(dataset_env, tmp_path, field)
 
 
 @pytest.mark.parametrize("ok", [False, True])
-def test_endpoint_response_cannot_assert_objective_goal_verification(dataset_env: None, ok: bool) -> None:
+def test_endpoint_response_cannot_assert_objective_goal_verification(
+    dataset_env: None, ok: bool
+) -> None:
     s3 = FakeS3()
 
     @goal_episode_boundary(
         storage_factory=lambda: s3,
-        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
     )
     def endpoint(payload):
-        return {"ok": ok, "verified_by": ["untrusted self-reported success"], "verified": True}
+        return {
+            "ok": ok,
+            "verified_by": ["untrusted self-reported success"],
+            "verified": True,
+        }
 
     endpoint({})
     outcome = _episode_payloads(s3)[0]["outcome"]
@@ -862,12 +1054,15 @@ def test_endpoint_response_cannot_assert_objective_goal_verification(dataset_env
     assert outcome["verified_by"] == []
 
 
-def test_observed_endpoint_exception_is_objective_failure_evidence(dataset_env: None) -> None:
+def test_observed_endpoint_exception_is_objective_failure_evidence(
+    dataset_env: None,
+) -> None:
     s3 = FakeS3()
 
     @goal_episode_boundary(
         storage_factory=lambda: s3,
-        active_tenant_id=lambda: "tenant-test", active_bucket=lambda: "test-bucket",
+        active_tenant_id=lambda: "tenant-test",
+        active_bucket=lambda: "test-bucket",
     )
     def endpoint(payload):
         raise ValueError("synthetic observed endpoint failure")
@@ -876,13 +1071,19 @@ def test_observed_endpoint_exception_is_objective_failure_evidence(dataset_env: 
         endpoint({})
     outcome = _episode_payloads(s3)[0]["outcome"]
     assert outcome == {
-        "status": "failed", "verified": True, "verified_by": ["agent endpoint exception"],
-        "artifact_uris": [], "operator_interventions": [], "preference_pairs": [],
+        "status": "failed",
+        "verified": True,
+        "verified_by": ["agent endpoint exception"],
+        "artifact_uris": [],
+        "operator_interventions": [],
+        "preference_pairs": [],
     }
 
 
 def test_flush_skips_fifo_without_attempting_a_read(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     outbox = tmp_path / "outbox"
     outbox.mkdir()
@@ -898,13 +1099,22 @@ def test_flush_skips_fifo_without_attempting_a_read(
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", guarded_read)
-    assert flush_outbox(storage=FakeS3(), active_tenant_id="tenant-test", active_bucket="test-bucket") == []
+    assert (
+        flush_outbox(
+            storage=FakeS3(),
+            active_tenant_id="tenant-test",
+            active_bucket="test-bucket",
+        )
+        == []
+    )
     assert not read_attempts
     assert stat.S_ISFIFO(fifo.lstat().st_mode)
 
 
 def test_existing_outbox_fifo_is_rejected_without_reading(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     s3 = FakeS3()
     s3.fail_writes = True
@@ -929,10 +1139,17 @@ def test_existing_outbox_fifo_is_rejected_without_reading(
 
 
 @pytest.mark.parametrize("pending", [False, True])
-def test_recognizable_unlabelled_tokens_never_serialize(dataset_env: None, tmp_path: Path, pending: bool) -> None:
+def test_recognizable_unlabelled_tokens_never_serialize(
+    dataset_env: None, tmp_path: Path, pending: bool
+) -> None:
     # Assemble clearly synthetic shapes; no credential is copied from runtime.
     tokens = [
-        "eyJ" + "hbGciOiJub25lIn0" + "." + "eyJzdWIiOiJzeW50aGV0aWMifQ" + "." + "synthetic-signature",
+        "eyJ"
+        + "hbGciOiJub25lIn0"
+        + "."
+        + "eyJzdWIiOiJzeW50aGV0aWMifQ"
+        + "."
+        + "synthetic-signature",
         "xoxb" + "-" + "1" * 12 + "-" + "2" * 12 + "-" + "synthetic" * 4,
         "sk" + "_live_" + "synthetic" * 4,
         "AIza" + "synthetic" * 4,
@@ -942,19 +1159,29 @@ def test_recognizable_unlabelled_tokens_never_serialize(dataset_env: None, tmp_p
     ]
     s3 = FakeS3()
     s3.fail_writes = pending
-    _emit(FakeStorage(s3), request=" ".join(tokens), events=[{"observation": {"text": " ".join(tokens)}}])
+    _emit(
+        FakeStorage(s3),
+        request=" ".join(tokens),
+        events=[{"observation": {"text": " ".join(tokens)}}],
+    )
     body = (
         next((tmp_path / "outbox").glob("*.json")).read_text()
-        if pending else b"".join(s3.objects.values()).decode()
+        if pending
+        else b"".join(s3.objects.values()).decode()
     )
     assert all(token not in body for token in tokens)
 
 
 @pytest.mark.parametrize("pending", [False, True])
-@pytest.mark.parametrize("prefix", ["synthetic-private-prefix", "synthetic-collection/private-prefix"])
+@pytest.mark.parametrize(
+    "prefix", ["synthetic-private-prefix", "synthetic-collection/private-prefix"]
+)
 def test_configured_dataset_uri_and_bare_prefix_never_serialize(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    pending: bool, prefix: str,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pending: bool,
+    prefix: str,
 ) -> None:
     uri = f"s3://test-bucket/{prefix}/"
     monkeypatch.setenv("NPA_AGENT_DATASET_URI", uri)
@@ -970,14 +1197,21 @@ def test_configured_dataset_uri_and_bare_prefix_never_serialize(
     events = [{"sequence": 0, "observation": observation}]
     s3 = FakeS3()
     s3.fail_writes = pending
-    expected_status = CollectionStatus.PENDING if pending else CollectionStatus.COLLECTED
-    assert _emit(FakeStorage(s3), request=f"inspect {prefix} at {uri}", events=events)[0] == expected_status
+    expected_status = (
+        CollectionStatus.PENDING if pending else CollectionStatus.COLLECTED
+    )
+    assert (
+        _emit(FakeStorage(s3), request=f"inspect {prefix} at {uri}", events=events)[0]
+        == expected_status
+    )
     if pending:
         path = next((tmp_path / "outbox").glob("*.json"))
         serialized = path.read_bytes()
         row = json.loads(serialized)["payload"]
     else:
-        serialized = next(body for key, body in s3.objects.items() if "/episodes/" in key)
+        serialized = next(
+            body for key, body in s3.objects.items() if "/episodes/" in key
+        )
         row = json.loads(serialized)
     for forbidden in (prefix, uri, "test-bucket"):
         assert forbidden.encode() not in serialized
@@ -987,25 +1221,51 @@ def test_configured_dataset_uri_and_bare_prefix_never_serialize(
     assert safe["artifact_sha256"] == digest
     assert safe["unrelated"] == observation["unrelated"]
     assert len(safe) == len(observation)
-    assert {"bare-prefix-key-value", "existing-placeholder-key-value", "uri-key-value"} <= set(safe.values())
+    assert {
+        "bare-prefix-key-value",
+        "existing-placeholder-key-value",
+        "uri-key-value",
+    } <= set(safe.values())
     assert any(key.startswith("<private-ref>-") for key in safe)
     # A retry must resolve to the same finalized bytes and immutable key.
     before = dict(s3.objects) if not pending else {path.name: serialized}
-    assert _emit(FakeStorage(s3), request=f"inspect {prefix} at {uri}", events=events)[0] == expected_status
-    after = dict(s3.objects) if not pending else {item.name: item.read_bytes() for item in (tmp_path / "outbox").glob("*.json")}
+    assert (
+        _emit(FakeStorage(s3), request=f"inspect {prefix} at {uri}", events=events)[0]
+        == expected_status
+    )
+    after = (
+        dict(s3.objects)
+        if not pending
+        else {
+            item.name: item.read_bytes()
+            for item in (tmp_path / "outbox").glob("*.json")
+        }
+    )
     assert after == before
 
 
-def test_empty_dataset_prefix_does_not_redact_unrelated_values(dataset_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_empty_dataset_prefix_does_not_redact_unrelated_values(
+    dataset_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("NPA_AGENT_DATASET_URI", "s3://test-bucket/")
     s3 = FakeS3()
-    assert _emit(FakeStorage(s3), request="safe unchanged request")[0] == CollectionStatus.COLLECTED
-    row = next(json.loads(body) for key, body in s3.objects.items() if key.startswith("episodes/"))
+    assert (
+        _emit(FakeStorage(s3), request="safe unchanged request")[0]
+        == CollectionStatus.COLLECTED
+    )
+    row = next(
+        json.loads(body)
+        for key, body in s3.objects.items()
+        if key.startswith("episodes/")
+    )
     assert row["request"]["content"] == "safe unchanged request"
 
 
 def test_corrected_prefix_redaction_preserves_original_and_reports_conflict(
-    dataset_env: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    dataset_env: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from npa.agent_backend import trajectory
 

@@ -42,7 +42,9 @@ def test_require_s3_credentials_accepts_complete() -> None:
         ),
     ],
 )
-def test_require_s3_credentials_reports_each_missing_field(creds, missing_label) -> None:
+def test_require_s3_credentials_reports_each_missing_field(
+    creds, missing_label
+) -> None:
     with pytest.raises(MissingS3CredentialsError) as excinfo:
         require_s3_credentials(creds, context="SONIC serverless jobs")
     message = str(excinfo.value)
@@ -53,7 +55,11 @@ def test_require_s3_credentials_reports_each_missing_field(creds, missing_label)
 def test_require_s3_credentials_treats_blank_as_missing() -> None:
     with pytest.raises(MissingS3CredentialsError) as excinfo:
         require_s3_credentials(
-            {"aws_access_key_id": "  ", "aws_secret_access_key": "", "endpoint_url": None},
+            {
+                "aws_access_key_id": "  ",
+                "aws_secret_access_key": "",
+                "endpoint_url": None,
+            },
         )
     # All three fields are blank/None, so all three are named.
     message = str(excinfo.value)
@@ -65,7 +71,11 @@ def test_require_s3_credentials_treats_blank_as_missing() -> None:
 def test_require_s3_credentials_never_leaks_values() -> None:
     with pytest.raises(MissingS3CredentialsError) as excinfo:
         require_s3_credentials(
-            {"aws_access_key_id": "SECRET-AK", "aws_secret_access_key": "", "endpoint_url": ""},
+            {
+                "aws_access_key_id": "SECRET-AK",
+                "aws_secret_access_key": "",
+                "endpoint_url": "",
+            },
         )
     # Present values must never appear in the error text.
     assert "SECRET-AK" not in str(excinfo.value)
@@ -148,7 +158,9 @@ def test_build_serverless_job_env_lets_the_caller_override_the_cache() -> None:
 
 
 def test_build_serverless_job_env_with_hf_token() -> None:
-    env = build_serverless_job_env(output_path="s3://bucket/prefix", hf_token="PLACEHOLDER_HF_TOKEN")
+    env = build_serverless_job_env(
+        output_path="s3://bucket/prefix", hf_token="PLACEHOLDER_HF_TOKEN"
+    )
 
     assert env["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
     assert env["HUGGING_FACE_HUB_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
@@ -199,7 +211,9 @@ def test_split_serverless_env_separates_secrets() -> None:
         ("gpu-rtx-pro-6000", "gpu-rtx6000", "1gpu-24vcpu-218gb"),
     ],
 )
-def test_resolve_gpu_platform_known_types(gpu_type: str, platform: str, preset: str) -> None:
+def test_resolve_gpu_platform_known_types(
+    gpu_type: str, platform: str, preset: str
+) -> None:
     assert resolve_gpu_platform(gpu_type) == (platform, preset, 1)
 
 

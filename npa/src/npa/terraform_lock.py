@@ -137,7 +137,9 @@ def configure_plugin_cache(
     module_dir = Path(terraform_dir).resolve()
     platform_name = str(target_platform or terraform_platform()).strip()
     configured_root = str(env.get("TF_PLUGIN_CACHE_DIR", "") or "").strip()
-    cache_root = Path(configured_root).expanduser() if configured_root else Path(default_root)
+    cache_root = (
+        Path(configured_root).expanduser() if configured_root else Path(default_root)
+    )
     cache_dir = (cache_root / platform_name).resolve()
     try:
         cache_dir.relative_to(module_dir)

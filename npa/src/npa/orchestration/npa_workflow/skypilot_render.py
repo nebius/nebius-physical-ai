@@ -88,6 +88,15 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.encord": ("ENCORD_SSH_KEY_B64",),
+    "workflow.paidf": (),
+    "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
+    "workflow.paidf.run_evg_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
+    "workflow.paidf.postprocess_iaa": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_captioning": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_visual_qa": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
@@ -102,7 +111,6 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.cosmos3.text_to_image": (),
     "workbench.cosmos3.super_benchmark": (
         "HF_TOKEN",
-        "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     ),
@@ -132,6 +140,8 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.encord": "encord",
+    "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
     "workflow.groot.publish_learning": "viz",
@@ -158,7 +168,7 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.transfer_report": (
         ("python:av", "av>=12,<17"),
         ("python:matplotlib", "matplotlib>=3.8,<4"),
-        ("python:rerun", "rerun-sdk>=0.29,<0.32"),
+        ("python:rerun", "rerun-sdk==0.38.1"),
     ),
     "workbench.alpamayo2_super.sweep": (
         ('python:ray;assert(ray.__version__=="2.58.0")', "ray[default]==2.58.0"),
@@ -232,6 +242,9 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
+    # creates a separate vendor venv before installing XR1's pinned packages.
+    "workflow.xr1": ("/opt/conda/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
@@ -945,6 +958,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    if tool_ref == "workbench.token_factory.robot_sdg":
+        return "export MUJOCO_GL=osmesa\nexport PYOPENGL_PLATFORM=osmesa\n"
     content_agents_pythonpath = (
         'if [ -n "$PYTHONPATH" ]; then\n'
         '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
@@ -1507,7 +1522,7 @@ def default_npa_setup() -> str:
 #: two ever diverge. (An earlier version imported a ``_rerun_pin`` symbol that does
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
-NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -1766,6 +1781,14 @@ def render_setup_for_tool(
             "fi\n"
         )
     parts = [default_npa_setup()]
+    if tool_ref == "workbench.token_factory.robot_sdg":
+        parts.append(
+            'if [ "$(id -u)" = 0 ]; then\n'
+            "  apt-get update && apt-get install -y --no-install-recommends libosmesa6 ffmpeg\n"
+            "else\n"
+            "  sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 ffmpeg\n"
+            "fi\n"
+        )
     parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))
     extra = tool_pip_extra(tool_ref)
     if extra:
@@ -1796,6 +1819,13 @@ def render_setup_for_tool(
             "  exit 1\n"
             "fi\n"
         )
+    if tool_ref.startswith("workbench.encord"):
+        parts.append(
+            'if [[ -z "$ENCORD_SSH_KEY" && -z "$ENCORD_SSH_KEY_B64" ]]; then\n'
+            "  echo 'ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required for Encord stages' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+        )
     if tool_ref.startswith("workbench.nurec"):
         # These stages run inside NVIDIA's NRE container -- a VENDOR image, so it
         # carries none of the tool's runtime dependencies: no Hugging Face CLI
@@ -1806,6 +1836,10 @@ def render_setup_for_tool(
         # Installing into the interpreter npa was installed into (recorded by
         # default_npa_setup) avoids a second, npa-less python winning on PATH.
         parts.append(
+            # SkyPilot reconstructs a task environment and does not reliably
+            # preserve capability selectors declared only by the container.
+            # Bind the narrow CLI to the toolRef that owns this invocation.
+            "export NPA_LIGHT_WORKBENCH_TOOL=nurec\n"
             "set -e\n"
             "if ! command -v ffmpeg >/dev/null 2>&1; then\n"
             "  export DEBIAN_FRONTEND=noninteractive\n"
@@ -1866,7 +1900,9 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
         # the workflow config.  Read the already-resolved argv rather than
         # guessing a fixed variable name, so a deployment can use a scoped
         # token without silently dropping it at submit time.
-        if tool_ref == "workbench.robocasa" or tool_ref.startswith("workbench.robocasa."):
+        if tool_ref == "workbench.robocasa" or tool_ref.startswith(
+            "workbench.robocasa."
+        ):
             for index, arg in enumerate(step.argv[:-1]):
                 if arg != "--token-env":
                     continue

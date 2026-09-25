@@ -85,10 +85,7 @@ def _source_artifacts(row: dict[str, object]) -> list[tuple[str, bytes]]:
     if row["ecosystem"] == "dpkg":
         source = str(row["source"])
         version = str(row["source_version"])
-        parent = (
-            "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
-            f"{source}"
-        )
+        parent = f"usr/share/doc/npa-habitat-sim/ubuntu-sources/{source}"
         archive_name = f"{source}_{version}.orig.tar.gz"
         archive = f"source archive:{source}:{version}\n".encode()
         dsc = (
@@ -99,7 +96,10 @@ def _source_artifacts(row: dict[str, object]) -> list[tuple[str, bytes]]:
             "Checksums-Sha256:\n "
             f"{_digest(archive)} {len(archive)} {archive_name}\n"
         ).encode()
-        return [(f"{parent}/{source}_{version}.dsc", dsc), (f"{parent}/{archive_name}", archive)]
+        return [
+            (f"{parent}/{source}_{version}.dsc", dsc),
+            (f"{parent}/{archive_name}", archive),
+        ]
     package = H._normalize_distribution(str(row["name"]))
     version = str(row["version"])
     path = (
@@ -224,9 +224,7 @@ def test_source_delivery_rejects_missing_or_unrelated_declared_contents() -> Non
     artifacts = closure["records"][identity]["artifacts"]
     missing = copy.deepcopy(closure)
     missing["records"][identity]["artifacts"] = artifacts[:1]
-    assert H._source_delivery_findings(
-        state, {"corresponding_source_closure": missing}
-    )
+    assert H._source_delivery_findings(state, {"corresponding_source_closure": missing})
     unrelated = copy.deepcopy(closure)
     extra = copy.deepcopy(artifacts[1])
     extra["path"] = extra["path"].replace(".orig.tar.gz", ".extra.tar.gz")
@@ -281,7 +279,9 @@ def test_python_source_archive_rejects_metadata_only_content() -> None:
 def test_python_source_archive_rejects_bounded_expansion_ratio() -> None:
     row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}
     payload = io.BytesIO()
-    with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(
+        payload, mode="w", compression=zipfile.ZIP_DEFLATED
+    ) as archive:
         archive.writestr("fixture-1.0/PKG-INFO", b"Name: fixture\nVersion: 1.0\n")
         archive.writestr("fixture-1.0/repetitive.bin", b"0" * 2_000_000)
     assert H._python_source_matches(row, payload.getvalue()) is False
@@ -305,7 +305,13 @@ def test_member_read_checks_limits_before_extracting_body(monkeypatch) -> None:
 def test_layer_inventory_rejects_unowned_superseded_payload() -> None:
     state = H._ScanState(
         layer_payloads=[
-            {"layer": 0, "entry": 1, "path": "opt/rogue/payload", "sha256": "a" * 64, "bytes": 4}
+            {
+                "layer": 0,
+                "entry": 1,
+                "path": "opt/rogue/payload",
+                "sha256": "a" * 64,
+                "bytes": 4,
+            }
         ]
     )
     H._record_source_population(state)
@@ -357,7 +363,12 @@ def test_source_ownership_requires_content_bound_python_metadata() -> None:
         row["metadata_path"]: b"different metadata",
         "opt/venv/lib/python3.10/site-packages/fixture.py": b"changed payload",
     }
-    assert H._layer_python_owners({"id": row}, tracked, "opt/venv/lib/python3.10/site-packages/fixture.py") == set()
+    assert (
+        H._layer_python_owners(
+            {"id": row}, tracked, "opt/venv/lib/python3.10/site-packages/fixture.py"
+        )
+        == set()
+    )
 
 
 def test_source_ownership_requires_content_bound_dpkg_payload() -> None:
@@ -402,12 +413,15 @@ def test_dpkg_database_owner_rejects_undeclared_control_payload() -> None:
             },
         },
     }
-    assert H._layer_contract_owners(
-        state,
-        "var/lib/dpkg/info/opaque.blob",
-        tracked={},
-        source_inventory={"fixture": row},
-    ) == set()
+    assert (
+        H._layer_contract_owners(
+            state,
+            "var/lib/dpkg/info/opaque.blob",
+            tracked={},
+            source_inventory={"fixture": row},
+        )
+        == set()
+    )
     assert H._layer_contract_owners(
         state,
         "var/lib/dpkg/info/fixture.list",
@@ -469,7 +483,9 @@ def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
     )
 
 
-def test_python_source_archive_accepts_normalized_root_and_rejects_ambiguous_root() -> None:
+def test_python_source_archive_accepts_normalized_root_and_rejects_ambiguous_root() -> (
+    None
+):
     row = {"ecosystem": "python", "name": "PyYAML", "version": "6.0"}
     payload = io.BytesIO()
     with tarfile.open(fileobj=payload, mode="w") as archive:
@@ -506,13 +522,24 @@ def test_source_metadata_accepts_clearsigned_dsc_and_repeated_python_fields() ->
         b"Name: fixture\nVersion: 1.0\nClassifier: one\nClassifier: two\n"
     )
     assert metadata["Name"] == "fixture"
-    assert H._python_metadata_fields(b"Name: fixture\nName: other\nVersion: 1.0\n") is None
+    assert (
+        H._python_metadata_fields(b"Name: fixture\nName: other\nVersion: 1.0\n") is None
+    )
 
 
 def test_archive_metadata_helpers_remain_small_and_split() -> None:
     tree = ast.parse(Path(H.__file__).read_text())
-    names = {"_tar_archive_metadata", "_zip_archive_metadata", "_tar_archive_member", "_zip_archive_member"}
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    names = {
+        "_tar_archive_metadata",
+        "_zip_archive_metadata",
+        "_tar_archive_member",
+        "_zip_archive_member",
+    }
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in names
+    ]
     assert len(functions) == len(names)
     assert all(node.end_lineno - node.lineno + 1 < 40 for node in functions)
 
@@ -1397,7 +1424,11 @@ def _fixture() -> tuple[dict[str, object], list[tuple]]:
         ]
     )
     source_rows = [
-        {"ecosystem": "dpkg", "source": "python3-defaults", "source_version": "3.10.6-1~22.04.1"},
+        {
+            "ecosystem": "dpkg",
+            "source": "python3-defaults",
+            "source_version": "3.10.6-1~22.04.1",
+        },
         {"ecosystem": "dpkg", "source": "fixture-source", "source_version": "1.0"},
         {"ecosystem": "dpkg", "source": "transitive", "source_version": "1.0"},
         {"ecosystem": "dpkg", "source": "cmake", "source_version": "1"},
@@ -1596,7 +1627,9 @@ def test_provenance_unexpected_path_is_rejected_before_body_open():
         archive, member, "unexpected.txt", expected, {"declared.txt": 0}, {}, findings
     )
     archive.extractfile.assert_not_called()
-    assert findings == [{"code": "source_provenance_unexpected_path", "path": "unexpected.txt"}]
+    assert findings == [
+        {"code": "source_provenance_unexpected_path", "path": "unexpected.txt"}
+    ]
 
 
 def test_provenance_declared_oversize_is_rejected_before_body_open():
@@ -1699,9 +1732,7 @@ def _cli_fixture(
             file(f"{VERIFIER.PROVENANCE_ROOT}/inputs/{path}", payload)
         )
     if mutation == "missing":
-        omitted = (
-            f"{VERIFIER.PROVENANCE_ROOT}/inputs/{VERIFIER.NPA_SOURCE_PATHS[0]}"
-        )
+        omitted = f"{VERIFIER.PROVENANCE_ROOT}/inputs/{VERIFIER.NPA_SOURCE_PATHS[0]}"
         provenance_entries = [
             entry for entry in provenance_entries if entry[0] != omitted
         ]
@@ -1993,10 +2024,16 @@ def test_root_opaque_whiteout_affects_every_protected_target() -> None:
     contract = {
         "executable_source_bindings": {
             "/opt/npa-runtime/npa/a.py": {
-                "kind": "file", "uid": 0, "gid": 0, "sha256": "a" * 64
+                "kind": "file",
+                "uid": 0,
+                "gid": 0,
+                "sha256": "a" * 64,
             },
             "/opt/npa-runtime/npa/nested/b.py": {
-                "kind": "file", "uid": 0, "gid": 0, "sha256": "b" * 64
+                "kind": "file",
+                "uid": 0,
+                "gid": 0,
+                "sha256": "b" * 64,
             },
         }
     }
@@ -2012,10 +2049,16 @@ def test_nested_opaque_whiteout_affects_only_nested_protected_targets() -> None:
     contract = {
         "executable_source_bindings": {
             "/opt/npa-runtime/npa/a.py": {
-                "kind": "file", "uid": 0, "gid": 0, "sha256": "a" * 64
+                "kind": "file",
+                "uid": 0,
+                "gid": 0,
+                "sha256": "a" * 64,
             },
             "/opt/npa-runtime/npa/nested/b.py": {
-                "kind": "file", "uid": 0, "gid": 0, "sha256": "b" * 64
+                "kind": "file",
+                "uid": 0,
+                "gid": 0,
+                "sha256": "b" * 64,
             },
         }
     }
@@ -2586,7 +2629,9 @@ def test_every_installed_package_list_bytes_are_bound(tmp_path) -> None:
 def test_non_elf_package_file_content_is_bound_to_inventory_digest(tmp_path) -> None:
     baseline = _verify(tmp_path, [_required_entries()])
     entries = _required_entries()
-    file_index = next(index for index, row in enumerate(entries) if row[0] == "usr/bin/python3")
+    file_index = next(
+        index for index, row in enumerate(entries) if row[0] == "usr/bin/python3"
+    )
     entries[file_index] = file("usr/bin/python3", b"rewritten runtime fixture\n")
     report = _verify(
         tmp_path,

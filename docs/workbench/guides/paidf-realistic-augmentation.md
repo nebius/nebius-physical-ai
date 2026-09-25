@@ -7,6 +7,10 @@ generated video against the complete source before using it as training data.
 The starter's exploratory acceptance thresholds establish neither contact
 correctness nor task success.
 
+The [LeRobot comparison](paidf-lerobot-realism.md) applies the review to pinned
+cup-opening, coffee-preparation and simulated cube-lift episodes, with a matched
+native sampling experiment for each task.
+
 ## Define the edit before generation
 
 Inspect the selected episode and camera. Name the objects, small task features,
@@ -178,6 +182,18 @@ and frame through the native loader; `transfer.json` records this evidence.
 This is model conditioning, not source/output pixel blending. Compare it on the
 same source, captions, profiles and seeds, checking both fine task details and
 the intended appearance change: stronger source conditioning may suppress edits.
+
+`transfer_cfg_normalization=enabled` enables the pinned framework's native
+classifier-free guidance normalization during diffusion. The compatibility
+default is `disabled`; both are literal strings so workflow argv can carry the
+choice without an ambiguous boolean flag. The CLI equivalent is
+`--transfer-cfg-normalization enabled` on `cosmos3 generate-variants`. It requires
+edge transfer and records the actual `normalize_cfg` boolean in `transfer.json`.
+This changes the model's guided prediction; it does not postprocess or blend the
+published video. Compare it with normalization disabled using the same source,
+captions, profile, seed, guidance, steps and source controls. Inspect contrast,
+material appearance and small task features separately; normalization is not a
+guarantee of realistic contacts or preserved identity.
 
 The source's **first RGB frame is a separate appearance anchor**. Earlier adapter
 versions always supplied it to the first native generation window, even with

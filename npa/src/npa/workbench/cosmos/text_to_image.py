@@ -130,7 +130,9 @@ def verify_image(path: Path) -> tuple[int, int, int]:
         )
     width, height = image_dimensions(path)
     if width <= 0 or height <= 0:
-        raise Cosmos3TextToImageError(f"image has invalid dimensions {width}x{height}: {path}")
+        raise Cosmos3TextToImageError(
+            f"image has invalid dimensions {width}x{height}: {path}"
+        )
     return size, width, height
 
 
@@ -256,10 +258,16 @@ def uv_argv() -> list[str]:
 
 
 def _run(argv: list[str], *, cwd: Path, env: dict[str, str], what: str) -> None:
-    completed = subprocess.run(argv, cwd=str(cwd), env=env, text=True, capture_output=True)
+    completed = subprocess.run(
+        argv, cwd=str(cwd), env=env, text=True, capture_output=True
+    )
     if completed.returncode != 0:
-        tail = "\n".join((completed.stderr or completed.stdout or "").splitlines()[-25:])
-        raise Cosmos3TextToImageError(f"{what} failed (exit {completed.returncode}):\n{tail}")
+        tail = "\n".join(
+            (completed.stderr or completed.stdout or "").splitlines()[-25:]
+        )
+        raise Cosmos3TextToImageError(
+            f"{what} failed (exit {completed.returncode}):\n{tail}"
+        )
 
 
 def generate(
@@ -287,7 +295,9 @@ def generate(
         )
     source_dir = Path(fetched.source_checkout)
     if not source_dir.is_dir():
-        raise Cosmos3TextToImageError(f"source checkout missing after fetch: {source_dir}")
+        raise Cosmos3TextToImageError(
+            f"source checkout missing after fetch: {source_dir}"
+        )
 
     env = dict(environ if environ is not None else os.environ)
     env["HF_HOME"] = str(Path(config.cache_dir) / "hf")
@@ -317,7 +327,10 @@ def generate(
     shim_dir = link_runtime_library(output_dir / ".libstdcxx")
     infer_env["LD_LIBRARY_PATH"] = shim_dir
     if shim_dir:
-        print(f"cosmos3 text-to-image: LD_LIBRARY_PATH={shim_dir} (libstdc++ only)", flush=True)
+        print(
+            f"cosmos3 text-to-image: LD_LIBRARY_PATH={shim_dir} (libstdc++ only)",
+            flush=True,
+        )
     _run(
         inference_argv(
             input_json=input_json,
@@ -356,7 +369,9 @@ def generate(
     return result
 
 
-def publish(result: TextToImageResult, output_dir: Path, publish_uri: str) -> dict[str, str]:
+def publish(
+    result: TextToImageResult, output_dir: Path, publish_uri: str
+) -> dict[str, str]:
     """Upload the image and its manifest, so the run outlives the pod."""
 
     from npa.clients.storage import StorageClient
@@ -364,8 +379,12 @@ def publish(result: TextToImageResult, output_dir: Path, publish_uri: str) -> di
     client = StorageClient.from_environment()
     prefix = publish_uri if publish_uri.endswith("/") else publish_uri + "/"
     manifest_path = output_dir / MANIFEST_FILENAME
-    manifest_path.write_text(json.dumps(result.as_dict(), indent=2, sort_keys=True) + "\n")
+    manifest_path.write_text(
+        json.dumps(result.as_dict(), indent=2, sort_keys=True) + "\n"
+    )
     return {
         "image_uri": client.upload_file(result.output_image, prefix + IMAGE_FILENAME),
-        "manifest_uri": client.upload_file(str(manifest_path), prefix + MANIFEST_FILENAME),
+        "manifest_uri": client.upload_file(
+            str(manifest_path), prefix + MANIFEST_FILENAME
+        ),
     }

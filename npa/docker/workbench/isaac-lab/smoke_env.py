@@ -82,7 +82,9 @@ def check_import_versions() -> CheckResult:
         shim = Path(ISAAC_LAB_PYTHON)
         if not (shim.is_file() and os.access(shim, os.X_OK)):
             return CheckResult(
-                "import Isaac Lab core modules", False, f"{shim} is not an executable shim"
+                "import Isaac Lab core modules",
+                False,
+                f"{shim} is not an executable shim",
             )
         # Reaching this point at all means the bootstrap already ran: isaaclab and
         # isaacsim are importable only from the runtime-fetched cache tree.
@@ -93,14 +95,18 @@ def check_import_versions() -> CheckResult:
             f"isaaclab={lab_version}; {sim_detail}; runtime-fetched from {isaac_root}",
         )
     except Exception as exc:
-        return CheckResult("import Isaac Lab core modules", False, _format_exception(exc))
+        return CheckResult(
+            "import Isaac Lab core modules", False, _format_exception(exc)
+        )
 
 
 def check_rt_gpu() -> CheckResult:
     try:
         nvidia_smi = shutil.which("nvidia-smi")
         if nvidia_smi is None:
-            return CheckResult("verify L40S/RT GPU access", False, "nvidia-smi not found")
+            return CheckResult(
+                "verify L40S/RT GPU access", False, "nvidia-smi not found"
+            )
         result = subprocess.run(
             [nvidia_smi, "--query-gpu=name,memory.total", "--format=csv,noheader"],
             stdout=subprocess.PIPE,
@@ -117,7 +123,9 @@ def check_rt_gpu() -> CheckResult:
             )
         gpu_info = result.stdout.strip()
         if not any(marker in gpu_info for marker in RT_GPU_MARKERS):
-            return CheckResult("verify L40S/RT GPU access", False, f"non-RT GPU reported: {gpu_info}")
+            return CheckResult(
+                "verify L40S/RT GPU access", False, f"non-RT GPU reported: {gpu_info}"
+            )
         return CheckResult("verify L40S/RT GPU access", True, gpu_info)
     except Exception as exc:
         return CheckResult("verify L40S/RT GPU access", False, _format_exception(exc))
@@ -130,12 +138,18 @@ def check_launch_runtime_and_cuda() -> CheckResult:
         app_launcher = AppLauncher(headless=True)
         simulation_app = app_launcher.app
         if simulation_app is None:
-            return CheckResult("launch Isaac Sim and check CUDA", False, "AppLauncher.app is None")
+            return CheckResult(
+                "launch Isaac Sim and check CUDA", False, "AppLauncher.app is None"
+            )
         importlib.import_module("isaaclab_tasks")
 
         torch = importlib.import_module("torch")
         if not torch.cuda.is_available():
-            return CheckResult("launch Isaac Sim and check CUDA", False, "torch.cuda.is_available() is false")
+            return CheckResult(
+                "launch Isaac Sim and check CUDA",
+                False,
+                "torch.cuda.is_available() is false",
+            )
         before = torch.cuda.memory_allocated(0)
         tensor = torch.ones((128, 128), device="cuda")
         allocated = torch.cuda.memory_allocated(0) - before
@@ -149,7 +163,9 @@ def check_launch_runtime_and_cuda() -> CheckResult:
             f"allocated_delta_bytes={allocated}; sum={total}",
         )
     except Exception as exc:
-        return CheckResult("launch Isaac Sim and check CUDA", False, _format_exception(exc))
+        return CheckResult(
+            "launch Isaac Sim and check CUDA", False, _format_exception(exc)
+        )
 
 
 def _run_help(command: list[str], cwd: Path) -> tuple[bool, str]:
@@ -180,22 +196,40 @@ def check_training_eval_entrypoints() -> CheckResult:
         play_py = root / PLAY_REL
         missing = [str(path) for path in (train_py, play_py) if not path.is_file()]
         if missing:
-            return CheckResult("check training/eval entry points", False, "missing: " + ", ".join(missing))
+            return CheckResult(
+                "check training/eval entry points",
+                False,
+                "missing: " + ", ".join(missing),
+            )
 
         # Invoke through the Isaac interpreter (the bootstrap shim), not isaaclab.sh.
-        train_ok, train_output = _run_help([ISAAC_LAB_PYTHON, str(train_py), "--help"], root)
+        train_ok, train_output = _run_help(
+            [ISAAC_LAB_PYTHON, str(train_py), "--help"], root
+        )
         if not train_ok:
-            return CheckResult("check training/eval entry points", False, f"train --help failed: {train_output}")
-        eval_ok, eval_output = _run_help([ISAAC_LAB_PYTHON, str(play_py), "--help"], root)
+            return CheckResult(
+                "check training/eval entry points",
+                False,
+                f"train --help failed: {train_output}",
+            )
+        eval_ok, eval_output = _run_help(
+            [ISAAC_LAB_PYTHON, str(play_py), "--help"], root
+        )
         if not eval_ok:
-            return CheckResult("check training/eval entry points", False, f"eval --help failed: {eval_output}")
+            return CheckResult(
+                "check training/eval entry points",
+                False,
+                f"eval --help failed: {eval_output}",
+            )
         return CheckResult(
             "check training/eval entry points",
             True,
             f"train={train_py}; eval={play_py}",
         )
     except Exception as exc:
-        return CheckResult("check training/eval entry points", False, _format_exception(exc))
+        return CheckResult(
+            "check training/eval entry points", False, _format_exception(exc)
+        )
 
 
 def _print_result(result: CheckResult) -> None:

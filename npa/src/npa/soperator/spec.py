@@ -121,7 +121,9 @@ def validate_ssh_public_key_record(value: str) -> str:
     try:
         decoded = base64.b64decode(fields[1], validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise SoperatorSpecError("root login SSH key has an invalid base64 blob") from exc
+        raise SoperatorSpecError(
+            "root login SSH key has an invalid base64 blob"
+        ) from exc
     if not decoded:
         raise SoperatorSpecError("root login SSH key has an empty key blob")
     return normalized
@@ -143,7 +145,9 @@ class WorkerPoolSpec:
     # Node-local Docker/Enroot image cache disk (the reason multi-GB GPU tool
     # images don't thrash the boot disk). Enables node_local_image_disk.
     docker_cache: bool = False
-    docker_cache_gib: int = 372  # must be divisible by 93 for IO_M3 (keep IO_M3 quota modest)
+    docker_cache_gib: int = (
+        372  # must be divisible by 93 for IO_M3 (keep IO_M3 quota modest)
+    )
     docker_cache_disk_type: str = "NETWORK_SSD_IO_M3"
     # Reserved-capacity selectors are runtime inputs. ``capacity_block_group``
     # matches the fleet contract and accepts an immutable group ID;
@@ -154,9 +158,7 @@ class WorkerPoolSpec:
     capacity_block_group_name: str = ""
     # Populated only by the provider preflight for name-based selectors. It is
     # deliberately absent from YAML parsing and public plan/status output.
-    resolved_capacity_block_group_id: str = field(
-        default="", repr=False, compare=False
-    )
+    resolved_capacity_block_group_id: str = field(default="", repr=False, compare=False)
 
     def is_gpu(self) -> bool:
         return self.platform.startswith("gpu-")
@@ -294,10 +296,15 @@ class SoperatorSpec:
 
     def validate(self) -> None:
         if not self.name or not self.name.replace("-", "").isalnum():
-            raise SoperatorSpecError(f"cluster name must be alphanumeric/dash: {self.name!r}")
+            raise SoperatorSpecError(
+                f"cluster name must be alphanumeric/dash: {self.name!r}"
+            )
         if self.system_min_size < 3:
             raise SoperatorSpecError("system_min_size must be >= 3 (recipe rule)")
-        if self.system_max_size is not None and self.system_max_size < self.system_min_size:
+        if (
+            self.system_max_size is not None
+            and self.system_max_size < self.system_min_size
+        ):
             raise SoperatorSpecError(
                 "control_plane.system.max_size must be >= min_size"
             )
@@ -381,7 +388,9 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
         raise SoperatorSpecError("spec must be a mapping")
     api = str(data.get("apiVersion", API_VERSION))
     if api != API_VERSION:
-        raise SoperatorSpecError(f"unsupported apiVersion {api!r}; expected {API_VERSION}")
+        raise SoperatorSpecError(
+            f"unsupported apiVersion {api!r}; expected {API_VERSION}"
+        )
 
     raw_workers = data.get("workers") or []
     if not isinstance(raw_workers, list):
@@ -437,7 +446,9 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
         system_max_size=(
             int(system["max_size"]) if system.get("max_size") is not None else None
         ),
-        system_preset=(str(system["preset"]) if system.get("preset") is not None else None),
+        system_preset=(
+            str(system["preset"]) if system.get("preset") is not None else None
+        ),
         controller_preset=(
             str(controller["preset"]) if controller.get("preset") is not None else None
         ),
@@ -449,11 +460,11 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
         login_preset=str(login.get("preset", "16vcpu-64gb")),
         workers=workers,
         accounting=bool(data.get("accounting", False)),
-        slurm_rest_enabled=(
-            rest_value if rest_value is not None else None
-        ),
+        slurm_rest_enabled=(rest_value if rest_value is not None else None),
         telemetry=bool(data.get("telemetry", False)),
-        use_default_apparmor_profile=bool(data.get("use_default_apparmor_profile", False)),
+        use_default_apparmor_profile=bool(
+            data.get("use_default_apparmor_profile", False)
+        ),
         jail_size_gib=int(data.get("jail_size_gib", 512)),
         slurm_operator_version=str(
             data.get("slurm_operator_version", DEFAULT_SLURM_OPERATOR_VERSION)
