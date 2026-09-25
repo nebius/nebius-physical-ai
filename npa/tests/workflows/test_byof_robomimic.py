@@ -128,6 +128,8 @@ def _smoke_python() -> str:
 
 
 def _smoke_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    pytest.importorskip("numpy")
+    pytest.importorskip("torch")
     h5py = ModuleType("h5py")
     robomimic = ModuleType("robomimic")
     config = ModuleType("robomimic.config")
@@ -2487,6 +2489,17 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
     assert "robosuite" not in smoke
     assert '"strict_reserved_capacity_attested": True' not in smoke
     ast.parse(_smoke_python())
+
+
+@pytest.mark.parametrize("dependency", ("numpy", "torch"))
+def test_robomimic_smoke_module_skips_missing_optional_dependency(
+    monkeypatch: pytest.MonkeyPatch, dependency: str
+) -> None:
+    for name in ("numpy", "torch"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setitem(sys.modules, dependency, None)
+    with pytest.raises(pytest.skip.Exception, match=f"could not import '{dependency}'"):
+        _smoke_module(monkeypatch)
 
 
 def test_robomimic_dataset_stream_stops_and_removes_oversized_partial(
