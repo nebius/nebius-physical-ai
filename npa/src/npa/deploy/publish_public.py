@@ -41,6 +41,7 @@ import base64
 import hashlib
 import http.client
 import json
+import math
 import os
 import re
 import shutil
@@ -804,6 +805,32 @@ def _scan_content_agents_payload_exact_digest(
     }
 
 
+def _is_finite_manifest_number(value: Any) -> bool:
+    """Return whether a JSON manifest value is a finite, non-boolean number."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
+
+
+def _valid_content_agents_rigid_physics(rigid: Any) -> bool:
+    """Validate rigid-physics evidence at the public-promotion boundary."""
+
+    if not isinstance(rigid, dict):
+        return False
+    mass_or_density = rigid.get("mass_or_density")
+    friction = rigid.get("friction")
+    return (
+        rigid.get("rigid_body") is True
+        and rigid.get("collision") is True
+        and rigid.get("fixed") is False
+        and _is_finite_manifest_number(mass_or_density)
+        and mass_or_density > 0
+        and _is_finite_manifest_number(friction)
+        and 0.1 <= friction <= 2.0
+    )
+
+
 def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Bind Content Agents publication to clean bytes and the accepted RTX run."""
 
@@ -979,14 +1006,7 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
             ):
                 raise RuntimeError(f"Content Agents RTX proof has no {artifact_name}")
         rigid = proof.get("rigid_physics")
-        if (
-            not isinstance(rigid, dict)
-            or rigid.get("rigid_body") is not True
-            or rigid.get("collision") is not True
-            or rigid.get("fixed") is not False
-            or float(rigid.get("mass_or_density") or 0) <= 0
-            or not 0.1 <= float(rigid.get("friction") or 0) <= 2.0
-        ):
+        if not _valid_content_agents_rigid_physics(rigid):
             raise RuntimeError("Content Agents accepted rigid-physics proof is invalid")
 
         specialized = accepted.get("payload_scan")
