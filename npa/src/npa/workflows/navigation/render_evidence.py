@@ -26,6 +26,8 @@ def capture_settings():
         {
             prefix + "Orchestrator/enabled": True,
             "/omni/replicator/captureOnPlay": False,
+            "/rtx/hydra/supportMultiTickRate": True,
+            "/rtx/rendering/perSensorTickTlas": True,
         },
     ):
         yield
@@ -128,8 +130,10 @@ def frozen_physics(env):
     with _settings(
         carb.settings.get_settings(), {"/app/player/playSimulations": False}
     ):
-        yield before
-        _check_frozen(before, _native_snapshot(env))
+        try:
+            yield before
+        finally:
+            _check_frozen(before, _native_snapshot(env))
 
 
 def _camera_values(parameters):
@@ -209,9 +213,8 @@ def renderer_evidence(annotators, camera, transform, native):
     observed = _camera_values(annotators["CameraParams"].get_data())
     expected = _expected_camera(camera, transform)
     _check_camera(observed, expected)
-    reference = _reference_time(
-        annotators["ReferenceTime"].get_data(), native["clocks"]["physics_seconds"]
-    )
+    settings = _render_settings()
+    reference = _frame_time(annotators, native, settings)
     return {
         "native_clocks": native["clocks"],
         "native_clock_source": "isaacsim.core.simulation_manager.native_step_events",
@@ -220,4 +223,33 @@ def renderer_evidence(annotators, camera, transform, native):
         "expected_camera": {key: value.tolist() for key, value in expected.items()},
         "native_physics_unchanged": True,
         "frozen_render_passes": 2,
+        "render_settings": settings,
     }
+
+
+def _render_settings():
+    import carb.settings
+
+    # Lab's custom app omits these two sensor settings from Isaac's base app.
+    expected = {
+        "/rtx/hydra/supportMultiTickRate": True,
+        "/rtx/rendering/perSensorTickTlas": True,
+        "/exts/omni.replicator.core/Orchestrator/enabled": True,
+        "/app/player/playSimulations": False,
+    }
+    settings = carb.settings.get_settings()
+    observed = {key: settings.get(key) for key in expected}
+    if observed != expected:
+        raise RuntimeError(f"native capture settings changed: {observed}")
+    return observed
+
+
+def _frame_time(annotators, native, settings):
+    try:
+        return _reference_time(
+            annotators["ReferenceTime"].get_data(), native["clocks"]["physics_seconds"]
+        )
+    except RuntimeError as error:
+        raise RuntimeError(
+            f"{error}; native clocks={native['clocks']}; render settings={settings}"
+        ) from error

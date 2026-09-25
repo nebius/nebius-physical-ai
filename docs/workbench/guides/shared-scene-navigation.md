@@ -86,9 +86,11 @@ throughput or learning convergence.
 A native RTX PRO 6000 qualification constructed all 4000 robots in one warehouse
 and passed repeated-reset and coincident-peer controls with zero measured focal
 state/observation deltas and zero peer contact. The obstacle positive control
-produced actual contact. Sustained native PPO execution has begun; these controls
-do not establish completed training, held-out performance or video acceptance.
-The readiness record retains those outstanding gates.
+produced actual contact. Native PPO completed 1500 iterations and 48 million
+control transitions in 6230.69 seconds of learning, averaging 7703.80 transitions
+per second. The checkpoint changed by a finite, nonzero parameter norm and all
+34,500 exported scalar observations were finite. Independent held-out performance
+and video acceptance remain outstanding in the readiness record.
 
 Native training retains `reference_checkpoint.pt` before the first update,
 `policy.pt` after learning, TensorBoard logs and exported `learning-curves.json`.
@@ -111,7 +113,9 @@ while the focal robot follows its native policy. The video overlays measured
 goal distance, contact forces and simulated time. Peer visuals are hidden only
 for this recording; their physics remain active, and render steps use zero
 simulation delta. Capture temporarily enables the scheduler disabled by the pinned
-Lab headless rendering preset and restores settings afterward. Two frozen render
+Lab headless rendering preset and enables the native multi-tick and per-sensor
+acceleration-structure modes that Isaac's base app supplies but Lab omits. It
+restores these settings afterward. Two frozen render
 passes flush annotations. Each accepted frame must match its authored camera
 pose, intrinsics and resolution, and its rational renderer time must match actual
 native simulation-manager time backed by physics step events, with the same time

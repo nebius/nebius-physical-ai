@@ -22,7 +22,7 @@
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "Native qualification materialized sealed input/source objects and wrote prepared publications through configured storage; final learned/evaluation publication remains pending.",
+      "reason": "Native qualification materialized sealed input/source objects and verified prepared and completed 1500-iteration learned-checkpoint publications through configured storage; accepted evaluation publication remains pending.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]
@@ -50,7 +50,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Isaac Sim 6.0.1 / Isaac Lab 3 executed all 4000 robots in one scene. Repeated-reset/peer-isolation controls passed with zero state/observation deltas and peer contact; the obstacle contact control passed and sustained PPO began. Full 1500-iteration training, reloaded held-out comparison, corrected rollout video and optional RGB-D task probes remain pending.",
+      "reason": "Isaac Sim 6.0.1 / Isaac Lab 3 executed all 4000 robots in one scene. Repeated-reset/peer-isolation controls passed with zero state/observation deltas and peer contact; the obstacle contact control passed. All 1500 PPO iterations and 48 million control transitions completed with finite checkpoint updates and learning curves. Reloaded held-out comparison, corrected rollout video and optional RGB-D task probes remain pending.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]

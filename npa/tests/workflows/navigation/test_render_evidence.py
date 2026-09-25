@@ -150,7 +150,12 @@ def test_capture_enables_actual_pinned_scheduler_and_restores(monkeypatch):
     monkeypatch.setitem(sys.modules, "carb", SimpleNamespace(settings=module))
     monkeypatch.setitem(sys.modules, "carb.settings", module)
     with evidence.capture_settings():
-        assert settings == {enabled: True, capture: False}
+        assert settings == {
+            enabled: True,
+            capture: False,
+            "/rtx/hydra/supportMultiTickRate": True,
+            "/rtx/rendering/perSensorTickTlas": True,
+        }
     assert settings == {enabled: False, capture: True}
 
 
@@ -257,3 +262,59 @@ def test_clock_never_creates_missing_native_state(native_clock_api, missing):
         stage.GetPrimAtPath = lambda path: None
     with pytest.raises(RuntimeError, match="unavailable"):
         evidence._native_clocks(env)
+
+
+def test_capture_preserves_clocks_even_when_metadata_rejects(monkeypatch):
+    import sys
+
+    settings = Settings({"/app/player/playSimulations": True})
+    module = SimpleNamespace(get_settings=lambda: settings)
+    monkeypatch.setitem(sys.modules, "carb", SimpleNamespace(settings=module))
+    monkeypatch.setitem(sys.modules, "carb.settings", module)
+    snapshots = iter(
+        [{"clocks": {"physics_seconds": 24}}, {"clocks": {"physics_seconds": 25}}]
+    )
+    monkeypatch.setattr(evidence, "_native_snapshot", lambda env: next(snapshots))
+    with pytest.raises(RuntimeError, match="advanced native clocks") as failure:
+        with evidence.frozen_physics(object()):
+            raise RuntimeError("metadata rejected")
+    assert str(failure.value.__context__) == "metadata rejected"
+    assert settings["/app/player/playSimulations"] is True
+
+
+def test_failed_frame_preserves_native_clock_and_render_mode():
+    annotator = SimpleNamespace(
+        get_data=lambda: {"referenceTimeNumerator": 14, "referenceTimeDenominator": 15}
+    )
+    clocks = {
+        "physics_seconds": 24.01,
+        "fabric_seconds": 24.01,
+        "physics_step_count": 4802,
+    }
+    with pytest.raises(RuntimeError, match="stale rendered reference time") as failure:
+        evidence._frame_time(
+            {"ReferenceTime": annotator}, {"clocks": clocks}, {"multitick": True}
+        )
+    assert "fabric_seconds" in str(failure.value)
+    assert "4802" in str(failure.value)
+    assert "multitick" in str(failure.value)
+
+
+def test_render_mode_rejects_legacy_frame_clock(monkeypatch):
+    import sys
+
+    settings = Settings(
+        {
+            "/rtx/hydra/supportMultiTickRate": True,
+            "/rtx/rendering/perSensorTickTlas": True,
+            "/exts/omni.replicator.core/Orchestrator/enabled": True,
+            "/app/player/playSimulations": False,
+        }
+    )
+    module = SimpleNamespace(get_settings=lambda: settings)
+    monkeypatch.setitem(sys.modules, "carb", SimpleNamespace(settings=module))
+    monkeypatch.setitem(sys.modules, "carb.settings", module)
+    assert evidence._render_settings() == settings
+    settings["/rtx/hydra/supportMultiTickRate"] = False
+    with pytest.raises(RuntimeError, match="native capture settings changed"):
+        evidence._render_settings()
