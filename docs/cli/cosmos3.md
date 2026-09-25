@@ -17,7 +17,7 @@ failure-candidates  Generate guarded video candidates from measured failed-task 
 nano-video-augment  Augment every source interval with Cosmos3-Nano structural edge control.
 nano-video-augment-recover  Recover existing generation or retry publication without generating again.
 nano-video-batch  Run measured chunked video requests through the Nano vLLM-Omni Ray service.
-super-benchmark  Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation.
+super-benchmark  Run a fixed Cosmos3-Super node benchmark or single-GPU validation.
 ray-batch  Submit a durable SDG batch through Cosmos Framework's native Ray Serve path.
 ray-health  Check authenticated model readiness, not merely process liveness.
 ray-serve  Launch the persistent native Ray Serve model inside its GPU image.
@@ -46,7 +46,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 | `nano-video-augment` | Augment every source interval with Cosmos3-Nano structural edge control. |
 | `nano-video-augment-recover` | Recover existing generation or retry publication without generating again. |
 | `nano-video-batch` | Run measured chunked video requests through the Nano vLLM-Omni Ray service. |
-| `super-benchmark` | Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation. |
+| `super-benchmark` | Run a fixed Cosmos3-Super node benchmark or single-GPU validation. |
 | `ray-batch` | Submit a durable SDG batch through Cosmos Framework's native Ray Serve path. |
 | `ray-health` | Check authenticated model readiness, not merely process liveness. |
 | `ray-serve` | Launch the persistent native Ray Serve model inside its GPU image. |

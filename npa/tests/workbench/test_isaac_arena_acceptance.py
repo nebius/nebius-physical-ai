@@ -836,3 +836,17 @@ def test_task_registration_rejects_unregistered_policy_pairing(monkeypatch) -> N
     )
     with pytest.raises(IsaacArenaError, match="registered native task progress"):
         qualify_visual_acceptance(**proof)
+
+
+def test_film_acceptance_requires_resolution_scaled_evidence_filter():
+    from npa.workbench.isaac_arena.video_evidence import evidence_filter
+
+    proof = _proof()
+    proof["capture"]["physics_freeze"]["rendering"].update(
+        profile="film",
+        minimum_settling_renders=32,
+    )
+    with pytest.raises(IsaacArenaError, match="video is not bound"):
+        qualify_visual_acceptance(**proof)
+    proof["video"]["derivation"]["filter"] = evidence_filter("film")
+    assert qualify_visual_acceptance(**proof)["qualified"]

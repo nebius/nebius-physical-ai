@@ -14,6 +14,7 @@ from npa.workbench.isaac_arena.video_evidence import (
     EVIDENCE_FILTER,
     EVIDENCE_PLAYBACK_RATE,
     denoise_mp4,
+    evidence_filter,
     probe_mp4,
 )
 
@@ -291,6 +292,49 @@ def test_denoising_preserves_original_and_declares_transform(tmp_path: Path) -> 
     assert result["codec"] == "h264"
     assert result["pixel_format"] == "yuv420p"
     assert result["duration_seconds"] >= 2 * (45 - 1) / 15
+
+
+@pytest.mark.parametrize("moving", [False, True])
+def test_film_evidence_preserves_4k_and_rejects_static_noise(tmp_path, moving):
+    small = tmp_path / "scene.mp4"
+    _encode(small, _add_noise(_scene(45, moving=moving), "fine", 7))
+    source = tmp_path / "native-4k.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(small),
+            "-vf",
+            "scale=3840:2160",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            str(source),
+        ],
+        check=True,
+    )
+    original = hashlib.sha256(source.read_bytes()).hexdigest()
+    derivative, record = denoise_mp4(source, video_profile="film")
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == original
+    assert record["filter"] == "hqdn3d=20:16:30:24,gblur=sigma=10.5,setpts=2*PTS"
+    assert evidence_filter() == EVIDENCE_FILTER
+    if moving:
+        metadata = probe_mp4(derivative)
+        assert (metadata["width"], metadata["height"]) == (3840, 2160)
+        assert metadata["frame_count"] == 45
+        assert metadata["motion"]["changed_frame_pairs"] >= 2
+    else:
+        with pytest.raises(
+            IsaacArenaError, match="noise-resistant coherent scene motion"
+        ):
+            probe_mp4(derivative)
 
 
 @pytest.mark.parametrize("kind", ["fine", "coarse", "flicker"])

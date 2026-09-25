@@ -2,8 +2,8 @@
 
 The sim2real BYO trainer (:mod:`npa.workflows.sim2real.byo_isaac_trainer`) trains
 an rsl_rl ``OnPolicyRunner`` and uploads ``model_*.pt`` checkpoints to S3. Those
-checkpoints store an ``ActorCritic`` ``model_state_dict`` whose ``actor.*`` keys
-are a plain MLP. Running that policy on a robot otherwise requires torch **and**
+checkpoints store either an ``ActorCritic`` ``model_state_dict`` or an RSL-RL 5
+``MLPModel`` ``actor_state_dict`` with a plain MLP. Running that policy on a robot otherwise requires torch **and**
 Isaac Lab on the robot, which is not deployable.
 
 This module re-materializes the actor MLP directly from the checkpoint's
@@ -56,6 +56,11 @@ _ACTIVATIONS = {
     "leakyrelu": "LeakyReLU",
     "lrelu": "LeakyReLU",
     "gelu": "GELU",
+    "crelu": "CELU",
+    "softplus": "Softplus",
+    "swish": "SiLU",
+    "mish": "Mish",
+    "identity": "Identity",
 }
 
 # Best-effort, conservative hints for known Isaac Lab tasks. These describe the
@@ -299,12 +304,14 @@ def _resolve_activation(torch: Any, activation: str) -> Any:
 
 
 def load_state_dict_from_checkpoint(checkpoint: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Return the ActorCritic state dict from an rsl_rl checkpoint payload.
+    """Return canonical actor.* tensors from legacy or RSL-RL 5 checkpoints.
 
     rsl_rl ``OnPolicyRunner.save`` writes ``{"model_state_dict": ..., ...}``; a
     bare state dict (``actor.*`` keys at top level) is also accepted.
     """
 
+    if "actor_state_dict" in checkpoint:
+        return _rsl5_actor_state(checkpoint["actor_state_dict"])
     if "model_state_dict" in checkpoint:
         state = checkpoint["model_state_dict"]
         if not isinstance(state, Mapping):
@@ -316,6 +323,58 @@ def load_state_dict_from_checkpoint(checkpoint: Mapping[str, Any]) -> Mapping[st
         "checkpoint has neither a 'model_state_dict' nor top-level 'actor.*' "
         "keys; not an rsl_rl ActorCritic checkpoint"
     )
+
+
+def _rsl5_actor_state(state: Any) -> Mapping[str, Any]:
+    if not isinstance(state, Mapping):
+        raise PolicyExportError("actor_state_dict is not a mapping")
+    allowed = {
+        "distribution.std_param",
+        "distribution.log_std_param",
+        "obs_normalizer._mean",
+        "obs_normalizer._var",
+        "obs_normalizer._std",
+        "obs_normalizer.count",
+    }
+    if any(
+        key not in allowed and not re.fullmatch(r"mlp\.\d+\.(weight|bias)", key)
+        for key in state
+    ):
+        raise PolicyExportError("only plain RSL-RL 5 MLP actors are supported")
+    return {
+        "actor." + key.removeprefix("mlp."): value
+        for key, value in state.items()
+        if key.startswith("mlp.")
+    }
+
+
+def _rsl5_normalization(torch: Any, state: Mapping, obs_dim: int):
+    keys = {key for key in state if key.startswith("obs_normalizer.")}
+    if not keys:
+        return None, {"type": "none", "note": "actor consumes raw observations"}
+    required = {"obs_normalizer." + key for key in ("_mean", "_std", "_var", "count")}
+    if keys != required:
+        raise PolicyExportError("incomplete RSL-RL 5 observation normalization")
+    mean = torch.as_tensor(state["obs_normalizer._mean"], dtype=torch.float32).reshape(
+        -1
+    )
+    std = torch.as_tensor(state["obs_normalizer._std"], dtype=torch.float32).reshape(-1)
+    if mean.numel() != obs_dim or std.numel() != obs_dim:
+        raise PolicyExportError("RSL-RL 5 normalization dimensions differ from actor")
+    if (
+        not torch.isfinite(mean).all()
+        or not torch.isfinite(std).all()
+        or (std < 0).any()
+    ):
+        raise PolicyExportError("invalid RSL-RL 5 normalization statistics")
+    return (mean, std + 1e-2), {
+        "type": "empirical_baked",
+        "eps": 1e-2,
+        "formula": "(obs - mean) / (std + eps)",
+        "mean": mean.tolist(),
+        "std": std.tolist(),
+        "note": "RSL-RL 5 normalization is baked in; feed raw observations.",
+    }
 
 
 def _build_actor_module(
@@ -354,11 +413,13 @@ def _detect_normalization(
 ) -> tuple[Any | None, dict[str, Any]]:
     """Detect an rsl_rl empirical observation normalizer in the checkpoint.
 
-    Returns ``(mean_var_or_None, normalization_spec)``. When present, the
+    Returns ``(mean_scale_or_None, normalization_spec)``. When present, the
     normalizer is baked into the exported graph so the ONNX consumer always
     feeds RAW observations.
     """
 
+    if "actor_state_dict" in checkpoint:
+        return _rsl5_normalization(torch, checkpoint["actor_state_dict"], obs_dim)
     state = checkpoint.get("obs_norm_state_dict")
     if not isinstance(state, Mapping):
         return None, {"type": "none", "note": "actor consumes raw observations"}
@@ -382,7 +443,7 @@ def _detect_normalization(
         "mean": [float(v) for v in mean_t.tolist()],
         "var": [float(v) for v in var_t.tolist()],
     }
-    return (mean_t, var_t), spec
+    return (mean_t, torch.sqrt(var_t + 1e-8)), spec
 
 
 def _make_forward_module(torch: Any, actor: Any, norm: Any | None) -> Any:
@@ -393,16 +454,16 @@ def _make_forward_module(torch: Any, actor: Any, norm: Any | None) -> Any:
             super().__init__()
             self.actor = actor
             if norm is not None:
-                mean_t, var_t = norm
+                mean_t, scale_t = norm
                 self.register_buffer("_obs_mean", mean_t)
-                self.register_buffer("_obs_var", var_t)
+                self.register_buffer("_obs_scale", scale_t)
                 self._normalize = True
             else:
                 self._normalize = False
 
         def forward(self, obs: Any) -> Any:
             if self._normalize:
-                obs = (obs - self._obs_mean) / torch.sqrt(self._obs_var + 1e-8)
+                obs = (obs - self._obs_mean) / self._obs_scale
             return self.actor(obs)
 
     module = _PolicyForward()
@@ -532,6 +593,8 @@ def export_policy_onnx(
         action_limits=action_limits,
         normalization=norm_spec,
     )
+    if "actor_state_dict" in checkpoint:
+        contract["network"]["framework"] = "rsl_rl.models.MLPModel"
     contract_path.write_text(
         json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

@@ -1,4 +1,4 @@
-"""Reject security regressions between a Git base and a proposed merge snapshot."""
+"""Reject security regressions and known vulnerable application dependencies."""
 
 from __future__ import annotations
 
@@ -13,6 +13,18 @@ from pathlib import Path
 
 from security_dependencies import scan_dependencies
 from security_source import scan_source
+
+# Application and CI inputs must stay clean even when an advisory is newly
+# published for a version already on main. Vendor/runtime inventories retain
+# differential checks until their separately validated images can be rebuilt.
+_STRICT_DEPENDENCY_PATHS = {
+    "npa/requirements-lock.txt",
+    "npa/ci/requirements.txt",
+    "npa/pyproject.toml",
+    "npa/pyproject.toml (resolved core + dev)",
+    "npa/tests/browser/package-lock.json",
+    "scripts/security-requirements.txt",
+}
 
 
 def _git(root: Path, *arguments: str) -> bytes:
@@ -115,12 +127,41 @@ def regressions(base: list[dict], candidate: list[dict]) -> list[dict]:
 
 
 def _scan(root: Path, output: Path, cache: Path) -> list[dict]:
-    if not (root / "npa/pyproject.toml").is_file():
-        raise ValueError("Required application dependency manifest is missing")
+    for manifest in (
+        "npa/pyproject.toml",
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+    ):
+        if not (root / manifest).is_file():
+            raise ValueError(
+                f"Required application dependency manifest is missing: {manifest}"
+            )
     findings = scan_source(root, output / "source")
     findings.extend(scan_dependencies(root, output / "dependencies", cache))
     (output / "findings.json").write_text(json.dumps(findings, indent=2))
     return findings
+
+
+def blocking_findings(base: list[dict], candidate: list[dict]) -> list[dict]:
+    """Reject current application vulnerabilities as well as new occurrences.
+
+    Args:
+        base: Findings from the target revision under the same scanner policy.
+        candidate: Findings from the proposed merge.
+    Returns:
+        All application/CI dependency findings and new findings elsewhere.
+    Raises:
+        KeyError: A scanner omitted a required identity field.
+    """
+    tolerated = [
+        finding
+        for finding in base
+        if not (
+            finding["scanner"] == "trivy"
+            and finding["path"] in _STRICT_DEPENDENCY_PATHS
+        )
+    ]
+    return regressions(tolerated, candidate)
 
 
 def _arguments() -> argparse.Namespace:
@@ -139,16 +180,37 @@ def _arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _report_regressions(added: list[dict], summary: dict, output: Path) -> int:
-    summary["regressions"] = added
+def _report_findings(blocking: list[dict], summary: dict, output: Path) -> int:
+    summary["blocking_findings"] = blocking
     (output / "summary.json").write_text(json.dumps(summary, indent=2))
-    for finding in added:
+    for finding in blocking:
         print(
             f"{finding['path']}:{finding['line']}: {finding['scanner']} "
             f"{finding['rule']}: {finding['message']}"
         )
-    print(f"Security regression gate: {len(added)} new findings")
-    return int(bool(added))
+    print(f"Security gate: {len(blocking)} blocking findings")
+    return int(bool(blocking))
+
+
+def _compare_snapshots(arguments: argparse.Namespace, root: Path, output: Path) -> int:
+    base_commit = _snapshot_revision(root, arguments.base, output / "base")
+    if arguments.head:
+        head_commit = _snapshot_revision(root, arguments.head, output / "candidate")
+    else:
+        _snapshot_working(root, output / "candidate")
+        head_commit = "working-files"
+    base = _scan(output / "base", output / "base-report", output / "cache")
+    candidate = _scan(
+        output / "candidate", output / "candidate-report", output / "cache"
+    )
+    summary = {
+        "base": base_commit,
+        "head": head_commit,
+        "base_findings": len(base),
+        "candidate_findings": len(candidate),
+        "regressions": regressions(base, candidate),
+    }
+    return _report_findings(blocking_findings(base, candidate), summary, output)
 
 
 def main() -> int:
@@ -157,7 +219,7 @@ def main() -> int:
     Args:
         None; arguments are read from the command line.
     Returns:
-        Zero for no regressions, one for findings, two for operational failure.
+        Zero for no blocking findings, one for findings, two for operational failure.
     Raises:
         OSError: The private output directory cannot be created.
     """
@@ -169,24 +231,7 @@ def main() -> int:
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=False)
     try:
-        base_commit = _snapshot_revision(root, arguments.base, output / "base")
-        if arguments.head:
-            head_commit = _snapshot_revision(root, arguments.head, output / "candidate")
-        else:
-            _snapshot_working(root, output / "candidate")
-            head_commit = "working-files"
-        base = _scan(output / "base", output / "base-report", output / "cache")
-        candidate = _scan(
-            output / "candidate", output / "candidate-report", output / "cache"
-        )
-        added = regressions(base, candidate)
-        summary = {
-            "base": base_commit,
-            "head": head_commit,
-            "base_findings": len(base),
-            "candidate_findings": len(candidate),
-        }
-        return _report_regressions(added, summary, output)
+        return _compare_snapshots(arguments, root, output)
     except (
         OSError,
         ValueError,

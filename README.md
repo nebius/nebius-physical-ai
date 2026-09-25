@@ -15,6 +15,7 @@
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
+**[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
 **[Python & API](docs/workbench/cli-sdk-yaml-walkthrough.md)** ·
 **[Cookbooks](docs/workbench/cookbooks/README.md)** ·
@@ -247,10 +248,19 @@ Keep credentials and private infrastructure identifiers out of issue text.
 
 ## Contributing
 
+For dedicated CI capacity, operators can set the repository Actions variables
+`NPA_CI_PRIORITY_RUNNER` and `NPA_CI_TEST_RUNNER` to approved Ubuntu runner labels.
+Both default to `ubuntu-latest`; neither reserves capacity by itself. See
+[validation concurrency](CONTRIBUTING.md#validation-concurrency) for routing and setup.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment, required
 checks, and PR process. [The package README](npa/README.md#developing-and-testing-npa)
 has the shortest test commands. Update the relevant documentation and
 [root skill](skills/index.yaml) when changing behavior.
+Run `make precheck` for fast local CI checks. After committing, fetch main and run
+`make merge-precheck` to check the combined dependency inputs. The
+[merge-readiness guide](CONTRIBUTING.md#merge-readiness-and-queue-rejections)
+also explains the automatic PR comments for merge-queue rejections.
 Security disclosures: [SECURITY.md](SECURITY.md).
 
 ## License

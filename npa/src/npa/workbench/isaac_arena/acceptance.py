@@ -10,9 +10,10 @@ from .action_evidence import (
     validate_prepared_action_sequence,
 )
 from .errors import IsaacArenaError
+from .capture_profiles import capture_profile
 from .task_progress import task_progress_adapter, task_visual_interval
 from .video_evidence import (
-    EVIDENCE_FILTER,
+    evidence_filter,
     EVIDENCE_PLAYBACK_RATE,
     video_acceptance_thresholds,
 )
@@ -337,7 +338,8 @@ def _capture_contract(capture: dict, episode_length: int) -> dict:
         and rendering.get("dlss_execution_mode") == "quality"
         and rendering.get("dl_denoiser_enabled") is True
         and rendering.get("frame_generation_enabled") is False
-        and rendering.get("minimum_settling_renders") == 8
+        and rendering.get("minimum_settling_renders")
+        == capture_profile(rendering.get("profile", "standard")).settling_renders
         and rendering.get("stochastic_accumulation") is False
         and rendering.get("readback_phase") == "after_final_accepted_render"
         and isinstance(comparison, dict)
@@ -373,6 +375,7 @@ def _video_contract(
     evidence: dict | None,
     ground_truth: dict,
     source_mp4_sha256: str,
+    video_profile: str,
 ) -> dict:
     if not isinstance(video, dict):
         raise IsaacArenaError(
@@ -488,7 +491,7 @@ def _video_contract(
         and motion.get("progress_association_radius_pixels") == expected_radius_pixels
         and isinstance(derivation, dict)
         and derivation.get("kind") == "ffmpeg_spatiotemporal_denoise"
-        and derivation.get("filter") == EVIDENCE_FILTER
+        and derivation.get("filter") == evidence_filter(video_profile)
         and derivation.get("playback_rate") == EVIDENCE_PLAYBACK_RATE
         and derivation.get("source_sha256") == source_mp4_sha256
         and derivation.get("changes_simulator_outcome") is False
@@ -670,5 +673,6 @@ def qualify_visual_acceptance(
             evidence,
             ground_truth,
             capture_contract["source_mp4_sha256"],
+            capture_contract["rendering"].get("profile", "standard"),
         ),
     }

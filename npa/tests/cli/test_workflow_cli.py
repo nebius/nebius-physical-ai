@@ -12,7 +12,9 @@ from typer.testing import CliRunner
 import yaml
 
 from npa.cli.main import app
+from npa.cli.workbench.workflow import _raw_execution_preflight
 from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
+from npa.orchestration.skypilot._bin import SkyPilotConfigError
 from npa.orchestration.skypilot.workflow import ManagedJobEvidence, WorkflowResult
 from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 from npa.workflows.distill import DistillationError
@@ -61,6 +63,25 @@ def test_workflow_command_help(command: str) -> None:
 
     assert result.exit_code == 0
     assert "Usage:" in result.output
+
+
+def test_raw_submit_preflight_rejects_explicit_missing_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    missing = tmp_path / "selected-but-missing.yaml"
+    monkeypatch.setattr(
+        "npa.execution_preflight.preflight_skypilot_submission",
+        lambda *args, **kwargs: pytest.fail("must fail before provider preflight"),
+    )
+
+    with pytest.raises(SkyPilotConfigError) as caught:
+        _raw_execution_preflight(
+            [{"name": "demo", "resources": {"cloud": "kubernetes"}}],
+            sky_bin="/bin/true",
+            config_path=missing,
+            isolated_config_dir=tmp_path / "sky-state",
+        )
+    assert str(missing) in str(caught.value)
 
 
 class FakeWorkflowS3:
@@ -2132,6 +2153,173 @@ def test_paidf_active_multistage_cancel_targets_each_active_wave_once(
     assert payload["outcome"] == "cancelled"
     assert payload["cancelled_job_ids"] == ["93", "95"]
     assert calls == [[("93", "paidf-wave-augment"), ("95", "paidf-wave-curate")]]
+
+
+def _put_paidf_cancel_runtime(
+    fake_s3: FakeWorkflowS3, *, run_id: str, waves: list[dict[str, object]]
+) -> None:
+    prefix = f"physical-ai-data-factory/{run_id}/npa-workflow"
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=f"{prefix}/manifest.json",
+        Body=json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "physical-ai-data-factory",
+                "run_id": run_id,
+                "status": "running",
+                "steps": [],
+            }
+        ).encode(),
+    )
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=f"{prefix}/runtime.json",
+        Body=json.dumps(
+            {
+                "schema_version": "npa.workflow.runtime.v1",
+                "run_id": run_id,
+                "status": "running",
+                "waves": waves,
+            }
+        ).encode(),
+    )
+
+
+def _patch_paidf_cancel_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+
+
+def test_cancel_absence_conflict_exposes_only_explicit_destroy_allowance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    _patch_paidf_cancel_storage(monkeypatch)
+    _put_paidf_cancel_runtime(
+        fake_s3,
+        run_id="paidf-stale-absence",
+        waves=[{"key": "stale", "job_id": "701", "status": "running"}],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
+        lambda *args, **kwargs: ManagedJobEvidence("absent"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "cancel",
+            "paidf-stale-absence",
+            "--project",
+            "paidf",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "verification_failed"
+    assert payload["owned_teardown_allowed"] is True
+    assert payload["durable_absence_conflict_job_ids"] == ["701"]
+    assert payload["durable_absence_conflict_errors"] == payload["errors"]
+    assert payload["cloud_calls"] is False
+    assert payload["cancelled_job_ids"] == []
+
+    from npa.project_destroy import _owned_workflow_teardown_allowance
+
+    allowance = _owned_workflow_teardown_allowance(
+        subprocess.CompletedProcess(
+            ["npa", "workbench", "workflow", "cancel"],
+            result.exit_code,
+            stdout=result.output,
+            stderr="",
+        )
+    )
+    assert allowance is not None
+    assert allowance["verified_absent_job_ids"] == ["701"]
+
+
+@pytest.mark.parametrize(
+    ("cleanup_errors", "teardown_allowed"),
+    [([], True), (["synthetic cancellation failure"], False)],
+)
+def test_cancel_mixed_live_and_absence_conflict_requires_clean_live_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_errors: list[str],
+    teardown_allowed: bool,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    _patch_paidf_cancel_storage(monkeypatch)
+    _put_paidf_cancel_runtime(
+        fake_s3,
+        run_id="paidf-mixed-absence",
+        waves=[
+            {"key": "stale", "job_id": "701", "status": "running"},
+            {"key": "live", "job_id": "802", "status": "running"},
+        ],
+    )
+
+    def lookup(*_args, job_id: str = "", **_kwargs) -> ManagedJobEvidence:
+        return ManagedJobEvidence(
+            "absent" if job_id == "701" else "found",
+            job_id=job_id,
+            status="" if job_id == "701" else "RUNNING",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job", lookup
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_launched_workflows",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            resources_removed=["job:802"] if not cleanup_errors else [],
+            commands=[],
+            errors=cleanup_errors,
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "cancel",
+            "paidf-mixed-absence",
+            "--project",
+            "paidf",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "partial_cancellation", json.dumps(payload, indent=2)
+    assert payload["cancelled_job_ids"] == ["802"]
+    assert payload["durable_absence_conflict_job_ids"] == ["701"]
+    assert payload["durable_absence_conflict_errors"] == [payload["errors"][0]]
+    assert payload["owned_teardown_allowed"] is teardown_allowed
+
+    from npa.project_destroy import _owned_workflow_teardown_allowance
+
+    allowance = _owned_workflow_teardown_allowance(
+        subprocess.CompletedProcess(
+            ["npa", "workbench", "workflow", "cancel"],
+            result.exit_code,
+            stdout=result.output,
+            stderr="",
+        )
+    )
+    assert (allowance is not None) is teardown_allowed
 
 
 def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
