@@ -162,6 +162,38 @@ def test_evaluation_fails_closed_on_invalid_native_transitions(
         runtime._rollout(None, wrapped, policy, None, recipe)
 
 
+def test_rollout_actions_leave_native_metrics_resettable(recipe, monkeypatch):
+    torch = pytest.importorskip("torch")
+    initial = {
+        "position_m": np.array([case.position_m for case in recipe.eval_cases]),
+        "goal_m": np.array([case.goal_m for case in recipe.eval_cases]),
+        "obstacle_contact": np.zeros(2),
+        "peer_contact": np.zeros(2),
+        "physical_failure": np.zeros(2),
+    }
+    metrics = {"error_pos": torch.zeros(2)}
+    policy = torch.nn.Linear(3, 3).eval()
+
+    def reset(*args):
+        metrics["error_pos"][torch.arange(2)] = 0.0
+        return initial
+
+    def step(actions):
+        assert not actions.requires_grad
+        metrics["error_pos"] = torch.linalg.vector_norm(actions, dim=-1)
+        return actions, None, torch.zeros(2, dtype=torch.bool), {}
+
+    monkeypatch.setattr(runtime, "verify_reset", reset)
+    monkeypatch.setattr(runtime, "snapshot", lambda *args: initial)
+    wrapped = SimpleNamespace(get_observations=lambda: torch.zeros((2, 3)), step=step)
+    recipe = recipe.model_copy(update={"episode_steps": 2})
+    with torch.enable_grad():
+        for _ in range(2):
+            runtime._rollout(None, wrapped, policy, None, recipe)
+        reset()
+        assert torch.is_grad_enabled()
+
+
 def test_usd_reference_count_binds_exact_scene(usd_environment, recipe, tmp_path):
     from pxr import UsdGeom
     from npa.workflows.navigation.native import _verify_scene_reference

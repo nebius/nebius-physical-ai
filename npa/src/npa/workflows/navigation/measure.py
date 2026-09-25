@@ -125,7 +125,9 @@ def _probe_trace(adapter, env, wrapped, cases, actions, tolerance):
     for action in actions:
         batch = torch.zeros((len(cases), len(action)), device=env.unwrapped.device)
         batch[0] = torch.tensor(action, device=batch.device)
-        with torch.inference_mode():
+        # Native managers replace metric tensors during step and mutate them
+        # during later resets. Keep those tensors mutable outside this context.
+        with torch.no_grad():
             obs, _, done, _ = wrapped.step(batch)
         if bool(done.any()):
             raise ValueError("probe terminated/reset; choose nonterminal probe inputs")

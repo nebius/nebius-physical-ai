@@ -135,7 +135,7 @@ def _rollout(env, wrapped, policy, adapter, recipe, frame=None):
         frame(initial, 0)
     obs = wrapped.get_observations()
     for _ in range(recipe.episode_steps):
-        with torch.inference_mode():
+        with torch.no_grad():
             actions = policy(obs)
             if not torch.isfinite(actions).all():
                 raise ValueError("checkpoint policy produced nonfinite actions")

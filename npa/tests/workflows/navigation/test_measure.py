@@ -134,26 +134,32 @@ def test_probe_requires_motion_and_positive_obstacle_contact(recipe, monkeypatch
         )
 
 
-def test_probe_uses_inference_mode_for_native_low_level_actions(recipe, monkeypatch):
+def test_probe_actions_allow_subsequent_native_metric_resets(recipe, monkeypatch):
     torch = pytest.importorskip("torch")
     low_level_policy = torch.nn.Linear(3, 2).eval()
+    metrics = {"error_pos": torch.zeros(recipe.num_envs)}
+
+    def reset(*args):
+        metrics["error_pos"][torch.arange(recipe.num_envs)] = 0.0
 
     def step(actions):
         targets = low_level_policy(actions)
         assert not targets.requires_grad
-        assert torch.is_inference_mode_enabled()
+        metrics["error_pos"] = torch.linalg.vector_norm(targets, dim=-1)
         return targets, None, torch.zeros(recipe.num_envs, dtype=torch.bool), {}
 
-    monkeypatch.setattr(measure, "verify_reset", lambda *args: None)
+    monkeypatch.setattr(measure, "verify_reset", reset)
     adapter = SimpleNamespace(measure=lambda _: state(recipe))
     env = SimpleNamespace(unwrapped=SimpleNamespace(device="cpu"))
     wrapped = SimpleNamespace(
         get_observations=lambda: torch.zeros((recipe.num_envs, 2)), step=step
     )
     with torch.enable_grad():
-        trace = measure._probe_trace(
-            adapter, env, wrapped, recipe.eval_cases, [[0.6, 0.0, 0.0]], 1e-3
-        )
+        for _ in range(2):
+            trace = measure._probe_trace(
+                adapter, env, wrapped, recipe.eval_cases, [[0.6, 0.0, 0.0]], 1e-3
+            )
+        reset()
         assert torch.is_grad_enabled()
     assert len(trace) == 2
     assert trace[-1]["observations"]["value"].shape == (recipe.num_envs, 2)
