@@ -159,25 +159,19 @@ descendant. Zero-byte directory markers do not prove completion or absence,
 and malformed/truncated pagination blocks recovery rather than authorizing
 duplicate work.
 
-The finite infrastructure-recovery allowance limits relaunches, not reuse.
-When every declared durable output is valid, recovery marks the wave complete
-even at the allowance boundary. If the exact provider attempt is still live,
-its cancellation must reach a verified terminal state before that reuse is
-accepted.
-The workflow attempt then completes as `succeeded`, while `sky_status` retains
-the exact terminal provider state observed during cancellation verification
-(for example `CANCELLED`, `FAILED`, or a terminal `SUCCEEDED` race). Workflow
-completion never rewrites that provider evidence.
-Valid outputs from a provider-succeeded attempt are reused only when the
-recorded workflow, source, and image identities still match the requested run.
-Missing or changed immutable identity evidence blocks reuse and requires the
-recorded identity to be restored or a new run ID to be started.
-
 ## Reading status
 
 ```bash
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 ```
+
+The finite infrastructure-recovery allowance limits relaunches, not reuse.
+When every declared durable output is valid, recovery marks the wave complete
+even at the allowance boundary. If the exact provider attempt is still live,
+its cancellation must reach a verified terminal state before that reuse is
+accepted.
+The workflow completion result is separate from the observed provider status.
+
 
 `status` resolves the exact run from the selected project's receipt, the
 canonical workflow prefix, or the pinned managed-job identity — even while the
@@ -210,6 +204,11 @@ prefix explicitly:
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" \
   --workflow-s3-uri "s3://$BUCKET/<workflow>/$RUN_ID/npa-workflow"
 ```
+
+Valid outputs from a provider-succeeded attempt are reused only when the
+recorded workflow, source, and image identities still match the requested run.
+Missing or changed immutable identity evidence blocks reuse and requires the
+recorded identity to be restored or a new run ID to be started.
 
 ## Where the kubeconfig goes
 
