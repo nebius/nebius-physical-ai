@@ -9,7 +9,8 @@ CPU-only, but the optional CLIP embedding UDF is GPU-accelerated.
 
 | Runtime | Purpose | Notes |
 | --- | --- | --- |
-| `container` | Local development and smoke validation | Runs Docker on the operator machine. |
+| `container` | Local development and smoke validation | Runs Docker on the operator machine and bind-mounts the requested local storage directory. |
+| `kubernetes` | In-cluster service for workflow stages | Requires an S3-compatible storage prefix so data survives pod rollout and restart. |
 | `vm` | Production OSS path on a Nebius CPU VM | Uses an addressable service backed by S3-compatible storage. |
 | `byovm` | Existing SSH-accessible VM | Useful when infrastructure is pre-provisioned. |
 | `cloud` | Existing LanceDB Cloud or Enterprise endpoint | Connection-only; no provisioning. |
@@ -45,6 +46,10 @@ Check status:
 ```bash
 npa workbench lancedb status --endpoint http://localhost:8686
 ```
+
+The CLI creates the local directory when needed and bind-mounts it at
+`/data/lancedb` in the container. Destroying or replacing the container does
+not remove the tables in that host directory.
 
 Remove the smoke container:
 
@@ -140,7 +145,7 @@ archiving data.
 ## Known Limitation In This Build Run
 
 `npa workbench lancedb` is wired into the parent CLI. The remaining live-service
-gap is managed VM registration: the `container` and `cloud` paths are usable for
-local smoke and existing endpoints, while the `vm`/`byovm` app deploy path still
-requires Workbench parent registration work before it is a one-command
-production service deploy.
+gap is managed VM registration: the `container`, `kubernetes`, and `cloud`
+paths are usable for local smoke, in-cluster workflows, and existing endpoints,
+while the `vm`/`byovm` app deploy path still requires Workbench parent
+registration work before it is a one-command production service deploy.

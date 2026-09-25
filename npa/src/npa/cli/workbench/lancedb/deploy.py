@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 from typing import Any
 
@@ -74,10 +75,25 @@ def _run_container(
     replace: bool,
     dry_run: bool,
 ) -> str:
+    local_storage = not storage_path.startswith("s3://")
+    container_storage_path = "/data/lancedb" if local_storage else storage_path
+    host_storage_path: Path | None = None
+    if local_storage:
+        if "," in storage_path:
+            fail("Local LanceDB --storage-path cannot contain a comma")
+        host_storage_path = Path(storage_path)
+        if not dry_run:
+            try:
+                host_storage_path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                fail(f"Cannot create LanceDB storage directory {storage_path}: {exc}")
+            if not host_storage_path.is_dir():
+                fail(f"LanceDB storage path is not a directory: {storage_path}")
+
     s3_env = storage_env()
     env = {
         **s3_env,
-        "LANCEDB_STORAGE_PATH": storage_path,
+        "LANCEDB_STORAGE_PATH": container_storage_path,
         "LANCEDB_PORT": str(port),
         "LANCEDB_AUTH_MODE": auth_mode,
         "LANCEDB_TOKEN": os.environ.get(token_env, ""),
@@ -122,6 +138,10 @@ def _run_container(
         f"{port}:{port}",
     ]
     redacted_cmd = list(cmd)
+    if host_storage_path is not None:
+        mount = f"type=bind,source={host_storage_path},target={container_storage_path}"
+        cmd.extend(["--mount", mount])
+        redacted_cmd.extend(["--mount", mount])
     for key, value in env.items():
         if value:
             cmd.extend(["-e", f"{key}={value}"])
@@ -302,6 +322,15 @@ def deploy_cmd(
     resolved_storage = validate_storage_path(storage_path)
     resolved_auth = _auth_mode_for(runtime, auth_mode)
     image_ref = container_image(image)
+    if (
+        runtime == LanceDBRuntime.kubernetes
+        and not destroy
+        and not resolved_storage.startswith("s3://")
+    ):
+        fail(
+            "--runtime kubernetes requires an s3:// --storage-path; a pod-local "
+            "path is not persistent across rollouts or restarts"
+        )
 
     if destroy and runtime == LanceDBRuntime.container:
         name = _container_name(container_name, port)
