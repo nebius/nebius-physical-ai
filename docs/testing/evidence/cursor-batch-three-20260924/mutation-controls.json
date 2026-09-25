@@ -1,0 +1,148 @@
+{
+  "cases": [
+    {
+      "pr": 626,
+      "mutation": "empty-plan-error",
+      "target": "npa/tests/cli/test_workflow_submit_preflight.py::test_preflight_images_reports_planning_failure_before_pull_checks",
+      "head": "5741273c07c8a6a84fcc49a95e9baaa19156b753",
+      "candidate": {
+        "returncode": 0,
+        "summary": "2 passed in 1.73s ===============================",
+        "log_sha256": "58804d2260b5d4e0b06666343b7e93d6ef0710eae06ba53d3e03f9930b42496a"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "2 failed in 1.86s ===============================",
+        "log_sha256": "ccc22384437fc0fe8debd8b20f8b26c3b695ee78319d6bb9c6e0dc82e3e97fd5"
+      }
+    },
+    {
+      "pr": 619,
+      "mutation": "terminal-prefix",
+      "target": "npa/tests/orchestration/skypilot/test_cleanup.py::test_terminal_managed_job_status_is_closed_world",
+      "head": "7ea4a543f2eb7741f2c4e791cf44d443009e417c",
+      "candidate": {
+        "returncode": 0,
+        "summary": "26 passed in 0.83s ==============================",
+        "log_sha256": "cc6e20fd9085081cef5e36f5ca47c73acf0d12fb8d41e4e31918b58fc52b1cf4"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "2 failed, 24 passed in 0.52s =========================",
+        "log_sha256": "e5aa564976e2111336b9c2490af181af5c737ef22271060af75e6cb6ea42a8cc"
+      }
+    },
+    {
+      "pr": 620,
+      "mutation": "truthy-allowance",
+      "target": "npa/tests/unit/test_pr218_integrated_lifecycle.py::test_project_destroy_teardown_allowance_rejects_identity_forgery[truthy-authorization-lookalike]",
+      "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.48s ===============================",
+        "log_sha256": "2f4aa74d6fd243f8992b176ef478ac17f633a5bc757373ce81f24ab206323807"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.43s ===============================",
+        "log_sha256": "ed352a4e5f2fe5e7eb3c0f52676d1f9f16cec32e64a353a867e75064aca5ecde"
+      }
+    },
+    {
+      "pr": 620,
+      "mutation": "duplicate-conflict",
+      "target": "npa/tests/unit/test_pr218_integrated_lifecycle.py::test_project_destroy_teardown_allowance_rejects_identity_forgery[duplicate-conflict-identity]",
+      "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.39s ===============================",
+        "log_sha256": "20d277c468bc4c8b9beef3f2bf50da31c3dc098ba9fea55d19ae4282f0761ced"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.38s ===============================",
+        "log_sha256": "6f040063845971907def4b785b4f53137f7555d56a3455d56ffe927e94c76db0"
+      }
+    },
+    {
+      "pr": 620,
+      "mutation": "duplicate-cancelled",
+      "target": "npa/tests/unit/test_pr218_integrated_lifecycle.py::test_project_destroy_teardown_allowance_rejects_identity_forgery[duplicate-cancelled-identity]",
+      "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.26s ===============================",
+        "log_sha256": "f9f8e62c33bdcccca0e42080978903c943fcc9ca4164172a8776e4197548ced7"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.44s ===============================",
+        "log_sha256": "d108da85ce54e02519cf86e45f6718ed1a1c731c48f5438f4895d8bee224610a"
+      }
+    },
+    {
+      "pr": 628,
+      "mutation": "unreadable-is-absent",
+      "target": "npa/tests/orchestration/skypilot/test_workflow_state.py::test_read_stage_status_raises_when_exact_state_is_unreadable",
+      "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+      "candidate": {
+        "returncode": 0,
+        "summary": "4 passed in 4.92s ===============================",
+        "log_sha256": "8e8f89c8d77cba3bf23270e0b69ba3313d5e3ef70850d912256010e8415b4770"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "4 failed in 0.34s ===============================",
+        "log_sha256": "c12336757ace60ede30c743381e379eda3f74ceebba170abdf4c727587c465f3"
+      }
+    },
+    {
+      "pr": 628,
+      "mutation": "nonlookup-is-absent",
+      "target": "npa/tests/orchestration/skypilot/test_workflow_state.py",
+      "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+      "candidate": {
+        "returncode": 0,
+        "summary": "21 passed in 0.29s ==============================",
+        "log_sha256": "4891fe8f02e5df72c2921de4fd0a82034395100b478466ae23388aa03e3b68fb"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "8 failed, 13 passed in 0.46s =========================",
+        "log_sha256": "65c3c0c949a8185c128d6e616fc0c46329c5dca3a1b6704ddf97a1d90b09b485"
+      }
+    },
+    {
+      "pr": 623,
+      "mutation": "raw-failure",
+      "target": "npa/tests/cli/test_workflow_submit_preflight.py::test_fail_structurally_redacts_raw_multiline_exception",
+      "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 1.92s ===============================",
+        "log_sha256": "915c404f8b6f90916e6df594e01362fa53a6effde559b90bc022f35c2f6bf73c"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 1.00s ===============================",
+        "log_sha256": "f33d05108cf5a7f09ed1f1f6b44059b9169e06ee796332cdc43f36636e8c6c62"
+      }
+    },
+    {
+      "pr": 623,
+      "mutation": "quoted-rescan",
+      "target": "npa/tests/test_verification.py::test_quoted_secret_redaction_does_not_rescan_the_remaining_line",
+      "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.22s ===============================",
+        "log_sha256": "900d2b362b4c294161ba190ef3a1d0ffacea4a04431b19b463e89dd6537d7c59"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.28s ===============================",
+        "log_sha256": "3c69a5939ca445684c08e2acd6fa7d034cef14970bc8e76a6539eb8b51841f7a"
+      }
+    }
+  ]
+}

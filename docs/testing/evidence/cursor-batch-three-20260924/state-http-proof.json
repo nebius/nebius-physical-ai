@@ -1,0 +1,37 @@
+{
+  "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+  "production_module_sha256": "2a91cc4a9b60ffd4ae4c17eba25d751afccd6391bf9e8a7f1b9f9ea0b077ee9a",
+  "scope": "Real boto3/SigV4/HTTP response parsing against a task-owned loopback S3 responder; no cloud endpoint, customer credential or GPU used.",
+  "controls_passed": 6,
+  "http_requests": 6,
+  "cases": [
+    {
+      "case": "valid",
+      "result": "found"
+    },
+    {
+      "case": "missing-key",
+      "result": "missing"
+    },
+    {
+      "case": "missing-bucket",
+      "result": "unreadable",
+      "diagnostic_redacted": true
+    },
+    {
+      "case": "denied",
+      "result": "unreadable",
+      "diagnostic_redacted": true
+    },
+    {
+      "case": "invalid-json",
+      "result": "unreadable",
+      "diagnostic_redacted": true
+    },
+    {
+      "case": "truncated-body",
+      "result": "unreadable",
+      "diagnostic_redacted": true
+    }
+  ]
+}

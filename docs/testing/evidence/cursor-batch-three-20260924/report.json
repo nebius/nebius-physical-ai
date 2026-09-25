@@ -1,0 +1,861 @@
+{
+  "ci_recovery": {
+    "pr": 620,
+    "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+    "github_merge_commit": "35e5966da5eb7323e734439049b66c41b43b77f2",
+    "base": "8b77c1dfbb553b6609608c593e5de0e3dc0149c4",
+    "first_attempt": {
+      "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107904827630",
+      "failed_test": "tests/cli/test_workflow_submit_preflight.py::test_sim2real_submit_propagates_explicit_kubernetes_target",
+      "failed": 1,
+      "passed": 3417,
+      "skipped": 83,
+      "log_sha256": "6053392795ecf800fcd48a749bc822f2a7b9d8ee18a6c5c3d61082c8b37d8d4f"
+    },
+    "retry": {
+      "attempt": 2,
+      "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107910572885",
+      "conclusion": "success",
+      "source_unchanged": true,
+      "test_log": {
+        "summary": "2026-09-25T01:58:25.7100755Z ========== 3418 passed, 83 skipped, 45 warnings in 403.72s (0:06:43)",
+        "sha256": "32b39e72058161ad5180c402e606867137e4ddf7adb72041826c951a7720ef90"
+      }
+    },
+    "reproductions": {
+      "isolated_branch": {
+        "summary": "1 passed in 2.20s",
+        "sha256": "2d25aaec4a9a717d1d0fb70032f1336479b169efc016852f1f13ee096b38d66e"
+      },
+      "isolated_merge": {
+        "summary": "1 passed in 3.24s",
+        "sha256": "15454bb62fcf2b6950a2861b6a46c7ab7cb3b9a4ad58aba91a01b6c4ba82f02f"
+      },
+      "last_100_worker_tests": {
+        "summary": "100 passed, 4 skipped, 27878 deselected, 3 warnings in 19.94s",
+        "sha256": "d9c7614c05cfad75578034e062ed1e67662085a5f43a78a8f900ccd725289f53"
+      },
+      "complete_merge_shard_with_ci_cpu_runtime": {
+        "summary": "3420 passed, 82 skipped, 74 warnings in 265.22s (0:04:25)",
+        "sha256": "48ea92b43334b204df92eb13573ac17b1e9107579d3fd2fd2a714e47edbe773a"
+      },
+      "recorded_worker_order_with_ci_cpu_runtime": {
+        "summary": "2872 passed, 77 skipped, 25040 deselected, 16 warnings in 258.76s (0:04:18)",
+        "sha256": "59de7afe56b0cb8ef5b32fad18588ae8088dea6e82f53aff383f03b11b453968"
+      }
+    },
+    "interpretation": "The initial hosted assertion did not reproduce locally. Its cause remains unconfirmed. No source or test assertion changed for the successful retry.",
+    "harness_notes": [
+      "The first merge checkout was rejected for group-writable source permissions; only the task-owned checkout permissions were corrected.",
+      "The initial complete-worker replay lacked the CI RSL-RL dependency and one logged synthetic URI was masked by GitHub. The CPU runtime was matched to CI and the synthetic test ID was resolved against committed test source before repeating the replay."
+    ],
+    "checked_at": "2026-09-25T02:06:10.144931+00:00"
+  },
+  "checked_at": "2026-09-25T02:06:01.081318+00:00",
+  "base": "76881b08fc38db9fc5309eb70be494050f610a61",
+  "current_main_compatibility": {
+    "at": "2026-09-25T01:59:58.666765+00:00",
+    "base": "8b77c1dfbb553b6609608c593e5de0e3dc0149c4",
+    "head": "6fba99cef41a7657d0509defe0dafc5d4e3f95da",
+    "tree": "c228e6778ead30b45a0fb69a191c26e0ad474fc6",
+    "identical_to_validated_tree": true,
+    "steps": [
+      {
+        "number": 609,
+        "already_in_tree": true
+      },
+      {
+        "number": 640,
+        "already_in_tree": true
+      },
+      {
+        "number": 679,
+        "already_in_tree": true
+      },
+      {
+        "number": 687,
+        "already_in_tree": true
+      },
+      {
+        "number": 650,
+        "already_in_tree": true
+      },
+      {
+        "number": 619,
+        "head": "7ea4a543f2eb7741f2c4e791cf44d443009e417c",
+        "tree": "41ffcfb55e56bc7f103548a376c7bec76913a14c",
+        "commit": "a8b280fe03a86ed8a3565d0c881eefd494de845e"
+      },
+      {
+        "number": 620,
+        "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+        "tree": "19d59c4821716f4d8c7dee620ec5f2e956659c63",
+        "commit": "4ae68392e315362618bf698aa9574654b6cb2e14"
+      },
+      {
+        "number": 623,
+        "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+        "tree": "fff0476f5df9da5408b8f3a5a84dc237971747f3",
+        "commit": "ec5d6d9531df4127039ed7b7ef5caedf8bf7fc32"
+      },
+      {
+        "number": 626,
+        "head": "5741273c07c8a6a84fcc49a95e9baaa19156b753",
+        "tree": "9f3225db72156958e825aac1f4ce47945b4c532a",
+        "commit": "a9571918cfc3962c5f13368729052519e6dc396e"
+      },
+      {
+        "number": 628,
+        "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+        "tree": "c228e6778ead30b45a0fb69a191c26e0ad474fc6",
+        "commit": "6fba99cef41a7657d0509defe0dafc5d4e3f95da"
+      }
+    ]
+  },
+  "order": [
+    619,
+    620,
+    623,
+    626,
+    628
+  ],
+  "prs": [
+    {
+      "number": 619,
+      "title": "Unify managed-job terminality checks",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/619",
+      "head": "7ea4a543f2eb7741f2c4e791cf44d443009e417c",
+      "tree": "594e11d7ec25a424472b7041e40f5780731c3127",
+      "validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "18c06bd992ce3093cc6078ef9df58cfda4f2a7f9af0a9a055bcb60d45f518bf4"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "e95b678e51d71f432e2403d4deac134f6d54b6aeaf8a6d2e8c7164e378dc3126"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4466
+          },
+          "log_sha256": "a12f1708360ce55c11c3d8479f05a6332ceb2f72bd6b767b043e1197d51838d2"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27183,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "3e560fca0779b7070ec3503ae84b1dc0392e0cbfebfa9b511a8c6f5c6788a333"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "ae70eb6526dc5e5b37ad598f657900d95692f997bba1bd3a2ff645377add515e"
+        },
+        "merge-precheck": {
+          "passed": true,
+          "log_sha256": "625f33f22e0677ad3fb34fac3fcb89942c39684a86b6a965f9332dc80fdd675c"
+        },
+        "docs-drift": {
+          "passed": true,
+          "log_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+        },
+        "confidentiality": {
+          "passed": true,
+          "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+        }
+      },
+      "native_security": {
+        "base": "76881b08fc38db9fc5309eb70be494050f610a61",
+        "head": "7ea4a543f2eb7741f2c4e791cf44d443009e417c",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081001693/job/107902725837",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081001693/job/107902725853",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081001693/job/107912448905",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "merge_state": "CLEAN",
+      "verified_ahead_base_signatures": 1,
+      "unresolved_review_threads": 0
+    },
+    {
+      "number": 620,
+      "title": "Guard workflow teardown allowance invariants",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/620",
+      "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "tree": "3f4d1460dfda06537e5f2d2872e33d7baf61dab1",
+      "validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "650bddfe4dba43cd76f4b8d1069094aa3e7dbcf44b8b6e60679afdaae5b26646"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "7542c05e7d552921be351a78b826663c45da8c45c09e9a6311de7ed8f61dd00a"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4466
+          },
+          "log_sha256": "14285eb4f8c08144c369867c78e05215028492c397bdb3a6eae52d9fe3bb387a"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27189,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "3c383d430eb9c3b830d6f24a628ac4380cb099f946ed75bc1d2c969d8a28185c"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "f1f18472e742679b476349412648fe3234102553005e259efd7a0037b71d6d5d"
+        },
+        "merge-precheck": {
+          "passed": true,
+          "log_sha256": "d4d6c2dc581777c94d5af65fa08e48354b65086ad1449b2e0fa0740627d4c691"
+        },
+        "docs-drift": {
+          "passed": true,
+          "log_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+        },
+        "confidentiality": {
+          "passed": true,
+          "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+        }
+      },
+      "native_security": {
+        "base": "76881b08fc38db9fc5309eb70be494050f610a61",
+        "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107910571783",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107910594667",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107912880278",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "merge_state": "CLEAN",
+      "verified_ahead_base_signatures": 2,
+      "unresolved_review_threads": 0
+    },
+    {
+      "number": 623,
+      "title": "Sanitize workflow CLI failure output",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/623",
+      "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+      "tree": "b5456b2b96a2ae2bc4ef98d521327da642824fab",
+      "validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "11d8f01b24743351ec150cede44d570772de4d879a4000a82937f3435e9cdf1c"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "5509f50fdfcb643dca500457ba3a02154a004c899e63026b09a38db6fb874e08"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4466
+          },
+          "log_sha256": "484907a691fc3e012b7522d83a8ca7b0c6aca4560e22d5e4aea16c4b91daf8d5"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27214,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "62ba37e3faabaf4de4ab35a9b45b79d6668a15c0d75c23e5f826cbbd03ed91cc"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "3c34807b838c005c3560581d3d96f66a850ddcd74e6f8762b33774abf445933d"
+        },
+        "merge-precheck": {
+          "passed": true,
+          "log_sha256": "0067e19c4d13666f682200cd291d1bc339f64a1322ecda58fa8ad3e4fa1cca19"
+        },
+        "docs-drift": {
+          "passed": true,
+          "log_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+        },
+        "confidentiality": {
+          "passed": true,
+          "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+        }
+      },
+      "native_security": {
+        "base": "76881b08fc38db9fc5309eb70be494050f610a61",
+        "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080469522/job/107901068841",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080469522/job/107901068991",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080469522/job/107905530642",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "merge_state": "CLEAN",
+      "verified_ahead_base_signatures": 10,
+      "unresolved_review_threads": 0
+    },
+    {
+      "number": 626,
+      "title": "Report workflow image preflight planning failures",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/626",
+      "head": "5741273c07c8a6a84fcc49a95e9baaa19156b753",
+      "tree": "134e5dbea846a8622e491d0907214066ec711a71",
+      "validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "69a00c06d99fb9ae003914cb9d440e7e6c3590d3c9f2de9541a7ef52824917f1"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "effcd1cb7c276df21b45c189d69513941855846096b548e10ba20048fcdafc8a"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4466
+          },
+          "log_sha256": "752600242b9ac0eb5cdbe152818b99530854e4db1efd4bccdf5f90582912c42d"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27161,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "abff0f3485b0c4f64360c5f1d29e7ac93f46e94aa4abd4774bdbea2a6ad95293"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "1f9cf065c2bc3775543af0b40db135c02d585844f0479c1cef4f0e460d6b89ab"
+        },
+        "merge-precheck": {
+          "passed": true,
+          "log_sha256": "39d7a9ab5d8f236c60159198e49f058feb47fe65d48b4d8e9c727d4286d8f466"
+        },
+        "docs-drift": {
+          "passed": true,
+          "log_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+        },
+        "confidentiality": {
+          "passed": true,
+          "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+        }
+      },
+      "native_security": {
+        "base": "76881b08fc38db9fc5309eb70be494050f610a61",
+        "head": "5741273c07c8a6a84fcc49a95e9baaa19156b753",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080563218/job/107901353360",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080563218/job/107901353568",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080563218/job/107908491328",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "merge_state": "CLEAN",
+      "verified_ahead_base_signatures": 3,
+      "unresolved_review_threads": 0
+    },
+    {
+      "number": 628,
+      "title": "Fail closed on unreadable workflow stage status",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/628",
+      "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+      "tree": "13fe91dd0c49e0b62c2e277b848f1ca006d19fb0",
+      "validation": {
+        "precheck": {
+          "counts": {
+            "passed": 198
+          },
+          "log_sha256": "574c5302eee372e4c2ed65086cf68e8a99dece36989cf06635398e2860f5a5aa"
+        },
+        "smoke": {
+          "counts": {
+            "passed": 114
+          },
+          "log_sha256": "be1a22aa4dd2c348cf974a92fc9950045e57fee051cd25282671e31aeaa43aaf"
+        },
+        "guardrails": {
+          "counts": {
+            "passed": 4466
+          },
+          "log_sha256": "ebac0be485d651df76b648dc2b79c6ccdcb80183f1ce25f8c2d6b59a471f83d1"
+        },
+        "full-suite": {
+          "counts": {
+            "passed": 27188,
+            "skipped": 135,
+            "xpassed": 1
+          },
+          "log_sha256": "0d4e66f7df92dd34cc3ebf4d348b5bf568fb32a957cdb99f9816c6096cbcc2c6"
+        },
+        "hostile-input": {
+          "counts": {
+            "passed": 859
+          },
+          "log_sha256": "0b2a92ec5b2a015fa93c2c3b1df8b967c85039469fb0f5629dd7cd76cb2f28d5"
+        },
+        "merge-precheck": {
+          "passed": true,
+          "log_sha256": "fe7974363a86fb7aa9c79c243e9274d430cd7b90f57c83247ee114eedde4137b"
+        },
+        "docs-drift": {
+          "passed": true,
+          "log_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+        },
+        "confidentiality": {
+          "passed": true,
+          "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+        }
+      },
+      "native_security": {
+        "base": "76881b08fc38db9fc5309eb70be494050f610a61",
+        "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+        "base_findings": 603,
+        "candidate_findings": 603,
+        "regressions": [],
+        "blocking_findings": []
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080520949/job/107901224356",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "scan",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080520949/job/107901224688",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-regression",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36080520949/job/107908273076",
+          "github_app_id": 15368,
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "merge_state": "CLEAN",
+      "verified_ahead_base_signatures": 4,
+      "unresolved_review_threads": 0
+    }
+  ],
+  "combined": {
+    "order": [
+      609,
+      640,
+      679,
+      687,
+      650,
+      619,
+      620,
+      623,
+      626,
+      628
+    ],
+    "head": "ff95a0fea6eebb8975832a309ccc02621141e4c4",
+    "tree": "c228e6778ead30b45a0fb69a191c26e0ad474fc6",
+    "validation": {
+      "precheck": {
+        "counts": {
+          "passed": 198
+        },
+        "log_sha256": "6fc06ab30d391069fc57a04b7fe181f1544c4535189625505971e5b4f6f252d0"
+      },
+      "smoke": {
+        "counts": {
+          "passed": 114
+        },
+        "log_sha256": "6dcf05ab41400d6607bfcb67ce4679432b7bd29c9d14a39c0b979e04c4d5697b"
+      },
+      "guardrails": {
+        "counts": {
+          "passed": 4467
+        },
+        "log_sha256": "4a51a3c3e88105380f0557c70dd002cca212f0d23987a6b48ab191e239747cc1"
+      },
+      "full-suite": {
+        "counts": {
+          "passed": 27313,
+          "skipped": 135,
+          "xpassed": 1
+        },
+        "log_sha256": "edc192e05394354b57556a0a67bace4dff6c344dd3009bf5a527ce57cdbd5a23"
+      },
+      "hostile-input": {
+        "counts": {
+          "passed": 859
+        },
+        "log_sha256": "2174ac239f4d53971f07a25e11dc3390af8082f5b87e0639ede96b172aa498d8"
+      },
+      "merge-precheck": {
+        "passed": true,
+        "log_sha256": "c53fa950155fdc6b4f89c283ec30c5bbee1ee9fe8bd978397e0c2b27777b9b18"
+      },
+      "docs-drift": {
+        "passed": true,
+        "log_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+      },
+      "confidentiality": {
+        "passed": true,
+        "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+      }
+    },
+    "native_security": {
+      "base": "76881b08fc38db9fc5309eb70be494050f610a61",
+      "head": "ff95a0fea6eebb8975832a309ccc02621141e4c4",
+      "base_findings": 603,
+      "candidate_findings": 603,
+      "regressions": [],
+      "blocking_findings": []
+    }
+  },
+  "state_http_proof": {
+    "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+    "production_module_sha256": "2a91cc4a9b60ffd4ae4c17eba25d751afccd6391bf9e8a7f1b9f9ea0b077ee9a",
+    "scope": "Real boto3/SigV4/HTTP response parsing against a task-owned loopback S3 responder; no cloud endpoint, customer credential or GPU used.",
+    "controls_passed": 6,
+    "http_requests": 6,
+    "cases": [
+      {
+        "case": "valid",
+        "result": "found"
+      },
+      {
+        "case": "missing-key",
+        "result": "missing"
+      },
+      {
+        "case": "missing-bucket",
+        "result": "unreadable",
+        "diagnostic_redacted": true
+      },
+      {
+        "case": "denied",
+        "result": "unreadable",
+        "diagnostic_redacted": true
+      },
+      {
+        "case": "invalid-json",
+        "result": "unreadable",
+        "diagnostic_redacted": true
+      },
+      {
+        "case": "truncated-body",
+        "result": "unreadable",
+        "diagnostic_redacted": true
+      }
+    ]
+  },
+  "redaction_regression": {
+    "baseline": {
+      "head": "9db6e297ec3f3d5e7e6040a0399112e3cb8840bf",
+      "failed": 1,
+      "passed": 3,
+      "log_sha256": "2a8ed340fd28f10ecad2ffe32b6021d033ccf4397d514681c1de276dca10c0de"
+    },
+    "candidate": {
+      "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+      "verification_and_data_factory_tests_passed": 91,
+      "log_sha256": "e8803491376f9408f7ac6f5bedcb49af7ecc0c19faf537a936cf3b37a85f483c"
+    },
+    "repair": "Avoid repeatedly searching the remaining line for quoted assignments; preserve escaped line endings and the existing shared assignment pattern."
+  },
+  "mutation_controls": [
+    {
+      "pr": 626,
+      "mutation": "empty-plan-error",
+      "target": "npa/tests/cli/test_workflow_submit_preflight.py::test_preflight_images_reports_planning_failure_before_pull_checks",
+      "head": "5741273c07c8a6a84fcc49a95e9baaa19156b753",
+      "candidate": {
+        "returncode": 0,
+        "summary": "2 passed in 1.73s ===============================",
+        "log_sha256": "58804d2260b5d4e0b06666343b7e93d6ef0710eae06ba53d3e03f9930b42496a"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "2 failed in 1.86s ===============================",
+        "log_sha256": "ccc22384437fc0fe8debd8b20f8b26c3b695ee78319d6bb9c6e0dc82e3e97fd5"
+      }
+    },
+    {
+      "pr": 619,
+      "mutation": "terminal-prefix",
+      "target": "npa/tests/orchestration/skypilot/test_cleanup.py::test_terminal_managed_job_status_is_closed_world",
+      "head": "7ea4a543f2eb7741f2c4e791cf44d443009e417c",
+      "candidate": {
+        "returncode": 0,
+        "summary": "26 passed in 0.83s ==============================",
+        "log_sha256": "cc6e20fd9085081cef5e36f5ca47c73acf0d12fb8d41e4e31918b58fc52b1cf4"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "2 failed, 24 passed in 0.52s =========================",
+        "log_sha256": "e5aa564976e2111336b9c2490af181af5c737ef22271060af75e6cb6ea42a8cc"
+      }
+    },
+    {
+      "pr": 620,
+      "mutation": "truthy-allowance",
+      "target": "npa/tests/unit/test_pr218_integrated_lifecycle.py::test_project_destroy_teardown_allowance_rejects_identity_forgery[truthy-authorization-lookalike]",
+      "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.48s ===============================",
+        "log_sha256": "2f4aa74d6fd243f8992b176ef478ac17f633a5bc757373ce81f24ab206323807"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.43s ===============================",
+        "log_sha256": "ed352a4e5f2fe5e7eb3c0f52676d1f9f16cec32e64a353a867e75064aca5ecde"
+      }
+    },
+    {
+      "pr": 620,
+      "mutation": "duplicate-conflict",
+      "target": "npa/tests/unit/test_pr218_integrated_lifecycle.py::test_project_destroy_teardown_allowance_rejects_identity_forgery[duplicate-conflict-identity]",
+      "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.39s ===============================",
+        "log_sha256": "20d277c468bc4c8b9beef3f2bf50da31c3dc098ba9fea55d19ae4282f0761ced"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.38s ===============================",
+        "log_sha256": "6f040063845971907def4b785b4f53137f7555d56a3455d56ffe927e94c76db0"
+      }
+    },
+    {
+      "pr": 620,
+      "mutation": "duplicate-cancelled",
+      "target": "npa/tests/unit/test_pr218_integrated_lifecycle.py::test_project_destroy_teardown_allowance_rejects_identity_forgery[duplicate-cancelled-identity]",
+      "head": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.26s ===============================",
+        "log_sha256": "f9f8e62c33bdcccca0e42080978903c943fcc9ca4164172a8776e4197548ced7"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.44s ===============================",
+        "log_sha256": "d108da85ce54e02519cf86e45f6718ed1a1c731c48f5438f4895d8bee224610a"
+      }
+    },
+    {
+      "pr": 628,
+      "mutation": "unreadable-is-absent",
+      "target": "npa/tests/orchestration/skypilot/test_workflow_state.py::test_read_stage_status_raises_when_exact_state_is_unreadable",
+      "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+      "candidate": {
+        "returncode": 0,
+        "summary": "4 passed in 4.92s ===============================",
+        "log_sha256": "8e8f89c8d77cba3bf23270e0b69ba3313d5e3ef70850d912256010e8415b4770"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "4 failed in 0.34s ===============================",
+        "log_sha256": "c12336757ace60ede30c743381e379eda3f74ceebba170abdf4c727587c465f3"
+      }
+    },
+    {
+      "pr": 628,
+      "mutation": "nonlookup-is-absent",
+      "target": "npa/tests/orchestration/skypilot/test_workflow_state.py",
+      "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+      "candidate": {
+        "returncode": 0,
+        "summary": "21 passed in 0.29s ==============================",
+        "log_sha256": "4891fe8f02e5df72c2921de4fd0a82034395100b478466ae23388aa03e3b68fb"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "8 failed, 13 passed in 0.46s =========================",
+        "log_sha256": "65c3c0c949a8185c128d6e616fc0c46329c5dca3a1b6704ddf97a1d90b09b485"
+      }
+    },
+    {
+      "pr": 623,
+      "mutation": "raw-failure",
+      "target": "npa/tests/cli/test_workflow_submit_preflight.py::test_fail_structurally_redacts_raw_multiline_exception",
+      "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 1.92s ===============================",
+        "log_sha256": "915c404f8b6f90916e6df594e01362fa53a6effde559b90bc022f35c2f6bf73c"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 1.00s ===============================",
+        "log_sha256": "f33d05108cf5a7f09ed1f1f6b44059b9169e06ee796332cdc43f36636e8c6c62"
+      }
+    },
+    {
+      "pr": 623,
+      "mutation": "quoted-rescan",
+      "target": "npa/tests/test_verification.py::test_quoted_secret_redaction_does_not_rescan_the_remaining_line",
+      "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+      "candidate": {
+        "returncode": 0,
+        "summary": "1 passed in 0.22s ===============================",
+        "log_sha256": "900d2b362b4c294161ba190ef3a1d0ffacea4a04431b19b463e89dd6537d7c59"
+      },
+      "mutant": {
+        "returncode": 1,
+        "summary": "1 failed in 0.28s ===============================",
+        "log_sha256": "3c69a5939ca445684c08e2acd6fa7d034cef14970bc8e76a6539eb8b51841f7a"
+      }
+    }
+  ],
+  "redaction_refactor": {
+    "prior_head": "8fc45429c30ae89c555da5142ffc7226969b660c",
+    "candidate_head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+    "prior_module_sha256": "b70ff735f1d1b64748dfd422cde851b634abf059d5b77c50bd1e67271125e08f",
+    "candidate_module_sha256": "4d37bd1d14ae7943076a226a9baacf1e075b81daab3bdd22b7b00e2155dd821f",
+    "deterministic_inputs": 6000,
+    "function_comparisons": 18000,
+    "mismatches": 0,
+    "network_calls": 0,
+    "scope": "Behavior equivalence of the readability refactor; separate regression tests and mutation controls establish safety-boundary coverage."
+  },
+  "state_read_repair": {
+    "baseline": {
+      "head": "9e36d240092b9ab289bd7849a1b95a48813a278b",
+      "passed": 10,
+      "failed": 11,
+      "log_sha256": "93291d03029cf4ccb63211de31f3a3fb78127850add07a816874d6f958066271"
+    },
+    "candidate": {
+      "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+      "passed": 21,
+      "failed": 0,
+      "log_sha256": "1ff397652ae6ff0d1f12de08e00e10edcf9547f09628b694b6ccf6deaf8fce23"
+    },
+    "scope": "Client setup errors, malformed responses, body reads and body cleanup remain unreadable, including errors shaped like missing files or keys."
+  },
+  "test_scope": "Complete local non-live CPU suite plus explicit hostile-input runtime tests with CPU PyTorch; hosted checks separately verify coverage and required security gates.",
+  "hardware": "GPU and VLM execution do not apply to these host-CPU orchestration and diagnostic boundaries. External providers are fault-injected; no new GPU workload or live cloud execution is claimed.",
+  "limitations": [
+    "The required merge queue validates the actual integration candidate at enqueue time.",
+    "PR 620 includes PR 619 as a source dependency; merge in the stated order after batch two."
+  ],
+  "signature_repairs": [
+    {
+      "number": 619,
+      "validated_head": "521c8da4c662ee33ac4390cda5a485aa03c61b47",
+      "published_candidate": "7ea4a543f2eb7741f2c4e791cf44d443009e417c",
+      "tree": "594e11d7ec25a424472b7041e40f5780731c3127",
+      "byte_identical_tree": true
+    },
+    {
+      "number": 620,
+      "validated_head": "e911d155d2ab0e588036a98811c5bf0f848e5a25",
+      "published_candidate": "622e014a0cefb7cc9202435a7e0632891bba6bd1",
+      "tree": "3f4d1460dfda06537e5f2d2872e33d7baf61dab1",
+      "byte_identical_tree": true
+    }
+  ],
+  "cursor_used": false,
+  "enqueued_or_merged": false
+}

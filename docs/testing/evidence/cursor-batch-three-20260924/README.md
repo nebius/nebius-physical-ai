@@ -1,0 +1,31 @@
+# Cursor batch three: verified merge handoff
+
+Verified 2026-09-25T02:06:01.081318+00:00. Merge after batch two, in the order below. All five PRs target main, have clean merge status, verified commit signatures, no unresolved review threads, and green required checks. Codex performed this refresh without Cursor.
+
+| Order | PR | Full Linux suite | Required checks |
+|---|---|---:|---|
+| 1 | [#619: Unify managed-job terminality checks](https://github.com/nebius/nebius-physical-ai/pull/619) | 27,183 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36081001693/job/107902725837), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36081001693/job/107902725853), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36081001693/job/107912448905) |
+| 2 | [#620: Guard workflow teardown allowance invariants](https://github.com/nebius/nebius-physical-ai/pull/620) | 27,189 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107910571783), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107910594667), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36081002074/job/107912880278) |
+| 3 | [#623: Sanitize workflow CLI failure output](https://github.com/nebius/nebius-physical-ai/pull/623) | 27,214 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36080469522/job/107901068841), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36080469522/job/107901068991), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36080469522/job/107905530642) |
+| 4 | [#626: Report workflow image preflight planning failures](https://github.com/nebius/nebius-physical-ai/pull/626) | 27,161 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36080563218/job/107901353360), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36080563218/job/107901353568), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36080563218/job/107908491328) |
+| 5 | [#628: Fail closed on unreadable workflow stage status](https://github.com/nebius/nebius-physical-ai/pull/628) | 27,188 passed; 0 failures | [gitleaks](https://github.com/nebius/nebius-physical-ai/actions/runs/36080520949/job/107901224356), [scan](https://github.com/nebius/nebius-physical-ai/actions/runs/36080520949/job/107901224688), [security-regression](https://github.com/nebius/nebius-physical-ai/actions/runs/36080520949/job/107908273076) |
+
+The ordered batch-two-plus-batch-three integration passed **27,313 tests, zero failures**, at tree `c228e6778ead30b45a0fb69a191c26e0ad474fc6`. Each individual head and the combined tree passed lint/format/precheck, smoke, guardrails, docs drift, confidentiality, full PR-range Gitleaks, and the explicit hostile-input runtime suite. Native Bandit, zizmor and Trivy comparisons found zero new regressions and zero blocking findings.
+
+Nine fresh negative controls passed on the candidates and failed when the corresponding guard was deliberately weakened. They cover unknown terminal states, exact teardown authorization, duplicate job identities, credential redaction, planning errors and unreadable storage state. These controls run the production code with synthetic boundary inputs. They are separate from smoke tests.
+
+#628 review found that client setup failures could still resemble missing objects, while response-body failures escaped structured status handling. Eleven new cases failed on the earlier candidate; all 21 storage controls pass with the repair. JSON, watch, human-readable status and cancellation controls cover malformed responses and read/close failures. Only actual provider object-lookup errors can retain missing-object semantics.
+
+Six real boto3/SigV4/HTTP controls against a task-owned loopback responder passed: valid state, missing key, missing bucket, access denial, invalid JSON and a truncated body. No live cloud endpoint or customer credential was used.
+
+#623 retains the newer main artifact-loading implementation and uses shorter redaction helpers. A deterministic 6,000-input comparison across three entry points produced 18,000 exact matches with the previously reviewed redactor. This checks refactor equivalence; the regression and mutation controls separately check the safety behavior. A quoted-diagnostic rescan regression failed before repair; the final verification and data-factory focused suite passed 91 tests. The first full-suite attempt caught a removed shared assignment-pattern import; it was restored and complete suites were rerun. Superseded failures and interrupted runs remain retained privately.
+
+Two unsigned commits inherited by #619 and #620 were replaced with signed histories. Their file trees remained byte-identical, and full validation was repeated on the new heads. The combined source tree is unchanged by these signature-only repairs.
+
+#620 initially failed one hosted Kubernetes-target propagation assertion. It passed in isolation, in the complete shard on the GitHub merge snapshot with the CI CPU runtime, and in the recorded worker-order replay. The unchanged-commit hosted retry passed. The original failure and retry are retained in the report; the initial failure’s cause remains unconfirmed.
+
+GPU and VLM runs do not exercise these host-CPU changes. No new live cloud or GPU execution is claimed. #620 includes the #619 terminality dependency; preserve the listed merge order. The required merge queue still checks the actual integration candidate. No PR was enqueued or merged by this work.
+
+Main advanced to `8b77c1dfbb553b6609608c593e5de0e3dc0149c4` during validation. A fresh ordered merge simulation produced the identical tested tree; all five PRs also merge individually without conflicts.
+
+[Exact heads, test counts, native findings, required-check links and log hashes](report.json), [mutation controls](mutation-controls.json), [redaction comparison](redaction-parity.json), [storage-read regression](state-read-controls.json), [real HTTP controls](state-http-proof.json), [quoted-redaction regression](redaction-regression.json), and [checksums](SHA256SUMS). Raw logs and infrastructure details remain in private evidence.

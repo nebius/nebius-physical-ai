@@ -1,0 +1,14 @@
+{
+  "baseline": {
+    "head": "9db6e297ec3f3d5e7e6040a0399112e3cb8840bf",
+    "failed": 1,
+    "passed": 3,
+    "log_sha256": "2a8ed340fd28f10ecad2ffe32b6021d033ccf4397d514681c1de276dca10c0de"
+  },
+  "candidate": {
+    "head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+    "verification_and_data_factory_tests_passed": 91,
+    "log_sha256": "e8803491376f9408f7ac6f5bedcb49af7ecc0c19faf537a936cf3b37a85f483c"
+  },
+  "repair": "Avoid repeatedly searching the remaining line for quoted assignments; preserve escaped line endings and the existing shared assignment pattern."
+}

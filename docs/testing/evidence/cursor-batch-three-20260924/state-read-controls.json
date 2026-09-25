@@ -1,0 +1,15 @@
+{
+  "baseline": {
+    "head": "9e36d240092b9ab289bd7849a1b95a48813a278b",
+    "passed": 10,
+    "failed": 11,
+    "log_sha256": "93291d03029cf4ccb63211de31f3a3fb78127850add07a816874d6f958066271"
+  },
+  "candidate": {
+    "head": "18acb69dd97d8ca498d67539b4623eb1f9039dc7",
+    "passed": 21,
+    "failed": 0,
+    "log_sha256": "1ff397652ae6ff0d1f12de08e00e10edcf9547f09628b694b6ccf6deaf8fce23"
+  },
+  "scope": "Client setup errors, malformed responses, body reads and body cleanup remain unreadable, including errors shaped like missing files or keys."
+}

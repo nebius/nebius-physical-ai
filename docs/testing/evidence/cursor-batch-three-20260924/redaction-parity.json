@@ -1,0 +1,11 @@
+{
+  "prior_head": "8fc45429c30ae89c555da5142ffc7226969b660c",
+  "candidate_head": "ebb48b7d6d68c82f8b20483461ec6ab2a9c7a7e1",
+  "prior_module_sha256": "b70ff735f1d1b64748dfd422cde851b634abf059d5b77c50bd1e67271125e08f",
+  "candidate_module_sha256": "4d37bd1d14ae7943076a226a9baacf1e075b81daab3bdd22b7b00e2155dd821f",
+  "deterministic_inputs": 6000,
+  "function_comparisons": 18000,
+  "mismatches": 0,
+  "network_calls": 0,
+  "scope": "Behavior equivalence of the readability refactor; separate regression tests and mutation controls establish safety-boundary coverage."
+}
