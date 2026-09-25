@@ -3,15 +3,12 @@
 [The workflow](../../workflows/testing/multicamera-rgbd-capture.yaml) renders a
 camera rig in a static USD scene with **Isaac Sim 6.0.1.0**, then downloads and
 validates the resulting S3 dataset in a separate CPU stage. No robot is required.
-The existing Franka RGB capture adapter is unchanged. This is an executable
-implementation with CPU contract tests; **GPU acceptance is pending**. See the
-[readiness record](../../workflows/testing/multicamera-rgbd-capture.readiness.json).
-The public warehouse reference completed native preparation and rendered all
-265 four-camera poses on an RTX GPU. Its first complete dataset was rejected
-because the native render reference clock stayed fixed. A subsequent capture
-advanced that clock but rejected a camera pose exactly one sample behind.
-The corrected adapter settles every frozen pose before capture and requires a
-fresh complete capture and decoded validation before acceptance.
+The existing Franka RGB capture adapter is unchanged. The public warehouse
+reference passed a full native RTX capture and a separate CPU worker's exhaustive
+decoded validation: **265 poses, four 1280×720 cameras, 1,060 RGB-D views and
+265 fused colored clouds**. See [native acceptance](#native-acceptance) and the
+[measured summary](evidence/multicamera-rgbd/native-validation.json).
+The default procedural room's known-wall-depth live test remains unrun.
 
 The default `procedural://four-camera-room` input creates a repository-authored
 room with four walls, a floor, a crate, lighting, four outward-facing calibrated
@@ -47,7 +44,8 @@ storage endpoint through the normal Workbench credential configuration. Source
 staging, runtime cache, credentials, image availability, and GPU compatibility
 must be verified before a live submission. Schema validation does not prove any
 of those prerequisites. The submit matrix includes this executable GPU case
-and excludes it from automatic daily rotation until live qualification.
+and keeps the default procedural case out of automatic daily rotation until
+its separate known-wall-depth live check passes.
 
 `config.source_overlay: true` is required for this new adapter. `--stage-src`
 uploads the submitting checkout through the standard source staging path;
@@ -270,7 +268,66 @@ or certify collision-free motion. The full point outputs can occupy tens of
 gigabytes, so both workers need corresponding staging space and storage access.
 This public authored environment demonstrates the capture workload; it is not
 a reconstructed site or a reproduction of any operator's camera calibration.
-Native collection and GPU capture still require live acceptance.
+The completed reference below qualifies this authored warehouse and calibrated
+rig on the recorded RTX target. Different inputs still need their own acceptance.
+
+## Native acceptance
+
+On September 25, 2026, the standard managed workflow captured the complete public
+warehouse route and a separate CPU worker downloaded and validated every object.
+The [sanitized measured summary](evidence/multicamera-rgbd/native-validation.json)
+records source, input, image, manifest, validation-report and preview hashes.
+Actual rendered contact sheets, a four-camera video containing all 265 samples,
+and a colored-cloud preview were derived from those hash-verified outputs and
+retained with the private run evidence. Raw storage and infrastructure identifiers
+are excluded from the repository.
+
+| Measurement | Observed result |
+| --- | --- |
+| Rig samples / cameras / views | 265 / 4 / 1,060 |
+| Source resolution | 1280×720 per camera |
+| Valid depth pixels and verified fused points | 976,895,672 each |
+| Fused clouds | 265, with source camera and pixel indices verified |
+| Published objects including manifest | 4,506 |
+| Published bytes including manifest | 70,451,048,116 |
+| Input files | 2,034, plus the exact native material descriptor |
+| GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition |
+| Driver / total device memory | 580.173.02 / 97,887 MiB |
+| Maximum sampled GPU utilization | 98%; sampled, not average utilization |
+| Capture stage wall time | 2,734 seconds |
+| First RGB file to last fused-cloud file | 547.760 seconds |
+| Virtual trajectory duration | 66 seconds |
+| Independent validator | CPU worker, no GPU resource requested |
+
+The capture stage wall time includes scheduling, runtime bootstrap, scene and
+shader startup, rendering, both local decoded validation passes, and publication.
+The artifact-write span excludes initial setup, work before the first completed
+RGB file, validation and upload; it is not an end-to-end rendering benchmark.
+The summary labels measured filesystem capacity and available space separately
+from device memory. No peak allocated GPU-memory measurement is claimed.
+
+The measured capture and CPU validator used payload
+`ab3180aa45cd02906be928e8ba793da2033c5cd5`; subsequent documentation changes were not
+part of that runtime. Native input preparation succeeded with source
+`58021a3bd132a00485d4d99b9a6bb62aed333e3c`. The corrected capture reused its immutable
+input without alteration, rechecking the original request and all assets plus the
+exact installed native material library. This qualification combines that earlier
+preparation with the successful capture/validation workflow; it does not claim a
+fresh three-stage preparation run at the final capture source revision.
+
+The actual worker image digest matched the requested immutable image recorded in
+the summary. Isaac Sim 6.0.1.0 and Replicator 1.13.27 produced
+the pixels. Every view passed the unchanged camera matrix/calibration tolerances,
+cross-camera rational-time equality and one-nanosecond timestamp comparison.
+The independent validator decoded RGB/depth/masks, recomputed every world point,
+and checked fused colors and source indices. Earlier attempts rejected a fixed
+render clock and a one-sample stale camera pose; they are not acceptance evidence.
+
+This proves static calibrated sensor capture in a public authored industrial
+environment. It does not qualify the default procedural known-depth test, L40S,
+an operator's reconstructed site, collision-free navigation, robot policies,
+encoder training, or simulation-to-real performance. Portable scan USDZ handoff
+has CPU coverage; a full scan-to-camera GPU round trip was not run here.
 
 ## Opt-in live acceptance
 
@@ -289,7 +346,8 @@ NPA_RGBD_LIVE_REPORT_URI='s3://<your-bucket>/<run-prefix>/live-validation.json' 
 The first variable enables live tests; the second selects the procedural capture;
 the third must be a fresh report object. With no opt-in, the test skips without
 using storage. Retain GPU, driver, immutable-image and staged-source evidence
-externally. No industrial scene or calibration has been qualified by this PR.
+externally. This known-depth fixture check is separate from the completed
+public-warehouse qualification above.
 
 ## API sources
 

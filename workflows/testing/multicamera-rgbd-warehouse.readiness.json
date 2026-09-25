@@ -4,7 +4,7 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec --run-id preview succeeded for prepare, capture and validate. Native preparation passed; completed pixels failed temporal validation.",
+      "reason": "validate-spec and plan-spec succeeded. Native preparation succeeded separately; the corrected standard capture/validate workflow passed for the complete immutable public warehouse input.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-warehouse.yaml --run-id preview --json"
@@ -12,44 +12,49 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Native USD/MDL collection prepares a public warehouse; Replicator captures 265 poses with four 1280x720 RGB-D cameras; a separate CPU stage validates decoded data and source-attributed fused clouds. CPU tests do not prove native GPU behavior.",
+      "reason": "Real Replicator captured 265 poses with four 1280x720 RGB-D cameras; a separate CPU worker decoded every artifact and verified calibration, synchronized native times, world points and source-attributed fused clouds. Earlier native preparation was reused unchanged and reverified.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd.py",
         "npa/tests/workflows/test_isaac_rgbd_runtime.py",
-        "npa/tests/workflows/test_isaac_rgbd_usd.py"
+        "npa/tests/workflows/test_isaac_rgbd_usd.py",
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The example bucket must be replaced with fresh operator-owned writable storage; successful publication from the corrected full workflow remains unverified.",
-      "evidence": []
+      "reason": "The completed reference proved immutable publication and independent readback of 4,506 objects. A new run must replace the example bucket with operator-owned writable storage and a fresh prefix.",
+      "evidence": [
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+      ]
     },
     "worker_input": {
       "status": "verified",
-      "reason": "The native public-warehouse collector published 2,034 hashed files and an exact installed Kit MDL dependency descriptor; a separate native capture worker verified that descriptor.",
+      "reason": "Native collection published 2,034 hashed public warehouse files and an exact Kit MDL descriptor. The corrected capture reverified that immutable input and every rendered frame passed independent decoded validation. Other scenes or calibrations require separate checks.",
       "evidence": [
-        "npa/tests/workflows/test_isaac_rgbd_usd.py"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
       ]
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Deployment-specific operator credentials and bootstrap use requirements must pass preflight; a successful full capture is not yet qualified.",
-      "evidence": []
+      "reason": "Storage credentials and bootstrap use requirements worked for the completed reference. Each future operator must pass their own credential and software-access preflight.",
+      "evidence": [
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+      ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The pinned image and staged source started Isaac Sim 6.0.1, loaded the public warehouse, and rendered calibrated views on an RTX GPU. Strict acceptance rejected stale native pose metadata despite a current render clock; the frozen-pose settling correction still requires a full native run.",
+      "reason": "The completed reference bound capture/validator payload ab3180aa4, the requested immutable image and actual worker imageID; native preparation at 58021a3bd was reused unchanged. A future run must stage its intended source and verify its selected image and native material contract.",
       "evidence": [
-        "npa/tests/workflows/test_isaac_rgbd_runtime.py::test_render_stages_branch_source_in_gpu_and_cpu_tasks"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Native evidence measured a camera pose exactly one 0.25 m sample behind at the correct current ReferenceTime. Pose tolerances remain unchanged; a second paused, same-time rendering pass settles annotation buffers before capture, and full decoded acceptance remains pending.",
+      "reason": "All 265 poses and 1,060 views passed on one RTX PRO 6000 Blackwell Server Edition with Isaac Sim 6.0.1.0, followed by independent CPU validation. A future target needs its own GPU/runtime/scratch health checks; L40S and the procedural known-wall-depth check were not qualified here.",
       "evidence": [
-        "npa/tests/e2e/test_multicamera_rgbd_live.py"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
       ]
     }
   }
