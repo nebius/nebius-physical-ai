@@ -1233,14 +1233,24 @@ def _reconcile_tainted_node_groups(
         for instance in resource.get("instances", []):
             if not isinstance(instance, dict) or instance.get("status") != "tainted":
                 continue
-            if pool is None or pool.count <= 0:
-                raise RuntimeError(
-                    "refusing to reconcile a tainted node group with no exact desired pool"
-                )
             attributes = instance.get("attributes")
             if not isinstance(attributes, dict) or not attributes.get("id"):
                 raise RuntimeError(
                     "refusing to reconcile a tainted node group without exact state identity"
+                )
+            from npa.cluster_backends.mk8s_capacity_reuse import is_removed_cpu_taint
+
+            if is_removed_cpu_taint(
+                resource, instance, pool, cluster_ids, cluster.name
+            ):
+                _log(
+                    on_status,
+                    "retaining owned CPU taint for the requested pool removal",
+                )
+                continue
+            if pool is None or pool.count <= 0:
+                raise RuntimeError(
+                    "refusing to reconcile a tainted node group with no exact desired pool"
                 )
             tainted.append(
                 (_terraform_instance_address(resource, instance), attributes, pool)
@@ -2134,14 +2144,6 @@ def _is_verified_unchanged_target(
     groups = groups_payload.get("items", [])
     if not isinstance(groups, list) or groups_payload.get("next_page_token"):
         return False
-    if removes_cpu_pool:
-        from npa.cluster_backends.mk8s_capacity_reuse import retained_node_groups
-
-        groups = retained_node_groups(
-            groups, tfvars_path.with_name("terraform.tfstate"), cluster_id
-        )
-        if groups is None:
-            return False
     expected_pools = [
         pool
         for pool in (cluster.cpu_nodes, cluster.gpu_nodes)
@@ -2156,6 +2158,16 @@ def _is_verified_unchanged_target(
             expected_pools.extend(
                 replace(cluster.gpu_nodes, count=per_group) for _ in range(group_count)
             )
+    if removes_cpu_pool or (
+        cluster.cpu_count() == 0 and len(groups) > len(expected_pools)
+    ):
+        from npa.cluster_backends.mk8s_capacity_reuse import retained_node_groups
+
+        groups = retained_node_groups(
+            groups, tfvars_path.with_name("terraform.tfstate"), cluster_id
+        )
+        if groups is None:
+            return False
     if len(groups) != len(expected_pools):
         return False
 

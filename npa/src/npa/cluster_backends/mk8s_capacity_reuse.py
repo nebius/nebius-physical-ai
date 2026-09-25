@@ -81,3 +81,36 @@ def _exclude_cpu_group(groups, attributes, cluster_id):
     ):
         return None
     return [g for g in groups if g is not group]
+
+
+def is_removed_cpu_taint(resource, instance, pool, cluster_ids, cluster_name):
+    """Keep a removed CPU group's taint so Terraform deletes it without adoption.
+
+    Args:
+        resource: Managed node-group resource from this target's Terraform state.
+        instance: Exact tainted instance within that resource.
+        pool: Desired CPU pool, explicitly retaining its shape with count zero.
+        cluster_ids: Exact managed cluster identities from the same state.
+        cluster_name: Desired cluster name used by the recipe.
+    Returns:
+        Whether the state proves this is only an owned CPU pool being removed.
+    Raises:
+        None.
+    """
+    attributes = instance.get("attributes") or {}
+    template = attributes.get("template") or {}
+    return bool(
+        pool is not None
+        and pool.count == 0
+        and resource.get("name") == "cpu-only"
+        and not resource.get("module")
+        and not instance.get("deposed")
+        and len(cluster_ids) == 1
+        and attributes.get("id")
+        and attributes.get("parent_id") in cluster_ids
+        and attributes.get("name") == cluster_name + "-ng-cpu"
+        and pool.platform.startswith("cpu-")
+        and template.get("resources")
+        == {"platform": pool.platform, "preset": pool.preset}
+        and not template.get("reservation_policy")
+    )
