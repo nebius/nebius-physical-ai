@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import sys
 import tempfile
+import traceback
 
 from .contract import _json_bytes
 from .fixture import write_fixture
@@ -93,5 +96,21 @@ def main(argv=None):
     return 0
 
 
+def _entrypoint():
+    try:
+        result = main()
+    except BaseException as exc:
+        if isinstance(exc, SystemExit) and exc.code in (None, 0):
+            raise
+        # Kit's registered automatic shutdown can replace even an unhandled
+        # exception with exit 0. Preserve failure before those handlers run.
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        code = exc.code if isinstance(exc, SystemExit) else 1
+        os._exit(code if isinstance(code, int) and 0 < code < 256 else 1)
+    raise SystemExit(result)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _entrypoint()

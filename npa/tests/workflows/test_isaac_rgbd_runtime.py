@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
+import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -12,6 +13,25 @@ import pytest
 
 from npa.workflows.isaac_rgbd import runtime
 from npa.workflows.isaac_rgbd.fixture import write_fixture
+
+
+def test_cli_failure_survives_native_atexit_that_forces_success():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import atexit, os; "
+            "from npa.workflows.isaac_rgbd import cli; "
+            "atexit.register(lambda: os._exit(0)); "
+            "cli.main = lambda: (_ for _ in ()).throw(ValueError('native failure')); "
+            "cli._entrypoint()",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "ValueError: native failure" in result.stderr
 
 
 def _modules(monkeypatch, names):

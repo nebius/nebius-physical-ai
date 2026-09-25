@@ -104,7 +104,10 @@ def _dependency_name(root, parent, asset, names, package):
         _contained(root, name)
         if name in names:
             return name
-    raise ValueError("USD dependency is absent from the hashed input bundle")
+    raise ValueError(
+        "USD dependency is absent from the hashed input bundle: "
+        f"{asset!r} authored below {relative_parent!r}"
+    )
 
 
 def _check_tree(root, names, *, package=False):
@@ -124,7 +127,10 @@ def _check_tree(root, names, *, package=False):
         _check_layer(layer)
         for group in UsdUtils.ExtractExternalReferences(str(path)):
             for asset in group:
-                _dependency_name(root, path.parent, asset, names, package)
+                try:
+                    _dependency_name(root, path.parent, asset, names, package)
+                except ValueError as exc:
+                    raise ValueError(f"USD layer {name!r}: {exc}") from exc
 
 
 def _check_package(path):
