@@ -200,7 +200,7 @@ def _resolve_rerun_cli() -> str:
         env_var="NPA_RERUN_CLI",
         candidates=tuple(candidates),
         description="Rerun CLI",
-        install_hint="Install rerun-sdk==0.31.4 and ensure the rerun CLI is on PATH.",
+        install_hint="Install rerun-sdk==0.38.1 and ensure the rerun CLI is on PATH.",
     )
 
 
@@ -931,7 +931,7 @@ def _import_rerun() -> tuple[Any, Any]:
         import rerun.blueprint as rrb
     except ImportError as exc:
         raise RerunRenderError(
-            "rerun-sdk==0.31.4 is required for the Rerun backend"
+            "rerun-sdk==0.38.1 is required for the Rerun backend"
         ) from exc
     return rr, rrb
 

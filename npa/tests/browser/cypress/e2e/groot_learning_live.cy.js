@@ -21,11 +21,70 @@ function agentReq(path, options = {}) {
   });
 }
 
-function artifactContentPath(activeRun, artifact) {
+function exactSourceQuery(entry) {
+  return new URLSearchParams({
+    project_id: String(entry.project_id || ""),
+    resource_bucket: String(entry.bucket || ""),
+    resolved_prefix: String(entry.resolved_prefix || ""),
+    source_selected: "1",
+  }).toString();
+}
+
+function discoverExactRun(id, cursor = "", found = [], seenCursors = new Set()) {
+  const params = new URLSearchParams({ q: id, limit: "100" });
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(`/api/artifacts/runs?${params.toString()}`).then((resp) => {
+    expect(resp.status, "learning run discovery status").to.eq(200);
+    const matches = (resp.body.runs || []).filter(
+      (entry) => String(entry.run_id || "") === id,
+    );
+    const all = [...found, ...matches];
+    const nextCursor = String(resp.body.next_cursor || "");
+    if (!nextCursor) return all;
+    expect(seenCursors.has(nextCursor), "run discovery cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return discoverExactRun(id, nextCursor, all, seenCursors);
+  });
+}
+
+function collectRunInventory(id, source, cursor = "", artifacts = [], firstBody = null, seenCursors = new Set()) {
+  const params = new URLSearchParams(exactSourceQuery(source));
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(
+    `/api/artifacts/run/${encodeURIComponent(source.run_ref)}?${params.toString()}`,
+  ).then((resp) => {
+    expect(resp.status, "learning artifact inventory status").to.eq(200);
+    const body = resp.body || {};
+    const merged = [...artifacts, ...(body.artifacts || [])];
+    const base = firstBody || body;
+    const nextCursor = String(body.next_cursor || "");
+    if (!nextCursor) return { status: resp.status, body: { ...base, artifacts: merged, next_cursor: "" } };
+    expect(seenCursors.has(nextCursor), "artifact inventory cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return collectRunInventory(id, source, nextCursor, merged, base, seenCursors);
+  });
+}
+
+function resolveRunInventory(id) {
+  return discoverExactRun(id).then((matches) => {
+    expect(matches, "one unambiguous server-issued learning source").to.have.length(1);
+    const source = matches[0];
+    expect(String(source.run_ref || ""), "source-qualified run reference").to.match(/^npa1_/);
+    expect(String(source.project_id || ""), "source project identity").not.to.eq("");
+    expect(String(source.bucket || ""), "source bucket identity").not.to.eq("");
+    return collectRunInventory(id, source).then((resp) => ({ resp, source }));
+  });
+}
+
+function artifactContentPath(activeRun, source, artifact) {
   const query = new URLSearchParams({
     run_id: activeRun,
+    run_ref: String(source.run_ref || ""),
     key: String(artifact.key || ""),
-    bucket: String(artifact.bucket || ""),
+    project_id: String(source.project_id || ""),
+    resource_bucket: String(source.bucket || ""),
+    resolved_prefix: String(source.resolved_prefix || ""),
+    source_selected: "1",
   });
   return `/api/artifacts/content?${query.toString()}`;
 }
@@ -34,15 +93,17 @@ describe("GR00T learning experience (live system)", () => {
   let activeRun = "";
   let artifacts = [];
   let summary = {};
+  let source = {};
 
   before(function () {
     if (!liveEnvAvailable() || !runId()) this.skip();
     activeRun = runId();
-    return agentReq(`/api/artifacts/run/${encodeURIComponent(activeRun)}`).then((resp) => {
+    return resolveRunInventory(activeRun).then(({ resp, source: discoveredSource }) => {
       expect(resp.status, "learning artifact inventory status").to.eq(200);
       expect(resp.body.summary.learning, "machine-readable learning summary").to.be.an("object");
       artifacts = resp.body.artifacts || [];
       summary = resp.body.summary || {};
+      source = discoveredSource;
     });
   });
 
@@ -120,7 +181,15 @@ describe("GR00T learning experience (live system)", () => {
     expect(Number(mcap.size || mcap.size_bytes || mcap.bytes || 0), "MCAP inventory bytes").to.be.greaterThan(0);
     agentReq("/api/sim-viz/load-artifact", {
       method: "POST",
-      body: { run_id: activeRun, key: mcap.key },
+      body: {
+        run_id: activeRun,
+        run_ref: String(source.run_ref || ""),
+        key: String(mcap.key || ""),
+        project_id: String(source.project_id || ""),
+        resource_bucket: String(source.bucket || ""),
+        resolved_prefix: String(source.resolved_prefix || ""),
+        source_selected: true,
+      },
     }).then((resp) => {
       expect(resp.status).to.eq(200);
       expect(String(resp.body.sim_viz.artifact_key || "")).to.eq(mcap.key);
@@ -139,7 +208,7 @@ describe("GR00T learning experience (live system)", () => {
     const video = artifacts.find((item) => String(item.key || "").endsWith("reports/offline-heldout-comparison.mp4"));
     expect(video, "offline held-out comparison video").to.exist;
     expect(Number(video.size || video.size_bytes || video.bytes || 0), "comparison video bytes").to.be.greaterThan(0);
-    agentReq(artifactContentPath(activeRun, video), {
+    agentReq(artifactContentPath(activeRun, source, video), {
       headers: { Range: "bytes=0-4095" },
       encoding: "binary",
       failOnStatusCode: false,

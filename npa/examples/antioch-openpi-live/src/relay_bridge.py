@@ -1,0 +1,137 @@
+"""Authenticated WSS rendezvous inside the persistent Antioch sim service."""
+
+from __future__ import annotations
+
+import argparse
+import hmac
+import ipaddress
+import os
+import ssl
+import stat
+import threading
+import time
+from pathlib import Path
+
+from websockets.sync.server import serve
+
+MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+# The declared Antioch service port must be reachable from the named-route sidecar;
+# WSS client certificates and the API token gate every request.
+LISTEN_HOST = str(ipaddress.IPv4Address(0))
+ROLES = frozenset({"operator", "simulation"})
+
+
+def _prepare_temp_root() -> None:
+    """Create the uid-owned lock root required by the Antioch runner."""
+
+    portable = Path(os.environ.get("ANTIOCH_KIT_PORTABLE_ROOT", ""))
+    temp_root = Path(os.environ.get("TMPDIR", ""))
+    if (
+        not portable.is_absolute()
+        or not temp_root.is_absolute()
+        or temp_root.parent != portable
+    ):
+        raise RuntimeError("TMPDIR must be a direct child of the Kit portable root")
+    if temp_root.is_symlink():
+        raise RuntimeError("TMPDIR must not be a symlink")
+    temp_root.mkdir(mode=0o700, parents=False, exist_ok=True)
+    temp_root.chmod(0o700)
+    observed = temp_root.stat()
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_uid != os.geteuid()
+        or stat.S_IMODE(observed.st_mode) != 0o700
+    ):
+        raise RuntimeError("TMPDIR ownership or mode is unsafe")
+
+
+class RelayBridge:
+    """Pair one operator relay with one streamed scenario connection."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+        self._condition = threading.Condition()
+        self._peers: dict[str, object] = {}
+
+    def handle(self, connection) -> None:  # noqa: ANN001
+        authorization = connection.request.headers.get("Authorization", "")
+        role = connection.request.headers.get("X-NPA-Relay-Role", "")
+        if not hmac.compare_digest(authorization, "Api-Key " + self._token):
+            connection.close(code=1008, reason="authentication required")
+            return
+        if role not in ROLES:
+            connection.close(code=1008, reason="relay role required")
+            return
+        other_role = "simulation" if role == "operator" else "operator"
+        with self._condition:
+            if role in self._peers:
+                connection.close(code=1013, reason="relay role already connected")
+                return
+            self._peers[role] = connection
+            self._condition.notify_all()
+            while other_role not in self._peers:
+                self._condition.wait(timeout=1)
+            print(f"NPA_ANTIOCH_BRIDGE_PAIRED role={role}", flush=True)
+        try:
+            while True:
+                message = connection.recv(timeout=120)
+                with self._condition:
+                    peer = self._peers.get(other_role)
+                if peer is None:
+                    raise RuntimeError("relay peer disconnected")
+                peer.send(message)
+        finally:
+            with self._condition:
+                if self._peers.get(role) is connection:
+                    self._peers.pop(role, None)
+                peer = self._peers.pop(other_role, None)
+                self._condition.notify_all()
+            if peer is not None:
+                try:
+                    peer.close(code=1012, reason="relay peer reconnected")
+                except Exception:
+                    pass
+
+
+def main() -> int:
+    _prepare_temp_root()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bundle", required=True)
+    parser.add_argument("--wait-for-bundle", action="store_true")
+    parser.add_argument("service_command", nargs="*")
+    args = parser.parse_args()
+    if args.service_command not in ([], ["sleep", "infinity"]):
+        raise RuntimeError("unexpected service command arguments")
+    bundle = Path(args.bundle)
+    required = ("relay-api-key", "relay-server.crt", "relay-server.key")
+    while args.wait_for_bundle and not all(
+        (bundle / name).is_file() for name in required
+    ):
+        time.sleep(1)
+    token = (bundle / "relay-api-key").read_text(encoding="utf-8").strip()
+    if len(token) < 32:
+        raise RuntimeError("relay API key is missing or malformed")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(
+        str(bundle / "relay-server.crt"), str(bundle / "relay-server.key")
+    )
+    bridge = RelayBridge(token)
+    with serve(
+        bridge.handle,
+        LISTEN_HOST,
+        8444,
+        ssl=context,
+        compression=None,
+        max_size=MAX_MESSAGE_BYTES,
+        max_queue=2,
+        open_timeout=10,
+        close_timeout=5,
+    ) as server:
+        print("NPA_ANTIOCH_BRIDGE_READY", flush=True)
+        server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
