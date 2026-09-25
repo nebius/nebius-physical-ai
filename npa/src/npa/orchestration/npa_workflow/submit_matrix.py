@@ -72,6 +72,15 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "shared-scene-navigation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned Isaac task adapter, scene/reset bundle and exact BYOF image digest.",
+        notes="Native Isaac training and checkpoint evaluation; dedicated opt-in runtime test. GPU acceptance unverified.",
+    ),
+    SubmitLiveCase(
         "xr1-antioch-finetune.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

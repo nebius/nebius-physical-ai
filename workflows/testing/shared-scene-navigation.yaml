@@ -1,0 +1,79 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: shared-scene-navigation
+  description: >-
+    Operator-owned Isaac Lab navigation: seal explicit task/scene/reset inputs,
+    measure shared-scene contact and perception isolation, train native RSL-RL,
+    and evaluate the exact checkpoint on held-out goals. Requires a BYOF task
+    adapter and digest-pinned image. No stock robot, warehouse or GPU acceptance
+    is implied. RGB-D supports only all_robot_geometry_hidden.
+config:
+  bucket: example-bucket
+  prefix: "shared-scene-navigation/{{run.id}}"
+  source_overlay: "1"
+  input_uri: ""
+  # Must be an operator BYOF image digest matching recipe.json before execution.
+  byof_image: "tool://isaac-lab"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+  isaac:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+    image: "{{config.byof_image}}"
+initial: prepare
+states:
+  prepare:
+    description: Require operator inputs and seal exact task/image/scene/reset provenance.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -c
+        - "import sys; from npa.workflows.navigation.stages import prepare; prepare(*sys.argv[1:])"
+        - "{{config.input_uri}}"
+        - "{{config.prepared_uri}}"
+        - "{{config.byof_image}}"
+    outputs:
+      - {uri: "{{config.prepared_uri}}completion.json", schema: npa.navigation.publication.v1}
+    next: train
+  train:
+    description: Run real native isolation probes and RSL-RL training inside the supplied Isaac task image.
+    resources: isaac
+    run:
+      argv:
+        - python3
+        - -c
+        - "import sys; from npa.workflows.navigation.stages import run_stage; run_stage(*sys.argv[1:])"
+        - train
+        - "{{config.prepared_uri}}"
+        - "{{config.training_uri}}"
+    inputs:
+      - {uri: "{{config.prepared_uri}}completion.json", schema: npa.navigation.publication.v1}
+    outputs:
+      - {uri: "{{config.training_uri}}completion.json", schema: npa.navigation.publication.v1}
+    next: evaluate
+  evaluate:
+    description: Reload tensor-only native weights, repeat isolation probes and gate measured held-out navigation.
+    resources: isaac
+    run:
+      argv:
+        - python3
+        - -c
+        - "import sys; from npa.workflows.navigation.stages import run_stage; run_stage(*sys.argv[1:])"
+        - evaluate
+        - "{{config.training_uri}}"
+        - "{{config.evaluation_uri}}"
+    inputs:
+      - {uri: "{{config.training_uri}}completion.json", schema: npa.navigation.publication.v1}
+    outputs:
+      - {uri: "{{config.evaluation_uri}}completion.json", schema: npa.navigation.publication.v1}
+    terminal: true

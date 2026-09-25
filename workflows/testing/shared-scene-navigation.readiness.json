@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "26e492e78f8cb796140eac8ed71663d41ef92e8e765dae0683418719efd10144",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and three-stage planning passed.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/shared-scene-navigation.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/shared-scene-navigation.yaml --run-id preview --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The graph invokes native Isaac BYOF training, measured isolation probes and exact-checkpoint held-out evaluation; it requires explicit operator task and scene inputs.",
+      "evidence": [
+        "npa/src/npa/workflows/navigation/stages.py",
+        "docs/workbench/guides/shared-scene-navigation.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "No live S3 writes were authorized or performed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "Operator-owned task adapter, scene USDZ and deterministic reset/probe bundle are required; proprietary task data is unavailable.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Runtime storage and operator asset access have not been checked.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "An exact operator BYOF image digest containing the registered navigation task and adapter must replace the planning placeholder.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Native Isaac Sim 6.0.1 / Isaac Lab 3, PhysX contact filtering and RTX camera probes have not been executed. CPU USD visibility and image-contract tests are not GPU acceptance.",
+      "evidence": []
+    }
+  }
+}
