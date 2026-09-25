@@ -18,6 +18,7 @@ from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
+    assert_literal_python_heredocs_compile,
     assert_no_unresolved_placeholders,
     normalize_resources,
     plan_image_pull_secrets,
@@ -999,6 +1000,153 @@ resources:
     )
     with pytest.raises(NpaWorkflowRenderError, match=r"\$\{IMAGE_TAG\}"):
         assert_no_unresolved_placeholders(unresolved_image)
+
+
+def _rendered_shell(script: str, *, field_name: str = "run") -> str:
+    return yaml.safe_dump({"name": "heredoc-contract", field_name: script})
+
+
+def _malformed_python_heredoc(command: str, *, delimiter: str = "PY") -> str:
+    lines = [
+        f"{command} <<'{delimiter}'",
+        "from pathlib import Path",
+        'Path("failure.json").write_text("failed',
+        '")',
+        delimiter,
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("field_name", ["run", "setup"])
+def test_literal_python_heredoc_guard_rejects_generated_newline_syntax_error(
+    field_name: str,
+) -> None:
+    script = _malformed_python_heredoc(
+        "STATUS=failed /usr/bin/python3 -B -", delimiter="PUBFAIL"
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="does not compile"):
+        assert_literal_python_heredocs_compile(
+            _rendered_shell(script, field_name=field_name)
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3",
+        "MODE=fixed /usr/bin/python3 -B",
+        "python3 -B - argument-for-sys-argv",
+    ],
+)
+def test_literal_python_heredoc_guard_accepts_valid_stdin_programs(
+    command: str,
+) -> None:
+    script = "\n".join(
+        [
+            f'{command} <<"PY"',
+            "from pathlib import Path",
+            'Path("result.json").write_text("ready\\n")',
+            "PY",
+        ]
+    )
+
+    assert_literal_python_heredocs_compile(_rendered_shell(script))
+
+
+def test_literal_python_heredoc_guard_does_not_execute_or_import() -> None:
+    script = "\n".join(
+        [
+            "python3 - <<'PY'",
+            "import module_that_must_not_be_imported_by_the_renderer",
+            'raise RuntimeError("must not execute")',
+            "PY",
+        ]
+    )
+
+    assert_literal_python_heredocs_compile(_rendered_shell(script))
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        _malformed_python_heredoc("python3 -").replace("<<'PY'", "<<PY", 1),
+        _malformed_python_heredoc('"$CONTROL_PY" -B -'),
+        _malformed_python_heredoc("$VENV/bin/python -"),
+        _malformed_python_heredoc('PYTHONPATH="$RUN/src" python3 -B -'),
+        _malformed_python_heredoc("node -"),
+        _malformed_python_heredoc("python3 worker.py"),
+        _malformed_python_heredoc("python3 -c pass"),
+        _malformed_python_heredoc("python3 -m worker"),
+        "\n".join(
+            [
+                "cat <<'DATA'",
+                "python3 - <<'PY'",
+                "this is not Python",
+                "PY",
+                "DATA",
+            ]
+        ),
+        "# python3 - <<'PY'\nthis is a shell command, not Python\nPY\n",
+        "printf '%s\\n' \"python3 - <<'PY'\"\n",
+        "\n".join(
+            [
+                "payload='",
+                "python3 - <<'PY'",
+                "this is quoted shell data, not Python",
+                "PY",
+                "'",
+            ]
+        ),
+        "\n".join(
+            [
+                "python3 - <<'FIRST' | cat <<'SECOND'",
+                "pass",
+                "FIRST",
+                "this is data for cat, not Python",
+                "SECOND",
+            ]
+        ),
+        "\n".join(
+            [
+                "echo command continues \\",
+                "python3 - <<'PY'",
+                "this is data for echo, not Python",
+                "PY",
+            ]
+        ),
+        "\n".join(
+            [
+                "X=prefix\\",
+                "python3 - <<'PY'",
+                "this is continued assignment data, not Python",
+                "PY",
+            ]
+        ),
+    ],
+)
+def test_literal_python_heredoc_guard_skips_ambiguous_shell_forms(script: str) -> None:
+    assert_literal_python_heredocs_compile(_rendered_shell(script))
+
+
+def test_render_path_checks_literal_python_heredocs(mocker) -> None:  # noqa: ANN001
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="invalid-python-heredoc")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.skypilot_render.build_skypilot_task_doc",
+        return_value={
+            "name": "invalid-python-heredoc",
+            "run": _malformed_python_heredoc("python3 -B -"),
+        },
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="does not compile"):
+        render_skypilot_yaml(
+            spec,
+            plan,
+            run_id="invalid-python-heredoc",
+            options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+        )
 
 
 def test_render_self_hosted_vlm_includes_vllm_setup(

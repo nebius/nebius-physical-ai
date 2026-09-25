@@ -42,6 +42,16 @@ first-party image startup-contract errors that schema validation cannot see. The
 check stays local, does not contact a provider, and does not materialize registry
 secrets.
 
+The renderer also compiles simple quoted Python heredocs in top-level `setup`
+and `run` scripts with the local NPA interpreter, so syntax errors fail before
+submission. This check is deliberately narrow: the quoted identifier delimiter
+must end the command line, and the command must invoke a literal `python`,
+`python3`, or versioned `python3` executable that reads its program from standard
+input. Fixed environment assignments may precede it. Unquoted or nested
+heredocs, continued command lines, dynamically expanded commands or assignments,
+other interpreters, and heredocs passed to a Python script as data are left to
+the shell and runtime.
+
 The renderer rejects explicit non-root main containers that disable the sudo
 access required by first-party images. It also rejects individual command
 arguments of 131,072 UTF-8 bytes or more, including an oversized `run.shell`.

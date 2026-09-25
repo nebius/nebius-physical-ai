@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shlex
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
@@ -2542,11 +2543,178 @@ def _render_docs(
                 width=10_000,
             ).rstrip()
         )
-    return "\n---\n".join(chunks) + "\n"
+    rendered = "\n---\n".join(chunks) + "\n"
+    assert_literal_python_heredocs_compile(rendered)
+    return rendered
 
 
 _SKYPILOT_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SKYPILOT_SHELL_FIELDS = frozenset({"run", "setup"})
+_SIMPLE_HEREDOC_RE = re.compile(
+    r"<<(?P<strip>-?)(?:(?P<quote>['\"])(?P<quoted>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P=quote)|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))\s*(?:#.*)?$"
+)
+_SHELL_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=(.*)", re.DOTALL)
+_PYTHON_EXECUTABLE_RE = re.compile(r"python(?:3(?:\.\d+)?)?")
+_PYTHON_STDIN_OPTION_RE = re.compile(r"-[BEIOPsSuvx]+")
+_DYNAMIC_OR_CONTROL_SHELL_CHARS = frozenset("$`~;&|<>(){}*?[]")
+
+
+def _heredoc_end(
+    lines: list[str], start: int, delimiter: str, strip_tabs: bool
+) -> int | None:
+    """Return the terminator index for one simple heredoc."""
+
+    for index in range(start, len(lines)):
+        candidate = lines[index].lstrip("\t") if strip_tabs else lines[index]
+        if candidate == delimiter:
+            return index
+    return None
+
+
+def _literal_command_tokens(prefix: str) -> list[str] | None:
+    """Parse a literal command prefix and remove fixed environment assignments."""
+
+    try:
+        tokens = shlex.split(prefix, comments=True, posix=True)
+    except ValueError:
+        return None
+    if any(_DYNAMIC_OR_CONTROL_SHELL_CHARS.intersection(token) for token in tokens):
+        return None
+    while tokens:
+        assignment = _SHELL_ASSIGNMENT_RE.fullmatch(tokens[0])
+        if assignment is None:
+            break
+        tokens.pop(0)
+    return tokens
+
+
+def _python_reads_stdin(prefix: str) -> bool:
+    """Return whether a supported literal Python command reads its program on stdin."""
+
+    tokens = _literal_command_tokens(prefix)
+    if not tokens:
+        return False
+    executable = tokens[0].rsplit("/", 1)[-1]
+    if _PYTHON_EXECUTABLE_RE.fullmatch(executable) is None:
+        return False
+    arguments = tokens[1:]
+    if not arguments:
+        return True
+    stdin_index = arguments.index("-") if "-" in arguments else len(arguments)
+    options = arguments[:stdin_index]
+    if not all(_PYTHON_STDIN_OPTION_RE.fullmatch(option) for option in options):
+        return False
+    return True
+
+
+def _shell_quote_state(text: str, initial: str | None) -> tuple[str | None, bool, bool]:
+    """Return shell quote, comment, and trailing-continuation state."""
+
+    state = initial
+    escaped = False
+    for character in text:
+        if state == "'":
+            state = None if character == "'" else state
+            continue
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if state in {'"', "`"}:
+            state = None if character == state else state
+            continue
+        if character == "#":
+            return state, False, False
+        if character in {'"', "'", "`"}:
+            state = character
+    return state, True, escaped
+
+
+def _shell_heredocs(script: str) -> Iterator[tuple[str, str, re.Match[str], int]]:
+    """Yield simple heredocs while skipping their bodies during command scanning."""
+
+    lines = script.splitlines()
+    index = 0
+    quote_state: str | None = None
+    continued_command = False
+    while index < len(lines):
+        line = lines[index]
+        match = _SIMPLE_HEREDOC_RE.search(line)
+        prefix_state, active, _ = _shell_quote_state(
+            line[: match.start()] if match else line, quote_state
+        )
+        if match is not None and active and prefix_state is None:
+            delimiter = match.group("quoted") or match.group("bare")
+            strip_tabs = match.group("strip") == "-"
+            end = _heredoc_end(lines, index + 1, delimiter, strip_tabs)
+            if end is not None:
+                body_lines = lines[index + 1 : end]
+                if strip_tabs:
+                    body_lines = [body.lstrip("\t") for body in body_lines]
+                if not continued_command:
+                    yield (
+                        line[: match.start()],
+                        "\n".join(body_lines) + "\n",
+                        match,
+                        index + 1,
+                    )
+                quote_state, _, trailing = _shell_quote_state(line, quote_state)
+                continued_command = quote_state is not None or trailing
+                index = end + 1
+                continue
+        quote_state, _, trailing = _shell_quote_state(line, quote_state)
+        continued_command = quote_state is not None or trailing
+        index += 1
+
+
+def assert_literal_python_heredocs_compile(yaml_text: str) -> None:
+    """Compile supported literal Python heredocs in rendered shell fields.
+
+    Args:
+        yaml_text: Rendered SkyPilot YAML to inspect.
+
+    Returns:
+        None.
+
+    Raises:
+        NpaWorkflowRenderError: If rendered YAML is invalid or a supported
+            quoted Python heredoc contains invalid syntax.
+    """
+
+    try:
+        documents = list(yaml.safe_load_all(yaml_text))
+    except yaml.YAMLError as exc:
+        raise NpaWorkflowRenderError(
+            f"rendered SkyPilot YAML is invalid while checking Python heredocs: {exc}"
+        ) from exc
+    for document_number, document in enumerate(documents, start=1):
+        if not isinstance(document, Mapping):
+            continue
+        for field_name in _SKYPILOT_SHELL_FIELDS:
+            script = document.get(field_name)
+            if not isinstance(script, str):
+                continue
+            _compile_python_heredocs(script, document_number, field_name)
+
+
+def _compile_python_heredocs(script: str, document: int, field_name: str) -> None:
+    """Compile the supported Python heredocs from one shell field."""
+
+    for prefix, body, match, line_number in _shell_heredocs(script):
+        if match.group("quote") is None or not _python_reads_stdin(prefix):
+            continue
+        delimiter = match.group("quoted")
+        filename = f"<SkyPilot document {document} {field_name} heredoc {delimiter}>"
+        try:
+            compile(body, filename, "exec")
+        except SyntaxError as exc:
+            raise NpaWorkflowRenderError(
+                f"literal Python heredoc in SkyPilot document {document} "
+                f"{field_name!r} at shell line {line_number} does not compile: {exc.msg}"
+            ) from exc
 
 
 def _placeholder_names(value: object) -> set[str]:
