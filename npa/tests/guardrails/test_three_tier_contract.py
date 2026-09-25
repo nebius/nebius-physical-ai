@@ -882,6 +882,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Typed shared requests are exercised through HTTP, CLI, SDK and toolRefs
         # in test_mjlab.py and test_mjlab_workflow.py.
         "mjlab",
+        # Namespace selection is host-side platform configuration.
+        # CLI and SDK share namespaces.py; no payload service or toolRef applies.
+        "namespace",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.
         # CLI <-> SDK <-> YAML coherence is enforced instead by
