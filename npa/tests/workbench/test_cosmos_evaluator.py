@@ -160,6 +160,41 @@ def test_check_hallucination_rejects_an_out_of_range_threshold(tmp_path: Path) -
         )
 
 
+@pytest.mark.parametrize("passed", [True, False])
+def test_upstream_hallucination_result_requires_a_boolean_verdict(passed: bool) -> None:
+    result = hal._parse_upstream_result(
+        {
+            "clip_id": "upstream-clip",
+            "passed": passed,
+            "threshold": 0.73,
+            "score": 0.41,
+            "total_frames": 8,
+            "total_hallucinated_dynamic_pixels": 5,
+            "total_augmented_dynamic_pixels": 12,
+        },
+        clip_id="requested-clip",
+        params={"threshold": 0.68},
+    )
+
+    assert result is not None
+    assert result.passed is passed
+    assert result.score == 0.41
+    assert result.threshold == 0.73
+
+
+@pytest.mark.parametrize("passed", ["false", 0, 1, None, [], {}])
+def test_upstream_hallucination_result_falls_back_on_malformed_verdicts(
+    passed: Any,
+) -> None:
+    result = hal._parse_upstream_result(
+        {"passed": passed, "score": 1.0, "threshold": 0.5},
+        clip_id="clip",
+        params={"threshold": 0.5},
+    )
+
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # NPA source-relative temporal consistency companion check
 # ---------------------------------------------------------------------------

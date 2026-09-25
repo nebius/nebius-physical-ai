@@ -159,9 +159,25 @@ def _run_upstream(
         return None
 
     payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+    return _parse_upstream_result(payload, clip_id=clip_id, params=params)
+
+
+def _parse_upstream_result(
+    payload: dict[str, Any], *, clip_id: str, params: dict[str, Any]
+) -> HallucinationResult | None:
+    """Convert a valid upstream payload, falling back on an ambiguous verdict."""
+
+    passed = payload.get("passed")
+    if type(passed) is not bool:
+        _log.warning(
+            "upstream hallucination check returned a non-boolean passed value; "
+            "using the in-repo port"
+        )
+        return None
+
     return HallucinationResult(
         clip_id=str(payload.get("clip_id") or clip_id),
-        passed=bool(payload.get("passed")),
+        passed=passed,
         threshold=float(payload.get("threshold", params["threshold"])),
         score=float(payload.get("score", 0.0)),
         total_frames=int(payload.get("total_frames", 0)),
