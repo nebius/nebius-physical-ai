@@ -564,8 +564,11 @@ microbatch one.
 The experimental `mot` policy requires activation checkpointing off and the
 pinned CUDA Torch 2.7.1 runtime. It captures only the mixed-attention module's
 training forward and backward using `torch.cuda.make_graphed_callables`, with
-static inputs and autocast caching disabled inside capture. Input preparation, random sampling, loss calculation, optimizer
-updates, DDP reduction, and evaluation retain their eager paths. Parameter
+static inputs and autocast caching disabled inside capture. Only forward uses
+autocast; backward capture runs outside autocast, matching eager training. DDP
+initialization uses an ordered side stream before capture. Input preparation,
+random sampling, loss calculation, optimizer updates, DDP reduction, and
+evaluation retain their eager paths. Parameter
 identities and checkpoint keys remain unchanged. Capture failures, changed input
 shapes or metadata, and incomplete backward execution fail the run. Every phase
 must report observed native forward and backward graph replays on all four ranks

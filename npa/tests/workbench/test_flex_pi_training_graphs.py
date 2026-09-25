@@ -264,6 +264,68 @@ def test_capture_detaches_samples_preserves_parameters_and_restores_rng(monkeypa
     assert module.weight.grad.item() == 2.0
 
 
+def test_capture_autocasts_only_forward_and_preserves_eager_backward(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from torch.utils._pytree import tree_flatten
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.randn(2, 7, 5))
+
+        def forward(self, inputs):
+            assert torch.is_autocast_enabled("cpu")
+            return torch.bmm(inputs * 10, self.weight * 10)
+
+    torch.manual_seed(42)
+    module = Model()
+    inputs = torch.randn(2, 3, 7, requires_grad=True)
+    with torch.autocast("cpu", dtype=torch.bfloat16, cache_enabled=False):
+        expected_output = module(inputs)
+    expected_gradients = torch.autograd.grad(
+        expected_output, (inputs, module.weight), torch.ones_like(expected_output)
+    )
+    leaves, spec = tree_flatten(((inputs,), {}))
+    state = SimpleNamespace(module=module, original=module.forward, replays={})
+    original_autocast = torch.autocast
+    original_enabled = torch.is_autocast_enabled
+    original_dtype = torch.get_autocast_dtype
+    original_fork = torch.random.fork_rng
+    monkeypatch.setattr(
+        torch, "autocast", lambda device, **kw: original_autocast("cpu", **kw)
+    )
+    monkeypatch.setattr(
+        torch, "is_autocast_enabled", lambda device: original_enabled("cpu")
+    )
+    monkeypatch.setattr(
+        torch, "get_autocast_dtype", lambda device: original_dtype("cpu")
+    )
+    monkeypatch.setattr(
+        torch.random, "fork_rng", lambda **kw: original_fork(devices=[])
+    )
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(graphs, "_observe_native_replays", lambda *args: None)
+
+    def capture(wrapper, samples, **options):
+        assert not original_enabled("cpu")
+        output = wrapper(*samples)
+        assert output.dtype == torch.bfloat16
+        assert torch.equal(output, expected_output)
+        assert not original_enabled("cpu")
+        gradients = torch.autograd.grad(
+            output, (*samples, *wrapper.parameters()), torch.ones_like(output)
+        )
+        for actual, expected in zip(gradients, expected_gradients, strict=True):
+            assert torch.equal(actual, expected)
+        return wrapper
+
+    monkeypatch.setattr(torch.cuda, "make_graphed_callables", capture)
+    with original_autocast("cpu", dtype=torch.bfloat16, cache_enabled=False):
+        graphs._capture_native(state, leaves, spec)
+        assert original_enabled("cpu")
+    assert not original_enabled("cpu")
+
+
 def test_native_observer_counts_only_successful_forward_and_backward_replays(
     monkeypatch,
 ):

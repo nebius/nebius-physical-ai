@@ -144,6 +144,8 @@ def _capture_native(state, leaves, tree_spec):
         for i in positions
     )
     template = [None if isinstance(value, torch.Tensor) else value for value in leaves]
+    forward_autocast = torch.is_autocast_enabled("cuda")
+    forward_dtype = torch.get_autocast_dtype("cuda")
 
     class CaptureModule(torch.nn.Module):
         def __init__(self):
@@ -155,13 +157,21 @@ def _capture_native(state, leaves, tree_spec):
             for index, tensor in zip(positions, tensors, strict=True):
                 values[index] = tensor
             args, kwargs = tree_unflatten(values, tree_spec)
-            return state.original(*args, **kwargs)
+            with torch.autocast(
+                "cuda",
+                enabled=forward_autocast,
+                dtype=forward_dtype,
+                cache_enabled=False,
+            ):
+                return state.original(*args, **kwargs)
 
     wrapper = CaptureModule()
     # Warmup/capture must not consume the live training RNG sequence. Input
     # leaves are detached copies so qualification cannot retain an eager graph.
     with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
-        with torch.autocast("cuda", cache_enabled=False):
+        # The native API also captures autograd.grad. Match eager training:
+        # autocast applies only to forward, never to backward capture.
+        with torch.autocast("cuda", enabled=False):
             wrapper = torch.cuda.make_graphed_callables(
                 wrapper, static, num_warmup_iters=11, allow_unused_input=True
             )
