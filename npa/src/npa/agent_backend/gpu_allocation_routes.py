@@ -32,6 +32,11 @@ def register_gpu_allocation_routes(
             raise http_error(
                 status_code=400, detail="logical_allocation and request are required"
             )
+        success = body.get("success", False)
+        if not isinstance(success, bool):
+            raise http_error(
+                status_code=400, detail="success must be a boolean when supplied"
+            )
         logical_ref = fallback.logical_allocation_ref(logical)
         failure = body.get("failure") if isinstance(body.get("failure"), dict) else {}
 
@@ -55,7 +60,7 @@ def register_gpu_allocation_routes(
                     if isinstance(body.get("preemptible_candidate"), dict)
                     else None
                 ),
-                success=bool(body.get("success")),
+                success=success,
             )
             confirm_token = ""
             if decision.get("prompt"):
