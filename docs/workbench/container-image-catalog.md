@@ -46,9 +46,9 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **52 packaging entries** (43 redistribution-eligible
-and nine restricted) and **44 mapped tools**: 37 public-release members, two
-restricted tools, and five quarantined tools (`curobo`, `ncore`, `openpi`,
+The current source inventory has **54 packaging entries** (45 redistribution-eligible
+and nine restricted) and **46 mapped tools**: 37 public-release members, two
+restricted tools, and seven quarantined tools (`antioch`, `curobo`, `libero`, `ncore`, `openpi`,
 `robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -617,6 +617,16 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
+- **LIBERO** has a quarantined public-neutral-bootstrap development candidate,
+  with no supported release. Its neutral bytes contain only a
+  digest-pinned Python/Debian base, snapshot-locked bootstrap packages, NPA
+  code, and immutable manifests—no LIBERO, GPU runtime, model, demonstration,
+  task/render asset, cache, checkpoint, credential, or output. Trusted development
+  publication requires complete-byte, published-base-provenance and anonymous-pull
+  checks. Customer-authorized exact-digest B200 acceptance remains required before
+  any public-table row or supported release claim.
+  Historical private r15 bytes do not establish equivalence. See the
+  [LIBERO qualification contract](byof-libero.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.
