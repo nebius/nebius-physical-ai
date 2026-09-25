@@ -73,6 +73,8 @@ def service_endpoint(name: str, namespace: str, port: int) -> str:
 def _service_environment(
     service_env: dict[str, str], storage_path: str
 ) -> list[dict[str, Any]]:
+    """Bind the service path once and leave storage credentials to Secret refs."""
+
     configured_storage = service_env.get("LANCEDB_STORAGE_PATH")
     if configured_storage is not None and configured_storage != storage_path:
         raise ServiceKubernetesError(
