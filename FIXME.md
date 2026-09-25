@@ -50,16 +50,17 @@ work lives).
 - **Next step**: Extract `upload_via_remote_env(host, local_path, s3_uri,
   env_file_path)` into `npa.clients.storage` when another tool needs it.
 
-#### [M] SDK_PUBLIC_SURFACE
-
-- **Surfaced by**: Architecture doc follow-up.
-- **Status**: Still active.
-- **Current issue**: `npa/__init__.py` does not expose a clean public SDK surface
-  even though the architecture docs describe one as roadmap.
-- **Next step**: Decide public versus internal methods, add re-exports,
-  document the API, and cover imports/behavior in tests.
-
 ## Resolved (recent)
+
+- 2026-09-24 - `SDK_PUBLIC_SURFACE` backlog reconciliation only:
+  `npa/src/npa/__init__.py` already exposes the existing `convert`, `demo`,
+  `errors`, `network`, `rerun`, `workflow`, and `workbench` namespaces through
+  lazy imports. `docs/architecture/cli-namespaces.md` documents that surface,
+  and `npa/tests/test_sdk_surface.py` covers imports and existing public wrapper
+  behavior. No exports were added. The SDK remains v0 and unstable; consumers
+  should pin the exact `npa` version, and this resolution makes no v1-stability
+  claim. This reconciliation provides no runtime, cloud, GPU, deployment, or
+  operational-readiness evidence.
 
 - 2026-09-23 - The Sim-to-LeRobot adapter has an optional native-reader smoke
   that exports a compact synthetic dataset, loads the real directory through
