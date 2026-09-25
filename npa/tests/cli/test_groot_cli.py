@@ -2673,6 +2673,64 @@ def test_groot_status_reports_readiness_blockers(mocker) -> None:
     assert f"Model {DEFAULT_MODEL} not loaded" in payload["readiness"]["blockers"]
 
 
+@pytest.mark.parametrize("loaded", ["false", "true", 0, 1])
+def test_groot_status_rejects_malformed_loaded_values(mocker, loaded) -> None:
+    http = mocker.MagicMock()
+    http.health.return_value = {
+        "status": "ok",
+        "app_status": "healthy",
+        "model": DEFAULT_MODEL,
+        "loaded": loaded,
+        "ngc_credentials_configured": True,
+    }
+    mocker.patch(
+        "npa.cli.groot.resolve_config",
+        return_value=_cfg(hf_token="PLACEHOLDER_HF_TOKEN"),
+    )
+    mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "groot", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["app_status"] == "degraded"
+    assert payload["readiness"]["ngc_credentials_configured"] is True
+    assert payload["readiness"]["model_loaded"] is False
+    assert payload["readiness"]["ready"] is False
+
+
+@pytest.mark.parametrize("ngc_configured", ["false", "true", 0, 1])
+def test_groot_status_rejects_malformed_ngc_values_without_blocking_loaded_model(
+    mocker, ngc_configured
+) -> None:
+    http = mocker.MagicMock()
+    http.health.return_value = {
+        "status": "ok",
+        "model": DEFAULT_MODEL,
+        "loaded": True,
+        "ngc_credentials_configured": ngc_configured,
+    }
+    mocker.patch(
+        "npa.cli.groot.resolve_config",
+        return_value=_cfg(hf_token="PLACEHOLDER_HF_TOKEN"),
+    )
+    mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "groot", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["app_status"] == "healthy"
+    assert payload["readiness"]["ngc_credentials_configured"] is False
+    assert payload["readiness"]["model_loaded"] is True
+    assert payload["readiness"]["ready"] is True
+    assert payload["readiness"]["blockers"] == []
+    assert any(
+        note.startswith("NGC credentials not configured")
+        for note in payload["readiness"]["notes"]
+    )
+
+
 def test_groot_status_ready_when_loaded_without_ngc(mocker) -> None:
     """A served HF model is ready even when NGC credentials are absent."""
     http = mocker.MagicMock()
