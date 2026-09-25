@@ -660,38 +660,42 @@ def test_stage_prefix_rejects_truncated_source_page_without_token(
     assert s3.list_calls == [("source", "dataset/", None)]
 
 
-def test_stage_prefix_rejects_repeated_target_continuation_token(
+@pytest.mark.parametrize("side", ["source", "target"])
+@pytest.mark.parametrize(
+    "tokens", [("page-2", "page-2"), ("page-2", "page-3", "page-2")]
+)
+def test_stage_prefix_rejects_continuation_token_cycles(
     tmp_path: Path,
+    side: str,
+    tokens: tuple[str, ...],
 ) -> None:
     manifest = _prefix_manifest(tmp_path / "manifest.yaml")
     s3 = DemoStageFakeS3()
     s3.add("source", "dataset/a.bin", b"abc")
     s3.add("source", "dataset/b.bin", b"defg")
-    s3.set_list_page(
-        "target",
-        "staged/dataset/",
-        None,
-        {
-            "IsTruncated": True,
-            "NextContinuationToken": "target-page-2",
-            "Contents": [{"Key": "staged/dataset/a.bin", "Size": 3}],
-        },
-    )
-    s3.set_list_page(
-        "target",
-        "staged/dataset/",
-        "target-page-2",
-        {
-            "IsTruncated": True,
-            "NextContinuationToken": "target-page-2",
-            "Contents": [{"Key": "staged/dataset/b.bin", "Size": 4}],
-        },
-    )
+    prefix = "dataset/" if side == "source" else "staged/dataset/"
+    previous = None
+    for token in tokens:
+        s3.set_list_page(
+            side,
+            prefix,
+            previous,
+            {
+                "IsTruncated": True,
+                "NextContinuationToken": token,
+                "Contents": [{"Key": prefix + "a.bin", "Size": 3}],
+            },
+        )
+        previous = token
 
     with pytest.raises(DemoManifestError, match="repeated continuation token"):
         stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
 
     assert s3.copy_calls == []
+    assert [call[2] for call in s3.list_calls if call[0] == side] == [
+        None,
+        *tokens[:-1],
+    ]
 
 
 def test_verify_prefix_rejects_malformed_target_pagination(tmp_path: Path) -> None:
