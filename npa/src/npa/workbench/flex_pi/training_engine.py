@@ -116,9 +116,9 @@ class VerifiedTrainer(Wan22Trainer):
             raise RuntimeError(
                 "actual DDP wrapping differs from the fixed bucket policy"
             )
-        if self.accelerator.num_processes != 4 or self.batch_size != 1:
+        if self.accelerator.num_processes != 4 or self.batch_size not in {1, 3}:
             raise RuntimeError(
-                "the accepted contract requires four ranks and microbatch one"
+                "the training contract requires four ranks and microbatch one or three"
             )
         if self.gradient_accumulation_steps * self.batch_size != 24:
             raise RuntimeError("the accepted effective batch is 96")

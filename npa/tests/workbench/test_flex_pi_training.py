@@ -23,8 +23,9 @@ from npa.workbench.flex_pi.training_worker import _workload_identity
 @pytest.mark.parametrize("mode", ["train", "profile-resume"])
 @pytest.mark.parametrize("memory_fill", ["on", "off"])
 @pytest.mark.parametrize("activation_checkpointing", ["on", "off"])
+@pytest.mark.parametrize("microbatch_per_rank", [1, 3])
 def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
-    mode, memory_fill, activation_checkpointing
+    mode, memory_fill, activation_checkpointing, microbatch_per_rank
 ):
     result = CliRunner().invoke(
         app,
@@ -38,6 +39,8 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
             memory_fill,
             "--activation-checkpointing",
             activation_checkpointing,
+            "--microbatch-per-rank",
+            str(microbatch_per_rank),
             "--normalization-path",
             "s3://example-bucket/original/dataset_stats.json",
             "--normalization-sha256",
@@ -54,6 +57,7 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
         mode=mode,
         memory_fill=memory_fill,
         activation_checkpointing=activation_checkpointing,
+        microbatch_per_rank=microbatch_per_rank,
         normalization_path="s3://example-bucket/original/dataset_stats.json",
         normalization_sha256="a" * 64,
         dry_run=True,
@@ -67,9 +71,7 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
     assert cli["reference_benchmark_beaten"] is False
 
 
-@pytest.mark.parametrize(
-    "candidate", [{"microbatch_per_rank": 3}, {"compile_mode": "rmsnorm"}]
-)
+@pytest.mark.parametrize("candidate", [{"compile_mode": "rmsnorm"}])
 def test_unqualified_execution_options_are_not_http_controls(candidate):
     from pydantic import ValidationError
     from npa.workbench.flex_pi.schemas import TrainingBody

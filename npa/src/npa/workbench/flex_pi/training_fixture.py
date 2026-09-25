@@ -79,7 +79,7 @@ class FixtureRecorder:
         self.updates.append(
             {
                 "losses_sha256": state_digest(self.losses),
-                "local_samples": len(self.losses),
+                "local_samples": len(self.losses) * trainer.batch_size,
                 "gradients_sha256": dict(self.gradients),
                 "clipping_norm_sha256": state_digest(norm),
                 "trainable_parameters_sha256": _finite_digest(parameters),
@@ -111,7 +111,7 @@ def _optimizer_digest(optimizer):
 def _fixture_loader(trainer, indices):
     loader = DataLoader(
         trainer.train_dataset,
-        batch_size=1,
+        batch_size=trainer.batch_size,
         sampler=indices,
         num_workers=trainer.num_workers,
         pin_memory=True,
@@ -126,11 +126,16 @@ def _fixture_loader(trainer, indices):
 def _fixture_updates(trainer, loader, recorder):
     indices, inputs = [], []
     initial_step = trainer.global_step
+    full_batches, tail_batches = 24 // trainer.batch_size, 9 // trainer.batch_size
     for position, sample in enumerate(loader, 1):
         indices.extend(sample.pop("npa_sample_index").detach().cpu().tolist())
         inputs.append(state_digest(sample))
-        trainer._backward(sample, 24 if position <= 24 else 9)
-        if trainer.accelerator.sync_gradients != (position in {24, 33}):
+        trainer._backward(
+            sample, full_batches if position <= full_batches else tail_batches
+        )
+        if trainer.accelerator.sync_gradients != (
+            position in {full_batches, full_batches + tail_batches}
+        ):
             raise RuntimeError("qualification changed native accumulation boundaries")
     if len(indices) != 33 or trainer.global_step != initial_step + 2:
         raise RuntimeError("qualification must execute exactly 96 and 36 samples")
@@ -161,7 +166,7 @@ def run_fixture_qualification(trainer):
     indices, inputs = _fixture_updates(
         trainer, _fixture_loader(trainer, global_indices), recorder
     )
-    if indices != global_indices[trainer.accelerator.process_index :: 4]:
+    if indices != _rank_fixture_indices(global_indices, trainer):
         raise RuntimeError("qualification loader changed the ordered real anchors")
     trainer._verify_indices(indices, 132)
     local = {
@@ -176,6 +181,16 @@ def run_fixture_qualification(trainer):
     torch.distributed.all_gather_object(ranks, local)
     trainer._qualification_seconds = time.perf_counter() - started
     return {"initial_training_state": initial, "ranks": ranks}
+
+
+def _rank_fixture_indices(indices, trainer):
+    width = trainer.batch_size
+    rank_start = trainer.accelerator.process_index * width
+    return [
+        index
+        for start in range(rank_start, len(indices), 4 * width)
+        for index in indices[start : start + width]
+    ]
 
 
 def _validation_fixture(trainer):

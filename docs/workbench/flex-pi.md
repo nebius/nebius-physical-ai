@@ -469,7 +469,7 @@ state/actions. Thirty-three observations yield nine encoded video frames and
 Training uses the upstream `yam_unified_flex_3cam_32d_rel_1e-4` model and loss,
 Wan VideoDiT initialization plus the official derived ActionDiT backbone,
 BF16 native DDP, AdamW with a peak learning rate of `1e-4`, and effective batch
-96 (microbatch one × 24 accumulation steps × four GPUs). Mixed-attention
+96 (by default, microbatch one × 24 accumulation steps × four GPUs). Mixed-attention
 gradient checkpointing is enabled by default. Model, tokenizer, VAE, DINOv3, and dataset
 bytes are fetched only at runtime under their separate upstream terms. The
 bundled manifests pin source revisions and every downloaded content hash.
@@ -483,6 +483,18 @@ The adapter also fixes DDP bucket partitioning with unused-parameter discovery
 enabled and static graphs disabled. Its guarded Accelerate 1.12.0 integration
 runs before model preparation, preventing a fresh reducer from using different
 first-iteration buckets than the uninterrupted run.
+
+`--microbatch-per-rank 1|3` (`config.microbatch_per_rank`) selects one or three
+samples per GPU. Accumulation automatically becomes 24 or 8 steps, preserving
+global batch 96. Both widths divide the nine samples per rank in the real
+36-sample tail; unsupported widths fail before launch. Qualification uses the
+actual microbatch and native loader-end synchronization for both the full and
+tail updates, and fresh resume checks the next ordered anchors. Validation
+continues to use one sample per GPU with its original per-anchor seed.
+Larger microbatches can change floating-point reductions and random draws, so
+they require their own measured profile, exact within-configuration resume,
+and full held-out quality check. Microbatch three is a tuning candidate, not
+an established speedup or an execution-equivalent replacement for one.
 
 `--activation-checkpointing on|off` (`config.activation_checkpointing` in a
 workflow) selects recomputation for both experts and mixed attention together.

@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "2740589d6a35b5c902a3f50e1165797ca367dd7fe2478b1fc42e754bb23ddc3a",
+  "workflow_sha256": "c7d64b75eec8b817f31ae0d11032f19e604865b98764b5c7005f574071ac0a6f",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Local validate-spec resolved the maintained four-node training toolRef; runtime acceptance remains pending.",
+      "reason": "validate-spec and plan-spec resolve the explicit microbatch default through the maintained four-GPU toolRef.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/flex-pi-b300-multinode-public-training.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/flex-pi-b300-multinode-public-training.yaml --json"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The adapter invokes the pinned upstream YAM model/loss and exact disjoint episode split.",
+      "reason": "The resolved default retains microbatch one, 24 accumulation steps and the pinned upstream YAM model/loss and exact disjoint episode split; microbatch three is a separately qualified tuning option.",
       "evidence": [
         "npa/src/npa/workbench/flex_pi/training_sources.json",
         "npa/src/npa/workbench/flex_pi/training_split.json"

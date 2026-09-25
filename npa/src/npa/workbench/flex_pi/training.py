@@ -33,6 +33,7 @@ class TrainingRequest:
         optimizer: Default, foreach, or fused AdamW implementation.
         memory_fill: Keep deterministic allocation fills on, or qualify them off.
         activation_checkpointing: Recompute activations, or retain them in GPU memory.
+        microbatch_per_rank: One or three samples per GPU; effective batch stays 96.
         run_id: Caller-assigned provenance identifier.
         runtime_image: Exact runtime image reference for provenance.
         dry_run: Return the frozen plan without executing it.
@@ -51,6 +52,7 @@ class TrainingRequest:
     optimizer: str = "default"
     memory_fill: str = "on"
     activation_checkpointing: str = "on"
+    microbatch_per_rank: int = 1
     run_id: str = ""
     runtime_image: str = ""
     dry_run: bool = False
@@ -64,6 +66,10 @@ def _validate(request):
 
     validate_normalization(request)
     activation_checkpointing_overrides(request.activation_checkpointing)
+    if type(
+        request.microbatch_per_rank
+    ) is not int or request.microbatch_per_rank not in {1, 3}:
+        raise FlexPiError("microbatch-per-rank must be one or three")
     if request.mode not in {"profile", "profile-resume", "train"}:
         raise FlexPiError("mode must be profile, profile-resume or train")
     if request.optimizer not in {"default", "foreach", "fused"}:
@@ -96,8 +102,8 @@ def _plan(request):
         "validation_frames": VALIDATION_FRAMES,
         "gpu_count": 4,
         "effective_batch": GLOBAL_BATCH,
-        "microbatch_per_rank": 1,
-        "gradient_accumulation_steps": 24,
+        "microbatch_per_rank": request.microbatch_per_rank,
+        "gradient_accumulation_steps": 24 // request.microbatch_per_rank,
         "final_training_batch": 36,
         "precision": "bf16",
         "peak_learning_rate": 1e-4,

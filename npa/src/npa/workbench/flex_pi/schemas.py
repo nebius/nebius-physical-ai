@@ -35,6 +35,7 @@ class TrainingBody(BaseModel):
     optimizer: Literal["default", "foreach", "fused"] = "default"
     memory_fill: Literal["on", "off"] = "on"
     activation_checkpointing: Literal["on", "off"] = "on"
+    microbatch_per_rank: Literal[1, 3] = 1
     dry_run: bool = False
 
 

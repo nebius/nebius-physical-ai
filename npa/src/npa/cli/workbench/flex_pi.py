@@ -42,6 +42,9 @@ def train_cmd(
         "--activation-checkpointing",
         help="on recomputes activations; off uses more GPU memory",
     ),
+    microbatch_per_rank: int = typer.Option(
+        1, "--microbatch-per-rank", help="1 or 3; accumulation keeps effective batch 96"
+    ),
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -59,6 +62,7 @@ def train_cmd(
         optimizer: Default, foreach, or fused AdamW execution.
         memory_fill: Deterministic allocation fills; off runs exact parity gates.
         activation_checkpointing: Recompute activations or retain them for backward.
+        microbatch_per_rank: Samples per GPU; one by default, or three for tuning.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve the immutable contract without downloads or execution.

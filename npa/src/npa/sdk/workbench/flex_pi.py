@@ -70,6 +70,7 @@ def train(
     optimizer: str = "default",
     memory_fill: str = "on",
     activation_checkpointing: str = "on",
+    microbatch_per_rank: int = 1,
     run_id: str = "",
     runtime_image: str = "",
     dry_run: bool = False,
@@ -86,6 +87,7 @@ def train(
         optimizer: Default, foreach or fused AdamW execution.
         memory_fill: Deterministic allocation fills; off requires exact parity.
         activation_checkpointing: Recompute activations or retain them for backward.
+        microbatch_per_rank: Samples per GPU; one by default, or three for tuning.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve without fetching data or executing a model.

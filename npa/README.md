@@ -30,6 +30,11 @@ checks before execution.
 backward, using more GPU memory. Qualify each memory policy with a profile,
 numerical parity and fresh resume before a full epoch; durable checkpoints
 remain enabled with either policy.
+`--microbatch-per-rank` (`config.microbatch_per_rank`) accepts `1` (default)
+or `3`, with 24 or 8 accumulation steps respectively. Both keep effective
+batch 96 and the complete 36-sample epoch tail. Larger microbatches use more
+memory and can change numerical results; qualify the selected configuration
+with a profile, fresh resume and held-out validation before accepting it.
 
 The four-host B300 workflow sets `config.training_nodes: "4"` and requests one
 GPU on each host. `NPA_FLEX_PI_NODE_COUNT` comes from the resolved workflow

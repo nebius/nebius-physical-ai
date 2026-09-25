@@ -30,8 +30,8 @@ def _configuration(plan, root, assets):
         )
         + [
             f"output_dir={root}",
-            "batch_size=1",
-            "gradient_accumulation_steps=24",
+            f"batch_size={plan['microbatch_per_rank']}",
+            f"gradient_accumulation_steps={plan['gradient_accumulation_steps']}",
             "num_epochs=1",
             "max_steps=null",
             "mixed_precision=bf16",
