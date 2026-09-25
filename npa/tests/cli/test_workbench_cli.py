@@ -11,7 +11,6 @@ from npa.cli.main import app
 from npa.clients import config as config_module
 from npa.clients import credentials
 from npa.clients.config import (
-    DEFAULT_CONTAINER_REGISTRY,
     SSHConfig,
     StorageConfig,
     WorkbenchConfig,
@@ -21,6 +20,7 @@ from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
+_OPERATOR_LEROBOT_IMAGE = "registry.example.invalid/npa-lerobot:reviewed"
 
 
 def _cfg(*, storage: bool = False) -> WorkbenchConfig:
@@ -673,7 +673,7 @@ def test_lerobot_deploy_accepts_lerobot_version_060(tmp_path: Path, mocker) -> N
     assert tf_vars["lerobot_version"] == "0.6.0"
 
 
-def test_lerobot_deploy_runtime_container_uses_default_registry(
+def test_lerobot_deploy_runtime_container_uses_explicit_operator_image(
     tmp_path: Path, mocker
 ) -> None:
     ssh = mocker.MagicMock()
@@ -721,6 +721,8 @@ def test_lerobot_deploy_runtime_container_uses_default_registry(
             str(tmp_path),
             "--runtime",
             "container",
+            "--image",
+            _OPERATOR_LEROBOT_IMAGE,
         ],
     )
 
@@ -731,13 +733,12 @@ def test_lerobot_deploy_runtime_container_uses_default_registry(
     install_lerobot.assert_not_called()
     deploy_server.assert_not_called()
 
-    image = f"{DEFAULT_CONTAINER_REGISTRY}/npa-lerobot:0.5.1"
     remote_commands = "\n".join(
         call.args[0] for call in ssh.run_or_raise.call_args_list
     )
-    assert f"docker pull {image}" in remote_commands
+    assert f"docker pull {_OPERATOR_LEROBOT_IMAGE}" in remote_commands
     assert "docker run -d --gpus all --ipc=host --network host" in remote_commands
-    assert image in remote_commands
+    assert _OPERATOR_LEROBOT_IMAGE in remote_commands
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["wb"]
     assert wb_cfg["runtime"] == "container"
 
@@ -786,7 +787,7 @@ def test_lerobot_deploy_disk_size_overrides_vm_default(tmp_path: Path, mocker) -
     assert apply.call_args.kwargs["tf_vars"]["boot_disk_size_gb"] == "384"
 
 
-def test_lerobot_deploy_runtime_container_ignores_saved_registry_override(
+def test_lerobot_saved_registry_does_not_bypass_public_quarantine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mocker,
@@ -854,16 +855,10 @@ def test_lerobot_deploy_runtime_container_ignores_saved_registry_override(
         ],
     )
 
-    assert result.exit_code == 0
-    assert apply.call_args.kwargs["tf_vars"]["boot_disk_size_gb"] == "384"
-    remote_commands = "\n".join(
-        call.args[0] for call in ssh.run_or_raise.call_args_list
-    )
-    assert (
-        "docker pull ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1"
-        in remote_commands
-    )
-    assert "registry.example/private" not in remote_commands
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ValueError)
+    assert "public release metadata is quarantined" in str(result.exception)
+    apply.assert_not_called()
 
 
 def test_lerobot_deploy_rejects_invalid_tf_var() -> None:

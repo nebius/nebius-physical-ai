@@ -2304,6 +2304,7 @@ def deploy(
             f"Default: {supported_tool_version('lerobot')}."
         ),
     ),
+    image: str = typer.Option("", "--image", help="Explicit rebuilt container image."),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
@@ -2359,10 +2360,12 @@ def deploy(
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
 
-    container_image = container_image_for_tool(
-        "lerobot",
-        tag=resolved_lerobot_version,
-    )
+    container_image = ""
+    if not destroy and not skip_app and runtime_uses_container(runtime):
+        container_image = image.strip() or container_image_for_tool(
+            "lerobot",
+            tag=resolved_lerobot_version,
+        )
     cloud_init_workbench_type = (
         "lerobot-container" if runtime_uses_container(runtime) else "lerobot"
     )
