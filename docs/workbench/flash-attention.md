@@ -9,6 +9,24 @@ Q/K/V gradients. All 24 cases passed on a reserved Nebius RTX PRO 6000 on
 record the exact scope. Rebuilding this recipe does not update published base images,
 derived images, or a customer's own container.
 
+The separate [full-model rendering qualification](fa4-sdxl-validation.md)
+completed 24 SDXL image generations at three resolutions with explicit FA4
+UNet attention and a same-GPU SDPA comparison. It includes actual renders,
+timings, output differences and CUDA kernel evidence. Performance was mixed;
+it is not proof of a general FA4 speedup or customer training convergence.
+
+## Default behavior
+
+New builds of the `cuda13-b300` base use the updated FA4 pin by default. The
+recipe already selected FA4; this change fixes that dependency set and its RTX
+qualification. Its legacy `flash_attn` root shim also dispatches to FA4.
+
+This is not a Workbench-wide backend switch. Existing published image digests
+stay unchanged until their own rebuild, qualification and release. Models that
+select PyTorch SDPA or install their own FA2 keep that selection. The explicit
+FA4 integration below is the qualified starting point; unsupported model
+features must not silently fall back or be discarded.
+
 ## Why the old guidance changed
 
 RTX PRO 6000 is compute capability 12.0; B200 is 10.0. Both are Blackwell, but
