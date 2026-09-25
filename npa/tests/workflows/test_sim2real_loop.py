@@ -2463,6 +2463,7 @@ def test_vlm_signal_update_result_from_dict_defaults_and_required() -> None:
     assert result.policy_output_before == [0.0, 0.0]
     assert result.backend == "byo_command"
     assert result.status == "updated"
+    assert result.control is False
     assert result.loss_integration_point == "byo_trainer_command"
     assert result.to_dict()["policy_delta_l2"] == 0.5
 
@@ -2484,6 +2485,38 @@ def test_vlm_signal_update_result_from_dict_defaults_and_required() -> None:
                 "policy_delta_l2": 0.5,
             }
         )
+
+
+@pytest.mark.parametrize(
+    "control",
+    ["false", "true", 0, 1, [], {}, None],
+)
+def test_vlm_signal_update_result_from_dict_rejects_non_boolean_control(
+    control,
+) -> None:
+    with pytest.raises(PolicyContainerError, match="control must be a boolean"):
+        VlmSignalUpdateResult.from_dict(
+            {
+                "reward_head_after": 0.3,
+                "policy_output_after": [0.1],
+                "policy_delta_l2": 0.5,
+                "control": control,
+            }
+        )
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_vlm_signal_update_result_from_dict_preserves_boolean_control(control) -> None:
+    result = VlmSignalUpdateResult.from_dict(
+        {
+            "reward_head_after": 0.3,
+            "policy_output_after": [0.1],
+            "policy_delta_l2": 0.5,
+            "control": control,
+        }
+    )
+
+    assert result.control is control
 
 
 def test_action_conditioning_is_a_stage_of_the_envgen_spec_and_is_cpu() -> None:
