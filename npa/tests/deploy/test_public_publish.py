@@ -465,22 +465,21 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
         development_git_sha=sha,
     )
     assert plan
-    accepted_shas = {
-        tool: entry["development_sha"]
+    expected_shas = {
+        tool: entry.get("development_sha") or sha
         for tool, entry in images.public_release_manifest()["releases"].items()
-        if entry.get("development_sha")
     }
-    assert accepted_shas
-    # Five Sim2Real roles share a source, as do the three native model images.
-    # Flex-Pi and the other accepted images retain distinct exact sources.
-    assert len(set(accepted_shas.values())) == 11
+    assert expected_shas
+    observed_shas: dict[str, str] = {}
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
         assert source_image.split(":", 1)[0] == target_image.split(":", 1)[0], item
-        expected_sha = accepted_shas.get(item.tool) or sha
+        expected_sha = expected_shas[item.tool]
+        observed_shas[item.tool] = source_image.rsplit(":dev-", 1)[-1]
         assert source_image.endswith(f":dev-{expected_sha}"), item
         assert not target_image.endswith(f":dev-{expected_sha}"), item
+    assert observed_shas == expected_shas
 
 
 def test_accepted_images_use_distinct_exact_development_sources_and_digests() -> None:
@@ -737,10 +736,8 @@ def test_restricted_tool_allows_deliberate_operator_ghcr_namespace(
 
 def test_oss_tools_resolve_from_the_public_release_normally() -> None:
     """The guard must not get in the way of the images that ARE publishable."""
-    ref = container_image_for_tool(
-        "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
-    )
-    assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
+    ref = container_image_for_tool("groot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
+    assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-groot:")
 
 
 # --------------------------------------------------------------------------------------

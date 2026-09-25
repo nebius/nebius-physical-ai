@@ -11,8 +11,8 @@ USER root
 
 # Refresh vulnerable userspace headers inherited from the accepted runtime;
 # the CUDA, torch and torchvision closure remains the same.
-ARG UBUNTU_SNAPSHOT=20260820T000000Z
-ARG LINUX_LIBC_DEV_VERSION=6.8.0-138.138
+ARG UBUNTU_SNAPSHOT=20260910T000000Z
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-139.139
 COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
     /usr/local/bin/configure-ubuntu-snapshot
 RUN /usr/local/bin/configure-ubuntu-snapshot "${UBUNTU_SNAPSHOT}" \

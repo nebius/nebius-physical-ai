@@ -49,6 +49,20 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.
 
+### Strict YAML types
+
+The v0.0.1 parser does not coerce convenient-but-ambiguous YAML values. Omit an
+optional field instead of setting it to `null`; collection fields such as
+`inputs`, `outputs`, `params`, `parallel`, and `sequence` must retain their
+declared mapping/list shape. Integer fields reject booleans and every YAML float,
+including `1.0`. Boolean fields accept only YAML `true` or `false`, never strings
+such as `"yes"`. State names are unique; a duplicate key is rejected rather than
+silently overwriting an earlier state. Quote `{{config.*}}` tokens where YAML
+scalar parsing could otherwise assign a type before token resolution.
+
+Always run `validate-spec` on generator output and again with the intended
+`--var` overrides before planning or submission.
+
 ## Validation Hardening (v0.0.1)
 
 | Check | When |
@@ -56,6 +70,7 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 | Unknown `toolRef` / predicate | `validate-spec` |
 | Unbounded transition cycles | `validate-spec` (loops do **not** whitelist cycles) |
 | Missing `{{config.*}}`, bad loop max | `validate-spec` via token resolution |
+| Null collections, floating-point counts, truthy strings, duplicate states | `validate-spec` |
 | Forward `{{state.*}}` refs | Allowed at validate; resolved during plan/execute |
 | Execution depth | Guarded at `--execute` (no stack blowups) |
 | `run.shell` | Resolves config tokens; spec authors are trusted (injection risk if config is untrusted) |

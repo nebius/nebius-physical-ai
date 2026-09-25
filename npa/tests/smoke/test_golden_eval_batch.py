@@ -7,7 +7,12 @@ from unittest.mock import patch
 import pytest
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
-from npa.smoke.batch import iter_containers, run_all, run_container_eval
+from npa.smoke.batch import (
+    iter_containers,
+    run_all,
+    run_container_eval,
+    select_containers,
+)
 
 
 def test_iter_containers_excludes_unrunnable_by_default() -> None:
@@ -25,6 +30,21 @@ def test_iter_containers_can_include_each_unrunnable_status() -> None:
     assert "ncore" not in blocked
     assert "base-cuda13-b300" not in needs_update
     assert "ncore" in needs_update
+
+
+def test_default_selection_records_every_status_exclusion() -> None:
+    from npa.smoke.manifest import load_manifest
+
+    selection = select_containers(tools_only=True, include_foundation=False)
+    expected = {
+        name: spec.golden_eval.status
+        for name, spec in load_manifest().items()
+        if name in CONTAINER_IMAGE_NAMES
+        and spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
+    }
+
+    assert {result.name: result.status for result in selection.excluded} == expected
+    assert all(result.skipped and result.skip_reason for result in selection.excluded)
 
 
 def test_iter_containers_tools_only_matches_image_names() -> None:
@@ -129,6 +149,8 @@ def test_run_all_cli_dry_run() -> None:
     assert result.exit_code == 0, strip_ansi(result.output)
     output = strip_ansi(result.output)
     assert "lerobot" in output
+    assert '"skipped"' in output
+    assert "needs-image-update" in output
     assert '"passed"' in output
 
 
@@ -154,6 +176,8 @@ def test_run_all_script_dry_run() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "lerobot" in proc.stdout
+    assert '"skipped"' in proc.stdout
+    assert "needs-image-update" in proc.stdout
 
 
 # --------------------------------------------------------------------------------------

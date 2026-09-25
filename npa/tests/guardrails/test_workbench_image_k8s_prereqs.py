@@ -67,7 +67,6 @@ SKYPILOT_HOSTED_IMAGES = (
 DERIVED_PREREQ_IMAGES = (
     "cosmos3-reason",
     "groot",
-    "isaac-lab",
     "lerobot",
     "sim2real-control",
     "sonic",
@@ -78,6 +77,12 @@ DERIVED_PREREQ_IMAGES = (
 #: recursive chmod would rewrite multi-GB layers). Not universal: the lerobot image has
 #: no /isaac-sim at all, so requiring the usermod there would pin a no-op.
 ISAAC_BASED_IMAGES = ("isaac-lab", "sonic")
+
+
+def test_isaac_lab_does_not_offer_a_layer_only_host_key_repair() -> None:
+    """Ancestor SSH identities require rebuilding the canonical image."""
+
+    assert not (DOCKER_ROOT / "isaac-lab" / "Dockerfile.k8s-prereqs").exists()
 
 
 #: What every SkyPilot-hosted image needs, established by bisecting derived images against a

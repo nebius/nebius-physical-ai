@@ -284,14 +284,15 @@ def run_all_cmd(
 
     from pathlib import Path
 
-    from npa.smoke.batch import iter_containers, run_all
+    from npa.smoke.batch import select_containers, run_all
 
-    names = iter_containers(
+    selection = select_containers(
         include_blocked=include_blocked,
         include_needs_image_update=include_needs_image_update,
         include_foundation=not tools_only,
         tools_only=tools_only,
     )
+    names = selection.included
     if containers:
         wanted = set(containers)
         names = [name for name in names if name in wanted]
@@ -327,6 +328,9 @@ def run_all_cmd(
         parallel=parallel,
         on_progress=_on_progress if serverless or execute else None,
     )
+    if not containers:
+        batch.results.extend(selection.excluded)
+        batch.results.sort(key=lambda result: result.name)
     if json_out:
         Path(json_out).write_text(batch.to_json() + "\n", encoding="utf-8")
     console.print_json(batch.to_json())

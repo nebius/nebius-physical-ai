@@ -56,6 +56,10 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     assert "guardrails-gate" not in jobs
     precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
     assert "bash npa/scripts/ci_precheck.sh" in precheck
+    assert "npa/scripts/ci_merge_precheck.py" in precheck
+    assert '--base "$BASE_SHA" --head "$HEAD_SHA"' in precheck
+    checkout = jobs["pr-precheck"]["steps"][0]
+    assert checkout["with"]["fetch-depth"] == "0"
     assert jobs["gitleaks"]["name"].endswith("|| 'gitleaks' }}")
     assert jobs["scan"]["name"] == "scan"
     required = set(jobs["security-regression"]["needs"])

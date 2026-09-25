@@ -303,7 +303,10 @@ def test_sonic_stage_setup_installs_torch_stack(
         spec,
         build_plan(spec, run_id="demo"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     assert docs, rendered
@@ -737,7 +740,10 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
         spec,
         build_plan(spec, run_id="demo", assume_decision="promote_checkpoint"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
     transfer = next(doc for doc in docs if "cosmos2 transfer" in doc.get("run", ""))

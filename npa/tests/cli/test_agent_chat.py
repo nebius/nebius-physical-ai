@@ -17,10 +17,9 @@ from npa.cli.agent_chat import (
 from npa.deploy.images import supported_tool_version
 
 
-def test_agent_isaac_image_guidance_matches_canonical_pin() -> None:
-    assert _image_for_tool("isaac-lab").endswith(
-        f"/npa-isaac-lab:{supported_tool_version('isaac-lab')}"
-    )
+def test_agent_isaac_image_guidance_does_not_offer_quarantined_release() -> None:
+    assert supported_tool_version("isaac-lab") not in _image_for_tool("isaac-lab")
+    assert "quarantined" in _image_for_tool("isaac-lab")
 
 
 def _planner(script):

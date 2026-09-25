@@ -142,7 +142,15 @@ def test_lancedb_container_s3_path_requires_credentials(
     # must fail up front instead of only once the container hits the bucket.
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
 
-    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(
+        lancedb_deploy,
+        "storage_env",
+        lambda: {
+            "AWS_ACCESS_KEY_ID": "must-not-reach-local-container",
+            "AWS_SECRET_ACCESS_KEY": "must-not-reach-local-container",
+        },
+    )
+    monkeypatch.setenv("LANCEDB_TOKEN", "must-not-reach-unauthenticated-container")
     result = runner.invoke(
         lancedb_app,
         [
@@ -212,6 +220,7 @@ def test_lancedb_container_local_path_skips_s3_guard(
     assert (
         f"--mount type=bind,source={storage_path},target=/data/lancedb" in result.output
     )
+    assert f"--user {os.getuid()}:{os.getgid()}" in result.output
     assert "LANCEDB_STORAGE_PATH=/data/lancedb" in result.output
 
 
@@ -254,7 +263,60 @@ def test_lancedb_container_creates_and_mounts_local_storage(
         "--mount",
         f"type=bind,source={storage_path},target=/data/lancedb",
     ] == command[command.index("--mount") : command.index("--mount") + 2]
+    assert command[command.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
     assert "LANCEDB_STORAGE_PATH=/data/lancedb" in command
+    assert "HOME=/tmp" in command
+    assert not any(token.startswith("AWS_ACCESS_KEY_ID=") for token in command)
+    assert not any(token.startswith("AWS_SECRET_ACCESS_KEY=") for token in command)
+    assert not any(token.startswith("LANCEDB_TOKEN=") for token in command)
+
+
+def test_lancedb_container_refuses_unwritable_local_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(
+        lancedb_deploy.tempfile,
+        "mkstemp",
+        lambda **_kwargs: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            str(tmp_path / "lancedb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "not writable by uid" in result.output
+
+
+def test_lancedb_container_refuses_root_owned_local_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(lancedb_deploy.os, "getuid", lambda: 0)
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            str(tmp_path / "lancedb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "deployed by a non-root host user" in result.output
 
 
 def test_lancedb_container_s3_storage_is_not_bind_mounted(

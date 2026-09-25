@@ -39,6 +39,15 @@ _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
     "sim2real-eval/Dockerfile",
 )
 
+_GENESIS_PARENT = (
+    "ghcr.io/nebius/nebius-physical-ai/npa-genesis@"
+    "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"
+)
+_ENVGEN_PARENT = (
+    "ghcr.io/nebius/nebius-physical-ai/npa-envgen@"
+    "sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422"
+)
+
 
 def test_rerun_viewer_bakes_exact_stage14_runtime() -> None:
     dockerfile = (
@@ -96,6 +105,53 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
         str(resource["image"]).startswith("{{config.")
         for resource in resources.values()
     )
+
+
+def test_envgen_pins_the_real_genesis_parent() -> None:
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    text = (root / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
+    assert f"ARG BASE_IMAGE={_GENESIS_PARENT}" in text
+    assert "npa-envgen@sha256:" not in text
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "child_image"),
+    (
+        ("lerobot-vlm-rl/Dockerfile", "npa-lerobot-vlm-rl"),
+        ("sim2real-eval/Dockerfile", "npa-loop-eval"),
+    ),
+)
+def test_component_images_pin_the_sanitized_envgen_parent(
+    relative_path: str, child_image: str
+) -> None:
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    text = (root / relative_path).read_text(encoding="utf-8")
+    assert f"ARG BASE_IMAGE={_ENVGEN_PARENT}" in text
+    assert 'npa.base.image="npa-envgen"' in text
+    assert f"{child_image}@sha256:" not in text
+    assert "pip install --no-deps -e /opt/npa" not in text
+    assert "env -u PYTHONPATH python -c" in text
+
+
+def test_sim2real_build_default_uses_the_same_real_genesis_parent() -> None:
+    script = (
+        Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
+    ).read_text(encoding="utf-8")
+    assert _GENESIS_PARENT in script
+    assert "npa-loop-eval@sha256:" not in script
+    assert (
+        'SIM2REAL_COMPONENT_BASE_IMAGE="${SIM2REAL_COMPONENT_BASE_IMAGE:-npa-envgen:${ENVGEN_TAG}}"'
+        in script
+    )
+    assert script.count('"BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"') == 2
+
+
+def test_sonic_keeps_an_explicit_amd64_build_platform() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "docker/workbench/sonic/Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "ARG NPA_BUILD_PLATFORM=linux/amd64" in dockerfile
+    assert "FROM --platform=${NPA_BUILD_PLATFORM} ${BASE_IMAGE}" in dockerfile
 
 
 @pytest.mark.parametrize("relative_path", _EXACT_SOURCE_DOCKERFILES)

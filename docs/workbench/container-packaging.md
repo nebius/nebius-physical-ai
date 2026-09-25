@@ -26,6 +26,11 @@ does not help: the reusable private keys remain recoverable from the install
 layer. The workbench prerequisite guard checks every Dockerfile and shared
 installer for this layer-local cleanup.
 
+For that reason, Isaac Lab deliberately has no
+`Dockerfile.k8s-prereqs` repair derivative. A historical Isaac Lab layer that
+contains generated host keys must be replaced by rebuilding its canonical
+Dockerfile; a child image cannot sanitize the ancestor blob.
+
 The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
 passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and

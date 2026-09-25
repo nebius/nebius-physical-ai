@@ -517,6 +517,8 @@ def test_plan_only_stage_src_plans_without_uploading(
             "bucket=real-bucket",
             "--stage-src",
             "--plan-only",
+            "--registry",
+            "registry.example.invalid/operator/validated",
         ],
     )
 
@@ -545,6 +547,8 @@ def test_plan_only_stage_src_can_describe_a_placeholder_bucket(
             "promote_checkpoint",
             "--stage-src",
             "--plan-only",
+            "--registry",
+            "registry.example.invalid/operator/validated",
         ],
     )
 

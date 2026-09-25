@@ -48,8 +48,14 @@ npa workbench lancedb status --endpoint http://localhost:8686
 ```
 
 The CLI creates the local directory when needed and bind-mounts it at
-`/data/lancedb` in the container. Destroying or replacing the container does
-not remove the tables in that host directory.
+`/data/lancedb` in the container. It proves the directory is writable and maps
+the container process to the invoking non-root uid/gid before startup; root
+callers and uid-mismatched/unwritable paths fail before Docker reports success.
+The container `/readyz` probe also performs a local write/delete check, so a
+readable-but-unwritable database cannot remain Ready. Destroying or replacing
+the container does not remove the tables in that host directory. Local-storage
+containers are not given any configured S3 credentials; those are injected only
+when `--storage-path` is an `s3://` URI.
 
 Remove the smoke container:
 

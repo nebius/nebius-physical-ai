@@ -7,6 +7,8 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
+import tempfile
 from typing import Any, Literal
 
 import lancedb
@@ -203,6 +205,21 @@ def _normalize_table_names(values: Any) -> list[str]:
         else:
             names.append(str(value))
     return names
+
+
+def _verify_local_storage_writable(storage_path: str) -> None:
+    """Prove a local LanceDB path supports the mutation its API advertises."""
+
+    if storage_path.startswith("s3://"):
+        return
+    directory = Path(storage_path)
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=directory, prefix=".npa-ready-", delete=True
+    ) as sentinel:
+        sentinel.write(b"ready")
+        sentinel.flush()
+        os.fsync(sentinel.fileno())
 
 
 def _parse_arrow_type(type_spec: Any) -> pa.DataType:
@@ -532,6 +549,7 @@ def create_app(
 
         try:
             known_tables.update(_list_tables(db))
+            _verify_local_storage_writable(resolved_storage)
         except Exception as exc:
             LOGGER.exception("LanceDB storage readiness check failed")
             raise HTTPException(status_code=503, detail="storage is not ready") from exc

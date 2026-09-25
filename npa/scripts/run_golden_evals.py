@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
-from npa.smoke.batch import iter_containers, run_all, run_container_eval
+from npa.smoke.batch import run_all, run_container_eval, select_containers
 from npa.smoke.manifest import container, load_manifest, validate_manifest
 
 
@@ -129,12 +129,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_run_all(args: argparse.Namespace) -> int:
-    names = iter_containers(
+    selection = select_containers(
         include_blocked=args.include_blocked,
         include_needs_image_update=args.include_needs_image_update,
         include_foundation=not args.tools_only,
         tools_only=args.tools_only,
     )
+    names = selection.included
     if args.containers:
         wanted = set(args.containers)
         names = [name for name in names if name in wanted]
@@ -170,6 +171,9 @@ def _cmd_run_all(args: argparse.Namespace) -> int:
         parallel=args.parallel,
         on_progress=_on_progress if args.serverless or args.execute else None,
     )
+    if not args.containers:
+        batch.results.extend(selection.excluded)
+        batch.results.sort(key=lambda result: result.name)
     if args.json_out:
         Path(args.json_out).write_text(batch.to_json() + "\n", encoding="utf-8")
     print(batch.to_json())

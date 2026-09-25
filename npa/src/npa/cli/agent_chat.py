@@ -1093,6 +1093,10 @@ def _image_for_tool(tool: str) -> str:
         return container_image_for_tool(tool, tag=tag)
     except KeyError:
         return f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}:{tag}"
+    except ValueError:
+        return (
+            "unavailable (public release quarantined; use an explicit operator image)"
+        )
 
 
 def _format_tool_family_capabilities(

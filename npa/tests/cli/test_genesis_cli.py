@@ -1463,6 +1463,8 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
             str(tmp_path),
             "--runtime",
             "container",
+            "--image",
+            "registry.example.invalid/operator/npa-genesis:rebuilt",
         ],
     )
 
@@ -1472,8 +1474,8 @@ def test_genesis_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-genesis"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith(
-        "/npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    assert deploy_container.call_args.kwargs["image_ref"] == (
+        "registry.example.invalid/operator/npa-genesis:rebuilt"
     )
     env_vars = write_env.call_args.args[2]
     assert env_vars["NVIDIA_DRIVER_CAPABILITIES"] == "all"
@@ -1546,6 +1548,8 @@ def test_genesis_byovm_deploy_reuses_project_storage_credentials(mocker) -> None
             "~/.ssh/id",
             "--region",
             "eu-north1",
+            "--image",
+            "registry.example.invalid/operator/npa-genesis:rebuilt",
         ],
     )
 

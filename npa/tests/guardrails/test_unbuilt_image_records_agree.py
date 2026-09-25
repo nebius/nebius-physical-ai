@@ -160,9 +160,21 @@ def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
 
     image_to_tool = {image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()}
     parent_pattern = re.compile(r"\bnpa-[a-z0-9-]+(?=[:@])")
-    for dockerfile in sorted((REPO_ROOT / "npa/docker/workbench").glob("*/Dockerfile")):
-        child = dockerfile.parent.name
-        if child not in CONTAINER_IMAGE_NAMES:
+    directory_aliases = {
+        "sim2real-envgen": {"envgen"},
+        "sim2real-eval": {"loop-eval"},
+        "sim2real-reference-policy": {"reference-policy"},
+    }
+    inspected_variants: set[str] = set()
+    for dockerfile in sorted((REPO_ROOT / "npa/docker/workbench").rglob("Dockerfile*")):
+        if not dockerfile.is_file():
+            continue
+        inspected_variants.add(dockerfile.name)
+        directory = dockerfile.parent.name
+        children = ({directory} if directory in CONTAINER_IMAGE_NAMES else set()) | (
+            directory_aliases.get(directory, set())
+        )
+        if not children:
             continue
         parents = {
             image_to_tool[image]
@@ -171,10 +183,15 @@ def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
         }
         stale_parents = parents & LAYER_STALE_PUBLICATION_TOOLS
         if stale_parents:
-            assert child in STALE_PUBLICATION_TOOLS, (
-                f"{child} inherits stale image layer(s) from "
-                f"{sorted(stale_parents)} but remains publication-eligible"
-            )
+            for child in children:
+                assert child in STALE_PUBLICATION_TOOLS, (
+                    f"{child} inherits stale image layer(s) from "
+                    f"{sorted(stale_parents)} in {dockerfile.name} but remains "
+                    "publication-eligible"
+                )
+    assert {"Dockerfile.k8s-prereqs", "Dockerfile.b300", "Dockerfile.sm120"} <= (
+        inspected_variants
+    )
 
 
 def test_pending_build_never_carries_a_confident_verdict() -> None:

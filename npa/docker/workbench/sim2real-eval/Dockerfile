@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-loop-eval@sha256:9cb111c56d9c1db8357b04f43e46790f6853213ff1a78fd0b2dae5ad337eb75a
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422
 FROM ${BASE_IMAGE}
 
 ARG SIM2REAL_EVAL_VERSION=cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
@@ -7,7 +7,7 @@ ARG UBUNTU_SNAPSHOT=20260820T000000Z
 
 LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}" \
-      npa.base.image="npa-genesis" \
+      npa.base.image="npa-envgen" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
@@ -47,8 +47,9 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
       -r /opt/npa/sim2real-genesis-requirements.txt \
     && python -m pip check \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
-    && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
+    && env -u PYTHONPATH python -c \
+      'from npa.workflows.sim2real_loop import main; assert callable(main)' \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \
     && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml
 
