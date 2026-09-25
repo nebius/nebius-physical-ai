@@ -159,17 +159,19 @@ descendant. Zero-byte directory markers do not prove completion or absence,
 and malformed/truncated pagination blocks recovery rather than authorizing
 duplicate work.
 
-The finite infrastructure-recovery allowance limits relaunches, not reuse.
-When every declared durable output is valid, recovery marks the wave complete
-even at the allowance boundary. If the exact provider attempt is still live,
-its cancellation must reach a verified terminal state before that reuse is
-accepted.
-
 ## Reading status
 
 ```bash
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 ```
+
+The finite infrastructure-recovery allowance limits relaunches, not reuse.
+When every declared durable output is valid, recovery marks the wave complete
+even at the allowance boundary. If the exact provider attempt is still live,
+its cancellation must reach a verified terminal state before that reuse is
+accepted.
+The workflow completion result is separate from the observed provider status.
+
 
 `status` resolves the exact run from the selected project's receipt, the
 canonical workflow prefix, or the pinned managed-job identity — even while the
