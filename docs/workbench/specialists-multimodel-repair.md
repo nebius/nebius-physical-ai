@@ -80,6 +80,16 @@ streams. Six cases also expected a partial first video when a later episode was
 invalid; those now assert the stronger contract that no encoding starts until
 every episode passes validation. The expanded focused set passed 128 checks.
 
+Final validation at source commit `5cc83e841` passed **29,150 Linux tests**
+(124 skipped, one xpassed) with **76.68% package-source coverage**, all **859
+security regressions**, 221 Cypress tests and 28 native protocol tests.
+Precheck passed 257 tests; CLI documentation drift and merge checks passed.
+A fresh six-case simulation/export/replay run passed with the final three source
+hashes. The separate real conversion-failure/retry test also passed and loaded
+one 185-timestep episode through native LeRobot. These publication checks made
+no additional model calls. Their receipts are separate from the model campaign
+in the results file; they do not establish the hosted CI result.
+
 Local dataset publication stages conversion and metadata on the same filesystem
 before rename. Conversion errors preserve raw episodes and leave no new dataset
 or provenance indices. Existing datasets and dangling destination links are

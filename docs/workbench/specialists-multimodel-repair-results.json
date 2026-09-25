@@ -55,9 +55,520 @@
     "Requirements, initial regressions and extra review cases were authored by the operator.",
     "Full GLM was explicitly assigned after Lightning selected Flash for both tasks.",
     "The full-GLM integration snapshot was taken while Flash finished its independent export validation; all task outcomes are retained.",
-    "Final formatting and additional scalar-array boundary fixes were made by the maintainer and are verified separately."
+    "Final formatting and additional scalar-array boundary fixes were made by the maintainer and are verified separately.",
+    "Maintainer full-suite review restored exact stream-length diagnostics and strengthened existing tests to reject invalid later episodes before encoding any video."
   ],
   "private_repository_dependencies": false,
+  "publication_validation": {
+    "cli_docs_drift": "passed",
+    "final_main_commit": "444a670e99c8f74be2a92a63e5748f293fe8b0d4",
+    "focused_checks": [
+      {
+        "receipt_sha256": "91c2e7e30dcbae2c439141ba3349b64663b17b54da403a912280efbf5cf93471",
+        "source_sha256": {
+          "npa/adapter/sim_to_lerobot.py": "13861841bab5b6adf9cb989549d8e8850d7fd7b45a6e1427738221d0bc2dc0dd",
+          "npa/workbench/token_factory/robot_artifacts.py": "813f91e95a904bf698038678b3a67aa26652ae9c9c1a42050f6eef7021afa2ac",
+          "npa/workbench/token_factory/robot_sim.py": "47f49e2dae7b0700d008f92d23d5cd672fdd75ad5529908d6bec7952a293e667"
+        },
+        "status": "passed",
+        "summary": "128 passed in 4.22s"
+      }
+    ],
+    "inference_calls": 0,
+    "linux_suite": {
+      "coverage_percent": 76.67729806523761,
+      "log_sha256": "8fe7c8548af960bf5d4acddf0000510f93e5cceecb716f4ae7d22b63c1f30900",
+      "summary": "29150 passed, 124 skipped, 1 xpassed, 408 warnings in 359.68s (0:05:59)"
+    },
+    "local_browser": {
+      "cypress_passed": 221,
+      "log_sha256": "8e244379d4fad326644f075b356f90f5c2ef81cbe2d2bf16b175a90c362980ea",
+      "native_protocol_passed": 28
+    },
+    "local_precheck": {
+      "log_sha256": "d6c37e368514b268ce03b6361fc3bfc91e28e5d1e5906b4529ca57e024464b14",
+      "passed": 257
+    },
+    "merge_precheck": "passed",
+    "native_attempts": [
+      {
+        "artifacts": {
+          "bytes": 1162153047,
+          "files": 52,
+          "manifest_sha256": "7969769930f37a93e44b16db74c96ec7d3e72e91ddce877d2686d236a36a9f20"
+        },
+        "receipt_sha256": "e483ec122b76973f776bde75e6a16757e58fdd6ccd91d6139db381d8e89b25f2",
+        "seconds": 197.51579546002904,
+        "source_sha256": {
+          "npa/adapter/sim_to_lerobot.py": "13861841bab5b6adf9cb989549d8e8850d7fd7b45a6e1427738221d0bc2dc0dd",
+          "npa/workbench/token_factory/robot_artifacts.py": "813f91e95a904bf698038678b3a67aa26652ae9c9c1a42050f6eef7021afa2ac",
+          "npa/workbench/token_factory/robot_sim.py": "47f49e2dae7b0700d008f92d23d5cd672fdd75ad5529908d6bec7952a293e667"
+        },
+        "status": "completed",
+        "verification": {
+          "matrix_sha256": "68cb7e9f12cbc598775d614ec82c70af604830414308d7042077f5d30bcfbe0b",
+          "native_dataset": {
+            "aligned_dataset_camera_samples": 1480,
+            "decoded_dataset_camera_frames": 1480,
+            "lerobot_version": "0.5.1",
+            "native_episodes": 4,
+            "native_frames": 740,
+            "status": "passed",
+            "training_batch_shapes": {
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          },
+          "outcomes": [
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005531896284208511,
+              "id": "red-transfer",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14971642621329367,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 3.5677105346333823e-11
+            },
+            {
+              "accepted": false,
+              "bilateral_contact_frames": 0,
+              "checks": {
+                "bilateral_grasp_contact": false,
+                "environment_success": false,
+                "finite": true,
+                "lifted": false,
+                "placed": false,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.25612498351562457,
+              "id": "open-gripper-control",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 8.239872931020686e-05,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 0.0
+            },
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005413582329270984,
+              "id": "blue-transfer",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14959823896723284,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 6.242289694892359e-11
+            },
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005531896284208511,
+              "id": "red-transfer-lighting-shift",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14971642621329367,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 3.5677105346333823e-11
+            },
+            {
+              "accepted": false,
+              "bilateral_contact_frames": 0,
+              "checks": {
+                "bilateral_grasp_contact": false,
+                "environment_success": false,
+                "finite": true,
+                "lifted": false,
+                "placed": false,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.25612498351562457,
+              "id": "open-gripper-control-lighting-shift",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 8.239872931020686e-05,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 0.0
+            },
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005413582329270984,
+              "id": "blue-transfer-lighting-shift",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14959823896723284,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 6.242289694892359e-11
+            }
+          ],
+          "seconds": 99.69939801096916,
+          "source_sha256": {
+            "robot_artifacts.py": "813f91e95a904bf698038678b3a67aa26652ae9c9c1a42050f6eef7021afa2ac",
+            "robot_sim.py": "47f49e2dae7b0700d008f92d23d5cd672fdd75ad5529908d6bec7952a293e667"
+          },
+          "status": "passed"
+        },
+        "verification_returncode": 0,
+        "workload_returncode": 0
+      }
+    ],
+    "native_rollback_retry": {
+      "log_sha256": "60f995c0f84aae92febed3ec5865cffe41eb1b36e8db9df09c82651fb25e0beb",
+      "native_reader": {
+        "aligned_dataset_camera_samples": 370,
+        "decoded_dataset_camera_frames": 370,
+        "lerobot_version": "0.5.1",
+        "native_episodes": 1,
+        "native_frames": 185,
+        "status": "passed",
+        "training_batch_shapes": {
+          "action": [
+            4,
+            4
+          ],
+          "episode_index": [
+            4
+          ],
+          "frame_index": [
+            4
+          ],
+          "index": [
+            4
+          ],
+          "observation.images.workspace": [
+            4,
+            3,
+            360,
+            480
+          ],
+          "observation.images.wrist": [
+            4,
+            3,
+            360,
+            480
+          ],
+          "observation.state": [
+            4,
+            9
+          ],
+          "task_index": [
+            4
+          ],
+          "timestamp": [
+            4
+          ]
+        }
+      },
+      "receipt_sha256": "77ec061d0ecfe0b3a849a2a991711402f47e42ca12086197fbe10a3604ec884f",
+      "summary": "1 passed, 2 deselected in 60.15s (0:01:00)"
+    },
+    "preceding_full_suite": {
+      "log_sha256": "4ae7bb60c3c029c153e45ada30efa0368bb3da09383a66cfa2c6e277327c45a4",
+      "summary": "15 failed, 28385 passed, 124 skipped, 1 xpassed, 407 warnings in 329.83s (0:05:29)"
+    },
+    "preceding_publication_attempts": [
+      {
+        "artifacts": {
+          "bytes": 1162153047,
+          "files": 52,
+          "manifest_sha256": "f72b2ede6b87157792566989faf7f67db3f7e388c9f9880bc9b2cfd67a42dda9"
+        },
+        "receipt_sha256": "31a153f3e5b77280149d6ee7bf3b67527fa06fcb7f47c303b7c31295b9badfdd",
+        "seconds": 175.07780960795935,
+        "source_sha256": {
+          "npa/adapter/sim_to_lerobot.py": "da13a61be0c999f64345c7bb2881dcd33eec94f6269167af443b8fe59272875d",
+          "npa/workbench/token_factory/robot_artifacts.py": "813f91e95a904bf698038678b3a67aa26652ae9c9c1a42050f6eef7021afa2ac",
+          "npa/workbench/token_factory/robot_sim.py": "47f49e2dae7b0700d008f92d23d5cd672fdd75ad5529908d6bec7952a293e667"
+        },
+        "status": "completed",
+        "verification": {
+          "matrix_sha256": "68cb7e9f12cbc598775d614ec82c70af604830414308d7042077f5d30bcfbe0b",
+          "native_dataset": {
+            "aligned_dataset_camera_samples": 1480,
+            "decoded_dataset_camera_frames": 1480,
+            "lerobot_version": "0.5.1",
+            "native_episodes": 4,
+            "native_frames": 740,
+            "status": "passed",
+            "training_batch_shapes": {
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          },
+          "outcomes": [
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005531896284208511,
+              "id": "red-transfer",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14971642621329367,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 3.5677105346333823e-11
+            },
+            {
+              "accepted": false,
+              "bilateral_contact_frames": 0,
+              "checks": {
+                "bilateral_grasp_contact": false,
+                "environment_success": false,
+                "finite": true,
+                "lifted": false,
+                "placed": false,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.25612498351562457,
+              "id": "open-gripper-control",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 8.239872931020686e-05,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 0.0
+            },
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005413582329270984,
+              "id": "blue-transfer",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14959823896723284,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 6.242289694892359e-11
+            },
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005531896284208511,
+              "id": "red-transfer-lighting-shift",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14971642621329367,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 3.5677105346333823e-11
+            },
+            {
+              "accepted": false,
+              "bilateral_contact_frames": 0,
+              "checks": {
+                "bilateral_grasp_contact": false,
+                "environment_success": false,
+                "finite": true,
+                "lifted": false,
+                "placed": false,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.25612498351562457,
+              "id": "open-gripper-control-lighting-shift",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 8.239872931020686e-05,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 0.0
+            },
+            {
+              "accepted": true,
+              "bilateral_contact_frames": 94,
+              "checks": {
+                "bilateral_grasp_contact": true,
+                "environment_success": true,
+                "finite": true,
+                "lifted": true,
+                "placed": true,
+                "released": true,
+                "retreated": true,
+                "settled": true
+              },
+              "decoded_preview_frames": 185,
+              "final_distance_m": 0.005413582329270984,
+              "id": "blue-transfer-lighting-shift",
+              "judge": "mujoco_state_and_contacts",
+              "lift_height_m": 0.14959823896723284,
+              "replayed_camera_frames": 370,
+              "replayed_steps": 185,
+              "settled_max_speed_m_s": 6.242289694892359e-11
+            }
+          ],
+          "seconds": 89.791589860979,
+          "source_sha256": {
+            "robot_artifacts.py": "813f91e95a904bf698038678b3a67aa26652ae9c9c1a42050f6eef7021afa2ac",
+            "robot_sim.py": "47f49e2dae7b0700d008f92d23d5cd672fdd75ad5529908d6bec7952a293e667"
+          },
+          "status": "passed"
+        },
+        "verification_returncode": 0,
+        "workload_returncode": 0
+      }
+    ],
+    "security_regressions": {
+      "log_sha256": "93553a5648df06c7c25d9d69bf8182d390cf2de00aa3ffbddf03f8dcbd090f3d",
+      "summary": "859 passed, 1 warning in 137.48s (0:02:17)"
+    },
+    "source_commit": "5cc83e841af8878f187d77ada75a7928fd9e5778",
+    "source_sha256": {
+      "npa/adapter/sim_to_lerobot.py": "13861841bab5b6adf9cb989549d8e8850d7fd7b45a6e1427738221d0bc2dc0dd",
+      "npa/workbench/token_factory/robot_artifacts.py": "813f91e95a904bf698038678b3a67aa26652ae9c9c1a42050f6eef7021afa2ac",
+      "npa/workbench/token_factory/robot_sim.py": "47f49e2dae7b0700d008f92d23d5cd672fdd75ad5529908d6bec7952a293e667"
+    }
+  },
   "schema": "npa.specialists.multimodel-repair.v1",
   "tasks": [
     {
