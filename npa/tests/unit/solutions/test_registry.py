@@ -29,13 +29,13 @@ CONFIGURED_SOLUTIONS = [
     },
     {
         "name": "mjlab",
-        "description": "MJLab locomotion evaluation Workbench tool",
+        "description": "MJLab training, measured evaluation and ONNX export Workbench tool",
         "cli_command": "npa workbench mjlab",
     },
     {
         "name": "sonic-locomotion-finetuning",
         "description": (
-            "SONIC locomotion fine-tuning workflow (retarget -> train -> MJLab eval)"
+            "SONIC locomotion fine-tuning workflow (retarget -> train -> export -> SONIC eval)"
         ),
         "cli_command": (
             "npa workbench workflow submit "
