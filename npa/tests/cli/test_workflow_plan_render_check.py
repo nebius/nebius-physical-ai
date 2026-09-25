@@ -59,6 +59,31 @@ def test_plan_spec_render_check_reaches_production_security_guard(
     assert "runAsUser: 0 overrides are forbidden" in checked.output
 
 
+def test_plan_spec_render_check_rejects_oversized_shell_argument(
+    tmp_path: Path,
+) -> None:
+    workflow = _workflow(tmp_path, run_as_root=False)
+    document = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    initial = document["initial"]
+    document["states"][initial] = {
+        "run": {"shell": "x" * 131_072},
+        "resources": "gpu",
+        "terminal": True,
+    }
+    workflow.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    ordinary = RUNNER.invoke(app, ["workbench", "workflow", "plan-spec", str(workflow)])
+    checked = RUNNER.invoke(
+        app,
+        ["workbench", "workflow", "plan-spec", str(workflow), "--check-render"],
+    )
+
+    assert ordinary.exit_code == 0, ordinary.output
+    assert checked.exit_code == 1
+    assert "131072 UTF-8 bytes" in checked.output
+    assert "declared workflow inputs" in checked.output
+
+
 def test_plan_spec_render_check_is_secret_free_and_provider_free(
     tmp_path: Path,
     monkeypatch,

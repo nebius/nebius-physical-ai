@@ -603,6 +603,10 @@ def render_pip_extra_setup(extra: str) -> str:
 #: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
 #: arbitrary cluster configuration.
 TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
+# Linux limits each individual execve argument to 32 4 KiB pages, including
+# its terminating NUL byte. Kubernetes workers use this bound even when the
+# process-wide ARG_MAX is larger.
+_LINUX_MAX_ARGUMENT_BYTES = 131_072
 
 
 def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
@@ -638,6 +642,39 @@ def _contains_uid_zero_override(value: object) -> bool:
                 return True
     elif isinstance(value, (list, tuple)):
         return any(_contains_uid_zero_override(child) for child in value)
+    return False
+
+
+def _main_container_blocks_passwordless_sudo(
+    task_config: Mapping[str, Any],
+) -> bool:
+    """Return whether the explicit Sky task security context disables sudo."""
+
+    kubernetes = task_config.get("kubernetes")
+    if not isinstance(kubernetes, Mapping):
+        return False
+    pod_config = kubernetes.get("pod_config")
+    if not isinstance(pod_config, Mapping):
+        return False
+    spec = pod_config.get("spec")
+    if not isinstance(spec, Mapping):
+        return False
+    pod_security = spec.get("securityContext")
+    pod_security = pod_security if isinstance(pod_security, Mapping) else {}
+    containers = spec.get("containers")
+    if not isinstance(containers, list):
+        return False
+    for container in containers:
+        if not isinstance(container, Mapping) or container.get("name") != "ray-node":
+            continue
+        security = container.get("securityContext")
+        security = security if isinstance(security, Mapping) else {}
+        if security.get("allowPrivilegeEscalation") is not False:
+            return False
+        run_as_user = security.get("runAsUser", pod_security.get("runAsUser"))
+        run_as_non_root = security.get("runAsNonRoot", pod_security.get("runAsNonRoot"))
+        explicit_non_root_user = type(run_as_user) is int and run_as_user > 0
+        return run_as_non_root is True or explicit_non_root_user
     return False
 
 
@@ -1029,7 +1066,17 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
 
     if not command:
         raise NpaWorkflowRenderError("cannot render empty command for SkyPilot task")
-    quoted = " ".join(shlex.quote(str(part)) for part in command)
+    command_parts = [str(part) for part in command]
+    for index, part in enumerate(command_parts):
+        observed_bytes = len(part.encode("utf-8"))
+        if observed_bytes >= _LINUX_MAX_ARGUMENT_BYTES:
+            raise NpaWorkflowRenderError(
+                f"command argument {index} is {observed_bytes} UTF-8 bytes; Linux "
+                f"execve allows at most {_LINUX_MAX_ARGUMENT_BYTES - 1} bytes per "
+                "argument; stage large payloads as declared workflow inputs, "
+                "objects, or mounts and keep the command argument bounded"
+            )
+    quoted = " ".join(shlex.quote(part) for part in command_parts)
     preamble_block = f"{preamble.rstrip(chr(10))}\n" if preamble.strip() else ""
     return (
         "set -euo pipefail\n"
@@ -2191,6 +2238,16 @@ def build_skypilot_task_doc(
             raise NpaWorkflowRenderError(
                 "first-party workflow images must satisfy the SkyPilot bootstrap "
                 "contract as their declared image user; runAsUser: 0 overrides are forbidden"
+            )
+        if is_trusted_npa_image(image) and _main_container_blocks_passwordless_sudo(
+            task_config
+        ):
+            raise NpaWorkflowRenderError(
+                "first-party workflow images require passwordless sudo for the "
+                "SkyPilot bootstrap when the main container runs as non-root; "
+                "allowPrivilegeEscalation: false enables no-new-privileges and "
+                "blocks sudo; omit the conflicting main-container override or "
+                "allow sudo privilege escalation"
             )
     # A pod is discarded when the stage ends, so on Kubernetes the cache env above
     # only survives the run if it points at a volume that outlives the pod. Mount

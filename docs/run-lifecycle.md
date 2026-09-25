@@ -42,6 +42,12 @@ first-party image startup-contract errors that schema validation cannot see. The
 check stays local, does not contact a provider, and does not materialize registry
 secrets.
 
+The renderer rejects explicit non-root main containers that disable the sudo
+access required by first-party images. It also rejects individual command
+arguments of 131,072 UTF-8 bytes or more, including an oversized `run.shell`.
+Keep large scripts and archives in declared workflow inputs or mounted storage;
+use a short launcher to verify and execute them.
+
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
 prints the exact build command for anything missing. It unions every declared
 decision outcome, and `--infra k8s/<cluster>` lets the pull check verify that

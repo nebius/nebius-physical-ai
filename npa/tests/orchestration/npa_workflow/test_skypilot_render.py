@@ -21,6 +21,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     assert_no_unresolved_placeholders,
     normalize_resources,
     plan_image_pull_secrets,
+    render_task_run_script,
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
@@ -1202,6 +1203,189 @@ def test_first_party_image_rejects_uid_zero_pod_override(
                 materialize_registry_secrets=False,
             ),
         )
+
+
+def _render_with_pod_config(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    image: str,
+    pod_config: dict[str, object],
+) -> str:
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/project")
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    for profile in spec.resources.values():
+        if isinstance(profile, dict):
+            profile["kubernetes"] = {"pod_config": pod_config}
+    return render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="sudo-contract"),
+        run_id="sudo-contract",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": image},
+            materialize_registry_secrets=False,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "pod_config",
+    [
+        {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "ray-node",
+                        "securityContext": {
+                            "runAsUser": 1000,
+                            "allowPrivilegeEscalation": False,
+                        },
+                    }
+                ]
+            }
+        },
+        {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "ray-node",
+                        "securityContext": {
+                            "runAsNonRoot": True,
+                            "allowPrivilegeEscalation": False,
+                        },
+                    }
+                ],
+            }
+        },
+        {
+            "spec": {
+                "securityContext": {"runAsUser": 1000},
+                "containers": [
+                    {
+                        "name": "ray-node",
+                        "securityContext": {"allowPrivilegeEscalation": False},
+                    }
+                ],
+            }
+        },
+    ],
+)
+def test_first_party_image_rejects_non_root_main_that_blocks_sudo(
+    monkeypatch: pytest.MonkeyPatch,
+    pod_config: dict[str, object],
+) -> None:
+    with pytest.raises(NpaWorkflowRenderError, match="no-new-privileges"):
+        _render_with_pod_config(
+            monkeypatch,
+            image="registry-us.example/project/npa-fiftyone:validation",
+            pod_config=pod_config,
+        )
+
+
+@pytest.mark.parametrize(
+    ("image", "pod_config"),
+    [
+        (
+            "registry-us.example/project/vendor:validation",
+            {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "ray-node",
+                            "securityContext": {
+                                "runAsNonRoot": True,
+                                "runAsUser": 1000,
+                                "allowPrivilegeEscalation": False,
+                            },
+                        }
+                    ]
+                }
+            },
+        ),
+        (
+            "registry-us.example/project/npa-fiftyone:validation",
+            {
+                "spec": {
+                    "initContainers": [
+                        {
+                            "name": "initialize-output",
+                            "securityContext": {
+                                "runAsNonRoot": True,
+                                "runAsUser": 1000,
+                                "allowPrivilegeEscalation": False,
+                            },
+                        }
+                    ],
+                    "containers": [{"name": "ray-node"}],
+                }
+            },
+        ),
+        (
+            "registry-us.example/project/npa-fiftyone:validation",
+            {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "ray-node",
+                            "securityContext": {
+                                "runAsNonRoot": True,
+                                "runAsUser": 1000,
+                                "allowPrivilegeEscalation": True,
+                            },
+                        }
+                    ]
+                }
+            },
+        ),
+    ],
+)
+def test_passwordless_sudo_guard_stays_scoped_to_first_party_main_container(
+    monkeypatch: pytest.MonkeyPatch,
+    image: str,
+    pod_config: dict[str, object],
+) -> None:
+    rendered = _render_with_pod_config(
+        monkeypatch,
+        image=image,
+        pod_config=pod_config,
+    )
+
+    assert "sudo-contract" in rendered
+
+
+def test_render_task_run_script_accepts_linux_argument_byte_boundary() -> None:
+    boundary_argument = "a" * 131_071
+
+    rendered = render_task_run_script(["tool", boundary_argument])
+
+    assert boundary_argument in rendered
+
+
+def test_render_task_run_script_applies_limit_per_argument() -> None:
+    first = "a" * 70_000
+    second = "b" * 70_000
+
+    rendered = render_task_run_script(["tool", first, second])
+
+    assert first in rendered
+    assert second in rendered
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["bash", "-c", "a" * 131_072],
+        ["tool", "small", "b" * 131_072],
+        ["tool", "é" * 65_536],
+    ],
+)
+def test_render_task_run_script_rejects_linux_oversized_argument(
+    command: list[str],
+) -> None:
+    with pytest.raises(
+        NpaWorkflowRenderError,
+        match=r"command argument \d+ is 131072 UTF-8 bytes.*declared workflow inputs",
+    ):
+        render_task_run_script(command)
 
 
 def test_resolve_task_image_uses_longest_tool_family_override() -> None:
