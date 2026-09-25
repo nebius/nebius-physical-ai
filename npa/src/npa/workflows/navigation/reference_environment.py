@@ -45,13 +45,25 @@ class ReferenceEnvironment(ManagerBasedRLEnv):
 
     def _reset_idx(self, env_ids):
         super()._reset_idx(env_ids)
+        self._reset_controller(env_ids)
+        if hasattr(self, "npa_contacts"):
+            self.npa_contacts.reset(env_ids)
+        self.command_manager.compute(dt=0.0)
+
+    def _reset_controller(self, env_ids):
         action = self.action_manager.get_term("pre_trained_policy_action")
         action.low_level_actions[env_ids] = 0
         action._raw_actions[env_ids] = 0
         action._low_level_obs_manager.reset(env_ids)
-        action._low_level_action_term.reset(env_ids)
+        low_level = action._low_level_action_term
+        low_level.reset(env_ids)
+        robot = self.scene["robot"]
+        target = robot.data.default_joint_pos.torch[env_ids][:, low_level._joint_ids]
+        # Native reset calls write_data_to_sim(), which advances the actuator
+        # network. Never seed that reset with the previous episode's targets.
+        low_level.processed_actions[env_ids] = target
+        robot.set_joint_position_target_index(
+            target, joint_ids=low_level._joint_ids, env_ids=env_ids
+        )
         if len(env_ids) == self.num_envs:
             action._counter = 0
-        if hasattr(self, "npa_contacts"):
-            self.npa_contacts.reset(env_ids)
-        self.command_manager.compute(dt=0.0)

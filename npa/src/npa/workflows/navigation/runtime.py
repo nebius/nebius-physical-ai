@@ -184,7 +184,7 @@ def _install_visibility_guard(adapter, env, recipe):
 
 def _probes(adapter, env, wrapped, recipe, output):
     with adapter.probe_mode(env):
-        result = probe_isolation(adapter, env, wrapped, recipe)
+        result = probe_isolation(adapter, env, wrapped, recipe, output)
         if recipe.sensor_mode == "rgbd":
             from npa.workflows.navigation.cameras import probe_cameras
 

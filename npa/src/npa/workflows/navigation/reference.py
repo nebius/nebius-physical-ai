@@ -91,3 +91,30 @@ def probe_mode(env):
         yield
     finally:
         native.npa_probe = original
+
+
+def probe_state(env):
+    """Expose actual joint targets and actuator memory for reset diagnostics.
+
+    Args:
+        env: Native reference environment.
+    Returns:
+        Batched native tensors; collection copies them without stepping physics.
+    Raises:
+        RuntimeError: The pinned native controller state is unavailable.
+    """
+    native = env.unwrapped
+    robot = native.scene["robot"]
+    action = native.action_manager.get_term("pre_trained_policy_action")
+    values = {
+        "root_quaternion": robot.data.root_quat_w.torch,
+        "joint_position": robot.data.joint_pos.torch,
+        "joint_velocity": robot.data.joint_vel.torch,
+        "joint_position_target": robot.data.joint_pos_target.torch,
+        "low_level_actions": action.low_level_actions,
+        "processed_joint_position": action._low_level_action_term.processed_actions,
+    }
+    for name, actuator in robot.actuators.items():
+        for field in ("sea_hidden_state_per_env", "sea_cell_state_per_env"):
+            values[f"{name}/{field}"] = getattr(actuator, field).transpose(0, 1)
+    return values

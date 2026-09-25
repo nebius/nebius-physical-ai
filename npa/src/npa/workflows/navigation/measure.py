@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from npa.workflows.navigation.contract import finite_array
+from npa.workflows.navigation.probe_evidence import save_trace, trace_difference
 
 
 def snapshot(adapter, env, count: int) -> dict:
@@ -116,12 +117,7 @@ def _probe_trace(adapter, env, wrapped, cases, actions, tolerance):
     import torch
 
     verify_reset(adapter, env, cases, tolerance)
-    trace = [
-        {
-            "state": snapshot(adapter, env, len(cases)),
-            "observations": observations(wrapped.get_observations()),
-        }
-    ]
+    trace = [_trace_row(adapter, env, len(cases), wrapped.get_observations())]
     for action in actions:
         batch = torch.zeros((len(cases), len(action)), device=env.unwrapped.device)
         batch[0] = torch.tensor(action, device=batch.device)
@@ -131,35 +127,34 @@ def _probe_trace(adapter, env, wrapped, cases, actions, tolerance):
             obs, _, done, _ = wrapped.step(batch)
         if bool(done.any()):
             raise ValueError("probe terminated/reset; choose nonterminal probe inputs")
-        trace.append(
-            {
-                "state": snapshot(adapter, env, len(cases)),
-                "observations": observations(obs),
-            }
-        )
+        trace.append(_trace_row(adapter, env, len(cases), obs))
     return trace
 
 
-def _compare_traces(baseline, changed, tolerance):
-    maximum = 0.0
-    for left, right in zip(baseline, changed, strict=True):
-        for group in ("state", "observations"):
-            if left[group].keys() != right[group].keys():
-                raise ValueError("observation/measurement streams changed during probe")
-            for name, array in left[group].items():
-                other = right[group][name]
-                if array.shape != other.shape:
-                    raise ValueError("probe measurement shapes changed")
-                delta = float(np.max(np.abs(array[0] - other[0])))
-                maximum = max(maximum, delta)
-        if any(np.any(right["state"][key] > tolerance) for key in ("peer_contact",)):
-            raise ValueError("robot-to-robot physics contact detected")
-    if maximum > tolerance:
-        raise ValueError("peer placement changed focal physics or perception")
-    return maximum
+def _trace_row(adapter, env, count, obs):
+    row = {"state": snapshot(adapter, env, count), "observations": observations(obs)}
+    diagnostics = getattr(adapter, "probe_state", None)
+    if diagnostics is not None:
+        row["native"] = observations(diagnostics(env))
+    return row
 
 
-def probe_isolation(adapter, env, wrapped, recipe) -> dict:
+def _compare_traces(baseline, changed, tolerance, label="peer placement"):
+    report = trace_difference(baseline, changed)
+    if report["maximum_peer_contact"] > tolerance:
+        raise ValueError("robot-to-robot physics contact detected")
+    maximum = report["maximum"]
+    if maximum["absolute_delta"] > tolerance:
+        raise ValueError(
+            f"{label} changed focal physics or perception: "
+            f"{maximum['group']}/{maximum['stream']} step={maximum['step']} "
+            f"component={maximum['component']} delta={maximum['absolute_delta']:.9g} "
+            f"baseline={maximum['baseline']:.9g} changed={maximum['changed']:.9g}"
+        )
+    return maximum["absolute_delta"]
+
+
+def probe_isolation(adapter, env, wrapped, recipe, output=None) -> dict:
     """Run overlapping-peer and obstacle-contact controls in the same Isaac scene.
 
     Args:
@@ -167,6 +162,7 @@ def probe_isolation(adapter, env, wrapped, recipe) -> dict:
         env: Native environment shared by all robots.
         wrapped: RSL-RL wrapper used by the learner.
         recipe: Validated recipe with native probe actions.
+        output: Optional native artifact directory retaining every measured trace.
     Returns:
         Measured finite probe deltas and positive-control evidence.
     Raises:
@@ -174,19 +170,20 @@ def probe_isolation(adapter, env, wrapped, recipe) -> dict:
     """
     probe = recipe.probe
     parked = [probe.free] + [probe.parked] * (recipe.num_envs - 1)
-    baseline = _probe_trace(
-        adapter, env, wrapped, parked, probe.actions, probe.tolerance
-    )
+    baseline = _recorded_probe(adapter, env, wrapped, recipe, parked, output, "solo")
     motion = np.linalg.norm(
         baseline[-1]["state"]["position_m"][0] - probe.free.position_m
     )
     if motion <= probe.tolerance:
         raise ValueError("free-space probe did not move; isolation cannot be inferred")
-    delta, contact = _probe_controls(adapter, env, wrapped, recipe, parked, baseline)
+    repeat, delta, contact = _probe_controls(
+        adapter, env, wrapped, recipe, parked, baseline, output
+    )
     return {
         "passed": True,
         "robots": recipe.num_envs,
         "maximum_peer_delta": delta,
+        "maximum_repeat_delta": repeat,
         "free_motion_m": float(motion),
         "obstacle_contact": contact,
         "sensor_mode": recipe.sensor_mode,
@@ -194,7 +191,7 @@ def probe_isolation(adapter, env, wrapped, recipe) -> dict:
     }
 
 
-def _probe_controls(adapter, env, wrapped, recipe, parked, baseline):
+def _probe_controls(adapter, env, wrapped, recipe, parked, baseline, output=None):
     probe = recipe.probe
     if any(
         np.any(row["state"][key] > probe.tolerance)
@@ -202,27 +199,46 @@ def _probe_controls(adapter, env, wrapped, recipe, parked, baseline):
         for key in ("obstacle_contact", "peer_contact", "physical_failure")
     ):
         raise ValueError("free-space baseline has contacts or physical failure")
-    overlap = _probe_trace(
-        adapter,
-        env,
-        wrapped,
-        [probe.free] * recipe.num_envs,
-        probe.actions,
-        probe.tolerance,
+    repeat = _recorded_probe(adapter, env, wrapped, recipe, parked, output, "repeat")
+    overlap = _recorded_probe(
+        adapter, env, wrapped, recipe, [probe.free] * recipe.num_envs, output, "overlap"
     )
+    _save_comparisons(output, baseline, repeat, overlap)
+    obstacle = _recorded_probe(
+        adapter, env, wrapped, recipe, [probe.obstacle] + parked[1:], output, "obstacle"
+    )
+    repeat_delta = _compare_traces(baseline, repeat, probe.tolerance, "repeated reset")
     delta = _compare_traces(baseline, overlap, probe.tolerance)
-    obstacle = _probe_trace(
-        adapter,
-        env,
-        wrapped,
-        [probe.obstacle] + parked[1:],
-        probe.actions,
-        probe.tolerance,
-    )
     contact = max(float(row["state"]["obstacle_contact"][0]) for row in obstacle[1:])
     if contact <= probe.tolerance:
         raise ValueError("obstacle positive control produced no physical contact")
-    return delta, contact
+    return repeat_delta, delta, contact
+
+
+def _recorded_probe(adapter, env, wrapped, recipe, cases, output, name):
+    trace = _probe_trace(
+        adapter, env, wrapped, cases, recipe.probe.actions, recipe.probe.tolerance
+    )
+    if output is not None:
+        save_trace(output, name, trace)
+    return trace
+
+
+def _save_comparisons(output, baseline, repeat, overlap):
+    if output is None:
+        return
+    from npa.workflows.navigation.artifacts import write_json
+
+    write_json(
+        output / "isolation-comparisons.json",
+        {
+            "schema": "npa.navigation.isolation-traces.v1",
+            "focal_robot_index": 0,
+            "observation_scope": "focal_robot_only",
+            "repeatability": trace_difference(baseline, repeat),
+            "peer_isolation": trace_difference(baseline, overlap),
+        },
+    )
 
 
 def episode_rows(cases, trajectory: list[dict], tolerance: float) -> list[dict]:

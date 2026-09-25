@@ -201,10 +201,17 @@ Robot collision filtering must exclude every other robot and preserve contacts
 with warehouse obstacles. Implement it in the task's existing collision-group
 or pair-filter setup. The runtime independently compares the focal robot's
 motion and **all returned policy/critic observation streams** with peers parked
-and coincident. It rejects no-motion probes, changed observations, peer contacts
+and coincident, after checking a second identical parked-peer reset for
+repeatability. It rejects no-motion probes, changed observations, peer contacts
 or an obstacle probe that produces no physical contact. These are finite
 behavioral controls, not a proof over every possible scene state. Adapter source
 and contact instrumentation still require operator review.
+
+Native stages retain compressed probe arrays and `isolation-comparisons.json`
+before checking repeatability and peer isolation. These artifacts preserve all
+robots' measured states and the focal robot's observations, with exact deltas
+by stream and step. The public reference also records joint targets and recurrent
+actuator state so a failed reset can be distinguished from peer influence.
 
 State observations must contain only own state, goal and static-scene features.
 Static raycasters must target explicit mesh descendants of `scene_prim`, never
