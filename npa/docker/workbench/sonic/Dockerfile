@@ -25,7 +25,7 @@
 #          python3.11 venv and its cu130 torch (NPA_ISAAC_SKIP_TORCH=1).
 #
 ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01
-FROM --platform=linux/amd64 ${BASE_IMAGE}
+FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01
 ARG ISAAC_LAB_VERSION=2.3.2.post1
@@ -203,8 +203,7 @@ for site_dir in site.getsitepackages():
     path.write_text("from gear_sonic import *\n", encoding="utf-8")
 PY
 
-COPY docker/workbench/sonic/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=0755 docker/workbench/sonic/entrypoint.sh /entrypoint.sh
 
 # Build-time verification. Note what is NOT checked here any more: `import isaaclab` and
 # `import isaaclab.app` used to be asserted at build time, which is exactly the assertion

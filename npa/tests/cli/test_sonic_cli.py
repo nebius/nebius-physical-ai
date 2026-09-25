@@ -976,6 +976,7 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
     assert "ARG BASE_IMAGE=" in dockerfile
+    assert "FROM --platform=" not in dockerfile
     # Flipped 0 -> 1: with torch installed by us rather than inherited from the
     # nvcr.io base, a Blackwell-capable build is something we can require, not hope for.
     assert "ARG REQUIRE_TORCH_SM120=1" in dockerfile
@@ -1005,7 +1006,11 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "vector-quantize-pytorch==1.31.1" in requirements
     assert "find \"${SONIC_HOME}/gear_sonic\" -type f -name '*.urdf'" in dockerfile
     assert '-exec chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" {} +' in dockerfile
-    assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
+    assert (
+        "COPY --chmod=0755 docker/workbench/sonic/entrypoint.sh /entrypoint.sh"
+        in dockerfile
+    )
+    assert "RUN chmod +x /entrypoint.sh" not in dockerfile
     assert (
         'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
     )
