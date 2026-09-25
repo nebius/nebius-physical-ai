@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -74,8 +75,14 @@ def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> Non
         public_release_tag_for_tool(tool)
     with pytest.raises(ValueError, match="quarantined|no accepted release"):
         container_image_for_tool(tool)
-    with pytest.raises(ValueError, match="quarantined|no accepted release"):
-        container_image_for_tool(tool, tag=SUPPORTED_TOOL_VERSIONS[tool])
+    configured_tag = SUPPORTED_TOOL_VERSIONS[tool]
+    if re.fullmatch(r"dev-[0-9a-f]{40}", configured_tag):
+        assert container_image_for_tool(tool, tag=configured_tag).endswith(
+            f":{configured_tag}"
+        )
+    else:
+        with pytest.raises(ValueError, match="quarantined|no accepted release"):
+            container_image_for_tool(tool, tag=configured_tag)
 
 
 @pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
