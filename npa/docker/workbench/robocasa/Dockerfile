@@ -16,19 +16,22 @@
 #     the documented download_kitchen_assets script under the operator's own
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
-ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
-FROM --platform=linux/amd64 ${BASE_IMAGE}
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42
+ARG NPA_BUILD_PLATFORM=linux/amd64
+FROM --platform=${NPA_BUILD_PLATFORM} ${BASE_IMAGE}
 
 ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
 ARG ROBOCASA_REPO_REF=v1.0
 ARG ROBOSUITE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4
 ARG ROBOCASA_VERSION=0.1.0
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.base_profile="public-cuda-12.4" \
       npa.runtime_user="ubuntu" \
-      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120"
+      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -36,6 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ROBOCASA_PORT=8791 \
     PYTHONPATH=/app \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
@@ -55,7 +59,8 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3.12 python3.12-dev python3.12-venv \
     && rm -rf /var/lib/apt/lists/* \
-    && python3.12 -m venv /opt/robocasa/venv
+    && python3.12 -m venv /opt/robocasa/venv \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40
 
 WORKDIR /opt/robocasa
 

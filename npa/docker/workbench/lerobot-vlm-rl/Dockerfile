@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-lerobot-vlm-rl@sha256:7bd5b21d487f3ab6614197b8a8af81fe3ed001247b4501740615540cb55998e5
 FROM ${BASE_IMAGE}
 
 ARG LEROBOT_VLM_RL_VERSION=0.1.1
