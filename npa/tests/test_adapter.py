@@ -32,6 +32,11 @@ IMG_H, IMG_W = 480, 640
 N_STATE_DIM = 10  # 9 joint positions + 1 gripper state
 N_ACTIONS = 8
 FPS = 20
+NATIVE_EPISODES = 2
+NATIVE_TIMESTEPS = 3
+NATIVE_IMAGE_SHAPE = (16, 20, 3)
+NATIVE_STATE_DIM = 4
+NATIVE_ACTION_DIM = 2
 
 
 @pytest.fixture()
@@ -64,6 +69,38 @@ def output_dir(tmp_path: Path) -> Path:
     out = tmp_path / "dataset_output"
     out.mkdir()
     return out
+
+
+@pytest.fixture()
+def native_demo_dir(tmp_path: Path) -> Path:
+    """Create a compact dataset for the optional native-reader smoke."""
+    demo_root = tmp_path / "native_demo"
+    demo_root.mkdir()
+    for episode_index in range(NATIVE_EPISODES):
+        episode_dir = demo_root / f"episode_{episode_index:04d}"
+        episode_dir.mkdir()
+        camera_shape = (NATIVE_TIMESTEPS, *NATIVE_IMAGE_SHAPE)
+        np.save(
+            episode_dir / "obs_workspace.npy",
+            np.full(camera_shape, 32 + episode_index, dtype=np.uint8),
+        )
+        np.save(
+            episode_dir / "obs_wrist.npy",
+            np.full(camera_shape, 96 + episode_index, dtype=np.uint8),
+        )
+        np.save(
+            episode_dir / "state.npy",
+            np.arange(NATIVE_TIMESTEPS * NATIVE_STATE_DIM, dtype=np.float32).reshape(
+                NATIVE_TIMESTEPS, NATIVE_STATE_DIM
+            ),
+        )
+        np.save(
+            episode_dir / "actions.npy",
+            np.arange(NATIVE_TIMESTEPS * NATIVE_ACTION_DIM, dtype=np.float32).reshape(
+                NATIVE_TIMESTEPS, NATIVE_ACTION_DIM
+            ),
+        )
+    return demo_root
 
 
 def _has_ffmpeg() -> bool:
@@ -249,6 +286,35 @@ class TestAdapterHelpers:
 
 @needs_ffmpeg
 class TestConvert:
+    def test_native_lerobot_reader_loads_exported_dataset(
+        self, native_demo_dir: Path, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("lerobot")
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+        task = "Move the test cube"
+        dataset_root = tmp_path / "native_dataset"
+        convert(native_demo_dir, dataset_root, fps=FPS, task=task)
+
+        dataset = LeRobotDataset(repo_id=dataset_root.name, root=dataset_root)
+        first_sample = dataset[0]
+        last_sample = dataset[len(dataset) - 1]
+
+        assert dataset.meta.total_episodes == NATIVE_EPISODES
+        assert dataset.meta.total_frames == NATIVE_EPISODES * NATIVE_TIMESTEPS
+        assert len(dataset) == NATIVE_EPISODES * NATIVE_TIMESTEPS
+        assert first_sample["task"] == task
+        assert int(last_sample["episode_index"]) == NATIVE_EPISODES - 1
+        assert tuple(first_sample["observation.state"].shape) == (NATIVE_STATE_DIM,)
+        assert tuple(first_sample["action"].shape) == (NATIVE_ACTION_DIM,)
+        for camera_key in (
+            "observation.images.workspace",
+            "observation.images.wrist",
+        ):
+            decoded_camera = np.asarray(first_sample[camera_key])
+            assert decoded_camera.shape == (3, *NATIVE_IMAGE_SHAPE[:2])
+            assert np.isfinite(decoded_camera).all()
+
     def test_output_structure(self, demo_dir: Path, output_dir: Path) -> None:
         convert(demo_dir, output_dir, fps=FPS, robot_type="franka_panda")
 

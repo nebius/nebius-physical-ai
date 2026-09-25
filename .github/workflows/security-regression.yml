@@ -19,7 +19,8 @@ jobs:
   gitleaks:
     name: ${{ github.event_name == 'push' && 'validation-plan' || 'gitleaks' }}
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
-    timeout-minutes: 2
+    # Full-history checkout and queue evidence can exceed two minutes before
+    # scanning starts. Let the runner default cover the complete required job.
     permissions:
       contents: read
       actions: read

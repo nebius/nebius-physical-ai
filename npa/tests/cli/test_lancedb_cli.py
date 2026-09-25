@@ -249,6 +249,75 @@ def test_lancedb_create_table_schema_validation(tmp_path: Path) -> None:
     assert "--schema does not exist" in result.output
 
 
+def test_lancedb_create_table_sends_schema_for_zero_row_table(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    create_module = importlib.import_module("npa.cli.workbench.lancedb.create_table")
+    schema = {"fields": [{"name": "id", "type": "string", "nullable": False}]}
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    seen = {}
+
+    def fake_request(method: str, endpoint: str, path: str, **kwargs):
+        seen.update({"method": method, "path": path, **kwargs})
+        return {"status": "created", "table": "empty", "rows": 0}
+
+    monkeypatch.setattr(create_module, "request_json", fake_request)
+
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "create-table",
+            "--endpoint",
+            "http://localhost:8686",
+            "--table",
+            "empty",
+            "--schema",
+            str(schema_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/tables/empty"
+    assert seen["payload"]["schema"] == schema
+    assert seen["payload"]["rows"] == []
+
+
+def test_lancedb_create_table_requires_input_or_schema() -> None:
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "create-table",
+            "--endpoint",
+            "http://localhost:8686",
+            "--table",
+            "empty",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--input-path with rows or --schema is required" in result.output
+
+
+def test_lancedb_create_table_rejects_s3_input() -> None:
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "create-table",
+            "--endpoint",
+            "http://localhost:8686",
+            "--table",
+            "remote",
+            "--input-path",
+            "s3://example/data.json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Server-side S3 import is not implemented" in result.output
+
+
 def test_lancedb_query_top_k_default(monkeypatch: pytest.MonkeyPatch) -> None:
     query_module = importlib.import_module("npa.cli.workbench.lancedb.query")
     seen = {}

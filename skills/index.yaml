@@ -547,6 +547,25 @@ skills:
         path: npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
       - type: file_exists
         path: npa/src/npa/cli/agent_foxglove.py
+  - name: encord
+    category: tools
+    when_to_use: "Register S3 media with Encord SaaS, pull curated media with exact lineage, or verify a fail-closed roundtrip."
+    path: skills/tools/encord/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "encord", "push", "--help"]
+        contains: "identity-sidecar"
+      - type: cli_help
+        args: ["workbench", "encord", "pull", "--help"]
+        contains: "label-export"
+      - type: cli_help
+        args: ["workbench", "encord", "verify-roundtrip", "--help"]
+        contains: "receipt-uri"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/encord-push.yaml
+          - workflows/testing/encord-pull.yaml
+          - workflows/testing/encord-roundtrip-smoke.yaml
   - name: insights
     category: tools
     when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."
@@ -737,6 +756,26 @@ skills:
         contains: "dataset-uri"
       - type: file_exists
         path: skills/tools/newton/SKILL.md
+  - name: openvla
+    category: tools
+    when_to_use: "OpenVLA fine-tuning, serving, or evaluation workbench stages, the OpenVLA-OFT LoRA recipe, or the npa workbench openvla CLI."
+    path: skills/tools/openvla/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openvla", "train", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/openvla/SKILL.md
+  - name: molmoact
+    category: tools
+    when_to_use: "MolmoAct VLA fine-tuning, serving, or evaluation workbench stages, MolmoAct policy configs, or the npa workbench molmoact CLI."
+    path: skills/tools/molmoact/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "molmoact", "finetune", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/molmoact/SKILL.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."

@@ -28,6 +28,8 @@ nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings 
     Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab locomotion policy evaluation for SONIC workflows.
+molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
+openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
 robocasa  RoboCasa kitchen-task simulation workbench.
 newton  Newton physics engine: teacher training, demo generation, evaluation.
@@ -38,6 +40,7 @@ alpamayo2-super  NVIDIA Alpamayo 2 Super trajectory-inference workbench.
 curobo  NVIDIA cuRobo V2 motion planning and complete benchmark evaluation.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
+encord  Register S3 media with Encord SaaS and materialize curated results.
 scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
 dataset  Dataset-of-record: ingest, validate, curate, and query production sensor data.
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
@@ -77,6 +80,8 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
+| `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
+| `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |
 | `newton` | Newton physics engine: teacher training, demo generation, evaluation. |
@@ -86,6 +91,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `curobo` | NVIDIA cuRobo V2 motion planning and complete benchmark evaluation. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
+| `encord` | Register S3 media with Encord SaaS and materialize curated results. |
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default). |
 | `dataset` | Dataset-of-record: ingest, validate, curate, and query production sensor data. |
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
