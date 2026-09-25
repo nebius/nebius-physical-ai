@@ -170,6 +170,10 @@ _TRIVY_CONTAINER_IMAGE = (
     "docker.io/aquasec/trivy@"
     "sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
 )
+# Trivy applies --severity to every enabled scanner at once, so asking it for
+# CRITICAL would drop HIGH private keys from the report before Python can reject
+# them. Ask for everything and filter vulnerabilities to CRITICAL below instead.
+_TRIVY_ALL_SEVERITIES = "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
 
 
 def _repository(ref: str) -> str:
@@ -335,6 +339,44 @@ def _trivy_command() -> list[str]:
     return command
 
 
+def _severity_counts(findings: list[dict[str, Any]]) -> str:
+    """Summarise findings by severity without quoting any matched content.
+
+    The rejection reason is printed by the publisher and reaches CI logs, so it
+    carries counts only. Paths, rule matches and match text stay in the private
+    report.
+    """
+
+    counts: dict[str, int] = {}
+    for finding in findings:
+        severity = str(finding.get("Severity") or "UNKNOWN").upper()
+        counts[severity] = counts.get(severity, 0) + 1
+    return ", ".join(f"{name}={counts[name]}" for name in sorted(counts))
+
+
+def _trivy_findings(
+    result: dict[str, Any], section: str, *, subject: str
+) -> list[dict[str, Any]]:
+    """Return one report section, refusing shapes that could hide a finding.
+
+    Skipping entries that are not dictionaries would silently drop a finding
+    whenever the report does not look the way this code expects, which is the
+    one case where guessing is unacceptable: a dropped secret is published.
+    """
+
+    findings = result.get(section)
+    if findings is None:
+        return []
+    if not isinstance(findings, list) or any(
+        not isinstance(finding, dict) for finding in findings
+    ):
+        raise RuntimeError(
+            f"{subject} exact-digest Trivy scan returned an unreadable "
+            f"{section} section"
+        )
+    return findings
+
+
 def _scan_trivy_exact_digest(image_ref: str, *, subject: str) -> dict[str, int]:
     """Rerun Trivy against immutable source bytes immediately before copy."""
 
@@ -347,7 +389,7 @@ def _scan_trivy_exact_digest(image_ref: str, *, subject: str) -> dict[str, int]:
             "--scanners",
             "vuln,secret",
             "--severity",
-            "CRITICAL",
+            _TRIVY_ALL_SEVERITIES,
             "--format",
             "json",
             "--quiet",
@@ -362,35 +404,38 @@ def _scan_trivy_exact_digest(image_ref: str, *, subject: str) -> dict[str, int]:
     if completed.returncode:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise RuntimeError(detail or f"{subject} exact-digest Trivy scan failed")
-    payload = json.loads(completed.stdout)
+    try:
+        payload = json.loads(completed.stdout)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{subject} exact-digest Trivy scan returned unparsable JSON"
+        ) from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("Results"), list):
         raise RuntimeError(f"{subject} exact-digest Trivy scan returned invalid JSON")
     vulnerabilities: list[dict[str, Any]] = []
     secrets: list[dict[str, Any]] = []
     for result in payload["Results"]:
         if not isinstance(result, dict):
-            raise RuntimeError("Wan exact-digest Trivy result entry is invalid")
+            raise RuntimeError(f"{subject} exact-digest Trivy result entry is invalid")
         vulnerabilities.extend(
             finding
-            for finding in (result.get("Vulnerabilities") or [])
-            if isinstance(finding, dict)
-            and str(finding.get("Severity") or "").upper() == "CRITICAL"
+            for finding in _trivy_findings(result, "Vulnerabilities", subject=subject)
+            if str(finding.get("Severity") or "").upper() == "CRITICAL"
         )
-        secrets.extend(
-            finding
-            for finding in (result.get("Secrets") or [])
-            if isinstance(finding, dict)
-        )
+        secrets.extend(_trivy_findings(result, "Secrets", subject=subject))
     fixed = [
         item for item in vulnerabilities if str(item.get("FixedVersion") or "").strip()
     ]
+    # Secrets are rejected first and at every severity: a fixable CRITICAL
+    # vulnerability is a patch away, a published private key is not recoverable.
+    if secrets:
+        raise RuntimeError(
+            f"{subject} exact-digest Trivy scan found {len(secrets)} secret "
+            f"findings ({_severity_counts(secrets)})"
+        )
     if fixed:
         raise RuntimeError(
             f"{subject} exact-digest Trivy scan found {len(fixed)} fixed CRITICAL vulnerabilities"
-        )
-    if secrets:
-        raise RuntimeError(
-            f"{subject} exact-digest Trivy scan found {len(secrets)} secret findings"
         )
     return {
         "critical_total": len(vulnerabilities),

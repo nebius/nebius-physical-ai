@@ -1,0 +1,61 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: mjlab-train-eval
+  description: Train a native MJLab policy, measure episodes, export ONNX, and repeat
+    evaluation with an independent seed.
+config:
+  bucket: example-bucket
+  prefix: runs/{{run.id}}/mjlab
+  mjlab_task: Mjlab-Velocity-Flat-Unitree-G1
+  mjlab_iterations: '30000'
+  mjlab_num_envs: '4096'
+  episodes: '8'
+  training_uri: s3://{{config.bucket}}/{{config.prefix}}/training/
+  checkpoint_uri: '{{config.training_uri}}checkpoint.pt'
+  mjlab_uri: s3://{{config.bucket}}/{{config.prefix}}/eval/
+  export_uri: s3://{{config.bucket}}/{{config.prefix}}/export/
+  mjlab_seed: '42'
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 32Gi
+initial: train
+states:
+  train:
+    toolRef: workbench.mjlab.train
+    resources: gpu
+    outputs:
+    - uri: '{{config.checkpoint_uri}}'
+    - uri: '{{config.training_uri}}mjlab_train.json'
+    next: evaluate
+  evaluate:
+    needs:
+    - train
+    toolRef: workbench.mjlab.eval
+    resources: gpu
+    outputs:
+    - uri: '{{config.mjlab_uri}}mjlab_eval.json'
+    next: export
+  export:
+    needs:
+    - evaluate
+    toolRef: workbench.mjlab.export
+    resources: gpu
+    outputs:
+    - uri: '{{config.export_uri}}policy.onnx'
+    - uri: '{{config.export_uri}}mjlab_export.json'
+    next: evaluate-independent-seed
+  evaluate-independent-seed:
+    needs:
+    - export
+    resources: gpu
+    outputs:
+    - uri: s3://{{config.bucket}}/{{config.prefix}}/eval-seed-43/mjlab_eval.json
+    terminal: true
+    toolRef: workbench.mjlab.eval
+    params:
+      mjlab_seed: '43'
+      mjlab_uri: s3://{{config.bucket}}/{{config.prefix}}/eval-seed-43/

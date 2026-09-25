@@ -849,6 +849,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "cosmos-evaluator",
         "data",
         "dataset",
+        # CLI, SDK, and workflow call one shared implementation; Encord remains remote SaaS.
+        "encord",
         "fiftyone",
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).
@@ -877,7 +879,12 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Generation runs through the BYOF tier (`base_image: tool://ltx2`), so
         # this verb has no service or YAML env tier to stay coherent with.
         "ltx2",
+        # Typed shared requests are exercised through HTTP, CLI, SDK and toolRefs
+        # in test_mjlab.py and test_mjlab_workflow.py.
         "mjlab",
+        # Namespace selection is host-side platform configuration.
+        # CLI and SDK share namespaces.py; no payload service or toolRef applies.
+        "namespace",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.
         # CLI <-> SDK <-> YAML coherence is enforced instead by

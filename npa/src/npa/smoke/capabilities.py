@@ -43,6 +43,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
     ],
+    "mjlab": [
+        "native MJLab PPO training writes a loadable RSL-RL checkpoint",
+        "real complete-episode evaluation produces finite measured returns",
+        "native ONNX export passes the ONNX checker",
+    ],
     "curobo": [
         "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
         "finite interpolated joint trajectories and actual FK tool path",

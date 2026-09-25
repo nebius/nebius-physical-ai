@@ -187,7 +187,9 @@ def test_vendor_interpreter_resolves_by_prefix() -> None:
     assert tool_vendor_interpreters("workbench.lerobot.policy_train") == (
         "/opt/lerobot/venv/bin/python",
     )
-    assert tool_vendor_interpreters("workbench.mjlab.eval") == ()
+    assert tool_vendor_interpreters("workbench.mjlab.eval") == (
+        "/usr/local/bin/python",
+    )
     # OpenPI's GPU stage commands name /opt/venv/bin/python explicitly. Its
     # prepare-data and service-control stages run in the normal Sky image, so a
     # prefix-wide vendor override would select an interpreter that is absent there.

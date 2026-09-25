@@ -28,6 +28,9 @@ source overlay. Retained live output can be checked with
 `NPA_INTEGRATION_E2E=1 NPA_ARENA_FILM_RESULT=/path/to/result.json npa/.venv/bin/python -m pytest npa/tests/e2e/test_isaac_arena_film_capture_live.py -q`.
 That check reads the complete downloaded output bundle and launches no new job.
 
+For shared Kubernetes clusters, use [team namespaces](../docs/workbench/namespaces.md) to configure
+namespace selection and private SkyPilot contexts with `npa workbench namespace`.
+
 ## Install
 
 For a persistent remote development environment, use
@@ -461,3 +464,18 @@ using the installed renderer. Create a project from your own media with
 Install `npa[studio]` for optional speech generation and FFmpeg separately.
 See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
 configuration, offline narration, artifact search and privacy boundaries.
+
+### MJLab
+
+Install optional simulator packages with `pip install -e '.[mjlab]'` on Python
+3.10–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
+provides `train`, `eval`, `export`, `list`, `status`, `system-info`, `deploy`, and
+`workflow`; use `--help` for their options. Training preserves upstream defaults
+unless overridden. Public handoffs are S3 URIs; `--dry-run` plans without metrics
+or writes. The service requires `MJLAB_TOKEN` and `MJLAB_ALLOWED_S3_ROOTS` and
+uses existing storage credentials. See the [MJLab guide](../docs/workbench/mjlab.md)
+for request schemas, deployment Secrets, environment variables, validation and
+image publication status.
+`eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
+page alongside the measured evaluation manifest. The SDK and service expose the
+same behavior with `video=True`.

@@ -1,36 +1,29 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
-
 metadata:
   name: mjlab-eval
-  description: Score a SONIC locomotion checkpoint with MJLab metrics.
-
+  description: Measure a native MJLab/RSL-RL checkpoint in its registered task.
 config:
   bucket: example-bucket
-  prefix: "runs/{{run.id}}/mjlab"
-  suite: locomotion
-  embodiment: unitree-g1
-  episodes: "8"
-
-  motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/retargeted/"
-  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoint.json"
-  mjlab_uri: "s3://{{config.bucket}}/{{config.prefix}}/mjlab/"
-
+  prefix: runs/{{run.id}}/mjlab
+  episodes: '8'
+  checkpoint_uri: s3://{{config.bucket}}/inputs/mjlab/checkpoint.pt
+  mjlab_uri: s3://{{config.bucket}}/{{config.prefix}}/mjlab/
+  mjlab_task: Mjlab-Velocity-Flat-Unitree-G1
+  mjlab_seed: '42'
 resources:
   gpu:
     cloud: kubernetes
     accelerators: H100:1
     cpus: 8
     memory: 32Gi
-
 initial: mjlab-eval
-
 states:
   mjlab-eval:
-    description: Evaluate a SONIC locomotion checkpoint against MJLab metrics.
+    description: Run complete episodes and report measured returns and survival.
     toolRef: workbench.mjlab.eval
     resources: gpu
     outputs:
-      - uri: "{{config.mjlab_uri}}mjlab_eval.json"
-        schema: npa.workbench.mjlab.report.v1
+    - uri: '{{config.mjlab_uri}}mjlab_eval.json'
+      schema: npa.mjlab.eval.v1
     terminal: true
