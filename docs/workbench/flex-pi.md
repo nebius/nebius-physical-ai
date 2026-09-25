@@ -566,7 +566,9 @@ pinned CUDA Torch 2.7.1 runtime. It captures only the mixed-attention module's
 training forward and backward using `torch.cuda.make_graphed_callables`, with
 static inputs and autocast caching disabled inside capture. Only forward uses
 autocast; backward capture runs outside autocast, matching eager training. DDP
-initialization uses an ordered side stream before capture. Input preparation,
+initialization uses an ordered side stream before capture. Native backward
+results are copied before autograd accumulation, so later replays cannot
+overwrite gradients from earlier microbatches. Input preparation,
 random sampling, loss calculation, optimizer updates, DDP reduction, and
 evaluation retain their eager paths. Parameter
 identities and checkpoint keys remain unchanged. Capture failures, changed input

@@ -361,6 +361,7 @@ def test_native_observer_counts_only_successful_forward_and_backward_replays(
         @decorated
         def backward():
             bwd_graph.replay()
+            return ()
 
     def graphed():
         return Graphed.forward()
@@ -533,3 +534,53 @@ def test_authenticated_service_preserves_capture_policy(tmp_path, mode, status):
     assert response.status_code == status
     if status == 200:
         assert response.json()["execution"]["cuda_graphs"] == mode
+
+
+def test_native_static_gradients_do_not_overwrite_accumulation(monkeypatch):
+    torch = pytest.importorskip("torch")
+
+    class NativeGraph:
+        def replay(self):
+            pass
+
+    monkeypatch.setattr(torch.cuda, "CUDAGraph", NativeGraph)
+    fwd_graph, bwd_graph = NativeGraph(), NativeGraph()
+    static_gradient = torch.zeros(())
+
+    class Graphed(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, parameter, unused):
+            fwd_graph.replay()
+            return parameter.clone()
+
+        @staticmethod
+        @torch.autograd.function.once_differentiable
+        def backward(ctx, gradient):
+            bwd_graph.replay()
+            static_gradient.copy_(gradient)
+            return static_gradient.detach(), None
+
+    def graphed(*inputs):
+        return Graphed.apply(*inputs)
+
+    def forward(*inputs):
+        return graphed(*inputs)
+
+    counts = {"forward": 0, "backward": 0}
+    wrapper = SimpleNamespace(forward=forward)
+    graphs._observe_native_replays(wrapper, counts)
+    parameter = torch.nn.Parameter(torch.tensor(2.0))
+    unused = torch.nn.Parameter(torch.tensor(7.0))
+    optimizer = torch.optim.SGD([parameter, unused], lr=0.1)
+    expected_parameter = 2.0
+    for scales in ((2.0, 3.0), (7.0, 11.0)):
+        optimizer.zero_grad(set_to_none=True)
+        for scale in scales:
+            (wrapper.forward(parameter, unused) * scale).backward()
+        assert parameter.grad.item() == sum(scales)
+        assert parameter.grad.data_ptr() != static_gradient.data_ptr()
+        assert unused.grad is None
+        optimizer.step()
+        expected_parameter -= 0.1 * sum(scales)
+        assert parameter.item() == pytest.approx(expected_parameter)
+    assert counts == {"forward": 4, "backward": 4}

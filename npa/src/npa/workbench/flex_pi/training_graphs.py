@@ -106,6 +106,7 @@ def _input_signature(leaves):
 
 
 def _observe_native_replays(wrapper, counts):
+    from functools import wraps
     import inspect
     import torch
 
@@ -132,6 +133,18 @@ def _observe_native_replays(wrapper, counts):
             counts[mode] += 1
 
         graph.replay = observed
+
+    native_backward = autograd.backward
+
+    @wraps(native_backward)
+    def independent_backward(*args):
+        gradients = native_backward(*args)
+        # Native backward returns detached graph-owned buffers. AccumulateGrad
+        # may adopt those buffers as parameter.grad, so the next replay would
+        # overwrite prior microbatches. Return independent storage instead.
+        return tuple(grad.clone() if grad is not None else None for grad in gradients)
+
+    autograd.backward = staticmethod(independent_backward)
 
 
 def _capture_native(state, leaves, tree_spec):
