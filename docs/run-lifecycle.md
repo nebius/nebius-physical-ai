@@ -205,6 +205,11 @@ beside an earlier supervisor observation that outputs were absent. The top-level
 `automation_may_trust_state` flag covers the current lifecycle-state query and
 does not make those historical artifact observations current.
 
+When the driver records a terminal attempt, it replaces earlier live-job adoption
+advice with the terminal outcome. A failed job directs the operator to its error
+and artifacts; a completed wave is reusable only after its declared outputs pass
+validation. This reporting update preserves the configured retry policy.
+
 ### Pending storage claims
 
 When a managed job has no remaining worker pod, live status can still report a

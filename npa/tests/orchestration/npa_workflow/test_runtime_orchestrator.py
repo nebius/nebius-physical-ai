@@ -4248,6 +4248,80 @@ def test_runtime_refresh_failure_invalidates_prior_submit_proof(
     runtime_sdk_submission.job.assert_called_once()
 
 
+def _terminal_supervisor_run(tmp_path, mocker, statuses, *, outputs=True, retries=0):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(job_id="1"),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-terminal", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    store, submitter = MemoryStore(), FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-terminal",
+        store=store,
+        submitter=submitter,
+        status_fn=FakeStatus(statuses),
+        output_checker=lambda _uri: outputs,
+        options=RuntimeOptions(poll_seconds=0, retries=retries),
+    )
+    return executor, gate, store, submitter
+
+
+@pytest.mark.parametrize(
+    ("terminal", "outputs", "action"),
+    [
+        ("FAILED", False, "terminalize"),
+        ("FAILED_SETUP", False, "terminalize"),
+        ("CANCELLED", False, "terminalize"),
+        ("SUCCEEDED", False, "terminalize"),
+        ("SUCCEEDED", True, "reuse_completed_wave"),
+    ],
+)
+def test_terminal_supervisor_replaces_stale_live_advice(
+    tmp_path, mocker, terminal, outputs, action
+):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path, mocker, ["PENDING", "RUNNING", terminal], outputs=outputs
+    )
+    if action == "terminalize":
+        with pytest.raises(NpaWorkflowError):
+            executor.execute(gate)
+    else:
+        executor.execute(gate)
+    event = SupervisorLedger(store).latest()
+    assert event["phase"] == "attempt_terminal"
+    assert event["recovery"]["action"] == action
+    assert "Continue observing" not in event["recovery"]["remediation"]
+    assert store.read_runtime_state().waves[-1]["recovery_decision"] == action
+    assert len(submitter.calls) == 1
+
+
+def test_terminal_advice_preserves_explicit_payload_retry(tmp_path, mocker):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path,
+        mocker,
+        ["PENDING", "FAILED", "PENDING", "SUCCEEDED"],
+        retries=1,
+    )
+    executor.execute(gate)
+    attempts = store.read_runtime_state().waves
+    assert [row["status"] for row in attempts] == ["failed", "succeeded"]
+    assert [row["recovery_decision"] for row in attempts] == [
+        "terminalize",
+        "reuse_completed_wave",
+    ]
+    assert len(submitter.calls) == 2
+
+
 def test_runtime_supervisor_stops_configuration_retry_immediately(
     tmp_path: Path, mocker
 ) -> None:

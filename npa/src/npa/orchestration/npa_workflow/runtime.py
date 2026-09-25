@@ -505,6 +505,26 @@ class WaveAttempt:
         }
 
 
+def _refresh_terminal_recovery(attempt: WaveAttempt) -> None:
+    """Replace live-only guidance after the same attempt reaches a terminal state."""
+    if attempt.recovery_decision != "adopt_exact_attempt":
+        return
+    if attempt.status == "succeeded":
+        attempt.recovery_decision = "reuse_completed_wave"
+        attempt.error_category = "none"
+        attempt.operator_remedy = (
+            "The wave completed and its declared outputs were validated."
+        )
+    elif attempt.status == "failed" and is_terminal(attempt.sky_status):
+        attempt.recovery_decision = "terminalize"
+        if attempt.error_category in {"", "none"}:
+            attempt.error_category = "unknown"
+        attempt.operator_remedy = (
+            f"The managed job is terminal ({attempt.sky_status}). "
+            "Inspect the recorded error and artifacts before retrying."
+        )
+
+
 def _claims_for_steps(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     """Capture PVC identities from the exact rendered wave resources."""
 
@@ -2499,6 +2519,7 @@ class RuntimeLedger:
         return [uri for uri in remaining if uri not in previously_succeeded]
 
     def record(self, attempt: WaveAttempt) -> None:
+        _refresh_terminal_recovery(attempt)
         self.state.record_wave(attempt.to_dict())
         self.flush()
         if self.store is not None and (
