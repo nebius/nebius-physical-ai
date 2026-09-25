@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 from npa.clients.storage import StorageClient
-from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
+from npa.workflows.sim2real.config import artifact_uris_for_run
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX, DEFAULT_S3_ENDPOINT
 
 
@@ -609,13 +609,11 @@ def _stage_states(
     s3_prefix: str,
     endpoint: str,
 ) -> dict[str, dict[str, Any]]:
-    config = build_config_from_env(
+    uris = artifact_uris_for_run(
         run_id=run_id,
         s3_bucket=bucket,
         s3_prefix=s3_prefix,
-        s3_endpoint=endpoint,
     )
-    uris = artifact_uris(config)
     client = StorageClient.from_environment(endpoint_url=endpoint)
     run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
     workflow_state: dict[str, Any] | None = None

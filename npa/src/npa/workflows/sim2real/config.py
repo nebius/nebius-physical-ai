@@ -42,7 +42,6 @@ from npa.workflows.sim2real.models import (
     new_run_id,
 )
 from npa.workflows.sim2real.utils import (
-    _artifact_root_uri,
     _bool_value,
     _serviceaccount_namespace,
     _split_csv,
@@ -467,12 +466,37 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
 def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
     """Return canonical S3 artifact URIs for the full 14-stage workflow."""
 
-    if not config.s3_bucket:
+    return artifact_uris_for_run(
+        s3_bucket=config.s3_bucket,
+        s3_prefix=config.s3_prefix,
+        run_id=config.run_id,
+        trigger_dataset_uri=config.trigger_dataset_uri,
+        outer_iterations=config.outer_iterations,
+    )
+
+
+def artifact_uris_for_run(
+    *,
+    s3_bucket: str,
+    s3_prefix: str,
+    run_id: str,
+    trigger_dataset_uri: str = "",
+    outer_iterations: int = DEFAULT_OUTER_ITERATIONS,
+) -> dict[str, str]:
+    """Return artifact URIs without resolving execution-only image defaults.
+
+    Status and artifact discovery are read-only operations over an existing run.
+    They must remain available when a previously used public runtime is later
+    quarantined, so this path deliberately accepts only artifact coordinates.
+    """
+
+    if not s3_bucket:
         return {}
-    root = _artifact_root_uri(config)
+    parts = [part for part in (s3_prefix.strip("/"), run_id) if part]
+    root = f"s3://{s3_bucket}/{'/'.join(parts)}"
     return {
         "root": f"{root}/",
-        "trigger_dataset": config.trigger_dataset_uri,
+        "trigger_dataset": trigger_dataset_uri,
         "stage_01_trigger": f"{root}/stage_01_trigger/trigger.json",
         "task_contract": f"{root}/stage_02_assets/task-contract.json",
         "stage_02_assets": f"{root}/stage_02_assets/consumed_scene_spec.json",
@@ -492,7 +516,7 @@ def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
         "validation_selection": f"{root}/checkpoints/validation-selection/",
         "inner_loop": f"{root}/inner_loop/",
         "stage_10_eval_heldout": (
-            f"{root}/eval/gold-heldout/outer-{config.outer_iterations:02d}/report.json"
+            f"{root}/eval/gold-heldout/outer-{outer_iterations:02d}/report.json"
         ),
         "stage_11_outer_loop": f"{root}/outer_loop/decision.json",
         "candidate_checkpoint": f"{root}/checkpoints/candidate/",
