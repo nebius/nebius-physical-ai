@@ -373,6 +373,10 @@ NPA_SPECIALISTS_LIVE=1 npa/.venv/bin/python -m pytest \
 It repairs copied PAIDF and Sim2Real workflow specifications through real hosted
 models and Workbench validation/planning; it does not submit GPU workloads.
 
+The [routed repair fanout experiment](specialists-token-router-experiment.md)
+compares this path against Astra on native simulation and dataset repairs,
+including classifier latency and usage.
+
 ## Optional Jev routing
 
 To choose a model while preserving an explicitly delegated workspace, set that

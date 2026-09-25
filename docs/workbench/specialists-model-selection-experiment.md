@@ -1,5 +1,9 @@
 # Choosing Token Factory models for workflow repairs
 
+A subsequent [Token Factory routing experiment](specialists-token-router-experiment.md)
+measures actual model-selected endpoints. The results below retain their original
+explicit-endpoint configuration and do not include that classifier.
+
 For this predefined pair of repairs, **GLM-5.3-Flash with Astra only on escalation**
 completed both tasks in two fresh comparisons with **zero Astra calls**.
 It took **100.3s and 106.4s versus Astra's 141.4s and 151.3s**, and cost an
