@@ -33,7 +33,11 @@ and final checks wait for their declared dependencies and an available runner.
 Organization runner limits can still cause waiting.
 Queue proof now shares the secret-scan runner, while full precheck collection
 overlaps smoke and guardrail execution on one runner. Both precheck results remain
-blocking. Optional priority/test runner labels separate candidate validation from
+blocking. The shared secret-scan job uses GitHub's default job timeout: full-history
+checkout, queue-evidence verification, scanning, and cleanup must all complete
+before it can report success. A short job timeout can reject a clean candidate
+even after the scanner reports no leaks.
+Optional priority/test runner labels separate candidate validation from
 background audits when operators provision that capacity; their defaults preserve
 standard runner behavior. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)

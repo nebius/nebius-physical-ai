@@ -36,9 +36,11 @@ The [workflow quick start](workbench/npa-workflow-guide.md#quick-start) shows th
 complete sequence.
 
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
-prints the exact build command for anything missing. `submit` runs the same
-check by default, so a missing image surfaces on your machine instead of as an
-`ImagePullBackOff` on the cluster.
+prints the exact build command for anything missing. It unions every declared
+decision outcome, and `--infra k8s/<cluster>` lets the pull check verify that
+exact cluster's declared pull-secret authority. `submit` uses the same complete
+image plan by default, so a branch-specific missing image surfaces before the
+run instead of as an `ImagePullBackOff` on the cluster.
 
 ### Quota is arithmetic, and it is checked first
 
@@ -111,6 +113,20 @@ Terraform state, and prints one deterministic resume command.
 Source staging and submission are content-addressed and idempotent for an
 explicit `RUN_ID`, so repeating a submit repairs and reuses derived artifacts
 instead of duplicating work.
+
+The owner-only submission receipt under
+`~/.npa/workflow-submissions/<project>/<run>.json` is part of that safety
+boundary. If it is unreadable, malformed, symlinked, or belongs to a different
+project/run identity, NPA preserves it and refuses pre-launch mutation. Audit
+the path and its exact ownership, back it up, then repair the receipt before
+retrying; do not delete it merely to bypass the check because it may retain the
+only exact managed-job identity. If corruption occurs after provider acceptance,
+submit still prints a `submission_warnings` entry only when the launch proves
+`submitted` or `adopted` plus a nonblank job ID, so that job can be cancelled or
+reconciled. Any weaker result remains a hard receipt error. Receipt warnings and
+optional post-success artifact-handoff diagnostics redact URL query strings,
+secret assignments, bearer tokens, and resolved credential values before JSON
+output or local persistence.
 
 **A stale or ambiguous run is never selected silently.** Resume by naming it:
 
