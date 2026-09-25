@@ -14,7 +14,15 @@ bootstrap source-delivery, security, SBOM and provenance checks. Supported relea
 promotion still requires a real exact-digest RTX RGB-D/navigation/Bullet result.
 The previous baked `Dockerfile` and `verify_image.py` remain a quarantined private
 candidate; their complete source-closure and retained-byte guards are unchanged.
-The legacy packaging details below apply to that candidate only.
+
+The local `npa/docker/workbench/habitat-sim/build.sh OUTPUT.oci.tar` now selects
+`Dockerfile.bootstrap` by default, matching the packaging contract and trusted
+publication workflow. It builds from committed Dockerfile/COPY inputs, supplies
+the full Git revision, and produces a local OCI archive with provenance and SBOM
+attestations. Use `--legacy-baked` only to inspect the separately quarantined
+baked candidate. See the [build README](../../npa/docker/workbench/habitat-sim/README.md)
+for commands and output requirements. The legacy source-closure details below
+apply to that baked candidate only.
 
 ## Source and maintenance boundary
 
@@ -93,12 +101,18 @@ NPA extracts the two processed members byte-for-byte and labels rendered
 observations as derived output. No Matterport3D, HM3D, Replica, Gibson, semantic,
 or other scene data is permitted.
 
-## Image and publication quarantine
+## Public bootstrap and legacy publication boundaries
 
-The packaging contract records `redistribution: unvalidated`, while public-neutral
-delivery remains the objective. `licenses.json` and the OCI contract record pending
-source closure; `UNVALIDATED_PUBLICATION_TOOLS` prevents publication. The candidate has no
-public-image-table row and no supported-release manifest entry.
+The packaging contract records `redistribution: public` for
+`Dockerfile.bootstrap`. Public development images use the trusted publication
+workflow and its exact-image checks. `UNVALIDATED_PUBLICATION_TOOLS` still
+excludes Habitat-Sim from supported release selection; it has no supported-release
+manifest entry or public-release table row. Development image evidence is recorded
+separately in the [image catalog](container-image-catalog.md#not-in-the-public-image-table).
+
+For the legacy baked candidate only, `licenses.json` and `runtime-payload.json`
+retain pending source closure. `build.sh --legacy-baked` does not change that
+classification or authorize publication.
 
 The verifier inventories distinct dpkg and Python package identities from every
 layer, including superseded base versions. A reviewed complete inventory and exact
@@ -152,13 +166,18 @@ hashes are supplied explicitly. The independent complete-byte scanner, Trivy, SB
 provenance, license, secret, vulnerability, native-library, and exact payload
 checks remain mandatory on actual candidate bytes.
 
-A later trusted public workflow must rebuild an exact reviewed full Git SHA. It
+Public publication uses a trusted rebuild of an exact reviewed full Git SHA. It
 must not transport privately built OCI bytes. The trusted rebuild is a new digest:
 all byte scans and the real exact-public-digest RTX run must be repeated before an
 anonymous pull or catalog claim is accepted. Private and public digest equality is
 never inferred from equivalent source.
 
 ## Workflow and hard gate
+
+Habitat-Sim uses the existing `npa workbench workflow` CLI and
+`workflow.habitat_sim.smoke` toolRef. The generic
+`npa.sdk.workbench.workflow` SDK exposes durable status, logs, and artifacts.
+This solution does not add a dedicated Habitat service or CLI namespace.
 
 Validate and plan without building or submitting:
 
@@ -173,9 +192,12 @@ npa/.venv/bin/npa workbench workflow run-spec \
 ```
 
 These structural planning commands do not submit or qualify an image. The
-quarantined `-unbuilt` reference is not runnable: SkyPilot task rendering refuses
-it until an explicit registry-qualified immutable image digest is supplied.
-A real run requires a later reviewed and byte-qualified exact image digest.
+quarantined `-unbuilt` default reference is not runnable: SkyPilot task rendering
+refuses it until an explicit registry-qualified immutable image digest is
+supplied. An operator can select a reviewed development digest using
+`--image-override workflow.habitat_sim.smoke=REGISTRY/IMAGE@sha256:DIGEST` on
+`npa workbench workflow submit`; the normal image, plan, storage, and hardware
+checks still apply.
 
 The spec has one `workflow.habitat_sim.smoke` state, selects
 `tool://habitat-sim`, and requests exactly
@@ -211,7 +233,7 @@ the Kubernetes `containerStatuses` image ID, command, arguments, selected
 environment, provider-bound node, and termination message with the immutable
 rendered-plan contract before it accepts the staged proof.
 
-The dedicated selector is intentionally inert unless all three owner-controlled
+The separate legacy direct-pod selector is inert unless all three owner-controlled
 gates are present: `NPA_INTEGRATION_E2E=1`,
 `NPA_HABITAT_SIM_IMAGE_LIVE=1`, and a mode-restricted
 `NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT`. The receipt binds the exact Git/workflow
@@ -236,5 +258,5 @@ authorization.
 - semantic annotations and semantic-sensor claims;
 - Habitat-Lab installation, policy training, and distributed training;
 - GUI, interactive viewer, audio, CUDA build, multi-GPU, and B200 rendering;
-- built-image, private/public pull, RTX capability, anonymous publication, catalog,
-  and supported-release claims until their separate exact-byte gates pass.
+- supported-release promotion and image/hardware/capability claims beyond the
+  exact evidence recorded for a named development digest.

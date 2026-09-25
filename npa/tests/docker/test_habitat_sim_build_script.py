@@ -6,9 +6,11 @@ import ast
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -37,6 +39,22 @@ SOURCE_PATHS = (
     "src/npa/workflows/__init__.py",
     "src/npa/workflows/habitat_sim_smoke.py",
 )
+BOOTSTRAP_DOCKERFILE = "docker/workbench/habitat-sim/Dockerfile.bootstrap"
+
+
+def _bootstrap_copy_inputs() -> set[str]:
+    source = (ROOT / "npa" / BOOTSTRAP_DOCKERFILE).read_text()
+    paths = {BOOTSTRAP_DOCKERFILE}
+    for line in source.replace("\\\n", " ").splitlines():
+        arguments = shlex.split(line)
+        if not arguments or arguments[0] != "COPY":
+            continue
+        if any(argument.startswith("--from=") for argument in arguments):
+            continue
+        paths.update(
+            argument for argument in arguments[1:-1] if not argument.startswith("--")
+        )
+    return paths
 
 
 def _run(
@@ -44,9 +62,15 @@ def _run(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     script: Path = SCRIPT,
+    legacy: bool = False,
 ) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(script), *(str(arg) for arg in args)],
+        [
+            "bash",
+            str(script),
+            *(["--legacy-baked"] if legacy else []),
+            *(str(arg) for arg in args),
+        ],
         cwd=cwd or script.parents[4],
         env=env,
         check=False,
@@ -57,7 +81,7 @@ def _run(
 
 def _committed_fixture(tmp_path: Path) -> tuple[Path, Path]:
     repository = tmp_path / "repository"
-    for path in SOURCE_PATHS:
+    for path in set(SOURCE_PATHS) | _bootstrap_copy_inputs():
         source = ROOT / "npa" / path
         destination = repository / "npa" / path
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +134,10 @@ for argument in "$@"; do
   fi
   previous=$argument
 done
+context=${!#}
+if [[ "$context" == */inputs ]]; then
+  cp -a "$(dirname "$context")" "$DOCKER_SOURCE_CAPTURE"
+fi
 """,
         encoding="utf-8",
     )
@@ -202,7 +230,7 @@ def test_builder_and_verifier_share_the_exact_source_input_path_set() -> None:
 def test_source_verifier_module_is_projected_from_exact_committed_bytes(tmp_path):
     repository, script = _committed_fixture(tmp_path)
     env, _log, capture = _stubbed_environment(tmp_path)
-    result = _run(tmp_path / "candidate.oci.tar", env=env, script=script)
+    result = _run(tmp_path / "candidate.oci.tar", env=env, script=script, legacy=True)
     assert result.returncode == 0, result.stderr
     relative = "docker/workbench/habitat-sim/verify_apt_source.py"
     committed = subprocess.check_output(
@@ -261,14 +289,14 @@ def test_builder_failure_cleans_exact_temporary_output(
     assert not list(tmp_path.glob("npa-habitat-source.*"))
 
 
-def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
+def test_legacy_builder_passes_exact_git_sha_to_local_attested_oci_export(
     tmp_path: Path,
 ) -> None:
     repository, script = _committed_fixture(tmp_path)
     env, log, capture = _stubbed_environment(tmp_path)
     output = tmp_path / "candidate.oci.tar"
 
-    result = _run(output, env=env, script=script)
+    result = _run(output, env=env, script=script, legacy=True)
 
     assert result.returncode == 0, result.stderr
     argv = log.read_text(encoding="utf-8").splitlines()
@@ -277,6 +305,9 @@ def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
     ).strip()
     assert argv[:2] == ["buildx", "build"]
     assert argv.count("--platform=linux/amd64") == 1
+    assert argv[argv.index("--file") + 1] == (
+        "npa/docker/workbench/habitat-sim/Dockerfile"
+    )
     assert f"NPA_SOURCE_SHA={revision}" in argv
     manifest = capture / "npa-source-manifest.sha256"
     manifest_digest = subprocess.check_output(
@@ -308,6 +339,56 @@ def test_builder_passes_exact_git_sha_to_local_attested_oci_export(
         key=lambda row: row.split("  ", 1)[1],
     )
     for path in SOURCE_PATHS:
+        committed = subprocess.check_output(
+            ["git", "-C", str(repository), "show", f"HEAD:npa/{path}"]
+        )
+        assert (capture / "inputs" / path).read_bytes() == committed
+
+
+def test_default_builder_selects_public_contract_and_committed_copy_closure(
+    tmp_path: Path,
+) -> None:
+    repository, script = _committed_fixture(tmp_path)
+    env, log, capture = _stubbed_environment(tmp_path)
+    output = tmp_path / "bootstrap.oci.tar"
+    result = _run(output, env=env, script=script)
+    assert result.returncode == 0, result.stderr
+    argv = log.read_text().splitlines()
+    contract = yaml.safe_load(
+        (ROOT / "npa/docker/workbench/packaging-contract.yaml").read_text()
+    )["images"]["habitat-sim"]
+    context = Path(argv[-1])
+    dockerfile = Path(argv[argv.index("--file") + 1])
+    assert dockerfile.relative_to(context).as_posix() == (
+        "docker/workbench/" + contract["dockerfile"]
+    )
+    assert contract["redistribution"] == "public"
+    assert argv[:2] == ["buildx", "build"]
+    assert argv.count("--platform=linux/amd64") == 1
+    assert "--provenance=mode=max" in argv and "--sbom=true" in argv
+    assert "--push" not in argv and "--load" not in argv
+    assert "--build-context" not in argv
+    revision = subprocess.check_output(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert [value for value in argv if value.startswith("NPA_")] == [
+        f"NPA_SOURCE_SHA={revision}"
+    ]
+    _assert_committed_bootstrap_projection(repository, capture)
+    assert not context.exists()
+    assert output.read_bytes() == b"synthetic OCI bytes\n"
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.stat().st_nlink == 1
+
+
+def _assert_committed_bootstrap_projection(repository: Path, capture: Path) -> None:
+    observed = {
+        path.relative_to(capture / "inputs").as_posix()
+        for path in (capture / "inputs").rglob("*")
+        if path.is_file()
+    }
+    assert observed == _bootstrap_copy_inputs()
+    for path in observed:
         committed = subprocess.check_output(
             ["git", "-C", str(repository), "show", f"HEAD:npa/{path}"]
         )

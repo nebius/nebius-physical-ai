@@ -2,8 +2,13 @@
 set -euo pipefail
 umask 077
 
+legacy_baked=false
+if [[ "${1:-}" == --legacy-baked ]]; then
+  legacy_baked=true
+  shift
+fi
 if [[ $# -ne 1 || "$1" == -* ]]; then
-  echo "usage: build.sh OWNER_ONLY_OUTPUT.oci.tar" >&2
+  echo "usage: build.sh [--legacy-baked] OWNER_ONLY_OUTPUT.oci.tar" >&2
   exit 2
 fi
 caller_cwd="$(pwd -P)"
@@ -66,8 +71,8 @@ if [[ "$build_platform" != "linux/amd64" ]]; then
   exit 2
 fi
 
-# Every repository-owned file copied by the Dockerfile is projected from the
-# committed object database. Keep this list identical to verify_image.py.
+# The private legacy verifier requires this exact source-provenance population.
+# Keep it identical to verify_image.py; it does not describe the public image.
 readonly source_paths=(
   docker/workbench/habitat-sim/Dockerfile
   docker/workbench/habitat-sim/REDISTRIBUTION.md
@@ -92,6 +97,28 @@ readonly source_paths=(
   src/npa/workflows/__init__.py
   src/npa/workflows/habitat_sim_smoke.py
 )
+readonly bootstrap_source_paths=(
+  docker/workbench/habitat-sim/Dockerfile.bootstrap
+  docker/workbench/habitat-sim/apt-build.lock
+  docker/workbench/habitat-sim/apt-runtime.lock
+  docker/workbench/habitat-sim/bootstrap-entrypoint.sh
+  docker/workbench/habitat-sim/bootstrap_sources.py
+  docker/workbench/habitat-sim/prepare_source.py
+  docker/workbench/habitat-sim/python-shim.sh
+  docker/workbench/habitat-sim/requirements-build.lock
+  docker/workbench/habitat-sim/requirements-runtime.lock
+  docker/workbench/habitat-sim/runtime.sh
+  docker/workbench/habitat-sim/source-manifest.json
+  docker/workbench/habitat-sim/verify_apt_artifacts.sh
+  docker/workbench/habitat-sim/verify_apt_source.py
+  src/npa/__init__.py
+  src/npa/workflows/__init__.py
+  src/npa/workflows/habitat_sim_smoke.py
+)
+selected_source_paths=("${bootstrap_source_paths[@]}")
+if [[ "$legacy_baked" == true ]]; then
+  selected_source_paths=("${source_paths[@]}")
+fi
 
 projection="$(mktemp -d "${TMPDIR:-/tmp}/npa-habitat-source.XXXXXX")"
 chmod 0700 "$projection"
@@ -120,7 +147,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 manifest="$projection/npa-source-manifest.sha256"
 : > "$manifest.unsorted"
-for context_path in "${source_paths[@]}"; do
+for context_path in "${selected_source_paths[@]}"; do
   repository_path="npa/$context_path"
   destination="$projection/inputs/$context_path"
   mkdir -p "$(dirname "$destination")"
@@ -150,16 +177,25 @@ if [[ -e "$output" || -L "$output" ]]; then
 fi
 output_temporary="$(mktemp -d "$output_directory/.npa-habitat-oci.XXXXXX")"
 : > "$output_temporary/candidate.oci.tar"
+build_args=(--build-arg "NPA_SOURCE_SHA=$source_sha")
+build_context="$projection/inputs"
+dockerfile="$build_context/docker/workbench/habitat-sim/Dockerfile.bootstrap"
+if [[ "$legacy_baked" == true ]]; then
+  build_args+=(
+    --build-arg "NPA_SOURCE_MANIFEST_SHA256=$manifest_sha256"
+    --build-context "npa-source-provenance=$projection"
+  )
+  build_context=npa
+  dockerfile=npa/docker/workbench/habitat-sim/Dockerfile
+fi
 docker buildx build \
   --platform="$build_platform" \
-  --build-arg "NPA_SOURCE_SHA=$source_sha" \
-  --build-arg "NPA_SOURCE_MANIFEST_SHA256=$manifest_sha256" \
-  --build-context "npa-source-provenance=$projection" \
-  --file npa/docker/workbench/habitat-sim/Dockerfile \
+  "${build_args[@]}" \
+  --file "$dockerfile" \
   --output "type=oci,dest=$output_temporary/candidate.oci.tar" \
   --provenance=mode=max \
   --sbom=true \
-  npa
+  "$build_context"
 if [[ ! -f "$output_temporary/candidate.oci.tar" || -L "$output_temporary/candidate.oci.tar" ||
       ! -s "$output_temporary/candidate.oci.tar" ||
       "$(stat -c '%u:%h' "$output_temporary/candidate.oci.tar")" != "$(id -u):1" ]]; then

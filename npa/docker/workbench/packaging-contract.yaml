@@ -387,7 +387,8 @@ images:
       fetched only by the operator workload into an ephemeral runtime; source
       archives, direct APT packages and wheels are verified against existing pins.
       The real RGB-D, navigation and Bullet smoke still requires one RTX GPU.
-      Legacy Dockerfile/build.sh artifacts remain separately quarantined under
+      build.sh selects this bootstrap by default. Its explicit --legacy-baked
+      option selects the legacy Dockerfile, separately quarantined under
       runtime-payload.json and its unchanged full-layer/source/512 MiB guards;
       they are not the public build target. All public full-SHA builds require
       exact-image absence/source, security, SBOM/provenance and GPU validation.
