@@ -89,6 +89,8 @@ _BYOF_REPO_ARGV = [
     "{{config.base_image}}",
     "--build-command",
     "{{config.build_command}}",
+    "--source-prune-path",
+    "{{config.source_prune_path}}",
     "--workload",
     "{{config.workload}}",
     "--smoke-command",
@@ -99,6 +101,8 @@ _BYOF_REPO_ARGV = [
     "{{config.capability_name}}",
     "--smoke-artifact-name",
     "{{config.smoke_artifact_name}}",
+    "--libero-qualified-candidate-image",
+    "{{config.libero_qualified_candidate_image}}",
     "--yaml",
     "{{config.resource_profile_yaml}}",
     "--task",
@@ -122,6 +126,8 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "source_prune_path": "",
+    "libero_qualified_candidate_image": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
@@ -1717,6 +1723,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "RL, datagen, container-verify, or solution smoke."
         ),
         argv_template=_BYOF_REPO_ARGV,
+        omit_flags_when_empty=(
+            "--source-prune-path",
+            "--libero-qualified-candidate-image",
+        ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.openpi.prepare_data": ToolEntry(
@@ -2151,6 +2161,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.isaac_lab.byof_repo",
         description="Compatibility alias for workbench.byof.repo.",
         argv_template=_BYOF_REPO_ARGV,
+        omit_flags_when_empty=(
+            "--source-prune-path",
+            "--libero-qualified-candidate-image",
+        ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
     "workbench.rl.policy_train": ToolEntry(

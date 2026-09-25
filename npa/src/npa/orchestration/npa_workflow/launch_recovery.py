@@ -277,6 +277,10 @@ def _refresh_preflight(executor: Any, steps: Any, attempt: Any) -> None:
             project=executor.options.project,
             extra_env=executor._wave_credentials(attempt),
         )
+    # The SDK preflight canonicalizes YAML before checking it. Keep the
+    # original launch hash for immutable identity, and bind the durable
+    # reservation to the exact canonical bytes that this refresh checked.
+    attempt.partial_launch["preflight_wave_sha256"] = digest
     executor._record_submit_preflight(
         attempt, digest, source="default_sdk_recovery_preflight"
     )
@@ -354,7 +358,10 @@ def _require_event_preflight(attempt: Any, run_id: str, event: Any) -> None:
             "run_id": run_id,
             "wave_key": attempt.key,
             "attempt": attempt.attempt,
-            "rendered_wave_sha256": attempt.partial_launch["rendered_wave_sha256"],
+            "rendered_wave_sha256": attempt.partial_launch.get(
+                "preflight_wave_sha256",
+                attempt.partial_launch["rendered_wave_sha256"],
+            ),
         }
     ):
         _blocked(attempt, "durable reservation lacks the exact SDK preflight proof")

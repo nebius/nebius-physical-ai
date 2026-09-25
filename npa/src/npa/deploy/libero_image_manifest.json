@@ -1,0 +1,126 @@
+{
+  "schema": "npa.workbench.image-manifest.v1",
+  "tool": "libero",
+  "image_name": "npa-libero",
+  "version": "public-neutral-bootstrap-unbuilt",
+  "status": "quarantined_unbuilt_unvalidated",
+  "redistribution": "public",
+  "payload": "neutral_bootstrap_only",
+  "source_revision": "",
+  "oci_digest": "",
+  "gpu_validation": null,
+  "anonymous_pull_verified": false,
+  "base_linux_amd64_manifest": "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496",
+  "base_rootfs_material": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
+  "base_provenance": {
+    "repository": "index.docker.io/library/python",
+    "blob_sha256": "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b",
+    "predicate_type": "https://slsa.dev/provenance/v0.2",
+    "builder_id": "https://github.com/docker-library",
+    "source_revision": "688a0b86bb44289df16a363e9f41d90514c1a5f9"
+  },
+  "base_sbom": {
+    "format": "https://spdx.dev/Document",
+    "blob_sha256": "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb"
+  },
+  "runtime_payloads_baked": false,
+  "customer_runtime_authorization_required": true,
+  "runtime_manifest_sha256": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02",
+  "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
+  "governing_terms_count": 7,
+  "runtime_artifact_review": {
+    "status": "complete",
+    "pending_size_artifacts": 0,
+    "pending_license_artifacts": 0,
+    "report_sha256": "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
+  },
+  "customer_acceptance": {
+    "schema": "npa.libero.customer-acceptance-requirements.v1",
+    "required": true,
+    "credentials_establish_acceptance": false,
+    "authorization_schema": "npa.libero.customer-runtime-authorization.v2",
+    "terms": [
+      {
+        "id": "libero-mit",
+        "name": "LIBERO MIT License",
+        "official_url": "https://raw.githubusercontent.com/Lifelong-Robot-Learning/LIBERO/8f1084e3132a39270c3a13ebe37270a43ece2a01/LICENSE",
+        "version": "sha256:e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6"
+      },
+      {
+        "id": "dataset-cc-by-4.0",
+        "name": "Creative Commons Attribution 4.0 International",
+        "official_url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+        "version": "sha256:9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
+      },
+      {
+        "id": "bert-apache-2.0",
+        "name": "Apache License 2.0",
+        "official_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+        "version": "sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "id": "pytorch-bsd",
+        "name": "PyTorch BSD-Style License",
+        "official_url": "https://raw.githubusercontent.com/pytorch/pytorch/v2.13.0/LICENSE",
+        "version": "sha256:bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43"
+      },
+      {
+        "id": "cuda-eula",
+        "name": "NVIDIA CUDA Toolkit End User License Agreement",
+        "official_url": "https://docs.nvidia.com/cuda/archive/13.0.2/eula/index.html",
+        "version": "sha256:845cf2a25f5705b8633393cd18e38bced16ced0914d468c707910df2190f4bc4"
+      },
+      {
+        "id": "nvidia-software-license",
+        "name": "NVIDIA Software License Agreement (navigation UUID normalized v1)",
+        "official_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/",
+        "version": "sha256:3f13fbe637d25533777fff3785752b530401c10055acfcffe28540f33263e17f"
+      },
+      {
+        "id": "cudnn-eula",
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "official_url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
+        "version": "sha256:9ee6e64c6f2545e0fe482681c97d8cf244992e57e2cd36335d9c0e008a5628c4"
+      }
+    ]
+  },
+  "qualification": {
+    "schema": "npa.libero.image-qualification.v1",
+    "status": "not_qualified",
+    "qualification_id": "",
+    "qualified_at": "",
+    "expires_at": "",
+    "candidate_image": "",
+    "oci_digest": "",
+    "platform_manifest_digest": "",
+    "config_digest": "",
+    "canonical_build_metadata_sha256": "",
+    "attestation_manifest_digest": "",
+    "attestation_config_digest": "",
+    "attestation_layers": [
+      {
+        "predicate_type": "https://slsa.dev/provenance/v1",
+        "digest": "",
+        "size_bytes": 0
+      },
+      {
+        "predicate_type": "https://spdx.dev/Document",
+        "digest": "",
+        "size_bytes": 0
+      }
+    ],
+    "package_version_digests": [],
+    "complete_image_inventory_sha256": "",
+    "base_provenance_sha256": "",
+    "publication_bundle_sha256": "",
+    "development_sha": "",
+    "upstream_source_revision": "",
+    "build_input_bundle_sha256": "",
+    "publication_enforcement_bundle_sha256": "",
+    "package_writer_repository": "",
+    "customer_authorization_public_key_sha256": "",
+    "output_storage_authorization_public_key_sha256": "",
+    "runtime_manifest_sha256": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02"
+  },
+  "catalog_release": false
+}

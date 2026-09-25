@@ -1,6 +1,10 @@
+# npa: publication-enforcement=libero
 """Exercise target resolution and real probe behavior at provider boundaries."""
 
+import base64
+import hashlib
 from io import BytesIO
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1246,6 +1250,682 @@ def test_fractional_gpu_minimum_never_rounds_down(
     assert not provider.s3.calls
 
 
+def libero_task(service_account: str | None) -> dict:
+    document = raw_task(BYOF_SOLUTION_NAME="libero")
+    document["name"] = "byof-solution-smoke-libero-b200-gpu"
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+    document["resources"]["image_id"] = f"docker:{candidate}"
+    document["envs"]["BYOF_IMAGE"] = candidate
+    document["envs"]["S3_OUTPUT_PREFIX"] = "s3://unit-output/task/"
+    if service_account is not None:
+        document["config"] = {
+            "kubernetes": {
+                "pod_config": {"spec": {"serviceAccountName": service_account}}
+            }
+        }
+    return document
+
+
+def libero_controller_config(service_account: str = "skypilot-service-account") -> dict:
+    return {
+        "kubernetes": {"pod_config": {"spec": {"serviceAccountName": service_account}}}
+    }
+
+
+@pytest.fixture
+def libero_authorized(monkeypatch) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "yaml-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "yaml-secret")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "temporary-session")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.eu-west1.nebius.cloud")
+    monkeypatch.setattr(
+        "npa.execution_preflight._validate_libero_runtime_authorization",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "npa.execution_preflight._verify_libero_output_storage_authorization",
+        lambda *_args, **_kwargs: None,
+    )
+
+
+@pytest.mark.parametrize(
+    "service_account",
+    [None, "", "default", "skypilot-service-account", "another-account"],
+)
+def test_libero_preflight_refuses_non_scoped_payload_account_before_storage(
+    provider, configured, service_account
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    with pytest.raises(ExecutionPreflightError, match="payload_service_account"):
+        preflight_skypilot_submission(
+            [libero_task(service_account)],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize("service_account", ["", "default", "npa-byof-libero-payload"])
+def test_libero_preflight_requires_explicit_engine_controller_account(
+    provider, configured, service_account
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    with pytest.raises(ExecutionPreflightError, match="controller_service_account"):
+        preflight_skypilot_submission(
+            [libero_task("npa-byof-libero-payload")],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(service_account),
+        )
+    assert not provider.s3.calls
+
+
+def test_libero_preflight_accepts_split_payload_and_controller_accounts(
+    provider, configured, libero_authorized
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    _, report, injected = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+    )
+
+    assert report["execution_readiness"] == "pass"
+    assert provider.s3.calls
+    assert injected["AWS_ACCESS_KEY_ID"] == "yaml-access"
+    assert injected["AWS_SECRET_ACCESS_KEY"] == "yaml-secret"
+    assert injected["AWS_SESSION_TOKEN"] == "temporary-session"
+    assert provider.connections[0]["access"] == "yaml-access"
+    assert provider.connections[0]["secret"] == "yaml-secret"
+    assert provider.connections[0]["session_token"] == "temporary-session"
+    assert "AWS_ACCESS_KEY_ID" not in document["envs"]
+    assert "AWS_SECRET_ACCESS_KEY" not in document["envs"]
+
+
+def test_libero_worker_environment_checks_the_final_stripped_document(
+    provider, configured, monkeypatch, libero_authorized
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    observed: list[dict[str, str]] = []
+
+    def verify_final(_target, documents) -> None:
+        task_env = dict(documents[0]["envs"])
+        observed.append(task_env)
+        assert task_env["AWS_ENDPOINT_URL"] == ("https://storage.eu-west1.nebius.cloud")
+        assert "AWS_ACCESS_KEY_ID" not in task_env
+        assert "AWS_SECRET_ACCESS_KEY" not in task_env
+
+    monkeypatch.setattr(
+        "npa.execution_preflight.verify_worker_environment", verify_final
+    )
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+    )
+
+    assert report["execution_readiness"] == "pass"
+    assert len(observed) == 1
+
+
+def test_libero_preflight_preserves_the_bound_executable_profile(
+    provider, configured, libero_authorized
+) -> None:
+    import yaml
+
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
+
+    run_id = "libero-exact-profile-0001"
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"].pop("AWS_ACCESS_KEY_ID")
+    document["envs"].pop("AWS_SECRET_ACCESS_KEY")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    for name in STORAGE_ENDPOINT_ENV_NAMES:
+        document["envs"][name] = "https://storage.eu-west1.nebius.cloud"
+    before = yaml.safe_dump_all([document], sort_keys=False).encode()
+
+    preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+        submission_backend="kubernetes",
+        run_id=run_id,
+        executable_profile_sha256=hashlib.sha256(before).hexdigest(),
+        extra_env={
+            "AWS_ACCESS_KEY_ID": "yaml-access",
+            "AWS_SECRET_ACCESS_KEY": "yaml-secret",
+        },
+    )
+
+    assert yaml.safe_dump_all([document], sort_keys=False).encode() == before
+    assert provider.s3.calls
+
+
+@pytest.mark.parametrize(
+    ("secret_name", "expected_error"),
+    [
+        (
+            "AWS_ACCESS_KEY_ID",
+            "inline authorization or storage material",
+        ),
+        (
+            "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
+            "inline authorization or storage material",
+        ),
+    ],
+)
+def test_libero_preflight_rejects_inline_pod_authorization_or_storage_material(
+    provider, configured, libero_authorized, secret_name, expected_error
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    document["config"]["kubernetes"]["pod_config"]["spec"]["containers"] = [
+        {
+            "name": "payload",
+            "env": [{"name": secret_name, "value": "inline-material"}],
+        }
+    ]
+    with pytest.raises(ExecutionPreflightError, match=expected_error):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+
+
+@pytest.mark.parametrize("missing_signal", ["profile", "solution"])
+def test_libero_preflight_requires_both_canonical_identity_signals(
+    provider, configured, missing_signal
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    if missing_signal == "profile":
+        document["name"] = "renamed-task"
+    else:
+        del document["envs"]["BYOF_SOLUTION_NAME"]
+    with pytest.raises(ExecutionPreflightError, match="payload_service_account"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize("image_location", ["resources", "environment"])
+def test_libero_official_image_signal_cannot_bypass_shared_authorization(
+    provider, configured, image_location
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = raw_task()
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "8" * 64
+    if image_location == "resources":
+        document["resources"]["image_id"] = f"docker:{candidate}"
+    else:
+        document["envs"]["BYOF_IMAGE"] = candidate
+    with pytest.raises(ExecutionPreflightError, match="payload_service_account"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+def test_libero_preflight_requires_output_authority_before_target_resolution(
+    provider, configured, monkeypatch
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    monkeypatch.setattr(
+        "npa.execution_preflight._validate_libero_runtime_authorization",
+        lambda *_args, **_kwargs: {"infrastructure": {}},
+    )
+    document = libero_task("npa-byof-libero-payload")
+    with pytest.raises(ExecutionPreflightError, match="credentials"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+        )
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["endpoint", "access", "session", "prefix", "policy", "expired"],
+)
+def test_libero_output_authority_binds_every_execution_input(
+    drift, monkeypatch
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from npa.execution_preflight import _verify_libero_output_storage_authorization
+
+    run_id = "libero-storage-authority-0001"
+    access_key = "unit-executing-access"
+    secret_key = "unit-executing-secret"
+    session_token = "unit-executing-session"
+    endpoint = "https://storage.eu-west1.nebius.cloud"
+    prefix = "s3://unit-output/task/"
+    policy_sha256 = "7" * 64
+    now = datetime.now(timezone.utc)
+    authorization = {
+        "schema": "npa.libero.output-storage-authorization.v3",
+        "issuer": "npa-output-storage-control-plane",
+        "capability_id": "libero-storage-capability-0001",
+        "customer_identity_sha256": "8" * 64,
+        "run_id": run_id,
+        "candidate_image": (
+            "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+        ),
+        "runtime_manifest_sha256": "6" * 64,
+        "output_prefix": prefix,
+        "endpoint_url": endpoint,
+        "access_key_id_sha256": hashlib.sha256(access_key.encode()).hexdigest(),
+        "secret_access_key_sha256": hashlib.sha256(secret_key.encode()).hexdigest(),
+        "session_token_sha256": hashlib.sha256(session_token.encode()).hexdigest(),
+        "policy_sha256": policy_sha256,
+        "issued_at": (now - timedelta(minutes=1)).isoformat(),
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "nonce": "control-plane-storage-authorization-nonce-0001",
+        "signature": {
+            "algorithm": "ed25519",
+            "public_key_sha256": "5" * 64,
+            "signature_b64": "synthetic-signature",
+        },
+    }
+    payload = json.dumps(authorization, sort_keys=True).encode()
+    customer_authorization = {
+        "customer_identity_sha256": authorization["customer_identity_sha256"],
+        "run_id": run_id,
+        "candidate_image": authorization["candidate_image"],
+        "runtime_manifest_sha256": authorization["runtime_manifest_sha256"],
+        "expires_at": (now + timedelta(hours=2)).isoformat(),
+    }
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    document["envs"].update(
+        {
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256": hashlib.sha256(
+                payload
+            ).hexdigest(),
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_PREFIX_SHA256": hashlib.sha256(
+                prefix.encode()
+            ).hexdigest(),
+            "NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256": policy_sha256,
+        }
+    )
+    process_env = {
+        "AWS_ACCESS_KEY_ID": access_key,
+        "AWS_SECRET_ACCESS_KEY": secret_key,
+        "AWS_SESSION_TOKEN": session_token,
+        "AWS_ENDPOINT_URL": endpoint,
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64": base64.b64encode(
+            payload
+        ).decode(),
+    }
+
+    def validate_storage(payload_bytes, **kwargs):
+        observed = json.loads(payload_bytes)
+        if (
+            observed.get("expires_at", "") <= now.isoformat()
+            or observed.get("output_prefix") != kwargs["output_prefix"]
+            or observed.get("endpoint_url") != kwargs["endpoint_url"]
+            or observed.get("access_key_id_sha256")
+            != hashlib.sha256(kwargs["access_key_id"].encode()).hexdigest()
+            or observed.get("secret_access_key_sha256")
+            != hashlib.sha256(kwargs["secret_access_key"].encode()).hexdigest()
+            or observed.get("session_token_sha256")
+            != hashlib.sha256(kwargs["session_token"].encode()).hexdigest()
+            or observed.get("policy_sha256") != kwargs["expected_policy_sha256"]
+        ):
+            raise RuntimeError("storage capability differs")
+        return observed, hashlib.sha256(payload_bytes).hexdigest()
+
+    from npa.deploy import images
+
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: {})
+    monkeypatch.setattr(
+        images, "validate_libero_output_storage_authorization", validate_storage
+    )
+
+    _verify_libero_output_storage_authorization(
+        [document],
+        process_env,
+        customer_authorization=customer_authorization,
+        run_id=run_id,
+    )
+
+    if drift == "endpoint":
+        process_env["AWS_ENDPOINT_URL"] = "https://other.invalid"
+    elif drift == "access":
+        process_env["AWS_ACCESS_KEY_ID"] = "different-access"
+    elif drift == "session":
+        process_env.pop("AWS_SESSION_TOKEN")
+    elif drift == "prefix":
+        document["envs"]["S3_OUTPUT_PREFIX"] = "s3://unit-output/other/"
+    elif drift == "policy":
+        document["envs"]["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_POLICY_SHA256"] = "6" * 64
+    else:
+        authorization["expires_at"] = (now - timedelta(minutes=1)).isoformat()
+        payload = json.dumps(authorization, sort_keys=True).encode()
+        document["envs"]["NPA_LIBERO_EXPECTED_OUTPUT_STORAGE_AUTHORIZATION_SHA256"] = (
+            hashlib.sha256(payload).hexdigest()
+        )
+        process_env["NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64"] = base64.b64encode(
+            payload
+        ).decode()
+    with pytest.raises(ValueError):
+        _verify_libero_output_storage_authorization(
+            [document],
+            process_env,
+            customer_authorization=customer_authorization,
+            run_id=run_id,
+        )
+
+
+def test_libero_preflight_allows_only_control_plane_authorized_secret_session_pair(
+    provider, configured, libero_authorized, monkeypatch
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    def require_pair(_documents, process_env, **_kwargs) -> None:
+        if not process_env.get("AWS_SESSION_TOKEN") or not process_env.get(
+            "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64"
+        ):
+            raise ValueError("missing temporary output authority")
+
+    monkeypatch.setattr(
+        "npa.execution_preflight._verify_libero_output_storage_authorization",
+        require_pair,
+    )
+
+    document = libero_task("npa-byof-libero-payload")
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+        extra_env={
+            "AWS_SESSION_TOKEN": "temporary-session",
+            "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64": "control-plane-bound-secret",
+        },
+    )
+    assert report["execution_readiness"] == "pass"
+    assert provider.s3.calls
+
+    with pytest.raises(ExecutionPreflightError, match="credentials"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+            extra_env={"AWS_SESSION_TOKEN": "temporary-session"},
+        )
+
+
+def test_libero_submission_authorization_binds_customer_run_and_image(
+    monkeypatch,
+) -> None:
+    from npa.deploy import images
+    from npa.execution_preflight import _validate_libero_runtime_authorization
+
+    run_id = "libero-exact-profile-0001"
+    profile_sha256 = "a" * 64
+    manifest = {"schema": "qualified-fixture"}
+    authorization_bytes = b'{"fixture":"customer-authorization"}\n'
+    authorization_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
+    caller_bytes = b'{"fixture":"authenticated-caller"}\n'
+    caller_sha256 = hashlib.sha256(caller_bytes).hexdigest()
+    customer_identity_sha256 = "8" * 64
+    customer_signer_public_key_sha256 = "7" * 64
+    authorization = {"customer_identity_sha256": customer_identity_sha256}
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: manifest)
+
+    def validate_qualification(payload):
+        observed["qualification"] = payload
+        return {"candidate_image": candidate}
+
+    def validate_authorization(payload, **kwargs):
+        observed["authorization"] = (payload, kwargs)
+        return authorization, authorization_sha256
+
+    def validate_caller(payload, **kwargs):
+        observed["caller"] = (payload, kwargs)
+        return {
+            "customer_identity_sha256": customer_identity_sha256,
+            "customer_signer_public_key_sha256": customer_signer_public_key_sha256,
+        }, caller_sha256
+
+    monkeypatch.setattr(
+        images, "validate_libero_qualified_image_manifest", validate_qualification
+    )
+    monkeypatch.setattr(
+        images, "validate_libero_customer_runtime_authorization", validate_authorization
+    )
+    monkeypatch.setattr(
+        images, "validate_libero_authenticated_caller_assertion", validate_caller
+    )
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    process_env = {
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64": base64.b64encode(
+            authorization_bytes
+        ).decode(),
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256": authorization_sha256,
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": customer_identity_sha256,
+        "NPA_LIBERO_AUTHENTICATED_CALLER_B64": base64.b64encode(caller_bytes).decode(),
+        "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": caller_sha256,
+        "NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE": "/owner/trust-root",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": "/other/customer-root",
+    }
+
+    _validate_libero_runtime_authorization(
+        [document],
+        process_env,
+        run_id=run_id,
+        submission_backend="kubernetes",
+        infra="k8s/unit-context",
+        executable_profile_sha256=profile_sha256,
+    )
+
+    assert observed["qualification"] == manifest
+    caller_payload, caller_kwargs = observed["caller"]
+    assert caller_payload == caller_bytes
+    assert caller_kwargs == {
+        "run_id": run_id,
+        "public_key_file": "/owner/trust-root",
+    }
+    payload, kwargs = observed["authorization"]
+    assert payload == authorization_bytes
+    assert kwargs == {
+        "image_manifest": manifest,
+        "run_id": run_id,
+        "customer_identity_sha256": customer_identity_sha256,
+        "customer_signer_public_key_sha256": customer_signer_public_key_sha256,
+        "executable_profile_sha256": profile_sha256,
+    }
+
+
+@pytest.mark.parametrize(
+    ("drift", "expected_check", "expected_status"),
+    [
+        ("qualification", "qualification", "fail"),
+        ("authorization-missing", "authorization", "needs_customer_acceptance"),
+        ("authorization-denied", "authorization_denied", "needs_customer_acceptance"),
+        ("authorization-bytes", "authorization", "needs_customer_acceptance"),
+        ("authorization-invalid", "authorization", "needs_customer_acceptance"),
+        ("authorization-digest", "authorization", "fail"),
+        ("customer", "authorization", "fail"),
+        ("caller-bytes", "authorization", "fail"),
+        ("candidate", "submission_identity", "fail"),
+        ("run", "submission_identity", "fail"),
+        ("backend", "submission_identity", "fail"),
+        ("infra", "submission_identity", "fail"),
+    ],
+)
+def test_libero_submission_authorization_rejects_every_identity_drift(
+    monkeypatch, drift, expected_check, expected_status
+) -> None:
+    from npa.deploy import images
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        _validate_libero_runtime_authorization,
+    )
+
+    run_id = "libero-exact-profile-0001"
+    profile_sha256 = "a" * 64
+    manifest = {"schema": "signed-fixture"}
+    authorization_bytes = b'{"fixture":"customer-authorization"}\n'
+    authorization_sha256 = hashlib.sha256(authorization_bytes).hexdigest()
+    caller_bytes = b'{"fixture":"authenticated-caller"}\n'
+    caller_sha256 = hashlib.sha256(caller_bytes).hexdigest()
+    authorization = {"customer_identity_sha256": "8" * 64}
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: manifest)
+    monkeypatch.setattr(
+        images,
+        "validate_libero_qualified_image_manifest",
+        lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(RuntimeError("qualification differs"))
+            if drift == "qualification"
+            else {
+                "candidate_image": (
+                    "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+                )
+            }
+        ),
+    )
+
+    def validate_authorization(*_args, **_kwargs):
+        if drift == "authorization-denied":
+            raise images.LiberoCustomerAuthorizationDenied("signed denial")
+        if drift == "authorization-invalid":
+            raise RuntimeError("authorization is expired or replayable")
+        return authorization, authorization_sha256
+
+    monkeypatch.setattr(
+        images, "validate_libero_customer_runtime_authorization", validate_authorization
+    )
+    monkeypatch.setattr(
+        images,
+        "validate_libero_authenticated_caller_assertion",
+        lambda *_args, **_kwargs: (
+            {
+                "customer_identity_sha256": "8" * 64,
+                "customer_signer_public_key_sha256": "7" * 64,
+            },
+            caller_sha256,
+        ),
+    )
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = (
+        "libero-different-run-0001" if drift == "run" else run_id
+    )
+    process_env = {
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64": (
+            ""
+            if drift == "authorization-missing"
+            else (
+                "self-attested"
+                if drift == "authorization-bytes"
+                else base64.b64encode(authorization_bytes).decode()
+            )
+        ),
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256": (
+            "b" * 64 if drift == "authorization-digest" else authorization_sha256
+        ),
+        "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": (
+            "7" * 64 if drift == "customer" else "8" * 64
+        ),
+        "NPA_LIBERO_AUTHENTICATED_CALLER_B64": (
+            "self-attested"
+            if drift == "caller-bytes"
+            else base64.b64encode(caller_bytes).decode()
+        ),
+        "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": caller_sha256,
+    }
+    if drift == "candidate":
+        document["envs"]["BYOF_IMAGE"] = (
+            "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "8" * 64
+        )
+
+    with pytest.raises(ExecutionPreflightError, match=expected_check) as failure:
+        _validate_libero_runtime_authorization(
+            [document],
+            process_env,
+            run_id=run_id,
+            submission_backend=("nebius" if drift == "backend" else "kubernetes"),
+            infra="nebius" if drift == "infra" else "k8s/unit-context",
+            executable_profile_sha256=profile_sha256,
+        )
+    assert failure.value.check == expected_check
+    assert failure.value.status == expected_status
+
+
+def test_libero_self_attested_secret_names_never_reach_storage(
+    provider, configured, monkeypatch
+) -> None:
+    from npa.deploy import images
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        preflight_skypilot_submission,
+    )
+
+    monkeypatch.setattr(images, "libero_image_manifest", lambda: {})
+    monkeypatch.setattr(
+        images,
+        "validate_libero_qualified_image_manifest",
+        lambda _manifest: {
+            "candidate_image": (
+                "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
+            )
+        },
+    )
+    run_id = "libero-self-attested-0001"
+    document = libero_task("npa-byof-libero-payload")
+    document["envs"]["NPA_BYOF_RUN_ID"] = run_id
+    with pytest.raises(ExecutionPreflightError, match="authorization"):
+        preflight_skypilot_submission(
+            [document],
+            project="unit",
+            infra="k8s/unit-context",
+            global_config=libero_controller_config(),
+            submission_backend="kubernetes",
+            run_id=run_id,
+            executable_profile_sha256="a" * 64,
+            extra_env={
+                "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64": "self-attested",
+                "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256": "a" * 64,
+                "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": "b" * 64,
+            },
+        )
+    assert not provider.s3.calls
+
+
 @pytest.mark.parametrize("boundary", ["profile", "rendered"])
 @pytest.mark.parametrize("shortfall", ["", "cpu", "memory", "storage"])
 def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
@@ -1331,6 +2011,60 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
         else:
             assert verified[1]["checks"]["gpu"] == "pass"
             assert provider.s3.calls
+
+
+def test_sky_gpu_preflight_accepts_skypilot_allowed_node_names_shape(
+    provider, configured, monkeypatch
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    inventory = KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        1,
+        1,
+        ("NVIDIA-B200",),
+        {},
+        nodes=(
+            KubernetesGpuNode(
+                "unit-node",
+                True,
+                True,
+                ("NVIDIA-B200",),
+                1,
+                1,
+                0,
+                1,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: inventory,
+    )
+    document = raw_task()
+    document["resources"].update({"accelerators": "B200:1", "cpus": 8, "memory": 32})
+
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config={"kubernetes": {"allowed_nodes": {"names": ["unit-node"]}}},
+    )
+
+    assert report["checks"]["gpu"] == "pass"
+    assert provider.s3.calls
 
 
 def test_raw_production_environment_supplies_exact_principal(provider, configured):
@@ -1684,6 +2418,21 @@ def test_raw_explicit_pair_overrides_yaml_and_saved_pair_consistently(
     )
     assert provider.connections[0]["access"] == "explicit-access"
     assert document["envs"]["AWS_ACCESS_KEY_ID"] == "explicit-access"
+
+
+def test_non_libero_ambient_session_token_refuses_before_storage(
+    provider, configured, monkeypatch
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "stale-ambient-session")
+
+    with pytest.raises(ExecutionPreflightError, match="session-token overrides"):
+        preflight_skypilot_submission(
+            [raw_task()], project="unit", infra="k8s/unit-context"
+        )
+
+    assert not provider.s3.calls
 
 
 @pytest.mark.parametrize(
