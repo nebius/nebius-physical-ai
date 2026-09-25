@@ -236,6 +236,12 @@ This runner records observations; it does not claim the hybrid is faster,
 cheaper or more reliable until an independently verified comparison establishes
 that result.
 
+The [real NuRec experiment report](../../../../docs/workbench/specialists-nurec-experiment.md)
+documents GPU reconstruction and rendering across four scenes. Both original
+agent runs ended with zero verified completions. It separates the four hybrid
+artifact sets verified by an operator from agent completion, and retains the
+baseline failures and incomplete usage without claiming a winner.
+
 After a trial finishes, the [usage summary script](USAGE.md) combines retained
 Astra and specialist generations using an operator-supplied price table. It
 reports unknown counters and ranges for unresolved cache or context-tier
