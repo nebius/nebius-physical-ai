@@ -65,10 +65,15 @@ class VerifiedTrainer(Wan22Trainer):
     """
 
     def _build_optimizer(self, parameters):
-        from npa.workbench.flex_pi.training_graphs import configure_training_graphs
+        from npa.workbench.flex_pi.training_graphs import (
+            configure_training_graphs,
+            prepare_ddp_for_graph_capture,
+        )
 
         configure_training_graphs(self.model, self.cfg)
         self._configure_ddp()
+        if self.cfg.get("npa_cuda_graphs", "off") == "mot":
+            prepare_ddp_for_graph_capture(self.accelerator)
         mode = str(self.cfg.npa_optimizer)
         options = {} if mode == "default" else {mode: True}
         return torch.optim.AdamW(

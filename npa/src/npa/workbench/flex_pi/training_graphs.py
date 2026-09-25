@@ -53,6 +53,35 @@ def _check_runtime():
         raise FlexPiError("training CUDA graphs forbid compiler error suppression")
 
 
+def prepare_ddp_for_graph_capture(accelerator):
+    """Construct native DDP on a side stream before its parameters enter capture.
+
+    Args:
+        accelerator: Pinned Accelerator whose initial prepare has not run yet.
+    Returns:
+        None; installs a one-use wrapper and restores prepare even on failure.
+    Raises:
+        RuntimeError: Stream setup or the original prepare operation fails.
+    """
+    import torch
+
+    original = accelerator.prepare
+
+    def prepare(*args, **kwargs):
+        accelerator.prepare = original
+        caller = torch.cuda.current_stream()
+        stream = torch.cuda.Stream()
+        stream.wait_stream(caller)
+        try:
+            with torch.cuda.stream(stream):
+                result = original(*args, **kwargs)
+        finally:
+            caller.wait_stream(stream)
+        return result
+
+    accelerator.prepare = prepare
+
+
 def _input_signature(leaves):
     import torch
 

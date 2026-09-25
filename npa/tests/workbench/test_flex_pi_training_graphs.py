@@ -162,6 +162,60 @@ def test_native_replay_observation_requires_pinned_closure_layout():
         graphs._observe_native_replays(SimpleNamespace(forward=lambda: None), {})
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_ddp_prepare_uses_ordered_side_stream_once_and_restores_on_error(
+    monkeypatch, fails
+):
+    torch = pytest.importorskip("torch")
+    from contextlib import contextmanager
+
+    events = []
+
+    class Stream:
+        def __init__(self, name):
+            self.name = name
+
+        def wait_stream(self, other):
+            events.append((self.name, "wait", other.name))
+
+    caller, side = Stream("caller"), Stream("side")
+    active = [caller]
+
+    @contextmanager
+    def scope(stream):
+        active.append(stream)
+        try:
+            yield
+        finally:
+            active.pop()
+
+    def original(*args, **kwargs):
+        assert args == ("model", "optimizer") and kwargs == {"device_placement": None}
+        assert active[-1] is side
+        assert events == [("side", "wait", "caller")]
+        events.append("prepare")
+        if fails:
+            raise RuntimeError("prepare failed")
+        return "wrapped model", "wrapped optimizer"
+
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda: caller)
+    monkeypatch.setattr(torch.cuda, "Stream", lambda: side)
+    monkeypatch.setattr(torch.cuda, "stream", scope)
+    accelerator = SimpleNamespace(prepare=original)
+    graphs.prepare_ddp_for_graph_capture(accelerator)
+    if fails:
+        with pytest.raises(RuntimeError, match="prepare failed"):
+            accelerator.prepare("model", "optimizer", device_placement=None)
+    else:
+        assert accelerator.prepare("model", "optimizer", device_placement=None) == (
+            "wrapped model",
+            "wrapped optimizer",
+        )
+    assert accelerator.prepare is original
+    assert active == [caller]
+    assert events == [("side", "wait", "caller"), "prepare", ("caller", "wait", "side")]
+
+
 def test_capture_detaches_samples_preserves_parameters_and_restores_rng(monkeypatch):
     torch = pytest.importorskip("torch")
     from torch.utils._pytree import tree_flatten
