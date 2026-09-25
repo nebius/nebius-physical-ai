@@ -21,7 +21,7 @@ def validate_cuda_graphs(mode, activation_checkpointing):
 
 
 def configure_training_graphs(model, configuration):
-    """Install a training-only compiled forward before distributed wrapping.
+    """Install a training-only capture wrapper before distributed wrapping.
 
     Args:
         model: Instantiated Flex-Pi model before Accelerator.prepare().
@@ -38,8 +38,6 @@ def configure_training_graphs(model, configuration):
     if getattr(model, "_npa_training_graphs", None) is not None:
         raise FlexPiError("training CUDA graphs were already configured")
     _check_runtime()
-    if any(_recorded_graphs().values()):
-        raise FlexPiError("training capture requires an unused CUDA graph manager")
     state = _TrainingGraphs(model.mot)
     model.mot.forward = state.forward
     model._npa_training_graphs = state
@@ -55,129 +53,168 @@ def _check_runtime():
         raise FlexPiError("training CUDA graphs forbid compiler error suppression")
 
 
-def _compiler_counters():
-    from torch._dynamo.utils import counters
-
-    return {
-        "skipped_cuda_graphs": counters["inductor"]["cudagraph_skips"],
-        "compiled_graphs": counters["stats"]["unique_graphs"],
-    }
-
-
-def _recorded_graphs():
+def _input_signature(leaves):
     import torch
-    from torch._inductor.cudagraph_trees import get_manager
 
-    # This internal tree layout is bound to the exact vendor version above.
-    manager = get_manager(torch.cuda.current_device(), create_if_none_exists=False)
-    counts = {"forward": 0, "backward": 0, "inference": 0}
-    if manager is None:
-        return counts
-    pending = [(key, node) for key, roots in manager.roots.items() for node in roots]
-    seen = set()
-    while pending:
-        key, node = pending.pop()
-        if id(node) in seen:
-            continue
-        seen.add(id(node))
-        mode = manager.id_to_mode[key].name.lower()
-        counts[mode] += int(node.graph is not None)
-        pending.extend(
-            (key, child)
-            for key, children in node.children.items()
-            for child in children
-        )
-    return counts
+    signature = []
+    for value in leaves:
+        if isinstance(value, torch.Tensor):
+            signature.append(
+                (
+                    "tensor",
+                    value.shape,
+                    value.stride(),
+                    value.dtype,
+                    value.device,
+                    value.requires_grad,
+                )
+            )
+        elif type(value) in {int, float, bool, str, type(None)}:
+            signature.append((type(value).__name__, value))
+        else:
+            raise FlexPiError("CUDA graph input contains unsupported static metadata")
+    return signature
+
+
+def _observe_native_replays(wrapper, counts):
+    import inspect
+    import torch
+
+    # The closure layout is verified against the pinned Torch 2.7.1 source.
+    # Count successful native replay calls, not merely an API invocation.
+    try:
+        function = inspect.getclosurevars(wrapper.forward).nonlocals["graphed"]
+        autograd = inspect.getclosurevars(function).nonlocals["Graphed"]
+        forward = inspect.getclosurevars(autograd.forward).nonlocals["fwd_graph"]
+        backward = inspect.getclosurevars(inspect.unwrap(autograd.backward)).nonlocals[
+            "bwd_graph"
+        ]
+    except (KeyError, TypeError, AttributeError) as error:
+        raise FlexPiError("pinned native CUDA graph closure layout differs") from error
+    if forward is backward or not all(
+        isinstance(g, torch.cuda.CUDAGraph) for g in (forward, backward)
+    ):
+        raise FlexPiError("native capture lacks distinct forward/backward CUDA graphs")
+    for mode, graph in (("forward", forward), ("backward", backward)):
+        replay = graph.replay
+
+        def observed(*, replay=replay, mode=mode):
+            replay()
+            counts[mode] += 1
+
+        graph.replay = observed
+
+
+def _capture_native(state, leaves, tree_spec):
+    import torch
+    from torch.utils._pytree import tree_unflatten
+
+    positions = [i for i, value in enumerate(leaves) if isinstance(value, torch.Tensor)]
+    static = tuple(
+        leaves[i].detach().clone().requires_grad_(leaves[i].requires_grad)
+        for i in positions
+    )
+    template = [None if isinstance(value, torch.Tensor) else value for value in leaves]
+
+    class CaptureModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.mot = state.module
+
+        def forward(self, *tensors):
+            values = list(template)
+            for index, tensor in zip(positions, tensors, strict=True):
+                values[index] = tensor
+            args, kwargs = tree_unflatten(values, tree_spec)
+            return state.original(*args, **kwargs)
+
+    wrapper = CaptureModule()
+    # Warmup/capture must not consume the live training RNG sequence. Input
+    # leaves are detached copies so qualification cannot retain an eager graph.
+    with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+        with torch.autocast("cuda", cache_enabled=False):
+            wrapper = torch.cuda.make_graphed_callables(
+                wrapper, static, num_warmup_iters=11, allow_unused_input=True
+            )
+    _observe_native_replays(wrapper, state.replays)
+    return wrapper, positions
 
 
 class _TrainingGraphs:
     def __init__(self, module):
-        import torch
-
         self.module = module
         self.original = module.forward
-        self.initial_counters = _compiler_counters()
         self.training_calls = 0
         self.evaluation_calls = 0
-        self.compiled = torch.compile(
-            self.original, backend="cudagraphs", fullgraph=True, dynamic=False
-        )
+        self.replays = {"forward": 0, "backward": 0}
+        self.captured = None
+        self.signature = None
+        self.tree_spec = None
+        self.positions = None
 
-    def check(self):
-        if (
-            _compiler_counters()["skipped_cuda_graphs"]
-            != self.initial_counters["skipped_cuda_graphs"]
+    def check(self, completed=False):
+        forward, backward = self.replays["forward"], self.replays["backward"]
+        if forward != self.training_calls or forward - backward not in (
+            {0} if completed else {0, 1}
         ):
-            raise FlexPiError(
-                "training CUDA graph capture fell back to eager execution"
-            )
+            raise FlexPiError("native CUDA graph replay or backward completion differs")
 
     def forward(self, *args, **kwargs):
         import torch
-        import torch._dynamo
+        from torch.utils._pytree import tree_flatten
 
-        self.check()
+        self.check(completed=True)
         # Evaluation keeps the exact eager path; only training needs capture.
         if not self.module.training or not torch.is_grad_enabled():
             self.evaluation_calls += 1
             return self.original(*args, **kwargs)
-        # The eager trainer completes backward after each MoT invocation.
-        # State that boundary explicitly so lazy backward compilation cannot
-        # advance the graph manager's automatic iteration while saved forward
-        # tensors are still needed. Gradient accumulation remains in native DDP.
-        torch.compiler.cudagraph_mark_step_begin()
-        # Dynamo's DDP optimizer can partition even a fullgraph compilation.
-        # Keep this capture boundary whole: its saved forward tensors must stay
-        # alive until its one AOT backward completes. Native DDP and no_sync
-        # still handle gradient reduction outside this compiled module.
-        with torch._dynamo.config.patch(optimize_ddp=False):
-            result = self.compiled(*args, **kwargs)
+        leaves, spec = tree_flatten((args, kwargs))
+        signature = _input_signature(leaves)
+        if self.captured is None:
+            self.captured, self.positions = _capture_native(self, leaves, spec)
+            self.signature, self.tree_spec = signature, spec
+        elif signature != self.signature or spec != self.tree_spec:
+            raise FlexPiError(
+                "training input differs from the static CUDA graph contract"
+            )
+        with torch.autocast("cuda", cache_enabled=False):
+            result = self.captured(*(leaves[i] for i in self.positions))
         self.training_calls += 1
         self.check()
         return result
 
     def receipt(self):
-        self.check()
-        recorded = _recorded_graphs()
-        compiled = (
-            _compiler_counters()["compiled_graphs"]
-            - self.initial_counters["compiled_graphs"]
-        )
-        if (
-            self.training_calls < 2
-            or compiled < 1
-            or recorded["forward"] < 1
-            or recorded["backward"] < 1
-        ):
-            raise FlexPiError("training lacks recorded forward/backward CUDA graphs")
+        self.check(completed=True)
+        if self.training_calls < 2 or self.captured is None:
+            raise FlexPiError("training lacks replayed forward/backward CUDA graphs")
         return {
             "policy": "mot",
-            "backend": "cudagraphs",
+            "backend": "make_graphed_callables",
             "fullgraph": True,
             "dynamic": False,
             "evaluation": "eager",
-            "compiled_training_calls": self.training_calls,
+            "captured_training_calls": self.training_calls,
             "eager_evaluation_calls": self.evaluation_calls,
-            "compiled_graphs": compiled,
-            "recorded_cuda_graphs": recorded,
+            "native_replays": dict(self.replays),
+            "recorded_cuda_graphs": {"forward": 1, "backward": 1, "inference": 0},
             "skipped_cuda_graphs": 0,
         }
 
 
 def check_training_graphs(model):
-    """Reject a compiler fallback observed during either forward or backward.
+    """Require matching native graph replay and backward completion.
 
     Args:
         model: Original model, or its native DDP wrapper.
     Returns:
-        None; eager models require no compiler inspection.
+        None; eager models require no graph inspection.
     Raises:
-        FlexPiError: The requested capture fell back to eager execution.
+        FlexPiError: The requested native forward/backward replay did not occur.
     """
     unwrapped = getattr(model, "module", model)
     state = getattr(unwrapped, "_npa_training_graphs", None)
     if state is not None:
-        state.check()
+        state.check(completed=True)
 
 
 def training_graphs_receipt(model, configuration):
@@ -238,7 +275,7 @@ def validate_graphs_receipt(receipt, mode, world_size):
 
 def _validate_captured_rank(row):
     expected = {
-        "backend": "cudagraphs",
+        "backend": "make_graphed_callables",
         "fullgraph": True,
         "dynamic": False,
         "evaluation": "eager",
@@ -248,12 +285,23 @@ def _validate_captured_rank(row):
         if type(row.get(key)) is not type(value) or row[key] != value:
             raise FlexPiError("CUDA graph receipt differs from required backend")
     for key, minimum in (
-        ("compiled_training_calls", 2),
+        ("captured_training_calls", 2),
         ("eager_evaluation_calls", 0),
-        ("compiled_graphs", 1),
     ):
         if type(row.get(key)) is not int or row[key] < minimum:
-            raise FlexPiError("CUDA graph receipt lacks observed compiler execution")
+            raise FlexPiError("CUDA graph receipt lacks observed training execution")
+    replays = row.get("native_replays")
+    if (
+        not isinstance(replays, dict)
+        or set(replays) != {"forward", "backward"}
+        or any(
+            type(count) is not int or count != row["captured_training_calls"]
+            for count in replays.values()
+        )
+    ):
+        raise FlexPiError(
+            "CUDA graph receipt lacks matching native forward/backward replays"
+        )
     recorded = row.get("recorded_cuda_graphs")
     if not isinstance(recorded, dict) or set(recorded) != {
         "forward",

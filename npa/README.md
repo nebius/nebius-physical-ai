@@ -37,10 +37,10 @@ memory and can change numerical results; qualify the selected configuration
 with a profile, fresh resume and held-out validation before accepting it.
 `--cuda-graphs` (`config.cuda_graphs`) defaults to `off`. The experimental
 `mot` option captures mixed-attention training with the pinned Torch 2.7.1
-CUDA graph backend and requires `--activation-checkpointing off`. Input
+native CUDA graph API and requires `--activation-checkpointing off`. Input
 preparation, noise sampling, validation and optimizer updates remain eager.
-Compiler fallbacks are errors; every rank must report recorded forward and
-backward graphs. Qualify the GPU trace, numerical results, full held-out pass
+Capture failures are errors; every rank must report native forward and
+backward graph replays. Qualify the GPU trace, numerical results, full held-out pass
 and fresh resume before accepting a performance claim.
 
 The four-host B300 workflow sets `config.training_nodes: "4"` and requests one

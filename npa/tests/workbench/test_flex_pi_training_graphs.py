@@ -15,32 +15,37 @@ from npa.workbench.flex_pi.service import create_app
 @pytest.fixture
 def compiled_model(monkeypatch):
     torch = pytest.importorskip("torch")
+    from torch.utils._pytree import tree_unflatten
+
     model = torch.nn.Module()
     model.mot = torch.nn.Linear(2, 1, dtype=torch.float64)
-    counters = {"skipped_cuda_graphs": 0, "compiled_graphs": 0}
-    recorded = {"forward": 0, "backward": 0, "inference": 0}
-    calls = []
-    boundaries = []
+    captures = []
 
-    def compile_forward(function, **options):
-        assert options == {"backend": "cudagraphs", "fullgraph": True, "dynamic": False}
+    def capture(state, leaves, spec):
+        positions = [
+            i for i, value in enumerate(leaves) if isinstance(value, torch.Tensor)
+        ]
+        captures.append(True)
 
-        def execute(*args, **kwargs):
-            assert torch._dynamo.config.optimize_ddp is False
-            assert len(boundaries) == len(calls) + 1
-            calls.append(True)
-            counters["compiled_graphs"] = 1
-            return function(*args, **kwargs)
+        def execute(*tensors):
+            values = list(leaves)
+            for i, tensor in zip(positions, tensors, strict=True):
+                values[i] = tensor
+            args, kwargs = tree_unflatten(values, spec)
+            result = state.original(*args, **kwargs)
+            state.replays["forward"] += 1
 
-        return execute
+            def backward(gradient):
+                state.replays["backward"] += 1
+                return gradient
 
-    monkeypatch.setattr(torch, "compile", compile_forward)
-    monkeypatch.setattr(
-        torch.compiler, "cudagraph_mark_step_begin", lambda: boundaries.append(True)
-    )
+            result.register_hook(backward)
+            return result
+
+        return execute, positions
+
+    monkeypatch.setattr(graphs, "_capture_native", capture)
     monkeypatch.setattr(graphs, "_check_runtime", lambda: None)
-    monkeypatch.setattr(graphs, "_compiler_counters", lambda: counters.copy())
-    monkeypatch.setattr(graphs, "_recorded_graphs", lambda: recorded.copy())
     original = deepcopy(model.state_dict())
     parameter_ids = [id(parameter) for parameter in model.parameters()]
     graphs.configure_training_graphs(
@@ -49,13 +54,7 @@ def compiled_model(monkeypatch):
     assert [id(parameter) for parameter in model.parameters()] == parameter_ids
     assert set(original) == set(model.state_dict())
     return SimpleNamespace(
-        torch=torch,
-        model=model,
-        original=original,
-        counters=counters,
-        recorded=recorded,
-        calls=calls,
-        boundaries=boundaries,
+        torch=torch, model=model, original=original, captures=captures
     )
 
 
@@ -79,53 +78,57 @@ def test_capture_wrapper_preserves_state_gradients_and_eager_evaluation(compiled
     model.train()
     with torch.no_grad():
         assert torch.equal(model.mot(sample), reference(sample))
-    assert len(fixture.calls) == 3
-    assert len(fixture.boundaries) == 3
-    fixture.recorded.update(forward=1, backward=1)
+    assert len(fixture.captures) == 1
     receipt = model._npa_training_graphs.receipt()
-    assert receipt["compiled_training_calls"] == 3
+    assert receipt["captured_training_calls"] == 3
+    assert receipt["native_replays"] == {"forward": 3, "backward": 3}
     assert receipt["eager_evaluation_calls"] == 2
 
 
-def test_native_ddp_configuration_restored_after_capture_and_failure(compiled_model):
+def test_next_forward_and_receipt_require_completed_backward(compiled_model):
     fixture = compiled_model
-    torch, state = fixture.torch, fixture.model._npa_training_graphs
-    sample = torch.ones(1, 2, dtype=torch.float64)
-    with torch._dynamo.config.patch(optimize_ddp=True):
-        fixture.model.mot(sample).sum().backward()
-        assert torch._dynamo.config.optimize_ddp is True
-
-        def fail(*args, **kwargs):
-            assert torch._dynamo.config.optimize_ddp is False
-            raise RuntimeError("capture failed")
-
-        state.compiled = fail
-        with pytest.raises(RuntimeError, match="capture failed"):
-            fixture.model.mot(sample)
-        assert torch._dynamo.config.optimize_ddp is True
-
-
-def test_compile_invocation_alone_is_not_capture_proof(compiled_model):
-    fixture = compiled_model
-    for _ in range(3):
-        fixture.model.mot(fixture.torch.ones(1, 2, dtype=fixture.torch.float64))
-    with pytest.raises(FlexPiError, match="recorded forward/backward"):
+    sample = fixture.torch.ones(1, 2, dtype=fixture.torch.float64)
+    output = fixture.model.mot(sample)
+    with pytest.raises(FlexPiError, match="backward completion"):
+        fixture.model.mot(sample)
+    with pytest.raises(FlexPiError, match="backward completion"):
         fixture.model._npa_training_graphs.receipt()
-    fixture.recorded["forward"] = 1
-    with pytest.raises(FlexPiError, match="recorded forward/backward"):
+    output.sum().backward()
+    graphs.check_training_graphs(SimpleNamespace(module=fixture.model))
+    with pytest.raises(FlexPiError, match="replayed forward/backward"):
         fixture.model._npa_training_graphs.receipt()
 
 
-def test_forward_or_backward_fallback_cannot_be_published(compiled_model):
+def test_changed_static_input_contract_is_rejected(compiled_model):
     fixture = compiled_model
-    fixture.counters["skipped_cuda_graphs"] += 1
-    with pytest.raises(FlexPiError, match="fell back"):
-        graphs.check_training_graphs(SimpleNamespace(module=fixture.model))
-    with pytest.raises(FlexPiError, match="fell back"):
-        fixture.model.mot(fixture.torch.ones(1, 2, dtype=fixture.torch.float64))
+    fixture.model.mot(
+        fixture.torch.ones(1, 2, dtype=fixture.torch.float64)
+    ).sum().backward()
+    with pytest.raises(FlexPiError, match="static CUDA graph contract"):
+        fixture.model.mot(fixture.torch.ones(2, 2, dtype=fixture.torch.float64))
+    with pytest.raises(FlexPiError, match="static CUDA graph contract"):
+        fixture.model.mot(
+            fixture.torch.ones(1, 2, dtype=fixture.torch.float64, requires_grad=True)
+        )
+    with pytest.raises(FlexPiError, match="unsupported static metadata"):
+        graphs._input_signature([object()])
 
 
-def test_eager_default_does_not_inspect_or_compile_cuda(monkeypatch):
+def test_native_capture_failure_propagates_without_eager_fallback(
+    compiled_model, monkeypatch
+):
+    def fail(*args):
+        raise RuntimeError("capture failed")
+
+    monkeypatch.setattr(graphs, "_capture_native", fail)
+    with pytest.raises(RuntimeError, match="capture failed"):
+        compiled_model.model.mot(
+            compiled_model.torch.ones(1, 2, dtype=compiled_model.torch.float64)
+        )
+    assert compiled_model.model._npa_training_graphs.training_calls == 0
+
+
+def test_eager_default_does_not_inspect_or_capture_cuda(monkeypatch):
     monkeypatch.setattr(
         graphs, "_check_runtime", lambda: pytest.fail("eager runtime inspected")
     )
@@ -154,25 +157,111 @@ def test_incompatible_runtime_or_error_suppression_is_rejected(
         graphs._check_runtime()
 
 
-def test_recorded_graph_proof_traverses_backward_children_once(monkeypatch):
-    torch = pytest.importorskip("torch")
-    from torch._inductor import cudagraph_trees
+def test_native_replay_observation_requires_pinned_closure_layout():
+    with pytest.raises(FlexPiError, match="closure layout"):
+        graphs._observe_native_replays(SimpleNamespace(forward=lambda: None), {})
 
-    backward = SimpleNamespace(graph=object(), children={})
-    forward = SimpleNamespace(graph=object(), children={2: [backward]})
-    empty = SimpleNamespace(graph=None, children={})
-    manager = SimpleNamespace(
-        roots={1: [forward, forward], 3: [empty]},
-        id_to_mode={
-            key: SimpleNamespace(name=name)
-            for key, name in ((1, "FORWARD"), (2, "BACKWARD"), (3, "INFERENCE"))
-        },
-    )
+
+def test_capture_detaches_samples_preserves_parameters_and_restores_rng(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from torch.utils._pytree import tree_flatten
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(3.0))
+
+        def forward(self, inputs, gain):
+            return {"output": inputs * self.weight * gain}
+
+    module = Model()
+    source = torch.tensor([2.0], requires_grad=True)
+    inputs = source * 2
+    leaves, spec = tree_flatten(((inputs,), {"gain": 0.5}))
+    state = SimpleNamespace(module=module, original=module.forward, replays={})
+    original_fork = torch.random.fork_rng
+
+    def fork(*, devices):
+        assert devices == [0]
+        return original_fork(devices=[])
+
+    def capture(wrapper, samples, **options):
+        assert options == {"num_warmup_iters": 11, "allow_unused_input": True}
+        assert list(wrapper.parameters()) == list(module.parameters())
+        assert samples[0].is_leaf and samples[0].requires_grad
+        assert samples[0].data_ptr() != inputs.data_ptr()
+        assert torch.equal(samples[0], inputs)
+        torch.rand(5)
+        torch.autograd.grad(
+            wrapper(*samples)["output"].sum(), (*samples, *wrapper.parameters())
+        )
+        assert module.weight.grad is None
+        return wrapper
+
+    monkeypatch.setattr(torch.random, "fork_rng", fork)
     monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
-    monkeypatch.setattr(
-        cudagraph_trees, "get_manager", lambda device, create_if_none_exists: manager
-    )
-    assert graphs._recorded_graphs() == {"forward": 1, "backward": 1, "inference": 0}
+    monkeypatch.setattr(torch.cuda, "make_graphed_callables", capture)
+    monkeypatch.setattr(graphs, "_observe_native_replays", lambda wrapper, counts: None)
+    rng = torch.get_rng_state().clone()
+    wrapper, positions = graphs._capture_native(state, leaves, spec)
+    assert torch.equal(torch.get_rng_state(), rng)
+    wrapper(*(leaves[i] for i in positions))["output"].sum().backward()
+    assert source.grad.item() == 3.0
+    assert module.weight.grad.item() == 2.0
+
+
+def test_native_observer_counts_only_successful_forward_and_backward_replays(
+    monkeypatch,
+):
+    torch = pytest.importorskip("torch")
+    from functools import wraps
+
+    class NativeGraph:
+        def __init__(self):
+            self.calls = 0
+            self.fail = False
+
+        def replay(self):
+            if self.fail:
+                raise RuntimeError("native replay failed")
+            self.calls += 1
+
+    monkeypatch.setattr(torch.cuda, "CUDAGraph", NativeGraph)
+    fwd_graph, bwd_graph = NativeGraph(), NativeGraph()
+
+    def decorated(function):
+        @wraps(function)
+        def call(*args):
+            return function(*args)
+
+        return call
+
+    class Graphed:
+        @staticmethod
+        def forward():
+            fwd_graph.replay()
+
+        @staticmethod
+        @decorated
+        def backward():
+            bwd_graph.replay()
+
+    def graphed():
+        return Graphed.forward()
+
+    def new_fwd():
+        return graphed()
+
+    counts = {"forward": 0, "backward": 0}
+    graphs._observe_native_replays(SimpleNamespace(forward=new_fwd), counts)
+    new_fwd()
+    Graphed.backward()
+    assert counts == {"forward": 1, "backward": 1}
+    assert fwd_graph.calls == bwd_graph.calls == 1
+    bwd_graph.fail = True
+    with pytest.raises(RuntimeError, match="native replay failed"):
+        Graphed.backward()
+    assert counts == {"forward": 1, "backward": 1}
 
 
 @pytest.mark.parametrize(
@@ -197,13 +286,13 @@ def _receipt():
             {
                 "rank": rank,
                 "policy": "mot",
-                "backend": "cudagraphs",
+                "backend": "make_graphed_callables",
                 "fullgraph": True,
                 "dynamic": False,
                 "evaluation": "eager",
-                "compiled_training_calls": 24,
+                "captured_training_calls": 24,
                 "eager_evaluation_calls": 0,
-                "compiled_graphs": 1,
+                "native_replays": {"forward": 24, "backward": 24},
                 "skipped_cuda_graphs": 0,
                 "recorded_cuda_graphs": {"forward": 1, "backward": 1, "inference": 0},
             }
@@ -214,10 +303,10 @@ def _receipt():
 
 def test_every_gathered_rank_must_confirm_capture(compiled_model, monkeypatch):
     fixture = compiled_model
-    fixture.recorded.update(forward=1, backward=1)
     state = fixture.model._npa_training_graphs
     state.training_calls = 24
-    fixture.counters["compiled_graphs"] = 1
+    state.captured = object()
+    state.replays.update(forward=24, backward=24)
     monkeypatch.setattr(fixture.torch.distributed, "get_rank", lambda: 0)
     monkeypatch.setattr(fixture.torch.distributed, "get_world_size", lambda: 4)
 
@@ -240,8 +329,8 @@ def test_every_gathered_rank_must_confirm_capture(compiled_model, monkeypatch):
         ("fullgraph", 1),
         ("dynamic", True),
         ("evaluation", "compiled"),
-        ("compiled_training_calls", 1),
-        ("compiled_graphs", 0),
+        ("captured_training_calls", 1),
+        ("native_replays", {"forward": 24, "backward": 0}),
         ("skipped_cuda_graphs", 1),
         ("recorded_cuda_graphs", {"forward": 2, "backward": 0, "inference": 0}),
         ("recorded_cuda_graphs", {"forward": 1, "backward": 1, "inference": 1}),
