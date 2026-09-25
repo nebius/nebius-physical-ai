@@ -30,3 +30,11 @@ Reference SHA-256: 8cb6cfe8987bbd8da5da4031aa3ffee9e09cc644d140febd25371b84a97ac
 Reference size: 174075 bytes. Recipes seal the controller digest independently
 of the learned high-level checkpoint. Native loading verifies the exact fetched
 bytes before decoding. This attribution record contains no controller payload.
+
+The pinned upstream robot configuration also refers to these separate Isaac 6.0
+runtime assets:
+https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/IsaacLab/Robots/ANYbotics/ANYmal-C/anymal_c.usd
+https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/IsaacLab/ActuatorNets/ANYbotics/anydrive_3_lstm_jit.pt
+The recipe does not independently byte-pin these assets or the robot USD's full
+dependency closure. Hashes observed after loading are separate provenance and
+do not establish verified-before-load identity. No asset payload is included.

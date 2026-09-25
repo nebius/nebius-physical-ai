@@ -38,6 +38,13 @@ comparison arms retain this pin independently of the high-level checkpoint.
 The [attribution record](shared-scene-navigation.NOTICE.txt) lists its vendor URL
 and public reference digest; weights are not included in this repository.
 
+The upstream robot USD assets and recurrent actuator model retain their versioned
+Isaac 6.0 asset references. This recipe does not byte-pin that complete vendor
+asset closure, and the runtime image digest does not cover those fetched bytes.
+Keep any cache or URL hashes observed after loading separate from the locomotion
+policy's verified-before-load identity. Qualification reports must state this
+boundary and reject comparisons when observed asset identities differ.
+
 ```bash
 npa/.venv/bin/python -m npa.workflows.navigation.reference_bundle \
   --output-path "$NPA_NAVIGATION_BUNDLE" --image "$NPA_NAVIGATION_IMAGE" \
@@ -93,6 +100,11 @@ simulation delta. Artifacts include `rendered-rollout/*.png`, frame measurements
 and `rollout.mp4` when the runtime supplies FFmpeg. The PNG sequence can be encoded
 later without rerunning or reconstructing the simulation. Custom BYOF tasks
 retain their own visualization integration.
+
+The focal robot continues stepping in the video while other robots finish their
+episodes. Its score stops at its first goal arrival, obstacle/peer contact, or
+physical failure. Present the focal robot's scored step count and outcome beside
+the full video; later frames do not change that score or the cohort metrics.
 
 ## Resume and independent checkpoint evaluation
 
