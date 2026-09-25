@@ -322,7 +322,12 @@ queue, and persistent user identity. Its endpoint and process ownership are
 recorded before startup and verified again on reconnect. A conflicting endpoint,
 foreign listener, or changed executing identity blocks submission. Preserve this
 directory when reconnecting to existing jobs; an unrelated local SkyPilot API
-is never adopted or stopped as part of that isolated runtime.
+is never adopted or stopped as part of that isolated runtime. This isolates
+SkyPilot state and process ownership, not the selected provider files: the
+isolated home contains live symlinks to the operator's Nebius configuration and
+kubeconfig, so reads and writes through those paths reach the source files. Use
+dedicated task-owned provider configuration when credential helpers or other
+submit-time clients must not update shared operator files.
 
 The actual resolved output directories, file-parent prefixes, run-ledger prefix,
 and any source-staging destination receive a unique write/readback probe using
