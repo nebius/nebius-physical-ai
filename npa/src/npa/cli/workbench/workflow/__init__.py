@@ -393,6 +393,140 @@ def prepare_run_cmd(
         typer.echo(prepared.run_id)
 
 
+# Recovery argv is an explicit allowlist so a future CLI option cannot silently
+# copy a secret such as --registry-password into the durable operation journal.
+_WORKFLOW_RECOVERY_VALUE_OPTIONS = (
+    ("sky_bin", "--sky-bin"),
+    ("isolated_config_dir", "--isolated-config-dir"),
+    ("config_path", "--config-path"),
+    ("controller_backend", "--controller-backend"),
+    ("infra", "--infra"),
+    ("submit_timeout", "--submit-timeout"),
+    ("preset", "--preset"),
+    ("assume_decision", "--assume-decision"),
+    ("plan_migration_reason", "--plan-migration-reason"),
+    ("poll_seconds", "--poll-seconds"),
+    ("max_wait_seconds", "--max-wait-seconds"),
+    ("retries", "--retries"),
+    ("max_infrastructure_recoveries", "--max-infrastructure-recoveries"),
+    ("max_concurrency", "--max-concurrency"),
+    ("image_bootstrap_timeout_seconds", "--image-bootstrap-timeout-seconds"),
+    ("gpu_readiness_timeout", "--gpu-readiness-timeout"),
+    ("gpu_readiness_poll_interval", "--gpu-readiness-poll-interval"),
+    ("tool", "--tool"),
+    ("registry", "--registry"),
+    ("image", "--image"),
+    ("npa_image", "--npa-image"),
+    ("registry_username", "--registry-username"),
+    ("registry_server", "--registry-server"),
+    ("gpu_target", "--gpu-target"),
+    ("image_variant", "--image-variant"),
+    ("accelerators", "--accelerators"),
+    ("cloud", "--cloud"),
+    ("region", "--region"),
+    ("aws_profile", "--aws-profile"),
+    ("s3_endpoint", "--s3-endpoint"),
+    ("s3_bucket", "--s3-bucket"),
+    ("s3_prefix", "--s3-prefix"),
+    ("workflow_s3_uri", "--workflow-s3-uri"),
+    ("input_video", "--input-video"),
+    ("input_uri", "--input-uri"),
+    ("lerobot_uri", "--lerobot-uri"),
+    ("lerobot_camera", "--lerobot-camera"),
+    ("lerobot_episode", "--lerobot-episode"),
+    ("agent_name", "--agent-name"),
+    ("output_format", "--output-format"),
+)
+_WORKFLOW_RECOVERY_REPEATABLE_OPTIONS = (
+    ("var", "--var"),
+    ("image_override", "--image-override"),
+    ("secret_env", "--secret-env"),
+)
+_WORKFLOW_RECOVERY_BOOLEAN_OPTIONS = (
+    ("accept_eula", "--accept-eula", "--no-accept-eula"),
+    ("cancel_on_timeout", "--cancel-on-timeout", "--no-cancel-on-timeout"),
+    ("preflight_images", "--preflight-images", "--no-preflight-images"),
+    ("resolve_accelerators", "--resolve-accelerators", "--no-resolve-accelerators"),
+    ("deploy_if_absent", "--deploy-if-absent", "--no-deploy-if-absent"),
+    ("registry_auth", "--registry-auth", "--no-registry-auth"),
+    (
+        "require_controller_up",
+        "--require-controller-up",
+        "--skip-controller-health-guard",
+    ),
+    ("durable_s3", "--durable-s3", "--no-durable-s3"),
+    ("stage_src", "--stage-src", "--no-stage-src"),
+    ("use_spot", "--use-spot", "--no-use-spot"),
+    ("auto_load", "--auto-load", "--no-auto-load"),
+)
+_WORKFLOW_RECOVERY_ENABLED_FLAGS = (
+    ("retry_absent_in_flight", "--retry-absent-in-flight"),
+    ("allow_terminal_plan_migration", "--allow-terminal-plan-migration"),
+    ("adopt_absent_in_flight_outputs", "--adopt-absent-in-flight-outputs"),
+    ("bind_controller", "--bind-controller"),
+    ("require_explicit_lerobot_selection", "--require-explicit-lerobot-selection"),
+    ("seed_fixture", "--seed-fixture"),
+    ("skip_preflight", "--skip-preflight"),
+)
+_WORKFLOW_RECOVERY_ARGUMENT_NAMES = frozenset(
+    name
+    for group in (
+        _WORKFLOW_RECOVERY_VALUE_OPTIONS,
+        _WORKFLOW_RECOVERY_REPEATABLE_OPTIONS,
+        _WORKFLOW_RECOVERY_BOOLEAN_OPTIONS,
+        _WORKFLOW_RECOVERY_ENABLED_FLAGS,
+    )
+    for name, *_flags in group
+) | {"runtime"}
+
+
+def _workflow_submit_recovery_argv(
+    yaml_path: Path,
+    *,
+    alias: str,
+    run_id: str,
+    is_npa_spec: bool,
+    arguments: Mapping[str, object],
+) -> list[str]:
+    """Serialize the secret-free effective submit contract for exact recovery.
+
+    Values are captured after target/config resolution so replay pins the same
+    effective launch. Credential values remain outside the durable command.
+    """
+
+    argv = [
+        "npa",
+        "workbench",
+        "workflow",
+        "submit",
+        str(yaml_path),
+        "--project",
+        alias,
+    ]
+    argv.extend(
+        ["--resume-run", run_id] if is_npa_spec else ["--run-id", run_id, "--resume"]
+    )
+    for name, flag in _WORKFLOW_RECOVERY_VALUE_OPTIONS:
+        value = arguments.get(name)
+        if value not in (None, ""):
+            argv.extend([flag, str(getattr(value, "value", value))])
+    for name, flag in _WORKFLOW_RECOVERY_REPEATABLE_OPTIONS:
+        for value in arguments.get(name) or ():
+            argv.extend([flag, str(value)])
+    for name, enabled_flag, disabled_flag in _WORKFLOW_RECOVERY_BOOLEAN_OPTIONS:
+        value = arguments.get(name)
+        if value is not None:
+            argv.append(enabled_flag if bool(value) else disabled_flag)
+    argv.extend(
+        flag
+        for name, flag in _WORKFLOW_RECOVERY_ENABLED_FLAGS
+        if bool(arguments.get(name))
+    )
+    if is_npa_spec:
+        argv.append("--runtime" if bool(arguments.get("runtime")) else "--no-runtime")
+    return argv
+
+
 @app.command("submit")
 def submit_cmd(
     yaml_path: Path = typer.Argument(
@@ -882,7 +1016,8 @@ def submit_cmd(
     )
 
     explicitly_isolated = isolated_config_dir is not None
-
+    recovery_yaml_path = yaml_path.resolve()
+    requested_secret_env = tuple(secret_env)
     if submit_timeout <= 0:
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
 
@@ -1139,7 +1274,10 @@ def submit_cmd(
         )
         secret_env[:] = list(dict.fromkeys(required_secret_env))
     except Exception as exc:
-        _fail(f"Workflow credential resolution failed: {exc}")
+        _fail(
+            "Workflow credential resolution failed: "
+            + _sanitized_failure_reason(exc, secrets=())
+        )
         return
     s3_endpoint = submit_credentials.endpoint_url
     extra_env: dict[str, str] = dict(submit_credentials.secret_values)
@@ -1153,6 +1291,15 @@ def submit_cmd(
     resolved_access_key = str(getattr(submit_credentials, "access_key_id", "") or "")
     resolved_secret_key = str(
         getattr(submit_credentials, "secret_access_key", "") or ""
+    )
+    submission_redaction_secrets = tuple(
+        value
+        for value in (
+            *submit_credentials.secret_values.values(),
+            resolved_access_key,
+            resolved_secret_key,
+        )
+        if value
     )
     if resolved_access_key:
         extra_env.setdefault("AWS_ACCESS_KEY_ID", resolved_access_key)
@@ -1738,7 +1885,12 @@ def submit_cmd(
                     },
                 )
             except Exception as exc:
-                _fail(f"could not persist pre-mutation submission ledger: {exc}")
+                _fail(
+                    "could not persist pre-mutation submission ledger: "
+                    + _sanitized_failure_reason(
+                        exc, secrets=submission_redaction_secrets
+                    )
+                )
                 return
             if output_format != OutputFormat.json:
                 typer.echo(
@@ -2215,6 +2367,7 @@ def submit_cmd(
     submitted_yaml_context: tempfile.TemporaryDirectory[str] | None = None
     workflow_state = None
     instrumented = None
+    submission_warnings: list[str] = []
     if substitutions or materializer or durable_s3:
         submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
         submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
@@ -2391,6 +2544,31 @@ def submit_cmd(
             "attempt-1",
             hashlib.sha256(submitted_yaml_path.read_bytes()).hexdigest(),
         )
+        submit_arguments = locals()
+        recovery_arguments = {
+            name: value
+            for name, value in submit_arguments.items()
+            if name in _WORKFLOW_RECOVERY_ARGUMENT_NAMES
+        }
+        recovery_arguments["secret_env"] = tuple(dict.fromkeys(requested_secret_env))
+        if workflow_state is not None:
+            recovery_arguments["workflow_s3_uri"] = workflow_state.uri
+        from npa.provisioning_journal import operation_contains_secret
+
+        alias = str(project).strip() or "default"
+        recovery_argv = _workflow_submit_recovery_argv(
+            recovery_yaml_path,
+            alias=alias,
+            run_id=resolved_run_id,
+            is_npa_spec=is_npa_spec,
+            arguments=recovery_arguments,
+        )
+        if operation_contains_secret(recovery_argv):
+            _fail(
+                "The durable recovery command contains a secret-shaped option "
+                "value. Pass credentials with --secret-env or configured NPA "
+                "credentials; do not pass secrets through --var or URLs."
+            )
 
         def _record_transaction(payload: dict[str, object]) -> None:
             if prepared_npa is None:
@@ -2399,15 +2577,27 @@ def submit_cmd(
                 update_submission_state,
             )
 
-            update_submission_state(
-                ledger_project,
-                resolved_run_id,
-                {"launch": dict(payload)},
-                locked=True,
-            )
+            try:
+                update_submission_state(
+                    ledger_project,
+                    resolved_run_id,
+                    {"launch": dict(payload)},
+                    locked=True,
+                )
+            except (OSError, ValueError) as exc:
+                if not _accepted_submission_identity(
+                    state=payload.get("state"),
+                    job_id=payload.get("job_id"),
+                ):
+                    raise
+                warning = _submission_receipt_warning(
+                    exc, secrets=submission_redaction_secrets
+                )
+                if warning not in submission_warnings:
+                    submission_warnings.append(warning)
 
         def _launch() -> WorkflowResult:
-            from npa.clients.config import default_project_name, resolve_environment
+            from npa.clients.config import resolve_environment
             from npa.provisioning_journal import (
                 ProvisioningOperation,
                 current_operation,
@@ -2435,7 +2625,6 @@ def submit_cmd(
 
             if current_operation() is not None:
                 return submit()
-            alias = str(project or default_project_name()).strip() or "default"
             environment = resolve_environment(alias)
             operation = ProvisioningOperation.prepare(
                 command="npa workbench workflow submit",
@@ -2447,17 +2636,7 @@ def submit_cmd(
                 requested_name=resolved_run_id,
                 ownership_source="workflow-submit-cli",
                 resume_command="",
-                resume_argv=[
-                    "npa",
-                    "workbench",
-                    "workflow",
-                    "submit",
-                    str(yaml_path),
-                    "--project",
-                    alias,
-                    "--resume-run",
-                    resolved_run_id,
-                ],
+                resume_argv=recovery_argv,
                 destroy_argv=[
                     "npa",
                     "workbench",
@@ -2490,29 +2669,51 @@ def submit_cmd(
             )
 
             with submission_lock(ledger_project, resolved_run_id):
-                update_submission_state(
-                    ledger_project,
-                    resolved_run_id,
-                    {
-                        "workflow": _npa_submission_receipt(
-                            prepared_npa, resolved_run_id
+                try:
+                    update_submission_state(
+                        ledger_project,
+                        resolved_run_id,
+                        {
+                            "workflow": _npa_submission_receipt(
+                                prepared_npa, resolved_run_id
+                            )
+                        },
+                        locked=True,
+                    )
+                except (OSError, ValueError) as exc:
+                    _fail(
+                        "could not persist pre-launch workflow receipt: "
+                        + _sanitized_failure_reason(
+                            exc, secrets=submission_redaction_secrets
                         )
-                    },
-                    locked=True,
-                )
+                    )
+                    return
                 result = _launch()
-                update_submission_state(
-                    ledger_project,
-                    resolved_run_id,
-                    {
-                        "launch": {
-                            **dict(getattr(result, "launch_transaction", {}) or {}),
-                            "status": result.status.lower(),
-                            "sky_job_id": result.job_id,
-                        }
-                    },
-                    locked=True,
-                )
+                try:
+                    warning = _try_optional_submission_update(
+                        ledger_project,
+                        resolved_run_id,
+                        {
+                            "launch": {
+                                **dict(getattr(result, "launch_transaction", {}) or {}),
+                                "status": result.status.lower(),
+                                "sky_job_id": result.job_id,
+                            }
+                        },
+                        warning_allowed=_accepted_workflow_result_identity(result),
+                        locked=True,
+                        secrets=submission_redaction_secrets,
+                    )
+                except (OSError, ValueError) as exc:
+                    _fail(
+                        "could not persist post-launch submission receipt: "
+                        + _sanitized_failure_reason(
+                            exc, secrets=submission_redaction_secrets
+                        )
+                    )
+                    return
+                if warning and warning not in submission_warnings:
+                    submission_warnings.append(warning)
         else:
             result = _launch()
         if workflow_state is not None and instrumented is not None:
@@ -2554,16 +2755,22 @@ def submit_cmd(
                     f"{run_prefix_uri.rstrip('/')}/npa-workflow/manifest.json",
                 )
     except OSError as exc:
-        _fail(f"SkyPilot workflow submission failed: {exc}")
+        _fail(
+            "SkyPilot workflow submission failed: "
+            + _sanitized_failure_reason(exc, secrets=submission_redaction_secrets)
+        )
         return
     except SkyPilotSubmitError as exc:
         transaction = getattr(exc, "transaction", None)
+        safe_error = _sanitized_failure_reason(
+            exc, secrets=submission_redaction_secrets
+        )
         if output_format == OutputFormat.json and transaction is not None:
             typer.echo(
                 json.dumps(
                     {
                         "status": "failed",
-                        "error": str(exc),
+                        "error": safe_error,
                         "launch_transaction": transaction.to_dict(),
                     },
                     indent=2,
@@ -2571,7 +2778,7 @@ def submit_cmd(
                 )
             )
             raise typer.Exit(_submit_failure_code(exc)) from exc
-        _fail(str(exc), code=_submit_failure_code(exc))
+        _fail(safe_error, code=_submit_failure_code(exc))
         return
     finally:
         if submitted_yaml_context is not None:
@@ -2580,9 +2787,12 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
 
     if output_format == OutputFormat.json:
+        payload = {**result.__dict__, "run_id": resolved_run_id}
+        if submission_warnings:
+            payload["submission_warnings"] = submission_warnings
         typer.echo(
             json.dumps(
-                {**result.__dict__, "run_id": resolved_run_id},
+                payload,
                 indent=2,
                 sort_keys=True,
             )
@@ -2593,6 +2803,8 @@ def submit_cmd(
     typer.echo(f"run_id: {resolved_run_id}")
     if result.job_id:
         typer.echo(f"job_id: {result.job_id}")
+    for warning in submission_warnings:
+        typer.echo(f"warning: {warning}", err=True)
     if workflow_state is not None:
         typer.echo(f"run_prefix_uri: {workflow_state.uri}")
     log_paths = getattr(result, "log_paths", {})
@@ -2985,6 +3197,81 @@ def _resolve_runtime_secret_values(
     return dict(context.secret_values)
 
 
+def _sanitized_failure_reason(exc: BaseException, *, secrets: Sequence[str]) -> str:
+    """Redact credential values and provider URL context from a diagnostic."""
+
+    from npa.verification import sanitize_failure_reason
+
+    return sanitize_failure_reason(exc, secrets=secrets)
+
+
+def _accepted_submission_identity(*, state: object, job_id: object) -> bool:
+    """Return whether a launch result proves one accepted managed-job identity."""
+
+    from npa.orchestration.skypilot.launch_transaction import LaunchState
+
+    raw_state = getattr(state, "value", state)
+    normalized = str(raw_state or "").strip().lower()
+    return normalized in {
+        LaunchState.SUBMITTED.value,
+        LaunchState.ADOPTED.value,
+    } and bool(str(job_id or "").strip())
+
+
+def _accepted_workflow_result_identity(result: object) -> bool:
+    """Require accepted, matching identities from result and transaction evidence."""
+
+    result_job_id = str(getattr(result, "job_id", "") or "").strip()
+    if not _accepted_submission_identity(
+        state=getattr(result, "status", ""),
+        job_id=result_job_id,
+    ):
+        return False
+    raw_transaction = getattr(result, "launch_transaction", None)
+    if not isinstance(raw_transaction, Mapping) or not raw_transaction:
+        return True
+    transaction_job_id = str(raw_transaction.get("job_id") or "").strip()
+    return (
+        _accepted_submission_identity(
+            state=raw_transaction.get("state"),
+            job_id=transaction_job_id,
+        )
+        and transaction_job_id == result_job_id
+    )
+
+
+def _submission_receipt_warning(exc: BaseException, *, secrets: Sequence[str]) -> str:
+    """Return a sanitized warning for a nonfatal receipt-write failure."""
+
+    return "submission receipt was not updated: " + _sanitized_failure_reason(
+        exc, secrets=secrets
+    )
+
+
+def _try_optional_submission_update(
+    project: str,
+    run_id: str,
+    updates: Mapping[str, object],
+    *,
+    warning_allowed: bool,
+    secrets: Sequence[str],
+    locked: bool = False,
+) -> str:
+    """Persist one update, warning only when the caller proves that is safe."""
+
+    from npa.orchestration.npa_workflow.submission_state import (
+        update_submission_state,
+    )
+
+    try:
+        update_submission_state(project, run_id, updates, locked=locked)
+    except (OSError, ValueError) as exc:
+        if not warning_allowed:
+            raise
+        return _submission_receipt_warning(exc, secrets=secrets)
+    return ""
+
+
 def _load_paidf_artifact(
     *,
     project: str,
@@ -3000,7 +3287,6 @@ def _load_paidf_artifact(
         load_final_artifact_into_agent,
     )
     from npa.orchestration.npa_workflow.src_staging import _storage_client
-    from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
     if not run_prefix_uri:
         result: dict[str, object] = {
@@ -3012,7 +3298,15 @@ def _load_paidf_artifact(
             ),
             "verified": False,
         }
-        update_submission_state(project or "default", run_id, {"artifact_load": result})
+        warning = _try_optional_submission_update(
+            project or "default",
+            run_id,
+            {"artifact_load": result},
+            warning_allowed=True,
+            secrets=tuple((credential_values or {}).values()),
+        )
+        if warning:
+            result["receipt_warning"] = warning
         return result
     try:
         client = _storage_client(
@@ -3028,11 +3322,17 @@ def _load_paidf_artifact(
             run_prefix_uri=run_prefix_uri,
             storage_client=client,
             agent_name=agent_name,
+            credential_values=credential_values,
         ).to_dict()
     except Exception as exc:  # noqa: BLE001 - optional post-success operation
         result = {
             "status": "partial",
-            "detail": f"workflow succeeded; artifact load is incomplete: {exc}",
+            "detail": (
+                "workflow succeeded; artifact load is incomplete: "
+                + _sanitized_failure_reason(
+                    exc, secrets=tuple((credential_values or {}).values())
+                )
+            ),
             "retry_command": (
                 f"npa workbench workflow load-artifact {run_id}"
                 + (f" --project {project}" if project else "")
@@ -3040,7 +3340,15 @@ def _load_paidf_artifact(
             ),
             "verified": False,
         }
-        update_submission_state(project or "default", run_id, {"artifact_load": result})
+        warning = _try_optional_submission_update(
+            project or "default",
+            run_id,
+            {"artifact_load": result},
+            warning_allowed=True,
+            secrets=tuple((credential_values or {}).values()),
+        )
+        if warning:
+            result["receipt_warning"] = warning
         return result
 
 
@@ -6316,6 +6624,109 @@ def status_cmd(
             console.print(f"  {stage}: {info.get('status', 'unknown')}")
 
 
+def _matching_stage_log_waves(
+    runtime_state: Mapping[str, object],
+    stage_attempt: Mapping[str, object],
+    stage: str,
+) -> list[dict[str, object]]:
+    """Return waves that can belong to one durable stage attempt."""
+
+    job_id = str(stage_attempt.get("managed_job_id") or "")
+    stage_key = str(stage_attempt.get("wave_key") or "")
+    attempt = int(stage_attempt.get("attempt") or 1)
+    if not stage_key and not job_id:
+        return []
+    matches: list[dict[str, object]] = []
+    for raw_wave in runtime_state.get("waves") or []:
+        if not isinstance(raw_wave, dict):
+            continue
+        if stage not in list(raw_wave.get("states") or []):
+            continue
+        try:
+            wave_attempt = int(raw_wave.get("attempt") or 1)
+        except (TypeError, ValueError):
+            continue
+        if wave_attempt != attempt:
+            continue
+        if stage_key and str(raw_wave.get("key") or "") != stage_key:
+            continue
+        if job_id and str(raw_wave.get("job_id") or "") != job_id:
+            continue
+        matches.append(raw_wave)
+    return matches
+
+
+def _wave_task_id(wave: Mapping[str, object], stage: str) -> str:
+    """Return an exact task ID only when wave state/task positions align."""
+
+    states = list(wave.get("states") or [])
+    tasks = [item for item in wave.get("tasks") or [] if isinstance(item, dict)]
+    if len(states) != len(tasks) or states.count(stage) != 1:
+        return ""
+    task_id = tasks[states.index(stage)].get("task_id")
+    return "" if task_id is None else str(task_id)
+
+
+def _stage_log_task_id(
+    waves: Sequence[Mapping[str, object]],
+    stage: str,
+    *,
+    allow_serial_zero: bool,
+) -> str:
+    """Choose a task selector without guessing across conflicting waves."""
+
+    task_ids = {_wave_task_id(wave, stage) for wave in waves} - {""}
+    if len(task_ids) == 1:
+        return next(iter(task_ids))
+    if (
+        allow_serial_zero
+        and len(waves) == 1
+        and waves[0].get("kind") == "serial"
+        and list(waves[0].get("states") or []) == [stage]
+        and waves[0].get("tasks", []) == []
+    ):
+        return "0"
+    return ""
+
+
+def _recover_stage_log_wave_attribution(
+    runtime_state: Mapping[str, object],
+    stage_attempt: Mapping[str, object],
+    stage: str,
+) -> tuple[dict[str, object], str, str]:
+    """Recover missing log identity from one unambiguous matching wave."""
+
+    recovered = dict(stage_attempt)
+    job_id = str(recovered.get("managed_job_id") or "")
+    had_job_id = bool(job_id)
+    if job_id and recovered.get("sky_task_id") not in (None, ""):
+        return recovered, job_id, ""
+    matching_waves = _matching_stage_log_waves(runtime_state, recovered, stage)
+    if not job_id:
+        wave_job_ids = {
+            str(wave.get("job_id") or "")
+            for wave in matching_waves
+            if str(wave.get("job_id") or "")
+        }
+        if len(wave_job_ids) > 1:
+            return recovered, "", "matching durable waves disagree on managed-job ID"
+        if len(wave_job_ids) == 1:
+            job_id = next(iter(wave_job_ids))
+            recovered["managed_job_id"] = job_id
+            recovered["provenance"] = "runtime_wave_attribution_recovery"
+            matching_waves = [
+                wave
+                for wave in matching_waves
+                if str(wave.get("job_id") or "") == job_id
+            ]
+    if recovered.get("sky_task_id") not in (None, ""):
+        return recovered, job_id, ""
+    task_id = _stage_log_task_id(matching_waves, stage, allow_serial_zero=had_job_id)
+    if task_id:
+        recovered["sky_task_id"] = task_id
+    return recovered, job_id, ""
+
+
 @app.command("logs")
 def logs_cmd(
     run_id: str = typer.Argument(help="Run ID."),
@@ -6559,44 +6970,17 @@ def logs_cmd(
                 ]
                 stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
                 selected_attempt = stage_attempts[-1] if stage_attempts else {}
-                job_id = str(selected_attempt.get("managed_job_id") or "")
-                if selected_attempt.get("sky_task_id") in (None, ""):
-                    matching_waves = [
-                        wave
-                        for wave in resolution.runtime_state.get("waves") or []
-                        if isinstance(wave, dict)
-                        and selected_stage in list(wave.get("states") or [])
-                        and (not job_id or str(wave.get("job_id") or "") == job_id)
-                    ]
-                    matching_waves.sort(key=lambda wave: int(wave.get("attempt") or 1))
-                    if matching_waves:
-                        selected_wave = matching_waves[-1]
-                        wave_states = list(selected_wave.get("states") or [])
-                        wave_tasks = [
-                            item
-                            for item in selected_wave.get("tasks") or []
-                            if isinstance(item, dict)
-                        ]
-                        if len(wave_states) == len(wave_tasks):
-                            index = wave_states.index(selected_stage)
-                            task_id = wave_tasks[index].get("task_id")
-                            if task_id is not None:
-                                selected_attempt = {
-                                    **selected_attempt,
-                                    "sky_task_id": str(task_id),
-                                }
-                        elif (
-                            job_id
-                            and len(matching_waves) == 1
-                            and selected_wave.get("kind") == "serial"
-                            and wave_states == [selected_stage]
-                            and selected_wave.get("tasks", []) == []
-                        ):
-                            # A driver can stop after recording the job ID but
-                            # before its first task observation. The renderer's
-                            # single-state serial wave has exactly task 0; its
-                            # provider name is the full job name, not the stage.
-                            selected_attempt = {**selected_attempt, "sky_task_id": "0"}
+                attribution_error = ""
+                if cached:
+                    job_id = str(selected_attempt.get("managed_job_id") or "")
+                else:
+                    selected_attempt, job_id, attribution_error = (
+                        _recover_stage_log_wave_attribution(
+                            resolution.runtime_state,
+                            selected_attempt,
+                            selected_stage,
+                        )
+                    )
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
@@ -6683,9 +7067,14 @@ def logs_cmd(
                         _emit_log_truncation(log_metadata)
                     return
                 if not job_id:
-                    reason = (
-                        "no exact managed-job identity is recorded for this stage/attempt; "
-                        "live logs cannot be attributed safely"
+                    reason = attribution_error or (
+                        "no exact managed-job identity is recorded for this "
+                        "stage/attempt; live logs cannot be attributed safely"
+                    )
+                    error_code = (
+                        "STAGE_JOB_ID_AMBIGUOUS"
+                        if attribution_error
+                        else "STAGE_JOB_ID_UNAVAILABLE"
                     )
                     source_payload = apply_verification(
                         source_payload,
@@ -6700,10 +7089,10 @@ def logs_cmd(
                         + _isolated_controller_option(isolated_config_dir),
                     )
                     source_payload["live_log_state"] = "unavailable"
-                    source_payload["error_code"] = "STAGE_JOB_ID_UNAVAILABLE"
+                    source_payload["error_code"] = error_code
                     live_verification = source_payload["live_verification"]
                     assert isinstance(live_verification, dict)
-                    live_verification["error_code"] = "STAGE_JOB_ID_UNAVAILABLE"
+                    live_verification["error_code"] = error_code
                     live_verification["category"] = "ATTRIBUTION"
                     if json_output:
                         typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
@@ -7008,12 +7397,45 @@ def load_artifact_cmd(
 ) -> None:
     """Retry only the final artifact load; never relaunch workflow stages."""
 
+    artifact_credentials: dict[str, str] = {}
+    diagnostic_secrets: tuple[str, ...] = ()
+    resolved_s3_endpoint = s3_endpoint
     try:
+        from npa.orchestration.npa_workflow.submit_credentials import (
+            resolve_submit_credentials,
+        )
+
+        credential_context = resolve_submit_credentials(
+            project=project,
+            explicit_endpoint=s3_endpoint,
+            requested=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        )
+        resolved_s3_endpoint = credential_context.endpoint_url
+        artifact_credentials = dict(credential_context.secret_values)
+        if credential_context.access_key_id:
+            artifact_credentials.setdefault(
+                "AWS_ACCESS_KEY_ID", credential_context.access_key_id
+            )
+        if credential_context.secret_access_key:
+            artifact_credentials.setdefault(
+                "AWS_SECRET_ACCESS_KEY", credential_context.secret_access_key
+            )
+        diagnostic_secrets = tuple(
+            dict.fromkeys(
+                value
+                for value in (
+                    *artifact_credentials.values(),
+                    credential_context.access_key_id,
+                    credential_context.secret_access_key,
+                )
+                if value
+            )
+        )
         status = _durable_workflow_status(
             run_id,
             project=project,
             workflow_s3_uri=workflow_s3_uri,
-            s3_endpoint=s3_endpoint,
+            s3_endpoint=resolved_s3_endpoint,
         )
         if str(status.get("status") or "").upper() != "SUCCEEDED":
             raise RuntimeError(
@@ -7024,11 +7446,12 @@ def load_artifact_cmd(
             project=project,
             run_id=str(status.get("run_id") or _display_run_id(run_id)),
             run_prefix_uri=str(status.get("run_prefix_uri") or ""),
-            s3_endpoint=s3_endpoint,
+            s3_endpoint=resolved_s3_endpoint,
+            credential_values=artifact_credentials,
             agent_name=agent_name,
         )
     except Exception as exc:
-        _fail(str(exc))
+        _fail(_sanitized_failure_reason(exc, secrets=diagnostic_secrets))
         return
     if json_output:
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
@@ -7772,8 +8195,8 @@ def stage_src_cmd(
                 run_id,
                 {"source": {"status": "verified", "uri": uri}},
             )
-        except (ConfigError, SrcStagingError) as exc:
-            _fail(str(exc))
+        except (ConfigError, SrcStagingError, OSError, ValueError) as exc:
+            _fail(_sanitized_failure_reason(exc, secrets=()))
             return
     else:
         uri = _stage_npa_src_for_submit(
