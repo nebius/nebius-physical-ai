@@ -5663,3 +5663,85 @@ def test_spec_rejects_quota_inputs_that_cannot_be_counted() -> None:
         ClusterSpec(
             name="c", gpu_nodes=NodePoolSpec(count=1, platform="gpu-h200", preset="bad")
         ).validate()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("deployed", {"deployed": 1, "unresolved": 0, "failed": 0}),
+        ("running", {"deployed": 1, "unresolved": 0, "failed": 0}),
+        ("provisioning", {"deployed": 0, "unresolved": 1, "failed": 0}),
+        ("reconciling", {"deployed": 0, "unresolved": 1, "failed": 0}),
+        ("destroyed", {"deployed": 0, "unresolved": 0, "failed": 0}),
+        ("absent", {"deployed": 0, "unresolved": 0, "failed": 0}),
+        ("error", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        ("status-error", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        ("unexpected", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        (None, {"deployed": 0, "unresolved": 0, "failed": 1}),
+    ],
+)
+def test_fleet_recount_distinguishes_transitional_status(status, expected) -> None:
+    from npa.fleet.lifecycle import _recount
+
+    assert _recount([{"status": status}]) == expected
+
+
+def test_deploy_unresolved_status_remains_nonzero(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "deploy_fleet",
+        lambda spec, **kwargs: {
+            "name": spec.name,
+            "region": spec.region,
+            "tenant_id": spec.tenant_id,
+            "deployed": 0,
+            "unresolved": 1,
+            "failed": 0,
+            "clusters": [
+                {
+                    "project_key": "a",
+                    "cluster_name": "cluster",
+                    "status": "provisioning",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(
+        app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--yes"]
+    )
+
+    assert result.exit_code == 1
+    assert "0 deployed, 1 unresolved, 0 failed" in result.output
+    assert "[wait]" in result.output
+
+
+def test_destroy_unresolved_status_remains_nonzero(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "destroy_fleet",
+        lambda spec, **kwargs: {
+            "name": spec.name,
+            "unresolved": 1,
+            "failed": 0,
+            "clusters": [
+                {
+                    "project_key": "a",
+                    "cluster_name": "cluster",
+                    "status": "reconciling",
+                }
+            ],
+            "networks": [],
+        },
+    )
+
+    result = runner.invoke(
+        app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path)), "--yes"]
+    )
+
+    assert result.exit_code == 1
+    assert "teardown is incomplete" in result.output
