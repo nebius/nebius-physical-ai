@@ -83,6 +83,17 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "spec": "byof-wan2.1-14b.yaml",
         "must_exercise": ["wan2.1-14b_text_to_video", "decoded_mp4_validation"],
     },
+    "libero": {
+        "capability_name": "libero_spatial_bc_rnn_train_reload_heldout",
+        "smoke_artifact_name": "libero-smoke.json",
+        "spec": "byof-libero.yaml",
+        "must_exercise": [
+            "libero_official_demo_sha256",
+            "libero_upstream_bert_task_conditioning",
+            "libero_trajectory_disjoint_heldout_split",
+            "libero_spatial_bc_rnn_train_reload_heldout",
+        ],
+    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
@@ -203,6 +214,11 @@ def _smoke_contract(path: Path, config: dict[str, object]) -> str:
     """Read an embedded smoke or the fixed neutral-bootstrap hard gate."""
 
     smoke = str(config.get("smoke_command") or "")
+    if path.name == "byof-libero.yaml":
+        assert smoke == "/opt/npa/libero/smoke.sh"
+        return (ROOT / "npa/docker/workbench/libero/libero_smoke.py").read_text(
+            encoding="utf-8"
+        )
     if path.name != "byof-gymnasium-robotics.yaml":
         return smoke
     expected = "/usr/local/bin/npa-gymnasium-entrypoint run-smoke"
