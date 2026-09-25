@@ -726,6 +726,7 @@ skills:
         paths:
           - workflows/testing/mjlab-eval.yaml
           - workflows/testing/mjlab-train-eval.yaml
+          - workflows/testing/mjlab-render.yaml
   - name: development-desktop
     category: tools
     when_to_use: "Set up and operate an Ubuntu development desktop through npa tools desktop, with readable Retina rendering and authenticated public HTTPS access."

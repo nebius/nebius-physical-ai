@@ -15,7 +15,9 @@ that implementation. Keep simulator imports inside the isolated worker.
   environment count, learning rate, seed, native checkpoint resume and one-node
   multi-GPU torchrunx. The current process already owns its GPU allocation.
 - `eval`: real complete episodes with measured returns, lengths and survival;
-  optional first-episode MP4. `--device cpu` is supported for local evaluation.
+  `--video` publishes the first-episode MP4 and self-contained `rollout.html`
+  with measured results and checkpoint/video hashes. `--device cpu` is supported
+  for local evaluation.
 - `export`: native ONNX export and checker validation, with task metadata.
 - `list`: query the installed upstream task registry; never hardcode fake suites.
 - `status`, `system-info`: dependency versions; absence is not availability.
@@ -48,6 +50,8 @@ fall back to unsafe pickle.
 - `workflows/testing/mjlab-eval.yaml`: existing native checkpoint → measured report.
 - `workflows/testing/mjlab-train-eval.yaml`: native train → eval → ONNX export →
   independent-seed eval. All stages route to `npa-mjlab`, including repeated eval.
+- `workflows/testing/mjlab-render.yaml`: trained checkpoint → measured evaluation,
+  MP4 and HTML on RTX PRO 6000 through `workbench.mjlab.render` (`eval --video`).
 - `workbench.mjlab.train`, `.eval`, `.export` use real CLI flags and declared S3
   outputs. H100 is the state-based workflow default; camera/video workloads need
   a compatible rendering GPU/runtime.
@@ -76,3 +80,12 @@ Use `--family b200 --gpu-count 8` for native one-node torchrunx acceptance or
 `--family rtx6000 --gpu-count 1` to include a fully decoded G1 rollout video.
 Both require the built image and an authorized fresh S3 output prefix. Preserve
 full reports privately; its `acceptance.json` omits infrastructure identifiers.
+
+When asked for a trained-policy video, run actual training and independent-seed
+evaluation on the authorized GPUs; do not substitute the acceptance harness or
+golden smoke for that workload. Hand off the `rollout.html` artifact from the
+measured run. It embeds the exact MP4, so a signed HTML GET with `text/html` and
+`inline` response headers opens without a separate media URL. Keep the signed
+link private, verify its delivered bytes and browser playback, and state expiry.
+The Workbench artifact browser plays the separately declared MP4 and downloads
+HTML; do not imply that arbitrary HTML executes inside the agent UI.

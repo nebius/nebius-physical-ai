@@ -65,7 +65,8 @@ are not accepted through the service.
 
 - Training publishes `checkpoint.pt`, upstream checkpoints, parameters and
   TensorBoard events, followed by `mjlab_train.json`.
-- Evaluation publishes `episodes.json`, optionally `rollout.mp4`, and
+- Evaluation publishes `episodes.json`, optionally `rollout.mp4` and the
+  self-contained browser page `rollout.html`, and
   `mjlab_eval.json`. Each completed episode records return, length and survival.
 - Export publishes checked `policy.onnx` with task/version metadata and, for
   compatible joint-position robot policies, upstream robot metadata, followed
@@ -93,6 +94,39 @@ scores, simulation or storage writes. The former `--score`, `--suite` and
 `--task`; the old SONIC workflow now uses SONIC's native export/evaluation path.
 Public handoffs require S3 paths. JSON output supports `--output-format json`
 and the compatibility spelling `--output json`.
+
+## Rendered video in Workbench
+
+Run evaluation on a rendering-capable GPU with `--video`:
+
+```bash
+npa workbench mjlab eval --task Mjlab-Velocity-Flat-Unitree-G1 \
+  --checkpoint "s3://${NPA_S3_BUCKET}/runs/${RUN_ID}/train/checkpoint.pt" \
+  --episodes 32 --num-envs 4 --seed 43 --video \
+  --output-path "s3://${NPA_S3_BUCKET}/runs/${RUN_ID}/eval/"
+```
+
+This uses the same implementation as `EvalRequest(video=True)` in the SDK and
+`POST /eval` with `"video": true` in the authenticated service. Native MuJoCo
+renders the evaluated policy's first complete episode, and Workbench verifies
+that the MP4 decodes before publishing it. The result manifest lists both
+`artifacts["rollout.mp4"]` and `artifacts["rollout.html"]` with S3 URI, SHA-256
+and byte count.
+
+`rollout.html` embeds the unchanged MP4 bytes, measured evaluation results and
+the input checkpoint hash. Download and open it directly, or create an
+authenticated S3 GET URL with response content type `text/html` and content
+disposition `inline`. The page needs no separate viewer server, JavaScript,
+external media request or bucket CORS change. Keep signed links out of Git and
+PR text; share them only with the intended reviewer and state their expiry.
+
+For an NPA workflow, declare `rollout.mp4` and `rollout.html` as stage outputs.
+The supplied `workflows/testing/mjlab-render.yaml` does this with the
+`workbench.mjlab.render` toolRef and an RTX PRO 6000 resource profile. Supply your
+trained checkpoint and explicit operator image before submission.
+The Workbench artifact browser classifies the MP4 as video and provides normal
+playback; HTML remains a downloadable report. This does not require an MJLab
+specific UI route or executing arbitrary HTML inside the agent application.
 
 ## Service and SDK
 

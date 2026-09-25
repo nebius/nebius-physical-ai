@@ -257,6 +257,7 @@ def workflow_cmd(
             {
                 "workflow": "workflows/testing/mjlab-eval.yaml",
                 "training_workflow": "workflows/testing/mjlab-train-eval.yaml",
+                "render_workflow": "workflows/testing/mjlab-render.yaml",
             }
         )
     )

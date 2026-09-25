@@ -473,3 +473,6 @@ or writes. The service requires `MJLAB_TOKEN` and `MJLAB_ALLOWED_S3_ROOTS` and
 uses existing storage credentials. See the [MJLab guide](../docs/workbench/mjlab.md)
 for request schemas, deployment Secrets, environment variables, validation and
 image publication status.
+`eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
+page alongside the measured evaluation manifest. The SDK and service expose the
+same behavior with `video=True`.

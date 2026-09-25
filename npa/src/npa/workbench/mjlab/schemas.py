@@ -121,7 +121,7 @@ class EvalRequest(ExportRequest):
     Args:
         episodes: Number of completed episodes to measure.
         success_threshold: Required survival fraction, not task success.
-        video: Record the first environment's first episode as MP4.
+        video: Record the first episode as MP4 with a self-contained HTML page.
     Returns:
         Validated evaluation settings.
     Raises:

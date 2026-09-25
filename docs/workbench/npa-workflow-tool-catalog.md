@@ -93,6 +93,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
 | `workbench.mjlab.train` | `npa workbench mjlab train` | `config.mjlab_task`, `config.mjlab_iterations`, `config.mjlab_num_envs` | `config.training_uri` | no |
 | `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.mjlab_task`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
+| `workbench.mjlab.render` | `npa workbench mjlab eval --video` | `config.mjlab_task`, `config.checkpoint_uri` | `config.mjlab_uri` (MP4, HTML, measured report) | no |
 | `workbench.mjlab.export` | `npa workbench mjlab export` | `config.mjlab_task`, `config.checkpoint_uri` | `config.export_uri` | no |
 | `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint | no |
 | `workflow.groot.prepare_split` | `npa.workflows.groot_learning prepare-split` | source GR00T LeRobot dataset | hashed, episode-disjoint train/held-out datasets + split manifest with train-only statistics | no |

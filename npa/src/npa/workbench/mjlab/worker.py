@@ -115,6 +115,7 @@ def _policy_environment(request, inputs):
 
 def _evaluate(request, inputs, outputs):
     from .rollout import measure_episodes
+    from .video_report import write_video_report
 
     env, runner = _policy_environment(request, inputs)
     try:
@@ -122,6 +123,7 @@ def _evaluate(request, inputs, outputs):
         report = measure_episodes(env, policy, request, outputs)
         if request.video:
             report["video_frames"] = _verify_video(outputs / "rollout.mp4")
+            write_video_report(outputs, request, report, inputs["checkpoint"]["sha256"])
         (outputs / "episodes.json").write_text(
             json.dumps(report["episodes"], allow_nan=False)
         )

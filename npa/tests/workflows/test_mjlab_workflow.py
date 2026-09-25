@@ -35,3 +35,18 @@ def test_complete_workflow_uses_native_container_and_independent_seed():
 def test_operator_candidate_cannot_enter_public_release_plan():
     assert "mjlab" in VALIDATION_CANDIDATE_TOOLS
     assert "mjlab" not in publicly_publishable_tools()
+
+
+def test_render_workflow_publishes_playable_video_and_portable_html():
+    spec = load_spec(ROOT / "workflows/testing/mjlab-render.yaml")
+    plan = build_plan(spec, run_id="test-render")
+    assert len(plan.steps) == 1
+    step = plan.steps[0]
+    assert step.tool_ref == "workbench.mjlab.render"
+    assert "--video" in step.argv
+    assert tool_image_key(step.tool_ref) == "mjlab"
+    output = step.argv[step.argv.index("--output-path") + 1]
+    assert {artifact["uri"] for artifact in step.outputs} == {
+        output + name
+        for name in ("mjlab_eval.json", "episodes.json", "rollout.mp4", "rollout.html")
+    }

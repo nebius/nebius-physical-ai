@@ -805,6 +805,15 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         skip_reason="Requires an operator-provided native MJLab checkpoint and a built MJLab image.",
     ),
     SubmitLiveCase(
+        "mjlab-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="mjlab",
+        rotation_skip=True,
+        skip_reason="Requires a trained native checkpoint and an explicit built MJLab image override.",
+        notes="Rendering GPU evaluation publishes measured episodes, MP4 and self-contained HTML.",
+    ),
+    SubmitLiveCase(
         "sonic-train.yaml",
         "gpu",
         secret_envs=(
@@ -952,7 +961,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         rotation_skip=True,
-        skip_reason="MJLab image awaits exact-byte scans and GPU qualification before publication.",
+        skip_reason="MJLab image awaits the complete public release gates after private GPU qualification.",
         notes="Native train -> eval -> export -> independent-seed eval; requires an explicit built image override.",
     ),
     # --- Multi-stage GPU ---
