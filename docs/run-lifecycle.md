@@ -233,3 +233,11 @@ Adoption must not overwrite that provider evidence.
 - [Workflow authoring guide](workbench/npa-workflow-guide.md) · [tool catalog](workbench/npa-workflow-tool-catalog.md)
 - [Tear it all down](teardown.md) — cancellation and cleanup ordering
 - [debug-failed-run skill](../skills/atomic/debug-failed-run/SKILL.md) — triage order for a run that failed or hung
+
+### Exact artifact lookup while a manifest is pending
+
+An explicit storage locator remains scoped to that workflow. Artifact lookup
+may remove a trailing control-directory suffix only when the requested run ID
+and path layout, or the manifest's exact run-prefix provenance, identify the
+parent as the run root. Workflow names and pending status alone never authorize
+listing a parent prefix that could contain a sibling workflow's outputs.
