@@ -4,7 +4,7 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec --run-id preview succeeded for prepare, capture and validate. Native execution is pending.",
+      "reason": "validate-spec and plan-spec --run-id preview succeeded for prepare, capture and validate. Native preparation passed; completed pixels failed temporal validation.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-warehouse.yaml --run-id preview --json"
@@ -27,8 +27,8 @@
       "evidence": []
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "A native public-warehouse collection attempt stopped before publication because its built-in Kit MDL was not explicitly bound. The corrected native material dependency contract requires a fresh complete run.",
+      "status": "verified",
+      "reason": "The native public-warehouse collector published 2,034 hashed files and an exact installed Kit MDL dependency descriptor; a separate native capture worker verified that descriptor.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd_usd.py"
       ]
@@ -40,14 +40,14 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The pinned public image started native Isaac Sim 6.0.1 with Vulkan on an RTX GPU. The corrected source snapshot and explicit native material hashes still require full capture qualification.",
+      "reason": "The pinned image started native Isaac Sim 6.0.1 and rendered all 265 four-camera poses on an RTX GPU. Temporal validation rejected the dataset; the corrected external renderer-clock adapter needs a fresh full run.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd_runtime.py::test_render_stages_branch_source_in_gpu_and_cpu_tasks"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Isaac Sim 6.0.1.0 on an RT-core GPU is required. This macOS authoring host did not execute capture; actual calibration/freshness and reference-time semantics remain live acceptance gates.",
+      "reason": "Native rendering completed but ReferenceTime did not advance with the paused USD timeline. The corrected static external Fabric clock and early timestamp checks remain live acceptance gates.",
       "evidence": [
         "npa/tests/e2e/test_multicamera_rgbd_live.py"
       ]

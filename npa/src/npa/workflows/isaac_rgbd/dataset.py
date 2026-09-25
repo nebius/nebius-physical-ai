@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from fractions import Fraction
 import hashlib
 from pathlib import Path
 
@@ -31,13 +30,7 @@ from .geometry import (
     backproject,
 )
 from .fusion import _validate_fused_cloud, _write_fused_cloud
-
-
-def _reference_time(value):
-    _keys(value, "numerator denominator", "render_reference_time")
-    numerator = _integer(value["numerator"], "reference time numerator")
-    denominator = _integer(value["denominator"], "reference time denominator", 1)
-    return Fraction(numerator, denominator)
+from .render_time import RENDERER_CLOCK, _check_render_times
 
 
 def _check_render_metadata(metadata, camera, world_from_camera):
@@ -230,15 +223,13 @@ def _validate_frame(root, frame, index, manifest):
         camera["id"] for camera in cameras
     ]:
         raise ValueError("cross-camera coverage/order mismatch")
-    times = [_reference_time(view["render_reference_time"]) for view in frame["views"]]
-    if len(set(times)) != 1:
-        raise ValueError("cross-camera render reference times are not synchronized")
+    reference_time = _check_render_times(frame["views"], sample["timestamp_ns"])
     pixels = sum(
         _validate_view(root, view, camera, sample, manifest)
         for camera, view in zip(cameras, frame["views"], strict=True)
     )
     _validate_fused_cloud(root, frame, cameras, manifest)
-    return pixels, times[0]
+    return pixels, reference_time
 
 
 def _validate_header(manifest):
@@ -267,7 +258,9 @@ def _validate_header(manifest):
 
 def _validate_provenance(manifest):
     provenance = manifest["provenance"]
-    fields = "request_sha256 input_manifest_sha256 scope replicator_version"
+    fields = (
+        "request_sha256 input_manifest_sha256 scope replicator_version renderer_clock"
+    )
     if "runtime_materials" in manifest["request"]:
         fields += " runtime_materials"
         if (
@@ -285,6 +278,7 @@ def _validate_provenance(manifest):
     if (
         provenance["scope"] not in {"procedural-room", "supplied-usd"}
         or not provenance["replicator_version"]
+        or provenance["renderer_clock"] != RENDERER_CLOCK
     ):
         raise ValueError("missing renderer provenance")
     _file_hashes({"request.json": provenance["request_sha256"]})

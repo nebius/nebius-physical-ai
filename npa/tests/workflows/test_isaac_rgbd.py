@@ -12,6 +12,7 @@ import pytest
 
 from npa.workflows.isaac_rgbd import contract, dataset, geometry, reference, transport
 from npa.workflows.isaac_rgbd.fixture import write_fixture
+from npa.workflows.isaac_rgbd.render_time import _reference_time
 
 
 @pytest.fixture
@@ -34,7 +35,10 @@ def _snapshot(camera, sample, index):
     return {
         "rgb": np.arange(height * width * 4, dtype=np.uint8).reshape(height, width, 4),
         "depth": depth,
-        "render_reference_time": {"numerator": index + 1, "denominator": 10},
+        "render_reference_time": {
+            "numerator": sample["timestamp_ns"],
+            "denominator": 1_000_000_000,
+        },
         "render_calibration": {
             "focal": optics["focal"],
             "aperture": optics["aperture"],
@@ -65,6 +69,7 @@ def captured(tmp_path, rig_request):
         "input_manifest_sha256": "a" * 64,
         "scope": "procedural-room",
         "replicator_version": "unit-test",
+        "renderer_clock": "external_static_trajectory",
     }
     return root, dataset._finalize(root, rig_request, frames, provenance)
 
@@ -103,6 +108,21 @@ def test_cpu_validation_binds_measured_native_material_identity(captured):
     assert dataset.validate_dataset(root, manifest)["validated"]
     manifest["provenance"]["runtime_materials"]["library_sha256"] = "d" * 64
     with pytest.raises(ValueError, match="native MDL provenance"):
+        dataset.validate_dataset(root, manifest)
+
+
+@pytest.mark.parametrize("mutation", ["clock", "offset"])
+def test_cpu_validation_binds_native_clock_and_requested_times(captured, mutation):
+    root, manifest = captured
+    if mutation == "clock":
+        manifest["provenance"]["renderer_clock"] = "unverified_timeline"
+        match = "renderer provenance"
+    else:
+        for frame in manifest["frames"]:
+            for view in frame["views"]:
+                view["render_reference_time"]["numerator"] += 1_000_000
+        match = "requested time"
+    with pytest.raises(ValueError, match=match):
         dataset.validate_dataset(root, manifest)
 
 
@@ -290,7 +310,7 @@ def test_rejects_metadata_misalignment(captured, mutation, match):
         frame["views"][0]["render_reference_time"]["numerator"] += 1
     elif mutation == "stale":
         for view in manifest["frames"][1]["views"]:
-            view["render_reference_time"] = {"numerator": 1, "denominator": 10}
+            view["render_reference_time"] = {"numerator": 0, "denominator": 10}
     elif mutation in {"empty", "missing_frame"}:
         manifest["frames"] = [] if mutation == "empty" else manifest["frames"][:-1]
     elif mutation == "calibration":
@@ -372,10 +392,10 @@ def test_missing_and_undecodable_data_never_validate(captured):
 
 
 def test_reference_time_is_exact_rational_and_rejects_bad_denominator():
-    assert dataset._reference_time({"numerator": 1, "denominator": 3}) == Fraction(2, 6)
+    assert _reference_time({"numerator": 1, "denominator": 3}) == Fraction(2, 6)
     for value in [0, -1, True, 1.0]:
         with pytest.raises(ValueError):
-            dataset._reference_time({"numerator": 1, "denominator": value})
+            _reference_time({"numerator": 1, "denominator": value})
 
 
 class _MemoryStorage:

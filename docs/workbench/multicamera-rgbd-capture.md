@@ -6,6 +6,10 @@ validates the resulting S3 dataset in a separate CPU stage. No robot is required
 The existing Franka RGB capture adapter is unchanged. This is an executable
 implementation with CPU contract tests; **GPU acceptance is pending**. See the
 [readiness record](../../workflows/testing/multicamera-rgbd-capture.readiness.json).
+The public warehouse reference completed native preparation and rendered all
+265 four-camera poses on an RTX GPU. Its first complete dataset was rejected
+because the native render reference clock stayed fixed. The corrected clock
+adapter requires a fresh complete capture and decoded validation before acceptance.
 
 The default `procedural://four-camera-room` input creates a repository-authored
 room with four walls, a floor, a crate, lighting, four outward-facing calibrated
@@ -196,9 +200,15 @@ half-pixel conversion from this convention to the physical image window.
 Frames follow input trajectory order; cameras follow sorted IDs. Every camera's
 render product participates in one blocking Replicator step per sample, with
 `delta_time=0`, a paused timeline and four rendering subframes. All annotator
-buffers are copied before changing any pose. The adapter checks the actual
-timeline against the requested time, equal rational reference times across
-cameras, and strictly advancing reference times across samples. Renderer camera
+buffers are copied before changing any pose. Isaac 6 reads sensor time from
+Fabric's `/ExternalSimulationTime.omni:time`, independently of the USD timeline.
+The static sensor-only adapter drives that native external clock from each
+trajectory timestamp while physics remains paused. It records
+`renderer_clock: external_static_trajectory` in provenance. Before writing a
+view, the actual returned `ReferenceTime` must be identical across cameras and
+match the requested timestamp within one nanosecond. The CPU validator repeats
+these checks and requires reference times to advance between samples. It also
+checks the observed USD timeline against the requested time. Renderer camera
 metadata must agree with the calibrated poses and intrinsics. Ordering and
 sample times are deterministic; bit-identical RTX pixels across drivers or
 hardware are not promised.
@@ -286,6 +296,8 @@ it does not vendor runtime code or assets:
 - [Versioned Replicator annotator API](https://docs.omniverse.nvidia.com/kit/docs/omni_replicator/1.13.30/source/extensions/omni.replicator.core/docs/API.html)
   specifies `distance_to_image_plane`, `CameraParams` and `ReferenceTime`.
   The installed extension version is recorded in every capture.
+- [Isaac Sim 6.0.1 multi-tick clock architecture](https://docs.isaacsim.omniverse.nvidia.com/6.0.1/sensors/isaacsim_sensors_multitick_rendering.html)
+  distinguishes USD timeline time from the renderer's external Fabric clock.
 - [OpenUSD dependency extraction](https://openusd.org/release/api/dependencies_8h.html)
   documents nonrecursive enumeration of layer, payload and asset references.
 - [Native asset collector](https://docs.omniverse.nvidia.com/kit/docs/omni.kit.usd.collect/3.0.1/omni.kit.usd.collect/omni.kit.usd.collect.Collector.html)

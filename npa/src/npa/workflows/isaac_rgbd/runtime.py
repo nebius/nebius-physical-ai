@@ -20,6 +20,7 @@ from .dataset import _finalize, _write_frame
 from .geometry import _optical_to_usd, _usd_camera_parameters
 from .materials import _verify_materials
 from .scene import _check_scene_files
+from .render_time import RENDERER_CLOCK, _check_render_times, _set_render_time
 
 
 def _runtime_version():
@@ -56,8 +57,9 @@ def _open_scene(root, request):
         raise ValueError(
             "scene must declare Z up and metersPerUnit=1; convert it before capture"
         )
-    if stage.GetPrimAtPath("/NpaRgbdCapture"):
-        raise ValueError("scene uses the reserved /NpaRgbdCapture prim")
+    for path in ("/NpaRgbdCapture", "/ExternalSimulationTime"):
+        if stage.GetPrimAtPath(path):
+            raise ValueError(f"scene uses the reserved {path} prim")
     # Package root layers are read-only; rig opinions belong to this capture session.
     stage.SetEditTarget(stage.GetSessionLayer())
     return stage
@@ -145,11 +147,13 @@ def _render_frames(app, root, request, output, rep):
         timeline.set_current_time(sample["timestamp_ns"] / 1e9)
         timeline.commit()
         _set_poses(sensors, sample)
+        _set_render_time(sample["timestamp_ns"])
         app.update()
         rep.orchestrator.step(
             delta_time=0.0, pause_timeline=True, rt_subframes=4, wait_for_render=True
         )
         snapshots = {sensor["camera"]["id"]: _snapshot(sensor) for sensor in sensors}
+        _check_render_times(snapshots.values(), sample["timestamp_ns"])
         frames.append(
             _write_frame(output, request, index, snapshots, timeline.get_current_time())
         )
@@ -165,6 +169,7 @@ def _provenance(input_root, request, scope):
         "request_sha256": hashlib.sha256(_json_bytes(request)).hexdigest(),
         "input_manifest_sha256": _sha256(input_root / "request.json"),
         "scope": scope,
+        "renderer_clock": RENDERER_CLOCK,
         "replicator_version": manager.get_extension_dict(extension_id)["package"][
             "version"
         ],

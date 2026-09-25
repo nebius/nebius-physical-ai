@@ -149,7 +149,18 @@ def _fake_render_loop(monkeypatch, events):
     monkeypatch.setattr(
         runtime,
         "_snapshot",
-        lambda sensor: events.append(("view", sensor["camera"]["id"])) or {},
+        lambda sensor: (
+            events.append(("view", sensor["camera"]["id"]))
+            or {
+                "render_reference_time": {
+                    "numerator": round(timeline.get_current_time() * 1e9),
+                    "denominator": 1_000_000_000,
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        runtime, "_set_render_time", lambda time: events.append(("clock", time))
     )
     monkeypatch.setattr(
         runtime, "_write_frame", lambda *args: events.append(("write", args[2]))
@@ -170,10 +181,11 @@ def test_one_render_step_precedes_all_views_before_next_sample(monkeypatch, tmp_
     app, rep = _fake_render_loop(monkeypatch, events)
     runtime._render_frames(app, tmp_path, request, tmp_path, rep)
     for index in range(3):
-        batch = events[index * 9 : (index + 1) * 9]
+        batch = events[index * 10 : (index + 1) * 10]
         assert [item[0] for item in batch] == [
             "time",
             "pose",
+            "clock",
             "update",
             "render",
             "view",
@@ -182,13 +194,30 @@ def test_one_render_step_precedes_all_views_before_next_sample(monkeypatch, tmp_
             "view",
             "write",
         ]
-        assert batch[3][1] == {
+        assert batch[4][1] == {
             "delta_time": 0,
             "pause_timeline": True,
             "rt_subframes": 4,
             "wait_for_render": True,
         }
-        assert [item[1] for item in batch[4:8]] == ["front", "left", "rear", "right"]
+        assert [item[1] for item in batch[5:9]] == ["front", "left", "rear", "right"]
+
+
+def test_stale_native_clock_stops_before_writing_bad_views(monkeypatch, tmp_path):
+    request = write_fixture(tmp_path / "input")
+    events = []
+    app, rep = _fake_render_loop(monkeypatch, events)
+    monkeypatch.setattr(
+        runtime,
+        "_snapshot",
+        lambda sensor: {
+            "render_reference_time": {"numerator": 0, "denominator": 1_000_000_000}
+        },
+    )
+    with pytest.raises(ValueError, match="stale capture.*requested time"):
+        runtime._render_frames(app, tmp_path, request, tmp_path, rep)
+    assert [item for item in events if item[0] == "write"] == [("write", 0)]
+    assert len([item for item in events if item[0] == "render"]) == 2
 
 
 def test_snapshot_requires_real_sensor_metadata(monkeypatch):
