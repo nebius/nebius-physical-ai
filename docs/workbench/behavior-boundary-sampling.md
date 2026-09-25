@@ -10,23 +10,36 @@ The sampler uses the released 23-coordinate B1K action layout:
 
 - coordinate `14`: left gripper;
 - coordinate `22`: right gripper;
-- `0.0`: fully open;
-- `1.0`: fully closed.
+- `-1.0`: close;
+- `1.0`: open.
 
-These values apply to the raw expert action before model normalization. They
-come from the pinned Comet source at commit
-`4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5`. Its B1K transform
-(`a82c15dece0242a94cb25d94b7fe4ed04c1d0fcfc508ed6d9d5e28b0f32a075e`)
-passes the dataset's 23-coordinate action through unchanged; its normalization
-contract (`62e4a39ea7fcdae53b4466942db348c3e38fc016b7f7a5273cafed649ebe614b`)
-defines `0.0` as open and `1.0` as closed. The independently pinned RLC source at commit
-`ca556f74a455cef7987a2be4537b5ac85cc56dd7` names coordinates 14 and 22 in
-both its per-coordinate loss
-(`55faeee1c5e3f3c47f1dd02ca88e66270cb2f1bffb36b132fe90fa40855d2585`)
-and correction-rule
-(`943ac883b65527d7d1a63bafbb8ee84f19bde8de78785565c3ee8e118af4b857`)
-implementations. Inputs with another width or a nonbinary gripper command fail
-before sampling.
+These signed values apply to the raw expert action before model normalization.
+The pinned BEHAVIOR `v3.9.3`
+[R1Pro configuration](https://github.com/StanfordVL/BEHAVIOR-1K/blob/v3.9.3/OmniGibson/omnigibson/eval/r1pro.yaml)
+uses smooth gripper controllers with the default `[-1, 1]` input range. The
+[controller base](https://github.com/StanfordVL/BEHAVIOR-1K/blob/v3.9.3/OmniGibson/omnigibson/controllers/controller_base.py)
+and [multi-finger controller](https://github.com/StanfordVL/BEHAVIOR-1K/blob/v3.9.3/OmniGibson/omnigibson/controllers/multi_finger_gripper_controller.py)
+map the lower endpoint to the closed position limit and the upper endpoint to
+the open position limit.
+
+The source manifest
+`e7610329a274501b1c53d033f12a5ed61900f3121f4e5ec2a236af862bf7aeb3`
+binds the packed TRAIN data. One fully hashed task-1 Parquet file
+`0ad51a4a16cbe48b8d122109963e905819f92000380b1e0fdf64fae61e305795`
+contains 225,534 rows. Coordinate 14 contains 44,382 `-1` and 181,152 `+1`
+commands; coordinate 22 contains 167,586 `-1` and 57,948 `+1` commands. These
+counts describe that file rather than the full dataset. The sampler deliberately
+accepts only exact endpoint commands, so zero is invalid at its input boundary;
+the controller itself supports the continuous `[-1, 1]` input range.
+
+Pinned Comet commit `4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5`
+[passes the 23-coordinate action through its B1K input transform unchanged](https://github.com/mli0603/openpi-comet/blob/4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5/src/openpi/policies/b1k_policy.py).
+The
+quantile normalization asset
+`d66ed16830a98f90dde8a315058b4a0df59f5e05734c1686d8b3f66787d0a929`
+has `q01=-1` and `q99=+1` for both gripper coordinates, so normalization
+preserves their signs. As part of the sampler contract, inputs with another
+width or any command outside exact `{-1.0, 1.0}` fail before sampling.
 
 ## Transition and sampling rules
 

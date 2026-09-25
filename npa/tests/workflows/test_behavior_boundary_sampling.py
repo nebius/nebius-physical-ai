@@ -7,14 +7,16 @@ import pytest
 
 from npa.workflows.behavior_challenge.boundary_sampling import (
     BoundarySamplingPlan,
+    CLOSED_COMMAND,
     EpisodeActions,
+    OPEN_COMMAND,
     SampleKey,
     construct_matched_samples,
     persistent_gripper_transitions,
 )
 
 
-def _actions(length: int, *, left: float = 0.0, right: float = 0.0) -> np.ndarray:
+def _actions(length: int, *, left: float = 1.0, right: float = 1.0) -> np.ndarray:
     result = np.zeros((length, 23), dtype=np.float32)
     result[:, 14] = left
     result[:, 22] = right
@@ -38,32 +40,40 @@ def _plan(**changes: object) -> BoundarySamplingPlan:
 
 
 def test_persistent_transitions_use_exact_expert_gripper_coordinates() -> None:
-    actions = _actions(14)
-    actions[4:, 14] = 1.0
-    actions[10:, 14] = 0.0
+    actions = _actions(26)
+    actions[4:, 14] = -1.0
+    actions[10:, 14] = 1.0
+    actions[16:, 22] = -1.0
+    actions[22:, 22] = 1.0
 
     transitions = persistent_gripper_transitions(actions)
 
     assert [(item.side, item.command, item.frame_index) for item in transitions] == [
         ("left", "close", 4),
         ("left", "open", 10),
+        ("right", "close", 16),
+        ("right", "open", 22),
     ]
 
 
-def test_transition_requires_persistence_and_rejects_nonbinary_commands() -> None:
+def test_transition_requires_persistence() -> None:
     unstable = _actions(10)
-    unstable[4, 14] = 1.0
+    unstable[4, 14] = CLOSED_COMMAND
     assert persistent_gripper_transitions(unstable) == ()
 
+
+@pytest.mark.parametrize("coordinate", [14, 22])
+@pytest.mark.parametrize("command", [0.0, 0.5])
+def test_transition_rejects_nonbinary_commands(coordinate: int, command: float) -> None:
     nonbinary = _actions(10)
-    nonbinary[4, 14] = 0.5
-    with pytest.raises(ValueError, match="binary"):
+    nonbinary[4, coordinate] = command
+    with pytest.raises(ValueError, match="signed binary"):
         persistent_gripper_transitions(nonbinary)
 
 
 def test_simultaneous_two_arm_transition_is_ambiguous() -> None:
     actions = _actions(10)
-    actions[4:, (14, 22)] = 1.0
+    actions[4:, (14, 22)] = CLOSED_COMMAND
 
     assert persistent_gripper_transitions(actions) == ()
 
@@ -71,8 +81,8 @@ def test_simultaneous_two_arm_transition_is_ambiguous() -> None:
 def test_matched_sampling_preserves_anchor_draws_and_exact_task_quotas() -> None:
     anchor_zero = EpisodeActions(0, 5, _actions(12))
     focal = _actions(16)
-    focal[5:, 14] = 1.0
-    focal[12:, 14] = 0.0
+    focal[5:, 14] = CLOSED_COMMAND
+    focal[12:, 14] = OPEN_COMMAND
     anchor_twenty_two = EpisodeActions(22, 8, _actions(12))
     episodes = [EpisodeActions(1, 7, focal), anchor_twenty_two, anchor_zero]
 
@@ -138,8 +148,8 @@ def test_matched_sampling_preserves_anchor_draws_and_exact_task_quotas() -> None
 
 
 def test_release_near_chunk_edge_stays_inside_episode() -> None:
-    actions = _actions(12, left=1.0)
-    actions[9:, 14] = 0.0
+    actions = _actions(12, left=CLOSED_COMMAND)
+    actions[9:, 14] = OPEN_COMMAND
     episodes = [EpisodeActions(1, 3, actions)]
 
     result = construct_matched_samples(
@@ -154,8 +164,8 @@ def test_release_near_chunk_edge_stays_inside_episode() -> None:
 
 def test_chunks_with_overlapping_transitions_are_not_boundary_samples() -> None:
     actions = _actions(15)
-    actions[5:, 14] = 1.0
-    actions[9:, 22] = 1.0
+    actions[5:, 14] = CLOSED_COMMAND
+    actions[9:, 22] = CLOSED_COMMAND
     episodes = [EpisodeActions(1, 4, actions)]
 
     result = construct_matched_samples(
@@ -177,7 +187,7 @@ def test_chunks_with_overlapping_transitions_are_not_boundary_samples() -> None:
 
 def test_anchor_task_boundaries_cannot_fill_focal_task_quota() -> None:
     anchor = _actions(12)
-    anchor[5:, 14] = 1.0
+    anchor[5:, 14] = CLOSED_COMMAND
 
     with pytest.raises(ValueError, match="close boundary sample pool is empty"):
         construct_matched_samples(
@@ -194,9 +204,9 @@ def test_anchor_task_boundaries_cannot_fill_focal_task_quota() -> None:
 
 
 def test_valid_release_and_paired_hand_change_in_one_chunk_is_excluded() -> None:
-    actions = _actions(12, left=1.0)
-    actions[4:, 14] = 0.0
-    actions[8:, (14, 22)] = 1.0
+    actions = _actions(12, left=CLOSED_COMMAND)
+    actions[4:, 14] = OPEN_COMMAND
+    actions[8:, (14, 22)] = CLOSED_COMMAND
 
     with pytest.raises(ValueError, match="open boundary sample pool is empty"):
         construct_matched_samples(

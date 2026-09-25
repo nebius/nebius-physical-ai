@@ -11,8 +11,8 @@ import numpy as np
 
 ACTION_DIMENSION = 23
 GRIPPER_COORDINATES = {"left": 14, "right": 22}
-OPEN_COMMAND = 0.0
-CLOSED_COMMAND = 1.0
+OPEN_COMMAND = 1.0
+CLOSED_COMMAND = -1.0
 
 
 @dataclass(frozen=True, order=True)
@@ -275,7 +275,7 @@ def _validated_actions(actions: np.ndarray) -> np.ndarray:
         raise ValueError("expert actions must contain finite floating-point values")
     grippers = values[:, tuple(GRIPPER_COORDINATES.values())]
     if not np.all((grippers == OPEN_COMMAND) | (grippers == CLOSED_COMMAND)):
-        raise ValueError("expert gripper commands must be binary 0.0 or 1.0")
+        raise ValueError("expert gripper commands must be signed binary -1.0 or 1.0")
     return values
 
 
