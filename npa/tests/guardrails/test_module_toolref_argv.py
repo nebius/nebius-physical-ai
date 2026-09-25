@@ -47,6 +47,7 @@ PARSER_FACTORIES = {
     "npa.workflows.byof.newton_pipeline": "build_parser",
     "npa.workflows.byof.openpi_full_droid": "build_parser",
     "npa.workflows.byof.openpi_service": "build_parser",
+    "npa.workflows.byof.ros2_pipeline": "build_parser",
     "npa.workflows.content_agents": "build_parser",
     "npa.workflows.paidf_native": "build_parser",
 }

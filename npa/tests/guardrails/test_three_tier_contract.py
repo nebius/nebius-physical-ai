@@ -895,6 +895,13 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # test_module_toolref_argv.py instead.
         "openvla",
         "nurec",
+        # ROS 2 toolRef is preflight-only: the `preflight` command detects a
+        # usable ROS 2 Jazzy environment (ros2 CLI, ROS_DISTRO, rclpy) and the
+        # pipeline module emits plan specs without executing ROS 2 code, so
+        # there is no service tier to keep coherent with a YAML env block.
+        # CLI <-> workbench argv coherence is enforced by
+        # npa/tests/cli/test_ros2_cli.py instead.
+        "ros2",
         "scenario-gen",
         "sim2real",
         # Internal typed stage helper used by npa.workflow toolRefs. It delegates

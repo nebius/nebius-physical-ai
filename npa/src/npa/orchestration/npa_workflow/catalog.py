@@ -67,6 +67,7 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.ros2.preflight": "public ROS 2 preflight primitive (checks Jazzy prerequisites; bridge/bag/fleet not implemented)",
 }
 
 
@@ -135,6 +136,7 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 _NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
@@ -2019,6 +2021,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
         ],
+    ),
+    "workbench.ros2.preflight": ToolEntry(
+        name="workbench.ros2.preflight",
+        description=(
+            "Check ROS 2 Jazzy prerequisites (ros2 CLI, ROS_DISTRO, rclpy); "
+            "exits non-zero with remediation when unusable. Bridge, bag "
+            "conversion, and fleet execution are not implemented."
+        ),
+        argv_template=[*_ROS2_PIPELINE, "--preflight"],
     ),
     "workbench.molmoact.finetune": ToolEntry(
         name="workbench.molmoact.finetune",
