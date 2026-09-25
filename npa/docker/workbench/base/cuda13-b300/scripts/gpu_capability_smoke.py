@@ -1,45 +1,27 @@
 #!/usr/bin/env python
-"""Real capability smoke for the CUDA 13 Blackwell base image.
+"""Validate native CUDA coverage and real FA4 outputs and gradients on a GPU.
 
-Runs *inside* a workbench container on a real GPU. An import check is not
-enough: ``import flash_attn`` succeeds on every Blackwell part, but the
-flash-attn-4 CuTe forward kernel only executes on TMA-capable architectures.
-That gap went unnoticed for months because the golden eval only imported.
-
-Checks, in order:
-
-1. The device is the architecture we meant to validate, and the wheel carries
-   compatible native SASS for it (so kernels are not silently PTX-JIT-ing).
-   This includes same-major forward compatibility: ``sm_100`` SASS runs on an
-   ``sm_103`` B300, while SASS never crosses a CUDA major.
-2. A bf16 tensor-core matmul produces finite results. This is the control: if
-   it fails, the GPU or the wheel is wrong, not the kernel under test.
-3. torch SDPA runs, as a second control on the attention shape itself.
-4. The flash-attn-4 CuTe forward kernel executes and matches SDPA.
-
-Step 4 is expected to fail on ``sm_120`` (RTX PRO 6000): flash-attn-4's CuTe
-kernel partitions its epilogue with ``cpasync.tma_partition``, and the TMA copy
-atom is unavailable on workstation Blackwell. Pass ``--allow-no-tma`` to record
-that as a known gap rather than a failure; never pass it for a datacenter part
-(``sm_90``/``sm_100``/``sm_103``), where TMA exists and a failure is real.
+Run inside the CUDA 13 base image. Dense, grouped-query and variable-length
+cases cover FP16/BF16, head dimensions 64/128 and causal/noncausal attention.
+Every case compares outputs and dQ/dK/dV against independent FP64 attention.
+Unsupported features and other model shapes require separate qualification.
 
 Usage:
-  python gpu_capability_smoke.py --expect-capability 10.0
-  python gpu_capability_smoke.py --expect-capability 12.0 --allow-no-tma
+  python gpu_capability_smoke.py --expect-capability 12.0
+  python gpu_capability_smoke.py --expect-capability 10.0 --json-output report.json
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
+import json
 import sys
-
-# Architectures with the Tensor Memory Accelerator that flash-attn-4 CuTe needs.
-TMA_CAPABLE = {(9, 0), (10, 0), (10, 3)}
+from importlib import metadata
+from pathlib import Path
 
 
 def _parse_sass_arch(flag: str) -> tuple[int, int] | None:
-    """Parse an ``sm_*`` wheel flag, ignoring PTX-only entries."""
-
     if not flag.startswith("sm_"):
         return None
     digits = flag.removeprefix("sm_")
@@ -51,12 +33,16 @@ def _parse_sass_arch(flag: str) -> tuple[int, int] | None:
 def covering_sass_arch(
     capability: tuple[int, int], arch_flags: list[str]
 ) -> tuple[int, int] | None:
-    """Return the best native SASS that covers a device without PTX JIT.
+    """Find compatible native SASS without crossing a CUDA major.
 
-    Minor-version forward compatibility applies only within one CUDA major, so
-    ``sm_100`` covers ``sm_103`` but ``sm_90`` and ``sm_120`` do not.
+    Args:
+        capability: Device compute capability, as major and minor.
+        arch_flags: Architecture flags reported by the installed Torch wheel.
+    Returns:
+        The highest compatible SASS capability, or None when only PTX is usable.
+    Raises:
+        None.
     """
-
     available = [arch for flag in arch_flags if (arch := _parse_sass_arch(flag))]
     compatible = [
         arch
@@ -66,111 +52,214 @@ def covering_sass_arch(
     return max(compatible, default=None)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--expect-capability",
-        default="",
-        metavar="CC",
-        help="compute capability the device must report, e.g. 10.0",
-    )
-    parser.add_argument(
-        "--allow-no-tma",
-        action="store_true",
-        help="treat a missing-TMA flash-attn failure as a known gap (sm_120 only)",
-    )
-    args = parser.parse_args(argv)
+def _check_device(torch, expected: str) -> dict:
+    capability = torch.cuda.get_device_capability()
+    flags = torch.cuda.get_arch_list()
+    if expected and capability != tuple(int(part) for part in expected.split(".")):
+        raise ValueError(f"Expected capability {expected}, landed on {capability}")
+    if covering_sass_arch(capability, flags) is None:
+        raise ValueError(f"No compatible native SASS for {capability} in {flags}")
+    return {
+        "gpu": torch.cuda.get_device_name(0),
+        "capability": list(capability),
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "wheel_arch_flags": flags,
+        "packages": {
+            name: metadata.version(name)
+            for name in ("flash-attn-4", "nvidia-cutlass-dsl", "quack-kernels")
+        },
+    }
 
+
+def _check_controls(torch) -> None:
+    matrix = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
+    product = matrix @ matrix
+    query = torch.randn(2, 4, 129, 64, device="cuda", dtype=torch.bfloat16)
+    output = torch.nn.functional.scaled_dot_product_attention(query, query, query)
+    torch.cuda.synchronize()
+    if not bool(torch.isfinite(product).all() and torch.isfinite(output).all()):
+        raise AssertionError("Control matmul or Torch SDPA produced non-finite values")
+
+
+def _reference_attention(torch, query, key, value, causal: bool):
+    # FA causal cross-attention aligns at the bottom right; Torch SDPA's
+    # is_causal=True uses a different alignment when Q/K lengths differ.
+    repeats = query.shape[2] // key.shape[2]
+    key = key.repeat_interleave(repeats, dim=2)
+    value = value.repeat_interleave(repeats, dim=2)
+    scores = torch.einsum("bqhd,bkhd->bhqk", query, key) / query.shape[-1] ** 0.5
+    if causal:
+        rows = torch.arange(query.shape[1], device=query.device)[:, None]
+        columns = torch.arange(key.shape[1], device=query.device)[None, :]
+        mask = columns <= rows + key.shape[1] - query.shape[1]
+        scores = scores.masked_fill(~mask, float("-inf"))
+    return torch.einsum("bhqk,bkhd->bqhd", scores.softmax(dim=-1), value)
+
+
+def _reference_varlen(torch, tensors, lengths, causal: bool):
+    query, key, value = tensors
+    queries = query.split(lengths[0])
+    keys = key.split(lengths[1])
+    values = value.split(lengths[1])
+    outputs = [
+        _reference_attention(torch, q[None], k[None], v[None], causal)[0]
+        for q, k, v in zip(queries, keys, values, strict=True)
+    ]
+    return torch.cat(outputs)
+
+
+def _compare_tensor(torch, actual, reference, dtype: str) -> dict:
+    actual = actual.double()
+    if not bool(torch.isfinite(actual).all() and torch.isfinite(reference).all()):
+        raise AssertionError("Attention output or gradient contains non-finite values")
+    difference = actual - reference
+    relative = (difference.norm() / reference.norm().clamp_min(1e-12)).item()
+    tolerance = 0.02 if dtype == "bfloat16" else 0.003
+    torch.testing.assert_close(actual, reference, rtol=tolerance, atol=tolerance)
+    relative_limit = 0.01 if dtype == "bfloat16" else 0.002
+    if relative > relative_limit:
+        raise AssertionError(f"Relative L2 error {relative} exceeds {relative_limit}")
+    return {
+        "max_abs_error": difference.abs().max().item(),
+        "relative_l2_error": relative,
+    }
+
+
+def _make_inputs(torch, kind: str, dtype: str, head_dim: int):
+    query_lengths, key_lengths = (17, 65, 129, 33), (31, 97, 129, 65)
+    query_shape, key_shape = (2, 129, 4, head_dim), (2, 193, 4, head_dim)
+    if kind == "gqa":
+        key_shape = (2, 193, 2, head_dim)
+    if kind == "varlen":
+        query_shape = (sum(query_lengths), 4, head_dim)
+        key_shape = (sum(key_lengths), 4, head_dim)
+    tensors = tuple(
+        torch.randn(
+            shape, device="cuda", dtype=getattr(torch, dtype), requires_grad=True
+        )
+        for shape in (query_shape, key_shape, key_shape)
+    )
+    return tensors, (query_lengths, key_lengths)
+
+
+def _cumulative_lengths(torch, lengths):
+    return torch.tensor(
+        [0, *itertools.accumulate(lengths)], device="cuda", dtype=torch.int32
+    )
+
+
+def _attention_functions():
+    # Use the FA4 namespace explicitly: a root flash_attn import can resolve FA2.
+    from flash_attn.cute import flash_attn_func, flash_attn_varlen_func
+
+    return flash_attn_func, flash_attn_varlen_func
+
+
+def _run_attention(torch, functions, tensors, lengths, kind: str, causal: bool):
+    dense, varlen = functions
+    # Disable only packing and split-KV optimizations, never change the backend.
+    options = {"causal": causal, "pack_gqa": False, "num_splits": 1}
+    if kind != "varlen":
+        return dense(*tensors, **options)
+    return varlen(
+        *tensors,
+        cu_seqlens_q=_cumulative_lengths(torch, lengths[0]),
+        cu_seqlens_k=_cumulative_lengths(torch, lengths[1]),
+        max_seqlen_q=max(lengths[0]),
+        max_seqlen_k=max(lengths[1]),
+        **options,
+    )
+
+
+def _check_attention_case(torch, functions, kind, dtype, head_dim, causal) -> dict:
+    tensors, lengths = _make_inputs(torch, kind, dtype, head_dim)
+    reference_inputs = tuple(
+        tensor.detach().double().requires_grad_() for tensor in tensors
+    )
+    output = _run_attention(torch, functions, tensors, lengths, kind, causal)
+    if isinstance(output, tuple):
+        output = output[0]
+    if kind == "varlen":
+        reference = _reference_varlen(torch, reference_inputs, lengths, causal)
+    else:
+        reference = _reference_attention(torch, *reference_inputs, causal)
+    upstream_gradient = torch.randn_like(output)
+    gradients = torch.autograd.grad(output, tensors, upstream_gradient)
+    reference_gradients = torch.autograd.grad(
+        reference, reference_inputs, upstream_gradient.double()
+    )
+    torch.cuda.synchronize()
+    metrics = {"output": _compare_tensor(torch, output, reference, dtype)}
+    for name, actual, expected in zip(
+        ("dQ", "dK", "dV"), gradients, reference_gradients, strict=True
+    ):
+        metrics[name] = _compare_tensor(torch, actual, expected, dtype)
+    return {
+        "kind": kind,
+        "dtype": dtype,
+        "head_dim": head_dim,
+        "causal": causal,
+        "status": "passed",
+        "metrics": metrics,
+    }
+
+
+def _run_checks(expected: str, report: dict) -> None:
     import torch
 
-    arch_flags = (torch._C._cuda_getArchFlags() or "").split()
-    capability = torch.cuda.get_device_capability()
-    name = torch.cuda.get_device_name(0)
-    device_arch = f"sm_{capability[0]}{capability[1]}"
-
-    print(f"torch {torch.__version__} (cuda {torch.version.cuda})")
-    print(f"wheel arch flags: {arch_flags}")
-    print(f"device: {name}")
-    print(f"capability: {capability} -> {device_arch}")
-
-    failures: list[str] = []
-
-    if args.expect_capability:
-        expected = tuple(int(part) for part in args.expect_capability.split("."))
-        if capability != expected:
-            failures.append(f"expected capability {expected}, landed on {capability}")
-
-    covering_sass = covering_sass_arch(capability, arch_flags)
-    if covering_sass is None:
-        failures.append(
-            f"no compatible native SASS for {device_arch} in {arch_flags}; "
-            "kernels would PTX-JIT"
-        )
-    else:
-        covering_arch = f"sm_{covering_sass[0]}{covering_sass[1]}"
-        if covering_sass == capability:
-            print(f"native SASS present for {device_arch}")
-        else:
-            print(
-                f"compatible native SASS {covering_arch} covers {device_arch} "
-                "by same-major forward compatibility"
-            )
-
     torch.manual_seed(0)
-
-    a = torch.randn(4096, 4096, device="cuda", dtype=torch.bfloat16)
-    product = a @ a
-    torch.cuda.synchronize()
-    if not bool(torch.isfinite(product).all()):
-        failures.append("control bf16 matmul produced non-finite values")
-    else:
-        print(f"control bf16 matmul ok {tuple(product.shape)}")
-
-    shape = (2, 256, 8, 64)
-    q = torch.randn(shape, device="cuda", dtype=torch.bfloat16)
-    k = torch.randn(shape, device="cuda", dtype=torch.bfloat16)
-    v = torch.randn(shape, device="cuda", dtype=torch.bfloat16)
-
-    reference = torch.nn.functional.scaled_dot_product_attention(
-        q.transpose(1, 2).float(), k.transpose(1, 2).float(), v.transpose(1, 2).float()
-    ).transpose(1, 2)
-    torch.cuda.synchronize()
-    print(f"control torch SDPA ok {tuple(reference.shape)}")
-
-    import flash_attn
-    from flash_attn import flash_attn_func
-
-    print(f"flash-attn-4 {flash_attn.__version__}")
-    try:
-        out = flash_attn_func(q, k, v)
-        torch.cuda.synchronize()
-        error = (out.float() - reference).abs().max().item()
-        print(
-            f"flash_attn_func ok {tuple(out.shape)}, max abs error vs SDPA {error:.5f}"
+    report["environment"] = _check_device(torch, expected)
+    _check_controls(torch)
+    report["controls"] = "passed"
+    functions = _attention_functions()
+    cases = itertools.product(
+        ("dense", "gqa", "varlen"), ("float16", "bfloat16"), (64, 128), (False, True)
+    )
+    for kind, dtype, head_dim, causal in cases:
+        label = f"{kind}/{dtype}/d{head_dim}/causal={causal}"
+        print(f"Checking {label}", flush=True)
+        report["active_case"] = label
+        report["cases"].append(
+            _check_attention_case(torch, functions, kind, dtype, head_dim, causal)
         )
-        if not (error < 0.05):
-            failures.append(
-                f"flash-attn output diverges from SDPA (max abs error {error})"
-            )
-    except Exception as exc:  # noqa: BLE001 - the failure mode is the result
-        known_tma_gap = args.allow_no_tma and capability not in TMA_CAPABLE
-        detail = f"{type(exc).__name__}: {exc}"
-        if known_tma_gap:
-            print(
-                f"flash_attn_func unavailable on {device_arch} (known gap): {detail}. "
-                "flash-attn-4's CuTe kernel needs TMA, which datacenter parts have "
-                "and workstation Blackwell does not."
-            )
-        else:
-            failures.append(f"flash_attn_func failed on {device_arch}: {detail}")
+    report.pop("active_case", None)
 
-    for failure in failures:
-        print(f"FAIL: {failure}", file=sys.stderr)
-    if failures:
-        print("GPU_CAPABILITY_SMOKE_FAILED")
-        return 1
-    print("GPU_CAPABILITY_SMOKE_OK")
-    return 0
+
+def main(argv: list[str] | None = None) -> int:
+    """Run strict GPU checks and optionally write their measured results.
+
+    Args:
+        argv: Command arguments, or None to read the process arguments.
+    Returns:
+        Zero only when every device, control, output and gradient check passes.
+    Raises:
+        OSError: The requested JSON output cannot be written.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expect-capability", default="", metavar="CC")
+    parser.add_argument("--json-output", type=Path)
+    args = parser.parse_args(argv)
+    report = {
+        "schema_version": 1,
+        "backend": "flash_attn.cute",
+        "status": "failed",
+        "cases": [],
+    }
+    try:
+        _run_checks(args.expect_capability, report)
+        report["status"] = "passed"
+    except Exception as exc:  # noqa: BLE001 - a smoke must report every runtime failure
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        print(report["error"], file=sys.stderr)
+    if args.json_output is not None:
+        args.json_output.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8"
+        )
+    passed = report["status"] == "passed"
+    print(f"FA4 cases passed: {len(report['cases'])}/24")
+    print("GPU_CAPABILITY_SMOKE_OK" if passed else "GPU_CAPABILITY_SMOKE_FAILED")
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
