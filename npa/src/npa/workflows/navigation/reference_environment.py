@@ -63,7 +63,7 @@ class ReferenceEnvironment(ManagerBasedRLEnv):
         # network. Never seed that reset with the previous episode's targets.
         low_level.processed_actions[env_ids] = target
         robot.set_joint_position_target_index(
-            target, joint_ids=low_level._joint_ids, env_ids=env_ids
+            target=target, joint_ids=low_level._joint_ids, env_ids=env_ids
         )
         if len(env_ids) == self.num_envs:
             action._counter = 0

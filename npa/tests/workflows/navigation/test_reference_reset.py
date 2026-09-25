@@ -74,7 +74,10 @@ def test_reset_event_invalidates_kinematics_after_writes(monkeypatch):
 
 
 @pytest.mark.parametrize("selected", [[1], [0, 1]])
-def test_reset_restores_targets_before_native_actuator_write(monkeypatch, selected):
+@pytest.mark.parametrize("joint_ids", [[0, 2], slice(None)])
+def test_reset_restores_targets_before_native_actuator_write(
+    monkeypatch, selected, joint_ids
+):
     torch = pytest.importorskip("torch")
     monkeypatch.setitem(
         sys.modules, "isaaclab.envs", SimpleNamespace(ManagerBasedRLEnv=object)
@@ -87,19 +90,25 @@ def test_reset_restores_targets_before_native_actuator_write(monkeypatch, select
     spec.loader.exec_module(module)
     defaults = torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
     targets = torch.zeros_like(defaults)
+    joint_count = defaults[:, joint_ids].shape[1]
     low = SimpleNamespace(
-        _joint_ids=[0, 2], processed_actions=torch.zeros((2, 2)), reset=lambda ids: None
+        _joint_ids=joint_ids,
+        processed_actions=torch.zeros((2, joint_count)),
+        reset=lambda ids: None,
     )
     action = SimpleNamespace(
-        low_level_actions=torch.ones((2, 2)),
+        low_level_actions=torch.ones((2, joint_count)),
         _raw_actions=torch.ones((2, 3)),
         _low_level_obs_manager=SimpleNamespace(reset=lambda ids: None),
         _low_level_action_term=low,
         _counter=7,
     )
 
-    def write(target, *, joint_ids, env_ids):
-        targets[env_ids[:, None], torch.tensor(joint_ids)] = target
+    def write(*, target, joint_ids, env_ids):
+        resolved_joints = torch.arange(defaults.shape[1])[joint_ids]
+        assert target.dtype == torch.float32
+        assert target.shape == (len(env_ids), len(resolved_joints))
+        targets[env_ids[:, None], resolved_joints] = target
 
     robot = SimpleNamespace(
         data=SimpleNamespace(default_joint_pos=SimpleNamespace(torch=defaults)),
@@ -117,8 +126,8 @@ def test_reset_restores_targets_before_native_actuator_write(monkeypatch, select
         targets.fill_(stale)
         low.processed_actions.fill_(stale)
         module.ReferenceEnvironment._reset_controller(env, ids)
-        assert torch.equal(low.processed_actions[ids], defaults[ids][:, [0, 2]])
-        error = targets[ids][:, [0, 2]] - defaults[ids][:, [0, 2]]
+        assert torch.equal(low.processed_actions[ids], defaults[ids][:, joint_ids])
+        error = targets[ids][:, joint_ids] - defaults[ids][:, joint_ids]
         with torch.no_grad():
             _, (memory, _) = network(
                 torch.stack((error, torch.zeros_like(error)), dim=-1).reshape(-1, 1, 2)
