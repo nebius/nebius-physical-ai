@@ -17,8 +17,9 @@ immutable images when qualifying a run. This adds no image or baked dataset.
 Reconstruction covers measured surfaces only. Missing surfaces and unseen space
 stay unknown; the workflow does not invent floors, close holes, reconstruct from
 unposed photographs, or infer metric scale from arbitrary COLMAP units. A
-navigation task can consume the resulting `scene.usdz`, but robot clearance,
-policy learning, and held-out navigation success require separate native runs.
+navigation task can consume the resulting `scene.usdz` through the
+[verified training handoff](#continue-into-native-navigation-training), but robot
+clearance, policy learning, and held-out navigation success require separate native runs.
 An indoor public capture does not establish industrial-scene or customer-data
 quality. A public reference has passed native collision queries inside the RTX
 Isaac runtime; the complete three-stage recipe and learned navigation remain
@@ -150,6 +151,109 @@ Python integrations use `reconstruct_capture(input_path, output_path)` from
 S3 in a workflow. A single-process integration must supply both dependency sets.
 Do not publish private captures, manifests, scene screenshots, storage locations,
 or raw infrastructure logs as public PR evidence.
+
+## Continue into native navigation training
+
+The scan workflow above ends at native collision queries. To train a navigation
+policy in its exact reconstructed scene, combine this change with the companion
+[native navigation implementation, PR #805](https://github.com/nebius/nebius-physical-ai/pull/805).
+The public helper below calls that implementation's existing `reference_bundle`
+builder, strict `Recipe` reader and immutable artifact publisher. It does not
+implement a second trainer. Until both changes are present, the helper's native
+navigation imports are an unmet dependency. Use one reviewed combined checkout
+to build inputs and select the runtime source overlay; do not edit a checkout
+already serving active jobs.
+
+Provide a local JSON file containing exactly `train_cases`, `eval_cases`, and
+`probe`, measured for the reconstructed scene. Each case specifies `id`, `seed`,
+`position_m: [x,y,z]`, `heading_rad`, and `goal_m: [x,y]`. Train/evaluation IDs,
+seeds and physical resets must be disjoint; evaluation needs exactly `num_envs`
+cases. `probe` supplies `free`, `parked`, `obstacle`, the native `actions` sequence,
+and optional `tolerance`. Choose supported root heights and collision-free
+starting footprints from measured geometry, and a positive obstacle control
+that really contacts that geometry. The built-in reference uses a public
+quadruped and three velocity actions; it cannot infer safe routes, fill missing
+floor, or supply a private robot/controller integration. The authoritative types
+are `Case`, `Probe` and `Recipe` in `npa.workflows.navigation.contract`.
+
+After the scan's assembly and native physics stages have completed, run:
+
+```bash
+npa/.venv/bin/python -m npa.workbench.nurec.navigation_handoff \
+  --input-path "$NPA_SCAN_ASSEMBLED_URI" \
+  --physics-path "$NPA_SCAN_PHYSICS_URI" \
+  --cases-file "$NPA_SCAN_NAVIGATION_CASES" \
+  --output-path "$NPA_NAVIGATION_HANDOFF_URI" \
+  --image "$NPA_NAVIGATION_IMAGE" --num-envs 4000 \
+  --iterations "$NPA_PPO_ITERATIONS" \
+  --episode-steps "$NPA_EVALUATION_STEPS" > "$NPA_NAVIGATION_HANDOFF_JSON"
+export NPA_NAVIGATION_INPUT_URI="$(npa/.venv/bin/python -c \
+  'import json,sys; print(json.load(open(sys.argv[1]))["workflow_input_uri"])' \
+  "$NPA_NAVIGATION_HANDOFF_JSON")"
+```
+
+`NPA_SCAN_ASSEMBLED_URI` and `NPA_SCAN_PHYSICS_URI` are the scan run's `assembled/`
+and `reports/` prefixes. `NPA_NAVIGATION_HANDOFF_URI` must be a fresh private S3
+prefix; local directories are also supported for offline handoff checks.
+`NPA_NAVIGATION_IMAGE` is an exact Isaac image digest, not `tool://isaac-lab`.
+Use the native runtime, controller-asset access and graphics preflights from the
+companion navigation guide. Iterations and evaluation horizon remain explicit
+experiment inputs, not automatic workload limits.
+
+The helper verifies both scan publication seals, exact scene and report hashes,
+the original capture manifest, and every native probe's expected geometry. It
+rejects case files that override scene, image or source bindings. Its output
+contains `recipe.json`, the unchanged `scene.usdz`, `scan-lineage.json`, and exact
+scan/case report bytes under `scan/`. The builder pins the reviewed navigation
+source inventory and public low-level controller. S3 publication uses the
+navigation publisher's conditional claim and readback. The returned
+`workflow_input_uri` selects the completed immutable attempt containing the raw
+bundle; use that URI, not its logical publication parent, for workflow preparation.
+This operation seals inputs; `navigation_learning_verified` remains false.
+
+Local handoff validation used the complete qualified public scene above, its 501
+native probe results, and 4,000 measured training plus 4,000 held-out cases. The
+real companion recipe builder and preparation stage preserved the exact scene
+and report bytes. This CPU preparation check supplies no navigation learning or
+GPU population acceptance result.
+
+With PR #805 installed, set `NPA_NAVIGATION_WORKFLOW` to its checked-in
+`shared-scene-navigation.yaml` in the testing workflow catalog. This specification
+belongs to the companion change and is required before these commands can run.
+Validate, plan and submit that existing native workflow:
+
+```bash
+test -f "$NPA_NAVIGATION_WORKFLOW"
+npa workbench workflow validate-spec "$NPA_NAVIGATION_WORKFLOW" --json
+npa workbench workflow plan-spec "$NPA_NAVIGATION_WORKFLOW" --run-id preview --json
+npa workbench workflow submit "$NPA_NAVIGATION_WORKFLOW" \
+  --runtime --no-stage-src --project "$NPA_PROJECT_ALIAS" \
+  --infra "$NPA_RTX_RUNTIME" --run-id "$NPA_NAVIGATION_RUN_ID" \
+  --var "bucket=$NPA_S3_BUCKET" --var "input_uri=$NPA_NAVIGATION_INPUT_URI" \
+  --var "byof_image=$NPA_NAVIGATION_IMAGE" \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+Before that submission, explicitly stage and select the same combined source
+using `NPA_SRC_S3_URI` as described above. The workflow then runs prepare → native
+isolation controls → RSL-RL PPO training → reload/evaluate on held-out cases in
+the reconstructed scene. Retain the handoff publication separately: native
+training/evaluation carry their recipe and scene, while the handoff retains the
+capture lineage. Require `training.json` and `evaluation.json` to report the
+handoff's exact scene hash in `runtime.scene_sha256`, its recipe hash in
+`recipe_sha256`, and the same image/source/controller bindings. Actual learning
+requires a finite positive parameter update, the saved checkpoint, native
+learning curves and a passed held-out evaluation; input publication or PhysX
+ray probes alone establish none of those results.
+
+For replaying a recorded field failure, resuming a real baseline and comparing
+against an independent held-out scene, use the separate
+[field-loop implementation, PR #802](https://github.com/nebius/nebius-physical-ai/pull/802).
+That path additionally requires the real baseline and recorded failure inputs.
+Public scene/controller experiments demonstrate the mechanism and do not stand
+in for those private inputs or a validated private robot deployment.
+
+## Scan-only live test
 
 The [opt-in native live test](../../../npa/tests/e2e/test_scan_to_isaac_navigation_live.py)
 also qualifies this route. Set `NPA_SCAN_TO_ISAAC_INPUT_KIND=rgbd` with the
