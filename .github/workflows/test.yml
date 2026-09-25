@@ -2,6 +2,11 @@ name: Test
 
 on:
   workflow_call:
+    inputs:
+      prose_only:
+        description: Trusted parent policy proved that only prose changed
+        type: boolean
+        default: false
   schedule:
     - cron: "23 5 * * *"
   workflow_dispatch:
@@ -16,59 +21,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  scope:
-    name: test-scope
-    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
-    outputs:
-      prose_only: ${{ steps.scope.outputs.prose_only }}
-      full_suite: ${{ steps.scope.outputs.full_suite }}
-      browser: ${{ steps.scope.outputs.browser }}
-    steps:
-      - name: Check out comparison history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - name: Check CI dependency pins
-        run: |
-          python -m venv npa/.venv
-          npa/.venv/bin/python npa/scripts/ci_requirements.py --check
-      - name: Select tests using the trusted base policy
-        id: scope
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: |
-          set -euo pipefail
-          python -m venv npa/.venv
-          policy=npa/scripts/ci_test_scope.py
-          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == merge_group ]]; then
-            git rev-parse --verify "${BASE_SHA}^{commit}"
-            if git cat-file -e "${BASE_SHA}:${policy}"; then
-              git show "${BASE_SHA}:${policy}" > "${RUNNER_TEMP}/ci_test_scope.py"
-              # Older base policies narrow PR tests. Use their queue policy
-              # for both events so rollout also checks the full PR candidate.
-              npa/.venv/bin/python "${RUNNER_TEMP}/ci_test_scope.py" \
-                --base "$BASE_SHA" --head "$GITHUB_SHA" --event merge_group \
-                --github-output "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          # Missing base policy and periodic audits both retain all coverage.
-          {
-            echo 'prose_only=false'
-            echo 'full_suite=true'
-            echo 'browser=true'
-          } >> "$GITHUB_OUTPUT"
-
   browser-mocked:
     name: browser-and-compatibility
-    needs: scope
-    if: needs.scope.outputs.browser != 'false'
+    if: ${{ !inputs.prose_only }}
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Check out repository
@@ -104,7 +59,11 @@ jobs:
       - name: Install the production UI renderer
         run: |
           python -m venv npa/.venv
+          npa/.venv/bin/python npa/scripts/ci_requirements.py --check
           uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e npa
+      - name: Run CLI install test
+        run: cd npa && bash tests/integration/test_cli_install.sh
+
       - name: Run mocked agent Cypress coverage
         run: npm run --prefix npa/tests/browser cy:mock
 
@@ -116,7 +75,7 @@ jobs:
       - name: Install Python 3.10 compatibility environment
         run: |
           python -m venv npa/.venv-3.10
-          uv pip install --python npa/.venv-3.10/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
+          uv pip install --python npa/.venv-3.10/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter,encord]"
 
       - name: Run Python 3.10 compatibility regressions
         run: |
@@ -136,7 +95,7 @@ jobs:
       - name: Install Python 3.14 compatibility environment
         run: |
           python -m venv npa/.venv-3.14
-          uv pip install --python npa/.venv-3.14/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
+          uv pip install --python npa/.venv-3.14/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter,encord]"
 
       - name: Run Python 3.14 compatibility regressions
         run: |
@@ -150,9 +109,8 @@ jobs:
 
   pr-smoke:
     name: pr-smoke
-    needs: scope
-    # Full shards already collect these tests and run the CLI install check.
-    if: needs.scope.outputs.prose_only == 'true' && needs.scope.outputs.full_suite == 'false'
+    # Full validation covers smoke in shards and installation in the browser job.
+    if: inputs.prose_only
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     env:
       NPA_PROJECT_ID: project-test-00000000
@@ -181,7 +139,8 @@ jobs:
       - name: Install the fast validation environment
         run: |
           python -m venv npa/.venv
-          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
+          npa/.venv/bin/python npa/scripts/ci_requirements.py --check
+          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter,encord]"
           echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run smoke and CI contract regressions
@@ -207,8 +166,7 @@ jobs:
 
   test:
     name: pytest-${{ matrix.python-version }}-shard-${{ matrix.shard }}
-    needs: scope
-    if: needs.scope.outputs.full_suite != 'false'
+    if: ${{ !inputs.prose_only }}
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     strategy:
       # A merge candidate releases the remaining runners after a hard failure.
@@ -274,7 +232,8 @@ jobs:
       - name: Install npa
         run: |
           python -m venv npa/.venv
-          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
+          npa/.venv/bin/python npa/scripts/ci_requirements.py --check
+          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter,encord]"
           echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run Python compatibility and image scan regressions
@@ -358,10 +317,6 @@ jobs:
           name: ci-timings-${{ matrix.shard }}
           path: npa/ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
 
-      - name: Run CLI install test
-        if: matrix.python-version == '3.12' && matrix.shard == 1
-        run: cd npa && bash tests/integration/test_cli_install.sh
-
       - name: Check e2e shell scripts
         if: matrix.python-version == '3.12' && matrix.shard == 1
         run: |
@@ -377,10 +332,10 @@ jobs:
 
   coverage:
     name: coverage
-    needs: [scope, test]
+    needs: test
     # Failed shards already fail test-gate. Do not reserve another runner after
     # failure or keep a superseded reusable workflow alive during cancellation.
-    if: ${{ !cancelled() && needs.scope.outputs.full_suite != 'false' && needs.test.result == 'success' }}
+    if: ${{ !cancelled() && !inputs.prose_only && needs.test.result == 'success' }}
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Require successful pytest shards
@@ -403,6 +358,7 @@ jobs:
       - name: Install coverage reporter
         run: |
           python -m venv npa/.venv
+          npa/.venv/bin/python npa/scripts/ci_requirements.py --check
           npa/.venv/bin/python -m pip install "coverage[toml]==7.16.0"
 
       - name: Download coverage shards

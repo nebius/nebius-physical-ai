@@ -65,11 +65,12 @@ dependencies = [
     "fastapi>=0.136.1,<0.142.0",
     # Antioch's supported declared-port bridge uses bounded, authenticated WSS
     # on both legs. Keep the operator transport matched to the sim dependency.
-    "websockets==15.0.1",
+    "websockets==16.1.1",
     "python-multipart>=0.0.31",
 ]
 
 [project.optional-dependencies]
+encord = ["encord>=0.1.202,<0.2"]
 studio = ["edge-tts==7.2.8"]
 # SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
 orchestration = []

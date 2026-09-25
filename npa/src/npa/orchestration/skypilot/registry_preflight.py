@@ -607,7 +607,7 @@ def check_image_pulls_with_credentials(
     fetcher: Fetcher | None = None,
     pull_secret_names: tuple[str, ...] = (),
     pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
-    namespace: str = "default",
+    namespace: str = "",
     context: str = "",
     secret_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> list[ImagePullCheck]:
@@ -662,7 +662,7 @@ def check_image_pulls_with_credentials(
                 )
             )
             continue
-        verified, detail = verify_kubernetes_pull_secret(
+        target_namespace, verified, detail = _target_pull_authority(
             host,
             image_secret_names,
             namespace=namespace,
@@ -688,7 +688,7 @@ def check_image_pulls_with_credentials(
         remedy = operator_check.remedy
         target_remedy = (
             f"declare a valid imagePullSecret for {host} in namespace "
-            f"{namespace!r} and make it readable in context {context or '<current>'!r}"
+            f"{target_namespace or '<selected-context namespace>'!r} and make it readable in context {context or '<current>'!r}"
         )
         checks.append(
             ImagePullCheck(
@@ -714,6 +714,32 @@ def check_image_pulls_with_credentials(
 
 
 _KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
+
+
+def _target_pull_authority(
+    registry, secret_names, *, namespace, context, timeout, runner
+):
+    from npa.clients.kubernetes_namespace import context_namespace
+
+    if not secret_names:
+        return (
+            namespace,
+            False,
+            "no imagePullSecret is declared for this execution path",
+        )
+    try:
+        selected = namespace or context_namespace(context=context)
+    except ValueError:
+        return "", False, "cannot resolve the selected context namespace"
+    verified, detail = verify_kubernetes_pull_secret(
+        registry,
+        secret_names,
+        namespace=selected,
+        context=context,
+        timeout=timeout,
+        runner=runner,
+    )
+    return selected, verified, detail
 
 
 def verify_kubernetes_pull_secret(

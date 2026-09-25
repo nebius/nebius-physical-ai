@@ -1534,6 +1534,28 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     assert env["HOME"] == str(isolated / "home")
 
 
+def test_sky_environment_links_default_kubeconfig_when_unset(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    operator_home = tmp_path / "operator"
+    default_kubeconfig = operator_home / ".kube" / "config"
+    default_kubeconfig.parent.mkdir(parents=True)
+    default_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+
+    isolated = tmp_path / "isolated"
+    sky_environment(isolated)
+
+    isolated_kubeconfig = isolated / "home" / ".kube" / "config"
+    assert isolated_kubeconfig.is_symlink()
+    assert isolated_kubeconfig.resolve() == default_kubeconfig.resolve()
+
+
 def test_submit_workflow_require_controller_up_uses_canonical_preflight(
     monkeypatch, tmp_path
 ) -> None:
@@ -1919,6 +1941,7 @@ def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
     assert result.healthy is False
     assert result.outcome == "cwd_unusable"
     assert "getcwd" in result.error
+    assert "--all-namespaces" not in calls[0]
     assert calls[0][-4:] == [
         "--selector",
         "skypilot-cluster-name=sky-jobs-controller-test",

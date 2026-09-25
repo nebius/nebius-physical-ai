@@ -7,6 +7,7 @@ from npa.verification import (
     VERIFICATION_UNAVAILABLE,
     apply_verification,
     classify_verification_failure,
+    sanitize_failure_reason,
     sanitize_reason,
 )
 
@@ -86,3 +87,23 @@ def test_sanitizer_removes_secret_assignments_and_presigned_queries() -> None:
     assert "password" not in sanitized
     assert "X-Amz-Signature" not in sanitized
     assert "<redacted>" in sanitized
+
+
+def test_sanitizer_removes_quoted_assignments_and_non_http_queries() -> None:
+    sanitized = sanitize_reason(
+        '{"aws_secret_access_key":"quoted-secret"} '
+        "s3://bucket/key?X-Amz-Signature=object-secret"
+    )
+
+    assert "quoted-secret" not in sanitized
+    assert "X-Amz-Signature" not in sanitized
+    assert "<redacted>" in sanitized
+
+
+def test_failure_sanitizer_requires_and_redacts_explicit_secrets() -> None:
+    assert "hunter2" not in sanitize_failure_reason(
+        "login failed for hunter2",
+        secrets=("hunter2",),
+    )
+    with pytest.raises(TypeError):
+        sanitize_failure_reason("login failed")  # type: ignore[call-arg]

@@ -185,7 +185,9 @@ class AntiochCli:
         if scenario_case:
             args.extend(["--case", scenario_case])
         for key, value in sorted((parameters or {}).items()):
-            args.extend(["--set", f"{key}={json.dumps(value, separators=(',', ':'))}"])
+            # The vendor parses typed raw values, not JSON string literals.
+            rendered = value if isinstance(value, str) else json.dumps(value)
+            args.extend(["--set", f"{key}={rendered}"])
         args.extend(["--detach", "--json"])
         payload = self._run(args, cwd=cwd, timeout_seconds=None).payload
         if (
