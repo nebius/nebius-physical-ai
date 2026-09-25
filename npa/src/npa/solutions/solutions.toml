@@ -16,10 +16,10 @@ cli_command = "npa workbench sonic retargeting"
 
 [[solutions]]
 name = "mjlab"
-description = "MJLab locomotion evaluation Workbench tool"
+description = "MJLab training, measured evaluation and ONNX export Workbench tool"
 cli_command = "npa workbench mjlab"
 
 [[solutions]]
 name = "sonic-locomotion-finetuning"
-description = "SONIC locomotion fine-tuning workflow (retarget -> train -> MJLab eval)"
+description = "SONIC locomotion fine-tuning workflow (retarget -> train -> export -> SONIC eval)"
 cli_command = "npa workbench workflow submit workflows/testing/sonic-locomotion-finetuning.yaml"

@@ -19,7 +19,8 @@ jobs:
   gitleaks:
     name: ${{ github.event_name == 'push' && 'validation-plan' || 'gitleaks' }}
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
-    timeout-minutes: 2
+    # Full-history checkout and queue evidence can exceed two minutes before
+    # scanning starts. Let the runner default cover the complete required job.
     permissions:
       contents: read
       actions: read
@@ -27,11 +28,23 @@ jobs:
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       source_run: ${{ steps.plan.outputs.source_run }}
+      prose_only: ${{ steps.scope.outputs.prose_only }}
+      full_suite: ${{ steps.scope.outputs.full_suite }}
+      browser: ${{ steps.scope.outputs.browser }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Create isolated validation environment
+        if: github.event_name != 'push'
+        run: |
+          set -euo pipefail
+          test -d npa && test ! -L npa
+          test ! -e npa/.venv && test ! -L npa/.venv
+          validation_environment="$(mktemp -d "$RUNNER_TEMP/queue-validation.XXXXXXXX")"
+          python -I -m venv "$validation_environment"
+          ln -s "$validation_environment" npa/.venv
       - name: Verify queue evidence using the trusted base policy
         id: plan
         env:
@@ -53,14 +66,32 @@ jobs:
           fi
           git show "$BASE_SHA:$policy" > "$RUNNER_TEMP/ci_queue_evidence.py"
           git show "$BASE_SHA:scripts/ci_image_security_scope.py" > "$RUNNER_TEMP/image_scope.py"
-          test -d npa && test ! -L npa
-          test ! -e npa/.venv && test ! -L npa/.venv
-          validation_environment="$(mktemp -d "$RUNNER_TEMP/queue-validation.XXXXXXXX")"
-          python -I -m venv "$validation_environment"
-          ln -s "$validation_environment" npa/.venv
           npa/.venv/bin/python -I "$RUNNER_TEMP/ci_queue_evidence.py" \
             --repository "$GITHUB_REPOSITORY" --event-path "$GITHUB_EVENT_PATH" \
             --github-output "$GITHUB_OUTPUT" --image-policy "$RUNNER_TEMP/image_scope.py"
+
+      - name: Select tests using the trusted base policy
+        id: scope
+        if: github.event_name != 'push' && steps.plan.outputs.mode != 'reuse'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          policy=npa/scripts/ci_test_scope.py
+          git rev-parse --verify "${BASE_SHA}^{commit}"
+          if git cat-file -e "${BASE_SHA}:${policy}"; then
+            git show "${BASE_SHA}:${policy}" > "${RUNNER_TEMP}/ci_test_scope.py"
+            # The merge-candidate policy also covers older bases with narrower PR selection.
+            npa/.venv/bin/python -I "${RUNNER_TEMP}/ci_test_scope.py" \
+              --base "$BASE_SHA" --head "$GITHUB_SHA" --event merge_group \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            {
+              echo 'prose_only=false'
+              echo 'full_suite=true'
+              echo 'browser=true'
+            } >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install verified gitleaks release
         if: github.event_name != 'push'
@@ -127,6 +158,8 @@ jobs:
     needs: [gitleaks, pr-precheck]
     if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
     uses: ./.github/workflows/test.yml
+    with:
+      prose_only: ${{ needs.gitleaks.outputs.prose_only == 'true' && needs.gitleaks.outputs.full_suite == 'false' && needs.gitleaks.outputs.browser == 'false' }}
 
   lint-gate:
     needs: [gitleaks, pr-precheck]
@@ -144,7 +177,7 @@ jobs:
   scan:
     if: github.event_name != 'push'
     name: scan
-    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_SECURITY_RUNNER || vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     env:
       CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
       INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
@@ -165,7 +198,8 @@ jobs:
       - name: Install the confidentiality scanner
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e npa
+          # The scanner and its source-attribution verifier use only the stdlib.
+          npa/.venv/bin/python -m pip install --no-deps -e npa
 
       - name: Reject confidential data
         env:
@@ -200,7 +234,7 @@ jobs:
   security-scanners:
     name: security-scanners
     timeout-minutes: 7
-    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_SECURITY_RUNNER || vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
