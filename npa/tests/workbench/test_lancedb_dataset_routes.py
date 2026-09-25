@@ -111,6 +111,39 @@ def test_create_table_schema_controls_stored_rows(
     assert table.to_arrow().to_pylist() == [{"id": "row-1", "vector": [1.0, 2.0]}]
 
 
+def test_create_table_infers_the_schema_lancedb_stores(
+    client: TestClient, tmp_path: Path
+) -> None:
+    response = client.post(
+        "/tables/inferred_vectors",
+        json={
+            "rows": [
+                {"id": "a", "vector": [0.1, 0.2, 0.3, 0.4]},
+                {"id": "b", "vector": [0.9, 0.8, 0.7, 0.6]},
+            ],
+            "mode": "overwrite",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["rows"] == 2
+    table = _open_created_table(tmp_path, "inferred_vectors")
+    assert table.schema.field("vector").type == pa.list_(pa.float32(), 4)
+
+
+def test_create_table_rejects_inconsistent_inferred_vectors_before_mutation(
+    client: TestClient, tmp_path: Path
+) -> None:
+    response = client.post(
+        "/tables/inconsistent_vectors",
+        json={"rows": [{"vector": [1.0, 2.0]}, {"vector": [1.0]}]},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "consistent positive size" in response.json()["detail"]
+    assert "inconsistent_vectors" not in _created_table_names(tmp_path)
+
+
 def test_create_table_preserves_fields_introduced_by_later_rows(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -240,6 +273,23 @@ def test_index_creates_the_table_on_first_write(client: TestClient) -> None:
     assert body["inserted"] == 2
     assert body["reused"] == 0
     assert body["table"] == "dataset"
+
+
+def test_readiness_is_public_while_health_remains_authenticated(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            storage_path=str(tmp_path / "secure-lance"),
+            auth_mode="token",
+            token="s3cr3t",
+        )
+    )
+
+    assert client.get("/readyz").json() == {"status": "ok"}
+    assert client.get("/health").status_code == 401
+    assert (
+        client.get("/health", headers={"Authorization": "Bearer s3cr3t"}).status_code
+        == 200
+    )
 
 
 def test_index_appends_on_a_second_write(client: TestClient) -> None:
