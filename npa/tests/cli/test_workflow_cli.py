@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 
+from botocore.exceptions import ClientError
 import pytest
 from typer.testing import CliRunner
 import yaml
@@ -1228,6 +1229,99 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     assert "s3://bucket/run-1/artifacts/train/model.bin" in artifacts_result.output
 
 
+def _unreadable_stage_response(failure: str) -> dict:
+    if failure == "missing-body":
+        return {}
+
+    def read():
+        if failure == "stream-read":
+            raise FileNotFoundError("synthetic-stage-provider-secret")
+        return b"{}"
+
+    def close():
+        if failure == "body-close":
+            raise KeyError("synthetic-stage-provider-secret")
+
+    return {"Body": SimpleNamespace(read=read, close=close)}
+
+
+@pytest.mark.parametrize(
+    "read_failure", ["provider", "missing-body", "stream-read", "body-close"]
+)
+def test_durable_workflow_status_reports_unreadable_stage_as_unavailable(
+    monkeypatch,
+    read_failure,
+) -> None:
+    synthetic_secret = "synthetic-stage-provider-secret"
+
+    class StageStatusThrottledS3(FakeWorkflowS3):
+        def get_object(self, *, Bucket: str, Key: str):
+            if Key.endswith("/logs/train/status.json"):
+                if read_failure != "provider":
+                    return _unreadable_stage_response(read_failure)
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "SlowDown",
+                            "Message": f"token={synthetic_secret}",
+                        }
+                    },
+                    "GetObject",
+                )
+            return super().get_object(Bucket=Bucket, Key=Key)
+
+    fake_s3 = StageStatusThrottledS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key="throttled-status/manifest.json",
+        Body=json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "throttled-status",
+                "workflow_name": "legacy",
+                "status": "succeeded",
+                "updated_at": "2026-09-20T13:00:00Z",
+                "stages": {"train": {"status": "succeeded"}},
+            }
+        ).encode(),
+    )
+
+    base_command = [
+        "workbench",
+        "workflow",
+        "status",
+        "s3://bucket/throttled-status",
+    ]
+    for extra in (["--json"], ["--json", "--watch", "--interval", "0"]):
+        result = runner.invoke(app, [*base_command, *extra])
+
+        assert result.exit_code == 2, result.output
+        payload = json.loads(result.output)
+        assert payload["status"] == "VERIFICATION_UNAVAILABLE"
+        assert payload["verification_status"] == "VERIFICATION_UNAVAILABLE"
+        assert payload["verification"] == "unavailable"
+        assert payload["live_verified"] is False
+        assert payload["automation_may_trust_state"] is False
+        assert payload["last_known"] == {
+            "state": "SUCCEEDED",
+            "observed_at": "2026-09-20T13:00:00Z",
+            "source": "legacy_manifest",
+        }
+        assert (
+            "stage train status verification failed"
+            in payload["live_verification"]["reason"]
+        )
+        assert synthetic_secret not in result.output
+
+    human = runner.invoke(app, base_command)
+
+    assert human.exit_code == 2
+    assert human.output.startswith("VERIFICATION_UNAVAILABLE")
+    assert "last-known state: SUCCEEDED" in human.output
+    assert synthetic_secret not in human.output
+
+
 def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(
     monkeypatch,
 ) -> None:
@@ -2270,6 +2364,89 @@ def test_workflow_cancel_distinguishes_terminal_launched_run(monkeypatch) -> Non
     assert payload["outcome"] == "terminal"
     assert payload["status"] == "SUCCEEDED"
     assert payload["cloud_calls"] is False
+
+
+@pytest.mark.parametrize(
+    "read_failure", ["provider", "missing-body", "stream-read", "body-close"]
+)
+def test_workflow_cancel_denied_stage_status_records_verification_failure(
+    monkeypatch,
+    read_failure,
+) -> None:
+    class StageStatusDeniedS3(FakeWorkflowS3):
+        def get_object(self, *, Bucket: str, Key: str):
+            if Key.endswith("/logs/train/status.json"):
+                if read_failure != "provider":
+                    return _unreadable_stage_response(read_failure)
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "AccessDenied",
+                            "Message": "synthetic stage-status denial",
+                        }
+                    },
+                    "GetObject",
+                )
+            return super().get_object(Bucket=Bucket, Key=Key)
+
+    fake_s3 = StageStatusDeniedS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key="denied-terminal/manifest.json",
+        Body=json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "denied-terminal",
+                "workflow_name": "legacy",
+                "status": "succeeded",
+                "stages": {"train": {"status": "succeeded"}},
+            }
+        ).encode(),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stage-status denial must stop before provider lookup")
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_launched_workflows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stage-status denial must stop before cancellation")
+        ),
+    )
+    receipts: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "npa.teardown_receipts.record_teardown_event",
+        lambda **kwargs: receipts.append(kwargs),
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "cancel", "s3://bucket/denied-terminal", "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "verification_failed"
+    assert payload["detected_state"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["cloud_calls"] is False
+    reason = (
+        "object not found or unreadable"
+        if read_failure == "provider"
+        else "object response unreadable"
+    )
+    assert payload["errors"] == [
+        f"stage train status verification failed: S3 {reason}: "
+        "s3://bucket/denied-terminal/logs/train/status.json"
+    ]
+    assert len(receipts) == 1
+    assert receipts[0]["terminal_state"] == "verification_failed"
+    assert receipts[0]["action"] == {
+        "kind": "none",
+        "cancelled_job_ids": [],
+    }
 
 
 def test_paidf_terminal_multistage_cancel_without_root_job_id_exits_zero(

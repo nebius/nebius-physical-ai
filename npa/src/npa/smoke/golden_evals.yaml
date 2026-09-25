@@ -1136,6 +1136,27 @@ containers:
       timeout_seconds: 120
       status: ready
 
+  mjlab:
+    image: npa-mjlab
+    dockerfile: npa/docker/workbench/mjlab/Dockerfile
+    physical_ai:
+      useful: true
+      role: GPU robot learning, measured policy evaluation and ONNX deployment artifacts.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm (digest pinned); CUDA provided by locked wheels
+      network: S3 artifacts only; no model download required for velocity or cartpole tasks
+      external_fetch: [s3]
+      notes: No checkpoints, motion datasets, credentials or populated caches baked.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_mjlab_functional
+      command: python -m npa.smoke.test_mjlab_functional
+      serverless_gpu: h100
+      gpu: required
+      timeout_seconds: 600
+      status: gpu-gated
+
   curobo:
     image: npa-curobo
     dockerfile: npa/docker/workbench/curobo/Dockerfile

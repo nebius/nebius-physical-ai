@@ -179,6 +179,25 @@ The first failure is nearly always one specific thing:
 > for you** — for a single-camera capture the rig *is* the camera, so the derived
 > edge is exact.
 
+The derivation prefers an existing dynamic `<camera> -> world` pose edge. If a
+capture has no dynamic camera pose edge, it can instead read the per-frame
+`T_sensor_worlds` values stored on NCore camera components. Every selected frame
+must provide a finite 4×4 transform on a strictly increasing timestamp timeline;
+missing, malformed, duplicate, or non-finite data stops conversion before a
+derived sequence is published. `--reference-camera <id>` selects a camera
+explicitly; otherwise the longest trajectory wins, with camera ID breaking ties.
+
+This fallback only applies the exact single-camera identity assumption: the rig
+is the selected camera. It does not infer extrinsics for other cameras and does
+not establish reconstruction quality for a multi-camera capture. The derived
+sidecar records both the selected camera and whether poses came from a dynamic
+edge or camera-frame `T_sensor_worlds`.
+
+Local regression coverage establishes conversion compatibility only. Live
+workflow readiness for a frame-pose capture still requires a decoded NRE
+reconstruction on applicable RT-core hardware and inspection of its retained
+artifacts.
+
 For everything else — 402s from NGC, placeholder sensor ids in the stock recipes,
 the missing `sudo`, the 64 MB `/dev/shm` — see the troubleshooting table in
 `skills/workflows/neural-reconstruction/SKILL.md`. Most are already handled
