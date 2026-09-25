@@ -110,14 +110,17 @@ def _dependency_name(root, parent, asset, names, package):
     )
 
 
-def _check_tree(root, names, *, package=False):
+def _check_tree(root, names, *, package=False, runtime_modules=()):
     from pxr import Sdf, UsdUtils
 
+    native_names = {name.casefold() for name in runtime_modules}
+    if any(Path(name).name.casefold() in native_names for name in names):
+        raise ValueError("scene bundle cannot shadow a declared native MDL module")
     for name in names:
         path = _contained(root, name)
         file_format = _asset_file_format(path)
         if file_format == "package":
-            _check_package(path)
+            _check_package(path, runtime_modules=runtime_modules)
             continue
         if file_format is None:
             continue
@@ -127,23 +130,32 @@ def _check_tree(root, names, *, package=False):
         _check_layer(layer)
         for group in UsdUtils.ExtractExternalReferences(str(path)):
             for asset in group:
+                if asset in runtime_modules:
+                    continue
                 try:
                     _dependency_name(root, path.parent, asset, names, package)
                 except ValueError as exc:
                     raise ValueError(f"USD layer {name!r}: {exc}") from exc
 
 
-def _check_package(path):
+def _check_package(path, *, runtime_modules=()):
     with tempfile.TemporaryDirectory(prefix="npa-rgbd-usdz-audit-") as directory:
         root = Path(directory)
         names = _extract_package(path, root)
         # Inspect every member, even unused layers and nested archives, before Kit.
-        _check_tree(root, names, package=True)
+        _check_tree(root, names, package=True, runtime_modules=runtime_modules)
 
 
 def _check_scene_files(root, request):
+    from .contract import validate_request
+
+    validate_request(request)
     for name, digest in request["files"].items():
         path = _contained(root, name)
         if not path.is_file() or _sha256(path) != digest:
             raise ValueError("scene bundle contains a missing or hash-mismatched asset")
-    _check_tree(root, request["files"])
+    _check_tree(
+        root,
+        request["files"],
+        runtime_modules=request.get("runtime_materials", {}).get("modules", {}),
+    )

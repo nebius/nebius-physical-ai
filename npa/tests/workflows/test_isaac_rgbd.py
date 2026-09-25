@@ -80,6 +80,32 @@ def test_backprojection_uses_axial_depth_and_rigid_world_transform():
     np.testing.assert_array_equal(rgb, colors[[0, 1, 1], [0, 0, 1]])
 
 
+def test_cpu_validation_binds_measured_native_material_identity(captured):
+    root, manifest = captured
+    declared = {
+        "isaac_sim_version": "6.0.1.0",
+        "image": "registry.example/isaac@sha256:" + "a" * 64,
+        "library_sha256": "b" * 64,
+        "modules": {
+            "OmniPBR.mdl": {
+                "path": "core/Base/OmniPBR.mdl",
+                "sha256": "c" * 64,
+            }
+        },
+    }
+    manifest["request"]["runtime_materials"] = declared
+    manifest["provenance"]["request_sha256"] = hashlib.sha256(
+        contract._json_bytes(manifest["request"])
+    ).hexdigest()
+    with pytest.raises(ValueError, match="native MDL provenance"):
+        dataset.validate_dataset(root, manifest)
+    manifest["provenance"]["runtime_materials"] = copy.deepcopy(declared)
+    assert dataset.validate_dataset(root, manifest)["validated"]
+    manifest["provenance"]["runtime_materials"]["library_sha256"] = "d" * 64
+    with pytest.raises(ValueError, match="native MDL provenance"):
+        dataset.validate_dataset(root, manifest)
+
+
 def test_projection_parameters_preserve_off_center_non_square_calibration(rig_request):
     camera = rig_request["cameras"][0]
     camera["intrinsics"] = [[8, 0, 1], [0, 4, 2], [0, 0, 1]]

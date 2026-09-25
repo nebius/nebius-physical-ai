@@ -99,6 +99,8 @@ def _collect_warehouse(app, root):
 
 
 def _write_reference_request(root, scene, mapping):
+    from .materials import _reference_materials
+
     sources = {
         Path(target).resolve().relative_to(root.resolve()).as_posix(): source
         for source, target in mapping.items()
@@ -125,6 +127,9 @@ def _write_reference_request(root, scene, mapping):
         "cameras": _reference_cameras(),
         "trajectory": _reference_trajectory(),
     }
+    materials = _reference_materials(root)
+    if materials is not None:
+        request["runtime_materials"] = materials
     validate_request(request)
     _check_scene_files(root, request)
     return request

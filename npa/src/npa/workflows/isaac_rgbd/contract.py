@@ -100,6 +100,30 @@ def _file_hashes(files):
             raise ValueError("asset paths contain a file/directory collision")
 
 
+def _runtime_materials(value):
+    _keys(value, "isaac_sim_version image library_sha256 modules", "runtime materials")
+    if value["isaac_sim_version"] != ISAAC_SIM_VERSION:
+        raise ValueError("runtime materials require the pinned Isaac version")
+    if not isinstance(value["image"], str) or not re.fullmatch(
+        r"[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}", value["image"]
+    ):
+        raise ValueError("runtime materials require an immutable image digest")
+    _file_hashes({"library": value["library_sha256"]})
+    modules = value["modules"]
+    if not isinstance(modules, dict) or not modules:
+        raise ValueError("runtime materials require explicit native MDL modules")
+    for name, record in modules.items():
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9_]*\.mdl", name
+        ):
+            raise ValueError("native MDL names must be canonical bare module names")
+        _keys(record, "path sha256", "native MDL module")
+        path = _relative(record["path"])
+        if not path.parts[0] == "core" or path.name != name:
+            raise ValueError("native MDL modules must belong to Kit's core library")
+        _file_hashes({record["path"]: record["sha256"]})
+
+
 def _camera(camera):
     _keys(camera, "id width height intrinsics T_rig_camera depth_range_m", "camera")
     if not isinstance(camera["id"], str) or not re.fullmatch(
@@ -142,7 +166,11 @@ def validate_request(request):
     Raises:
         ValueError: A field is missing, unsupported, non-finite, or inconsistent.
     """
-    _keys(request, "schema scene files cameras trajectory pointcloud", "request")
+    fields = "schema scene files cameras trajectory pointcloud"
+    if isinstance(request, dict) and "runtime_materials" in request:
+        fields += " runtime_materials"
+        _runtime_materials(request["runtime_materials"])
+    _keys(request, fields, "request")
     if request["schema"] != REQUEST_SCHEMA or type(request["pointcloud"]) is not bool:
         raise ValueError("unsupported request schema or non-boolean pointcloud")
     _file_hashes(request["files"])

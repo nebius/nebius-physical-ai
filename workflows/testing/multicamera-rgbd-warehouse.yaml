@@ -21,6 +21,7 @@ config:
 resources:
   rtx:
     cloud: kubernetes
+    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 64Gi

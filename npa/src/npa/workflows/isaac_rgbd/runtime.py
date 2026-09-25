@@ -18,6 +18,7 @@ from .contract import (
 )
 from .dataset import _finalize, _write_frame
 from .geometry import _optical_to_usd, _usd_camera_parameters
+from .materials import _verify_materials
 from .scene import _check_scene_files
 
 
@@ -39,6 +40,7 @@ def _open_scene(root, request):
     from pxr import UsdGeom
 
     _check_scene_files(root, request)
+    _verify_materials(request)
     context = omni.usd.get_context()
     if not context.open_stage(str(_contained(root, request["scene"]))):
         raise ValueError("Isaac could not open the supplied USD scene")
@@ -159,7 +161,7 @@ def _provenance(input_root, request, scope):
 
     manager = omni.kit.app.get_app().get_extension_manager()
     extension_id = manager.get_enabled_extension_id("omni.replicator.core")
-    return {
+    result = {
         "request_sha256": hashlib.sha256(_json_bytes(request)).hexdigest(),
         "input_manifest_sha256": _sha256(input_root / "request.json"),
         "scope": scope,
@@ -167,6 +169,10 @@ def _provenance(input_root, request, scope):
             "version"
         ],
     }
+    materials = _verify_materials(request)
+    if materials is not None:
+        result["runtime_materials"] = materials
+    return result
 
 
 def capture_local(input_root, request, output_root, *, scope, publish):

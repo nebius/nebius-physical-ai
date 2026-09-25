@@ -131,6 +131,23 @@ sensor noise, distortion, SLAM, robot controller or navigation evaluation is
 provided. Supply a trusted USD bundle; this is not a sandbox for arbitrary USD
 plugins or shaders. Existing lighting is used as authored.
 
+Kit's canonical native MDL modules, such as `OmniPBR.mdl`, are a separate,
+explicit runtime dependency. They retain the bare names required by NVIDIA's
+resolver. Optional `runtime_materials` declares the exact `isaac_sim_version`,
+immutable `image`, aggregate `library_sha256`, and a `modules` mapping from each
+bare MDL name to its relative Kit-library `path` and `sha256`. Preparation
+measures these values from the installed runtime; capture measures them again
+and requires equality before opening the scene. Every resolved module must be
+inside that installed Kit core library. Project files, including unused nested
+package members, cannot shadow declared module names. An undeclared missing
+MDL, texture, or USD layer still fails containment. The dataset preserves the
+measured descriptor, and CPU validation binds it to the input descriptor.
+The image field is operator-declared through `NPA_TASK_IMAGE`; retain the worker's
+actual imageID separately when qualifying a deployment. Library and module
+hashes are measured file bytes. No vendor material source is copied into Git.
+Select the descriptor's exact image digest in the capture resource profile;
+the warehouse workflow pins the same immutable image for preparation and capture.
+
 ## Output and geometry contract
 
 `capture/manifest.json` is the commit marker. It records the complete request,
@@ -212,7 +229,8 @@ Preparation invokes `npa.workflows.isaac_rgbd.cli prepare-reference --output-pat
 s3://<your-bucket>/<input-prefix>` in `/isaac-sim/python.sh`. The stage uses the
 native `omni.kit.usd.collect.Collector`, with missing USD and other assets treated
 as failures. It collects and remaps MDL module imports and their texture defaults,
-as well as USD references. USD-only dependency extraction is insufficient for
+as well as USD references. Canonical built-in Kit materials are recorded through
+the explicit native dependency contract above. USD-only dependency extraction is insufficient for
 this asset. The complete collected tree passes the same static and containment
 audit as a supplied scene, and publication commits `request.json` only after all
 hashed files upload under a unique attempt prefix. Input `reference.json` records
@@ -272,6 +290,8 @@ it does not vendor runtime code or assets:
   documents nonrecursive enumeration of layer, payload and asset references.
 - [Native asset collector](https://docs.omniverse.nvidia.com/kit/docs/omni.kit.usd.collect/3.0.1/omni.kit.usd.collect/omni.kit.usd.collect.Collector.html)
   documents collection of USD and material dependencies and explicit failure options.
+- [OmniUsdResolver MDL strategy](https://docs.omniverse.nvidia.com/kit/docs/usd_resolver/latest/docs/resolver-details.html)
+  explains why canonical native modules resolve from shared runtime libraries.
 - [OmniScripting schema 1.0.1](https://docs.omniverse.nvidia.com/kit/docs/omni.usd.schema.omniscripting/1.0.1/Overview.html)
   documents the applied API and script asset attribute rejected by preflight.
 

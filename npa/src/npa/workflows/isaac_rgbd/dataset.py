@@ -267,9 +267,19 @@ def _validate_header(manifest):
 
 def _validate_provenance(manifest):
     provenance = manifest["provenance"]
+    fields = "request_sha256 input_manifest_sha256 scope replicator_version"
+    if "runtime_materials" in manifest["request"]:
+        fields += " runtime_materials"
+        if (
+            provenance.get("runtime_materials")
+            != manifest["request"]["runtime_materials"]
+        ):
+            raise ValueError(
+                "measured native MDL provenance differs from capture input"
+            )
     _keys(
         provenance,
-        "request_sha256 input_manifest_sha256 scope replicator_version",
+        fields,
         "provenance",
     )
     if (

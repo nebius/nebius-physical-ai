@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "3b6a1a1779875eacb2d803728f430deb3ea3f624802ac5c18a7168f639f36215",
+  "workflow_sha256": "88f05b2cd4948dae34004616a81a7c720906b5028a97560fa7e7dd4298714934",
   "planning": {
     "validation": {
       "status": "verified",
@@ -23,24 +23,24 @@
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The example bucket must be replaced with a fresh operator-owned writable run prefix; no live storage probe was performed.",
+      "reason": "The example bucket must be replaced with fresh operator-owned writable storage; successful publication from the corrected full workflow remains unverified.",
       "evidence": []
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The public warehouse root URL was reachable and its raw USD layer passed static checks. Complete native USD/MDL dependency collection and capture remain unverified.",
+      "reason": "A native public-warehouse collection attempt stopped before publication because its built-in Kit MDL was not explicitly bound. The corrected native material dependency contract requires a fresh complete run.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd_usd.py"
       ]
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Operator S3 credentials and runtime bootstrap use requirements were not exercised.",
+      "reason": "Deployment-specific operator credentials and bootstrap use requirements must pass preflight; a successful full capture is not yet qualified.",
       "evidence": []
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Offline rendering proves source_overlay plus staged source for the existing Isaac image and CPU worker. Actual worker installation and immutable-image availability were not exercised.",
+      "reason": "The pinned public image started native Isaac Sim 6.0.1 with Vulkan on an RTX GPU. The corrected source snapshot and explicit native material hashes still require full capture qualification.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd_runtime.py::test_render_stages_branch_source_in_gpu_and_cpu_tasks"
       ]
