@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from statistics import pvariance
 from typing import Any
 
@@ -15,6 +16,41 @@ from npa.workflows.sim2real.episode_boundaries import (
 
 class TemporalCreditError(ValueError):
     """Raised when an evaluation cannot produce a trustworthy reward signal."""
+
+
+_SIMULATOR_BOOLEAN_FIELDS = (
+    "contact",
+    "stable_grasp",
+    "placement_stable",
+    "dropped",
+    "terminated",
+)
+
+
+def _literal_boolean(evidence: Mapping[str, Any], field: str, *, location: str) -> bool:
+    value = evidence.get(field, False)
+    if field in evidence and type(value) is not bool:
+        raise TemporalCreditError(f"{location}.{field} must be a literal boolean")
+    return value
+
+
+def _validate_boolean_evidence(
+    evaluation: dict[str, Any], raw_steps: list[Any]
+) -> bool:
+    success = _literal_boolean(evaluation, "success", location="evaluation")
+    for index, raw in enumerate(raw_steps):
+        if not isinstance(raw, dict) or "step" not in raw:
+            raise TemporalCreditError("per_step entries must be objects with step")
+        location = f"per_step[{index}]"
+        _literal_boolean(raw, "model_disagreement", location=location)
+        truth = raw.get("simulator_ground_truth")
+        if not isinstance(truth, Mapping):
+            continue
+        for field in _SIMULATOR_BOOLEAN_FIELDS:
+            _literal_boolean(
+                truth, field, location=f"{location}.simulator_ground_truth"
+            )
+    return success
 
 
 def _clip(value: float, low: float = -1.0, high: float = 1.0) -> float:
@@ -187,6 +223,7 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         isinstance(row, dict) and "episode_boundary" in row for row in raw_steps
     ):
         validate_episode_sequence(raw_steps)
+    success = _validate_boolean_evidence(evaluation, raw_steps)
 
     items: list[dict[str, Any]] = []
     previous_truth: dict[str, Any] | None = None
@@ -199,8 +236,6 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
     summary_broadcast = 0
     unobserved_visual = 0
     for raw in raw_steps:
-        if not isinstance(raw, dict) or "step" not in raw:
-            raise TemporalCreditError("per_step entries must be objects with step")
         tags = _tags(raw)
         credit_valid = temporal_credit_valid(raw)
         truth = dict(raw.get("simulator_ground_truth") or {})
@@ -233,7 +268,7 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
             confidence = min(confidence, 0.10)
             summary_broadcast += 1
             reasons.add("summary_broadcast")
-        disagreement = bool(raw.get("model_disagreement"))
+        disagreement = raw.get("model_disagreement", False)
         if disagreement:
             confidence *= 0.25
             disagreements += 1
@@ -328,7 +363,7 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         "schema": "npa.sim2real.rl_signal.v1",
         "rollout_id": str(evaluation.get("rollout_id") or ""),
         "source": "simulator_ground_truth_with_bounded_vlm_auxiliary",
-        "success": bool(evaluation.get("success")),
+        "success": success,
         "score": evaluation.get("score"),
         "per_step": items,
         "calibration": calibration,
