@@ -93,7 +93,10 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
 
     assert "pip uninstall -y transformers imageio-ffmpeg wandb tetgen" in text
     assert "sanitize-sim2real-envgen-parent.py" in text
-    assert "COPY docker/workbench/common/envgen_compat /opt/npa/compat" in text
+    assert "COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py " in text
+    assert "/opt/npa/compat/tetgen.py" in text
+    assert "chmod 0755 /opt/npa/compat" in text
+    assert "chmod 0644 /opt/npa/compat/tetgen.py" in text
     assert "PYTHONPATH=/opt/npa/compat:/opt/npa/src" in text
     assert '("genesis-world", "tetgen")' in sanitizer
     assert '("lerobot", "wandb")' in sanitizer

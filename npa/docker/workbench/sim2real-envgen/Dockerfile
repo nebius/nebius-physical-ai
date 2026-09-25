@@ -23,7 +23,8 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
     /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
-COPY docker/workbench/common/envgen_compat /opt/npa/compat
+COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
+    /opt/npa/compat/tetgen.py
 
 # The public Genesis parent includes three payloads that are outside this
 # capability's public packaging/security contract:
@@ -46,6 +47,8 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
+    && chmod 0755 /opt/npa/compat \
+    && chmod 0644 /opt/npa/compat/tetgen.py \
     && python -m pip uninstall -y npa \
     && python -m pip uninstall -y transformers imageio-ffmpeg wandb tetgen \
     && python /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py \
