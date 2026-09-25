@@ -150,7 +150,9 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
 | [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
 | [`lerobot-subtask-proof.yaml`](testing/lerobot-subtask-proof.yaml) | CPU post-review gate: complete LeRobot v3 `subtask_index` coverage → catalog resolution → row-level proof bound to the source Parquet digest ([guide](../docs/workbench/guides/lerobot-subtask-labeling.md)) |
-| [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | MJLab locomotion eval |
+| [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | Measured native MJLab checkpoint evaluation |
+| [`mjlab-train-eval.yaml`](testing/mjlab-train-eval.yaml) | Native MJLab training, measured evaluation, ONNX export and independent-seed evaluation |
+| [`mjlab-render.yaml`](testing/mjlab-render.yaml) | Trained MJLab checkpoint to measured evaluation, rendered MP4 and self-contained HTML on RTX PRO 6000 |
 | [`openpi-pi05-four-mode.yaml`](testing/openpi-pi05-four-mode.yaml) | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`openpi-pi05-full-droid-finetune.yaml`](testing/openpi-pi05-full-droid-finetune.yaml) | Complete upstream pi0.5 full-DROID recipe: checksum-synced RLDS 1.0.1 and preparation RRD, ten-million-frame normalization, fixed 100-update distributed qualification RRD, global batch 256, 100,000 updates on eight one-RTX-PRO-6000 nodes, durable resume, immutable checkpoint lineage, and verified progress RRD snapshots at 1k/10k/25k/50k/75k/100k ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
@@ -162,7 +164,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
 | [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |
 | [`sonic-export.yaml`](testing/sonic-export.yaml) | SONIC export |
-| [`sonic-locomotion-finetuning.yaml`](testing/sonic-locomotion-finetuning.yaml) | Retarget → train → mjlab |
+| [`sonic-locomotion-finetuning.yaml`](testing/sonic-locomotion-finetuning.yaml) | Retarget → train → export → native SONIC eval |
 | [`sonic-train.yaml`](testing/sonic-train.yaml) | SONIC train |
 
 #### Data, perception, and scenario analysis
@@ -266,3 +268,5 @@ timelines and control hashes, and checks every downstream component report.
 - [Workflow runbooks](guides/README.md) and [robot guides](../docs/workbench/guides/README.md).
 - [Tool catalog](../docs/workbench/npa-workflow-tool-catalog.md) and [authoring reference](../docs/workbench/npa-workflow-guide.md).
 - Agent skills: [author a workflow](../skills/workflows/author-npa-workflow/SKILL.md) or [design a pipeline](../skills/workflows/generate-npa-workflow/SKILL.md).
+
+MJLab workflows require an explicitly built MJLab image while its public release is quarantined; see the [MJLab guide](../docs/workbench/mjlab.md).
