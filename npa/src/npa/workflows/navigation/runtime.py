@@ -271,23 +271,13 @@ def main(argv: list[str] | None = None) -> int:
         ImportError: Required native dependencies are missing.
     """
     from isaaclab_tasks.utils import launch_simulation
-    from isaaclab.utils.seed import configure_seed
 
     args = _arguments(argv)
     recipe = read_recipe(args.input_path)
     validate_scene_package(args.input_path / recipe.scene_file)
     adapter = task_adapter(recipe)
     training = args.stage == "train"
-    cases = recipe.train_cases if training else recipe.eval_cases
-    configure_seed(cases[0].seed)
-    config = adapter.configure(
-        task=recipe.task,
-        scene_file=str(args.input_path / recipe.scene_file),
-        scene_prim=recipe.scene_prim,
-        num_envs=recipe.num_envs,
-        cases=[case.model_dump() for case in cases],
-        training=training,
-    )
+    config = _configure_environment(adapter, recipe, args.input_path, training)
     args.enable_cameras = recipe.sensor_mode == "rgbd" or (
         not training and recipe.adapter_module == "npa.workflows.navigation.reference"
     )
@@ -296,6 +286,26 @@ def main(argv: list[str] | None = None) -> int:
     with launch_simulation(config, args):
         _execute(args, recipe, adapter, config)
     return 0
+
+
+def _configure_environment(adapter, recipe, source, training):
+    from isaaclab.utils.seed import configure_seed
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    cases = recipe.train_cases if training else recipe.eval_cases
+    configure_seed(cases[0].seed)
+    config = adapter.configure(
+        task=recipe.task,
+        scene_file=str(source / recipe.scene_file),
+        scene_prim=recipe.scene_prim,
+        num_envs=recipe.num_envs,
+        cases=[case.model_dump() for case in cases],
+        training=training,
+    )
+    # Kit detection must inspect only selected backends, not unused alternatives.
+    config = resolve_presets(config)
+    config.seed = cases[0].seed
+    return config
 
 
 def _arguments(argv):

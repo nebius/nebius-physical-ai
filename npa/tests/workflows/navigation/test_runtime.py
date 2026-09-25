@@ -1,6 +1,8 @@
 """Exercise native driver boundaries with CPU contract fixtures, never a simulator."""
 
 import json
+import sys
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +11,62 @@ import pytest
 from npa.workflows.navigation import runtime
 from npa.workflows.navigation.artifacts import file_sha256
 from npa.workflows.navigation.contract import finite_array
+
+
+@pytest.mark.parametrize("stage", ["train", "evaluate-checkpoint"])
+def test_launcher_receives_resolved_backends_and_sealed_seed(
+    stage, recipe, tmp_path, monkeypatch
+):
+    source, output = tmp_path / "input", tmp_path / "output"
+    source.mkdir()
+    (source / "recipe.json").write_text(recipe.model_dump_json())
+    cases = recipe.train_cases if stage == "train" else recipe.eval_cases
+    unresolved = SimpleNamespace(physics_alternatives=("PhysX", "Newton"))
+    resolved = SimpleNamespace(physics="PhysX", seed=None)
+    events = []
+
+    def resolve(config):
+        assert config is unresolved
+        events.append("resolved")
+        return resolved
+
+    @contextmanager
+    def launch(config, args):
+        assert config is resolved and config.seed == cases[0].seed
+        assert events == [cases[0].seed, "resolved"]
+        events.append("Kit")
+        yield
+
+    monkeypatch.setitem(
+        sys.modules, "isaaclab_tasks.utils", SimpleNamespace(launch_simulation=launch)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaclab_tasks.utils.hydra",
+        SimpleNamespace(resolve_presets=resolve),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaclab.utils.seed",
+        SimpleNamespace(configure_seed=events.append),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_arguments",
+        lambda _: SimpleNamespace(stage=stage, input_path=source, output_path=output),
+    )
+    monkeypatch.setattr(runtime, "validate_scene_package", lambda _: None)
+    monkeypatch.setattr(runtime, "read_recipe", lambda _: recipe)
+    monkeypatch.setattr(
+        runtime,
+        "task_adapter",
+        lambda _: SimpleNamespace(configure=lambda **kwargs: unresolved),
+    )
+    monkeypatch.setattr(
+        runtime, "_execute", lambda args, recipe, adapter, config: events.append(config)
+    )
+    assert runtime.main([]) == 0
+    assert events == [cases[0].seed, "resolved", "Kit", resolved]
 
 
 def test_measurements_do_not_alias_mutating_simulator_buffers():
