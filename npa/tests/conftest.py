@@ -65,6 +65,10 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
     "FOXGLOVE_API_TOKEN",
+    "ENCORD_SSH_KEY",
+    "ENCORD_SSH_KEY_B64",
+    "ENCORD_SSH_KEY_FILE",
+    "ENCORD_DOMAIN",
     "ANTIOCH_TOKEN",
     "NEBIUS_TOKEN_FACTORY_KEY",
     "TYPESAFE_API_KEY",
@@ -480,12 +484,12 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     import npa.cluster.state
     import npa.controller_ownership
     import npa.deploy.provisioner
-    import npa.deploy.ssh_trust
     import npa.orchestration.npa_workflow.first_run_state
     import npa.orchestration.skypilot._bin
     import npa.workbench.access_approval
 
     npa_dir = home / ".npa"
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(npa_dir))
     # The bases matter as much as the paths derived from them: cleanup.py reads
     # `NPA_CONFIG_DIR` directly and seeds it into a subprocess environment, so
     # leaving it unpatched hands the operator's real directory to a child
@@ -521,7 +525,6 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
         "_DEFAULT_SKYPILOT_BIN",
         npa_dir / "skypilot-venv" / "bin" / "sky",
     )
-    monkeypatch.setattr(npa.deploy.ssh_trust, "NPA_CONFIG_DIR", npa_dir)
     monkeypatch.setattr(
         npa.workbench.access_approval,
         "DEFAULT_STATE_PATH",

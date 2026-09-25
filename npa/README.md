@@ -67,6 +67,25 @@ That check reads the complete downloaded output bundle and launches no new job.
 
 ## Install
 
+For a persistent remote development environment, use
+[`npa tools desktop`](../docs/tools/development-desktop.md). This operator tool
+installs VS Code and Codex on an existing Ubuntu VM, provides a sharp browser
+desktop with adjustable workspace size, and can enable authenticated HTTPS on a
+public IP. Its setup and operation commands live under `npa tools`.
+The browser desktop shares text with your device through copy/paste shortcuts
+and **Paste** / **Copy to device** controls, with a manual clipboard fallback.
+`npa tools desktop chat-setup --connect-vscode` adds authenticated mobile Codex
+chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it. Mobile
+and VS Code share conversations, model/reasoning selections, and live activity.
+The shared runtime setting covers desktop VS Code and Remote SSH clients on the VM.
+Cloud chat setup also enables a persistent browser sign-in, automatic phone
+routing to chat, and an installable Home Screen app using the same login.
+`npa tools desktop chat-setup --local` attaches the same interface to existing Mac
+sessions, including native VS Code views of mobile-owned running chats. Add
+`--gateway-ssh-host <alias>` to use an existing authenticated gateway.
+`npa tools desktop optimize --ssh-host <alias>` reduces desktop effects for faster
+clicking and typing while preserving the running session and display resolution.
+
 From the repository root, with your virtual environment active:
 
 ```bash
@@ -386,6 +405,10 @@ npa/.venv/bin/python -m pytest \
 
 Mocked browser checks require Google Chrome and run with
 `bash npa/scripts/run_agent_cypress.sh --mock` from the repository root.
+The wrapper installs the locked browser and native Codex adapter dependencies
+when absent, then runs the native protocol tests and mocked desktop/agent specs.
+For direct npm invocation, first run `npm ci --prefix npa/tests/browser` and
+`npm ci --prefix npa/src/npa/tools/desktop/native`.
 They use Chrome's software WebGL renderer for real canvas capture coverage;
 Cypress 16's deprecated Electron browser cannot provide that context in CI.
 

@@ -112,7 +112,7 @@ def test_guard_catches_a_constant_left_pointing_at_the_real_home(
 
 
 def test_credentials_path_and_config_path_are_inside_the_test_home() -> None:
-    """Pin the two paths that would leak real secrets if they were missed.
+    """Keep config, credentials, and runtime SSH trust inside the test home.
 
     Returns:
         None.
@@ -120,6 +120,7 @@ def test_credentials_path_and_config_path_are_inside_the_test_home() -> None:
 
     import npa.clients.config as config
     import npa.clients.credentials as credentials
+    from npa.deploy.ssh_trust import known_hosts_path
 
     home = Path(os.environ["HOME"])
     for name, value in (
@@ -127,5 +128,6 @@ def test_credentials_path_and_config_path_are_inside_the_test_home() -> None:
         ("clients.config.NPA_CONFIG_DIR", config.NPA_CONFIG_DIR),
         ("clients.credentials.CREDENTIALS_PATH", credentials.CREDENTIALS_PATH),
         ("clients.credentials.NPA_CONFIG_DIR", credentials.NPA_CONFIG_DIR),
+        ("deploy.ssh_trust.known_hosts_path", known_hosts_path("127.0.0.1")),
     ):
         assert value.is_relative_to(home), f"{name} resolves to {value}"

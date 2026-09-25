@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
-from npa.orchestration.skypilot.workflow import WorkflowResult
+from npa.orchestration.skypilot.workflow import SkyPilotSubmitError, WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS = REPO_ROOT / "workflows" / "testing"
@@ -859,10 +859,12 @@ def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> N
 
 
 def test_submit_without_runtime_uses_the_one_shot_path(
-    mocker, monkeypatch, satisfied_preflight
+    mocker, monkeypatch, satisfied_preflight, tmp_path
 ) -> None:
-    """Backwards compatibility: the default submit path never calls the driver."""
+    """The one-shot path recovers from the original declarative source spec."""
 
+    operation_root = tmp_path / "operations"
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(operation_root))
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     runtime_driver = mocker.patch(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
@@ -874,13 +876,15 @@ def test_submit_without_runtime_uses_the_one_shot_path(
         nonlocal submit_calls
         submit_calls += 1
         submitted["content"] = Path(path).read_text(encoding="utf-8")
+        if submit_calls == 1:
+            raise SkyPilotSubmitError(
+                "synthetic indeterminate launch", launch_attempted=True
+            )
         return WorkflowResult(
             status="SUBMITTED",
             job_id="9",
             returncode=0,
-            launch_transaction={
-                "state": "adopted" if submit_calls > 1 else "submitted"
-            },
+            launch_transaction={"state": "adopted"},
         )
 
     submit_mock = mocker.patch(
@@ -903,30 +907,29 @@ def test_submit_without_runtime_uses_the_one_shot_path(
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     runtime_driver.assert_not_called()
     # The parallel group is flattened into today's serial pipeline.
     assert "execution: serial" in str(submitted["content"])
     assert "caption-shard-c" in str(submitted["content"])
 
-    resumed = RUNNER.invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "submit",
-            str(FANOUT),
-            "--run-id",
-            "one-shot-1",
-            "--image",
-            "none",
-            "--var",
-            "bucket=rt-bucket",
-        ],
-    )
+    [journal_path] = operation_root.glob("*/journal.json")
+    initial = json.loads(journal_path.read_text(encoding="utf-8"))
+    recovery_argv = initial["recovery_commands"]["resume_argv"]
+    assert Path(recovery_argv[4]) == FANOUT.resolve()
+    assert Path(recovery_argv[4]).is_file()
+    assert recovery_argv[recovery_argv.index("--resume-run") + 1] == "one-shot-1"
+    assert "--no-runtime" in recovery_argv
+    assert recovery_argv[recovery_argv.index("--var") + 1] == "bucket=rt-bucket"
+
+    resumed = RUNNER.invoke(app, recovery_argv[1:])
     assert resumed.exit_code == 0, resumed.output
     assert "status: SUBMITTED" in resumed.output
     assert submit_mock.call_count == 2
+    final = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert final["phase"] == "committed"
+    assert final["resume_count"] == 1
+    assert len(list(operation_root.glob("*/journal.json"))) == 1
 
 
 def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -> None:

@@ -253,6 +253,19 @@ Workflow cancellation reports `NOT_SUBMITTED` only from durable planned or
 reserved evidence. If submission began and S3 or SkyPilot verification is gone,
 it stays `VERIFICATION_UNAVAILABLE` with exit 2 — never silently "already gone".
 
+An exact managed-job lookup can also report absence while durable workflow state
+still says that job is non-terminal. `workflow cancel` preserves that
+contradiction, exits 2, and writes a non-terminal receipt. During an explicit
+`npa destroy --all --yes` transaction, the workflow phase may continue as
+degraded only when the cancel JSON contains `owned_teardown_allowed: true`.
+That narrow result proves every actually live exact job cancelled cleanly and
+all remaining errors are verified-absence contradictions. It does not apply to
+provider failures, malformed ledgers, missing job IDs, or cancellation errors;
+those remain hard dependency blockers before controller or cluster teardown.
+Managed-job drain uses a closed terminal contract: `SUBMITTED`,
+`WINDING_DOWN`, and unrecognized future states remain non-terminal until the
+exact queue reports a terminal state or verified absence.
+
 ## Audit receipts
 
 Every destructive phase writes a versioned, atomic, non-secret receipt under

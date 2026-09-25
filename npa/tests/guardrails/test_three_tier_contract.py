@@ -162,6 +162,24 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "train_steps": "knob",
         "seed": "knob",
     },
+    "openvla/train": {
+        "dataset_name": "knob",
+        "batch_size": "knob",
+        "max_steps": "knob",
+        "learning_rate": "knob",
+        "lora_rank": "knob",
+        "lora_dropout": "knob",
+        "image_aug": "boolean",
+        "seed": "knob",
+        "dry_run": "boolean",
+    },
+    "molmoact/finetune": {
+        "max_steps": "knob",
+        "batch_size": "knob",
+        "learning_rate": "knob",
+        "num_gpus": "knob",
+        "run_name": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
@@ -230,6 +248,66 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("config_name", "config_name", "--config-name"),
             _p("train_steps", "train_steps", "--train-steps"),
             _p("seed", "seed", "--seed"),
+        ),
+    ),
+    CapabilityContract(
+        name="openvla/train",
+        cli_module="npa.cli.workbench.openvla",
+        cli_callback="train_cmd",
+        sdk_module="npa.sdk.workbench.openvla",
+        sdk_attr="train",
+        spec_path=SPECS / "openvla-train.yaml",
+        tool_ref="workbench.openvla.train",
+        spec_gap=(
+            "dataset_name",
+            "batch_size",
+            "max_steps",
+            "learning_rate",
+            "lora_rank",
+            "lora_dropout",
+            "image_aug",
+            "seed",
+            "dry_run",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("dataset_name", "dataset_name", "--dataset-name"),
+            _p("output_dir", "output_dir", "--output-dir"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("lora_rank", "lora_rank", "--lora-rank"),
+            _p("lora_dropout", "lora_dropout", "--lora-dropout"),
+            _p("image_aug", "image_aug", "--image-aug"),
+            _p("seed", "seed", "--seed"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="molmoact/finetune",
+        cli_module="npa.cli.workbench.molmoact",
+        cli_callback="finetune_cmd",
+        sdk_module="npa.sdk.workbench.molmoact",
+        sdk_attr="finetune",
+        spec_path=SPECS / "molmoact-finetune.yaml",
+        tool_ref="workbench.molmoact.finetune",
+        spec_gap=(
+            "max_steps",
+            "batch_size",
+            "learning_rate",
+            "num_gpus",
+            "run_name",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_s3_uri", "output_s3_uri", "--output-s3-uri"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("num_gpus", "num_gpus", "--num-gpus"),
+            _p("run_name", "run_name", "--run-name"),
         ),
     ),
     CapabilityContract(
@@ -823,6 +901,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "cosmos-evaluator",
         "data",
         "dataset",
+        # CLI, SDK, and workflow call one shared implementation; Encord remains remote SaaS.
+        "encord",
         "fiftyone",
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).
@@ -858,6 +938,11 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # npa/tests/workbench/test_nurec_access.py::
         # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
         # argv flag against the real Typer options.
+        # OpenVLA toolRefs emit upstream argv plans and raise (train/serve/eval
+        # not yet wired), so there is no service tier to keep coherent with a
+        # YAML env block. CLI <-> catalog argv coherence is enforced by
+        # test_module_toolref_argv.py instead.
+        "openvla",
         "nurec",
         "scenario-gen",
         "sim2real",

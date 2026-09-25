@@ -547,6 +547,25 @@ skills:
         path: npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
       - type: file_exists
         path: npa/src/npa/cli/agent_foxglove.py
+  - name: encord
+    category: tools
+    when_to_use: "Register S3 media with Encord SaaS, pull curated media with exact lineage, or verify a fail-closed roundtrip."
+    path: skills/tools/encord/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "encord", "push", "--help"]
+        contains: "identity-sidecar"
+      - type: cli_help
+        args: ["workbench", "encord", "pull", "--help"]
+        contains: "label-export"
+      - type: cli_help
+        args: ["workbench", "encord", "verify-roundtrip", "--help"]
+        contains: "receipt-uri"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/encord-push.yaml
+          - workflows/testing/encord-pull.yaml
+          - workflows/testing/encord-roundtrip-smoke.yaml
   - name: insights
     category: tools
     when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."
@@ -706,6 +725,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/mjlab-eval.yaml
+  - name: development-desktop
+    category: tools
+    when_to_use: "Set up and operate an Ubuntu development desktop through npa tools desktop, with readable Retina rendering and authenticated public HTTPS access."
+    path: skills/tools/development-desktop/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["tools", "desktop", "setup", "--help"]
+        contains: "ssh-host"
+      - type: cli_help
+        args: ["tools", "desktop", "public-access", "--help"]
+        contains: "public-ip"
   - name: nebius-infra
     category: tools
     when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, retained-backup checksum verification and VM maintenance pauses across reboot."
@@ -726,6 +756,26 @@ skills:
         contains: "dataset-uri"
       - type: file_exists
         path: skills/tools/newton/SKILL.md
+  - name: openvla
+    category: tools
+    when_to_use: "OpenVLA fine-tuning, serving, or evaluation workbench stages, the OpenVLA-OFT LoRA recipe, or the npa workbench openvla CLI."
+    path: skills/tools/openvla/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openvla", "train", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/openvla/SKILL.md
+  - name: molmoact
+    category: tools
+    when_to_use: "MolmoAct VLA fine-tuning, serving, or evaluation workbench stages, MolmoAct policy configs, or the npa workbench molmoact CLI."
+    path: skills/tools/molmoact/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "molmoact", "finetune", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/molmoact/SKILL.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
@@ -953,18 +1003,6 @@ skills:
           - workflows/testing/cosmos3-ray-batch.yaml
       - type: file_exists
         path: npa/docker/workbench/cosmos3-ray-serve/Dockerfile
-  - name: cosmos3-super-benchmark
-    category: tools
-    when_to_use: "Reproduce, run, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU sweep on B200/H200, the ten-cell B200 public record, or the isolated single-H200 TP-1 suite with durable cell resume."
-    path: skills/tools/cosmos3-super-benchmark/SKILL.md
-    smoke:
-      - type: cli_help
-        args: ["workbench", "cosmos3", "super-benchmark", "--help"]
-        contains: "H200 single-GPU validation"
-      - type: npa_workflow_yaml
-        paths:
-          - workflows/testing/cosmos3-super-b200-benchmark.yaml
-          - workflows/testing/cosmos3-super-h200-benchmark.yaml
   - name: contribute-workbench-image
     category: workflows
     when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."
