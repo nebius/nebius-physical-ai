@@ -122,6 +122,9 @@ def _environment(settings, run):
         COSMOS_TRAINING="1",
         LD_LIBRARY_PATH="",
         PYTHONPATH=str(root / "framework"),
+        PATH=str(root / "framework/.venv/bin")
+        + os.pathsep
+        + os.environ.get("PATH", ""),
         WANDB_MODE="disabled",
         NPA_WAM_RUN_DIR=str(run),
         LIBERO_ROOT=str(root / "data/libero_10"),
@@ -138,6 +141,8 @@ def _native_options(settings, run):
         str(run / "train.toml"),
         "--",
         f"trainer.seed={settings['seed']}",
+        "model.config.vlm_config.tokenizer.pretrained_model_name="
+        + json.dumps(str(Path(settings["shared_root"]) / "tokenizer")),
     ]
     if settings["profile"]:
         ranks = ",".join(str(rank * 8) for rank in range(settings["nodes"]))
@@ -190,6 +195,9 @@ def _verify_inputs(settings, run):
     for item in (
         "base-dcp/model/.metadata",
         "vae/Wan2.2_VAE.pth",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/vocab.json",
+        "tokenizer/merges.txt",
         "data/libero_10/meta/info.json",
     ):
         if not (root / item).is_file():

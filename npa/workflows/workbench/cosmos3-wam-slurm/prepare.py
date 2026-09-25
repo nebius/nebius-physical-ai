@@ -92,6 +92,12 @@ def _fetch(root, sources, data_only):
     snapshot_download(
         "nvidia/Cosmos3-Nano", revision=sources["model"], local_dir=root / "model"
     )
+    snapshot_download(
+        "Qwen/Qwen3-VL-8B-Instruct",
+        revision=sources["qwen"],
+        allow_patterns=["*.json", "*.txt", "*.jinja"],
+        local_dir=root / "tokenizer",
+    )
     hf_hub_download(
         "Wan-AI/Wan2.2-TI2V-5B",
         "Wan2.2_VAE.pth",
@@ -99,6 +105,28 @@ def _fetch(root, sources, data_only):
         local_dir=root / "vae",
     )
     return data
+
+
+def _conversion_argv(root):
+    # Native conversion defaults to a moving processor revision and a registry
+    # VAE. Its supported config overrides keep both on our downloaded bytes.
+    return [
+        str(root / "framework/.venv/bin/python"),
+        "-m",
+        "cosmos_framework.scripts.convert_model_to_dcp",
+        "--checkpoint-path",
+        str(root / "model"),
+        "-o",
+        str(root / "base-dcp"),
+        "--experiment-overrides",
+        "model.config.vlm_config.tokenizer.repository=null",
+        "model.config.vlm_config.tokenizer.revision=null",
+        "model.config.vlm_config.tokenizer.tokenizer_type="
+        + json.dumps(str(root / "model")),
+        'model.config.tokenizer.bucket_name=""',
+        "model.config.tokenizer.vae_path="
+        + json.dumps(str(root / "vae/Wan2.2_VAE.pth")),
+    ]
 
 
 def _convert(root, sources):
@@ -113,19 +141,12 @@ def _convert(root, sources):
         COSMOS_TRAINING="1",
         LD_LIBRARY_PATH="",
         PYTHONPATH=str(framework),
+        PATH=str(framework / ".venv/bin") + os.pathsep + os.environ.get("PATH", ""),
         WANDB_MODE="disabled",
     )
     with (root / "conversion.log").open("x") as log:
         subprocess.run(
-            [
-                str(framework / ".venv/bin/python"),
-                "-m",
-                "cosmos_framework.scripts.convert_model_to_dcp",
-                "--checkpoint-path",
-                str(root / "model"),
-                "-o",
-                str(root / "base-dcp"),
-            ],
+            _conversion_argv(root),
             cwd=framework,
             env=env,
             stdout=log,

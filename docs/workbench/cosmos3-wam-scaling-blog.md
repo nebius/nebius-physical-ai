@@ -12,8 +12,10 @@ We have prepared a [Workbench recipe](cookbooks/cosmos3-wam-slurm.md) to measure
 Cosmos 3 Nano WAM post-training on reserved Nebius B200 nodes under Slurm. It
 covers data preparation, native training, one-node to multi-node scaling,
 profiling, and the evidence needed to connect training time to policy quality.
-The current implementation has passed local launch and reporting tests and
-real dataset inspection. GPU execution and policy measurements remain pending.
+The current implementation has passed local launch and reporting tests, real
+dataset inspection, native checkpoint conversion and B200 runtime checks. An
+actual one-GPU WAM attempt exposed a memory limit described below. Completed
+Slurm training and policy measurements remain pending.
 
 ## The question public launch recipes leave open
 
@@ -51,6 +53,32 @@ immutable revisions. The model checkpoint is converted once into PyTorch's
 distributed checkpoint format and placed with the dataset on shared storage.
 This separates preparation time from training time and lets each topology
 start from the same artifacts.
+
+## What the first B200 run established
+
+We ran the pinned environment on a reserved B200 with driver 580.173.02,
+PyTorch 2.10.0 and CUDA 13.0. BF16 attention matched an FP32 reference, backward
+gradients were finite and nonzero, and the native fused Adam implementation
+updated FP32 parameters successfully. The native converter produced a 31.5 GB
+base checkpoint. The trainer accepted all three proposed distributed
+configurations. The [evidence record](evidence/cosmos3-wam-b200-runtime.json)
+preserves versions, hashes and the scope of each check.
+
+We also attempted actual WAM training on that GPU with one sample per step,
+FP32 parameter storage and EMA enabled. It exhausted GPU memory at the first
+optimizer-state allocation: the process occupied 178.31 GiB of the 178.35 GiB
+available to PyTorch. No optimizer step completed. This is evidence that this
+specific configuration does not fit on one B200, even at that small batch;
+it does not determine the minimum GPU count under other memory settings.
+
+The failed process lasted about 96 seconds. That is diagnostic startup and
+failure time, **not training duration or time to quality**. Full eight-GPU
+Slurm workers remain unavailable in the selected reservation, so the 8/16-GPU
+comparison and performance answers are still pending.
+
+The live preparation test also found an operational issue: the native converter
+could resolve a moving processor revision. The recipe now selects the staged
+processor and VAE explicitly and pins the training tokenizer separately.
 
 ## Change GPU count while preserving the experiment
 

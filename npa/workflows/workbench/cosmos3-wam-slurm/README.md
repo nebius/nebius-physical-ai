@@ -9,10 +9,12 @@ It is a standalone application recipe for `npa soperator`, alongside the existin
 It does not add a new `npa.workflow` toolRef or claim that the inference image is
 a training image.
 
-**Validation:** experimental; B200 Slurm execution and scaling measurements are
-pending. See [validation.json](validation.json). Offline launch tests, upstream
-TOML schema validation, and real dataset inspection do not establish GPU runtime
-support, training quality, or time to convergence.
+**Validation:** experimental; a reserved B200 passed real CUDA forward/backward
+and native fused-optimizer checks. Native checkpoint conversion and trainer
+configuration checks passed. A one-GPU WAM attempt exhausted memory at its first
+optimizer update with FP32 parameters and EMA, even with one sample per step.
+B200 Slurm execution, scaling and policy quality remain unmeasured. See
+[validation.json](validation.json) and the [GPU evidence](../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json).
 
 ## Plan without cloud resources
 
@@ -47,7 +49,8 @@ example follows upstream LIBERO-10's training schedule.
 
 | File | Purpose |
 | --- | --- |
-| `sources.json` | Immutable framework, model, dataset, VAE, and simulator revisions |
+| `sources.json` | Immutable framework, model, tokenizer, dataset, VAE, and simulator revisions |
+| `probe.py` | Actual BF16 CUDA attention forward/backward and native FP32 fused Adam update |
 | `cluster.py` | Private reserved-capacity Soperator spec; 2 TiB shared jail, explicit node count |
 | `prepare.py` | Pinned HF downloads, actual Parquet/camera checks, dataset hashes, DCP conversion |
 | `recipe.py` / `train.toml.in` | Native TOML, batch arithmetic, Slurm launch, per-node completion evidence |
@@ -70,6 +73,20 @@ NumPy, PyArrow and PyAV. It verifies raw state/action shapes and finite values,
 all Parquet row/episode/task counts, both camera streams, and one decoded frame
 per video file. It does **not** fully decode every video frame. Downloads use
 the caller's HF configuration; `HF_TOKEN` is optional for these public payloads.
+Conversion overrides the native moving processor reference with the staged
+model's processor and uses the staged VAE. Training uses a separately pinned
+Qwen tokenizer. Child processes receive the native virtualenv's executable path.
+
+For a runtime check on an allocated B200, run in that Linux training environment:
+
+```bash
+COSMOS_TRAINING=1 LD_LIBRARY_PATH="" \
+  "$WAM_SHARED_ROOT/framework/.venv/bin/python" "$WAM_RECIPE/probe.py" \
+  --output "$WAM_SHARED_ROOT/runtime-probe.json"
+```
+
+This checks one visible device and refuses to overwrite an existing receipt.
+It does not load WAM weights, test cross-node NCCL, or establish training capacity.
 
 `cluster.py` requires `NPA_PROJECT_ID`, `NPA_TENANT_ID`, and
 `NPA_CAPACITY_BLOCK_GROUP` from private operator configuration, plus explicit

@@ -8,9 +8,13 @@ visual observations and action chunks from language and camera observations.
 It uses the actual `action_policy_libero_nano` experiment and its `mode="wam"`
 dataloader. Captioned-video generator SFT does not exercise this action pathway.
 
-**Current evidence:** local launcher/report tests, native TOML schema checks,
-and decoded public dataset inspection. No B200 Slurm training duration,
-scaling efficiency, or policy success result has been measured for this recipe.
+**Current evidence:** actual reserved B200 CUDA attention forward/backward and
+native fused Adam checks, completed native checkpoint conversion, native trainer
+dryruns for 8/16/32 GPUs, and decoded public data. A separate one-GPU WAM attempt
+failed at its first optimizer update with FP32 parameters and EMA, even at one
+sample per step. No B200 Slurm training duration, scaling efficiency, or policy
+success result has been measured for this recipe. The [GPU evidence record](../evidence/cosmos3-wam-b200-runtime.json)
+includes runtime versions, hashes, and the memory failure.
 Consult the [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json).
 
 ## What the experiment measures
@@ -125,6 +129,12 @@ Preparation runs on a worker because checkpoint conversion can exceed the
 login node's memory. Charge this allocation to preparation, separately from
 the training-process timings. The CPU-only `--data-only` check can run on the
 login node or a development machine without reserving GPUs.
+
+The converter's supported overrides select the staged processor and VAE;
+the unmodified native defaults can otherwise fetch a moving processor revision.
+Training's Qwen tokenizer is also downloaded at an immutable revision and passed
+as a local path. Both launchers put the native virtualenv on `PATH`, including
+the `uv` executable needed by upstream subprocesses.
 
 The pinned data contains **379 episodes, 101,469 frames, and ten tasks at 20 Hz**.
 Local inspection checked every action/state row and decoded a frame from each

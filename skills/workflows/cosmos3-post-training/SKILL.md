@@ -59,8 +59,9 @@ For reserved B200 Slurm scaling, use the standalone application recipe at
 `npa/workflows/workbench/cosmos3-wam-slurm/` and
 `docs/workbench/cookbooks/cosmos3-wam-slurm.md`. It plans native LIBERO WAM runs
 with eight ranks per node, a fixed nominal batch and explicit HSDP topology.
-Its `validation.json` distinguishes real CPU data/schema checks from pending
-GPU execution. Do not claim training duration, scaling efficiency or time to
+Its `validation.json` distinguishes real B200 runtime checks, native conversion,
+trainer dryruns and a one-GPU WAM memory failure from pending
+Slurm training. Do not claim training duration, scaling efficiency or time to
 quality until completed Slurm runs, profiles and full matched evaluation exist.
 The linked blog is an editorial draft with pending results. Current upstream
 LIBERO already describes two-node training; avoid the outdated blanket claim
