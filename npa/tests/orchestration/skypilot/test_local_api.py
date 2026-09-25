@@ -371,9 +371,20 @@ def test_listener_exit_after_namespace_read_returns_not_ready(monkeypatch):
         child.wait()
 
 
-def test_new_server_exit_still_fails_readiness(local_runtime):
+def test_new_server_exit_still_fails_readiness(local_runtime, monkeypatch):
     modules = Path(local_runtime["environment"]["PYTHONPATH"])
     (modules / "sky" / "server" / "server.py").write_text("raise SystemExit(7)\n")
+    launch = api.subprocess.Popen
+
+    def exited_server(argv, **kwargs):
+        process = launch(argv, **kwargs)
+        if "sky.server.server" in argv:
+            # Reap the real child before inspection: this tests an exited server,
+            # not Linux denying /proc access during its exit transition.
+            assert process.wait() == 7
+        return process
+
+    monkeypatch.setattr(api.subprocess, "Popen", exited_server)
 
     with pytest.raises(api.IsolatedApiError, match="exited before readiness"):
         api.ensure_isolated_api(**local_runtime)
