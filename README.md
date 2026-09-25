@@ -273,3 +273,14 @@ Security disclosures: [SECURITY.md](SECURITY.md).
 
 [Apache License 2.0](LICENSE). Third-party software, models, and datasets retain
 their own licenses and access terms.
+
+### MJLab robot learning
+
+[MJLab integration](docs/workbench/mjlab.md) provides native training and resume,
+measured evaluation, ONNX export, a scoped authenticated service, and CLI/SDK
+clients. Use the [train/evaluate workflow](workflows/testing/mjlab-train-eval.yaml)
+on a Nebius GPU with an explicitly built MJLab image. Native GPU acceptance
+results are recorded in the guide; public image promotion remains gated.
+`eval --video` publishes the rendered MP4 and a self-contained HTML report with
+measured episode results and checkpoint provenance.
+The former deterministic scoring placeholder has been removed.

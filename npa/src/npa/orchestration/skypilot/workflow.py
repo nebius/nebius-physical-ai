@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 import fcntl
+import stat
 import shutil
 import subprocess
 import sys
@@ -76,6 +77,10 @@ HEALTHY_CONTROLLER_STATUS = "UP"
 # controller wait for a status ("UP") it never reaches without a launch, so the
 # preflight burned the whole timeout and failed a submit that would have worked.
 READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
+LIBERO_OWNER_BINDING_SCHEMA = "npa.libero.owner-binding.v1"
+LIBERO_PENDING_SUBMISSION_TIME = (
+    "LIBERO exact managed job is PENDING; awaiting provider submission timestamp"
+)
 
 
 @dataclass(frozen=True)
@@ -816,76 +821,147 @@ class _PreparedWorkflowSubmission:
     config_path: Path
     sky_executable: str
     global_config: dict[str, Any]
+    libero_submission: bool = False
     env: dict[str, str] = field(default_factory=dict)
 
 
-def _submission_global_config(runtime, controller_backend, infra):
+def _submission_global_config(
+    runtime, controller_backend, infra, *, documents=(), extra_env=None
+):
+    from npa.workflows.byof.libero_customer import (
+        controller_context,
+        selected,
+        validate_profile,
+    )
+
+    context = _controller_region_from_infra(infra, controller_backend)
+    controller = None
+    if selected(documents):
+        validate_profile(documents)
+        controller = controller_context(
+            {**os.environ, **(extra_env or {})}, context or ""
+        )
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
         controller_backend=controller_backend,
-        infra=infra,
+        infra="k8s/" + controller if controller else infra,
     )
-    context = _controller_region_from_infra(infra, controller_backend)
+    if controller:
+        # Credential mounts are gathered even for disabled clouds. This path
+        # uses Kubernetes only and must never transport Nebius credentials.
+        config["allowed_clouds"] = ["kubernetes"]
+        config.setdefault("nebius", {})["remote_identity"] = "NO_UPLOAD"
     if context:
         kubernetes = config.setdefault("kubernetes", {})
         if not isinstance(kubernetes, dict):
             raise ValueError(
                 "SkyPilot global config kubernetes section must be a mapping"
             )
-        # The selected workload and controller share this exact context; other
-        # operator settings, including pod configuration, retain their values.
-        kubernetes["allowed_contexts"] = [context]
+        # Customer LIBERO separates namespaces through verified same-cluster
+        # aliases. Ordinary submissions retain their single exact context.
+        kubernetes["allowed_contexts"] = (
+            [context, controller] if controller else [context]
+        )
+        if controller:
+            contexts = kubernetes.setdefault("context_configs", {})
+            # Only the controller receives the private two-context kubeconfig.
+            contexts.setdefault(controller, {})["remote_identity"] = "LOCAL_CREDENTIALS"
+            contexts.setdefault(context, {})["remote_identity"] = "NO_UPLOAD"
+            # SkyPilot 0.12.2 reads this hook from the effective region config,
+            # without task overrides. Project the validated signed worker hook
+            # into its exact context; never apply it to the CPU controller.
+            task = next(item for item in documents if item.get("resources"))
+            worker_config = (task.get("config") or {}).get("kubernetes") or task[
+                "resources"
+            ]["kubernetes"]
+            commands = worker_config["post_provision_runcmd"]
+            worker = contexts[context]
+            if worker.get("post_provision_runcmd", commands) != commands:
+                raise ValueError(
+                    "LIBERO worker startup hook differs from the signed profile"
+                )
+            worker["post_provision_runcmd"] = list(commands)
         config["allowed_clouds"] = ["kubernetes"]
     return config
 
 
-def _preflight_prepared_submission(prepared, *, project, infra, extra_env, target):
-    from npa.execution_preflight import ExecutionPreflightError
+def _preflight_prepared_submission(
+    runtime,
+    docs,
+    global_config,
+    sky_executable,
+    run_id,
+    submission_backend,
+    *,
+    project,
+    infra,
+    extra_env,
+    target,
+):
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        libero_executable_profile_sha256,
+    )
 
-    env = sky_environment(prepared.runtime_config.isolated_config_dir)
+    executable_profile_sha256 = libero_executable_profile_sha256(docs)
+    env = sky_environment(runtime.isolated_config_dir)
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
             env[key] = value
     isolated_endpoint = str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
     if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
-        api_server = prepared.global_config.setdefault("api_server", {})
+        api_server = global_config.setdefault("api_server", {})
         if not isinstance(api_server, dict):
             raise ValueError(
                 "SkyPilot global config api_server section must be a mapping"
             )
         api_server["endpoint"] = isolated_endpoint
-    env["SKYPILOT_GLOBAL_CONFIG"] = str(prepared.config_path)
     try:
         selected, _report, injected = _execution_preflight(
-            prepared.docs,
+            docs,
             project=project,
             infra=infra,
             extra_env=env,
             target=target,
-            global_config=prepared.global_config,
-            sky_bin=prepared.sky_executable,
-            cwd=_stable_sky_cwd(prepared.runtime_config.isolated_config_dir),
+            global_config=global_config,
+            submission_backend=submission_backend,
+            run_id=run_id,
+            executable_profile_sha256=executable_profile_sha256,
+            sky_bin=sky_executable,
+            cwd=_stable_sky_cwd(runtime.isolated_config_dir),
         )
     except (ExecutionPreflightError, ValueError) as exc:
         raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
+    # This marker means only that the customer-runtime evidence was
+    # cryptographically validated and bound to this run.  It is not an
+    # acceptance decision and is never issued by the manager/control plane.
+    libero_submission = (_report.get("checks") or {}).get(
+        "libero_customer_authorization_validated"
+    ) == "validated"
     env.update(injected)
+    if (_report.get("checks") or {}).get("libero_customer_run"):
+        from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
+        from npa.workflows.byof.libero_customer import SECRET_NAMES
+
+        # Keep operator Kubernetes access on the controller, while removing the
+        # extra hosted-path secrets from automatic workload secret forwarding.
+        for key in set(LIBERO_SKYPILOT_SECRET_ENV_NAMES) - set(SECRET_NAMES):
+            env.pop(key, None)
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
-    prepared.env = env
-    prepared.config_path.write_text(
-        yaml.safe_dump(prepared.global_config, sort_keys=False), encoding="utf-8"
-    )
-    _chmod_owner_only(prepared.config_path)
-    prepared.yaml_path.write_text(
-        yaml.safe_dump_all(prepared.docs, sort_keys=False), encoding="utf-8"
-    )
-    _chmod_owner_only(prepared.yaml_path)
+    if (
+        libero_submission
+        and libero_executable_profile_sha256(docs) != executable_profile_sha256
+    ):
+        raise SkyPilotSubmitError("LIBERO executable profile changed after preflight")
+    return env, libero_submission
 
 
 def _prepare_workflow_submission(
     yaml_path,
     run_id,
     *,
+    submission_id=None,
     isolated_config_dir=None,
     config_path=None,
     sky_bin=None,
@@ -900,32 +976,65 @@ def _prepare_workflow_submission(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    docs = _load_yaml_documents(Path(yaml_path))
+    _, docs = _load_yaml_documents(Path(yaml_path))
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
-    directory = _submission_dir(run_id, runtime.isolated_config_dir)
+    from npa.workflows.byof.libero_customer import selected as customer_selected
+
+    if customer_selected(docs):
+        for document in docs:
+            resources = document.get("resources") or {}
+            if "kubernetes" in resources:
+                kubernetes = resources.pop("kubernetes")
+                config = document.setdefault("config", {})
+                if "kubernetes" in config and config["kubernetes"] != kubernetes:
+                    raise ValueError("LIBERO customer pod declarations differ")
+                config["kubernetes"] = kubernetes
+    executable = str(ensure_skypilot_version(runtime.sky_bin))
+    global_config = _submission_global_config(
+        runtime, controller_backend, infra, documents=docs, extra_env=extra_env
+    )
+    env, libero_submission = _preflight_prepared_submission(
+        runtime,
+        docs,
+        global_config,
+        executable,
+        run_id,
+        controller_backend,
+        project=project,
+        infra=infra,
+        extra_env=extra_env,
+        target=execution_target,
+    )
+    # Refuse and sanitize before any submission artifact exists.
+    directory = _submission_dir(
+        submission_id if submission_id is not None else run_id,
+        runtime.isolated_config_dir,
+    )
     try:
         rendered = directory / "workflow.yaml"
-        shutil.copy2(yaml_path, rendered)
+        rendered.write_bytes(yaml.safe_dump_all(docs, sort_keys=False).encode())
         _chmod_owner_only(rendered)
-        executable = str(ensure_skypilot_version(runtime.sky_bin))
-        global_config = _submission_global_config(runtime, controller_backend, infra)
         generated = directory / "skypilot-config.yaml"
         generated.write_text(
             yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
         )
         _chmod_owner_only(generated)
-        prepared = _PreparedWorkflowSubmission(
-            runtime, docs, directory, rendered, generated, executable, global_config
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(generated)
+        if libero_submission:
+            generated.chmod(0o400)
+            rendered.chmod(0o400)
+        return _PreparedWorkflowSubmission(
+            runtime,
+            docs,
+            directory,
+            rendered,
+            generated,
+            executable,
+            global_config,
+            libero_submission=libero_submission,
+            env=env,
         )
-        _preflight_prepared_submission(
-            prepared,
-            project=project,
-            infra=infra,
-            extra_env=extra_env,
-            target=execution_target,
-        )
-        return prepared
     except BaseException:
         if runtime.isolated_config_dir is None:
             _cleanup_owned_submission_dir(directory)
@@ -939,9 +1048,13 @@ def _refresh_workflow_preflight(yaml_path, run_id, **kwargs):
     # Failed-attempt files are immutable evidence. A refresh prepares a separate
     # local document; its name is never submitted as a provider job.
     preparation_id = f"{run_id}-recovery-preflight-{uuid4().hex}"
-    prepared = _prepare_workflow_submission(yaml_path, preparation_id, **kwargs)
+    prepared = _prepare_workflow_submission(
+        yaml_path, run_id, submission_id=preparation_id, **kwargs
+    )
     try:
-        return hashlib.sha256(Path(yaml_path).read_bytes()).hexdigest()
+        # Recovery must bind to the exact bytes that were preflighted and would
+        # be submitted, not the author's source formatting/comments.
+        return hashlib.sha256(Path(prepared.yaml_path).read_bytes()).hexdigest()
     finally:
         if prepared.runtime_config.isolated_config_dir is None:
             _cleanup_owned_submission_dir(prepared.submission_dir)
@@ -983,6 +1096,13 @@ def submit_workflow(
     owned_submission_dir: Path | None = None
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
+    bound_libero_job_id = ""
+    unverified_libero_job_id = ""
+    unverified_libero_job_ids: tuple[str, ...] = ()
+    libero_binding_error = ""
+    libero_launch_succeeded = False
+    launch_started_at: float | None = None
+    last_transaction_payload: dict[str, Any] = {}
     try:
         prepared = _prepare_workflow_submission(
             yaml_path,
@@ -1004,7 +1124,13 @@ def submit_workflow(
         owned_submission_dir = (
             submission_dir if runtime_config.isolated_config_dir is None else None
         )
+        from npa.execution_preflight import (
+            LIBERO_SKYPILOT_SECRET_ENV_NAMES,
+        )
 
+        libero_submission = prepared.libero_submission
+        workflow_identity = _private_file_identity(prepared_yaml)
+        config_identity = _private_file_identity(generated_config_path)
         cmd = [
             sky_executable,
             "jobs",
@@ -1020,7 +1146,28 @@ def submit_workflow(
         ]
         if infra:
             cmd[-1:-1] = ["--infra", infra]
-        for secret_name in secret_envs or ():
+        selected_secret_envs = list(secret_envs or ())
+        from npa.workflows.byof.libero_customer import (
+            selected as customer_selected,
+            SECRET_NAMES,
+        )
+
+        customer_run = libero_submission and customer_selected(docs)
+        if customer_run and any(
+            name not in SECRET_NAMES for name in selected_secret_envs
+        ):
+            raise SkyPilotSubmitError(
+                "customer-run profile cannot forward additional secrets",
+                launch_attempted=False,
+            )
+        if libero_submission:
+            # This is mandatory even for direct SDK callers.  The preflight has
+            # removed these values from prepared YAML, so omitting ``--secret``
+            # must never silently launch a credentialless or inline-secret task.
+            selected_secret_envs.extend(
+                SECRET_NAMES if customer_run else LIBERO_SKYPILOT_SECRET_ENV_NAMES
+            )
+        for secret_name in dict.fromkeys(selected_secret_envs):
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
@@ -1100,21 +1247,125 @@ def submit_workflow(
         )
 
         def _reconcile() -> ReconciliationEvidence:
+            nonlocal bound_libero_job_id
+            nonlocal unverified_libero_job_id, unverified_libero_job_ids
+            nonlocal libero_binding_error
             nonlocal initial_controller_absent
             if initial_controller_absent:
                 initial_controller_absent = False
                 return ReconciliationEvidence(ReconciliationState.ABSENT)
-            return _reconcile_managed_job_env(
+            expected_profile_sha256 = ""
+            expected_job_id = ""
+            binding_error = ""
+            owner_ledger_binding = False
+            persisted_candidate_binding = False
+            if libero_submission:
+                from npa.execution_preflight import libero_executable_profile_sha256
+
+                expected_profile_sha256 = libero_executable_profile_sha256(docs)
+                if libero_launch_succeeded and not (
+                    bound_libero_job_id
+                    or unverified_libero_job_id
+                    or unverified_libero_job_ids
+                ):
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=libero_binding_error
+                        or (
+                            "LIBERO launch succeeded without an exact immutable "
+                            "ID/name/profile binding; preserving indeterminate state "
+                            "and refusing retry"
+                        ),
+                    )
+                if libero_binding_error and not (
+                    bound_libero_job_id or unverified_libero_job_id
+                ):
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=libero_binding_error,
+                    )
+                if bound_libero_job_id or unverified_libero_job_id:
+                    expected_job_id = bound_libero_job_id or unverified_libero_job_id
+                    binding_error = (
+                        libero_binding_error if unverified_libero_job_id else ""
+                    )
+                    # A launch-output candidate is not a durable owner binding.
+                    # It must still pass the provider's exact ID/name/profile
+                    # observation before reconciliation can adopt it.
+                    owner_ledger_binding = False
+                else:
+                    (
+                        expected_job_id,
+                        binding_error,
+                        owner_ledger_binding,
+                        persisted_candidate_binding,
+                    ) = _load_libero_owner_binding_details(
+                        project=project,
+                        run_id=run_id,
+                        expected_profile_sha256=expected_profile_sha256,
+                    )
+                if binding_error and not expected_job_id:
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=binding_error,
+                    )
+            evidence = _reconcile_managed_job_env(
                 run_id,
                 env=env,
                 sky_executable=sky_executable,
                 cwd=stable_cwd,
+                expected_profile_sha256=(
+                    expected_profile_sha256 if expected_job_id else ""
+                ),
+                expected_job_id=expected_job_id,
+                require_owner_binding=libero_submission,
+                owner_ledger_binding=owner_ledger_binding,
+                allow_omitted_profile=(
+                    (bool(bound_libero_job_id) or persisted_candidate_binding)
+                    and not owner_ledger_binding
+                ),
+                launch_started_at=(launch_started_at if binding_error else None),
             )
+            preserved = _preserve_unverified_libero_candidate(
+                evidence,
+                expected_job_id=expected_job_id,
+                binding_error=binding_error,
+                binding_verified=(
+                    bool(binding_error)
+                    and not owner_ledger_binding
+                    and evidence.state is ReconciliationState.FOUND
+                ),
+            )
+            if (
+                libero_submission
+                and binding_error
+                and preserved.state is ReconciliationState.FOUND
+                and preserved.job_id
+            ):
+                # Promotion is one local state transition: only the same exact
+                # ID/name/profile observation may clear the candidate/error and
+                # become the durable verified owner binding.
+                bound_libero_job_id = preserved.job_id
+                unverified_libero_job_id = ""
+                unverified_libero_job_ids = ()
+                libero_binding_error = ""
+            return preserved
 
         def _launch() -> tuple[
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
         ]:
+            nonlocal initial_controller_absent
+            initial_controller_absent = False
+            nonlocal launch_started_at
             try:
+                if (
+                    _private_file_identity(prepared_yaml) != workflow_identity
+                    or _private_file_identity(generated_config_path) != config_identity
+                ):
+                    raise _SkyPilotLaunchCommandError(
+                        "validated SkyPilot submission artifacts changed before launch"
+                    )
+                launch_started_at = time.time()
                 launch_result, diagnoses = _run_launch(
                     cmd,
                     env=env,
@@ -1133,6 +1384,82 @@ def submit_workflow(
                     _format_submit_error(cmd, launch_result, streamed=diagnoses),
                     launch_result,
                 )
+            if libero_submission:
+                nonlocal bound_libero_job_id, libero_launch_succeeded
+                nonlocal libero_binding_error, unverified_libero_job_id
+                nonlocal unverified_libero_job_ids
+                libero_launch_succeeded = True
+                parsed_job_id = _parse_job_id(
+                    "\n".join(
+                        part
+                        for part in (launch_result.stdout, launch_result.stderr)
+                        if part
+                    )
+                )
+                from npa.execution_preflight import libero_executable_profile_sha256
+
+                binding_deadline = (
+                    transaction_clock() + recovery_policy.deadline_seconds
+                )
+                binding_sequence = 0
+                while True:
+                    (
+                        verified_job_id,
+                        plausible_job_ids,
+                        launch_binding_error,
+                    ) = _libero_launch_binding_candidates(
+                        parsed_job_id,
+                        run_id,
+                        env=env,
+                        sky_executable=sky_executable,
+                        cwd=stable_cwd,
+                        expected_profile_sha256=libero_executable_profile_sha256(docs),
+                        launch_started_at=launch_started_at,
+                    )
+                    if verified_job_id:
+                        bound_libero_job_id = verified_job_id
+                        unverified_libero_job_id = ""
+                        unverified_libero_job_ids = ()
+                        libero_binding_error = ""
+                    else:
+                        unverified_libero_job_ids = plausible_job_ids
+                        unverified_libero_job_id = (
+                            parsed_job_id if parsed_job_id.isdigit() else ""
+                        )
+                        libero_binding_error = launch_binding_error
+                        if unverified_libero_job_id:
+                            # Keep the historical scalar for compatibility while
+                            # also retaining every plausible immutable candidate.
+                            unverified_libero_job_ids = tuple(
+                                dict.fromkeys(
+                                    (unverified_libero_job_id, *plausible_job_ids)
+                                )
+                            )
+                    # Journal the actual immutable candidate before waiting. SkyPilot
+                    # leaves submitted_at unset while the controller queues this ID.
+                    _record_with_controller(last_transaction_payload)
+                    if launch_binding_error != LIBERO_PENDING_SUBMISSION_TIME:
+                        break
+                    remaining = binding_deadline - transaction_clock()
+                    if remaining <= 0:
+                        break
+                    binding_sequence += 1
+                    transaction_sleeper(
+                        min(
+                            remaining,
+                            recovery_policy.delay(
+                                binding_sequence, random_value=random_source()
+                            ),
+                        )
+                    )
+                if not verified_job_id and not libero_binding_error:
+                    # Defensive fallback for a malformed resolver result.
+                    unverified_libero_job_id = parsed_job_id
+                    libero_binding_error = (
+                        "LIBERO launch returned success without an exact immutable "
+                        "ID/name/profile binding; preserving indeterminate state "
+                        "and refusing retry"
+                    )
             return launch_result, diagnoses
 
         def _classify(exc: BaseException) -> tuple[EvidenceState, FailureCategory]:
@@ -1157,9 +1484,40 @@ def submit_workflow(
             random_source = _random.random
 
         def _record_with_controller(payload: dict[str, Any]) -> None:
+            nonlocal last_transaction_payload
+            last_transaction_payload = dict(payload)
             if transaction_recorder is None:
                 return
             enriched = dict(payload)
+            if libero_submission:
+                from npa.execution_preflight import libero_executable_profile_sha256
+
+                enriched["libero_profile_sha256"] = libero_executable_profile_sha256(
+                    docs
+                )
+                if bound_libero_job_id:
+                    enriched["libero_candidate_job_id"] = bound_libero_job_id
+                if libero_launch_succeeded:
+                    enriched["libero_launch_succeeded"] = True
+                if unverified_libero_job_ids:
+                    enriched["libero_unverified_candidate_job_ids"] = list(
+                        unverified_libero_job_ids
+                    )
+                if unverified_libero_job_id:
+                    enriched["libero_unverified_candidate_job_id"] = (
+                        unverified_libero_job_id
+                    )
+                    enriched["libero_binding_error"] = libero_binding_error
+                candidate_job_id = bound_libero_job_id or unverified_libero_job_id
+                if candidate_job_id:
+                    enriched["libero_owner_binding"] = _libero_owner_binding_payload(
+                        run_id=run_id,
+                        job_id=candidate_job_id,
+                        profile_sha256=enriched["libero_profile_sha256"],
+                        state=("candidate" if unverified_libero_job_id else "verified"),
+                    )
+                if libero_binding_error:
+                    enriched["libero_binding_error"] = libero_binding_error
             enriched["controller"] = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
@@ -1210,6 +1568,40 @@ def submit_workflow(
         launch_pair = transaction.launch_result
         result = launch_pair[0] if isinstance(launch_pair, tuple) else None
         job_id = transaction.job_id
+        launch_transaction = transaction.to_dict()
+        if libero_submission:
+            from npa.execution_preflight import libero_executable_profile_sha256
+
+            launch_transaction["libero_profile_sha256"] = (
+                libero_executable_profile_sha256(docs)
+            )
+            if bound_libero_job_id:
+                # Keep the returned transaction self-validating on exact-run
+                # resume: verified owner bindings must carry the same exact
+                # queue candidate ID that the loader checks.
+                launch_transaction["libero_candidate_job_id"] = bound_libero_job_id
+            candidate_job_id = bound_libero_job_id or unverified_libero_job_id
+            if libero_launch_succeeded:
+                launch_transaction["libero_launch_succeeded"] = True
+            if unverified_libero_job_ids:
+                launch_transaction["libero_unverified_candidate_job_ids"] = list(
+                    unverified_libero_job_ids
+                )
+            if candidate_job_id:
+                launch_transaction["libero_owner_binding"] = (
+                    _libero_owner_binding_payload(
+                        run_id=run_id,
+                        job_id=candidate_job_id,
+                        profile_sha256=launch_transaction["libero_profile_sha256"],
+                        state=("candidate" if unverified_libero_job_id else "verified"),
+                    )
+                )
+            if unverified_libero_job_id:
+                launch_transaction["libero_unverified_candidate_job_id"] = (
+                    unverified_libero_job_id
+                )
+            if libero_binding_error:
+                launch_transaction["libero_binding_error"] = libero_binding_error
         return WorkflowResult(
             # Preserve the public result contract; adoption is exposed through
             # launch_transaction.state and the human reconciliation message.
@@ -1223,7 +1615,7 @@ def submit_workflow(
             stdout=result.stdout if result is not None else "",
             stderr=result.stderr if result is not None else "",
             submitted_yaml_path=str(prepared_yaml),
-            launch_transaction=transaction.to_dict(),
+            launch_transaction=launch_transaction,
         )
     except SkyPilotSubmitError:
         _cleanup_owned_submission_dir(owned_submission_dir)
@@ -1603,12 +1995,111 @@ def lookup_managed_job(
     )
 
 
+def _libero_owner_binding_payload(
+    *,
+    run_id: str,
+    job_id: str,
+    profile_sha256: str,
+    state: str,
+) -> dict[str, str]:
+    """Build the immutable local owner-ledger binding for one LIBERO attempt."""
+
+    if state not in {"candidate", "verified"}:
+        raise ValueError(f"unsupported LIBERO owner-binding state: {state!r}")
+
+    return {
+        "schema": LIBERO_OWNER_BINDING_SCHEMA,
+        "run_id": str(run_id),
+        "job_name": str(run_id),
+        "job_id": str(job_id),
+        "profile_sha256": str(profile_sha256),
+        "state": str(state),
+        "evidence": (
+            "queue_exact_id_name_profile"
+            if state == "verified"
+            else "launch_output_unverified"
+        ),
+    }
+
+
+def _group_libero_managed_job_rows(
+    rows: Sequence[Mapping[str, Any]], job_name: str
+) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    """Group same-name queue task rows by their immutable managed-job ID."""
+
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("job_name") or row.get("name") or "") != job_name:
+            continue
+        job_id = str(row.get("job_id") or row.get("id") or "")
+        if job_id.isdigit():
+            grouped.setdefault(job_id, []).append(row)
+    return {job_id: tuple(group) for job_id, group in grouped.items()}
+
+
+def _libero_managed_job_group_is_viable(
+    rows: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Keep active mixed-status jobs eligible for reconciliation, not replacement."""
+
+    statuses = {str(row.get("status") or "UNKNOWN").upper() for row in rows}
+    if statuses & {"RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"}:
+        return True
+
+    return not any(
+        is_terminal_failure_job_status(str(row.get("status") or "UNKNOWN").upper())
+        for row in rows
+    )
+
+
+def _libero_managed_job_group_status(
+    rows: Sequence[Mapping[str, Any]],
+) -> str:
+    """Select a deterministic status without hiding active mixed-status work."""
+
+    statuses = [str(row.get("status") or "UNKNOWN").upper() for row in rows]
+    for status in ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"):
+        if status in statuses:
+            return status
+    for status in statuses:
+        if is_terminal_failure_job_status(status):
+            return status
+    for status in statuses:
+        if status not in {"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"}:
+            return status
+    return statuses[-1] if statuses else "UNKNOWN"
+
+
+def _managed_job_submission_time(row: Mapping[str, Any]) -> float | None:
+    """Return a numeric provider submission time when the queue exposes one."""
+
+    for key in ("submitted_at", "created_at", "launch_started_at"):
+        value = row.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed >= 0:
+            return parsed
+    return None
+
+
 def _reconcile_managed_job_env(
     job_name: str,
     *,
     env: Mapping[str, str],
     sky_executable: str,
     cwd: str | None,
+    expected_profile_sha256: str = "",
+    expected_job_id: str = "",
+    require_owner_binding: bool = False,
+    owner_ledger_binding: bool = False,
+    allow_omitted_profile: bool = False,
+    launch_started_at: float | None = None,
     timeout: int = 60,
 ) -> ReconciliationEvidence:
     """Reconcile one exact name through the same SkyPilot runtime as launch."""
@@ -1654,20 +2145,129 @@ def _reconcile_managed_job_env(
     matching: set[str] = set()
     statuses: dict[str, str] = {}
     workload_markers: dict[str, set[str]] = {}
-    for row in rows:
-        if not isinstance(row, Mapping):
+    expected_profile_sha256 = str(expected_profile_sha256 or "").strip()
+    expected_job_id = str(expected_job_id or "").strip()
+    grouped_rows = _group_libero_managed_job_rows(rows, job_name)
+    all_matching_rows = [row for group in grouped_rows.values() for row in group]
+    matching_rows = all_matching_rows
+    if expected_job_id:
+        matching_rows = list(grouped_rows.get(expected_job_id, ()))
+        viable_other_ids = [
+            job_id
+            for job_id, group in grouped_rows.items()
+            if job_id != expected_job_id and _libero_managed_job_group_is_viable(group)
+        ]
+        if viable_other_ids and matching_rows:
+            return ReconciliationEvidence(
+                ReconciliationState.AMBIGUOUS,
+                error=(
+                    f"exact managed-job name {job_name!r} has another viable "
+                    "immutable ID beside its owner-bound job"
+                ),
+            )
+        if viable_other_ids and not matching_rows:
+            return ReconciliationEvidence(
+                ReconciliationState.UNAVAILABLE,
+                error=(
+                    "owner-bound LIBERO job is absent but another viable same-name "
+                    "managed job exists; refusing duplicate launch"
+                ),
+            )
+    elif require_owner_binding:
+        if any(
+            _libero_managed_job_group_is_viable(group)
+            for group in grouped_rows.values()
+        ):
+            return ReconciliationEvidence(
+                ReconciliationState.UNAVAILABLE,
+                error=(
+                    "existing LIBERO managed job has no owner-controlled immutable "
+                    "job binding; refusing adoption"
+                ),
+            )
+        matching_rows = []
+    matching_ids = set(grouped_rows) if not expected_job_id else {expected_job_id}
+    for job_id in matching_ids:
+        group = grouped_rows.get(job_id, ())
+        if not group:
             continue
-        if str(row.get("job_name") or row.get("name") or "") != job_name:
-            continue
-        job_id = str(row.get("job_id") or row.get("id") or "")
+        for row in group:
+            if not isinstance(row, Mapping):
+                continue
+            if row not in matching_rows:
+                continue
+            if expected_profile_sha256:
+                if owner_ledger_binding or allow_omitted_profile:
+                    # The profile digest was atomically persisted with the immutable
+                    # candidate ID before reconciliation.  SkyPilot's queue schema
+                    # does not promise a custom digest field, so exact ID + name
+                    # binding is the durable provider-independent observation.
+                    if not expected_job_id:
+                        return ReconciliationEvidence(
+                            ReconciliationState.UNAVAILABLE,
+                            error=(
+                                "LIBERO owner-ledger binding has no immutable job ID; "
+                                "refusing adoption"
+                            ),
+                        )
+                    observed_profile_values = _managed_job_profile_values(row)
+                    if any(
+                        value != expected_profile_sha256
+                        for value in observed_profile_values
+                    ):
+                        return ReconciliationEvidence(
+                            ReconciliationState.UNAVAILABLE,
+                            error=(
+                                "existing LIBERO managed job exposes a conflicting "
+                                "executable profile digest; refusing adoption"
+                            ),
+                        )
+                else:
+                    observed_profile_sha256 = _managed_job_profile_digest(row)
+                    if observed_profile_sha256 != expected_profile_sha256:
+                        return ReconciliationEvidence(
+                            ReconciliationState.UNAVAILABLE,
+                            error=(
+                                "existing LIBERO managed job lacks the exact executable "
+                                "profile digest; refusing adoption"
+                            ),
+                        )
+                if not expected_job_id or not expected_profile_sha256:
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=(
+                            "existing LIBERO managed job lacks the exact owner-controlled "
+                            "profile binding; refusing adoption"
+                        ),
+                    )
         if job_id.isdigit():
             matching.add(job_id)
-            statuses[job_id] = str(row.get("status") or "UNKNOWN").upper()
+            statuses[job_id] = _libero_managed_job_group_status(group)
             workload_markers.setdefault(job_id, set()).update(
-                _managed_job_workload_markers(row)
+                marker for row in group for marker in _managed_job_workload_markers(row)
             )
     if not matching:
+        if require_owner_binding and expected_job_id:
+            return ReconciliationEvidence(
+                ReconciliationState.UNAVAILABLE,
+                error=(
+                    "owner-bound LIBERO job is absent without authoritative terminal "
+                    "evidence; refusing duplicate launch"
+                ),
+            )
         return ReconciliationEvidence(ReconciliationState.ABSENT)
+    if launch_started_at is not None and not any(
+        _managed_job_submission_time(row) is not None
+        and _managed_job_submission_time(row) >= launch_started_at
+        for row in matching_rows
+    ):
+        return ReconciliationEvidence(
+            ReconciliationState.UNAVAILABLE,
+            error=(
+                "unverified LIBERO candidate lacks current-attempt queue "
+                "correlation during reconciliation; refusing adoption"
+            ),
+        )
     # Historical cancelled/failed attempts retain the same deterministic name
     # in SkyPilot's all-jobs queue.  Once a viable replacement exists, those
     # terminal rows must not make exact-name reconciliation ambiguous.
@@ -1694,6 +2294,434 @@ def _reconcile_managed_job_env(
         status=statuses.get(selected, "UNKNOWN"),
         workload_observable=bool(markers),
         workload_evidence=",".join(markers),
+    )
+
+
+def _libero_launch_binding_candidates(
+    parsed: str,
+    job_name: str,
+    *,
+    env: Mapping[str, str],
+    sky_executable: str,
+    cwd: str | None,
+    expected_profile_sha256: str,
+    launch_started_at: float | None = None,
+) -> tuple[str, tuple[str, ...], str]:
+    """Resolve launch output only when one viable row is attributable to it.
+
+    SkyPilot's all-jobs queue retains historical rows under a deterministic
+    name.  A numeric launch result is therefore only authoritative when the
+    queue has exactly one viable same-name immutable ID, every row for that ID
+    is consistent, and its ID is the returned ID.  Viability is decided for the
+    whole managed job: any failed/cancelled task makes that ID historical.
+    The provider submission timestamp must prove that the queue row belongs to
+    this launch attempt. Any optional provider profile field must agree with the
+    locally preflighted digest when present; an omitted field is accepted only
+    with that current-attempt proof.
+    All other plausible IDs are retained as indeterminate evidence rather than
+    silently adopting one.
+    """
+
+    parsed_id = str(parsed or "").strip()
+    if not parsed_id.isdigit():
+        parsed_id = ""
+    try:
+        result = subprocess.run(
+            [sky_executable, "jobs", "queue", "--all", "--output", "json"],
+            env=dict(env),
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0:
+            return (
+                "",
+                (parsed_id,) if parsed_id else (),
+                "LIBERO launch returned success but exact queue/name/profile "
+                "binding could not be read; preserving indeterminate state and "
+                "refusing retry",
+            )
+        rows = queue_rows_from_output(result.stdout)
+    except Exception:  # noqa: BLE001 - missing confirmation must fail closed
+        return (
+            "",
+            (parsed_id,) if parsed_id else (),
+            "LIBERO launch returned success but exact queue/name/profile binding "
+            "could not be read; preserving indeterminate state and refusing retry",
+        )
+    if rows is None:
+        return (
+            "",
+            (parsed_id,) if parsed_id else (),
+            "LIBERO launch returned success but the queue binding was malformed; "
+            "preserving indeterminate state and refusing retry",
+        )
+
+    grouped_rows = _group_libero_managed_job_rows(rows, job_name)
+    all_candidate_ids = tuple(sorted(grouped_rows, key=int))
+    viable_groups = {
+        job_id: group
+        for job_id, group in grouped_rows.items()
+        if _libero_managed_job_group_is_viable(group)
+    }
+    candidate_ids = tuple(sorted(viable_groups, key=int))
+    profile_conflicts = tuple(
+        row
+        for row in viable_groups.get(parsed_id, ())
+        if any(
+            value != expected_profile_sha256
+            for value in _managed_job_profile_values(row)
+        )
+    )
+    candidate_rows = viable_groups.get(parsed_id, ())
+    terminal_success = candidate_rows and all(
+        str(row.get("status") or "UNKNOWN").upper()
+        in {"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"}
+        for row in candidate_rows
+    )
+    current_attempt = launch_started_at is not None and any(
+        _managed_job_submission_time(row) is not None
+        and _managed_job_submission_time(row) >= launch_started_at
+        for row in candidate_rows
+    )
+    if (
+        parsed_id
+        and candidate_ids == (parsed_id,)
+        and candidate_rows
+        and re.fullmatch(r"[0-9a-f]{64}", expected_profile_sha256)
+        and not profile_conflicts
+        and current_attempt
+    ):
+        return parsed_id, (), ""
+
+    plausible_ids = tuple(
+        sorted(
+            set(all_candidate_ids).union({parsed_id} if parsed_id else set()),
+            key=int,
+        )
+    )
+    if not parsed_id:
+        error = (
+            "LIBERO launch returned success without a parseable job ID; preserving "
+            "indeterminate state and refusing retry until exact ID/name/profile "
+            "binding is verified or the operator resolves it"
+        )
+    elif len(candidate_ids) != 1 or candidate_ids != (parsed_id,):
+        error = (
+            "LIBERO launch returned success with multiple or missing viable "
+            "same-name queue IDs; preserving plausible candidates as indeterminate "
+            "and refusing retry"
+        )
+    elif not re.fullmatch(r"[0-9a-f]{64}", expected_profile_sha256):
+        error = (
+            "LIBERO launch lacks the locally preflighted executable profile digest; "
+            "preserving indeterminate state and refusing retry"
+        )
+    elif terminal_success and not current_attempt:
+        error = (
+            "LIBERO launch returned a pre-existing terminal job ID without "
+            "authoritative current-attempt correlation; preserving indeterminate "
+            "state and refusing adoption"
+        )
+    elif profile_conflicts:
+        error = (
+            "LIBERO launch returned success without an exact queue/name/profile "
+            "binding; preserving indeterminate state and refusing retry"
+        )
+    elif (
+        launch_started_at is not None
+        and candidate_rows
+        and all(
+            str(row.get("status") or "").upper() == "PENDING" for row in candidate_rows
+        )
+        and all(row.get("submitted_at") is None for row in candidate_rows)
+        and all(_managed_job_submission_time(row) is None for row in candidate_rows)
+    ):
+        error = LIBERO_PENDING_SUBMISSION_TIME
+    else:
+        error = (
+            "LIBERO launch ID was not uniquely attributable to the exact queue "
+            "name/profile row; preserving indeterminate state and refusing retry"
+        )
+    return "", plausible_ids, error
+
+
+def _verified_libero_job_id(
+    parsed: str,
+    job_name: str,
+    *,
+    env: Mapping[str, str],
+    sky_executable: str,
+    cwd: str | None,
+    expected_profile_sha256: str,
+    launch_started_at: float | None = None,
+) -> str:
+    """Return a launch ID only after unique exact queue/name/profile proof."""
+
+    verified, _plausible, _error = _libero_launch_binding_candidates(
+        parsed,
+        job_name,
+        env=env,
+        sky_executable=sky_executable,
+        cwd=cwd,
+        expected_profile_sha256=expected_profile_sha256,
+        launch_started_at=launch_started_at,
+    )
+    return verified
+
+
+def _preserve_unverified_libero_candidate(
+    evidence: ReconciliationEvidence,
+    *,
+    expected_job_id: str,
+    binding_error: str,
+    binding_verified: bool = False,
+) -> ReconciliationEvidence:
+    """Keep an unverified launch indeterminate until exact binding is observed."""
+
+    if not binding_error:
+        return evidence
+    job_id = str(expected_job_id or evidence.job_id or "").strip()
+    if not job_id:
+        return ReconciliationEvidence(
+            ReconciliationState.UNAVAILABLE,
+            error=binding_error,
+        )
+    if binding_verified and evidence.state is ReconciliationState.FOUND:
+        return ReconciliationEvidence(
+            evidence.state,
+            job_id=evidence.job_id or job_id,
+            status=evidence.status,
+            workload_observable=evidence.workload_observable,
+            workload_evidence=evidence.workload_evidence,
+            error=evidence.error,
+        )
+    state = (
+        ReconciliationState.AMBIGUOUS
+        if evidence.state is ReconciliationState.AMBIGUOUS
+        else ReconciliationState.UNAVAILABLE
+    )
+    combined_error = "; ".join(
+        value for value in (binding_error, evidence.error) if value
+    )
+    return ReconciliationEvidence(
+        state,
+        job_id=job_id,
+        status=evidence.status,
+        workload_observable=evidence.workload_observable,
+        workload_evidence=evidence.workload_evidence,
+        error=combined_error,
+    )
+
+
+def _load_libero_owner_binding_details(
+    *, project: str, run_id: str, expected_profile_sha256: str
+) -> tuple[str, str, bool, bool]:
+    """Read the atomic owner binding, without trusting undocumented queue fields."""
+
+    try:
+        from npa.orchestration.npa_workflow.submission_state import (
+            inspect_submission_state,
+        )
+
+        receipt = inspect_submission_state(project or "default", run_id)
+        payload = receipt.payload if receipt.outcome == "found" else {}
+        launch = payload.get("launch")
+        if not isinstance(launch, Mapping):
+            return "", "", False, False
+        binding = launch.get("libero_owner_binding")
+        if isinstance(binding, Mapping):
+            job_id = str(binding.get("job_id") or "").strip()
+            binding_run_id = str(binding.get("run_id") or "").strip()
+            binding_job_name = str(binding.get("job_name") or "").strip()
+            digest = str(binding.get("profile_sha256") or "").strip()
+            if (
+                binding.get("schema") != LIBERO_OWNER_BINDING_SCHEMA
+                or binding_run_id != run_id
+                or binding_job_name != run_id
+                or not job_id.isdigit()
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            ):
+                return (
+                    "",
+                    "existing LIBERO launch ledger has an invalid immutable owner binding",
+                    False,
+                    False,
+                )
+            state = str(binding.get("state") or "").strip()
+            if state not in {"candidate", "verified"}:
+                return (
+                    "",
+                    "existing LIBERO launch ledger has an unsupported owner-binding state",
+                    False,
+                    False,
+                )
+            if digest != expected_profile_sha256:
+                return (
+                    "",
+                    "existing LIBERO launch ledger profile digest conflicts with the prepared profile",
+                    False,
+                    False,
+                )
+            binding_error = str(launch.get("libero_binding_error") or "").strip()
+            if state == "candidate":
+                if binding_error:
+                    return job_id, binding_error, False, True
+                binding_error = (
+                    "existing LIBERO launch ledger contains an unverified candidate "
+                    f"job {job_id}; exact name/profile binding remains unverified "
+                    "and must not be treated as absence"
+                )
+                return job_id, binding_error, False, True
+            if (
+                binding.get("evidence") != "queue_exact_id_name_profile"
+                or binding_error
+                or str(launch.get("libero_candidate_job_id") or "").strip() != job_id
+                or str(launch.get("libero_profile_sha256") or "").strip() != digest
+            ):
+                return (
+                    "",
+                    "existing LIBERO verified owner binding lacks exact queue evidence",
+                    False,
+                    False,
+                )
+            return job_id, "", True, False
+
+        # Preserve compatibility with the pre-binding ledger while keeping its
+        # conservative queue-digest requirement. New launches always write the
+        # explicit immutable binding above.
+        launch_succeeded = launch.get("libero_launch_succeeded") is True
+        job_id = str(
+            launch.get("job_id") or launch.get("libero_candidate_job_id") or ""
+        ).strip()
+        unverified_candidate = str(
+            launch.get("libero_unverified_candidate_job_id") or ""
+        ).strip()
+        raw_candidates = launch.get("libero_unverified_candidate_job_ids")
+        if isinstance(raw_candidates, (list, tuple)):
+            candidate_ids = tuple(
+                sorted(
+                    {
+                        str(value).strip()
+                        for value in raw_candidates
+                        if str(value).strip().isdigit()
+                    },
+                    key=int,
+                )
+            )
+        else:
+            candidate_ids = ()
+        if not job_id and unverified_candidate.isdigit():
+            return (
+                unverified_candidate,
+                "existing LIBERO launch ledger contains an unverified candidate "
+                f"job {unverified_candidate}; exact name/profile binding remains "
+                "unverified and must not be treated as absence",
+                False,
+                False,
+            )
+        if not job_id and candidate_ids:
+            return (
+                "",
+                "existing LIBERO launch ledger preserves plausible candidate IDs "
+                + ", ".join(candidate_ids)
+                + "; exact ID/name/profile binding remains unverified and must "
+                "not be treated as absence",
+                False,
+                False,
+            )
+        digest = str(launch.get("libero_profile_sha256") or "").strip()
+        if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            if launch_succeeded:
+                return (
+                    "",
+                    "existing LIBERO launch ledger records successful submission "
+                    "without an exact immutable ID/name/profile binding; refusing "
+                    "retry until the operator resolves it",
+                    False,
+                    False,
+                )
+            return (
+                "",
+                "existing LIBERO launch ledger has no valid profile binding",
+                False,
+                False,
+            )
+        if digest != expected_profile_sha256:
+            return (
+                "",
+                "existing LIBERO launch ledger profile digest conflicts with the prepared profile",
+                False,
+                False,
+            )
+        return job_id, "", False, False
+    except Exception:  # noqa: BLE001 - unavailable owner state must fail closed
+        return "", "existing LIBERO launch ledger is unavailable", False, False
+
+
+def _load_libero_owner_binding(
+    *, project: str, run_id: str, expected_profile_sha256: str
+) -> tuple[str, str, bool]:
+    """Read the owner binding while preserving the legacy three-value contract."""
+
+    job_id, error, owner_binding, _persisted_candidate = (
+        _load_libero_owner_binding_details(
+            project=project,
+            run_id=run_id,
+            expected_profile_sha256=expected_profile_sha256,
+        )
+    )
+    return job_id, error, owner_binding
+
+
+def _load_libero_bound_job_id(
+    *, project: str, run_id: str, expected_profile_sha256: str
+) -> tuple[str, str]:
+    """Read and validate the exact owner-ledger job/profile binding."""
+
+    job_id, error, _owner_binding = _load_libero_owner_binding(
+        project=project,
+        run_id=run_id,
+        expected_profile_sha256=expected_profile_sha256,
+    )
+    return job_id, error
+
+
+def _managed_job_profile_digest(row: Mapping[str, Any]) -> str:
+    """Extract the provider's durable profile binding for LIBERO adoption."""
+
+    for candidate in _managed_job_profile_values(row):
+        if re.fullmatch(r"[0-9a-f]{64}", candidate):
+            return candidate
+    return ""
+
+
+def _managed_job_profile_values(row: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return provider profile fields, preserving malformed values for refusal."""
+
+    candidates: list[Any] = [
+        row.get("executable_profile_sha256"),
+        row.get("workflow_profile_sha256"),
+    ]
+    for container_name in ("metadata", "labels", "envs", "task_metadata"):
+        container = row.get(container_name)
+        if isinstance(container, Mapping):
+            candidates.extend(
+                container[key]
+                for key in (
+                    "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256",
+                    "executable_profile_sha256",
+                    "workflow_profile_sha256",
+                )
+                if key in container
+            )
+    return tuple(
+        str(candidate or "").strip()
+        for candidate in candidates
+        if candidate is not None
     )
 
 
@@ -2479,12 +3507,16 @@ def _json_payload_from_output(output: str) -> Any | None:
     return parse_single_json_document(output)
 
 
-def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as handle:
-        docs = [doc for doc in yaml.safe_load_all(handle) if doc is not None]
+def _load_yaml_documents(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
+    profile_bytes = path.read_bytes()
+    docs = [
+        doc
+        for doc in yaml.safe_load_all(profile_bytes.decode("utf-8"))
+        if doc is not None
+    ]
     if not all(isinstance(doc, dict) for doc in docs):
         raise ValueError("SkyPilot YAML documents must be mappings")
-    return docs
+    return profile_bytes, docs
 
 
 def _execution_preflight(*args, **kwargs):
@@ -2539,14 +3571,59 @@ def _chmod_owner_only(path: Path, *, is_dir: bool = False) -> None:
         pass
 
 
+def _private_file_identity(path: Path) -> tuple[int, int, int, int, str]:
+    """Read one no-follow regular file and bind its identity plus bytes."""
+
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        before = os.fstat(descriptor)
+        payload = b""
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            payload += chunk
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or before.st_size != len(payload)
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        raise SkyPilotSubmitError(
+            "SkyPilot submission artifact is not stable and owner-private"
+        )
+    return (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        hashlib.sha256(payload).hexdigest(),
+    )
+
+
 def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
     if isolated_config_dir is None:
         # Successful submissions return this path for debugging; exception paths
         # remove it via _cleanup_owned_submission_dir.
         root = Path(tempfile.mkdtemp(prefix=f"npa-skypilot-{run_id}-"))
     else:
-        root = Path(isolated_config_dir) / "submissions" / run_id
-        root.mkdir(parents=True, exist_ok=True)
+        # Keep each attempt immutable.  LIBERO submissions are tightened to
+        # mode 0400 after preparation, so reusing ``submissions/<run_id>``
+        # would make an exact-run resume fail while overwriting its evidence.
+        attempts_root = Path(isolated_config_dir) / "submissions"
+        attempts_root.mkdir(parents=True, exist_ok=True)
+        first_attempt = attempts_root / run_id
+        try:
+            first_attempt.mkdir(mode=0o700)
+            root = first_attempt
+        except FileExistsError:
+            root = Path(tempfile.mkdtemp(prefix=f"{run_id}-retry-", dir=attempts_root))
     root.mkdir(parents=True, exist_ok=True)
     _chmod_owner_only(root, is_dir=True)
     return root
