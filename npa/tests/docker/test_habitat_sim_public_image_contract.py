@@ -51,10 +51,10 @@ def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
         value: sum(row["redistribution"] == value for row in entries.values())
         for value in ("public", "restricted", "unvalidated")
     }
-    assert counts == {"public": 41, "restricted": 2, "unvalidated": 0}
+    assert counts == {"public": 45, "restricted": 9, "unvalidated": 0}
     catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
-    assert "43 packaging entries" in catalog
-    assert "41 redistribution-eligible and two restricted" in catalog
+    assert "54 packaging entries" in catalog
+    assert "45 redistribution-eligible and nine restricted" in catalog
     assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 

@@ -42,7 +42,7 @@
     "/usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md"
   ],
   "required_final_file_sha256": {
-    "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "0d1615e343511f397fda28327a19b4da418d01f39c3f44b9da0366ac9b0a266e",
+    "/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py": "3007275168f8f21cc7b53c84491c78d693b2af27a470a53e14f65a7a6144bef1",
     "/usr/src/habitat-sim/data/pbr/PbrImages.conf": "0fedbc71e140aca2fb286b0582beb57106990f997b7a5647690a85d4bd106fce",
     "/usr/src/habitat-sim/data/pbr/anniversary_lounge.pbr_config.json": "8dda877423f42922fb279d30e5143df41bdb22e836df88326773d444b03d0c06",
     "/usr/src/habitat-sim/data/pbr/autoshop_01.pbr_config.json": "7f0f1b94d23ac6c7b6938993d0f7cc4c045a104171e46937c8b0dfecb2e97e5c",
