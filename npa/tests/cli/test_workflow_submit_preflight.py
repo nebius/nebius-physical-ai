@@ -37,6 +37,8 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
 runner = CliRunner()
 _REAL_EXECUTION_TARGET_PREFLIGHT = workflow_cli._execution_target_preflight
 
+_OPERATOR_REGISTRY = "registry.example.invalid/operator/workbench"
+
 SPEC = (
     Path(__file__).resolve().parents[3]
     / "workflows"
@@ -118,6 +120,8 @@ def _submit(*args: str):
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
+            "--registry",
+            _OPERATOR_REGISTRY,
             *args,
         ],
     )
@@ -136,6 +140,8 @@ def _submit_cosmos3(*args: str):
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
+            "--registry",
+            _OPERATOR_REGISTRY,
             *args,
         ],
     )
@@ -170,6 +176,8 @@ def _submit_nvidia_vda(*args: str):
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
+            "--registry",
+            _OPERATOR_REGISTRY,
             *args,
         ],
     )
@@ -2163,6 +2171,8 @@ def test_preflight_images_deduplicates_declared_and_explicit_pull_secret(
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--registry",
+            _OPERATOR_REGISTRY,
             "--image-pull-secret",
             "operator-registry",
         ],
@@ -2191,6 +2201,8 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--registry",
+            _OPERATOR_REGISTRY,
             "--image-pull-secret",
             "operator-registry",
         ],
@@ -2289,6 +2301,8 @@ def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--registry",
+            _OPERATOR_REGISTRY,
             "--infra",
             "k8s/unit-context",
         ],
@@ -2331,6 +2345,8 @@ def test_preflight_images_fails_on_branch_only_image(mocker) -> None:
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--registry",
+            _OPERATOR_REGISTRY,
         ],
     )
 
