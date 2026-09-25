@@ -27,7 +27,8 @@ Four rules follow:
    - *Source-compiled extensions* (flash-attn from source, Taichi/Genesis, natten, custom ops) obey `TORCH_CUDA_ARCH_LIST` at build time. Omit an arch and the failure surfaces at runtime as `no kernel image is available for execution on the device`.
 4. **Datacenter Blackwell has no RT cores**, exactly like H100/H200. Isaac Lab and SONIC rendering must stay on L40S / RTX PRO 6000; only headless, state-based training routes to B200/B300. `npa.workbench.sonic.routing` classifies `b200`/`b300`/`sm_100`/`sm_103` as datacenter-headless and rejects render workloads on them.
 
-Datacenter-only features (NVFP4, 2nd-gen Transformer Engine, NVLink, MIG) are exercised only on real B200/B300 — a workstation-Blackwell smoke never touches them.
+Validate each product's tensor-core instructions, memory limits and interconnect
+on that product. Shared feature names do not imply interchangeable kernels.
 
 Floor: R570+ driver, CUDA 12.8 or 13.0.
 
@@ -37,11 +38,24 @@ Floor: R570+ driver, CUDA 12.8 or 13.0.
 
 `sm_103` is deliberately absent from that assertion: stock cu130 wheels ship `sm_100` SASS, and B300 is reached by forward compatibility. Asserting `sm_103` would fail a perfectly good wheel.
 
-`npa-base` also builds flash-attn-4 (CuTe), which JIT-compiles at runtime. That was assumed to make it usable on any Blackwell part; **real-GPU testing disproved it for `sm_120`.** The CuTe forward kernel partitions its epilogue with a TMA (Tensor Memory Accelerator) copy atom, and TMA is a datacenter feature — `sm_90`, `sm_100`, and `sm_103` have it, RTX PRO 6000 (`sm_120`) does not. On `sm_120` the kernel raises `AttributeError: 'NoneType' object has no attribute '_trait'` inside `cpasync.tma_partition`, for every dtype, head dim, and sequence length tried, while torch SDPA and bf16 matmul run fine on the same device.
+`npa-base` also builds flash-attn-4 (CuTe), which JIT-compiles at runtime.
+Historical images using upstream commit `0409f9adcbdebff6cc19eb95f370d40e896980bc`
+failed on RTX PRO 6000 with `NoneType._trait` in the TMA epilogue. The earlier
+explanation that SM120 lacks TMA was incorrect: NVIDIA lists TMA for compute
+capability 12.0. The SM80-derived FA4 kernel selected an incompatible epilogue
+path; upstream subsequently fixed SM120 dispatch and backward initialization.
+See the [FA4 audit and qualified configuration](flash-attention.md) for sources,
+dependency pins, restrictions and reproduction commands.
 
-The same image on a real H100 (`sm_90`, which has TMA) runs the kernel correctly — max abs error 0.00186 against SDPA. Same wheel, same flash-attn build, only the architecture differs, which isolates the cause to TMA and shows the kernel path is sound wherever TMA exists. B200 and B300 have TMA, so the datacenter path is expected to work; that remains unverified on B200/B300 silicon itself.
+Historical forward checks passed on H100, B200 and B300 (max absolute errors
+0.00186, 0.00206 and 0.00206 respectively). Those results qualify those old
+images and configurations; they do not qualify a new FA4 build on those GPUs.
 
-`import flash_attn` still succeeds, which is exactly why this went unnoticed: the golden eval only imported. It is now a real capability smoke. Details, including the A/B against the previously published image that proves this is pre-existing rather than a regression, are in the `known_gaps` block of `npa/docker/workbench/blackwell-dc-images.json`. Callers on `sm_120` should use torch SDPA.
+The current source uses the corrected upstream implementation and requires
+real outputs and Q/K/V gradients to pass on the selected GPU. There is no RTX
+failure waiver. Published immutable images and downstream images keep their
+old dependencies until rebuilt and independently qualified. Historical results
+remain in `known_gaps.flash_attn_sm120` in the machine-readable inventory.
 
 ## 2. Build, tag, and register
 
@@ -102,7 +116,7 @@ python -c "import torch; cap=torch.cuda.get_device_capability(); \
   assert cap in {(10,0),(10,3)}, cap"   # (10,0)=B200, (10,3)=B300
 ```
 
-**A real capability smoke, not a CUDA probe.** Run the image's golden/functional smoke so the custom kernels actually execute: flash-attn / natten for cosmos and lerobot-b300, `gs.init(gpu)` plus a `FrankaPickPlaceEnv` step for genesis and loop-eval, a real video-to-video transfer for cosmos2-transfer, a CLIP embed for lancedb, a detector training step for detection-training. This is what caught the `loop-eval:0.1.1` `sm_120` regression, and it is what caught the flash-attn TMA gap above — in both cases an import check passed and the first real kernel failed.
+**A real capability smoke, not a CUDA probe.** Run the image's golden/functional smoke so the custom kernels actually execute: flash-attn / natten for cosmos and lerobot-b300, `gs.init(gpu)` plus a `FrankaPickPlaceEnv` step for genesis and loop-eval, a real video-to-video transfer for cosmos2-transfer, a CLIP embed for lancedb, a detector training step for detection-training. This caught both the `loop-eval:0.1.1` `sm_120` regression and the historical FA4 dispatch failure: imports passed before the first real kernel failed.
 
 For the base image that smoke is committed as `npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py`. To run it on an already-deployed Kubernetes GPU pool rather than provisioning a node, use `npa/scripts/blackwell-gpu-validation-job.yaml`; it runs the arch check positively for the target architecture, negatively for a different CUDA major (so a pass on the wrong GPU family cannot be mistaken for success), and then the capability smoke.
 

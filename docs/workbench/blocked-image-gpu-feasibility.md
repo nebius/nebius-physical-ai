@@ -49,9 +49,11 @@ major, but within a major it is forward compatible, so `sm_86` covers L40S
 nothing here depends on driver JIT. Every one of these artifacts can reach all
 six platforms.
 
-Coverage is necessary, never sufficient. flash-attn-4 ships `sm_120` SASS and
-still raises on `sm_120` because its epilogue needs TMA, which is the finding
-recorded in the matrix. A cell moves on a capability run, not on a wheel scan.
+Coverage is necessary, never sufficient. Torch wheel SASS coverage did not
+prevent historical FA4 CuTe builds from failing on `sm_120` during JIT kernel
+execution. That was a dispatch bug, not missing TMA hardware; see the
+[updated FA4 audit](flash-attention.md). A cell moves on a capability run,
+not on a wheel scan.
 
 ## `npa-cosmos2-transfer` — yes, and it is the most contained
 

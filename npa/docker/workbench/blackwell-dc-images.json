@@ -103,8 +103,9 @@
       "source_compiled_extensions": [
         "flash-attn-4 (CuTe)"
       ],
-      "smoke": "gpu_capability_smoke.py: device capability + native SASS, bf16 matmul and torch SDPA as controls, then a flash-attn-4 CuTe forward pass checked against SDPA",
-      "notes": "Gates most of the tree, so it is built and validated first. TORCH_CUDA_ARCH_LIST was widened from 10.3 to cover both CUDA majors; the build asserts the wheel reports sm_80/sm_90/sm_100/sm_120. sm_103 is intentionally not asserted because stock cu130 wheels ship sm_100 SASS and B300 is reached by 10.0 -> 10.3 forward compat. The flash-attn-4 CuTe JIT was assumed to make this image usable on any Blackwell part; real-GPU testing disproved that for sm_120 - see known_gaps.flash_attn_sm120.",
+      "smoke": "gpu_capability_smoke.py: device/native SASS checks, BF16 matmul and Torch SDPA controls, then 24 FA4 CuTe cases comparing outputs and dQ/dK/dV against FP64 attention",
+      "notes": "The base builds and validates first. Torch must report sm_80/sm_90/sm_100/sm_120; sm_100 covers sm_103 by same-major compatibility. Current source updates FA4 for SM120 and removes the failure waiver. Published image results remain version-specific; see known_gaps.flash_attn_sm120 and docs/workbench/flash-attention.md.",
+      "source_recipe_evidence": "docs/workbench/validation/fa4-rtx6000-20260925.json",
       "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
       "published_digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
       "published_registries": [
@@ -1154,7 +1155,7 @@
         "public-development",
         "public-release"
       ],
-      "hardware_run": "Validated the corrected published 20260803T032705Z image on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03 with npa/scripts/blackwell-gpu-validation-job.yaml. B200 reported capability (10,0) and native sm_100 SASS; B300 reported capability (10,3) with same-major sm_100 SASS coverage; H100 reported native sm_90; RTX reported native sm_120. Every run passed bf16 matmul and torch SDPA, intentionally rejected a different CUDA major, and ended ALL_GPU_VALIDATION_PASSED. flash-attn-4 matched SDPA at max error 0.00206 on B200/B300 and 0.00186 on H100; RTX recorded only the known non-TMA gap with --allow-no-tma. Datacenter runs never used that exception. The earlier rebuilt image's kernels ran on B300 but its baked validator was stale; it is superseded and is not the current alias target.",
+      "hardware_run": "Validated the corrected published 20260803T032705Z image on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03 with npa/scripts/blackwell-gpu-validation-job.yaml. B200 reported capability (10,0) and native sm_100 SASS; B300 reported capability (10,3) with same-major sm_100 SASS coverage; H100 reported native sm_90; RTX reported native sm_120. Every run passed bf16 matmul and torch SDPA, intentionally rejected a different CUDA major, and ended ALL_GPU_VALIDATION_PASSED. flash-attn-4 matched SDPA at max error 0.00206 on B200/B300 and 0.00186 on H100; RTX recorded only the historical FA4 dispatch failure using the then-available waiver (not an FA4 pass). Datacenter runs never used that exception. The earlier rebuilt image's kernels ran on B300 but its baked validator was stale; it is superseded and is not the current alias target.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
@@ -1174,7 +1175,7 @@
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",
           "capability": "12.0",
-          "result": "ALL_GPU_VALIDATION_PASSED (known non-TMA exception)"
+          "result": "ALL_GPU_VALIDATION_PASSED (historical FA4 dispatch failure waived)"
         }
       },
       "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
@@ -1258,7 +1259,7 @@
       "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"
     },
     "npa-lerobot": {
-      "hardware_run": "The exact default tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run checked the inherited and dedicated LeRobot venv wheel arch sets and ran official ACT PushT for 50 training steps, produced a checkpoint, and evaluated one episode (5/5 checks). B200/B300/H100 also executed the datacenter flash-attn-4 CuTe kernel; RTX recorded the known non-TMA exception. The optional 0.6.0 exact digest separately passed the checked-in B200 validator and a real 272,708-parameter DiffusionPolicy CUDA construction on 2026-09-12 (6/6 environment checks). The superseded npa-lerobot:0.5.1 image failed its B200 functional smoke on a torchcodec/FFmpeg mismatch and was not counted.",
+      "hardware_run": "The exact default tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run checked the inherited and dedicated LeRobot venv wheel arch sets and ran official ACT PushT for 50 training steps, produced a checkpoint, and evaluated one episode (5/5 checks). B200/B300/H100 also executed the datacenter flash-attn-4 CuTe kernel; RTX waived the historical FA4 dispatch failure. The optional 0.6.0 exact digest separately passed the checked-in B200 validator and a real 272,708-parameter DiffusionPolicy CUDA construction on 2026-09-12 (6/6 environment checks). The superseded npa-lerobot:0.5.1 image failed its B200 functional smoke on a torchcodec/FFmpeg mismatch and was not counted.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
@@ -1278,7 +1279,7 @@
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",
           "capability": "12.0",
-          "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks (known non-TMA exception)"
+          "result": "LEROBOT_VALIDATION_PASSED; 5/5 checks (historical FA4 dispatch failure waived)"
         }
       },
       "published_tag": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -1294,7 +1295,7 @@
       }
     },
     "npa-cosmos3-reason": {
-      "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run completed baked arch/capability validators, downloaded four gated nvidia/Cosmos-Reason2-8B checkpoint shards, and completed a real two-frame VLM judgment. B200/B300/H100 also ran the flash-attn-4 forward against SDPA; RTX recorded only the known non-TMA exception. B200 emitted score 0.0/success true; B300, H100, and RTX emitted score 0.0/success false. All are functional execution passes, not semantic-quality claims. The superseded pre-rebuild image lacked the functional smoke module and was not counted.",
+      "hardware_run": "The exact final tag passed on physical B200, B300, H100, and RTX PRO 6000 on 2026-08-03. Every run completed baked arch/capability validators, downloaded four gated nvidia/Cosmos-Reason2-8B checkpoint shards, and completed a real two-frame VLM judgment. B200/B300/H100 also ran the flash-attn-4 forward against SDPA; RTX waived the historical FA4 dispatch failure. B200 emitted score 0.0/success true; B300, H100, and RTX emitted score 0.0/success false. All are functional execution passes, not semantic-quality claims. The superseded pre-rebuild image lacked the functional smoke module and was not counted.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
@@ -1314,7 +1315,7 @@
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",
           "capability": "12.0",
-          "result": "Reason2-8B functional execution PASS on exact final tag (known non-TMA exception)"
+          "result": "Reason2-8B functional execution PASS on exact final tag (historical FA4 dispatch failure waived)"
         }
       },
       "published_tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -1341,7 +1342,7 @@
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",
           "capability": "12.0",
-          "result": "Genesis CUDA kernel compilation and physics step PASS (known non-TMA exception in base control)"
+          "result": "Genesis CUDA kernel compilation and physics step PASS (historical FA4 dispatch failure waived in base control)"
         }
       },
       "published_tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -1828,18 +1829,19 @@
   },
   "known_gaps": {
     "flash_attn_sm120": {
-      "summary": "flash-attn-4's CuTe forward kernel cannot execute on sm_120 (RTX PRO 6000 Blackwell). `import flash_attn` succeeds, so an import-only check reports a false pass.",
+      "summary": "Historical FA4 builds failed on SM120 despite successful imports. The current source includes upstream fixes; published immutable images retain their original dependencies and qualification.",
       "error": "AttributeError: 'NoneType' object has no attribute '_trait' in cutlass.cute.nvgpu.cpasync.tma_partition, reached from flash_attn/cute/flash_fwd.py epilogue via quack.copy_utils.tma_get_copy_fn",
-      "root_cause": "The kernel partitions its epilogue with a TMA (Tensor Memory Accelerator) copy atom, and that atom is unavailable on workstation Blackwell. TMA is a datacenter feature: sm_90 (Hopper) and sm_100/sm_103 (datacenter Blackwell) have it, sm_120 does not.",
-      "evidence": "Verified on a real NVIDIA RTX PRO 6000 Blackwell Server Edition node (capability (12,0)). All four tested configurations (bf16/fp16, head_dim 64/128, seqlen 64/256) fail at the same line, so it is architecture-wide rather than config-specific. torch SDPA and a bf16 tensor-core matmul both succeed on the same device, ruling out the GPU and the wheel.",
+      "root_cause": "The old SM80-derived kernel selected a TMA epilogue with no initialized copy atom. This is a software dispatch failure, not missing TMA hardware: NVIDIA lists TMA for compute capability 12.0. The updated source corrects dispatch, PR2671 fixes backward initialization, and PR2763 adds varlen tile guards.",
+      "evidence": "Historical RTX PRO 6000 runs failed at the same epilogue line for the tested FP16/BF16, head-dimension and sequence-length configurations, while Torch SDPA and BF16 matmul passed. This evidence applies to those builds and shapes, not all FA4 versions or all SM120 kernels.",
       "regression": "No. The previously published npa-base:cuda13-b300-sm80-sm90-sm120-latest, built before the arch widen and the CUTLASS pin, fails identically on the same node. This is pre-existing and was hidden by an import-only golden eval.",
       "affects": [
-        "sm_120 consumers of npa-base"
+        "SM120 consumers retaining historical FA4 commit 0409f9adcbdebff6cc19eb95f370d40e896980bc or otherwise reproducing this dispatch failure"
       ],
-      "does_not_affect": "sm_100 and sm_103 have TMA. The kernel passed on physical B200 and B300 hardware at max abs error 0.00206 against torch SDPA, so the gap is confined to non-TMA sm_120 in the tested Blackwell set.",
-      "upstream_tracking": "https://github.com/Dao-AILab/flash-attention - flash-attn-4 CuTe TMA path assumes a datacenter architecture",
-      "mitigation": "gpu_capability_smoke.py --allow-no-tma records this as a known gap on non-TMA parts and still fails on datacenter parts, where a TMA failure would be real. Callers on sm_120 should use torch SDPA.",
-      "positive_control": "The same image on a real NVIDIA H100 80GB HBM3 node (capability (9,0), which has TMA) runs flash_attn_func successfully with max abs error 0.00186 against torch SDPA. Same wheel, same flash-attn build, same CUTLASS pin - only the architecture differs. That isolates the cause to TMA availability and shows the kernel path itself is sound."
+      "does_not_affect": "Historical B200 and B300 forward checks passed with maximum absolute error 0.00206 against SDPA. Those results do not qualify the newly pinned FA4 build on B200/B300.",
+      "upstream_tracking": "https://github.com/Dao-AILab/flash-attention/pull/2671",
+      "mitigation": "Rebuild with FA4 eed1971f5132630dc296fe37601e834d4b57a248, CUTLASS DSL 4.6.2 and Quack 0.6.4; use pack_gqa=False and num_splits=1 for the qualified baseline. Run strict outputs/gradients qualification on the actual GPU and model features. Old images need an independently validated FA2/SDPA path until rebuilt; a failure must not count as an FA4 pass.",
+      "positive_control": "The historical H100 image matched SDPA with maximum absolute error 0.00186. Different architecture dispatch explains why this control does not establish the absence of TMA on RTX.",
+      "source_recipe": "docs/workbench/flash-attention.md"
     },
     "cosmos_predict2_b300_allowlist": {
       "summary": "Cosmos Predict2 v1.0.9 rejects B300 capability 10.3 before kernel dispatch even though its cu128 torch wheel carries forward-compatible sm_100 SASS.",
