@@ -116,6 +116,15 @@ def test_workbench_public_surface() -> None:
             assert callable(getattr(tool_module, name)), f"{tool}.{name} missing"
 
 
+def test_cosmos_public_surface_excludes_unimplemented_wrappers() -> None:
+    """Cosmos does not expose wrappers for commands that cannot execute."""
+    from npa import workbench
+
+    for name in ["finetune", "optimize"]:
+        assert name not in workbench.cosmos.__all__
+        assert not hasattr(workbench.cosmos, name)
+
+
 def test_errors_public_surface() -> None:
     """npa.errors exposes public exception types."""
     from npa.errors import NpaError, ScopedCredentialError

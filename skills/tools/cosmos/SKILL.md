@@ -38,8 +38,6 @@ npa workbench cosmos deploy
 npa workbench cosmos serve
 npa workbench cosmos infer
 npa workbench cosmos train --runtime serverless --smoke
-npa workbench cosmos finetune
-npa workbench cosmos optimize
 npa workbench cosmos status
 npa workbench cosmos system-info
 npa workbench cosmos list
@@ -47,15 +45,13 @@ npa workbench cosmos list
 
 ## Backend Selection
 
-Use `--backend` to select one of:
+Deploy and serve accept only the `basic` backend, which uses the built-in
+FastAPI/Diffusers server. For multiple models, use named workbenches or the
+deploy/serve model swap pattern.
 
-- `basic`
-- `nim`
-- `triton`
-
-Only `basic` is implemented today. `nim` and `triton` are exposed as enum
-choices but intentionally exit as not implemented. For multiple models, use
-named workbenches or the deploy/serve model swap pattern.
+Fine-tuning and optimization are not legacy Cosmos CLI commands. For current
+Cosmos3 supervised fine-tuning and post-training guidance, use
+`skills/workflows/cosmos3-post-training/SKILL.md`.
 
 ## E2E Status
 
@@ -72,7 +68,6 @@ gap for an artifact-bearing Cosmos workflow.
 
 Known constraints:
 
-- `finetune` and `optimize` are placeholders.
 - Basic serverless endpoint inference validates endpoint/job completion, but
   generated endpoint outputs do not yet have a public CLI serverless-side S3
   export contract.
