@@ -56,6 +56,10 @@ class WorkflowStateError(RuntimeError):
     """Raised when durable workflow state cannot be read or written."""
 
 
+class _WorkflowStateUnreadableError(WorkflowStateError):
+    """Read failure outside the provider lookup that can establish absence."""
+
+
 @dataclass(frozen=True)
 class WorkflowS3Config:
     """Resolved S3 location and credentials for a workflow run prefix."""
@@ -648,48 +652,52 @@ def get_json(
     return payload
 
 
-def get_text(state: WorkflowS3Config, *parts: str, client: Any = None) -> str:
-    """Read one object as text.
+def _get_object_for_read(state: WorkflowS3Config, key: str, client: Any) -> Any:
+    message = f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}"
+    try:
+        s3 = client if client is not None else state.client()
+    except Exception as exc:  # Client setup cannot prove object absence.
+        raise _WorkflowStateUnreadableError(message) from exc
+    try:
+        return s3.get_object(Bucket=state.bucket, Key=key)
+    except Exception as exc:  # boto3 exposes provider-specific ClientError payloads.
+        raise WorkflowStateError(message) from exc
 
-    Pass ``client`` when the caller is reading many objects from the same
-    bucket/endpoint concurrently (see ``list_runs`` / ``discover_workflow_run_state``):
-    it reuses one already-built client instead of each call building its own
-    through ``state.client()``, which constructs clients through boto3's
-    shared default session and is not documented as safe to do concurrently.
+
+def get_text(state: WorkflowS3Config, *parts: str, client: Any = None) -> str:
+    """Read one object as text, preserving whether its lookup proved absence.
 
     Args:
         state: Bucket/prefix/credentials to read from.
-        *parts: Path segments joined onto ``state.prefix`` to form the key.
-        client: Optional pre-built boto3 client to reuse instead of calling
-            ``state.client()``.
-
+        *parts: Path segments joined onto the run prefix.
+        client: Optional pre-built client for concurrent reads; reuse avoids
+            constructing clients through boto3's shared default session.
     Returns:
-        The object's bytes, decoded as UTF-8 (invalid bytes replaced).
-
+        The object's bytes decoded as UTF-8, with invalid bytes replaced.
     Raises:
-        WorkflowStateError: The client could not be built, or the provider
-            rejected the GET (missing object, auth failure, or any other
-            provider error).
+        WorkflowStateError: Client setup, provider lookup, response shape,
+            body read, or body cleanup failed.
     """
 
     key = _key(state.prefix, *parts)
+    response = _get_object_for_read(state, key, client)
     try:
-        s3 = client if client is not None else state.client()
-        response = s3.get_object(Bucket=state.bucket, Key=key)
-    except Exception as exc:  # boto3 exposes provider-specific ClientError payloads.
-        raise WorkflowStateError(
-            f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}"
+        body = response["Body"]
+        try:
+            return body.read().decode("utf-8", errors="replace")
+        finally:
+            body.close()
+    except Exception as exc:  # An opened object is not absent when its body fails.
+        raise _WorkflowStateUnreadableError(
+            f"S3 object response unreadable: {_join_s3_uri(state.bucket, key)}"
         ) from exc
-    body = response["Body"]
-    try:
-        return body.read().decode("utf-8", errors="replace")
-    finally:
-        body.close()
 
 
 def workflow_state_error_is_missing(exc: BaseException) -> bool:
     """Return whether a read failure is an actual missing object, not auth/network."""
 
+    if isinstance(exc, _WorkflowStateUnreadableError):
+        return False
     cause = exc.__cause__
     if isinstance(cause, (FileNotFoundError, KeyError)):
         return True

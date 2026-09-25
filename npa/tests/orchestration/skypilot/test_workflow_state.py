@@ -109,3 +109,76 @@ def test_read_stage_status_returns_valid_payload(
         "state": "SUCCEEDED",
         "job_id": "42",
     }
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [KeyError("credential"), FileNotFoundError("credential"), _provider_error("404")],
+    ids=["configuration-key", "credential-file", "credential-provider-404"],
+)
+def test_client_setup_failure_never_proves_object_absence(monkeypatch, failure):
+    state = _state(monkeypatch, _ObjectClient())
+
+    def fail_setup(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(workflow_state.boto3, "client", fail_setup)
+    with pytest.raises(WorkflowStateError) as caught:
+        read_stage_status(state, "train")
+    assert caught.value.__cause__ is failure
+    assert not workflow_state.workflow_state_error_is_missing(caught.value)
+
+
+@pytest.mark.parametrize("response", [{}, None, {"Body": None}])
+def test_malformed_object_response_is_unreadable(monkeypatch, response):
+    client = _ObjectClient()
+    monkeypatch.setattr(client, "get_object", lambda **_kwargs: response)
+    state = _state(monkeypatch, client)
+
+    with pytest.raises(WorkflowStateError, match="response unreadable") as caught:
+        read_stage_status(state, "train")
+    assert not workflow_state.workflow_state_error_is_missing(caught.value)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        KeyError("body"),
+        FileNotFoundError("body"),
+        _provider_error("404"),
+        TimeoutError(),
+    ],
+    ids=["key-error", "file-not-found", "provider-404", "timeout"],
+)
+def test_body_read_failure_is_unreadable_and_closes_body(monkeypatch, failure):
+    body = BytesIO(b"{}")
+
+    def fail_read():
+        raise failure
+
+    monkeypatch.setattr(body, "read", fail_read)
+    client = _ObjectClient()
+    monkeypatch.setattr(client, "get_object", lambda **_kwargs: {"Body": body})
+    state = _state(monkeypatch, client)
+
+    with pytest.raises(WorkflowStateError, match="response unreadable") as caught:
+        read_stage_status(state, "train")
+    assert caught.value.__cause__ is failure
+    assert not workflow_state.workflow_state_error_is_missing(caught.value)
+    assert body.closed
+
+
+def test_body_close_failure_is_unreadable(monkeypatch):
+    body = BytesIO(b"{}")
+
+    def fail_close():
+        raise KeyError("cleanup")
+
+    monkeypatch.setattr(body, "close", fail_close)
+    client = _ObjectClient()
+    monkeypatch.setattr(client, "get_object", lambda **_kwargs: {"Body": body})
+    state = _state(monkeypatch, client)
+
+    with pytest.raises(WorkflowStateError, match="response unreadable") as caught:
+        read_stage_status(state, "train")
+    assert not workflow_state.workflow_state_error_is_missing(caught.value)

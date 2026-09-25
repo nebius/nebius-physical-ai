@@ -1016,14 +1016,36 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     assert "s3://bucket/run-1/artifacts/train/model.bin" in artifacts_result.output
 
 
+def _unreadable_stage_response(failure: str) -> dict:
+    if failure == "missing-body":
+        return {}
+
+    def read():
+        if failure == "stream-read":
+            raise FileNotFoundError("synthetic-stage-provider-secret")
+        return b"{}"
+
+    def close():
+        if failure == "body-close":
+            raise KeyError("synthetic-stage-provider-secret")
+
+    return {"Body": SimpleNamespace(read=read, close=close)}
+
+
+@pytest.mark.parametrize(
+    "read_failure", ["provider", "missing-body", "stream-read", "body-close"]
+)
 def test_durable_workflow_status_reports_unreadable_stage_as_unavailable(
     monkeypatch,
+    read_failure,
 ) -> None:
     synthetic_secret = "synthetic-stage-provider-secret"
 
     class StageStatusThrottledS3(FakeWorkflowS3):
         def get_object(self, *, Bucket: str, Key: str):
             if Key.endswith("/logs/train/status.json"):
+                if read_failure != "provider":
+                    return _unreadable_stage_response(read_failure)
                 raise ClientError(
                     {
                         "Error": {
@@ -1919,12 +1941,18 @@ def test_workflow_cancel_distinguishes_terminal_launched_run(monkeypatch) -> Non
     assert payload["cloud_calls"] is False
 
 
+@pytest.mark.parametrize(
+    "read_failure", ["provider", "missing-body", "stream-read", "body-close"]
+)
 def test_workflow_cancel_denied_stage_status_records_verification_failure(
     monkeypatch,
+    read_failure,
 ) -> None:
     class StageStatusDeniedS3(FakeWorkflowS3):
         def get_object(self, *, Bucket: str, Key: str):
             if Key.endswith("/logs/train/status.json"):
+                if read_failure != "provider":
+                    return _unreadable_stage_response(read_failure)
                 raise ClientError(
                     {
                         "Error": {
@@ -1979,8 +2007,13 @@ def test_workflow_cancel_denied_stage_status_records_verification_failure(
     assert payload["outcome"] == "verification_failed"
     assert payload["detected_state"] == "VERIFICATION_UNAVAILABLE"
     assert payload["cloud_calls"] is False
+    reason = (
+        "object not found or unreadable"
+        if read_failure == "provider"
+        else "object response unreadable"
+    )
     assert payload["errors"] == [
-        "stage train status verification failed: S3 object not found or unreadable: "
+        f"stage train status verification failed: S3 {reason}: "
         "s3://bucket/denied-terminal/logs/train/status.json"
     ]
     assert len(receipts) == 1
