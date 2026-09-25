@@ -154,6 +154,13 @@ If a started case has no recoverable original evidence, recovery stops and
 identifies the case. Creating a new output prefix to repeat it would defeat the
 protocol. Keep the original volume and logs for investigation.
 
+When evaluation or result validation fails, the worker also preserves any
+available prescribed metrics JSON and MP4 under the claim's `raw/` prefix.
+Conditional uploads and full byte readback precede `raw/manifest.json`, which
+records their hashes and explicitly marks them unvalidated. This diagnostic
+manifest neither completes the case nor authorizes recovery or another rollout.
+If storage fails, keep the original worker volume; logs report the failed upload.
+
 Each case starts with the policy's native initial random state. A websocket
 reset alone does not reset the RLC sampler's random generator. Fresh processes
 keep the sampler state independent of preceding cases, worker assignments, and

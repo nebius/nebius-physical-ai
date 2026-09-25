@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
+import hashlib
 import json
 import logging
+import os
 from pathlib import Path
+import stat
 
 from npa.clients.storage import StorageClient, StoragePreconditionFailed
 
@@ -61,6 +64,49 @@ def _record_case_provenance(store, version, output):
             )
             files[path.name] = file_digest(path)
     _put_original(store.storage, _json_bytes(files), f"{prefix}/provenance.json")
+
+
+def _raw_case_payload(output, relative):
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    with ExitStack() as stack:
+        directory = os.open(output, flags | os.O_DIRECTORY)
+        stack.callback(os.close, directory)
+        parent = os.open(relative.parent, flags | os.O_DIRECTORY, dir_fd=directory)
+        stack.callback(os.close, parent)
+        descriptor = os.open(relative.name, flags, dir_fd=parent)
+        stack.callback(os.close, descriptor)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("Raw campaign artifact must be a regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            return source.read()
+
+
+def _record_raw_case_artifacts(store, version, output):
+    case = version.record["case"]
+    stem = f"{case['task']}_{case['instance_id']}_{case['rollout_id']}"
+    prefix = store.artifact_prefix(version) + "/raw"
+    files = {}
+    for relative in (Path(f"json/{stem}.json"), Path(f"videos/{stem}.mp4")):
+        try:
+            payload = _raw_case_payload(output, relative)
+        except FileNotFoundError:
+            continue
+        _put_original(store.storage, payload, f"{prefix}/{relative.as_posix()}")
+        files[relative.as_posix()] = {
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    if files:
+        manifest = {
+            "schema": "npa.behavior.raw-case-artifacts.v1",
+            "status": "unvalidated",
+            "panel_id": store.panel_id,
+            "claim_id": version.record["claim_id"],
+            "case": case,
+            "all_prescribed_files_present": len(files) == 2,
+            "files": files,
+        }
+        _put_original(store.storage, _json_bytes(manifest), f"{prefix}/manifest.json")
 
 
 def _restore_case_provenance(store, version, output):
@@ -179,22 +225,23 @@ def _run_or_recover(
             started = store.start(claim)
             execute_case(case, output)
             (output / "evaluator-exit.json").write_bytes(_json_bytes(case))
+        record = inspect_rollout(output, case)
+        bind_inspected_rollout(panel, record)
+        _record_originals(store, started, output, record)
     except BaseException:
         _preserve_failed_case(store, claim, output)
         raise
-    record = inspect_rollout(output, case)
-    bind_inspected_rollout(panel, record)
-    _record_originals(store, started, output, record)
     return record
 
 
 def _preserve_failed_case(store, claim, output):
-    try:
-        _record_case_provenance(store, claim, output)
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "Case provenance upload also failed; retain its original workspace"
-        )
+    for preserve in (_record_raw_case_artifacts, _record_case_provenance):
+        try:
+            preserve(store, claim, output)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Case evidence upload also failed; retain its original workspace"
+            )
 
 
 def _case_directory(workspace, version):

@@ -1,6 +1,7 @@
 """Exercise durable campaign recovery against original JSON and decoded video."""
 
 from contextlib import contextmanager, suppress
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -368,6 +369,97 @@ def test_unfinished_evaluator_files_cannot_be_promoted(fixture):
         campaign_runner.run_partition(
             panel, partition, 0, store, workspace, _write_original
         )
+
+
+@pytest.mark.parametrize("failure_stage", ["evaluator", "inspection"])
+def test_validation_failure_preserves_raw_bytes_without_scoring(fixture, failure_stage):
+    panel, partition, store, workspace = fixture
+    calls = []
+
+    def invalid_result(case, output):
+        calls.append(case["case_id"])
+        _write_original(case, output)
+        metrics = next((output / "json").iterdir())
+        value = json.loads(metrics.read_bytes())
+        value["q_score"]["final"] = "invalid"
+        metrics.write_text(json.dumps(value))
+        if failure_stage == "evaluator":
+            campaign_runner.inspect_rollout(output, case)
+
+    with pytest.raises(ValueError, match="finite q_score"):
+        campaign_runner.run_partition(
+            panel, partition, 0, store, workspace, invalid_result
+        )
+    case = panel["cases"][0]
+    version = store.read(case)
+    prefix = store.artifact_prefix(version)
+    raw = json.loads(store.storage.objects[f"{prefix}/raw/manifest.json"][0])
+    assert raw["status"] == "unvalidated" and raw["all_prescribed_files_present"]
+    assert raw["case"] == case and raw["claim_id"] == version.record["claim_id"]
+    assert raw["panel_id"] == panel["panel_id"]
+    for relative, digest in raw["files"].items():
+        payload = (workspace / version.record["claim_id"] / relative).read_bytes()
+        assert store.storage.objects[f"{prefix}/raw/{relative}"][0] == payload
+        assert digest == {
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    assert version.record["state"] == "started"
+    assert f"{prefix}/validation.json" not in store.storage.objects
+    with pytest.raises(CaseAlreadyStarted):
+        campaign_runner.run_partition(
+            panel, partition, 0, store, workspace / "replacement", invalid_result
+        )
+    assert calls == [case["case_id"]]
+
+
+@pytest.mark.parametrize("linked_part", ["directory", "file"])
+def test_failed_case_does_not_publish_symlinked_raw_artifacts(fixture, linked_part):
+    panel, partition, store, workspace = fixture
+    external = workspace / "outside"
+    external.mkdir()
+    secret = b"outside the case workspace"
+
+    def fail(case, output):
+        filename = f"{case['task']}_{case['instance_id']}_0.json"
+        (external / filename).write_bytes(secret)
+        if linked_part == "directory":
+            (output / "json").symlink_to(external, target_is_directory=True)
+        else:
+            (output / "json").mkdir()
+            (output / "json" / filename).symlink_to(external / filename)
+        raise RuntimeError("original evaluation error")
+
+    with pytest.raises(RuntimeError, match="original evaluation error"):
+        campaign_runner.run_partition(panel, partition, 0, store, workspace, fail)
+    assert all(payload != secret for payload, _ in store.storage.objects.values())
+    assert not any("/raw/" in uri for uri in store.storage.objects)
+    assert store.read(panel["cases"][0]).record["state"] == "started"
+
+
+def test_failed_raw_readback_keeps_primary_error_and_provenance(fixture, monkeypatch):
+    panel, partition, store, workspace = fixture
+    read = store.storage.read_bytes_with_etag
+
+    def corrupt_raw(uri):
+        return (b"wrong bytes", "etag") if "/raw/" in uri else read(uri)
+
+    def fail(case, output):
+        _write_original(case, output)
+        (output / "policy.log").write_bytes(b"original policy log")
+        raise RuntimeError("original evaluation error")
+
+    monkeypatch.setattr(store.storage, "read_bytes_with_etag", corrupt_raw)
+    with pytest.raises(RuntimeError, match="original evaluation error"):
+        campaign_runner.run_partition(panel, partition, 0, store, workspace, fail)
+    assert not any(uri.endswith("/raw/manifest.json") for uri in store.storage.objects)
+    version = store.read(panel["cases"][0])
+    prefix = store.artifact_prefix(version)
+    assert (
+        store.storage.objects[f"{prefix}/provenance/policy.log"][0]
+        == b"original policy log"
+    )
+    assert version.record["state"] == "started"
 
 
 def test_partial_panel_cannot_be_aggregated(fixture):
