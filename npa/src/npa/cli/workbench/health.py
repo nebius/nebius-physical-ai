@@ -611,9 +611,6 @@ def sim2real_command(
         if value is not None:
             overrides[key] = value
 
-    config = build_config_from_env(**overrides)
-    credentials = load_credentials()
-
     selected = [item.strip() for item in checks.split(",") if item.strip()]
     # 'all' is the documented shorthand (operator runbooks and the 10-min demo
     # script use `--checks all`) — expand it to the full check set.
@@ -624,6 +621,15 @@ def sim2real_command(
         raise typer.BadParameter(
             f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(ALL_CHECKS)}."
         )
+
+    try:
+        config = build_config_from_env(**overrides)
+    except ValueError as exc:
+        # Image resolution deliberately fails closed for quarantined public
+        # releases. Surface that policy as an actionable CLI error instead of
+        # leaking an unrendered exception (and only after validating --checks).
+        raise typer.BadParameter(str(exc)) from exc
+    credentials = load_credentials()
 
     probes = DoctorProbes(
         s3_client_factory=lambda: StorageClient.from_environment(

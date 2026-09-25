@@ -811,6 +811,8 @@ def test_workbench_workflow_submit_rejects_isaac_byof_opt_out(mocker) -> None:
             "base_profile=isaac-lab",
             "--var",
             "base_image=tool://isaac-lab",
+            "--registry",
+            "registry.example.invalid/operator/workbench",
         ],
     )
 
