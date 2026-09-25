@@ -122,13 +122,24 @@ def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
 
 
 def _workflow_log_attempt(record: Mapping[str, object]) -> int:
-    """Return a persisted log-attribution attempt, defaulting missing values."""
+    """Read a positive whole-number attempt, preserving missing legacy values.
+
+    Historical ledgers may encode integral numbers as strings or floats. Reject
+    booleans and fractional numbers instead of silently attributing another attempt.
+    """
 
     raw_attempt = record.get("attempt")
     if raw_attempt is None:
         return 1
     try:
-        return int(raw_attempt)
+        attempt = int(raw_attempt)
+        if (
+            isinstance(raw_attempt, bool)
+            or (isinstance(raw_attempt, float) and raw_attempt != attempt)
+            or attempt < 1
+        ):
+            raise ValueError("attempt must be a positive whole number")
+        return attempt
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("persisted workflow attempt metadata is invalid") from exc
 
@@ -6368,7 +6379,7 @@ def _matching_stage_log_waves(
 
     job_id = str(stage_attempt.get("managed_job_id") or "")
     stage_key = str(stage_attempt.get("wave_key") or "")
-    attempt = int(stage_attempt.get("attempt") or 1)
+    attempt = _workflow_log_attempt(stage_attempt)
     if not stage_key and not job_id:
         return []
     matches: list[dict[str, object]] = []
@@ -6377,15 +6388,11 @@ def _matching_stage_log_waves(
             continue
         if stage not in list(raw_wave.get("states") or []):
             continue
-        try:
-            wave_attempt = int(raw_wave.get("attempt") or 1)
-        except (TypeError, ValueError):
-            continue
-        if wave_attempt != attempt:
-            continue
         if stage_key and str(raw_wave.get("key") or "") != stage_key:
             continue
         if job_id and str(raw_wave.get("job_id") or "") != job_id:
+            continue
+        if _workflow_log_attempt(raw_wave) != attempt:
             continue
         matches.append(raw_wave)
     return matches
@@ -6657,7 +6664,7 @@ def logs_cmd(
                         for index, state_name in enumerate(wave_states):
                             reconstructed = {
                                 "stage": str(state_name),
-                                "attempt": int(wave.get("attempt") or 1),
+                                "attempt": wave.get("attempt"),
                                 "managed_job_id": str(wave.get("job_id") or ""),
                                 "logical_state": str(wave.get("status") or "unknown"),
                                 "provenance": "legacy_runtime_wave_reconstruction",
@@ -6699,6 +6706,17 @@ def logs_cmd(
                     stage_attempts.sort(key=_workflow_log_attempt)
                     selected_attempt = stage_attempts[-1] if stage_attempts else {}
                     selected_attempt_number = _workflow_log_attempt(selected_attempt)
+                    attribution_error = ""
+                    if cached:
+                        job_id = str(selected_attempt.get("managed_job_id") or "")
+                    else:
+                        selected_attempt, job_id, attribution_error = (
+                            _recover_stage_log_wave_attribution(
+                                resolution.runtime_state,
+                                selected_attempt,
+                                selected_stage,
+                            )
+                        )
                 except ValueError:
                     source_payload = _invalid_log_attempt_payload(
                         run_id=resolution.run_id,
@@ -6717,17 +6735,6 @@ def logs_cmd(
                         assert isinstance(live_verification, dict)
                         typer.echo(f"retry: {live_verification['retry_command']}")
                     raise typer.Exit(code=2)
-                attribution_error = ""
-                if cached:
-                    job_id = str(selected_attempt.get("managed_job_id") or "")
-                else:
-                    selected_attempt, job_id, attribution_error = (
-                        _recover_stage_log_wave_attribution(
-                            resolution.runtime_state,
-                            selected_attempt,
-                            selected_stage,
-                        )
-                    )
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.

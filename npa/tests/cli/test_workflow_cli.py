@@ -1765,12 +1765,14 @@ def test_workflow_logs_does_not_treat_stage_key_as_wave_key(
     assert json.loads(result.output)["error_code"] == "STAGE_JOB_ID_UNAVAILABLE"
 
 
+@pytest.mark.parametrize("attempt", ["later", False, 0, 1.5, float("inf")])
 def test_workflow_logs_explicit_projection_ignores_malformed_wave_attempt(
     monkeypatch: pytest.MonkeyPatch,
+    attempt: object,
 ) -> None:
     result, calls = _invoke_logs_with_partial_stage(
         monkeypatch,
-        [_log_wave("42", attempt="later")],
+        [_log_wave("42", attempt=attempt)],
         job_id="42",
         task_id="7",
     )
@@ -1779,23 +1781,53 @@ def test_workflow_logs_explicit_projection_ignores_malformed_wave_attempt(
     assert calls == [("42", "7")]
 
 
-def test_workflow_logs_partial_projection_ignores_malformed_wave_attempt(
+@pytest.mark.parametrize(
+    "attempt", ["later", False, 0, 1.5, float("inf"), float("nan"), []]
+)
+def test_workflow_logs_partial_projection_rejects_malformed_wave_attempt(
     monkeypatch: pytest.MonkeyPatch,
+    attempt: object,
 ) -> None:
     result, calls = _invoke_logs_with_partial_stage(
-        monkeypatch, [_log_wave("42", attempt="later")]
+        monkeypatch, [_log_wave("42", attempt=attempt)]
     )
 
     assert result.exit_code == 2, result.output
     assert calls == []
-    assert json.loads(result.output)["error_code"] == "STAGE_JOB_ID_UNAVAILABLE"
+    payload = json.loads(result.output)
+    assert payload["error_code"] == "STAGE_ATTEMPT_INVALID"
+    assert payload["live_verification"]["category"] == "ATTRIBUTION"
+    assert "managed_job_id" not in payload
 
 
+@pytest.mark.parametrize("unrelated_identity", ["wave", "job", "stage"])
+def test_workflow_logs_partial_projection_ignores_unrelated_invalid_wave(
+    monkeypatch: pytest.MonkeyPatch,
+    unrelated_identity: str,
+) -> None:
+    unrelated = _log_wave("43", attempt=False)
+    if unrelated_identity == "wave":
+        unrelated["key"] = "wave-other"
+    if unrelated_identity == "stage":
+        unrelated["states"] = ["different-stage"]
+    result, calls = _invoke_logs_with_partial_stage(
+        monkeypatch,
+        [_log_wave("42"), unrelated],
+        job_id="42" if unrelated_identity == "job" else "",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("42", "7")]
+    assert json.loads(result.output)["verification_status"] == "VERIFIED"
+
+
+@pytest.mark.parametrize("attempt", [1, False, float("inf")])
 def test_workflow_cached_logs_do_not_recover_live_wave_attribution(
     monkeypatch: pytest.MonkeyPatch,
+    attempt: object,
 ) -> None:
     result, calls = _invoke_logs_with_partial_stage(
-        monkeypatch, [_log_wave("42")], cached=True
+        monkeypatch, [_log_wave("42", attempt=attempt)], cached=True
     )
 
     assert result.exit_code == 0, result.output
@@ -1844,6 +1876,10 @@ def _put_log_attempt_projection(
     [
         pytest.param("not-a-number", 1, id="stage-string"),
         pytest.param([], 1, id="stage-empty-list"),
+        pytest.param(True, 1, id="stage-boolean"),
+        pytest.param(0, 1, id="stage-zero"),
+        pytest.param(-1, 1, id="stage-negative"),
+        pytest.param(1.5, 1, id="stage-fractional"),
     ],
 )
 def test_workflow_logs_fail_closed_on_invalid_attempt_metadata(
@@ -1932,6 +1968,28 @@ def test_workflow_logs_accept_missing_and_numeric_attempt_metadata(
     payload = json.loads(result.output)
     assert payload["attempt"] == expected_attempt
     assert payload["managed_job_id"] == "42"
+
+
+@pytest.mark.parametrize("attempt", [False, 0, "", "invalid", 1.5])
+def test_workflow_logs_rejects_malformed_legacy_wave_attempt(
+    monkeypatch: pytest.MonkeyPatch, attempt: object
+) -> None:
+    """Reconstruction must not normalize malformed legacy identity into attempt one."""
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_workflow_log_waves(fake_s3, [_log_wave("42", attempt=attempt)])
+    calls = _patch_stage_log_tail(monkeypatch)
+    retained = dict(fake_s3.objects)
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "logs", uri, "--stage", "rollout", "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.output)["error_code"] == "STAGE_ATTEMPT_INVALID"
+    assert calls == []
+    assert fake_s3.objects == retained
 
 
 def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
