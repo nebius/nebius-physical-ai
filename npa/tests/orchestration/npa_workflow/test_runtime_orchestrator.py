@@ -38,6 +38,7 @@ from npa.orchestration.npa_workflow.runtime import (
     _record_reached_running,
     plan_fingerprint,
     run_workflow_runtime,
+    s3_artifact_exists,
     s3_trigger_waiter,
     wave_key,
 )
@@ -778,6 +779,80 @@ def test_declared_output_checker_receives_uri_and_ledger_keeps_schema(
             "schema": "npa.sim2real.threshold_decision.v1",
         }
     ]
+
+
+def test_prefix_marker_does_not_authorize_absent_output_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class PagedS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "IsTruncated": True,
+                "NextContinuationToken": "page-2",
+            }
+
+    client = PagedS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._outputs_exist([output])
+    assert executor._declared_outputs_absent([output]) == (False, "present")
+
+
+def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class MissingTruncationFlagS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "NextContinuationToken": "page-2",
+            }
+
+    client = MissingTruncationFlagS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._declared_outputs_absent([output]) == (False, "indeterminate")
+    assert calls == [
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "gate-loop/run/output/",
+            "MaxKeys": 1000,
+        }
+    ]
+    with pytest.raises(RuntimeError, match="malformed pagination"):
+        s3_artifact_exists(output)
 
 
 # ------------------------------------------------------------------- early exit

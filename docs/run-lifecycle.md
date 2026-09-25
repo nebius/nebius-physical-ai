@@ -154,6 +154,11 @@ launch absence; a new lookup must still prove absence. Existing outputs,
 unreadable storage, missing output declarations, or uncertain scheduler status
 continue to block a new launch. Prior attempts remain in the run history.
 
+Directory-style output evidence scans every S3 list page for a non-empty
+descendant. Zero-byte directory markers do not prove completion or absence,
+and malformed/truncated pagination blocks recovery rather than authorizing
+duplicate work.
+
 ## Reading status
 
 ```bash
