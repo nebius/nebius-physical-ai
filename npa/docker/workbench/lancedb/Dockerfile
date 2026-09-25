@@ -20,6 +20,8 @@ WORKDIR /app
 # Insights stages use this image through the standard SkyPilot Kubernetes
 # runtime.  Keep its non-root bootstrap closure identical to the other native
 # workflow images and source OS packages from an immutable Ubuntu snapshot.
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
+  /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
   /usr/local/bin/install-workflow-runtime-prereqs
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"

@@ -11,8 +11,12 @@ USER root
 
 # Refresh vulnerable userspace headers inherited from the accepted runtime;
 # the CUDA, torch and torchvision closure remains the same.
-ARG LINUX_LIBC_DEV_VERSION=6.8.0-139.139
-RUN apt-get update \
+ARG UBUNTU_SNAPSHOT=20260820T000000Z
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-138.138
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
+    /usr/local/bin/configure-ubuntu-snapshot
+RUN /usr/local/bin/configure-ubuntu-snapshot "${UBUNTU_SNAPSHOT}" \
+    && apt-get update \
     && apt-get install -y --no-install-recommends linux-libc-dev=${LINUX_LIBC_DEV_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
@@ -27,7 +31,8 @@ WORKDIR /app
 # stack come from the shared base; only the detector-specific torch extensions
 # and COCO metrics are unique to this image.
 COPY docker/workbench/detection-training/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt \
+    && python -m pip check
 
 RUN mkdir -p /app/npa/workbench
 RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py
