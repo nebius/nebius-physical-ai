@@ -11,8 +11,9 @@ const state = {
   cursor: 0,
   pending: [],
   generation: 0,
+  metadataRevision: 0,
   connected: false,
-  sending: false,
+  sending: new Set(),
   changingModel: false,
   models: [],
   statuses: new Map(),
@@ -103,18 +104,22 @@ function notice(text = "") {
   $("#notice").textContent = text;
   $("#notice").hidden = !text;
 }
-async function api(path, body) {
+async function api(path, body, headers = {}) {
   const options = { credentials: "same-origin", cache: "no-store" };
   if (body !== undefined) {
     options.method = "POST";
-    options.headers = { "Content-Type": "application/json" };
+    options.headers = { "Content-Type": "application/json", ...headers };
     options.body = JSON.stringify(body);
   }
   const response = await fetch(new URL("./api/" + path, location.href), options);
   if (response.status === 401)
-    throw new Error("Sign-in expired. Reload this page to sign in again.");
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "The request failed.");
+    throw Object.assign(new Error("Sign-in expired. Reload this page to sign in again."), {status: 401});
+  let data;
+  try { data = await response.json(); }
+  catch {
+    throw Object.assign(new Error("The connection returned an unexpected response. Checking delivery again is safe."), {status: response.ok ? 502 : response.status});
+  }
+  if (!response.ok) throw Object.assign(new Error(data.error || "The request failed."), {status: response.status});
   return data;
 }
 function closeSidebar() {
@@ -215,7 +220,7 @@ function updateControls() {
   $("#send").disabled =
     !state.id ||
     state.loading ||
-    state.sending ||
+    state.sending.has(state.id) ||
     state.changingModel ||
     readOnly ||
     (!$("#prompt").value.trim() && !state.images.length) ||
@@ -250,7 +255,9 @@ function prepareThread(id) {
   $("#prompt").value = draftForChat(id);
   resizePrompt();
   const pendingSend = JSON.parse(localStorage.getItem("codex-send:" + id) || "null");
-  state.images = pendingSend?.images || [];
+  state.images = draftImages(id, pendingSend);
+  state.savedDraft = composerSnapshot();
+  state.draftRevision = localStorage.getItem("codex-draft-revision:" + id);
   renderAttachments();
   $("#delivery-status").hidden = true;
   $("#clear-send").hidden = !pendingSend;
@@ -285,6 +292,7 @@ async function selectThread(id) {
     $("#title").textContent = title(state.thread);
     $("#project").textContent = state.thread.cwd || "VDI";
     await loadTurns(false, generation);
+    recoverDelivery(id).catch(error => { if (state.id === id) notice(error.message); });
   } catch (error) {
     if (generation !== state.generation) return;
     state.openFailed = true;
@@ -376,9 +384,10 @@ async function changeModel(model, effort) {
 async function refreshThread() {
   if (!state.id) return;
   const generation = state.generation;
+  const metadataRevision = state.metadataRevision;
   const revision = activityForChat(state.id).revision;
   const result = await api("thread?id=" + encodeURIComponent(state.id));
-  if (generation !== state.generation) return;
+  if (generation !== state.generation || metadataRevision !== state.metadataRevision) return;
   state.thread = {...state.thread, ...result.thread};
   if (revision === activityForChat(state.id).revision) {
     observeChatStatus(state.id, result.thread.status);
@@ -668,8 +677,12 @@ function sessionMetadataEvent(method, p) {
   if (["thread/started", "thread/name/updated", "thread/archived", "thread/unarchived"].includes(method))
     loadSessions(false, true).catch(() => {});
   if (p.threadId !== state.id) return;
-  if (method === "thread/name/updated") refreshThread().catch(() => {});
+  if (method === "thread/name/updated") {
+    state.metadataRevision++;
+    refreshThread().catch(() => {});
+  }
   if (method === "thread/archived" || method === "thread/unarchived") {
+    state.metadataRevision++;
     if (state.thread) state.thread.archived = method === "thread/archived";
     updateControls();
   }
@@ -861,27 +874,23 @@ $("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = $("#prompt").value;
   const generation = state.generation;
-  if ($("#send").disabled || state.sending || (!text.trim() && !state.images.length)) return;
-  state.sending = true;
+  const id = state.id;
+  if ($("#send").disabled || state.sending.has(id) || (!text.trim() && !state.images.length)) return;
+  state.sending.add(id);
   updateControls();
   notice();
   try {
     const sent = await sendMessage(text);
-    if (generation !== state.generation) return;
+    if (!sent || generation !== state.generation) return;
     if (state.thread && !state.thread.name && !state.thread.preview) {
       state.thread.preview = text;
       $("#title").textContent = title(state.thread);
     }
-    if ($("#prompt").value === text) $("#prompt").value = "";
-    state.images = state.images.filter(image => !sent.images.includes(image));
-    renderAttachments();
-    saveDraft();
-    $("#prompt").style.height = "auto";
     await loadTurns();
   } catch (error) {
-    notice(error.message);
+    if (generation === state.generation) notice(error.message);
   } finally {
-    state.sending = false;
+    state.sending.delete(id);
     updateControls();
   }
 });
@@ -1010,8 +1019,14 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("focus", () => {
   if (state.initialized && !state.loading && !state.openFailed) loadTurns().catch(() => {});
 });
+window.addEventListener("hashchange", () => {
+  const id = decodeURIComponent(location.hash.slice(1));
+  if (state.initialized && id && id !== state.id)
+    selectThread(id).catch(error => notice(error.message));
+});
 $("#conversation").addEventListener("scroll", markChatRead, {passive: true});
 window.addEventListener("storage", event => {
+  if (!event.key || event.key === "codex-draft-revision:" + state.id) syncDraft();
   if (event.key && !event.key.startsWith(activityKey)) return;
   if (event.key) chatActivity.delete(event.key.slice(activityKey.length));
   else chatActivity.clear();
@@ -1126,8 +1141,54 @@ function draftForChat(id) {
 
 function saveDraft() {
   if (!state.id) return;
-  try { localStorage.setItem("codex-draft:" + state.id, $("#prompt").value); }
+  const snapshot = composerSnapshot();
+  if (snapshot === state.savedDraft) return;
+  try {
+    state.draftRevision = writeDraft(state.id, $("#prompt").value, state.images);
+    state.savedDraft = snapshot;
+  }
   catch { notice("Browser storage is unavailable; keep this page open to retain your draft."); }
+}
+
+function composerSnapshot() {
+  return JSON.stringify({text: $("#prompt").value, images: state.images});
+}
+function draftImages(id, pending = null) {
+  const saved = localStorage.getItem("codex-draft-images:" + id);
+  return saved === null ? pending?.images || [] : JSON.parse(saved);
+}
+function writeDraft(id, text, images) {
+  const revision = crypto.randomUUID();
+  localStorage.setItem("codex-draft:" + id, text);
+  localStorage.setItem("codex-draft-images:" + id, JSON.stringify(images));
+  localStorage.setItem("codex-draft-revision:" + id, revision);
+  return revision;
+}
+function syncDraft() {
+  if (!state.id || composerSnapshot() !== state.savedDraft) return;
+  $("#prompt").value = draftForChat(state.id);
+  state.images = draftImages(state.id);
+  state.draftRevision = localStorage.getItem("codex-draft-revision:" + state.id);
+  state.savedDraft = composerSnapshot();
+  renderAttachments();
+  resizePrompt();
+  updateControls();
+}
+function clearDeliveredDraft(body) {
+  const revision = localStorage.getItem("codex-draft-revision:" + body.id);
+  if (body.draftRevision && body.draftRevision !== revision) return;
+  const expected = JSON.stringify({text: body.text, images: body.images || []});
+  const saved = JSON.stringify({text: draftForChat(body.id), images: draftImages(body.id, body)});
+  if (saved !== expected) return;
+  const cleared = writeDraft(body.id, "", []);
+  if (state.id !== body.id || composerSnapshot() !== expected ||
+      (body.draftRevision && state.draftRevision !== body.draftRevision)) return;
+  $("#prompt").value = "";
+  state.images = [];
+  state.draftRevision = cleared;
+  state.savedDraft = composerSnapshot();
+  renderAttachments();
+  resizePrompt();
 }
 
 function options(select, choices, value) {
@@ -1194,6 +1255,7 @@ $("#image-input").onchange = async () => {
     if (state.id === id) state.images.push(url);
   }
   $("#image-input").value = "";
+  saveDraft();
   renderAttachments();
   updateControls();
 };
@@ -1208,22 +1270,69 @@ function renderAttachments() {
     image.src = url;
     image.alt = "Image to send";
     button.prepend(image);
-    button.onclick = () => { state.images.splice(index, 1); renderAttachments(); updateControls(); };
+    button.onclick = () => { state.images.splice(index, 1); saveDraft(); renderAttachments(); updateControls(); };
     $("#attachments").append(button);
   });
 }
 
 async function sendMessage(text) {
+  saveDraft();
   const key = "codex-send:" + state.id;
   const previous = JSON.parse(localStorage.getItem(key) || "null");
   if (previous && (previous.text !== text || JSON.stringify(previous.images) !== JSON.stringify(state.images)))
     throw new Error("Check the previous send, then discard its pending state before sending different content.");
   const body = previous || {id: state.id, text, images: [...state.images],
-    turnId: activeTurn()?.id, clientUserMessageId: crypto.randomUUID()};
+    turnId: activeTurn()?.id, clientUserMessageId: crypto.randomUUID(), draftRevision: state.draftRevision};
   localStorage.setItem(key, JSON.stringify(body));
   $("#clear-send").hidden = false;
   const revision = activityForChat(body.id).revision;
-  const result = await api("send", body);
+  const result = await waitForDelivery(body, true);
+  return result && finishDelivery(body, result, revision) ? body : null;
+}
+
+const deliveryWaits = new Map();
+function waitForDelivery(body, submit = false) {
+  const id = body.clientUserMessageId;
+  if (!deliveryWaits.has(id))
+    deliveryWaits.set(id, pollDelivery(body, submit).finally(() => deliveryWaits.delete(id)));
+  return deliveryWaits.get(id);
+}
+
+async function pollDelivery(body, submit) {
+  const path = "delivery?clientUserMessageId=" + encodeURIComponent(body.clientUserMessageId);
+  while (pendingDelivery(body)) {
+    try {
+      const receipt = submit ? await api("send", body, {Prefer: "respond-async"}) : await api(path);
+      if (!pendingDelivery(body)) return null;
+      if (!receipt.state && submit) return receipt;
+      submit = false;
+      if (receipt.state === "complete") return receipt.result;
+      if (receipt.state === "missing") submit = true;
+      if (receipt.state === "uncertain")
+        throw Object.assign(new Error("Delivery is unconfirmed. Check this conversation before discarding the pending send. " + (receipt.error || "")), {status: 409});
+      if (!["pending", "missing"].includes(receipt.state))
+        throw Object.assign(new Error("The service returned an invalid delivery receipt. Your draft is saved."), {status: 409});
+    } catch (error) {
+      submit = false;
+      if (error.status && error.status < 500) throw error;
+    }
+    if (state.id === body.id) {
+      $("#delivery-status").hidden = false;
+      $("#delivery-status").textContent = "Checking delivery… You can leave this page; the message keeps its original send identity.";
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  return null;
+}
+
+function pendingDelivery(body) {
+  const pending = JSON.parse(localStorage.getItem("codex-send:" + body.id) || "null");
+  return pending?.clientUserMessageId === body.clientUserMessageId;
+}
+function finishDelivery(body, result, revision) {
+  const key = "codex-send:" + body.id;
+  if (!pendingDelivery(body)) return false;
+  clearDeliveredDraft(body);
   observeSentMessage(body, result, revision);
   if (!state.sessions.some(thread => thread.id === body.id))
     loadSessions(false, true).catch(() => {});
@@ -1234,12 +1343,24 @@ async function sendMessage(text) {
     $("#delivery-status").textContent = result.delivery?.target === "VS Code" ?
       (result.delivery.visible ? "✓ Message visible in VS Code on your Mac" : "Sent · waiting for VS Code to display the message") : "✓ Sent to this conversation";
   }
-  return body;
+  return true;
+}
+
+async function recoverDelivery(id) {
+  const body = JSON.parse(localStorage.getItem("codex-send:" + id) || "null");
+  if (!body || deliveryWaits.has(body.clientUserMessageId)) return;
+  const revision = activityForChat(id).revision;
+  const result = await waitForDelivery(body);
+  if (!result || !finishDelivery(body, result, revision)) return;
+  if (state.id !== id) return;
+  updateControls();
+  await loadTurns();
 }
 
 $("#clear-send").onclick = () => {
   localStorage.removeItem("codex-send:" + state.id);
   $("#clear-send").hidden = true;
+  $("#delivery-status").hidden = true;
   notice("Pending send cleared. Check the conversation before sending again.");
 };
 
@@ -1310,6 +1431,7 @@ async function manageAction(action) {
     await api(action, {id, ...(action === "rename" ? {name: $("#session-name").value} : {})});
     $("#session-dialog").close();
     if (id === state.id && generation === state.generation) {
+      state.metadataRevision++;
       if (action === "unarchive") await selectThread(id);
       else {
         if (action === "archive") state.thread.archived = true;

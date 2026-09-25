@@ -351,13 +351,25 @@ read state.
 Model and mode changes apply to the next turn. If the Linux runtime has not reported its current mode or speed, the
 picker says **Choose mode** or **Choose speed**; it updates when you make a
 selection or receive a settings notification. The Mac adapter reads these
-settings from the native owner. Browser sends retain a stable
-identity, and a private SQLite journal returns saved outcomes on retries even
-after the web service restarts. If the process dies after forwarding a send but
-before recording its result, the UI reports an uncertain delivery and requires
-checking the conversation before discarding that pending send. It does not
-automatically replay the prompt. Pending approvals follow the active runtime;
+settings from the native owner. Browser sends retain a stable identity. The
+service records a delivery receipt before waiting for Codex, so a slow native
+acknowledgment does not hold the phone's submission request open. The UI checks
+the receipt after a connection interruption or reload and preserves any newer
+unsent draft. A private SQLite journal returns saved outcomes without starting
+another turn. If an acknowledgment was lost, the service can also confirm the
+exact message identity in conversation history. Text similarity is never used
+as delivery proof. If neither source confirms the outcome, the UI retains the
+pending send and asks you to check the conversation before discarding it; it
+does not automatically replay an uncertain prompt. Pending approvals follow the active runtime;
 specialized requests must still be answered in VS Code.
+
+Unsent text and image drafts stay in the browser that created them and survive
+reloads and conversation switches. Tabs in that browser share draft changes;
+other devices see messages after they are sent. A delivery confirmation clears
+only its original, unchanged draft, including when it arrives after you switch
+chats. Other conversations remain usable while a receipt is pending. Discarding
+a pending send stops automatic retries; it does not cancel work already accepted
+by Codex. Use **Stop** to interrupt an active turn.
 
 Local runtime updates are versioned and refuse to restart while a mobile-owned
 turn is active. VS Code-owned turns run independently. A web-service restart preserves mobile-owned turns. An engine restart can
