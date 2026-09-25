@@ -1,0 +1,114 @@
+{
+  "source_head": "ce1456e601805fffbddd8d897ca019cae4f11936",
+  "mutations": [
+    {
+      "name": "first-page-only",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/run_state.py",
+      "source_sha256": "562bb5664b117c3d780f8c60b4d6f21ca7c7e08ba641a7db6282cfec118f5b5b",
+      "mutation_sha256": "e5cdc1e828ab997ecff2c040014f6859e675f3e4364bcc396d12656fd7d3ed0b",
+      "test": "test_run_state.py",
+      "selector": "prefix_output_looks_past_zero_byte_marker",
+      "summary": "======================= 1 failed, 86 deselected in 2.43s =======================",
+      "log_sha256": "7a7f9906119d46f5e1ef14673f5a0756cff15c43b6414a8d9c28f06e303627f5"
+    },
+    {
+      "name": "marker-counts-present",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/run_state.py",
+      "source_sha256": "562bb5664b117c3d780f8c60b4d6f21ca7c7e08ba641a7db6282cfec118f5b5b",
+      "mutation_sha256": "bd35f00b8a6a7e272f82471c4270ce491e9b14190407d1e941e7e7aafd562d73",
+      "test": "test_run_state.py",
+      "selector": "prefix_output_requires_nonempty_content",
+      "summary": "================== 2 failed, 1 passed, 84 deselected in 2.49s ==================",
+      "log_sha256": "e28796da68fb14969be572cd8ed46aa5857fec6f23e91a5e3c3ca215aaa21f75"
+    },
+    {
+      "name": "missing-flag-is-absence",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/run_state.py",
+      "source_sha256": "562bb5664b117c3d780f8c60b4d6f21ca7c7e08ba641a7db6282cfec118f5b5b",
+      "mutation_sha256": "a33f8404a4b22d266823f6c20b79586db2af24ee81dba0bf8ee1ba90f71b2633",
+      "test": "test_run_state.py",
+      "selector": "prefix_output_rejects_malformed_pagination",
+      "summary": "================== 1 failed, 4 passed, 82 deselected in 2.42s ==================",
+      "log_sha256": "d86ddd7a4d396afcc870077171f903f6579e2989698dc8f4fdb4a410721d7dcf"
+    },
+    {
+      "name": "falsey-records-are-absence",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/run_state.py",
+      "source_sha256": "562bb5664b117c3d780f8c60b4d6f21ca7c7e08ba641a7db6282cfec118f5b5b",
+      "mutation_sha256": "70f77a6b0ab1f9dccc815fd4a14e3816bdc472343e6b904799c6f4c41d044af4",
+      "test": "test_run_state.py",
+      "selector": "prefix_listing_rejects_falsey_malformed_contents",
+      "summary": "======================= 5 failed, 82 deselected in 0.67s =======================",
+      "log_sha256": "0a928e46fb70b3ee901b1b128e3d23da392388ac9a50f47293c16087aefabf67"
+    },
+    {
+      "name": "budget-before-reuse",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/supervisor.py",
+      "source_sha256": "e0561c6a370ee8194a2f93047ea47ebb376f634e5f1fb53d4f279eb360dafba6",
+      "mutation_sha256": "ad6cac3552d2efc7380dab22ac5dffb16f964d5ca55028a57840ec1fa6bf3f3e",
+      "test": "test_supervisor.py",
+      "selector": "valid_outputs_are_reused_at_infrastructure_recovery_limit",
+      "summary": "======================= 3 failed, 69 deselected in 0.69s =======================",
+      "log_sha256": "812975e0c7a50c89877dacbbbf9f88f047501d5f67a7153fbef5a5b22a5c02d5"
+    },
+    {
+      "name": "skip-live-cancellation",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/supervisor.py",
+      "source_sha256": "e0561c6a370ee8194a2f93047ea47ebb376f634e5f1fb53d4f279eb360dafba6",
+      "mutation_sha256": "30a994f6bfaa6412af510a7f8d2c4b4fe20cf42606995564ab47276a43d269f7",
+      "test": "test_supervisor.py",
+      "selector": "live_valid_outputs_cancel_exact_attempt_before_reuse",
+      "summary": "======================= 1 failed, 71 deselected in 0.63s =======================",
+      "log_sha256": "fba0473bcdba7e00c7b35d239d86663b26bd95023784f5d5896464af5af4fe75"
+    },
+    {
+      "name": "metadata-widens-artifacts",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/run_resolution.py",
+      "source_sha256": "6d27ab4f0067b55a3b261c66c975aeeea9bdd6232a95bd8160c9332fb19a6821",
+      "mutation_sha256": "3026fd0c3696d97f40ae42defa437922ee5d0ce84fbd8a77b607040f4606322c",
+      "test": "test_run_resolution.py",
+      "selector": "ambiguous_manifest_pending_prefix or terminal_ledger_workflow_name",
+      "summary": "================== 2 failed, 1 passed, 34 deselected in 0.72s ==================",
+      "log_sha256": "441ebe2ab89aa8fc1ecd4840339510009c3d8e067b49f06a8669f32ad0ae34c7"
+    },
+    {
+      "name": "succeeded-identity-bypass",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/supervisor.py",
+      "source_sha256": "e0561c6a370ee8194a2f93047ea47ebb376f634e5f1fb53d4f279eb360dafba6",
+      "mutation_sha256": "aba571a65e8c932be036103a2e8d5a24467afb3c5952d0b0a0e287303295389c",
+      "test": "test_supervisor.py",
+      "selector": "succeeded_valid_outputs",
+      "summary": "======================= 9 failed, 63 deselected in 0.73s =======================",
+      "log_sha256": "cd499b5ad53469311546c6f6c8290570f0cadf4676b415df133b83bc6a47c010"
+    },
+    {
+      "name": "reserved-provider-overwrite",
+      "status": "killed",
+      "returncode": 1,
+      "source_file": "npa/src/npa/orchestration/npa_workflow/launch_recovery.py",
+      "source_sha256": "0d44513bb98d79353e31793955ccdf9867b14c5f65cc8b788543b31c94cce864",
+      "mutation_sha256": "9533c7ee935d34972b106ba777a3d8a3c38e20c226c5054eabe949a278dd3c52",
+      "test": "test_partial_launch_recovery.py",
+      "selector": "reserved and reuse",
+      "summary": "====================== 1 failed, 113 deselected in 1.00s =======================",
+      "log_sha256": "a826f28bd8124d542b22398d8cc70a2ae342abe13c583a0d265e56c8e1a44a86"
+    }
+  ],
+  "killed": 9
+}

@@ -1,0 +1,94 @@
+{
+  "source_head": "ce1456e601805fffbddd8d897ca019cae4f11936",
+  "source_tree": "1535e86e05d88c23325c71406c3846f317b1f120",
+  "wire_cases": [
+    {
+      "caller": "RunStateStore.artifact_exists",
+      "scenario": "paged",
+      "outcome": "present",
+      "requests": 2
+    },
+    {
+      "caller": "RunStateStore.artifact_exists",
+      "scenario": "empty",
+      "outcome": "absent",
+      "requests": 1
+    },
+    {
+      "caller": "RunStateStore.artifact_exists",
+      "scenario": "missing-flag",
+      "outcome": "indeterminate",
+      "requests": 1
+    },
+    {
+      "caller": "RunStateStore.artifact_exists",
+      "scenario": "missing-token",
+      "outcome": "indeterminate",
+      "requests": 1
+    },
+    {
+      "caller": "RunStateStore.artifact_exists",
+      "scenario": "contradictory",
+      "outcome": "indeterminate",
+      "requests": 1
+    },
+    {
+      "caller": "RunStateStore.artifact_exists",
+      "scenario": "cycle",
+      "outcome": "indeterminate",
+      "requests": 2
+    },
+    {
+      "caller": "RunStateStore.artifact_exists",
+      "scenario": "denied",
+      "outcome": "denied",
+      "requests": 1
+    },
+    {
+      "caller": "s3_artifact_exists",
+      "scenario": "paged",
+      "outcome": "present",
+      "requests": 2
+    },
+    {
+      "caller": "s3_artifact_exists",
+      "scenario": "empty",
+      "outcome": "absent",
+      "requests": 1
+    },
+    {
+      "caller": "s3_artifact_exists",
+      "scenario": "missing-flag",
+      "outcome": "indeterminate",
+      "requests": 1
+    },
+    {
+      "caller": "s3_artifact_exists",
+      "scenario": "missing-token",
+      "outcome": "indeterminate",
+      "requests": 1
+    },
+    {
+      "caller": "s3_artifact_exists",
+      "scenario": "contradictory",
+      "outcome": "indeterminate",
+      "requests": 1
+    },
+    {
+      "caller": "s3_artifact_exists",
+      "scenario": "cycle",
+      "outcome": "indeterminate",
+      "requests": 2
+    },
+    {
+      "caller": "s3_artifact_exists",
+      "scenario": "denied",
+      "outcome": "denied",
+      "requests": 1
+    }
+  ],
+  "wire_passed": 14,
+  "decision_equivalence_cases": 337920,
+  "original_source_sha256": "7f68fb8f2bc30df5e59c2f937248e5664d02d39d2ace2fc4c52dc16262552597",
+  "scope": "Real boto3 HTTP/XML requests against loopback fault server; production recovery decisions. No cloud job or GPU workload."
+}
