@@ -69,11 +69,16 @@ verify the collision handoff; the complete held-out score qualifies geometry.
 ## Execute on Nebius
 
 Use the configured project, storage, and RT-core runtime after the normal health
-and image preflights. Replace all example values with private operator settings:
+and image preflights. Before creating an isolated runtime API, run
+`npa workbench workflow stage-src --project example-project --bucket example-bucket`
+from the reviewed checkout and retain its returned source URI. Pass that exact
+URI to the submit process: a previously configured source prefix can predate
+these modules. Replace all example values with private operator settings:
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/rgbd-scan-to-isaac.yaml --json
 npa workbench workflow plan-spec workflows/testing/rgbd-scan-to-isaac.yaml --run-id preview --json
+export NPA_SRC_S3_URI="s3://example-bucket/npa-src/npa/<verified-source-fingerprint>/"
 npa workbench workflow submit workflows/testing/rgbd-scan-to-isaac.yaml \
   --runtime --project example-project --infra example-rtx-runtime \
   --var bucket=example-bucket \
@@ -83,8 +88,12 @@ npa workbench workflow submit workflows/testing/rgbd-scan-to-isaac.yaml \
 ```
 
 Optional `reconstruction_image` and `assembly_image` overrides must retain their
-interpreter/dependency contracts. The workflow enables a run-scoped source
-overlay so the invoked modules match the reviewed checkout. The public SONIC
+interpreter/dependency contracts. The workflow overlays the selected source URI;
+enabling the overlay alone does not select or verify a particular checkout.
+Retain its content fingerprint and verify the required module bytes before GPU
+submission. Keep the control CLI checkout, Python import path, and configuration
+fixed while sharing an isolated API; select each workflow's immutable payload
+with its explicit source URI. The public SONIC
 image supplies Open3D; local module testing needs `open3d==0.19.0`, Pillow, and
 NumPy, and scene assembly additionally needs OpenUSD. Public reference inputs
 must be downloaded at run time. Open3D is MIT-licensed; the separately downloaded
