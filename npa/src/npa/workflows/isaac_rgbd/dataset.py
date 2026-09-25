@@ -50,12 +50,26 @@ def _check_render_metadata(metadata, camera, world_from_camera):
     # CameraParams uses Gf row-vector world-to-view; USD cameras look down -Z.
     expected_view = np.linalg.inv(_optical_to_usd(world_from_camera)).T
     if not np.allclose(view, expected_view, atol=1e-5, rtol=1e-5):
-        raise ValueError("rendered camera pose differs from the sampled rig pose")
+        raise ValueError(
+            "rendered camera pose differs from the sampled rig pose: "
+            f"camera={camera['id']}, max_abs_error={np.max(np.abs(view - expected_view))}, "
+            f"observed_view={view.tolist()}, expected_view={expected_view.tolist()}"
+        )
 
 
 def _save_array(path, value):
     with path.open("wb") as stream:
         np.save(stream, value, allow_pickle=False)
+
+
+def _check_snapshot_metadata(snapshot, camera, sample, frame_index, pose):
+    try:
+        _check_render_metadata(snapshot["render_calibration"], camera, pose)
+    except ValueError as error:
+        raise ValueError(
+            f"frame={frame_index}, timestamp_ns={sample['timestamp_ns']}, "
+            f"render_reference_time={snapshot['render_reference_time']}: {error}"
+        ) from error
 
 
 def _write_view(root, camera, sample, frame_index, snapshot, pointcloud):
@@ -66,7 +80,7 @@ def _write_view(root, camera, sample, frame_index, snapshot, pointcloud):
     rgb = rgb[:, :, :3].copy()
     depth, mask = _masked_depth(snapshot["depth"], camera)
     pose = np.asarray(sample["T_world_rig"]) @ np.asarray(camera["T_rig_camera"])
-    _check_render_metadata(snapshot["render_calibration"], camera, pose)
+    _check_snapshot_metadata(snapshot, camera, sample, frame_index, pose)
     directory = root / "frames" / f"{frame_index:06d}" / camera["id"]
     directory.mkdir(parents=True)
     Image.fromarray(rgb).save(directory / "rgb.png")

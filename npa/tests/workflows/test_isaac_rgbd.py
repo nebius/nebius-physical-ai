@@ -85,6 +85,27 @@ def test_backprojection_uses_axial_depth_and_rigid_world_transform():
     np.testing.assert_array_equal(rgb, colors[[0, 1, 1], [0, 0, 1]])
 
 
+def test_camera_pose_failure_preserves_exact_native_diagnostics(tmp_path, rig_request):
+    camera = rig_request["cameras"][0]
+    sample = rig_request["trajectory"][1]
+    snapshot = _snapshot(camera, sample, 1)
+    snapshot["render_calibration"]["view_transform"][3][0] += 0.25
+    with pytest.raises(ValueError, match="rendered camera pose") as failure:
+        dataset._write_view(tmp_path, camera, sample, 1, snapshot, True)
+    message = str(failure.value)
+    for detail in (
+        "frame=1",
+        f"timestamp_ns={sample['timestamp_ns']}",
+        f"camera={camera['id']}",
+        "max_abs_error=0.25",
+        "observed_view=",
+        "expected_view=",
+        "render_reference_time=",
+    ):
+        assert detail in message
+    assert not list(tmp_path.glob("frames/*"))
+
+
 def test_cpu_validation_binds_measured_native_material_identity(captured):
     root, manifest = captured
     declared = {
