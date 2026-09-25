@@ -42,6 +42,24 @@ def _signal_summary(values: Any) -> dict[str, Any]:
     return result
 
 
+def _success_attribute(value: Any) -> bool:
+    import numpy as np
+
+    scalar = np.asarray(value)
+    if scalar.ndim != 0 or not (
+        np.issubdtype(scalar.dtype, np.bool_) or np.issubdtype(scalar.dtype, np.integer)
+    ):
+        raise IsaacArenaError(
+            "simulator ground-truth success metadata must be a scalar boolean or 0/1"
+        )
+    success = scalar.item()
+    if success not in (0, 1):
+        raise IsaacArenaError(
+            "simulator ground-truth success metadata must be a scalar boolean or 0/1"
+        )
+    return bool(success)
+
+
 def _episode_record(path: Path, name: str, episode: Any) -> tuple[dict, dict[str, Any]]:
     arrays = _read_signals(episode)
     success_values = arrays.get("success")
@@ -55,8 +73,10 @@ def _episode_record(path: Path, name: str, episode: Any) -> tuple[dict, dict[str
             "simulator ground-truth success flag must be boolean or 0/1"
         )
     success = bool(success_value)
-    if "success" in episode.attrs and bool(episode.attrs["success"]) != success:
-        raise IsaacArenaError("simulator ground-truth success metadata disagrees")
+    if "success" in episode.attrs:
+        metadata_success = _success_attribute(episode.attrs["success"])
+        if metadata_success != success:
+            raise IsaacArenaError("simulator ground-truth success metadata disagrees")
     record = {
         "file": path.name,
         "episode": name,

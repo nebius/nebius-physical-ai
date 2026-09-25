@@ -111,6 +111,44 @@ def test_large_door_motion_does_not_override_upstream_failure(tmp_path):
     assert result["task_motion"] is None
 
 
+@pytest.mark.parametrize(
+    "success,metadata_success,expected_successes",
+    [(True, True, 1), (True, 1, 1), (False, False, 0), (False, 0, 0)],
+)
+def test_scalar_boolean_or_integer_success_metadata_is_accepted(
+    tmp_path, success, metadata_success, expected_successes
+):
+    _write_episode(tmp_path, trace=[0.2, 0.5, 0.81], success=success)
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = metadata_success
+
+    result = _validate(tmp_path, successes=expected_successes, required=False)
+
+    assert result["successes"] == expected_successes
+
+
+@pytest.mark.parametrize(
+    "metadata_success",
+    ["false", np.array([1], dtype=np.int8), 1.0, 2],
+)
+def test_malformed_success_metadata_is_rejected(tmp_path, metadata_success):
+    _write_episode(tmp_path, trace=[0.2, 0.5, 0.81])
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = metadata_success
+
+    with pytest.raises(IsaacArenaError, match="scalar boolean or 0/1"):
+        _validate(tmp_path, required=False)
+
+
+def test_valid_success_metadata_must_agree_with_success_signal(tmp_path):
+    _write_episode(tmp_path, trace=[0.2, 0.5, 0.81], success=False)
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = True
+
+    with pytest.raises(IsaacArenaError, match="success metadata disagrees"):
+        _validate(tmp_path, successes=0, required=False)
+
+
 def test_trace_cannot_exceed_source_actions_or_disagree_with_episode_length(tmp_path):
     _write_episode(tmp_path, trace=[0.2, 0.3, 0.5, 0.81])
     with pytest.raises(IsaacArenaError, match="exact replay action horizon"):
