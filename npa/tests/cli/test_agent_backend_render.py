@@ -504,6 +504,23 @@ def test_rendered_gpu_fallback_route_is_zero_token_and_confirmation_bound(
         )
         assert accepted["allocation"]["selected_pool"] == "preemptible"
         assert module._peek_agent_confirm_token() == ("", "", None)
+        provision_calls = []
+        monkeypatch.setattr(
+            module,
+            "_provision_agent_infra",
+            lambda *_args, **kwargs: (
+                provision_calls.append(kwargs) or {"ok": True, "status": "ready"}
+            ),
+        )
+        monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project: {})
+        module.provision_infra(
+            {
+                "dry_run": True,
+                "logical_allocation": "private-logical-name",
+                "preemptible": False,
+            }
+        )
+        assert provision_calls[0]["preemptible"] is True
         later = attempt(
             {
                 "logical_allocation": "private-logical-name",
@@ -796,6 +813,164 @@ def test_rendered_mk8s_confirmation_binds_storage_and_validation_switches(
             )
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_rendered_mk8s_rejects_ambiguous_booleans_before_side_effects(
+    monkeypatch, tmp_path
+) -> None:
+    """Only JSON booleans may control provisioning behavior."""
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    module_name = "npa_rendered_mk8s_invalid_booleans"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "_provision_agent_infra",
+        lambda *_args, **_kwargs: calls.append((_args, _kwargs)),
+    )
+    monkeypatch.setattr(
+        module,
+        "_issue_agent_confirm_token",
+        lambda *_args, **_kwargs: calls.append("confirmation"),
+    )
+    try:
+        client = TestClient(module.app)
+        for field in ("dry_run", "validate", "skip_s3", "preemptible"):
+            for value in ("false", 0, 1, None, [], {}):
+                response = client.post(
+                    "/infra/provision",
+                    json={field: value},
+                )
+                assert response.status_code == 400
+                assert response.json() == {"detail": f"{field} must be a JSON boolean"}
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            {},
+            {
+                "dry_run": True,
+                "validate": True,
+                "skip_s3": True,
+                "preemptible": False,
+            },
+        ),
+        (
+            {
+                "dry_run": True,
+                "validate": True,
+                "skip_s3": True,
+                "preemptible": True,
+            },
+            {
+                "dry_run": True,
+                "validate": True,
+                "skip_s3": True,
+                "preemptible": True,
+            },
+        ),
+        (
+            {
+                "dry_run": True,
+                "validate": False,
+                "skip_s3": False,
+                "preemptible": False,
+            },
+            {
+                "dry_run": True,
+                "validate": False,
+                "skip_s3": False,
+                "preemptible": False,
+            },
+        ),
+    ],
+)
+def test_rendered_mk8s_forwards_default_and_explicit_booleans_exactly(
+    monkeypatch, tmp_path, payload, expected
+) -> None:
+    import sys
+
+    module_name = "npa_rendered_mk8s_boolean_forwarding"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    captured = []
+
+    def provision(_project, _cluster_name, **kwargs):
+        captured.append(kwargs)
+        return {"ok": True, "status": "ready"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project: {})
+    try:
+        response = module.provision_infra(payload)
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert response["ok"] is True
+    assert len(captured) == 1
+    assert {key: captured[0][key] for key in expected} == expected
+
+
+def test_rendered_mk8s_confirmation_preserves_explicit_boolean_values(
+    monkeypatch, tmp_path
+) -> None:
+    import sys
+
+    module_name = "npa_rendered_mk8s_boolean_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "mk8s-boolean-confirmation-state.json"
+    module._STATE_STORE = None
+    captured = []
+
+    def provision(_project, _cluster_name, **kwargs):
+        captured.append(kwargs)
+        return {"ok": True, "status": "ok"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda _project: {})
+    payload = {
+        "dry_run": False,
+        "validate": False,
+        "skip_s3": False,
+        "preemptible": True,
+    }
+    try:
+        prompt = module.provision_infra(payload)
+        assert prompt["proposed_action"] == {
+            "action": "provision_infra",
+            "project": prompt["project"],
+            "cluster_name": prompt["cluster_name"],
+            "desired": {
+                "gpu_nodes": -1,
+                "cpu_nodes": -1,
+                "gpu_health_stabilization_seconds": 120,
+                "gpu_health_timeout_minutes": 60,
+            },
+            "preemptible": True,
+            "skip_s3": False,
+            "validate": False,
+            "dry_run": False,
+        }
+        result = module.provision_infra(
+            {**payload, "confirm_token": prompt["confirm_token"]}
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert result["ok"] is True
+    assert len(captured) == 1
+    assert captured[0]["dry_run"] is False
+    assert captured[0]["validate"] is False
+    assert captured[0]["skip_s3"] is False
+    assert captured[0]["preemptible"] is True
 
 
 def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
