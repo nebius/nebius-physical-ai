@@ -96,11 +96,19 @@ RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
-# Copy the shared workbench implementation into the image.
-RUN mkdir -p /app/npa/workbench
-RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py
+# Copy the shared workbench implementation and its two local-only helpers into
+# the image.  Keep this list explicit so the service image does not acquire the
+# full NPA CLI/client dependency tree by accident.
+RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/cli
+RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py \
+    /app/npa/clients/__init__.py /app/npa/cli/__init__.py
+COPY src/npa/clients/storage.py /app/npa/clients/storage.py
+COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py
 COPY src/npa/workbench/robocasa /app/npa/workbench/robocasa
 COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
+
+# Catch missing in-repository runtime modules before an image can be tagged.
+RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /app /opt/robocasa
@@ -108,6 +116,11 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
 EXPOSE 8791
 
 USER ubuntu
+
+# Exercise the final non-root filesystem and the actual service process.  A
+# narrow dependency import is insufficient: the service imports shared path and
+# object-storage containment helpers that are intentionally copied above.
+RUN python /app/smoke_functional.py
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python3 -c "import os,urllib.request; p=os.environ.get('ROBOCASA_PORT','8791'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1
