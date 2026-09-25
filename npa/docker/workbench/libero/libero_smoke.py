@@ -261,19 +261,28 @@ def observe_own_pod_image(expected_digest: str) -> dict[str, str]:
             raise RuntimeError("customer-run controller observation is mutable")
         observation = json.loads(observation_path.read_text())
         keys = {
-            "pod_observed_image_digest", "observation_method", "pod_name_sha256",
-            "namespace_sha256", "pod_uid_sha256", "node_name_sha256",
-            "actual_service_account", "service_account_uid_sha256",
+            "pod_observed_image_digest",
+            "observation_method",
+            "pod_name_sha256",
+            "namespace_sha256",
+            "pod_uid_sha256",
+            "node_name_sha256",
+            "actual_service_account",
+            "service_account_uid_sha256",
             "controller_service_account_separated",
         }
         if (
             set(observation) != keys
             or observation["pod_observed_image_digest"] != expected_digest
-            or observation["observation_method"] != "customer_controller_kubernetes_status_imageID"
+            or observation["observation_method"]
+            != "customer_controller_kubernetes_status_imageID"
             or observation["actual_service_account"] != "npa-byof-libero-payload"
             or observation["controller_service_account_separated"] is not True
-            or any(re.fullmatch(r"[0-9a-f]{64}", str(value)) is None
-                   for key, value in observation.items() if key.endswith("_sha256"))
+            or any(
+                re.fullmatch(r"[0-9a-f]{64}", str(value)) is None
+                for key, value in observation.items()
+                if key.endswith("_sha256")
+            )
         ):
             raise RuntimeError("customer-run controller observation differs")
         return observation

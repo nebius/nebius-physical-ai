@@ -1313,7 +1313,7 @@ def test_agent_bootstrap_installs_turn_without_baking_session_configuration() ->
     agent = (ROOT / "npa/src/npa/cli/agent.py").read_text(encoding="utf-8")
     ui = (ROOT / "npa/src/npa/cli/agent_ui.html").read_text(encoding="utf-8")
 
-    assert "ca-certificates coturn" in agent
+    assert "ca-certificates coturn socat" in agent
     assert "leisaac-turn.conf" not in agent
     assert 'iceTransportPolicy: "relay"' in ui
     assert "installLeIsaacPeerConnection(status)" in ui
@@ -1387,7 +1387,11 @@ def test_asset_cache_moves_to_the_durable_claim_when_one_exists(monkeypatch) -> 
 
 
 def test_asset_cache_keeps_its_pod_local_volume_without_a_claim(monkeypatch) -> None:
-    for name in ("NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_DIR"):
+    for name in (
+        "NPA_MODEL_CACHE_PVC",
+        "NPA_MODEL_CACHE_HOST_PATH",
+        "NPA_MODEL_CACHE_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     deployment = deployment_manifest(

@@ -65,12 +65,124 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
+| `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
 | Base CUDA 13 | `base/cuda13-b300/Dockerfile` | build base only |
+| PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
+| PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
+| PAIDF Cosmos3 Super Image2Video Sky compatibility (restricted) | `paidf-event-video-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
+| PAIDF RF-DETR detection Sky compatibility (restricted) | `paidf-detection-sky/Dockerfile` | operator-built worker shell; retains the upstream GPU detection CLI |
+| PAIDF captioning Sky compatibility (restricted) | `paidf-captioning-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
+| PAIDF Visual QA Sky compatibility (restricted) | `paidf-visual-qa-sky/Dockerfile` | operator-built worker shell; remote-VLM labeling client |
+| PAIDF attribute-search Sky compatibility (restricted) | `paidf-attribute-search-sky/Dockerfile` | operator-built worker shell; remote-LLM attribute-search client |
+
+The attribute-search, captioning, and Visual QA compatibility workers have
+verified operator-private publications from source
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e`. Their exact runnable
+digests and scoped acceptance evidence are recorded in the
+[external PAIDF image catalog](container-image-catalog.md#external-paidf-runtime-images).
+They remain excluded from the public release inventory. Image/bootstrap
+acceptance does not establish native workflow or GPU acceptance.
+
+The IAA generation wrapper also has a verified operator-private publication from
+`a04508698d3813785263831741f02b8bb8040d6d`. Its exact digest,
+bootstrap proof, SPDX package count and residual vulnerability counts are in
+the same catalog. The repository security gate rejects fixed CRITICAL findings;
+the full inventory separately records six unfixed CRITICAL findings, with no
+new ignore entries. The complete nine-state IAA workflow subsequently passed
+on B200; the catalog links its sanitized acceptance evidence.
+
+The EVG generation wrapper is also privately published from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e`, with independently
+verified registry bytes, bootstrap, complete scans and SPDX evidence in the
+catalog. Its full inventory retains six unfixed CRITICAL findings; the
+repository's fixed-CRITICAL policy passed without new ignore entries. Native
+GPU/workflow acceptance subsequently passed on B200, with the qualified
+Visual QA results recorded in the catalog.
+
+The AnomalyGen recipe keeps NPA installation in its own writable Python
+environment and selects the compiled upstream environment for DIG subprocesses.
+It applies the same hash-pinned NLTK security update as EVG after installing
+upstream requirements. It also pins W&B 0.28.2 to fix the embedded
+`wandb-core` dependency affected by
+[CVE-2026-56854](https://pkg.go.dev/vuln/GO-2026-6303).
+Upstream AnomalyGen holds W&B at 0.28.1 because 0.28.2 removes
+`wandb.util.generate_id`. The build verifies the exact Cosmos framework
+revision and source hash, then redirects its two calls to the byte-identical
+`wandb.sdk.lib.runid.generate_id` implementation. This preserves fresh-run,
+retry and persisted run-ID behavior, keeps the NVIDIA OpenMDW-1.1 header,
+checks the installed dependency requirements, and records original, patched,
+generator, patcher and wheel hashes in the image's
+`/usr/local/share/npa/paidf-wandb-compatibility.json`.
+The recipe removes SSH host keys in the same layer that installs SSH.
+The operator-private image built from
+`743d87df3a19fc0571d95c1d98b2bc53a2b438e9` has runnable child digest
+`sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf`.
+Its generic exact-layer/rootfs inventory covered 22 ordered diff IDs, 21 unique
+layer blobs, 67,908 files, and 10,673,751,967 bytes. All 1,924 weight-shaped
+candidates were reviewed; no gated runtime model weights, credential paths, or
+populated model-cache paths were accepted as image payload. The byte-audit
+record is 757,547 bytes with SHA-256
+`ce049048587669de54ec20f02c3b9832c76cfdb2cad5ba7854c9baef062d4d7e`.
+
+The 1,683-package SPDX SBOM is 4,282,800 bytes with SHA-256
+`296731803937d2d20392da5671e53979c61099868c15f45ad47ace04dc5eb5dc`.
+The complete vulnerability inventory remains nonempty: 5 CRITICAL, 186 HIGH,
+2,173 MEDIUM, 268 LOW, and 3 UNKNOWN findings; 0, 13, 90, 43, and 2 of those
+respective severities report a fixed version. The existing fixed-CRITICAL policy
+passed without a new ignore, which is not a zero-vulnerability claim. One
+JWT-shaped scanner match is an inert string in exact published scikit-image
+source, and six PEM blocks match public GnuTLS fixtures; those classifications
+do not establish equality of the containing binary or erase the original
+scanner findings.
+
+The exact image separately passed B200 CUDA, FlashAttention, Triton, and four
+native causal/full attention cases. It measured Python 3.13.15, Torch
+2.13.0+cu132, and CUDA 13.2. FlashAttention maximum absolute error was
+`0.000273943`, Triton maximum absolute error was `0`, and the largest attention
+relative L2 error was `0.00305612 < 0.015`. Training exercised NATTEN
+`blackwell-fmha` with Q/K/V gradients; inference exercised cuDNN. This diagnostic
+loaded no model weights and did not run a full model forward, so it remains
+separate from the full-workload acceptance.
+
+The same accepted child completed native DIG run `paidf-dig-15395d41fe18` on
+B200. Resume retained only the valid attempt-1 `record-upstream` state; attempt 8
+completed checkpoint preparation, all 15,000 training iterations with early
+stopping disabled, and generation. The evaluator selected checkpoint 13,000,
+and all 30 requests were accounted as 24 generated RGB images plus six enforcing
+text-guardrail blocks. The image preset performs face blurring but has no
+image-content classifier, so the terminal record correctly reports image
+guardrail enforcement as false.
+
+The resolved dependency closure remains restricted pending separate
+redistribution approval. A successful private build, authenticated pull, or
+workload does not grant public redistribution rights; the image remains outside
+NPA public GHCR. The CUDA wheel build is unchanged.
+
+The RF-DETR compatibility worker supports inference. It removes inherited
+W&B/torchtitan training tools and their unused system development toolchain
+through package-manager dependency handling, while retaining the vendor service
+code and CUDA runtime libraries. The actual service CLI and a CPU forward using
+the pinned RF-DETR checkpoint passed after removal, with no native compiler
+invocations. The exact rebuilt image is privately published from
+`ce010547321e8fee7b8783f684349a311ace63b2`, with verified
+registry identity, complete scans and an 894-package SPDX SBOM recorded in the
+catalog. Its inventory has zero CRITICAL findings; all inherited public TLS
+fixture-key findings have exact source evidence. Detection/tracking subsequently
+passed in the complete B200 EVG workflow; the earlier CPU check establishes
+dependency compatibility only.
+
+The AnomalyGen image keeps the exact CUDA 13.2 base image's
+`cuda-compat-13-2` libraries first on `LD_LIBRARY_PATH` while retaining the
+base search path. This supports runtime PTX/JIT users on supported older CUDA
+13 driver branches; NVIDIA documents both the compatibility-package matrix and
+the container-runtime loading behavior in the
+[CUDA Compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/latest/forward-compatibility.html)
+and [container compatibility FAQ](https://docs.nvidia.com/deploy/cuda-compatibility/frequently-asked-questions.html).
 
 BYOF images (`npa-byof:<run-id>`) are **ad-hoc** and are not registered in
 `CONTAINER_IMAGE_NAMES` until promoted to Tier 2 (see
@@ -86,7 +198,7 @@ Every Dockerfile must declare one of:
 
 | Tier | `kind` | ENTRYPOINT expectation | Examples |
 | --- | --- | --- | --- |
-| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | lerobot, lancedb, detection-training, lerobot-policy, leisaac |
+| **Service** | `service` | Starts the HTTP service (or entrypoint that does) | antioch, lerobot, lancedb, detection-training, lerobot-policy, leisaac |
 | **Job** | `job` | Runs a workflow/CLI module with explicit CMD or an exec-only command-passthrough entrypoint | sonic, fiftyone, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
 | **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, cosmos, groot, retargeting |
 
@@ -190,6 +302,7 @@ Neither mechanism grants redistribution rights or enables privacy/telemetry.
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
 | OpenPI / Gemma | `pi05_droid_jointpos_polaris` | The exact operator-confirmed `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value is forwarded only to accepted runtime jobs; refusal is attempt-scoped, and acceptance, weights, and credentials are never baked or persisted. |
+| Antioch | proprietary `antioch-sim==0.4.289` CLI and Antioch Service | The exact operator-confirmed `NPA_ANTIOCH_ACCEPT_TERMS=YES` value is injected from a dedicated runtime Secret and checked before fetch or use. Durable state records only the public terms identity and scoped accepted boolean; the image and cache contain no acceptance. |
 | Other non-NVIDIA comparison surfaces | `Wan-AI/Wan2.2-TI2V-5B`, LeRobot, Qwen, self-hosted Llama | No local terms boolean or interactive confirmation duplicates upstream entitlement; external vendor terms still apply at the source. |
 | Separate controls retained | privacy/telemetry, image redistribution classification, third-party dataset delivery | Privacy and telemetry remain independently off by default. Packaging contracts and built-image scans still control redistribution. The public PAIDF starter asset remains `acceptance_required: false`; its generic third-party dataset-license mechanism is separate from NVIDIA image/model access. |
 
@@ -375,6 +488,22 @@ The manually dispatched `publish-public-images.yml` workflow builds selected
 development images and separately promotes validated digests. Registry state
 must still be checked: source availability is not proof of publication.
 
+Main-branch pushes touching `npa/docker/workbench/` select development builds by
+changed recipe directories, individual packaging/catalog entries, and Dockerfile
+`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+source and staged workflow changes in the same push rebuild their consumers.
+Unchanged images retain their previously validated versions; no new development
+tag is fabricated for them. The existing weekly refresh still builds every
+eligible public image, including shared-source-only updates that do not trigger
+the workbench push filter. Explicit manual build selections remain available.
+
+Missing history, unknown shared workbench files, ambiguous metadata, and
+unsupported build-input syntax conservatively restore the full public build set.
+An empty automatic selection performs no build or release preflight. Every
+selected image retains all pre-publication and exact-digest security checks;
+release promotion remains a separate manual operation. Selection lives in
+`npa.deploy.image_build_scope` and is tested using real Git histories.
+
 The public-plan inventory retains all 34 published release tags. The current
 Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate
 after image security, B200 state, and successful RTX task/visual gates. The
@@ -461,10 +590,11 @@ from the repository root before building:
 npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 ```
 
-This copies `workflows/main/*.yaml` and `workflows/testing/*.yaml` into ignored
-package data in `main/` and `testing/` under `npa/src/npa/workflows/`, where existing
-Docker `COPY src` instructions include them. Repeat staging after catalog edits;
-it also removes stale generated YAMLs. Edit the top-level catalog source files.
+This copies `workflows/main/*.yaml`, `workflows/testing/*.yaml`, and
+`workflows/partners/*/*.yaml` into ignored package data under
+`npa/src/npa/workflows/`, preserving their relative directories. Existing Docker
+`COPY src` instructions include them. Repeat staging after catalog edits; it
+also removes stale generated YAMLs. Edit the top-level catalog source files.
 Wheel and source-distribution builds stage the same catalog through the package
 build hook.
 
@@ -477,6 +607,12 @@ build hook.
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
+
+## Platform scope
+
+All workbench images are linux/amd64 only. The publish buildx step passes no platform flag.
+
+This is intentional: the workbench targets NVIDIA GPU workloads which are amd64-only.
 
 ## Operator checklist (new or changed image)
 

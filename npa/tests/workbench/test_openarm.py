@@ -144,9 +144,7 @@ def test_mujoco_renderer_replays_only_bimanual_actuators(
 
     fake_mujoco = ModuleType("mujoco")
     fake_mujoco.mjtObj = SimpleNamespace(mjOBJ_ACTUATOR=object())
-    fake_mujoco.mj_name2id = (
-        lambda _model, _kind, name: actuator_ids.get(name, -1)
-    )
+    fake_mujoco.mj_name2id = lambda _model, _kind, name: actuator_ids.get(name, -1)
     fake_mujoco.Renderer = Renderer
     fake_mujoco.mj_resetData = lambda _model, data: data.ctrl.fill(0.0)
     fake_mujoco.mj_step = lambda _model, _data: None
@@ -231,7 +229,9 @@ def test_service_registry_claims_one_concurrent_execution() -> None:
     )
 
     with ThreadPoolExecutor(max_workers=16) as executor:
-        claims = list(executor.map(lambda _index: registry.claim(pending)[1], range(64)))
+        claims = list(
+            executor.map(lambda _index: registry.claim(pending)[1], range(64))
+        )
 
     assert claims.count(True) == 1
     assert registry.get("same-run") == pending
@@ -454,9 +454,10 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert sources["OpenArm HTTP service stack"]["version"] == (
         "FastAPI 0.136.1 / Starlette 1.6.0 / Uvicorn 0.53.0"
     )
-    assert "docker/workbench/openarm/security-requirements.txt" in components[
-        "transitive_inventory"
-    ]["python_lock"]
+    assert (
+        "docker/workbench/openarm/security-requirements.txt"
+        in components["transitive_inventory"]["python_lock"]
+    )
 
 
 def test_serve_defaults_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:

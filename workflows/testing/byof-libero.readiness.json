@@ -1,21 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "solution": "libero",
-  "status": "quarantined_unbuilt_unvalidated",
   "workflow_sha256": "51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a",
-  "resource_profile_sha256": "ab02acb123bb991e0d016f094659aff45156a78f1de2b28b93da252e56adc1fd",
-  "input_sha256": {
-    "workflow": "51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a",
-    "resource_profile": "ab02acb123bb991e0d016f094659aff45156a78f1de2b28b93da252e56adc1fd",
-    "runtime_manifest": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02",
-    "runtime_requirements": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
-    "runtime_bootstrap": "97f513ec0ce6f8f0fcc8f22490ace24a037df4c9069f1cd77abcd71f500ca657",
-    "smoke": "f3849f012ecaffd1caeaeba8ba61d7f0949cb4775931a471a3cb7ad4c9b7aaa6",
-    "image_manifest": "e7c88becfe3cdab897f8127c1cbe708b2536bca5936092e60cec7d9266437fe6"
-  },
-  "public_image_digest": "",
-  "anonymous_pull_verified": false,
-  "live_validated": false,
   "planning": {
     "validation": {
       "status": "verified",
@@ -31,7 +16,14 @@
       "evidence": [
         "npa/tests/workflows/test_byof_libero.py",
         "npa/tests/workflows/test_byof_container_verify.py",
-        "npa/tests/docker/test_libero_runtime_bootstrap.py"
+        "npa/tests/docker/test_libero_runtime_bootstrap.py",
+        "sha256:51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a workflows/testing/byof-libero.yaml",
+        "sha256:ab02acb123bb991e0d016f094659aff45156a78f1de2b28b93da252e56adc1fd npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
+        "sha256:d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02 npa/docker/workbench/libero/runtime-manifest.json",
+        "sha256:8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99 npa/docker/workbench/libero/runtime-requirements.txt",
+        "sha256:cb7e4fda79a4a33af81fb67ea9ec10d6eb8417afa5540d606542c475a35beecb npa/docker/workbench/libero/runtime-bootstrap.py",
+        "sha256:35aecce5323113281606c8841d79b8ddd8e54b13e9943b702e50e274a4c98dd6 npa/docker/workbench/libero/libero_smoke.py",
+        "sha256:e7c88becfe3cdab897f8127c1cbe708b2536bca5936092e60cec7d9266437fe6 npa/src/npa/deploy/libero_image_manifest.json"
       ]
     }
   },

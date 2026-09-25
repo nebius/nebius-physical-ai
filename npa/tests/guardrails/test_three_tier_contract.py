@@ -152,12 +152,112 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "download_assets": "boolean",
         "seed": "knob",
     },
+    "newton/train_teacher": {
+        "config_name": "knob",
+        "train_steps": "knob",
+        "seed": "knob",
+    },
+    "openvla/train": {
+        "dataset_name": "knob",
+        "batch_size": "knob",
+        "max_steps": "knob",
+        "learning_rate": "knob",
+        "lora_rank": "knob",
+        "lora_dropout": "knob",
+        "image_aug": "boolean",
+        "seed": "knob",
+        "dry_run": "boolean",
+    },
+    "molmoact/finetune": {
+        "max_steps": "knob",
+        "batch_size": "knob",
+        "learning_rate": "knob",
+        "num_gpus": "knob",
+        "run_name": "knob",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="newton/train_teacher",
+        cli_module="npa.cli.workbench.newton",
+        cli_callback="train_teacher_cmd",
+        sdk_module="npa.sdk.workbench.newton",
+        sdk_attr="train_teacher",
+        spec_path=SPECS / "newton-train-teacher.yaml",
+        tool_ref="workbench.newton.train_teacher",
+        spec_gap=("config_name", "train_steps", "seed"),
+        params=(
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("config_name", "config_name", "--config-name"),
+            _p("train_steps", "train_steps", "--train-steps"),
+            _p("seed", "seed", "--seed"),
+        ),
+    ),
+    CapabilityContract(
+        name="openvla/train",
+        cli_module="npa.cli.workbench.openvla",
+        cli_callback="train_cmd",
+        sdk_module="npa.sdk.workbench.openvla",
+        sdk_attr="train",
+        spec_path=SPECS / "openvla-train.yaml",
+        tool_ref="workbench.openvla.train",
+        spec_gap=(
+            "dataset_name",
+            "batch_size",
+            "max_steps",
+            "learning_rate",
+            "lora_rank",
+            "lora_dropout",
+            "image_aug",
+            "seed",
+            "dry_run",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("dataset_name", "dataset_name", "--dataset-name"),
+            _p("output_dir", "output_dir", "--output-dir"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("lora_rank", "lora_rank", "--lora-rank"),
+            _p("lora_dropout", "lora_dropout", "--lora-dropout"),
+            _p("image_aug", "image_aug", "--image-aug"),
+            _p("seed", "seed", "--seed"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
+        name="molmoact/finetune",
+        cli_module="npa.cli.workbench.molmoact",
+        cli_callback="finetune_cmd",
+        sdk_module="npa.sdk.workbench.molmoact",
+        sdk_attr="finetune",
+        spec_path=SPECS / "molmoact-finetune.yaml",
+        tool_ref="workbench.molmoact.finetune",
+        spec_gap=(
+            "max_steps",
+            "batch_size",
+            "learning_rate",
+            "num_gpus",
+            "run_name",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_s3_uri", "output_s3_uri", "--output-s3-uri"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("num_gpus", "num_gpus", "--num-gpus"),
+            _p("run_name", "run_name", "--run-name"),
+        ),
+    ),
     CapabilityContract(
         name="curobo/benchmark",
         cli_module="npa.cli.workbench.curobo",
@@ -735,6 +835,10 @@ def test_sim2real_headline_workflow_is_three_tier_coherent() -> None:
 def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
     contracted = {contract.name.split("/", 1)[0] for contract in CONTRACTS}
     seam = {
+        # Antioch's CLI, SDK, and FastAPI service all consume the same strict
+        # Pydantic request models; toolRef argv reachability and the executable
+        # workflow are checked by test_tool_catalog_argv and test_antioch.
+        "antioch",
         # Tier-0 BYOF onboarding CLI (script-backed; not a FastAPI service).
         "byof",
         "cosmos",
@@ -745,11 +849,17 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "cosmos-evaluator",
         "data",
         "dataset",
+        # CLI, SDK, and workflow call one shared implementation; Encord remains remote SaaS.
+        "encord",
         "fiftyone",
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).
         "foxglove",
         "genesis",
+        # S3 artifact GC is a CLI-only maintenance verb (dry-run/apply against
+        # manifests); it has no FastAPI service tier and no npa.workflow stage
+        # surface to stay coherent with. Part of #525 (PR #576).
+        "gc-artifacts",
         "golden-eval",
         "groot",
         "health",
@@ -776,6 +886,11 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # npa/tests/workbench/test_nurec_access.py::
         # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
         # argv flag against the real Typer options.
+        # OpenVLA toolRefs emit upstream argv plans and raise (train/serve/eval
+        # not yet wired), so there is no service tier to keep coherent with a
+        # YAML env block. CLI <-> catalog argv coherence is enforced by
+        # test_module_toolref_argv.py instead.
+        "openvla",
         "nurec",
         "scenario-gen",
         "sim2real",

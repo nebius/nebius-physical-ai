@@ -192,7 +192,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "f3849f012ecaffd1caeaeba8ba61d7f0949cb4775931a471a3cb7ad4c9b7aaa6"
+        "35aecce5323113281606c8841d79b8ddd8e54b13e9943b702e50e274a4c98dd6"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")
@@ -1814,17 +1814,23 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     ):
-        parser.error("inventory recording requires a local docker-save and output, without prior identities")
+        parser.error(
+            "inventory recording requires a local docker-save and output, without prior identities"
+        )
     if any(
         item is None
         for item in (
             args.base_provenance,
-            *(() if args.record_image_inventory else (
-                args.expected_image_inventory_sha256,
-                args.expected_config_digest,
-                args.expected_canonical_build_metadata_sha256,
-                args.expected_base_provenance_sha256,
-            )),
+            *(
+                ()
+                if args.record_image_inventory
+                else (
+                    args.expected_image_inventory_sha256,
+                    args.expected_config_digest,
+                    args.expected_canonical_build_metadata_sha256,
+                    args.expected_base_provenance_sha256,
+                )
+            ),
         )
     ):
         parser.error("complete lineage inputs are required for an image scan")

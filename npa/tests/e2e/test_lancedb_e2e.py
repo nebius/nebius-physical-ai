@@ -15,7 +15,10 @@ from urllib.parse import urlparse
 import pytest
 
 from npa.clients.config import resolve_project_storage
-from npa.clients.project_credentials import s3_client_for_project, storage_env_for_project
+from npa.clients.project_credentials import (
+    s3_client_for_project,
+    storage_env_for_project,
+)
 from npa.workbench.lancedb.bdd100k_import import manifest_checksum
 
 
@@ -47,23 +50,32 @@ def lancedb_storage(e2e_project: str | None) -> dict[str, str]:
         e2e_project or ""
     )
     storage = resolve_project_storage(project_alias or None)
-    bucket_uri = os.environ.get("NPA_E2E_LANCEDB_BUCKET", "").strip() or storage.checkpoint_bucket
+    bucket_uri = (
+        os.environ.get("NPA_E2E_LANCEDB_BUCKET", "").strip()
+        or storage.checkpoint_bucket
+    )
     parsed = urlparse(bucket_uri if "://" in bucket_uri else f"s3://{bucket_uri}")
     bucket = parsed.netloc
     if not bucket:
-        pytest.fail("LanceDB e2e requires writable checkpoint bucket in project storage")
+        pytest.fail(
+            "LanceDB e2e requires writable checkpoint bucket in project storage"
+        )
     return {"project_alias": project_alias, "bucket": bucket}
 
 
 @pytest.fixture
-def lancedb_service(test_id: str, lancedb_storage: dict[str, str]) -> Iterator[dict[str, str]]:
+def lancedb_service(
+    test_id: str, lancedb_storage: dict[str, str]
+) -> Iterator[dict[str, str]]:
     port = _free_port()
     container = f"{test_id}-container"
     endpoint = f"http://localhost:{port}"
     storage_prefix = f"{test_id}/db/"
     storage_path = f"s3://{lancedb_storage['bucket']}/{storage_prefix}"
     env = _lancedb_env(lancedb_storage["project_alias"])
-    os.environ["NPA_E2E_LANCEDB_PROJECT_ALIAS_ACTIVE"] = lancedb_storage["project_alias"]
+    os.environ["NPA_E2E_LANCEDB_PROJECT_ALIAS_ACTIVE"] = lancedb_storage[
+        "project_alias"
+    ]
 
     try:
         _ensure_image(env)
@@ -129,10 +141,21 @@ def lancedb_service(test_id: str, lancedb_storage: dict[str, str]) -> Iterator[d
             timeout=120,
         )
         if destroy.returncode != 0:
-            print(f"!!! ORPHANED LANCEDB CONTAINER {container}: {_format_result(destroy)}", flush=True)
+            print(
+                f"!!! ORPHANED LANCEDB CONTAINER {container}: {_format_result(destroy)}",
+                flush=True,
+            )
 
         remaining = _run(
-            ["docker", "ps", "-a", "--filter", f"name=^{container}$", "--format", "{{.Names}}"],
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                f"name=^{container}$",
+                "--format",
+                "{{.Names}}",
+            ],
             timeout=30,
         )
         if remaining.stdout.strip():
@@ -377,7 +400,13 @@ def test_lancedb_bdd100k_backfill_endpoint_cli_sdk(
     assert imported.status_code == 200, imported.text
     assert imported.json()["total_rows"] == 50
 
-    for udf in ["has_person", "has_rider", "person_bbox_area_pct", "dhash", "is_duplicate"]:
+    for udf in [
+        "has_person",
+        "has_rider",
+        "person_bbox_area_pct",
+        "dhash",
+        "is_duplicate",
+    ]:
         response = httpx.post(
             f"{endpoint}/backfill",
             json={"table": table, "lance_uri": storage_path, "udf": udf},
@@ -402,7 +431,13 @@ def test_lancedb_bdd100k_backfill_endpoint_cli_sdk(
     assert schema["dhash"] == "int64"
     assert schema["is_duplicate"] == "bool"
     rows = lance_table.to_arrow().to_pylist()
-    for column in ["has_person", "has_rider", "person_bbox_area_pct", "dhash", "is_duplicate"]:
+    for column in [
+        "has_person",
+        "has_rider",
+        "person_bbox_area_pct",
+        "dhash",
+        "is_duplicate",
+    ]:
         assert sum(row[column] is not None for row in rows) == 50
 
     idempotent = httpx.post(
@@ -416,7 +451,12 @@ def test_lancedb_bdd100k_backfill_endpoint_cli_sdk(
 
     forced = httpx.post(
         f"{endpoint}/backfill",
-        json={"table": table, "lance_uri": storage_path, "udf": "has_person", "force": True},
+        json={
+            "table": table,
+            "lance_uri": storage_path,
+            "udf": "has_person",
+            "force": True,
+        },
         timeout=180.0,
     )
     assert forced.status_code == 200, forced.text
@@ -440,7 +480,11 @@ def test_lancedb_bdd100k_backfill_endpoint_cli_sdk(
         if mode == "api":
             backfilled = httpx.post(
                 f"{endpoint}/backfill",
-                json={"table": parity_table, "lance_uri": storage_path, "udf": "has_person"},
+                json={
+                    "table": parity_table,
+                    "lance_uri": storage_path,
+                    "udf": "has_person",
+                },
                 timeout=180.0,
             )
             assert backfilled.status_code == 200, backfilled.text
@@ -527,7 +571,9 @@ def test_lancedb_bdd100k_materialized_views_endpoint_cli_sdk(
             "bdd100k_nighttime_person_train": "timeofday = 'night' AND has_person = true AND split = 'train'",
             "bdd100k_distant_person_train": "has_person = true AND person_bbox_area_pct < 0.01 AND split = 'train'",
         }
-        expected_counts = {name: source.count_rows(filter_sql) for name, filter_sql in filters.items()}
+        expected_counts = {
+            name: source.count_rows(filter_sql) for name, filter_sql in filters.items()
+        }
 
         results = create_bdd100k_failure_mode_views(
             service=True,
@@ -536,7 +582,9 @@ def test_lancedb_bdd100k_materialized_views_endpoint_cli_sdk(
             source_table=table,
         )
         assert {result.view_name for result in results} == set(filters)
-        assert {result.view_name: result.row_count for result in results} == expected_counts
+        assert {
+            result.view_name: result.row_count for result in results
+        } == expected_counts
 
         for view_name, expected in expected_counts.items():
             view = db.open_table(view_name)
@@ -639,10 +687,21 @@ def _lancedb_env(project_alias: str) -> dict[str, str]:
 
 def _ensure_image(env: dict[str, str]) -> None:
     inspect = _run(["docker", "image", "inspect", IMAGE], env=env, timeout=30)
-    if inspect.returncode == 0 and os.environ.get("NPA_E2E_LANCEDB_REBUILD_IMAGE") != "1":
+    if (
+        inspect.returncode == 0
+        and os.environ.get("NPA_E2E_LANCEDB_REBUILD_IMAGE") != "1"
+    ):
         return
     build = _run(
-        ["docker", "build", "-f", "npa/docker/workbench/lancedb/Dockerfile", "-t", IMAGE, "npa/"],
+        [
+            "docker",
+            "build",
+            "-f",
+            "npa/docker/workbench/lancedb/Dockerfile",
+            "-t",
+            IMAGE,
+            "npa/",
+        ],
         env=env,
         timeout=600,
     )
@@ -676,7 +735,9 @@ def _wait_for_ready(endpoint: str, env: dict[str, str]) -> None:
     pytest.fail(_format_result(last))
 
 
-def _wait_for_table_listed(endpoint: str, table: str, env: dict[str, str]) -> dict[str, object]:
+def _wait_for_table_listed(
+    endpoint: str, table: str, env: dict[str, str]
+) -> dict[str, object]:
     deadline = time.monotonic() + 60
     last: subprocess.CompletedProcess[str] | None = None
     while time.monotonic() < deadline:
@@ -766,7 +827,12 @@ def _registry_row(storage_path: str, name: str) -> dict[str, object]:
     _install_s3_env()
     import lancedb
 
-    rows = lancedb.connect(storage_path).open_table(MV_REGISTRY_TABLE).to_arrow().to_pylist()
+    rows = (
+        lancedb.connect(storage_path)
+        .open_table(MV_REGISTRY_TABLE)
+        .to_arrow()
+        .to_pylist()
+    )
     return next(row for row in rows if row["name"] == name)
 
 
@@ -779,7 +845,9 @@ def _install_s3_env() -> None:
     env = storage_env_for_project(project_alias)
     os.environ.update(env)
     os.environ["AWS_REGION"] = os.environ.get("AWS_REGION") or "auto"
-    os.environ["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION") or os.environ["AWS_REGION"]
+    os.environ["AWS_DEFAULT_REGION"] = (
+        os.environ.get("AWS_DEFAULT_REGION") or os.environ["AWS_REGION"]
+    )
     if os.environ.get("AWS_ENDPOINT_URL"):
         os.environ["AWS_ENDPOINT_URL_S3"] = os.environ["AWS_ENDPOINT_URL"]
 

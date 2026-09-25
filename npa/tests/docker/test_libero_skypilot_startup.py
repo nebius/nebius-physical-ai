@@ -1,5 +1,6 @@
 # npa: publication-enforcement=libero
 """The startup adapter preserves runtime code and refuses unreviewed inputs."""
+
 import base64
 import hashlib
 import importlib.util
@@ -17,16 +18,42 @@ def startup(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     algorithm = b"ssh-ed25519"
-    wire = len(algorithm).to_bytes(4, "big") + algorithm + (32).to_bytes(4, "big") + bytes(range(32))
+    wire = (
+        len(algorithm).to_bytes(4, "big")
+        + algorithm
+        + (32).to_bytes(4, "big")
+        + bytes(range(32))
+    )
     key = "ssh-ed25519 " + base64.b64encode(wire).decode() + " synthetic"
     apt = "# STEP 1:\ncat <<'SKYPILOT_SSH_KEY_EOF'\n" + key + "\nSKYPILOT_SSH_KEY_EOF\n"
     environment = "# STEP 3:\noriginal-environment\n"
     runtime = "# STEP 2:\n" + module.INSTALL + "\noriginal-ray-start\n"
-    source = module.HOOK + "\n" + apt + runtime + environment + "function mylsof\noriginal-keepalive\n"
-    monkeypatch.setattr(module, "BLOCKS", (
-        ("apt", "# STEP 1:", "# STEP 2:", hashlib.sha256(apt.replace(key, "PUBLIC_KEY").encode()).hexdigest()),
-        ("env", "# STEP 3:", "function mylsof", hashlib.sha256(environment.encode()).hexdigest()),
-    ))
+    source = (
+        module.HOOK
+        + "\n"
+        + apt
+        + runtime
+        + environment
+        + "function mylsof\noriginal-keepalive\n"
+    )
+    monkeypatch.setattr(
+        module,
+        "BLOCKS",
+        (
+            (
+                "apt",
+                "# STEP 1:",
+                "# STEP 2:",
+                hashlib.sha256(apt.replace(key, "PUBLIC_KEY").encode()).hexdigest(),
+            ),
+            (
+                "env",
+                "# STEP 3:",
+                "function mylsof",
+                hashlib.sha256(environment.encode()).hexdigest(),
+            ),
+        ),
+    )
     return module, source, runtime, key
 
 
@@ -45,7 +72,10 @@ def test_adapter_preserves_runtime_and_initializes_real_ssh(startup):
     assert "/etc/profile.d" not in adapted
 
 
-@pytest.mark.parametrize("mutation", ["apt", "env", "key", "duplicate", "late_hook", "runtime", "runtime_version"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["apt", "env", "key", "duplicate", "late_hook", "runtime", "runtime_version"],
+)
 def test_adapter_refuses_changed_bootstrap(startup, mutation):
     module, source, _, key = startup
     if mutation == "apt":

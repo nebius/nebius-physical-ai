@@ -150,6 +150,7 @@ LIBERO_SIGSTORE_PUBLICATION_REFERRERS = (
 )
 
 CONTAINER_IMAGE_NAMES = {
+    "antioch": "npa-antioch",
     "openpi": "npa-openpi",
     "lerobot": "npa-lerobot",
     "sim2real-control": "npa-sim2real-control",
@@ -188,6 +189,7 @@ CONTAINER_IMAGE_NAMES = {
     "diffusers": "npa-diffusers",
     "lingbot-world": "npa-lingbot-world",
     "sam2": "npa-sam2",
+    "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
     "curobo": "npa-curobo",
@@ -203,6 +205,13 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-anomalygen-sky",
+        "paidf-attribute-search-sky",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
@@ -244,11 +253,20 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. The Cosmos3-Super
-# benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
-# remains build-your-own in an operator-controlled registry.
+# redistribution decision, not a particular vendor payload. Operator-built
+# PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-super-benchmark", "cosmos3-nano-video"}
+    {
+        "cosmos3-nano-video",
+        "cosmos3-super-benchmark",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-attribute-search-sky",
+        "paidf-anomalygen-sky",
+        "paidf-image-edit-sky",
+        "paidf-event-video-sky",
+    }
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
@@ -256,8 +274,10 @@ RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
 OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 
-# Tools that are licence-eligible for public redistribution but have no accepted
-# built/GPU-validated artifact yet.
+# Tools that are licence-eligible for public redistribution but have not earned
+# every publication claim yet. Antioch is CPU-only and has a built-image payload
+# scan and local capability
+# smoke, but has not been published or anonymously pulled from the public mirror.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
 # them would be wrong in both directions: these are not restricted (the licensing
@@ -269,9 +289,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero"}
+    {"openpi", "curobo", "ncore", "libero", "sam3"}
 )
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -361,6 +381,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "antioch": "0.1.0-cli0.4.289",
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
@@ -407,6 +428,8 @@ SUPPORTED_TOOL_VERSIONS = {
     "diffusers": "0.38.0-rtfetch-20260916",
     "lingbot-world": "a43bec7-rtfetch-20260916",
     "sam2": "2.1-rtfetch-20260916",
+    # Candidate only; excluded from the supported public release plan.
+    "sam3": "3.1-unbuilt",
     # LTX source and weights remain operator-entitled runtime fetches. This tag
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
@@ -685,7 +708,8 @@ def libero_publication_enforcement_bundle_sha256(repository_root: Path) -> str:
                 qualification = dict(qualification)
                 enforcement_field = (
                     "operator_enforcement_bundle_sha256"
-                    if qualification.get("schema") == "npa.libero.image-qualification.v2"
+                    if qualification.get("schema")
+                    == "npa.libero.image-qualification.v2"
                     else "publication_enforcement_bundle_sha256"
                 )
                 qualification[enforcement_field] = ""
@@ -693,8 +717,7 @@ def libero_publication_enforcement_bundle_sha256(repository_root: Path) -> str:
                 manifest = dict(manifest)
                 manifest["qualification"] = qualification
                 payload = (
-                    json.dumps(manifest, sort_keys=True, separators=(",", ":"))
-                    + "\n"
+                    json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
                 ).encode("utf-8")
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 # A malformed manifest is still fingerprinted as-is here so
@@ -816,9 +839,13 @@ def libero_publication_lineage_values(
     )
     if qualification.get("schema") == "npa.libero.image-qualification.v2":
         fields = tuple(
-            field for field in fields
-            if field not in {
-                "attestation_manifest_digest", "attestation_config_digest", "attestation_layers"
+            field
+            for field in fields
+            if field
+            not in {
+                "attestation_manifest_digest",
+                "attestation_config_digest",
+                "attestation_layers",
             }
         ) + ("attestations", "operator_enforcement_bundle_sha256")
     return {field: qualification[field] for field in fields}
@@ -974,14 +1001,15 @@ def validate_libero_qualified_image_manifest(
     sigstore_format = qualification.get("schema") == "npa.libero.image-qualification.v2"
     if sigstore_format:
         expected_keys -= {
-            "attestation_manifest_digest", "attestation_config_digest", "attestation_layers"
+            "attestation_manifest_digest",
+            "attestation_config_digest",
+            "attestation_layers",
         }
         expected_keys |= {"attestations", "operator_enforcement_bundle_sha256"}
     require(set(qualification) == expected_keys, "closed qualification schema")
     require(
-        qualification.get("schema") in {
-            "npa.libero.image-qualification.v1", "npa.libero.image-qualification.v2"
-        },
+        qualification.get("schema")
+        in {"npa.libero.image-qualification.v1", "npa.libero.image-qualification.v2"},
         "qualification schema",
     )
     require(qualification.get("status") == "qualified", "qualified status")
@@ -1029,7 +1057,9 @@ def validate_libero_qualified_image_manifest(
             is not None,
             field,
         )
-    storage_root = str(qualification.get("output_storage_authorization_public_key_sha256") or "")
+    storage_root = str(
+        qualification.get("output_storage_authorization_public_key_sha256") or ""
+    )
     require(
         (customer_run and storage_root == "")
         or re.fullmatch(r"[0-9a-f]{64}", storage_root) is not None,
@@ -1056,13 +1086,17 @@ def validate_libero_qualified_image_manifest(
         )
         require(
             re.fullmatch(
-                r"[0-9a-f]{64}", str(qualification.get("operator_enforcement_bundle_sha256") or "")
-            ) is not None,
+                r"[0-9a-f]{64}",
+                str(qualification.get("operator_enforcement_bundle_sha256") or ""),
+            )
+            is not None,
             "operator enforcement bundle",
         )
         attestations = qualification.get("attestations")
-        require(isinstance(attestations, list) and len(attestations) == 2,
-                "complete Sigstore attestation set")
+        require(
+            isinstance(attestations, list) and len(attestations) == 2,
+            "complete Sigstore attestation set",
+        )
         manifest_digests = {qualification["oci_digest"]}
         invocations = set()
         identities = set()
@@ -1071,40 +1105,78 @@ def validate_libero_qualified_image_manifest(
             attestations, LIBERO_SIGSTORE_PUBLICATION_REFERRERS, strict=True
         ):
             require(
-                isinstance(attestation, dict) and set(attestation) == {
-                    "predicate_type", "manifest_digest", "manifest_size_bytes",
-                    "config_digest", "bundle_digest", "bundle_size_bytes",
-                    "subject_digest", "workflow_identity", "source_revision",
-                    "run_invocation_uri", "verification_result_sha256",
-                    "manifest_media_type", "artifact_type", "config_media_type",
-                    "config_size_bytes", "bundle_media_type", "subject_media_type",
-                    "subject_size_bytes", "certificate_issuer", "runner_environment",
+                isinstance(attestation, dict)
+                and set(attestation)
+                == {
+                    "predicate_type",
+                    "manifest_digest",
+                    "manifest_size_bytes",
+                    "config_digest",
+                    "bundle_digest",
+                    "bundle_size_bytes",
+                    "subject_digest",
+                    "workflow_identity",
+                    "source_revision",
+                    "run_invocation_uri",
+                    "verification_result_sha256",
+                    "manifest_media_type",
+                    "artifact_type",
+                    "config_media_type",
+                    "config_size_bytes",
+                    "bundle_media_type",
+                    "subject_media_type",
+                    "subject_size_bytes",
+                    "certificate_issuer",
+                    "runner_environment",
                 },
                 "closed Sigstore attestation record",
             )
-            require(attestation["predicate_type"] == predicate_type,
-                    "Sigstore predicate type")
-            for field in ("manifest_digest", "config_digest", "bundle_digest", "subject_digest"):
-                require(re.fullmatch(r"sha256:[0-9a-f]{64}", str(attestation[field])) is not None,
-                        f"Sigstore {field}")
-            for field in ("manifest_size_bytes", "bundle_size_bytes", "subject_size_bytes"):
-                require(type(attestation[field]) is int and 0 < attestation[field] <= 64 * 1024 * 1024,
-                        f"Sigstore {field}")
             require(
-                attestation["config_digest"] == "sha256:" + hashlib.sha256(b"{}").hexdigest()
+                attestation["predicate_type"] == predicate_type,
+                "Sigstore predicate type",
+            )
+            for field in (
+                "manifest_digest",
+                "config_digest",
+                "bundle_digest",
+                "subject_digest",
+            ):
+                require(
+                    re.fullmatch(r"sha256:[0-9a-f]{64}", str(attestation[field]))
+                    is not None,
+                    f"Sigstore {field}",
+                )
+            for field in (
+                "manifest_size_bytes",
+                "bundle_size_bytes",
+                "subject_size_bytes",
+            ):
+                require(
+                    type(attestation[field]) is int
+                    and 0 < attestation[field] <= 64 * 1024 * 1024,
+                    f"Sigstore {field}",
+                )
+            require(
+                attestation["config_digest"]
+                == "sha256:" + hashlib.sha256(b"{}").hexdigest()
                 and attestation["subject_digest"] == qualification["oci_digest"]
                 and attestation["source_revision"] == qualification["development_sha"],
                 "Sigstore subject/source binding",
             )
             require(
-                attestation["manifest_media_type"] == "application/vnd.oci.image.manifest.v1+json"
-                and attestation["artifact_type"] == "application/vnd.dev.sigstore.bundle.v0.3+json"
+                attestation["manifest_media_type"]
+                == "application/vnd.oci.image.manifest.v1+json"
+                and attestation["artifact_type"]
+                == "application/vnd.dev.sigstore.bundle.v0.3+json"
                 and attestation["bundle_media_type"] == attestation["artifact_type"]
-                and attestation["config_media_type"] == "application/vnd.oci.empty.v1+json"
+                and attestation["config_media_type"]
+                == "application/vnd.oci.empty.v1+json"
                 and type(attestation["config_size_bytes"]) is int
                 and attestation["config_size_bytes"] == 2
-                and attestation["subject_media_type"] == "application/vnd.docker.distribution.manifest.v2+json"
-                and attestation["certificate_issuer"] == "https://token.actions.githubusercontent.com"
+                and attestation["subject_media_type"]
+                == "application/vnd.docker.distribution.manifest.v2+json"
+                and attestation["certificate_issuer"]
+                == "https://token.actions.githubusercontent.com"
                 and attestation["runner_environment"] == "github-hosted",
                 "Sigstore media and signer contract",
             )
@@ -1113,13 +1185,18 @@ def validate_libero_qualified_image_manifest(
                     r"https://github\.com/nebius/nebius-physical-ai/\.github/workflows/"
                     r"publish-public-images\.yml@refs/heads/[A-Za-z0-9_./-]+",
                     str(attestation["workflow_identity"]),
-                ) is not None
+                )
+                is not None
                 and re.fullmatch(
                     r"https://github\.com/nebius/nebius-physical-ai/actions/runs/"
                     r"[1-9][0-9]*/attempts/[1-9][0-9]*",
                     str(attestation["run_invocation_uri"]),
-                ) is not None
-                and re.fullmatch(r"[0-9a-f]{64}", str(attestation["verification_result_sha256"])) is not None,
+                )
+                is not None
+                and re.fullmatch(
+                    r"[0-9a-f]{64}", str(attestation["verification_result_sha256"])
+                )
+                is not None,
                 "verified Sigstore workflow evidence",
             )
             manifest_digests.add(attestation["manifest_digest"])
@@ -1127,8 +1204,10 @@ def validate_libero_qualified_image_manifest(
             identities.add(attestation["workflow_identity"])
             bundle_digests.add(attestation["bundle_digest"])
         require(
-            len(manifest_digests) == 3 and len(bundle_digests) == 2
-            and len(invocations) == 1 and len(identities) == 1
+            len(manifest_digests) == 3
+            and len(bundle_digests) == 2
+            and len(invocations) == 1
+            and len(identities) == 1
             and package_version_digests == sorted(manifest_digests),
             "closed published runtime and Sigstore digest set",
         )
@@ -1161,7 +1240,8 @@ def validate_libero_qualified_image_manifest(
             and package_version_digests == sorted(set(package_version_digests))
             and qualification.get("oci_digest") in package_version_digests
             and qualification.get("platform_manifest_digest") in package_version_digests
-            and qualification.get("attestation_manifest_digest") in package_version_digests,
+            and qualification.get("attestation_manifest_digest")
+            in package_version_digests,
             "closed package version digest set",
         )
     require(
@@ -1210,7 +1290,11 @@ def validate_libero_qualified_image_manifest(
     }
     if sigstore_format:
         publication_bundle["schema"] = "npa.libero.publication-lineage-bundle.v4"
-        for field in ("attestation_manifest_digest", "attestation_config_digest", "attestation_layers"):
+        for field in (
+            "attestation_manifest_digest",
+            "attestation_config_digest",
+            "attestation_layers",
+        ):
             publication_bundle.pop(field)
         publication_bundle["attestations"] = qualification["attestations"]
         publication_bundle["operator_enforcement_bundle_sha256"] = qualification[
@@ -1311,7 +1395,9 @@ def validate_libero_customer_runtime_authorization(
     }
     if not isinstance(authorization, dict) or set(authorization) != expected_keys:
         raise RuntimeError("LIBERO customer authorization schema is not closed")
-    qualification = validate_libero_qualified_image_manifest(image_manifest, customer_run=customer_run)
+    qualification = validate_libero_qualified_image_manifest(
+        image_manifest, customer_run=customer_run
+    )
     expected_terms = [
         {"id": term["id"], "version": term["version"]}
         for term in _libero_customer_terms(image_manifest)
@@ -1945,10 +2031,22 @@ def public_release_manifest() -> dict[str, Any]:
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
         raise RuntimeError("Public release manifest inventories must be objects")
-    if set(releases) | set(pending) != set(publicly_publishable_tools()):
+    redistribution_eligible = {
+        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+    }
+    expected_releases = redistribution_eligible - PUBLICATION_QUARANTINE_TOOLS
+    if set(releases) != expected_releases:
         raise RuntimeError(
-            "Public release manifest must partition every publishable tool into "
-            "published or publication-pending"
+            "Public release manifest releases must match every currently publishable tool"
+        )
+    pending_tools = set(pending)
+    if (
+        pending_tools & set(releases)
+        or not pending_tools <= redistribution_eligible & PUBLICATION_QUARANTINE_TOOLS
+    ):
+        raise RuntimeError(
+            "Public release manifest pending tools must be distinct, "
+            "redistribution-eligible publication candidates"
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):

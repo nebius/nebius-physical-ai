@@ -343,7 +343,9 @@ def _validate_batch_response(
     for result in response.outputs:
         name, args = _bind_sample_arguments(result, requested, seen_samples)
         frames, hints, text_output = _bind_sample_media(requested[name], args, name)
-        sample_files = _declared_sample_files(request.request_id, name, result, expected)
+        sample_files = _declared_sample_files(
+            request.request_id, name, result, expected
+        )
         _require_sample_files(
             request.request_id, name, frames, hints, text_output, sample_files
         )
@@ -419,9 +421,7 @@ def _resolved_sample_mode(args: dict[str, Any], name: str) -> tuple[str, int]:
         "wam",
         "reasoner",
     }:
-        raise Cosmos3RayServeError(
-            f"sample {name} returned an unsupported model_mode"
-        )
+        raise Cosmos3RayServeError(f"sample {name} returned an unsupported model_mode")
     frames = args.get("num_frames")
     if type(frames) is not int or frames < 1:
         raise Cosmos3RayServeError(f"sample {name} returned invalid num_frames")
@@ -437,15 +437,11 @@ def _bind_sample_media(
     # Bind the category even when the caller uses native frame defaults.
     hints = _active_hints(sample)
     if _active_hints(args) != hints:
-        raise Cosmos3RayServeError(
-            f"sample {name} returned different transfer hints"
-        )
+        raise Cosmos3RayServeError(f"sample {name} returned different transfer hints")
     # Native generation dispatches transfer before reasoner when hints exist.
     text_output = mode == "reasoner" and not hints
     if not text_output and _requested_image(sample, mode) != (frames == 1):
-        raise Cosmos3RayServeError(
-            f"sample {name} returned a different frame category"
-        )
+        raise Cosmos3RayServeError(f"sample {name} returned a different frame category")
     return frames, hints, text_output
 
 
@@ -458,31 +454,27 @@ def _declared_sample_files(
         raise Cosmos3RayServeError(f"sample {name} has no structured output files")
     sample_files: set[str] = set()
     for output in outputs:
-        if not isinstance(output, dict) or not isinstance(
-            output.get("content"), dict
-        ):
-            raise Cosmos3RayServeError(
-                f"sample {name} returned invalid output content"
-            )
+        if not isinstance(output, dict) or not isinstance(output.get("content"), dict):
+            raise Cosmos3RayServeError(f"sample {name} returned invalid output content")
         files = output.get("files")
         if not isinstance(files, list) or not files:
-            raise Cosmos3RayServeError(
-                f"sample {name} has no structured output files"
-            )
+            raise Cosmos3RayServeError(f"sample {name} has no structured output files")
         for path in files:
             _validate_output_path(path, request_id, name)
             if path in expected:
-                raise Cosmos3RayServeError(
-                    "service declared a duplicate output file"
-                )
+                raise Cosmos3RayServeError("service declared a duplicate output file")
             expected[path] = name
             sample_files.add(path)
     return sample_files
 
 
 def _require_sample_files(
-    request_id: str, name: str, frames: int, hints: set[str],
-    text_output: bool, sample_files: set[str],
+    request_id: str,
+    name: str,
+    frames: int,
+    hints: set[str],
+    text_output: bool,
+    sample_files: set[str],
 ) -> None:
     """Require the pinned primary and requested transfer outputs to be declared."""
     primary = (
@@ -491,9 +483,7 @@ def _require_sample_files(
         else ("vision.jpg" if frames == 1 else "vision.mp4")
     )
     if f"{request_id}/{name}/{primary}" not in sample_files:
-        raise Cosmos3RayServeError(
-            f"sample {name} is missing its primary output file"
-        )
+        raise Cosmos3RayServeError(f"sample {name} is missing its primary output file")
     extension = ".jpg" if frames == 1 else ".mp4"
     for hint in hints:
         if f"{request_id}/{name}/control_{hint}{extension}" not in sample_files:

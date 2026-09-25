@@ -38,8 +38,14 @@ def _text(draw, position, text, size, color=_WHITE, weight=500):
 
 def _paragraph(draw, position, text, size, width, color=_MUTED, weight=500):
     for index, line in enumerate(_wrap(draw, text, size, width, weight)):
-        _text(draw, (position[0], position[1] + index * size * 1.45),
-              line, size, color, weight)
+        _text(
+            draw,
+            (position[0], position[1] + index * size * 1.45),
+            line,
+            size,
+            color,
+            weight,
+        )
 
 
 def _rectangles(scene):
@@ -96,8 +102,7 @@ def _base(scene, index, total):
     for x in range(72, _WIDTH, 150):
         draw.line((x, 0, x, _HEIGHT), fill=(19, 27, 31, 255))
     for x, y, width, height in _rectangles(scene):
-        draw.rectangle((x - 1, y - 1, x + width, y + height),
-                       fill=(46, 61, 65, 255))
+        draw.rectangle((x - 1, y - 1, x + width, y + height), fill=(46, 61, 65, 255))
         draw.rectangle((x, y, x + width - 1, y + height - 1), fill=(0, 0, 0, 0))
     if scene["layout"] in {"hero", "cinematic"}:
         for x in range(_WIDTH):
@@ -138,28 +143,45 @@ def _headlines(draw, scene):
     if scene["layout"] == "screen":
         size = 68
     available = 630 if feature else 1776
-    while any(draw.textlength(line, font=_font(size, 700)) > available for line in scene["title"]):
+    while any(
+        draw.textlength(line, font=_font(size, 700)) > available
+        for line in scene["title"]
+    ):
         size -= 1
     _text(draw, (72, 146 if feature else 129), scene["eyebrow"], 21, _ACCENT, 700)
     for index, line in enumerate(scene["title"]):
-        _text(draw, (72, title_y + index * size * 1.16), line, size,
-              _ACCENT if index else _WHITE, 700)
+        _text(
+            draw,
+            (72, title_y + index * size * 1.16),
+            line,
+            size,
+            _ACCENT if index else _WHITE,
+            700,
+        )
     subtitle_y = 469 if feature else 414
     if scene["layout"] == "cameras":
         subtitle_y = 292
     if scene["layout"] == "screen":
         subtitle_y = 252
-    _paragraph(draw, (72, subtitle_y), scene["subtitle"], 27,
-               606 if feature else 1650)
+    _paragraph(draw, (72, subtitle_y), scene["subtitle"], 27, 606 if feature else 1650)
 
 
 def _immersive_headlines(draw, scene):
     size = 82
-    while any(draw.textlength(line, font=_font(size, 700)) > 1776 for line in scene["title"]):
+    while any(
+        draw.textlength(line, font=_font(size, 700)) > 1776 for line in scene["title"]
+    ):
         size -= 1
     _text(draw, (72, 648), scene["eyebrow"], 21, _ACCENT, 700)
     for index, line in enumerate(scene["title"]):
-        _text(draw, (72, 697 + index * 95), line, size, _WHITE if index == 0 else _ACCENT, 700)
+        _text(
+            draw,
+            (72, 697 + index * 95),
+            line,
+            size,
+            _WHITE if index == 0 else _ACCENT,
+            700,
+        )
     _paragraph(draw, (72, 917), scene["subtitle"], 27, 1650)
 
 
@@ -174,8 +196,9 @@ def _labels(draw, scene):
         if scene["layout"] in {"hero", "cinematic"}:
             _text(draw, (72, 929), label, 20, _WHITE, 700)
             continue
-        draw.rectangle((x, y + height - 43, x + width - 1, y + height - 1),
-                       fill=(8, 13, 18, 232))
+        draw.rectangle(
+            (x, y + height - 43, x + width - 1, y + height - 1), fill=(8, 13, 18, 232)
+        )
         _text(draw, (x + 18, y + height - 30), label, 16, _WHITE, 700)
 
 
@@ -200,20 +223,27 @@ def _film_source_label(draw, label):
         size -= 1
     width = draw.textlength(label, font=_font(size, 600))
     left = _WIDTH - 96 - width - 40
-    draw.rounded_rectangle((left, 64, _WIDTH - 96, 120), radius=12,
-                           fill=(4, 8, 12, 205))
+    draw.rounded_rectangle(
+        (left, 64, _WIDTH - 96, 120), radius=12, fill=(4, 8, 12, 205)
+    )
     _text(draw, (left + 20, 78), label, size, _WHITE, 600)
 
 
 def _film_headlines(draw, scene):
     size = 76
-    while any(draw.textlength(line, font=_font(size, 600)) > 1728 for line in scene["title"]):
+    while any(
+        draw.textlength(line, font=_font(size, 600)) > 1728 for line in scene["title"]
+    ):
         size -= 1
     centered = scene.get("title_position", "bottom-left") == "center"
     spacing = round(size * 1.2)
     title_y = 470 if centered else 914 - spacing * len(scene["title"])
     for index, line in enumerate(scene["title"]):
-        x = (1920 - draw.textlength(line, font=_font(size, 600))) / 2 if centered else 96
+        x = (
+            (1920 - draw.textlength(line, font=_font(size, 600))) / 2
+            if centered
+            else 96
+        )
         _text(draw, (x, title_y + index * spacing), line, size, _WHITE, 600)
     subtitle = scene["subtitle"]
     x = (1920 - draw.textlength(subtitle, font=_font(26, 500))) / 2 if centered else 100
@@ -221,8 +251,13 @@ def _film_headlines(draw, scene):
 
 
 def _architecture_card(draw, node, x, width):
-    draw.rounded_rectangle((x, 442, x + width, 700), radius=20,
-                           fill=(18, 29, 35, 255), outline=(58, 77, 83, 255), width=2)
+    draw.rounded_rectangle(
+        (x, 442, x + width, 700),
+        radius=20,
+        fill=(18, 29, 35, 255),
+        outline=(58, 77, 83, 255),
+        width=2,
+    )
     _text(draw, (x + 30, 473), node["title"], 40, _WHITE, 700)
     _text(draw, (x + 30, 535), node["purpose"], 25, _ACCENT, 600)
     for index, model in enumerate(node["models"]):
@@ -241,11 +276,18 @@ def _architecture_base(scene):
         center = x + width // 2
         draw.line((center, 407, center, 442), fill=_ACCENT, width=3)
         draw.line((center, 700, center, 763), fill=_ACCENT, width=3)
-        draw.polygon(((center - 7, 752), (center + 7, 752), (center, 763)), fill=_ACCENT)
+        draw.polygon(
+            ((center - 7, 752), (center + 7, 752), (center, 763)), fill=_ACCENT
+        )
         _architecture_card(draw, node, x, width)
     draw.line((96, 407, 1824, 407), fill=(75, 98, 104, 255), width=2)
-    draw.rounded_rectangle((96, 775, 1824, 907), radius=20,
-                           fill=(25, 39, 41, 255), outline=_ACCENT, width=2)
+    draw.rounded_rectangle(
+        (96, 775, 1824, 907),
+        radius=20,
+        fill=(25, 39, 41, 255),
+        outline=_ACCENT,
+        width=2,
+    )
     _text(draw, (130, 805), scene["storage_node"]["title"], 35, _WHITE, 700)
     _text(draw, (580, 819), scene["storage_node"]["detail"], 24, _MUTED)
     _text(draw, (96, 958), scene["architecture_note"], 20, _MUTED)
@@ -268,7 +310,14 @@ def _details(draw, scene):
             _text(draw, (1442, y + 39), label, 34, _WHITE, 700)
     if layout == "pipeline":
         for index, label in enumerate(scene.get("pipeline_labels", [])):
-            _text(draw, ([72, 420, 1030][index], 949), label, 21, _ACCENT if index == 0 else _WHITE, 700)
+            _text(
+                draw,
+                ([72, 420, 1030][index], 949),
+                label,
+                21,
+                _ACCENT if index == 0 else _WHITE,
+                700,
+            )
     if layout == "close":
         _text(draw, (72, 953), scene.get("cta", ""), 24, _WHITE, 600)
 

@@ -931,14 +931,19 @@ def _validate_libero_runtime_authorization(
             "submission_identity",
             "LIBERO submission identity is invalid",
         ) from exc
-    from npa.workflows.byof.libero_customer import selected as customer_selected, validate_profile
+    from npa.workflows.byof.libero_customer import (
+        selected as customer_selected,
+        validate_profile,
+    )
 
     customer_run = customer_selected(documents)
     if customer_run:
         validate_profile(documents)
     try:
         if customer_run:
-            from npa.workflows.byof.libero_customer import image_manifest as customer_image_manifest
+            from npa.workflows.byof.libero_customer import (
+                image_manifest as customer_image_manifest,
+            )
 
             repository_manifest, qualification = customer_image_manifest(process_env)
         else:
@@ -1066,7 +1071,9 @@ def _libero_submission_authorization(
         from npa.workflows.byof.libero_customer import validate_authorization
 
         return validate_authorization(
-            process_env, image_manifest=image_manifest, run_id=run_id,
+            process_env,
+            image_manifest=image_manifest,
+            run_id=run_id,
             profile_sha256=executable_profile_sha256,
         )
 
@@ -1296,11 +1303,11 @@ def preflight_skypilot_submission(
         try:
             if not customer_run:
                 _verify_libero_output_storage_authorization(
-                documents,
-                process_env,
-                customer_authorization=customer_authorization,
-                run_id=run_id,
-            )
+                    documents,
+                    process_env,
+                    customer_authorization=customer_authorization,
+                    run_id=run_id,
+                )
         except ValueError as exc:
             raise ExecutionPreflightError(
                 "credentials",
@@ -1315,8 +1322,9 @@ def preflight_skypilot_submission(
             "alternative resource targets are ambiguous; select one effective resource mapping",
         )
     selected = (
-        SubmitCredentialContext() if customer_run else
-        resolve_submit_credentials(
+        SubmitCredentialContext()
+        if customer_run
+        else resolve_submit_credentials(
             project=project,
             environ=process_env,
             workflow_env=workflow_env,
@@ -1340,24 +1348,38 @@ def preflight_skypilot_submission(
         from npa.workflows.byof.libero_customer import controller_context
 
         try:
-            customer_controller = controller_context(process_env, infra.split("/", 1)[1])
+            customer_controller = controller_context(
+                process_env, infra.split("/", 1)[1]
+            )
         except (OSError, ValueError) as exc:
-            raise ExecutionPreflightError("cluster_owner", "LIBERO controller namespace identity is invalid") from exc
+            raise ExecutionPreflightError(
+                "cluster_owner", "LIBERO controller namespace identity is invalid"
+            ) from exc
         controller_resources = controller.get("resources") or {}
         if (
             controller_resources.get("cloud") != "kubernetes"
             or controller_resources.get("region") != customer_controller
             or controller_resources.get("accelerators")
         ):
-            raise ExecutionPreflightError("cluster_owner", "LIBERO controller differs from its verified CPU context")
-        contexts = ((global_config or {}).get("kubernetes") or {}).get("context_configs") or {}
+            raise ExecutionPreflightError(
+                "cluster_owner",
+                "LIBERO controller differs from its verified CPU context",
+            )
+        contexts = ((global_config or {}).get("kubernetes") or {}).get(
+            "context_configs"
+        ) or {}
         if (
             (global_config or {}).get("allowed_clouds") != ["kubernetes"]
-            or ((global_config or {}).get("nebius") or {}).get("remote_identity") != "NO_UPLOAD"
-            or (contexts.get(customer_controller) or {}).get("remote_identity") != "LOCAL_CREDENTIALS"
-            or (contexts.get(infra.split("/", 1)[1]) or {}).get("remote_identity") != "NO_UPLOAD"
+            or ((global_config or {}).get("nebius") or {}).get("remote_identity")
+            != "NO_UPLOAD"
+            or (contexts.get(customer_controller) or {}).get("remote_identity")
+            != "LOCAL_CREDENTIALS"
+            or (contexts.get(infra.split("/", 1)[1]) or {}).get("remote_identity")
+            != "NO_UPLOAD"
         ):
-            raise ExecutionPreflightError("credentials", "LIBERO requires controller-only kubeconfig transport")
+            raise ExecutionPreflightError(
+                "credentials", "LIBERO requires controller-only kubeconfig transport"
+            )
     if controller.get("resources"):
         if not isinstance(controller["resources"], Mapping):
             raise ExecutionPreflightError(
@@ -1442,7 +1464,9 @@ def preflight_skypilot_submission(
             raise ExecutionPreflightError(
                 "cluster_owner", "Kubernetes runtime configuration must be a mapping"
             )
-        kube_config["allowed_contexts"] = [context, customer_controller] if customer_run else [context]
+        kube_config["allowed_contexts"] = (
+            [context, customer_controller] if customer_run else [context]
+        )
     for document in documents:
         envs = document.setdefault("envs", {})
         bucket = process_env.get("NPA_S3_BUCKET")
@@ -1459,7 +1483,9 @@ def preflight_skypilot_submission(
                 envs["SONIC_OUTPUT_PREFIX"] = prefix
     destinations = skypilot_output_destinations(documents)
     if customer_run and destinations:
-        raise ExecutionPreflightError("storage_target", "customer-run artifacts must use controller retrieval")
+        raise ExecutionPreflightError(
+            "storage_target", "customer-run artifacts must use controller retrieval"
+        )
     from npa.orchestration.skypilot.storage_preflight import (
         nebius_mount_destinations,
         verify_nebius_mount_principal,
@@ -1533,12 +1559,16 @@ def preflight_skypilot_submission(
                         "native task placement disagrees with the explicit infrastructure",
                     )
                 resources["zone"] = placement[2]
-    injected = {} if customer_run else {
-        "AWS_ACCESS_KEY_ID": selected.access_key_id,
-        "AWS_SECRET_ACCESS_KEY": selected.secret_access_key,
-        "AWS_SESSION_TOKEN": selected.session_token,
-        **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, selected.endpoint_url),
-    }
+    injected = (
+        {}
+        if customer_run
+        else {
+            "AWS_ACCESS_KEY_ID": selected.access_key_id,
+            "AWS_SECRET_ACCESS_KEY": selected.secret_access_key,
+            "AWS_SESSION_TOKEN": selected.session_token,
+            **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, selected.endpoint_url),
+        }
+    )
     for document in documents:
         env = document.setdefault("envs", {})
         for name, value in injected.items():

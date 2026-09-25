@@ -264,10 +264,16 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
         "libero-caller-verification",
         "libero-customer-registration",
     }
-    storage_mount = next(mount for mount in mounts if mount["name"] == "libero-storage-verification")
+    storage_mount = next(
+        mount for mount in mounts if mount["name"] == "libero-storage-verification"
+    )
     assert storage_mount["readOnly"] is True
     assert storage_mount["subPath"] == "output-storage-authorization-public-key.b64"
-    storage_volume = next(volume for volume in pod_spec["volumes"] if volume["name"] == "libero-storage-verification")
+    storage_volume = next(
+        volume
+        for volume in pod_spec["volumes"]
+        if volume["name"] == "libero-storage-verification"
+    )
     assert storage_volume["configMap"]["defaultMode"] == 0o444
     assert "NVIDIA_VISIBLE_DEVICES" not in task["envs"]
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in task["envs"]
@@ -507,9 +513,7 @@ def test_libero_qualification_and_customer_authorization_are_separate(
         "canonical_build_metadata_sha256": qualification[
             "canonical_build_metadata_sha256"
         ],
-        "attestation_manifest_digest": qualification[
-            "attestation_manifest_digest"
-        ],
+        "attestation_manifest_digest": qualification["attestation_manifest_digest"],
         "attestation_config_digest": qualification["attestation_config_digest"],
         "attestation_layers": qualification["attestation_layers"],
         "package_version_digests": qualification["package_version_digests"],
@@ -569,23 +573,39 @@ def test_libero_qualification_and_customer_authorization_are_separate(
                 "runner_environment": "github-hosted",
             }
             for predicate_type, manifest_digit, bundle_digit in zip(
-                LIBERO_SIGSTORE_PUBLICATION_REFERRERS, ("e", "f"), ("8", "9"), strict=True
+                LIBERO_SIGSTORE_PUBLICATION_REFERRERS,
+                ("e", "f"),
+                ("8", "9"),
+                strict=True,
             )
         ]
         qualification["package_version_digests"] = sorted(
-            [digest, *(item["manifest_digest"] for item in qualification["attestations"])]
+            [
+                digest,
+                *(item["manifest_digest"] for item in qualification["attestations"]),
+            ]
         )
-        for field in ("attestation_manifest_digest", "attestation_config_digest", "attestation_layers"):
+        for field in (
+            "attestation_manifest_digest",
+            "attestation_config_digest",
+            "attestation_layers",
+        ):
             qualification.pop(field)
             publication_bundle.pop(field)
-        publication_bundle.update({
-            "schema": "npa.libero.publication-lineage-bundle.v4",
-            "platform_manifest_digest": digest,
-            "attestations": qualification["attestations"],
-            "package_version_digests": qualification["package_version_digests"],
-            "publication_enforcement_bundle_sha256": qualification["publication_enforcement_bundle_sha256"],
-            "operator_enforcement_bundle_sha256": qualification["operator_enforcement_bundle_sha256"],
-        })
+        publication_bundle.update(
+            {
+                "schema": "npa.libero.publication-lineage-bundle.v4",
+                "platform_manifest_digest": digest,
+                "attestations": qualification["attestations"],
+                "package_version_digests": qualification["package_version_digests"],
+                "publication_enforcement_bundle_sha256": qualification[
+                    "publication_enforcement_bundle_sha256"
+                ],
+                "operator_enforcement_bundle_sha256": qualification[
+                    "operator_enforcement_bundle_sha256"
+                ],
+            }
+        )
     qualification["publication_bundle_sha256"] = hashlib.sha256(
         json.dumps(publication_bundle, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -604,8 +624,14 @@ def test_libero_qualification_and_customer_authorization_are_separate(
             ("source_revision", "0" * 40),
             ("predicate_type", "https://spdx.dev/Document"),
             ("config_digest", "sha256:" + "0" * 64),
-            ("workflow_identity", "https://github.com/other/repo/workflow.yml@refs/heads/main"),
-            ("run_invocation_uri", "https://github.com/nebius/nebius-physical-ai/actions/runs/456/attempts/1"),
+            (
+                "workflow_identity",
+                "https://github.com/other/repo/workflow.yml@refs/heads/main",
+            ),
+            (
+                "run_invocation_uri",
+                "https://github.com/nebius/nebius-physical-ai/actions/runs/456/attempts/1",
+            ),
             ("verification_result_sha256", ""),
             ("certificate_issuer", "https://issuer.example.invalid"),
             ("runner_environment", "self-hosted"),
@@ -705,8 +731,12 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     ).decode("ascii")
     caller_bytes = json.dumps(caller_assertion, sort_keys=True).encode()
     monkeypatch.setenv("NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE", str(key_file))
-    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", str(customer_key_file))
-    monkeypatch.setenv("NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE", str(storage_key_file))
+    monkeypatch.setenv(
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", str(customer_key_file)
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE", str(storage_key_file)
+    )
     validated_caller, caller_sha256 = validate_libero_authenticated_caller_assertion(
         caller_bytes,
         run_id=run_id,
@@ -714,8 +744,12 @@ def test_libero_qualification_and_customer_authorization_are_separate(
     )
     with monkeypatch.context() as context:
         context.delenv("NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE")
-        with pytest.raises(RuntimeError, match="authenticated-caller trust-root file is unavailable"):
-            validate_libero_authenticated_caller_assertion(caller_bytes, run_id=run_id, now=now)
+        with pytest.raises(
+            RuntimeError, match="authenticated-caller trust-root file is unavailable"
+        ):
+            validate_libero_authenticated_caller_assertion(
+                caller_bytes, run_id=run_id, now=now
+            )
     assert (
         validated_caller["customer_identity_sha256"]
         == authorization["customer_identity_sha256"]
@@ -1082,7 +1116,8 @@ def test_publication_enforcement_bundle_detects_descendant_policy_drift(
 
 @pytest.mark.parametrize("qualification_version", [1, 2])
 def test_publication_enforcement_manifest_projection_avoids_digest_self_reference(
-    tmp_path, qualification_version,
+    tmp_path,
+    qualification_version,
 ) -> None:
     enforcement_paths = libero_publication_enforcement_paths(ROOT)
     for relative in enforcement_paths:
@@ -1097,22 +1132,28 @@ def test_publication_enforcement_manifest_projection_avoids_digest_self_referenc
         qualification["operator_enforcement_bundle_sha256"] = ""
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     accepted = libero_publication_enforcement_bundle_sha256(tmp_path)
-    field = "operator_enforcement_bundle_sha256" if qualification_version == 2 else "publication_enforcement_bundle_sha256"
+    field = (
+        "operator_enforcement_bundle_sha256"
+        if qualification_version == 2
+        else "publication_enforcement_bundle_sha256"
+    )
     qualification[field] = "a" * 64
     qualification["publication_bundle_sha256"] = "b" * 64
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     assert libero_publication_enforcement_bundle_sha256(tmp_path) == accepted
 
     if qualification_version == 2:
         qualification["publication_enforcement_bundle_sha256"] = "c" * 64
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
         assert libero_publication_enforcement_bundle_sha256(tmp_path) != accepted
 
 
 def test_libero_readiness_hashes_bind_every_execution_input() -> None:
-    readiness = json.loads(READINESS_PATH.read_text(encoding="utf-8"))
+    from npa.orchestration.npa_workflow.readiness import load_readiness_record
+
+    readiness = load_readiness_record(READINESS_PATH)
     expected_paths = {
         "workflow": WORKFLOW_PATH,
         "resource_profile": PROFILE_PATH,
@@ -1123,13 +1164,19 @@ def test_libero_readiness_hashes_bind_every_execution_input() -> None:
         "image_manifest": IMAGE_MANIFEST_PATH,
     }
 
-    assert readiness["schema_version"] == "workflow-readiness/v1"
-    assert readiness["solution"] == "libero"
-    assert readiness["status"] == "quarantined_unbuilt_unvalidated"
-    hashes = readiness["input_sha256"]
-    assert set(hashes) == set(expected_paths)
-    for name, path in expected_paths.items():
-        assert hashes[name] == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert readiness["public_image_digest"] == ""
-    assert readiness["anonymous_pull_verified"] is False
-    assert readiness["live_validated"] is False
+    evidence = readiness["planning"]["task_fidelity"]["evidence"]
+    hashes = {
+        item.split(" ", 1)[1]: item.split(" ", 1)[0].removeprefix("sha256:")
+        for item in evidence
+        if item.startswith("sha256:")
+    }
+    assert set(hashes) == {
+        str(path.relative_to(ROOT)) for path in expected_paths.values()
+    }
+    for path in expected_paths.values():
+        assert (
+            hashes[str(path.relative_to(ROOT))]
+            == hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+    assert readiness["prerequisites"]["source_image"]["status"] == "blocked"
+    assert readiness["prerequisites"]["target_runtime"]["status"] == "blocked"

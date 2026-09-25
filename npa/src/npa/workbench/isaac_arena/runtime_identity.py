@@ -29,7 +29,9 @@ def _source_identity(root: Path) -> dict[str, str]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise IsaacArenaError("Arena source identity metadata is missing or invalid") from exc
+        raise IsaacArenaError(
+            "Arena source identity metadata is missing or invalid"
+        ) from exc
     if not isinstance(payload, dict):
         raise IsaacArenaError("Arena source identity metadata must be an object")
     return {str(key): str(value) for key, value in payload.items()}
@@ -40,7 +42,9 @@ def _pyproject_version(root: Path) -> str:
         payload = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         return str(payload["project"]["version"])
     except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
-        raise IsaacArenaError("Arena installed source has no readable project version") from exc
+        raise IsaacArenaError(
+            "Arena installed source has no readable project version"
+        ) from exc
 
 
 def assert_runtime_identity(
@@ -61,7 +65,9 @@ def assert_runtime_identity(
     source_root = root or Path(env.get("ISAAC_ARENA_ROOT", ISAAC_ARENA_ROOT))
     if not source_root.is_dir():
         if env.get("NPA_LIGHT_WORKBENCH_TOOL") == "isaac-arena":
-            raise IsaacArenaError("Arena image marker is set but its source root is missing")
+            raise IsaacArenaError(
+                "Arena image marker is set but its source root is missing"
+            )
         return {"asserted": False, "reason": "baked_source_absent"}
     source = _source_identity(source_root)
     expected = {
@@ -71,15 +77,21 @@ def assert_runtime_identity(
         "archive_sha256": ISAAC_ARENA_ARCHIVE_SHA256,
     }
     if source != expected or _pyproject_version(source_root) != ISAAC_ARENA_VERSION:
-        raise IsaacArenaError("Arena installed source identity does not match the pinned release")
+        raise IsaacArenaError(
+            "Arena installed source identity does not match the pinned release"
+        )
     if env.get("ISAAC_ARENA_REVISION") != ISAAC_ARENA_REVISION:
-        raise IsaacArenaError("ISAAC_ARENA_REVISION does not match the installed source")
+        raise IsaacArenaError(
+            "ISAAC_ARENA_REVISION does not match the installed source"
+        )
     if env.get("ISAAC_ARENA_VERSION") != ISAAC_ARENA_VERSION:
         raise IsaacArenaError("ISAAC_ARENA_VERSION does not match the installed source")
     try:
         lightwheel_version = metadata.version("lightwheel-sdk")
     except metadata.PackageNotFoundError as exc:
-        raise IsaacArenaError("the pinned Lightwheel SDK distribution is not installed") from exc
+        raise IsaacArenaError(
+            "the pinned Lightwheel SDK distribution is not installed"
+        ) from exc
     if lightwheel_version != LIGHTWHEEL_SDK_VERSION:
         raise IsaacArenaError("installed Lightwheel SDK version does not match the pin")
     return {

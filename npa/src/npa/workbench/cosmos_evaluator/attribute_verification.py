@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import tempfile
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -63,9 +64,18 @@ QUESTION_SCHEMA: dict[str, Any] = {
         "schema": {
             "type": "object",
             "properties": {
-                "variable": {"type": "string", "description": "Name of the variable being verified"},
-                "value": {"type": "string", "description": "The selected value to verify"},
-                "question": {"type": "string", "description": "The multiple choice question text"},
+                "variable": {
+                    "type": "string",
+                    "description": "Name of the variable being verified",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The selected value to verify",
+                },
+                "question": {
+                    "type": "string",
+                    "description": "The multiple choice question text",
+                },
                 "options": {
                     "type": "object",
                     "properties": {
@@ -85,11 +95,19 @@ QUESTION_SCHEMA: dict[str, Any] = {
     },
 }
 
-REQUIRED_QUESTION_FIELDS = ("variable", "value", "question", "options", "correct_answer")
+REQUIRED_QUESTION_FIELDS = (
+    "variable",
+    "value",
+    "question",
+    "options",
+    "correct_answer",
+)
 ANSWER_LETTERS = ("A", "B", "C", "D")
 DEFAULT_QUESTION_MAX_TOKENS = 2048
 DEFAULT_VERIFY_MAX_TOKENS = 10
 ATTRIBUTE_SAMPLE_POLICIES = frozenset({"ranking", "holdout"})
+ATTRIBUTE_EVIDENCE_MODES = frozenset({"full-frame", "source-relative-change"})
+CHANGE_FOCUSED_VARIABLES = frozenset({"background", "color_grade", "surface_finish"})
 
 
 @dataclass(frozen=True)
@@ -104,6 +122,8 @@ class AttributeVerificationCheck:
     vlm_answer: str
     passed: bool
     error: str | None = None
+    evidence_mode: str = "full-frame"
+    vlm_model: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -123,6 +143,8 @@ class AttributeVerificationResult:
     vlm_model: str
     checks: list[AttributeVerificationCheck] = field(default_factory=list)
     threshold: float = 1.0
+    evidence_mode: str = "full-frame"
+    variable_vlm_models: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -143,6 +165,9 @@ def verify_attributes(
     max_tokens: int = DEFAULT_VERIFY_MAX_TOKENS,
     sample_policy: str = "ranking",
     threshold: float = 1.0,
+    reference_video: str | Path | None = None,
+    evidence_mode: str = "full-frame",
+    variable_vlm_models: dict[str, str] | None = None,
 ) -> AttributeVerificationResult:
     """Verify that ``video`` (or ``frame``) shows every selected attribute value.
 
@@ -153,40 +178,78 @@ def verify_attributes(
     from npa.clients.token_factory import DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODEL
 
     if not selected_variables:
-        raise CosmosEvaluatorError("attribute verification needs at least one selected variable")
+        raise CosmosEvaluatorError(
+            "attribute verification needs at least one selected variable"
+        )
     if not 0.0 < threshold <= 1.0:
-        raise CosmosEvaluatorError("attribute threshold must be greater than 0 and at most 1")
+        raise CosmosEvaluatorError(
+            "attribute threshold must be greater than 0 and at most 1"
+        )
     if (video is None) == (frame is None):
         raise CosmosEvaluatorError("pass exactly one of video= or frame=")
+
+    if sample_policy not in ATTRIBUTE_SAMPLE_POLICIES:
+        raise CosmosEvaluatorError("sample_policy must be ranking or holdout")
+    if evidence_mode not in ATTRIBUTE_EVIDENCE_MODES:
+        raise CosmosEvaluatorError(
+            "evidence_mode must be full-frame or source-relative-change"
+        )
+    if evidence_mode == "source-relative-change" and (
+        video is None or reference_video is None
+    ):
+        raise CosmosEvaluatorError(
+            "source-relative-change evidence needs generated and reference videos"
+        )
 
     active = client if client is not None else _default_client()
     llm_model = question_model or DEFAULT_TEXT_MODEL
     vision_model = vlm_model or DEFAULT_VISION_MODEL
-    options_table = {key: list(values) for key, values in (variable_options or {}).items()}
+    model_overrides = {
+        str(variable): str(model).strip()
+        for variable, model in (variable_vlm_models or {}).items()
+        if str(model).strip()
+    }
+    options_table = {
+        key: list(values) for key, values in (variable_options or {}).items()
+    }
 
-    if sample_policy not in ATTRIBUTE_SAMPLE_POLICIES:
-        raise CosmosEvaluatorError("sample_policy must be ranking or holdout")
-
-    with _frame_image(
-        video=video, frame=frame, sample_policy=sample_policy
-    ) as image_path:
-        image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
-        media_type = "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
-        data_url = f"data:{media_type};base64,{image_b64}"
+    with ExitStack() as stack:
+        full_frame_path = stack.enter_context(
+            _frame_image(video=video, frame=frame, sample_policy=sample_policy)
+        )
+        data_urls = {"full-frame": _data_url(full_frame_path)}
+        if evidence_mode == "source-relative-change":
+            focused_path = stack.enter_context(
+                _frame_image(
+                    video=video,
+                    frame=None,
+                    sample_policy=sample_policy,
+                    reference_video=reference_video,
+                    evidence_mode=evidence_mode,
+                )
+            )
+            data_urls[evidence_mode] = _data_url(focused_path)
 
         checks: list[AttributeVerificationCheck] = []
         for variable, value in selected_variables.items():
             options = options_table.get(variable) or [str(value)]
+            check_evidence_mode = (
+                evidence_mode
+                if evidence_mode == "source-relative-change"
+                and variable in CHANGE_FOCUSED_VARIABLES
+                else "full-frame"
+            )
             checks.append(
                 _verify_one(
                     client=active,
                     variable=str(variable),
                     value=str(value),
                     options=[str(option) for option in options],
-                    data_url=data_url,
+                    data_url=data_urls[check_evidence_mode],
                     llm_model=llm_model,
-                    vision_model=vision_model,
+                    vision_model=model_overrides.get(str(variable), vision_model),
                     max_tokens=max_tokens,
+                    evidence_mode=check_evidence_mode,
                 )
             )
 
@@ -195,7 +258,9 @@ def verify_attributes(
     score = round(passed_checks / len(checks), 6) if checks else 0.0
     return AttributeVerificationResult(
         clip_id=clip_id,
-        passed=bool(checks) and not any(check.error for check in checks) and score >= threshold,
+        passed=bool(checks)
+        and not any(check.error for check in checks)
+        and score >= threshold,
         total_checks=len(checks),
         passed_checks=passed_checks,
         failed_checks=failed_checks,
@@ -204,7 +269,15 @@ def verify_attributes(
         vlm_model=vision_model,
         checks=checks,
         threshold=threshold,
+        evidence_mode=evidence_mode,
+        variable_vlm_models=model_overrides,
     )
+
+
+def _data_url(image_path: Path) -> str:
+    image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    media_type = "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
+    return f"data:{media_type};base64,{image_b64}"
 
 
 def _verify_one(
@@ -217,6 +290,7 @@ def _verify_one(
     llm_model: str,
     vision_model: str,
     max_tokens: int,
+    evidence_mode: str = "full-frame",
 ) -> AttributeVerificationCheck:
     try:
         question = generate_question(
@@ -227,7 +301,9 @@ def _verify_one(
             model=llm_model,
         )
     except Exception as exc:  # noqa: BLE001 - one bad question must not drop the batch
-        _log.warning("question generation failed for %r: %s", variable, exc, exc_info=True)
+        _log.warning(
+            "question generation failed for %r: %s", variable, exc, exc_info=True
+        )
         return AttributeVerificationCheck(
             variable=variable,
             value=value,
@@ -237,6 +313,8 @@ def _verify_one(
             vlm_answer="",
             passed=False,
             error=f"question generation failed: {exc}"[:300],
+            evidence_mode=evidence_mode,
+            vlm_model=vision_model,
         )
 
     try:
@@ -247,6 +325,9 @@ def _verify_one(
             data_url=data_url,
             model=vision_model,
             max_tokens=max_tokens,
+            evidence_context=_evidence_context(
+                evidence_mode=evidence_mode,
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - record the failure, keep the batch
         _log.warning("VLM verification failed for %r: %s", variable, exc, exc_info=True)
@@ -259,6 +340,8 @@ def _verify_one(
             vlm_answer="",
             passed=False,
             error=f"vlm verification failed: {exc}"[:300],
+            evidence_mode=evidence_mode,
+            vlm_model=vision_model,
         )
 
     expected = str(question["correct_answer"]).upper()
@@ -270,6 +353,18 @@ def _verify_one(
         expected_answer=expected,
         vlm_answer=answer,
         passed=answer == expected,
+        evidence_mode=evidence_mode,
+        vlm_model=vision_model,
+    )
+
+
+def _evidence_context(*, evidence_mode: str) -> str:
+    if evidence_mode != "source-relative-change":
+        return ""
+    return (
+        "This is a source-relative crop containing only a large, consistently "
+        "changed part of the replaceable work surface. Judge this visible "
+        "work-surface crop."
     )
 
 
@@ -309,7 +404,9 @@ def generate_question(
         # about guided JSON.
         if not _looks_like_unsupported_response_format(exc):
             raise
-        _log.info("guided JSON unsupported by %s (%s); retrying unstructured", model, exc)
+        _log.info(
+            "guided JSON unsupported by %s (%s); retrying unstructured", model, exc
+        )
         text = client.chat_completion_text(
             model=model,
             messages=messages,
@@ -355,10 +452,13 @@ def answer_question(
     data_url: str,
     model: str,
     max_tokens: int = DEFAULT_VERIFY_MAX_TOKENS,
+    evidence_context: str = "",
 ) -> str:
     """Ask the VLM to answer ``question`` about the frame, returning a letter."""
 
     formatted = format_question(question, options)
+    if evidence_context:
+        formatted = f"{evidence_context.strip()}\n\n{formatted}"
     text = client.chat_completion_text(
         model=model,
         messages=[
@@ -412,7 +512,9 @@ def question_user_prompt(*, variable: str, value: str, options: Sequence[str]) -
 def format_question(question: str, options: dict[str, str]) -> str:
     """Upstream's rendering of a question plus its lettered options."""
 
-    options_text = "\n".join(f"{key}) {value}" for key, value in sorted(options.items()))
+    options_text = "\n".join(
+        f"{key}) {value}" for key, value in sorted(options.items())
+    )
     return f"{question}\n{options_text}\n\nAnswer with only a single letter (A, B, C, or D)."
 
 
@@ -426,8 +528,14 @@ def parse_question_response(text: str) -> dict[str, Any]:
     if not text:
         raise CosmosEvaluatorError("question generation returned no content")
     think_close = text.rfind("</think>")
-    base = text[think_close + len("</think>") :].strip() if think_close != -1 else text.strip()
-    fenced = re.search(r"```(?:json|javascript|js|python)?([\s\S]*?)```", base, flags=re.IGNORECASE)
+    base = (
+        text[think_close + len("</think>") :].strip()
+        if think_close != -1
+        else text.strip()
+    )
+    fenced = re.search(
+        r"```(?:json|javascript|js|python)?([\s\S]*?)```", base, flags=re.IGNORECASE
+    )
     candidate = fenced.group(1).strip() if fenced else base
     candidate = re.sub(r"```[a-zA-Z]*", "", candidate)
     candidate = re.sub(r"```", "", candidate)
@@ -442,7 +550,9 @@ def parse_question_response(text: str) -> dict[str, Any]:
         unwrapped = _unwrap_question(payload)
         if unwrapped is not None:
             return unwrapped
-    raise CosmosEvaluatorError("could not parse a verification question from the model output")
+    raise CosmosEvaluatorError(
+        "could not parse a verification question from the model output"
+    )
 
 
 def _unwrap_question(payload: Any) -> dict[str, Any] | None:
@@ -451,7 +561,9 @@ def _unwrap_question(payload: Any) -> dict[str, Any] | None:
             return payload
         for key in ("question", "item", "data", "result", "output"):
             inner = payload.get(key)
-            if isinstance(inner, dict) and all(field in inner for field in REQUIRED_QUESTION_FIELDS):
+            if isinstance(inner, dict) and all(
+                field in inner for field in REQUIRED_QUESTION_FIELDS
+            ):
                 return inner
     if isinstance(payload, list) and len(payload) == 1:
         return _unwrap_question(payload[0])
@@ -475,24 +587,32 @@ def normalize_question(
 
     raw_options = question.get("options")
     if not isinstance(raw_options, dict) or len(raw_options) < 2:
-        raise CosmosEvaluatorError(f"generated question for {variable!r} has no usable options")
+        raise CosmosEvaluatorError(
+            f"generated question for {variable!r} has no usable options"
+        )
     letters = {
         str(key).strip().upper(): str(text).strip()
         for key, text in raw_options.items()
         if str(key).strip().upper() in ANSWER_LETTERS and str(text).strip()
     }
     if len(letters) < 2:
-        raise CosmosEvaluatorError(f"generated question for {variable!r} has fewer than two lettered options")
+        raise CosmosEvaluatorError(
+            f"generated question for {variable!r} has fewer than two lettered options"
+        )
 
     wanted = str(value).strip().casefold()
-    matches = [letter for letter, text in letters.items() if text.strip().casefold() == wanted]
+    matches = [
+        letter for letter, text in letters.items() if text.strip().casefold() == wanted
+    ]
     if not matches:
         raise CosmosEvaluatorError(
             f"generated question for {variable!r} omits the requested value {value!r}"
         )
     text = str(question.get("question") or "").strip()
     if not text:
-        raise CosmosEvaluatorError(f"generated question for {variable!r} has no question text")
+        raise CosmosEvaluatorError(
+            f"generated question for {variable!r} has no question text"
+        )
     return {
         "variable": variable,
         "value": value,
@@ -516,7 +636,11 @@ def parse_answer_letter(text: str, *, offered: Iterable[str] | None = None) -> s
 
     if not text:
         return "UNKNOWN"
-    allowed = {str(letter).strip().upper() for letter in offered} if offered else set(ANSWER_LETTERS)
+    allowed = (
+        {str(letter).strip().upper() for letter in offered}
+        if offered
+        else set(ANSWER_LETTERS)
+    )
     allowed &= set(ANSWER_LETTERS)
     if not allowed:
         return "UNKNOWN"
@@ -546,10 +670,16 @@ class _FrameImage:
         video: str | Path | None,
         frame: str | Path | None,
         sample_policy: str = "ranking",
+        reference_video: str | Path | None = None,
+        evidence_mode: str = "full-frame",
     ) -> None:
         self._video = Path(video) if video is not None else None
         self._frame = Path(frame) if frame is not None else None
         self._sample_policy = sample_policy
+        self._reference_video = (
+            Path(reference_video) if reference_video is not None else None
+        )
+        self._evidence_mode = evidence_mode
         self._tmp: tempfile.TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> Path:
@@ -564,7 +694,11 @@ class _FrameImage:
         try:
             out = Path(self._tmp.name) / "representative_frames.jpg"
             _write_representative_contact_sheet(
-                self._video, out, sample_policy=self._sample_policy
+                self._video,
+                out,
+                sample_policy=self._sample_policy,
+                reference_video=self._reference_video,
+                evidence_mode=self._evidence_mode,
             )
         except BaseException:
             self.__exit__()
@@ -582,24 +716,45 @@ def _frame_image(
     video: str | Path | None,
     frame: str | Path | None,
     sample_policy: str = "ranking",
+    reference_video: str | Path | None = None,
+    evidence_mode: str = "full-frame",
 ) -> _FrameImage:
     return _FrameImage(
-        video=video, frame=frame, sample_policy=sample_policy
+        video=video,
+        frame=frame,
+        sample_policy=sample_policy,
+        reference_video=reference_video,
+        evidence_mode=evidence_mode,
     )
 
 
 def _write_representative_contact_sheet(
-    video: Path, output: Path, *, sample_policy: str = "ranking"
+    video: Path,
+    output: Path,
+    *,
+    sample_policy: str = "ranking",
+    reference_video: Path | None = None,
+    evidence_mode: str = "full-frame",
 ) -> None:
     """Decode deterministic ranking or disjoint holdout frames for verification."""
 
     try:
         import av
+        import numpy as np
         from PIL import Image
     except ImportError as exc:
         raise CosmosEvaluatorError(
-            "representative video verification requires PyAV and Pillow"
+            "representative video verification requires PyAV, NumPy, and Pillow"
         ) from exc
+
+    if evidence_mode not in ATTRIBUTE_EVIDENCE_MODES:
+        raise CosmosEvaluatorError(
+            "evidence_mode must be full-frame or source-relative-change"
+        )
+    if evidence_mode == "source-relative-change" and reference_video is None:
+        raise CosmosEvaluatorError(
+            "source-relative-change evidence needs a reference video"
+        )
 
     try:
         with av.open(str(video)) as container:
@@ -612,6 +767,18 @@ def _write_representative_contact_sheet(
             for index, frame in enumerate(container.decode(video=0)):
                 if index in targets:
                     frames.append(frame.to_image().convert("RGB"))
+        reference_frames: list[Image.Image] = []
+        if reference_video is not None:
+            with av.open(str(reference_video)) as container:
+                reference_frame_count = sum(1 for _frame in container.decode(video=0))
+            if reference_frame_count != frame_count:
+                raise CosmosEvaluatorError(
+                    "reference and augmented videos have different frame counts"
+                )
+            with av.open(str(reference_video)) as container:
+                for index, frame in enumerate(container.decode(video=0)):
+                    if index in targets:
+                        reference_frames.append(frame.to_image().convert("RGB"))
     except CosmosEvaluatorError:
         raise
     except Exception as exc:  # noqa: BLE001 - sanitized evaluator boundary
@@ -622,6 +789,20 @@ def _write_representative_contact_sheet(
         raise CosmosEvaluatorError(
             "the augmented video changed frame count while representative frames were decoded"
         )
+    if reference_video is not None and len(reference_frames) != len(targets):
+        raise CosmosEvaluatorError(
+            "the reference video changed frame count while representative frames were decoded"
+        )
+
+    if evidence_mode == "source-relative-change":
+        frames = [
+            _source_relative_change_crop(
+                generated=generated,
+                reference=reference,
+                np=np,
+            )
+            for generated, reference in zip(frames, reference_frames, strict=True)
+        ]
 
     normalized: list[Image.Image] = []
     for frame in frames:
@@ -638,9 +819,79 @@ def _write_representative_contact_sheet(
     sheet.save(output, format="JPEG", quality=95, subsampling=0)
 
 
-def _representative_frame_targets(
-    frame_count: int, sample_policy: str
-) -> set[int]:
+def _source_relative_change_crop(*, generated: Any, reference: Any, np: Any) -> Any:
+    """Crop the largest rectangle that is consistently changed from the source.
+
+    The crop is independent of the requested answer. It uses chroma distance to
+    exclude source-restored foreground pixels, thin letterbox boundaries, and
+    isolated codec noise. A missing material change fails closed instead of
+    quietly falling back to the whole frame.
+    """
+
+    from PIL import Image, ImageFilter
+
+    if generated.size != reference.size:
+        raise CosmosEvaluatorError(
+            "reference and augmented frames have different dimensions"
+        )
+    generated_ycbcr = np.asarray(generated.convert("YCbCr"), dtype=np.int16)
+    reference_ycbcr = np.asarray(reference.convert("YCbCr"), dtype=np.int16)
+    chroma_delta = np.sqrt(
+        np.square(generated_ycbcr[:, :, 1] - reference_ycbcr[:, :, 1])
+        + np.square(generated_ycbcr[:, :, 2] - reference_ycbcr[:, :, 2])
+    )
+    changed = chroma_delta >= 18.0
+    height, width = changed.shape
+    margin = max(2, int(min(height, width) * 0.025))
+    changed[:margin] = False
+    changed[-margin:] = False
+    changed[:, :margin] = False
+    changed[:, -margin:] = False
+
+    # Close codec-sized holes, then erode away transition boundaries so the
+    # chosen rectangle contains only high-confidence changed surface pixels.
+    mask = Image.fromarray((changed.astype(np.uint8) * 255), mode="L")
+    mask = mask.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.MinFilter(9))
+    mask = mask.filter(ImageFilter.MinFilter(15))
+    rectangle = _largest_true_rectangle(np.asarray(mask) >= 128, np=np)
+    area, left, top, right, bottom = rectangle
+    if area < height * width * 0.025:
+        raise CosmosEvaluatorError(
+            "source-relative appearance change is too small for attribute verification"
+        )
+    return generated.crop((left, top, right, bottom))
+
+
+def _largest_true_rectangle(mask: Any, *, np: Any) -> tuple[int, int, int, int, int]:
+    """Return ``(area, left, top, right, bottom)`` for a boolean mask."""
+
+    height, width = mask.shape
+    heights = np.zeros(width, dtype=np.int32)
+    best = (0, 0, 0, 0, 0)
+    for row in range(height):
+        heights = np.where(mask[row], heights + 1, 0)
+        stack: list[tuple[int, int]] = []
+        for column in range(width + 1):
+            current = int(heights[column]) if column < width else 0
+            start = column
+            while stack and stack[-1][1] > current:
+                candidate_left, candidate_height = stack.pop()
+                area = candidate_height * (column - candidate_left)
+                if area > best[0]:
+                    best = (
+                        area,
+                        candidate_left,
+                        row - candidate_height + 1,
+                        column,
+                        row + 1,
+                    )
+                start = candidate_left
+            if not stack or stack[-1][1] < current:
+                stack.append((start, current))
+    return best
+
+
+def _representative_frame_targets(frame_count: int, sample_policy: str) -> set[int]:
     """Return deterministic ranking or strictly disjoint holdout frame indices."""
 
     if frame_count < 1:
@@ -650,9 +901,7 @@ def _representative_frame_targets(
         return ranking_targets
     if sample_policy != "holdout":
         raise CosmosEvaluatorError("sample_policy must be ranking or holdout")
-    available = [
-        index for index in range(frame_count) if index not in ranking_targets
-    ]
+    available = [index for index in range(frame_count) if index not in ranking_targets]
     if not available:
         raise CosmosEvaluatorError(
             "holdout verification needs a frame not used by ranking"

@@ -1,0 +1,45 @@
+{
+  "artifact_uri": "subtask-proof.json",
+  "catalog": [
+    {
+      "subtask": "align",
+      "subtask_index": 0
+    },
+    {
+      "subtask": "approach",
+      "subtask_index": 1
+    },
+    {
+      "subtask": "grasp",
+      "subtask_index": 2
+    },
+    {
+      "subtask": "place",
+      "subtask_index": 3
+    }
+  ],
+  "expected_subtask": "grasp",
+  "proof": {
+    "episode_index": 0,
+    "frame_index": 2,
+    "row_sha256": "66fe074ecdf90002373a5882adc18f377aa91671258ab0927802a49228d5fc62",
+    "source_data_file": "data/chunk-000/file-000.parquet",
+    "source_parquet_sha256": "6d5147c5e438ae3870e5ff3cc590bea6bcf88b2febbc68ac84f12bdb19be1ce3",
+    "subtask": "grasp",
+    "subtask_index": 2,
+    "timestamp": 0.2
+  },
+  "schema": "npa.lerobot.subtask_proof.v1",
+  "source_catalog_sha256": "027cb6f8f779f08c930d9a405121b7b8eb2006da356895bb4e0d50f1338b26fd",
+  "source_dataset_uri": "reviewed",
+  "source_format": "lerobot-v3.0",
+  "status": "verified",
+  "summary": {
+    "episode_count": 2,
+    "frame_count": 8,
+    "labeled_frame_count": 8,
+    "segment_count": 4,
+    "subtask_count": 4,
+    "unlabeled_frame_count": 0
+  }
+}

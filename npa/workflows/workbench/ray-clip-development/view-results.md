@@ -10,7 +10,7 @@ conversion uses CPU only and does not start Ray or download a model.
 
 After the existing rsync and checksum step, convert either a basic `embed.py`
 result or a completed advanced `application.py` result. From the repository root,
-use the NPA environment (it already includes `rerun-sdk==0.31.4`, NumPy, PyArrow
+use the NPA environment (it already includes `rerun-sdk==0.38.1`, NumPy, PyArrow
 and Pillow):
 
 ```bash
@@ -69,3 +69,7 @@ NPA_INTEGRATION_E2E=1 NPA_RAY_CLIP_RESULTS="$RESULTS/baseline" \
 The test requires actual CUDA actor and completed inference receipts, invokes
 the converter CLI, runs Rerun's independent verifier and decodes every record
 index. Unit fixtures use explicit synthetic vectors and are not GPU evidence.
+
+New recordings use application id `npa-ray-clip-development`, which satisfies
+Rerun 0.38 catalog naming rules. Older recordings retain their original recorded
+identity; the updated viewer can read their RRD bytes.

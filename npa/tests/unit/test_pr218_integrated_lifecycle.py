@@ -732,6 +732,223 @@ def test_project_destroy_skips_not_submitted_workflow_cancellation(
     assert commands == [["npa", "workflow-list"]]
 
 
+@pytest.mark.parametrize(
+    (
+        "cancel_outcome",
+        "owned_teardown_allowed",
+        "expected_workflow_status",
+        "controller_runs",
+    ),
+    [
+        ("verification_failed", True, "degraded", True),
+        ("partial_cancellation", True, "degraded", True),
+        ("verification_failed", False, "partial", False),
+    ],
+)
+def test_project_destroy_consumes_only_structured_workflow_teardown_allowance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cancel_outcome: str,
+    owned_teardown_allowed: bool,
+    expected_workflow_status: str,
+    controller_runs: bool,
+) -> None:
+    from npa.clients import config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"projects": {"demo": {"project_id": "project-a"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    commands: list[str] = []
+
+    def runner(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        commands.append(str(cmd[1]))
+        if cmd[1] == "workflow-list":
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    {
+                        "runs": [
+                            {
+                                "run_id": "stale-run",
+                                "status": "RUNNING",
+                                "submission_state": "RUNNING",
+                            }
+                        ]
+                    }
+                ),
+                stderr="",
+            )
+        if cmd[1] == "workbench":
+            return subprocess.CompletedProcess(
+                cmd,
+                2,
+                stdout=json.dumps(
+                    {
+                        "run_id": "stale-run",
+                        "outcome": cancel_outcome,
+                        "detected_state": "VERIFICATION_UNAVAILABLE",
+                        "owned_teardown_allowed": owned_teardown_allowed,
+                        "durable_absence_conflict_job_ids": ["701"],
+                        "sky_job_ids": ["701"],
+                        "cancelled_job_ids": (
+                            ["802"] if cancel_outcome == "partial_cancellation" else []
+                        ),
+                        "jobs": [
+                            {
+                                "job_id": "701",
+                                "live_outcome": "absent",
+                                "persisted_states": ["RUNNING"],
+                            },
+                            *(
+                                [
+                                    {
+                                        "job_id": "802",
+                                        "live_outcome": "found",
+                                        "live_status": "RUNNING",
+                                        "persisted_states": ["RUNNING"],
+                                    }
+                                ]
+                                if cancel_outcome == "partial_cancellation"
+                                else []
+                            ),
+                        ],
+                        "durable_absence_conflict_errors": [
+                            "durable state contradicts exact verified absence"
+                        ],
+                        "errors": ["durable state contradicts exact verified absence"],
+                    }
+                ),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    result = execute_project_destroy(
+        "demo",
+        [
+            DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory"),
+            DestroyPhase(
+                "controller",
+                (("npa", "controller-destroy"),),
+                "controller",
+                ("workflows",),
+            ),
+        ],
+        runner=runner,
+    )
+
+    statuses = {item["phase"]: item["status"] for item in result["phases"]}
+    assert statuses["workflows"] == expected_workflow_status
+    assert (statuses["controller"] == "completed") is controller_runs
+    assert ("controller-destroy" in commands) is controller_runs
+    if owned_teardown_allowed:
+        assert result["phases"][0]["warnings"]
+        assert result["phases"][0]["errors"] == []
+    else:
+        assert result["phases"][0]["errors"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("outcome", "cancelled"),
+        ("detected_state", "ACTIVE"),
+        ("durable_absence_conflict_job_ids", []),
+        ("errors", ["conflict", "provider unavailable"]),
+        ("durable_absence_conflict_errors", ["different error"]),
+        (
+            "jobs",
+            [
+                {
+                    "job_id": "701",
+                    "live_outcome": "unavailable",
+                    "persisted_states": ["RUNNING"],
+                }
+            ],
+        ),
+        (
+            "jobs",
+            [
+                {
+                    "job_id": "701",
+                    "live_outcome": "absent",
+                    "persisted_states": ["RUNNING"],
+                },
+                {
+                    "job_id": "802",
+                    "live_outcome": "found",
+                    "live_status": "RUNNING",
+                    "persisted_states": ["RUNNING"],
+                },
+            ],
+        ),
+        (
+            "jobs",
+            [
+                {
+                    "job_id": "701",
+                    "live_outcome": "absent",
+                    "persisted_states": ["SUCCEEDED"],
+                }
+            ],
+        ),
+        (
+            "jobs",
+            [
+                {
+                    "job_id": "701",
+                    "live_outcome": "absent",
+                    "persisted_states": ["RUNNING"],
+                },
+                {
+                    "job_id": "802",
+                    "live_outcome": "durable_terminal",
+                    "persisted_states": ["RUNNING"],
+                },
+            ],
+        ),
+        ("cancelled_job_ids", ["802"]),
+    ],
+)
+def test_project_destroy_rejects_broadened_workflow_teardown_allowance(
+    field: str, value: object
+) -> None:
+    from npa.project_destroy import _owned_workflow_teardown_allowance
+
+    payload = {
+        "run_id": "stale-run",
+        "outcome": "verification_failed",
+        "detected_state": "VERIFICATION_UNAVAILABLE",
+        "owned_teardown_allowed": True,
+        "durable_absence_conflict_job_ids": ["701"],
+        "cancelled_job_ids": [],
+        "jobs": [
+            {
+                "job_id": "701",
+                "live_outcome": "absent",
+                "persisted_states": ["RUNNING"],
+            }
+        ],
+        "durable_absence_conflict_errors": [
+            "durable state contradicts exact verified absence"
+        ],
+        "errors": ["durable state contradicts exact verified absence"],
+    }
+    payload[field] = value
+    completed = subprocess.CompletedProcess(
+        ["npa", "workbench", "workflow", "cancel"],
+        2,
+        stdout=json.dumps(payload),
+        stderr="",
+    )
+
+    assert _owned_workflow_teardown_allowance(completed) is None
+
+
 def test_project_destroy_exact_empty_inventory_converges_despite_exit_race(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -845,8 +1062,12 @@ def test_agent_destroy_no_vm_id_continues_exact_owned_iam_cleanup(
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_a: True)
     monkeypatch.setattr("npa.cli.agent_iam._provider_agent_dependents", lambda *_a: [])
     monkeypatch.setattr("npa.cli.agent_iam._verify_access_key_absent", lambda *_a: None)
-    monkeypatch.setattr("npa.clients.agent_iam_binding.remove_created_agent_account",
-                        lambda project, tenant, account: __import__("npa.clients.nebius", fromlist=["delete_service_account"]).delete_service_account(account))
+    monkeypatch.setattr(
+        "npa.clients.agent_iam_binding.remove_created_agent_account",
+        lambda project, tenant, account: __import__(
+            "npa.clients.nebius", fromlist=["delete_service_account"]
+        ).delete_service_account(account),
+    )
 
     result = CliRunner().invoke(
         app, ["agent", "destroy", "--project", "demo", "--purge-iam", "--yes", "--json"]
@@ -1790,8 +2011,12 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_a: True)
     monkeypatch.setattr("npa.cli.agent_iam._provider_agent_dependents", lambda *_a: [])
     monkeypatch.setattr("npa.cli.agent_iam._verify_access_key_absent", lambda *_a: None)
-    monkeypatch.setattr("npa.clients.agent_iam_binding.remove_created_agent_account",
-                        lambda project, tenant, account: __import__("npa.clients.nebius", fromlist=["delete_service_account"]).delete_service_account(account))
+    monkeypatch.setattr(
+        "npa.clients.agent_iam_binding.remove_created_agent_account",
+        lambda project, tenant, account: __import__(
+            "npa.clients.nebius", fromlist=["delete_service_account"]
+        ).delete_service_account(account),
+    )
     report_agent_iam(
         project_id="project-a",
         remaining_agents=0,

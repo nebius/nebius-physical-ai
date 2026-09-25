@@ -52,14 +52,10 @@ SIM2REAL_ENVGEN_SPLIT = (
 )
 # The raw cosmos2-transfer template is retired; its spec is the surface, and unlike the
 # template it runs the real model (EVIDENCE.md §R38).
-COSMOS2_TRANSFER = (
-    ROOT / "workflows" / "testing" / "cosmos2-transfer.yaml"
-)
+COSMOS2_TRANSFER = ROOT / "workflows" / "testing" / "cosmos2-transfer.yaml"
 # The raw cosmos3-reason template is retired; its npa.workflow spec is the surface
 # (both run the same manifest builder — EVIDENCE §R2).
-COSMOS3_REASON = (
-    ROOT / "workflows" / "testing" / "cosmos3-reason.yaml"
-)
+COSMOS3_REASON = ROOT / "workflows" / "testing" / "cosmos3-reason.yaml"
 
 
 def _component_command(tmp_path: Path) -> str:
@@ -1229,15 +1225,11 @@ def test_kubernetes_component_env_uses_secret_refs_for_storage_credentials(
     )
     assert "ACCEPT_EULA" not in non_isaac_safe
 
-    opted_out = package_component_env(
-        {"ACCEPT_EULA": "no"}, config, isaac_backed=True
-    )
+    opted_out = package_component_env({"ACCEPT_EULA": "no"}, config, isaac_backed=True)
     assert opted_out["ACCEPT_EULA"] == ""
 
     with pytest.raises(ValueError, match="Invalid ACCEPT_EULA"):
-        package_component_env(
-            {"ACCEPT_EULA": "maybe"}, config, isaac_backed=True
-        )
+        package_component_env({"ACCEPT_EULA": "maybe"}, config, isaac_backed=True)
 
 
 def test_compatibility_surface_has_no_legacy_kubectl_controller() -> None:
@@ -1306,8 +1298,7 @@ def test_default_images_ignore_generic_build_registry(monkeypatch) -> None:
         "2.5.1-sim2real-coherent-20260904"
     )
     assert (
-        config.vlm_image
-        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
+        config.vlm_image == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
         "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
 
@@ -2509,10 +2500,7 @@ def test_action_conditioning_is_a_stage_of_the_envgen_spec_and_is_cpu() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    spec = load_spec(
-        ROOT
-        / "workflows" / "testing" / "sim2real-envgen-shards.yaml"
-    )
+    spec = load_spec(ROOT / "workflows" / "testing" / "sim2real-envgen-shards.yaml")
     plan = build_plan(spec, run_id="envgen-actions-test")
 
     actions = next(step for step in plan.steps if step.state == "actions")
@@ -2541,10 +2529,7 @@ def test_envgen_shard_fan_out_is_cpu_and_declares_its_shards() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    spec = load_spec(
-        ROOT
-        / "workflows" / "testing" / "sim2real-envgen-shards.yaml"
-    )
+    spec = load_spec(ROOT / "workflows" / "testing" / "sim2real-envgen-shards.yaml")
     plan = build_plan(spec, run_id="envgen-shards-test")
 
     for profile in spec.resources.values():
@@ -2581,10 +2566,7 @@ def test_cosmos_split_sdk_and_raw_yaml_contracts() -> None:
 
     assert transfer["schema"] == "npa.cosmos2.transfer.v1"
     assert reason["schema"] == "npa.cosmos3.reason.v1"
-    assert (
-        transfer["image"]
-        == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
-    )
+    assert transfer["image"] == "npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2"
     assert reason["image"] == "npa-cosmos3-reason:3.0.0"
     assert transfer["image"] != reason["image"]
     assert "cosmos3" not in transfer["image"]

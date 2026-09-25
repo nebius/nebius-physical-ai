@@ -132,6 +132,7 @@ def _customer_run_key() -> bytes:
         CUSTOMER_RUN_PUBLIC_KEY, owner_uid=0, label="customer-run signer"
     )
 
+
 CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
 AUTHENTICATED_CALLER_NAMESPACE = b"npa.libero.authenticated-caller"
 OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE = b"npa.libero.output-storage-authorization"
@@ -423,7 +424,15 @@ _OUTPUT_JSON_TOP_LEVEL_KEYS = {
 }
 _OUTPUT_JSON_REQUIRED_KEYS = {
     "libero-smoke.json": frozenset(
-        {"schema", "status", "exit_status", "solution", "capability", "source", "dataset"}
+        {
+            "schema",
+            "status",
+            "exit_status",
+            "solution",
+            "capability",
+            "source",
+            "dataset",
+        }
     ),
     "npa_byof_summary.json": frozenset(
         {"status", "tool", "workload", "run_id", "smoke_exit_code"}
@@ -436,7 +445,14 @@ _OUTPUT_JSON_REQUIRED_KEYS = {
     ),
 }
 _EMBEDDED_OUTPUT_KEYS = frozenset(
-    {"payload", "raw", "raw_bytes", "source_bytes", "checkpoint_bytes", "artifact_bytes"}
+    {
+        "payload",
+        "raw",
+        "raw_bytes",
+        "source_bytes",
+        "checkpoint_bytes",
+        "artifact_bytes",
+    }
 )
 
 
@@ -465,7 +481,11 @@ _SMOKE_SOURCE = _output_object(
     }
     | {
         key: _BOOL
-        for key in ("source_prune_path_absent", "git_objects_absent", "layer_scan_required_before_live_use")
+        for key in (
+            "source_prune_path_absent",
+            "git_objects_absent",
+            "layer_scan_required_before_live_use",
+        )
     },
     frozenset({"repository", "revision", "license"}),
 )
@@ -484,12 +504,15 @@ _SMOKE_DATASET = _output_object(
             "dataset_bddl_path",
         )
     }
-    | {
-        key: _HEX64 for key in ("expected_sha256", "observed_sha256")
-    }
+    | {key: _HEX64 for key in ("expected_sha256", "observed_sha256")}
     | {
         key: _INTEGER
-        for key in ("expected_size_bytes", "observed_size_bytes", "demo_count", "sample_count")
+        for key in (
+            "expected_size_bytes",
+            "observed_size_bytes",
+            "demo_count",
+            "sample_count",
+        )
     }
     | {"downloaded_this_run": _BOOL},
     frozenset(
@@ -508,7 +531,11 @@ _SMOKE_DATASET = _output_object(
     ),
 )
 _LANGUAGE_MODEL_FILE = _output_object(
-    {"expected_size_bytes": _INTEGER, "expected_sha256": _HEX64, "observed_sha256": _HEX64},
+    {
+        "expected_size_bytes": _INTEGER,
+        "expected_sha256": _HEX64,
+        "observed_sha256": _HEX64,
+    },
     frozenset({"expected_size_bytes", "expected_sha256", "observed_sha256"}),
 )
 _SMOKE_LANGUAGE_MODEL = _output_object(
@@ -530,8 +557,22 @@ _SMOKE_LANGUAGE_MODEL = _output_object(
     frozenset({"repository", "revision", "license", "delivery"}),
 )
 _SMOKE_TASK_ASSETS = _output_object(
-    {"bddl_path": _STRING, "bddl_sha256": _HEX64, "initial_states_path": _STRING, "initial_states_sha256": _HEX64, "source_license": _STRING},
-    frozenset({"bddl_path", "bddl_sha256", "initial_states_path", "initial_states_sha256", "source_license"}),
+    {
+        "bddl_path": _STRING,
+        "bddl_sha256": _HEX64,
+        "initial_states_path": _STRING,
+        "initial_states_sha256": _HEX64,
+        "source_license": _STRING,
+    },
+    frozenset(
+        {
+            "bddl_path",
+            "bddl_sha256",
+            "initial_states_path",
+            "initial_states_sha256",
+            "source_license",
+        }
+    ),
 )
 _SMOKE_SPLIT = _output_object(
     {
@@ -547,8 +588,15 @@ _SMOKE_SPLIT = _output_object(
     },
     frozenset(
         {
-            "strategy", "seed", "disjoint", "train_demo_count", "heldout_demo_count",
-            "train_demo_ids_sha256", "heldout_demo_ids_sha256", "train_sample_count", "heldout_sample_count",
+            "strategy",
+            "seed",
+            "disjoint",
+            "train_demo_count",
+            "heldout_demo_count",
+            "train_demo_ids_sha256",
+            "heldout_demo_ids_sha256",
+            "train_sample_count",
+            "heldout_sample_count",
         }
     ),
 )
@@ -565,19 +613,62 @@ _SMOKE_TRAINING = _output_object(
         "sequence_length": _INTEGER,
         "task_embedding": _STRING,
     },
-    frozenset({"algorithm", "optimizer", "optimizer_steps", "requested_optimizer_steps", "parameter_max_abs_delta", "first_loss", "final_loss", "all_losses_finite", "sequence_length", "task_embedding"}),
+    frozenset(
+        {
+            "algorithm",
+            "optimizer",
+            "optimizer_steps",
+            "requested_optimizer_steps",
+            "parameter_max_abs_delta",
+            "first_loss",
+            "final_loss",
+            "all_losses_finite",
+            "sequence_length",
+            "task_embedding",
+        }
+    ),
 )
 _SMOKE_HELDOUT = _output_object(
-    {"negative_log_likelihood": _NUMBER, "evaluated_sample_count": _INTEGER, "partition": _STRING},
+    {
+        "negative_log_likelihood": _NUMBER,
+        "evaluated_sample_count": _INTEGER,
+        "partition": _STRING,
+    },
     frozenset({"negative_log_likelihood", "evaluated_sample_count", "partition"}),
 )
 _SMOKE_CHECKPOINT = _output_object(
-    {"file": _STRING, "sha256": _HEX64, "saved_with": _STRING, "reloaded_with": _STRING, "strict_state_dict_load": _BOOL},
-    frozenset({"file", "sha256", "saved_with", "reloaded_with", "strict_state_dict_load"}),
+    {
+        "file": _STRING,
+        "sha256": _HEX64,
+        "saved_with": _STRING,
+        "reloaded_with": _STRING,
+        "strict_state_dict_load": _BOOL,
+    },
+    frozenset(
+        {"file", "sha256", "saved_with", "reloaded_with", "strict_state_dict_load"}
+    ),
 )
 _SMOKE_RELOADED = _output_object(
-    {"shape": ("integer_array", 8), "dtype": _STRING, "finite": _BOOL, "prediction_sha256": _HEX64, "value_min": _NUMBER, "value_max": _NUMBER, "evaluated_sample_count": _INTEGER},
-    frozenset({"shape", "dtype", "finite", "prediction_sha256", "value_min", "value_max", "evaluated_sample_count"}),
+    {
+        "shape": ("integer_array", 8),
+        "dtype": _STRING,
+        "finite": _BOOL,
+        "prediction_sha256": _HEX64,
+        "value_min": _NUMBER,
+        "value_max": _NUMBER,
+        "evaluated_sample_count": _INTEGER,
+    },
+    frozenset(
+        {
+            "shape",
+            "dtype",
+            "finite",
+            "prediction_sha256",
+            "value_min",
+            "value_max",
+            "evaluated_sample_count",
+        }
+    ),
 )
 _SMOKE_RUNTIME = _output_object(
     {
@@ -598,7 +689,16 @@ _SMOKE_RUNTIME = _output_object(
         "controller_service_account_separated": _BOOL,
         "host_architecture": _STRING,
     },
-    frozenset({"gpu_model", "gpu_architecture", "compute_capability", "gpu_count", "torch_cuda_arch_list", "nvidia_smi"}),
+    frozenset(
+        {
+            "gpu_model",
+            "gpu_architecture",
+            "compute_capability",
+            "gpu_count",
+            "torch_cuda_arch_list",
+            "nvidia_smi",
+        }
+    ),
 )
 _SMOKE_BUILD = _output_object(
     {
@@ -615,10 +715,30 @@ _SMOKE_BUILD = _output_object(
         "git_objects_present_in_final_filesystem": _BOOL,
         "independent_oci_layer_scan_required_before_live_use": _BOOL,
     },
-    frozenset({"runtime_metadata", "accepted_canonical_build_metadata_sha256", "base_image_digest", "base_rootfs_material_digest", "base_image_digest_pinned", "base_image_provenance", "dataset_delivery", "weights_delivery", "render_assets_present_in_final_filesystem", "render_assets_removed_path", "git_objects_present_in_final_filesystem", "independent_oci_layer_scan_required_before_live_use"}),
+    frozenset(
+        {
+            "runtime_metadata",
+            "accepted_canonical_build_metadata_sha256",
+            "base_image_digest",
+            "base_rootfs_material_digest",
+            "base_image_digest_pinned",
+            "base_image_provenance",
+            "dataset_delivery",
+            "weights_delivery",
+            "render_assets_present_in_final_filesystem",
+            "render_assets_removed_path",
+            "git_objects_present_in_final_filesystem",
+            "independent_oci_layer_scan_required_before_live_use",
+        }
+    ),
 )
 _SMOKE_BOUNDARIES = _output_object(
-    {"cache": _STRING, "output": _STRING, "cache_uploaded": _BOOL, "rendering_invoked": _BOOL},
+    {
+        "cache": _STRING,
+        "output": _STRING,
+        "cache_uploaded": _BOOL,
+        "rendering_invoked": _BOOL,
+    },
     frozenset({"cache", "output", "cache_uploaded", "rendering_invoked"}),
 )
 _RUNTIME_METADATA_FIELDS = {
@@ -646,7 +766,9 @@ _RUNTIME_METADATA_FIELDS = {
     "content_inventory_sha256": _HEX64,
     "content_inventory_entry_count": _INTEGER,
 }
-_RUNTIME_METADATA_SCHEMA = _output_object(_RUNTIME_METADATA_FIELDS, frozenset(_RUNTIME_METADATA_FIELDS))
+_RUNTIME_METADATA_SCHEMA = _output_object(
+    _RUNTIME_METADATA_FIELDS, frozenset(_RUNTIME_METADATA_FIELDS)
+)
 _RUNTIME_BOOTSTRAP_FIELDS = {
     **_RUNTIME_METADATA_FIELDS,
     "status": _STRING,
@@ -681,13 +803,55 @@ _OUTPUT_SCHEMAS = {
             "build": _SMOKE_BUILD,
             "boundaries": _SMOKE_BOUNDARIES,
             "deferred": ("string_array", 16),
-            "error": _output_object({"type": _STRING, "message": _STRING}, frozenset({"type", "message"})),
+            "error": _output_object(
+                {"type": _STRING, "message": _STRING}, frozenset({"type", "message"})
+            ),
         },
-        frozenset({"schema", "status", "exit_status", "solution", "capability", "capabilities_exercised", "source", "dataset", "task_language_model"}),
+        frozenset(
+            {
+                "schema",
+                "status",
+                "exit_status",
+                "solution",
+                "capability",
+                "capabilities_exercised",
+                "source",
+                "dataset",
+                "task_language_model",
+            }
+        ),
     ),
     "npa_byof_summary.json": _output_object(
-        {"status": _STRING, "tool": _STRING, "workload": _STRING, "run_id": _STRING, "image": _STRING, "solution_name": _STRING, "capability_name": _STRING, "smoke_artifact_name": _STRING, "smoke_exit_code": _INTEGER, "runtime_cache_uploaded": _BOOL, "rendering_invoked": _BOOL, "created_unix": _NUMBER},
-        frozenset({"status", "tool", "workload", "run_id", "image", "solution_name", "capability_name", "smoke_artifact_name", "smoke_exit_code", "runtime_cache_uploaded", "rendering_invoked", "created_unix"}),
+        {
+            "status": _STRING,
+            "tool": _STRING,
+            "workload": _STRING,
+            "run_id": _STRING,
+            "image": _STRING,
+            "solution_name": _STRING,
+            "capability_name": _STRING,
+            "smoke_artifact_name": _STRING,
+            "smoke_exit_code": _INTEGER,
+            "runtime_cache_uploaded": _BOOL,
+            "rendering_invoked": _BOOL,
+            "created_unix": _NUMBER,
+        },
+        frozenset(
+            {
+                "status",
+                "tool",
+                "workload",
+                "run_id",
+                "image",
+                "solution_name",
+                "capability_name",
+                "smoke_artifact_name",
+                "smoke_exit_code",
+                "runtime_cache_uploaded",
+                "rendering_invoked",
+                "created_unix",
+            }
+        ),
     ),
     "npa_runtime_bootstrap.json": _RUNTIME_BOOTSTRAP_SCHEMA,
     "npa_runtime_metadata.json": _RUNTIME_METADATA_SCHEMA,
@@ -701,25 +865,47 @@ def _validate_output_value(value: Any, spec: tuple, *, path: str) -> None:
     elif kind == "bool":
         valid = isinstance(value, bool)
     elif kind == "integer":
-        valid = isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2**63 - 1
+        valid = (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= 2**63 - 1
+        )
     elif kind == "number":
-        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+        valid = (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+        )
     elif kind == "hex40":
-        valid = isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+        valid = (
+            isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+        )
     elif kind == "hex64":
-        valid = isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+        valid = (
+            isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+        )
     elif kind == "object":
         _validate_output_object(value, spec[1], spec[2], path=path)
         return
     elif kind == "runtime_metadata":
-        _validate_output_object(value, _RUNTIME_METADATA_FIELDS, frozenset(_RUNTIME_METADATA_FIELDS), path=path)
+        _validate_output_object(
+            value,
+            _RUNTIME_METADATA_FIELDS,
+            frozenset(_RUNTIME_METADATA_FIELDS),
+            path=path,
+        )
         return
     elif kind == "map":
         valid = isinstance(value, dict) and len(value) <= spec[2]
         if valid:
             for key, child in value.items():
-                if not isinstance(key, str) or re.fullmatch(r"[A-Za-z0-9._-]{1,128}", key) is None:
-                    raise BootstrapRefusal(f"output JSON schema is invalid:{path}.{key}")
+                if (
+                    not isinstance(key, str)
+                    or re.fullmatch(r"[A-Za-z0-9._-]{1,128}", key) is None
+                ):
+                    raise BootstrapRefusal(
+                        f"output JSON schema is invalid:{path}.{key}"
+                    )
                 _validate_output_value(child, spec[1], path=f"{path}.{key}")
         if not valid:
             raise BootstrapRefusal(f"output JSON schema is invalid:{path}")
@@ -739,8 +925,14 @@ def _validate_output_value(value: Any, spec: tuple, *, path: str) -> None:
         raise BootstrapRefusal(f"output JSON schema is invalid:{path}")
 
 
-def _validate_output_object(value: Any, fields: dict[str, tuple], required: frozenset[str], *, path: str) -> None:
-    if not isinstance(value, dict) or set(value) - set(fields) or not required <= set(value):
+def _validate_output_object(
+    value: Any, fields: dict[str, tuple], required: frozenset[str], *, path: str
+) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) - set(fields)
+        or not required <= set(value)
+    ):
         raise BootstrapRefusal(f"output JSON schema is not closed:{path}")
     for key, child in value.items():
         _validate_output_value(child, fields[key], path=f"{path}.{key}")
@@ -750,7 +942,9 @@ def _reject_embedded_output(value: Any, *, path: str) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             if key in _EMBEDDED_OUTPUT_KEYS:
-                raise BootstrapRefusal(f"embedded output payload is not allowed:{path}.{key}")
+                raise BootstrapRefusal(
+                    f"embedded output payload is not allowed:{path}.{key}"
+                )
             _reject_embedded_output(child, path=f"{path}.{key}")
     elif isinstance(value, list):
         if len(value) > 1024:
@@ -833,7 +1027,11 @@ def _read_private_regular_bytes(path: Path, *, limit: int, input_name: str) -> b
 
 
 def _read_private_regular_descriptor(
-    descriptor: int, *, limit: int, owner_uid: int, input_name: str,
+    descriptor: int,
+    *,
+    limit: int,
+    owner_uid: int,
+    input_name: str,
     allow_unlinked: bool = False,
 ) -> bytes:
     """Read stable private bytes without changing an inherited descriptor offset."""
@@ -1212,6 +1410,8 @@ def wait_for_release() -> dict[str, str]:
             time.sleep(1)
             continue
         return {"pod_uid_sha256": hashlib.sha256(uid.encode()).hexdigest()}
+
+
 def _open_https_download(
     url: str, *, terms: bool = False, deadline: datetime | None = None
 ) -> tuple[http.client.HTTPSConnection, http.client.HTTPResponse]:
@@ -1797,7 +1997,9 @@ def _validate_authenticated_caller_binding(
         signature_path = root_path / "caller.sig"
         allowed_path.write_text(allowed_signer, encoding="ascii")
         signature_path.write_bytes(
-            _sshsig_envelope(AUTHENTICATED_CALLER_NAMESPACE, trusted_public_key, signature)
+            _sshsig_envelope(
+                AUTHENTICATED_CALLER_NAMESPACE, trusted_public_key, signature
+            )
         )
         os.chmod(allowed_path, 0o600)
         os.chmod(signature_path, 0o600)
@@ -1901,8 +2103,20 @@ def _validate_executable_profile_digest(expected_sha256: str) -> None:
             os.close(descriptor)
     if (
         len(payload) != before.st_size
-        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
         or not hmac.compare_digest(hashlib.sha256(payload).hexdigest(), expected_sha256)
     ):
         raise BootstrapRefusal("executable profile bytes differ from authorization")
@@ -1911,13 +2125,17 @@ def _validate_executable_profile_digest(expected_sha256: str) -> None:
             tasks = [item for item in json.loads(payload) if item.get("resources")]
             task = tasks[0]
             pod = task["resources"]["kubernetes"]["pod_config"]["spec"]
-            valid = (len(tasks) == 1
-                     and task["envs"].get("NPA_LIBERO_RUNTIME_DELIVERY") == CUSTOMER_RUN_MODE
-                     and pod.get("automountServiceAccountToken") is False)
+            valid = (
+                len(tasks) == 1
+                and task["envs"].get("NPA_LIBERO_RUNTIME_DELIVERY") == CUSTOMER_RUN_MODE
+                and pod.get("automountServiceAccountToken") is False
+            )
         except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             valid = False
         if not valid:
-            raise BootstrapRefusal("customer-run mode is absent from the signed profile")
+            raise BootstrapRefusal(
+                "customer-run mode is absent from the signed profile"
+            )
 
 
 def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
@@ -2298,7 +2516,8 @@ def _validate_customer_authorization_bytes(
         or authorization.get("runtime_manifest_sha256") != manifest_sha256
         or re.fullmatch(
             r"[0-9a-f]{64}", str(authorization.get("workflow_profile_sha256") or "")
-        ) is None
+        )
+        is None
         or authorization.get("workflow_profile_sha256")
         != os.environ.get("NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256")
         or authorization.get("upstream_source_revision")
@@ -2353,11 +2572,10 @@ def _validate_customer_authorization_bytes(
             expected_expires_raw.replace("Z", "+00:00")
         )
     except (TypeError, ValueError) as exc:
-        raise CustomerAcceptanceRequired("authorization_expected_expiry_invalid") from exc
-    if (
-        expected_expires_at.tzinfo is None
-        or expires_at != expected_expires_at
-    ):
+        raise CustomerAcceptanceRequired(
+            "authorization_expected_expiry_invalid"
+        ) from exc
+    if expected_expires_at.tzinfo is None or expires_at != expected_expires_at:
         raise CustomerAcceptanceRequired("authorization_expected_expiry_mismatch")
     try:
         _verify_customer_authorization_signature(
@@ -2391,14 +2609,18 @@ def _canonicalize_nvidia_terms(payload: bytes) -> bytes:
     uuid = rb"[0-9a-f]{8}(?:_[0-9a-f]{4}){3}_[0-9a-f]{12}"
     nav = re.findall(
         rb'^        <nav class="global-nav" id="meganavigation(' + uuid + rb')">$',
-        payload, re.M,
+        payload,
+        re.M,
     )
     script = re.findall(
         rb'^\t        id : "meganavigation(' + uuid + rb')",\n'
-        rb'\t        method : "navigation-megamenu",$', payload, re.M,
+        rb'\t        method : "navigation-megamenu",$',
+        payload,
+        re.M,
     )
     if (
-        len(nav) != 1 or script != nav
+        len(nav) != 1
+        or script != nav
         or len(re.findall(rb"meganavigation" + uuid, payload)) != 2
     ):
         raise BootstrapRefusal("NVIDIA terms navigation identity is invalid")
@@ -2422,8 +2644,10 @@ def _download_verified(
     if size <= 0 or size > MAX_RUNTIME_CACHE_DOWNLOAD_BYTES:
         raise BootstrapRefusal("runtime download has no valid expected size")
     if terms_normalization is not None and (
-        not terms or terms_normalization != NVIDIA_TERMS_NORMALIZATION
-        or url != NVIDIA_SOFTWARE_TERMS_URL or size > 1024 * 1024
+        not terms
+        or terms_normalization != NVIDIA_TERMS_NORMALIZATION
+        or url != NVIDIA_SOFTWARE_TERMS_URL
+        or size > 1024 * 1024
     ):
         raise BootstrapRefusal("governing terms normalization is invalid")
     (_validate_terms_url if terms else _validate_download_url)(url)
@@ -2486,12 +2710,21 @@ def _download_verified(
         )
     temporary.replace(destination)
     if terms_normalization is not None:
-        print(json.dumps({
-            "schema": "npa.libero.governing-terms-normalization.v1",
-            "url": url, "normalization": terms_normalization,
-            "raw_sha256": raw_sha256, "canonical_sha256": digest.hexdigest(),
-            "size_bytes": observed_size,
-        }, sort_keys=True), file=sys.stderr, flush=True)
+        print(
+            json.dumps(
+                {
+                    "schema": "npa.libero.governing-terms-normalization.v1",
+                    "url": url,
+                    "normalization": terms_normalization,
+                    "raw_sha256": raw_sha256,
+                    "canonical_sha256": digest.hexdigest(),
+                    "size_bytes": observed_size,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _governing_terms_identity(manifest: dict[str, Any]) -> str:
@@ -2502,7 +2735,11 @@ def _governing_terms_identity(manifest: dict[str, Any]) -> str:
             "sha256": term["sha256"],
             "size_bytes": term["size_bytes"],
             "url": term["url"],
-            **({"normalization": term["normalization"]} if "normalization" in term else {}),
+            **(
+                {"normalization": term["normalization"]}
+                if "normalization" in term
+                else {}
+            ),
         }
         for term in manifest["governing_terms"]
     ]
@@ -2802,9 +3039,13 @@ def _validate_read_only_system_submounts(source: Path, mountinfo: str) -> None:
         fields = line.split()
         if len(fields) < 10 or "-" not in fields:
             raise BootstrapRefusal("source build mount inventory is invalid")
-        mountpoint = Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4]))
+        mountpoint = Path(
+            re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
+        )
         if mountpoint.is_relative_to(source) and "ro" not in fields[5].split(","):
-            raise BootstrapRefusal("source build system subtree contains a writable mount")
+            raise BootstrapRefusal(
+                "source build system subtree contains a writable mount"
+            )
 
 
 def _build_source_wheels(
@@ -2945,7 +3186,9 @@ def _build_source_wheels(
     if len(wheels) != len(source_artifacts) or any(
         path.suffix != ".whl" for path in wheels
     ):
-        raise BootstrapRefusal("source runtime build did not produce one wheel per archive")
+        raise BootstrapRefusal(
+            "source runtime build did not produce one wheel per archive"
+        )
     for path in wheels:
         os.chmod(path, 0o400)
     expected = {
@@ -2953,11 +3196,18 @@ def _build_source_wheels(
         for item in source_artifacts
     }
     observed = {_built_wheel_identity(path) for path in wheels}
-    observed = {(_canonical_distribution_name(name), version) for name, version in observed}
+    observed = {
+        (_canonical_distribution_name(name), version) for name, version in observed
+    }
     if observed != expected:
-        raise BootstrapRefusal("source runtime build produced unexpected wheel identities")
+        raise BootstrapRefusal(
+            "source runtime build produced unexpected wheel identities"
+        )
     by_identity = {
-        (_canonical_distribution_name(_built_wheel_identity(path)[0]), _built_wheel_identity(path)[1]): path
+        (
+            _canonical_distribution_name(_built_wheel_identity(path)[0]),
+            _built_wheel_identity(path)[1],
+        ): path
         for path in wheels
     }
     return [
@@ -3041,8 +3291,16 @@ def _install_runtime(
         for line, item in zip(requirement_lines, artifacts, strict=True)
         if item["name"] not in bootstrap_names
     ]
-    wheel_entries = [(line, item) for line, item in runtime_entries if item["filename"].endswith(".whl")]
-    source_entries = [(line, item) for line, item in runtime_entries if item["filename"].endswith(".tar.gz")]
+    wheel_entries = [
+        (line, item)
+        for line, item in runtime_entries
+        if item["filename"].endswith(".whl")
+    ]
+    source_entries = [
+        (line, item)
+        for line, item in runtime_entries
+        if item["filename"].endswith(".tar.gz")
+    ]
     build_wheelhouse = root / ".built-wheelhouse"
     pip = str(venv / "bin" / "python")
     os.chmod(bootstrap_lock, 0o400)
@@ -4301,7 +4559,9 @@ def _verified_output_put(
         "checksum": checksum,
         "etag": "",
         "version_id": "",
-        "transaction_token_sha256": hashlib.sha256(transaction_token.encode()).hexdigest(),
+        "transaction_token_sha256": hashlib.sha256(
+            transaction_token.encode()
+        ).hexdigest(),
     }
 
     def reconcile_put() -> dict[str, str]:
@@ -4384,7 +4644,9 @@ def _verified_output_put(
         "sha256": digest,
         "etag": etag,
         "version_id": version_id,
-        "transaction_token_sha256": hashlib.sha256(transaction_token.encode()).hexdigest(),
+        "transaction_token_sha256": hashlib.sha256(
+            transaction_token.encode()
+        ).hexdigest(),
     }
 
 
@@ -4603,16 +4865,23 @@ def _write_output_summary(smoke_exit_code: int, *, root_fd: int) -> None:
         stream.write(summary_payload)
 
 
-
 def seal_for_controller(smoke_exit_code: int, *, root_fd: int) -> None:
     """Seal the existing bounded proof files; no object-store authority enters the Pod."""
     if not _customer_run():
         raise BootstrapRefusal("controller retrieval requires the customer-run profile")
-    if any(os.environ.get(name) for name in (
-        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-        "NEBIUS_IAM_TOKEN", "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
-    )):
-        raise BootstrapRefusal("customer-run workload received cloud or storage credentials")
+    if any(
+        os.environ.get(name)
+        for name in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "NEBIUS_IAM_TOKEN",
+            "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+        )
+    ):
+        raise BootstrapRefusal(
+            "customer-run workload received cloud or storage credentials"
+        )
     info = os.fstat(root_fd)
     if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise BootstrapRefusal("controller output descriptor is not sealed")
@@ -4648,7 +4917,9 @@ def _customer_phase_path(name: str) -> Path:
 
 
 def _write_phase_file(path: Path, value: dict[str, Any]) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+    )
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         json.dump(value, stream, sort_keys=True)
 
@@ -4659,7 +4930,9 @@ def wait_for_customer_phase(phase: str) -> dict[str, Any]:
         raise BootstrapRefusal("invalid customer-run phase")
     path = _customer_phase_path(phase + ".json")
     while not path.exists():
-        expected = os.environ.get("NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT", "")
+        expected = os.environ.get(
+            "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT", ""
+        )
         _ensure_deadline(_parse_utc(expected, "customer authorization expiry"))
         time.sleep(1)
     payload = json.loads(_immutable_supervisor_bytes(path, 64 * 1024))
@@ -4667,7 +4940,8 @@ def wait_for_customer_phase(phase: str) -> dict[str, Any]:
         payload.get("schema") != "npa.libero.customer-controller-phase.v1"
         or payload.get("phase") != phase
         or payload.get("run_id") != os.environ.get("NPA_BYOF_RUN_ID")
-        or payload.get("authorization_sha256") != os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256")
+        or payload.get("authorization_sha256")
+        != os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256")
         or payload.get("image") != os.environ.get("BYOF_IMAGE")
     ):
         raise BootstrapRefusal("customer-run controller phase differs")
@@ -4839,8 +5113,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
                 cleanup_errors.append(str(lease_exc))
         if cleanup_errors:
             raise BootstrapRefusal(
-                "output transaction cleanup is incomplete: "
-                + "; ".join(cleanup_errors)
+                "output transaction cleanup is incomplete: " + "; ".join(cleanup_errors)
             ) from exc
         raise
     return {
@@ -4927,9 +5200,7 @@ def _execution_process_group_ids(processes: list[int]) -> list[int]:
     groups: set[int] = set()
     for pid in processes:
         try:
-            stat_text = (Path("/proc") / str(pid) / "stat").read_text(
-                encoding="utf-8"
-            )
+            stat_text = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8")
         except (FileNotFoundError, PermissionError, ProcessLookupError) as exc:
             raise BootstrapRefusal(
                 "execution process group identity is unavailable"
@@ -4957,9 +5228,16 @@ def _terminate_execution_processes(processes: list[int]) -> None:
         return
     if _customer_run() and os.getuid() == pwd.getpwnam(RUNTIME_SUPERVISOR_USER).pw_uid:
         subprocess.run(
-            ["/usr/bin/sudo", "-n", "-u", RUNTIME_EXECUTION_USER,
-             "/opt/npa/libero/runtime-bootstrap.py", "terminate"],
-            check=True, start_new_session=True,
+            [
+                "/usr/bin/sudo",
+                "-n",
+                "-u",
+                RUNTIME_EXECUTION_USER,
+                "/opt/npa/libero/runtime-bootstrap.py",
+                "terminate",
+            ],
+            check=True,
+            start_new_session=True,
         )
         return
     groups = _execution_process_group_ids(initial)
@@ -4978,9 +5256,7 @@ def _terminate_execution_processes(processes: list[int]) -> None:
         except ProcessLookupError:
             pass
         except OSError as exc:
-            raise BootstrapRefusal(
-                "runtime execution termination failed"
-            ) from exc
+            raise BootstrapRefusal("runtime execution termination failed") from exc
 
     deadline = time.monotonic() + 5.0
     remaining = _execution_uid_processes()
@@ -5052,7 +5328,9 @@ def execute_and_upload(*, controller_retrieval: bool = False) -> int:
     """Hold exact authorization and exclusive UID ownership through readback."""
 
     if controller_retrieval != _customer_run():
-        raise BootstrapRefusal("execution output transport differs from customer profile")
+        raise BootstrapRefusal(
+            "execution output transport differs from customer profile"
+        )
 
     manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
@@ -5398,11 +5676,18 @@ def main(argv: list[str] | None = None) -> int:
             return execute_and_upload(controller_retrieval=True)
         if args.command == "customer-ready":
             if not _customer_run():
-                raise BootstrapRefusal("customer-ready requires the customer-run profile")
-            _write_phase_file(_customer_phase_path("materialized.json"), {
-                "run_id": os.environ["NPA_BYOF_RUN_ID"],
-                "authorization_sha256": os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256"],
-            })
+                raise BootstrapRefusal(
+                    "customer-ready requires the customer-run profile"
+                )
+            _write_phase_file(
+                _customer_phase_path("materialized.json"),
+                {
+                    "run_id": os.environ["NPA_BYOF_RUN_ID"],
+                    "authorization_sha256": os.environ[
+                        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256"
+                    ],
+                },
+            )
             return 0
         if args.command == "wait-for-retrieval":
             wait_for_customer_phase("retrieved")

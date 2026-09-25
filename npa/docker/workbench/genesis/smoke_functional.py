@@ -112,7 +112,9 @@ def check_import_genesis(state: SmokeState) -> CheckResult:
 
 def check_run_gpu_scene(state: SmokeState) -> CheckResult:
     if state.gs is None:
-        return CheckResult("run GPU Genesis scene", False, "skipped because genesis import failed")
+        return CheckResult(
+            "run GPU Genesis scene", False, "skipped because genesis import failed"
+        )
 
     try:
         torch = importlib.import_module("torch")
@@ -122,7 +124,9 @@ def check_run_gpu_scene(state: SmokeState) -> CheckResult:
         gs = state.gs
         backend = getattr(gs, "gpu", None)
         if backend is None:
-            return CheckResult("run GPU Genesis scene", False, "genesis.gpu backend is unavailable")
+            return CheckResult(
+                "run GPU Genesis scene", False, "genesis.gpu backend is unavailable"
+            )
 
         before = torch.cuda.memory_allocated(0)
         marker = torch.ones((512, 512), device="cuda")
@@ -132,14 +136,18 @@ def check_run_gpu_scene(state: SmokeState) -> CheckResult:
         gs.init(backend=backend, logging_level="warning")
         scene = gs.Scene(show_viewer=False)
         scene.add_entity(gs.morphs.Plane())
-        box = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, 0.1)))
+        box = scene.add_entity(
+            gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, 0.1))
+        )
         scene.build()
         for _ in range(int(os.environ.get("GENESIS_SMOKE_STEPS", "8"))):
             scene.step()
 
         pos = _flatten_numbers(box.get_pos())
         if len(pos) < 3 or not all(math.isfinite(v) for v in pos[:3]):
-            return CheckResult("run GPU Genesis scene", False, f"invalid box position: {pos}")
+            return CheckResult(
+                "run GPU Genesis scene", False, f"invalid box position: {pos}"
+            )
 
         state.scene = scene
         state.box = box
@@ -167,19 +175,27 @@ def check_run_gpu_scene(state: SmokeState) -> CheckResult:
 
 def check_output_file(state: SmokeState) -> CheckResult:
     if state.output is None:
-        return CheckResult("write simulation output file", False, "skipped because simulation failed")
+        return CheckResult(
+            "write simulation output file", False, "skipped because simulation failed"
+        )
     try:
         state.output_path.write_text(json.dumps(state.output, indent=2))
         if not state.output_path.exists() or state.output_path.stat().st_size == 0:
-            return CheckResult("write simulation output file", False, f"missing {state.output_path}")
+            return CheckResult(
+                "write simulation output file", False, f"missing {state.output_path}"
+            )
         return CheckResult("write simulation output file", True, str(state.output_path))
     except Exception as exc:
-        return CheckResult("write simulation output file", False, _format_exception(exc))
+        return CheckResult(
+            "write simulation output file", False, _format_exception(exc)
+        )
 
 
 def check_gpu_usage_recorded(state: SmokeState) -> CheckResult:
     if state.output is None:
-        return CheckResult("verify GPU usage was recorded", False, "skipped because simulation failed")
+        return CheckResult(
+            "verify GPU usage was recorded", False, "skipped because simulation failed"
+        )
     if state.cuda_memory_delta <= 0:
         return CheckResult(
             "verify GPU usage was recorded",
@@ -217,7 +233,11 @@ def main() -> int:
             results.append(result)
             _print_result(result)
     finally:
-        if os.environ.get("NPA_KEEP_SMOKE_OUTPUT", "").lower() not in {"1", "true", "yes"}:
+        if os.environ.get("NPA_KEEP_SMOKE_OUTPUT", "").lower() not in {
+            "1",
+            "true",
+            "yes",
+        }:
             shutil.rmtree(root, ignore_errors=True)
 
     passed = sum(result.ok for result in results)

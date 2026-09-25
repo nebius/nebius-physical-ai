@@ -78,7 +78,9 @@ HEALTHY_CONTROLLER_STATUS = "UP"
 # preflight burned the whole timeout and failed a submit that would have worked.
 READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
 LIBERO_OWNER_BINDING_SCHEMA = "npa.libero.owner-binding.v1"
-LIBERO_PENDING_SUBMISSION_TIME = "LIBERO exact managed job is PENDING; awaiting provider submission timestamp"
+LIBERO_PENDING_SUBMISSION_TIME = (
+    "LIBERO exact managed job is PENDING; awaiting provider submission timestamp"
+)
 
 
 @dataclass(frozen=True)
@@ -823,14 +825,22 @@ class _PreparedWorkflowSubmission:
     env: dict[str, str] = field(default_factory=dict)
 
 
-def _submission_global_config(runtime, controller_backend, infra, *, documents=(), extra_env=None):
-    from npa.workflows.byof.libero_customer import controller_context, selected, validate_profile
+def _submission_global_config(
+    runtime, controller_backend, infra, *, documents=(), extra_env=None
+):
+    from npa.workflows.byof.libero_customer import (
+        controller_context,
+        selected,
+        validate_profile,
+    )
 
     context = _controller_region_from_infra(infra, controller_backend)
     controller = None
     if selected(documents):
         validate_profile(documents)
-        controller = controller_context({**os.environ, **(extra_env or {})}, context or "")
+        controller = controller_context(
+            {**os.environ, **(extra_env or {})}, context or ""
+        )
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
         controller_backend=controller_backend,
@@ -849,7 +859,9 @@ def _submission_global_config(runtime, controller_backend, infra, *, documents=(
             )
         # Customer LIBERO separates namespaces through verified same-cluster
         # aliases. Ordinary submissions retain their single exact context.
-        kubernetes["allowed_contexts"] = [context, controller] if controller else [context]
+        kubernetes["allowed_contexts"] = (
+            [context, controller] if controller else [context]
+        )
         if controller:
             contexts = kubernetes.setdefault("context_configs", {})
             # Only the controller receives the private two-context kubeconfig.
@@ -859,12 +871,17 @@ def _submission_global_config(runtime, controller_backend, infra, *, documents=(
             # without task overrides. Project the validated signed worker hook
             # into its exact context; never apply it to the CPU controller.
             task = next(item for item in documents if item.get("resources"))
-            worker_config = (task.get("config") or {}).get("kubernetes") or task["resources"]["kubernetes"]
+            worker_config = (task.get("config") or {}).get("kubernetes") or task[
+                "resources"
+            ]["kubernetes"]
             commands = worker_config["post_provision_runcmd"]
             worker = contexts[context]
             if worker.get("post_provision_runcmd", commands) != commands:
-                raise ValueError("LIBERO worker startup hook differs from the signed profile")
+                raise ValueError(
+                    "LIBERO worker startup hook differs from the signed profile"
+                )
             worker["post_provision_runcmd"] = list(commands)
+        config["allowed_clouds"] = ["kubernetes"]
     return config
 
 
@@ -891,6 +908,14 @@ def _preflight_prepared_submission(
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
             env[key] = value
+    isolated_endpoint = str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
+    if env.get("NPA_SKYPILOT_ISOLATED_API_DIR") and isolated_endpoint:
+        api_server = global_config.setdefault("api_server", {})
+        if not isinstance(api_server, dict):
+            raise ValueError(
+                "SkyPilot global config api_server section must be a mapping"
+            )
+        api_server["endpoint"] = isolated_endpoint
     try:
         selected, _report, injected = _execution_preflight(
             docs,
@@ -1122,16 +1147,26 @@ def submit_workflow(
         if infra:
             cmd[-1:-1] = ["--infra", infra]
         selected_secret_envs = list(secret_envs or ())
-        from npa.workflows.byof.libero_customer import selected as customer_selected, SECRET_NAMES
+        from npa.workflows.byof.libero_customer import (
+            selected as customer_selected,
+            SECRET_NAMES,
+        )
 
         customer_run = libero_submission and customer_selected(docs)
-        if customer_run and any(name not in SECRET_NAMES for name in selected_secret_envs):
-            raise SkyPilotSubmitError("customer-run profile cannot forward additional secrets", launch_attempted=False)
+        if customer_run and any(
+            name not in SECRET_NAMES for name in selected_secret_envs
+        ):
+            raise SkyPilotSubmitError(
+                "customer-run profile cannot forward additional secrets",
+                launch_attempted=False,
+            )
         if libero_submission:
             # This is mandatory even for direct SDK callers.  The preflight has
             # removed these values from prepared YAML, so omitting ``--secret``
             # must never silently launch a credentialless or inline-secret task.
-            selected_secret_envs.extend(SECRET_NAMES if customer_run else LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+            selected_secret_envs.extend(
+                SECRET_NAMES if customer_run else LIBERO_SKYPILOT_SECRET_ENV_NAMES
+            )
         for secret_name in dict.fromkeys(selected_secret_envs):
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
@@ -1202,10 +1237,23 @@ def submit_workflow(
                 progress=echo or _default_launch_echo,
             )
 
+        # A verified absent controller proves that this isolated SkyPilot scope
+        # cannot contain a live managed job. Do not issue the initial queue
+        # query in that state: SkyPilot can create an empty INIT controller
+        # record for that query, then reject the launch that should create its
+        # first pod. Later reconciliations still query the exact job name.
+        initial_controller_absent = (
+            getattr(controller_health, "state", None) is ControllerState.ABSENT
+        )
+
         def _reconcile() -> ReconciliationEvidence:
             nonlocal bound_libero_job_id
             nonlocal unverified_libero_job_id, unverified_libero_job_ids
             nonlocal libero_binding_error
+            nonlocal initial_controller_absent
+            if initial_controller_absent:
+                initial_controller_absent = False
+                return ReconciliationEvidence(ReconciliationState.ABSENT)
             expected_profile_sha256 = ""
             expected_job_id = ""
             binding_error = ""
@@ -1306,6 +1354,8 @@ def submit_workflow(
         def _launch() -> tuple[
             subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]
         ]:
+            nonlocal initial_controller_absent
+            initial_controller_absent = False
             nonlocal launch_started_at
             try:
                 if (
@@ -1348,7 +1398,9 @@ def submit_workflow(
                 )
                 from npa.execution_preflight import libero_executable_profile_sha256
 
-                binding_deadline = transaction_clock() + recovery_policy.deadline_seconds
+                binding_deadline = (
+                    transaction_clock() + recovery_policy.deadline_seconds
+                )
                 binding_sequence = 0
                 while True:
                     (
@@ -1392,9 +1444,14 @@ def submit_workflow(
                     if remaining <= 0:
                         break
                     binding_sequence += 1
-                    transaction_sleeper(min(remaining, recovery_policy.delay(
-                        binding_sequence, random_value=random_source()
-                    )))
+                    transaction_sleeper(
+                        min(
+                            remaining,
+                            recovery_policy.delay(
+                                binding_sequence, random_value=random_source()
+                            ),
+                        )
+                    )
                 if not verified_job_id and not libero_binding_error:
                     # Defensive fallback for a malformed resolver result.
                     unverified_libero_job_id = parsed_job_id
@@ -1573,7 +1630,8 @@ def submit_workflow(
     ) as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise SkyPilotSubmitError(
-            f"SkyPilot workflow submission failed: {exc}"
+            f"SkyPilot workflow submission failed: {exc}",
+            launch_attempted=False if prepared_yaml is None else None,
         ) from exc
 
 
@@ -2376,7 +2434,9 @@ def _libero_launch_binding_candidates(
     elif (
         launch_started_at is not None
         and candidate_rows
-        and all(str(row.get("status") or "").upper() == "PENDING" for row in candidate_rows)
+        and all(
+            str(row.get("status") or "").upper() == "PENDING" for row in candidate_rows
+        )
         and all(row.get("submitted_at") is None for row in candidate_rows)
         and all(_managed_job_submission_time(row) is None for row in candidate_rows)
     ):
@@ -3121,6 +3181,28 @@ def _wait_for_healthy_jobs_controller(
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
     unhealthy: list[tuple[str, str]] = []
+    # An exact zero-pod result is stronger than SkyPilot's cached status. In a
+    # new isolated scope it avoids materializing the no-pod INIT record whose
+    # existence prevents the first managed launch from creating a controller.
+    if execution_probe is not None and not require_existing:
+        user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+        expected_name = (
+            f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+            else ""
+        )
+        if expected_name:
+            initial_probe = execution_probe(expected_name)
+            if (
+                not initial_probe.healthy
+                and initial_probe.outcome == "head_pod_ambiguous"
+                and initial_probe.pod_count == 0
+            ):
+                return ControllerHealthResult(
+                    ControllerState.ABSENT,
+                    expected_name,
+                    ControllerExecutionProbe(True, "controller_absent", pod_count=0),
+                )
     while True:
         # Kubernetes has a stronger source of truth below: the exact controller
         # pod is selected and its readiness/cwd are probed directly.  Avoid a
@@ -3169,6 +3251,35 @@ def _wait_for_healthy_jobs_controller(
                 + _controller_health_remedy(detail)
             )
         controllers = _jobs_controller_statuses(result.stdout)
+        # A prior queue read can create exactly one INIT row before a controller
+        # pod exists. Treat that exact isolated row as absent so its first
+        # launch can create the pod; all other INIT rows remain unhealthy.
+        if execution_probe is not None and len(controllers) == 1:
+            init_name, init_status = controllers[0]
+            user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
+            expected_init_name = (
+                f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id)
+                else ""
+            )
+            if (
+                init_status.upper() == "INIT"
+                and expected_init_name
+                and init_name == expected_init_name
+            ):
+                init_probe = execution_probe(init_name)
+                if (
+                    not init_probe.healthy
+                    and init_probe.outcome == "head_pod_ambiguous"
+                    and init_probe.pod_count == 0
+                ):
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT,
+                        init_name,
+                        ControllerExecutionProbe(
+                            True, "controller_absent", pod_count=0
+                        ),
+                    )
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
             unhealthy = []
@@ -3209,6 +3320,17 @@ def _wait_for_healthy_jobs_controller(
                             "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
                         )
                 probe_result = checked_execution_probe(state, expected_name)
+                if (
+                    state in {ControllerState.UP, ControllerState.STOPPED}
+                    and probe_result is not None
+                    and probe_result.outcome == "controller_absent"
+                ):
+                    # A cached UP/STOPPED row with no execution pod is absent
+                    # for the first launch. Returning its cached state would
+                    # issue the queue query that causes the INIT deadlock.
+                    return ControllerHealthResult(
+                        ControllerState.ABSENT, expected_name, probe_result
+                    )
                 if probe_result is None or probe_result.healthy:
                     return ControllerHealthResult(state, expected_name, probe_result)
                 last_summary = (
@@ -3426,7 +3548,9 @@ def _load_base_config(config_path: Path | None) -> dict[str, Any]:
     if config_path is None:
         return {}
     if not config_path.exists():
-        return {}
+        raise SkyPilotConfigError(
+            f"SkyPilot global config does not exist: {config_path}"
+        )
     with config_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):

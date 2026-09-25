@@ -27,8 +27,10 @@ def _cached(directory):
     try:
         files = json.loads(receipt.read_text())["files"]
         return bool(files) and all(
-            Path(name).name == name and (directory / name).is_file()
-            and _hash(directory / name) == digest for name, digest in files.items()
+            Path(name).name == name
+            and (directory / name).is_file()
+            and _hash(directory / name) == digest
+            for name, digest in files.items()
         )
     except (OSError, ValueError, KeyError, AttributeError, TypeError):
         return False

@@ -14,8 +14,9 @@ specs.
 
 Keep `workflows/main/` limited to `sim2real.yaml`, `paidf-cosmos3.yaml`, and
 `nurec-reconstruct.yaml`.
-Add all other catalog specs under `workflows/testing/`; keep catalog
-documentation in `workflows/README.md`.
+Add partner integrations under `workflows/partners/<partner>/` and other
+reference specs under `workflows/testing/`; keep catalog documentation in
+`workflows/README.md`.
 
 For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
 

@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from npa.orchestration.skypilot import _bin as bin_module
+from npa.orchestration.skypilot import local_api as local_api_module
 from npa.orchestration.skypilot import workflow as workflow_module
 from npa.orchestration.skypilot.workflow import (
     SkyPilotSubmitError,
@@ -56,6 +57,9 @@ def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     monkeypatch.setattr(
         workflow_module, "_execution_preflight", lambda *args, **kwargs: (None, {}, {})
     )
+    # Host rejection is covered by test_local_api_host.py. These fake-Sky
+    # transaction/argv tests do not operate a real host control plane.
+    monkeypatch.setattr(local_api_module, "_require_linux_host", lambda: None)
     # Separate local_api tests exercise real owned-daemon/socket lifecycle.
     # These transaction/argv fixtures use a fake Sky executable.
     monkeypatch.setattr(
@@ -171,6 +175,12 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
         "memory": 8,
         "autostop": False,
     }
+    # A task-owned API has a dynamic endpoint.  SkyPilot reads that endpoint
+    # from the submitted config, not only SKYPILOT_API_SERVER_ENDPOINT.
+    assert (
+        config["api_server"]["endpoint"]
+        == kwargs["env"]["SKYPILOT_API_SERVER_ENDPOINT"]
+    )
 
 
 def test_recovery_preflight_preserves_authorization_identity(
@@ -387,19 +397,31 @@ def test_libero_pending_timestamp_keeps_one_launch_and_journals_candidate(
     monkeypatch, tmp_path, outcome
 ) -> None:
     from npa.orchestration.skypilot.launch_transaction import (
-        EvidenceState, RecoveryPolicy, StabilityResult,
+        EvidenceState,
+        RecoveryPolicy,
+        StabilityResult,
     )
 
     yaml_path = tmp_path / "libero.yaml"
     yaml_path.write_text("name: libero\nrun: 'true'\n")
     sky_bin = _fake_sky(tmp_path)
-    monkeypatch.setattr(workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION)
-    monkeypatch.setattr(workflow_module, "_execution_preflight", lambda *_a, **_k: (
-        None, {"checks": {"libero_customer_authorization_validated": "validated"}}, {},
-    ))
-    monkeypatch.setattr(workflow_module, "wait_for_api_stability", lambda *_a, **_k: (
-        StabilityResult(EvidenceState.READY, FailureCategory.NONE)
-    ))
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_a, **_k: (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "wait_for_api_stability",
+        lambda *_a, **_k: StabilityResult(EvidenceState.READY, FailureCategory.NONE),
+    )
     monkeypatch.setattr(workflow_module.time, "time", lambda: 100.0)
     clock = [0.0]
     records, sleeps, launches = [], [], []
@@ -418,12 +440,19 @@ def test_libero_pending_timestamp_keeps_one_launch_and_journals_candidate(
             return _healthy_status(command)
         if command[1:3] == ["jobs", "launch"]:
             launches.append(command)
-            return subprocess.CompletedProcess(command, 0, stdout="Job submitted, ID: 42\n", stderr="")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+            )
         assert command[1:3] == ["jobs", "queue"]
         rows = []
         if launches:
             observations += 1
-            row = {"job_id": 42, "job_name": "libero-timestamp-unit", "status": "PENDING", "submitted_at": None}
+            row = {
+                "job_id": 42,
+                "job_name": "libero-timestamp-unit",
+                "status": "PENDING",
+                "submitted_at": None,
+            }
             rows.append(row)
             if observations > 1:
                 if outcome == "ready":
@@ -432,15 +461,22 @@ def test_libero_pending_timestamp_keeps_one_launch_and_journals_candidate(
                     row["metadata"] = {"executable_profile_sha256": "b" * 64}
                 elif outcome == "competing":
                     rows.append({**row, "job_id": 43})
-        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(rows), stderr="")
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(rows), stderr=""
+        )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     kwargs = dict(
-        isolated_config_dir=tmp_path / "sky-state", sky_bin=sky_bin,
-        launch_lock_root=tmp_path / "locks", transaction_recorder=records.append,
-        transaction_clock=lambda: clock[0], transaction_sleeper=sleep,
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        launch_lock_root=tmp_path / "locks",
+        transaction_recorder=records.append,
+        transaction_clock=lambda: clock[0],
+        transaction_sleeper=sleep,
         transaction_random=lambda: 0.5,
-        recovery_policy=RecoveryPolicy(deadline_seconds=2, initial_backoff_seconds=1, cap_backoff_seconds=1),
+        recovery_policy=RecoveryPolicy(
+            deadline_seconds=2, initial_backoff_seconds=1, cap_backoff_seconds=1
+        ),
     )
     if outcome == "ready":
         result = submit_workflow(yaml_path, "libero-timestamp-unit", **kwargs)
@@ -451,7 +487,9 @@ def test_libero_pending_timestamp_keeps_one_launch_and_journals_candidate(
         with pytest.raises(SkyPilotSubmitError) as caught:
             submit_workflow(yaml_path, "libero-timestamp-unit", **kwargs)
         assert caught.value.transaction.state is LaunchState.INDETERMINATE
-        assert records[-1]["libero_owner_binding"] == records[-2]["libero_owner_binding"]
+        assert (
+            records[-1]["libero_owner_binding"] == records[-2]["libero_owner_binding"]
+        )
         assert records[-1]["libero_owner_binding"]["state"] == "candidate"
     assert len(launches) == 1
     assert sleeps == ([1, 1] if outcome == "still_pending" else [1])
@@ -646,6 +684,83 @@ def test_submit_uses_shared_libero_classification_for_secret_channel(
         / "workflow.yaml"
     )
     assert not any(value in prepared.read_text() for value in secret_values.values())
+
+
+def test_load_base_config_distinguishes_omitted_from_explicit_missing(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "selected-but-missing.yaml"
+
+    assert workflow_module._load_base_config(None) == {}
+    with pytest.raises(bin_module.SkyPilotConfigError, match=re.escape(str(missing))):
+        workflow_module._load_base_config(missing)
+
+
+def test_submit_rejects_explicit_missing_config_before_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    missing = tmp_path / "selected-but-missing.yaml"
+    monkeypatch.setattr(
+        workflow_module,
+        "_preflight_prepared_submission",
+        lambda *args, **kwargs: pytest.fail("must fail before SkyPilot preflight"),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must fail before provider launch"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match=re.escape(str(missing))) as caught:
+        submit_workflow(
+            yaml_path,
+            "run-missing-global-config",
+            config_path=missing,
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert caught.value.launch_attempted is False
+    assert caught.value.transaction is None
+    assert isinstance(caught.value.__cause__, bin_module.SkyPilotConfigError)
+
+
+def test_submit_keeps_launch_unknown_for_failure_after_preparation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+
+    def fail_after_preparation(*args, **kwargs):
+        raise ValueError("post-preparation failure")
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_local_api_daemon_cwd_locked",
+        fail_after_preparation,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must not start a provider launch"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="post-preparation failure") as caught:
+        submit_workflow(
+            yaml_path,
+            "run-post-preparation-failure",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert caught.value.launch_attempted is None
+    assert caught.value.transaction is None
 
 
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
@@ -1774,6 +1889,7 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
         ).read_text(encoding="utf-8")
     )
     assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
+    assert rendered["allowed_clouds"] == ["kubernetes"]
 
 
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
@@ -1814,6 +1930,7 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
 
     rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
     assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
+    assert rendered["allowed_clouds"] == ["kubernetes"]
     assert rendered["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
         {"name": "customer-registry-auth"}
     ]
@@ -1887,6 +2004,28 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     assert isolated_kubeconfig.is_symlink()
     assert isolated_kubeconfig.resolve() == selected_kubeconfig.resolve()
     assert env["HOME"] == str(isolated / "home")
+
+
+def test_sky_environment_links_default_kubeconfig_when_unset(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    operator_home = tmp_path / "operator"
+    default_kubeconfig = operator_home / ".kube" / "config"
+    default_kubeconfig.parent.mkdir(parents=True)
+    default_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+
+    isolated = tmp_path / "isolated"
+    sky_environment(isolated)
+
+    isolated_kubeconfig = isolated / "home" / ".kube" / "config"
+    assert isolated_kubeconfig.is_symlink()
+    assert isolated_kubeconfig.resolve() == default_kubeconfig.resolve()
 
 
 def test_submit_workflow_require_controller_up_uses_canonical_preflight(
@@ -2335,11 +2474,10 @@ def test_controller_up_allows_recreation_when_cleaned_up_pod_is_absent(
         execution_probe=lambda _name: probe,
     )
 
-    assert result.state is workflow_module.ControllerState.UP
+    assert result.state is workflow_module.ControllerState.ABSENT
     assert result.execution_probe is not None
     assert result.execution_probe.outcome == "controller_absent"
-    assert calls
-    assert all("--refresh" not in cmd for cmd in calls)
+    assert calls == []
 
 
 def test_controller_status_refresh_is_retained_without_execution_probe(
@@ -2432,7 +2570,7 @@ def test_controller_stopped_allows_launch_when_controller_pod_is_absent(
         ),
     )
 
-    assert result.state is workflow_module.ControllerState.STOPPED
+    assert result.state is workflow_module.ControllerState.ABSENT
     assert result.execution_probe is not None
     assert result.execution_probe.healthy is True
     assert result.execution_probe.outcome == "controller_absent"
@@ -3170,9 +3308,27 @@ def test_libero_launch_binding_accepts_omitted_optional_queue_profile(
     )
 
 
-@pytest.mark.parametrize("mutation", ["none", "conflict", "competing", "invalid_time", "stale_time", "wrong_name", "no_id"])
-def test_libero_only_polls_unique_pending_id_without_provider_time(monkeypatch, mutation):
-    row = {"job_id": 126, "job_name": "exact-run", "status": "PENDING", "submitted_at": None}
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "conflict",
+        "competing",
+        "invalid_time",
+        "stale_time",
+        "wrong_name",
+        "no_id",
+    ],
+)
+def test_libero_only_polls_unique_pending_id_without_provider_time(
+    monkeypatch, mutation
+):
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "submitted_at": None,
+    }
     rows = [row]
     if mutation == "conflict":
         row["metadata"] = {"executable_profile_sha256": "b" * 64}
@@ -3184,16 +3340,26 @@ def test_libero_only_polls_unique_pending_id_without_provider_time(monkeypatch, 
         row["submitted_at"] = 50.0
     elif mutation == "wrong_name":
         row["job_name"] = "different-run"
-    monkeypatch.setattr(workflow_module.subprocess, "run", lambda cmd, **_k: (
-        subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(rows), stderr="")
-    ))
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_k: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
     verified, plausible, error = workflow_module._libero_launch_binding_candidates(
-        "" if mutation == "no_id" else "126", "exact-run", env={},
-        sky_executable="sky", cwd="/durable", expected_profile_sha256="a" * 64,
+        "" if mutation == "no_id" else "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
         launch_started_at=100.0,
     )
     assert verified == ""
-    assert (error == workflow_module.LIBERO_PENDING_SUBMISSION_TIME) is (mutation == "none")
+    assert (error == workflow_module.LIBERO_PENDING_SUBMISSION_TIME) is (
+        mutation == "none"
+    )
     if mutation == "none":
         assert plausible == ("126",)
 
@@ -3620,6 +3786,36 @@ def test_wait_for_controller_blocks_on_transient_init(monkeypatch) -> None:
         )
     assert "INIT" in str(exc.value)
     assert "sky down" in str(exc.value)
+
+
+def test_wait_for_controller_allows_exact_init_without_a_controller_pod(
+    monkeypatch,
+) -> None:
+    """A queue-created INIT row must not deadlock its first jobs launch."""
+
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        _controller_status_run("INIT"),
+    )
+
+    result = workflow_module._wait_for_healthy_jobs_controller(
+        "sky",
+        env={"SKYPILOT_USER_ID": "abc123"},
+        timeout=0,
+        interval=0.01,
+        execution_probe=lambda _name: workflow_module.ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=0,
+            error="expected one controller head pod, found 0",
+        ),
+    )
+
+    assert result.state is workflow_module.ControllerState.ABSENT
+    assert result.name == "sky-jobs-controller-abc123"
+    assert result.execution_probe is not None
+    assert result.execution_probe.outcome == "controller_absent"
 
 
 def _failing_status_run(stderr: str):
@@ -4370,4 +4566,165 @@ def test_submit_transaction_recovers_controller_creation_refusal(
     assert launch_calls == 2
     assert result.launch_transaction["launch_sequence"] == 2
     assert result.launch_transaction["recovery_decision"] == "submitted_and_reconciled"
+    assert result.launch_transaction["controller"]["state"] == "absent"
+
+
+def test_submit_does_not_create_an_empty_init_controller_before_first_launch(
+    monkeypatch, tmp_path
+) -> None:
+    """A controller-absent preflight is stronger than an initial queue probe."""
+
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        StabilityPolicy,
+    )
+
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    sky_bin = _fake_sky(tmp_path)
+    launched = False
+
+    def ready_probe() -> ProbeObservation:
+        return ProbeObservation(EvidenceState.READY, observed_at="now", monotonic_at=0)
+
+    def fake_run(cmd, **_kwargs):
+        nonlocal launched
+        if _is_status_cmd(cmd):
+            return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+        if cmd[1:3] == ["jobs", "queue"]:
+            # Querying before launch is the SkyPilot 0.12 behavior that creates
+            # a no-pod INIT controller and makes the first launch fail.
+            assert launched, (
+                "initial reconciliation must not query an absent controller"
+            )
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "job_id": 701,
+                            "job_name": "first-controller-run",
+                            "status": "PENDING",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        if cmd[1:3] == ["jobs", "launch"]:
+            launched = True
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Job submitted, ID: 701\n", stderr=""
+            )
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "first-controller-run",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/exact-context",
+        stream_output=False,
+        stability_probe=ready_probe,
+        stability_policy=StabilityPolicy(2, 0, 0, 1),
+        transaction_sleeper=lambda _seconds: None,
+        transaction_random=lambda: 0.5,
+        launch_lock_root=tmp_path / "locks",
+    )
+
+    assert launched is True
+    assert result.status == "SUBMITTED"
+    assert result.job_id == "701"
+
+
+def test_submit_treats_cached_controller_without_a_pod_as_absent(
+    monkeypatch, tmp_path
+) -> None:
+    """A stale UP record must not create an empty queue before first launch."""
+
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        StabilityPolicy,
+    )
+
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_probe_kubernetes_controller_cwd",
+        lambda *_args, **_kwargs: workflow_module.ControllerExecutionProbe(
+            False,
+            "head_pod_ambiguous",
+            pod_count=0,
+            error="expected one controller head pod, found 0",
+        ),
+    )
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    sky_bin = _fake_sky(tmp_path)
+    launched = False
+
+    def ready_probe() -> ProbeObservation:
+        return ProbeObservation(EvidenceState.READY, observed_at="now", monotonic_at=0)
+
+    def fake_run(cmd, **_kwargs):
+        nonlocal launched
+        if _is_status_cmd(cmd):
+            raise AssertionError(
+                "podless controller preflight must not read SkyPilot status"
+            )
+        if cmd[1:3] == ["jobs", "queue"]:
+            assert launched, (
+                "initial reconciliation must not query a podless controller"
+            )
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "job_id": 702,
+                            "job_name": "stale-controller-run",
+                            "status": "PENDING",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        if cmd[1:3] == ["jobs", "launch"]:
+            launched = True
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Job submitted, ID: 702\n", stderr=""
+            )
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "stale-controller-run",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/exact-context",
+        stream_output=False,
+        stability_probe=ready_probe,
+        stability_policy=StabilityPolicy(2, 0, 0, 1),
+        transaction_sleeper=lambda _seconds: None,
+        transaction_random=lambda: 0.5,
+        launch_lock_root=tmp_path / "locks",
+    )
+
+    assert launched is True
+    assert result.status == "SUBMITTED"
+    assert result.job_id == "702"
     assert result.launch_transaction["controller"]["state"] == "absent"

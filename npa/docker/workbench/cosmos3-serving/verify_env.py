@@ -24,7 +24,9 @@ def main() -> int:
         raise SystemExit("FATAL: runtime closure checksum drift")
     lock = Path("/opt/npa-cosmos3-serving/requirements.lock")
     if hashlib.sha256(lock.read_bytes()).hexdigest() != expected:
-        raise SystemExit("FATAL: runtime closure bytes do not match the pinned checksum")
+        raise SystemExit(
+            "FATAL: runtime closure bytes do not match the pinned checksum"
+        )
     for package in FORBIDDEN_DISTRIBUTIONS:
         try:
             metadata.version(package)

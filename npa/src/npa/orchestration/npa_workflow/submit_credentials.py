@@ -28,8 +28,8 @@ PROCESS_ENVIRONMENT_CREDENTIAL_NAMES = frozenset(
         "AWS_SESSION_TOKEN",
     }
 )
-PROCESS_ENVIRONMENT_REQUEST_NAMES = (
-    PROCESS_ENVIRONMENT_CREDENTIAL_NAMES | frozenset(STORAGE_ENDPOINT_ENV_NAMES)
+PROCESS_ENVIRONMENT_REQUEST_NAMES = PROCESS_ENVIRONMENT_CREDENTIAL_NAMES | frozenset(
+    STORAGE_ENDPOINT_ENV_NAMES
 )
 
 
@@ -77,8 +77,10 @@ def resolve_submit_credentials(
 
     # A process-authorized triplet must come from the actual process environment;
     # a caller-supplied mapping is only an input to ordinary resolution.
-    process_env = os.environ if require_process_environment_triplet else (
-        environ if environ is not None else os.environ
+    process_env = (
+        os.environ
+        if require_process_environment_triplet
+        else (environ if environ is not None else os.environ)
     )
     if require_process_environment_triplet:
         credential_names = (
@@ -105,9 +107,7 @@ def resolve_submit_credentials(
             )
         requested_names = tuple(
             dict.fromkeys(
-                str(name or "").strip()
-                for name in requested
-                if str(name or "").strip()
+                str(name or "").strip() for name in requested if str(name or "").strip()
             )
         )
         unauthorized = set(requested_names) - PROCESS_ENVIRONMENT_REQUEST_NAMES

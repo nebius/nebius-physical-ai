@@ -38,7 +38,10 @@ class PhaseProgress:
         Raises:
             ValueError: Sequence, clock, schema or native nesting is invalid.
         """
-        if not isinstance(row, dict) or row.get("schema") != "npa.isaac-arena.simulator-phase.v1":
+        if (
+            not isinstance(row, dict)
+            or row.get("schema") != "npa.isaac-arena.simulator-phase.v1"
+        ):
             raise ValueError("invalid phase journal schema")
         rank = row.get("rank")
         if type(rank) is not int or rank < 0 or self.rank not in (None, rank):
@@ -49,8 +52,20 @@ class PhaseProgress:
             raise ValueError("phase sequence is discontinuous")
         if type(timestamp) is not int or timestamp < self.last_ns:
             raise ValueError("phase clock regressed")
-        fields = {k: v for k, v in row.items() if k not in {
-            "schema", "sequence", "monotonic_ns", "rank", "action_step", "phase", "event"}}
+        fields = {
+            k: v
+            for k, v in row.items()
+            if k
+            not in {
+                "schema",
+                "sequence",
+                "monotonic_ns",
+                "rank",
+                "action_step",
+                "phase",
+                "event",
+            }
+        }
         _validate_event(row["phase"], row["event"], row["action_step"], fields)
         self.sequence, self.last_ns = sequence, timestamp
         if row["event"] == "begin":
@@ -62,11 +77,16 @@ class PhaseProgress:
         if not self.stack:
             raise ValueError("phase ended without entry")
         start = self.stack.pop()
-        if any(start.get(k) != row.get(k) for k in ("phase", "action_step", "render_call")):
+        if any(
+            start.get(k) != row.get(k) for k in ("phase", "action_step", "render_call")
+        ):
             raise ValueError("phase nesting changed")
         if row["event"] == "end":
             count, maximum = self.samples.get(row["phase"], (0, 0))
-            self.samples[row["phase"]] = (count + 1, max(maximum, row["monotonic_ns"] - start["monotonic_ns"]))
+            self.samples[row["phase"]] = (
+                count + 1,
+                max(maximum, row["monotonic_ns"] - start["monotonic_ns"]),
+            )
 
     def stalled(self, now_ns: int) -> dict | None:
         """Describe a calibrated phase only after measured absence of advancement.
@@ -83,12 +103,22 @@ class PhaseProgress:
         phase = self.stack[-1]
         count, maximum = self.samples.get(phase["phase"], (0, 0))
         elapsed = now_ns - self.last_ns
-        if count < _BASELINE_SAMPLES or maximum <= 0 or elapsed <= maximum * _SLOWDOWN_FACTOR:
+        if (
+            count < _BASELINE_SAMPLES
+            or maximum <= 0
+            or elapsed <= maximum * _SLOWDOWN_FACTOR
+        ):
             return None
-        return {"phase": phase["phase"], "action_step": phase["action_step"],
-                "sequence": self.sequence, "baseline_samples": count,
-                "baseline_max_ns": maximum, "no_progress_ns": elapsed,
-                "slowdown_factor": _SLOWDOWN_FACTOR, "rank": phase["rank"]}
+        return {
+            "phase": phase["phase"],
+            "action_step": phase["action_step"],
+            "sequence": self.sequence,
+            "baseline_samples": count,
+            "baseline_max_ns": maximum,
+            "no_progress_ns": elapsed,
+            "slowdown_factor": _SLOWDOWN_FACTOR,
+            "rank": phase["rank"],
+        }
 
 
 class _JournalReader:
@@ -116,7 +146,11 @@ def _observe(directory, readers):
     for reader in readers.values():
         stalled = reader.progress.stalled(time.monotonic_ns())
         if stalled:
-            return {"schema": "npa.isaac-arena.phase-liveness.v1", "status": "stalled", **stalled}
+            return {
+                "schema": "npa.isaac-arena.phase-liveness.v1",
+                "status": "stalled",
+                **stalled,
+            }
     return None
 
 
@@ -153,7 +187,10 @@ def _monitor(process, artifact_root):
         try:
             failure = _observe(artifact_root, readers)
         except (OSError, ValueError, KeyError, TypeError):
-            failure = {"schema": "npa.isaac-arena.phase-liveness.v1", "status": "invalid_progress_evidence"}
+            failure = {
+                "schema": "npa.isaac-arena.phase-liveness.v1",
+                "status": "invalid_progress_evidence",
+            }
         if failure:
             path = artifact_root / "simulator-liveness.json"
             with path.open("w") as stream:
@@ -179,14 +216,21 @@ def run_supervised(argv, *, artifact_root: Path, private_dir: Path, **kwargs):
     Raises:
         OSError: Process or evidence staging failed, after owned-process cleanup.
     """
-    options = {k: v for k, v in kwargs.items() if k not in {"stdout", "stderr", "check"}}
+    options = {
+        k: v for k, v in kwargs.items() if k not in {"stdout", "stderr", "check"}
+    }
     # State-only evaluations have neither replay staging nor graphics setup;
     # the supervisor owns creation of its private log directory in every mode.
     private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     log_path = private_dir / "simulator-process.log"
     with log_path.open("w") as stream:
-        process = subprocess.Popen(argv, stdout=stream, stderr=subprocess.STDOUT,
-                                   start_new_session=True, **options)
+        process = subprocess.Popen(
+            argv,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            **options,
+        )
         try:
             failure = _monitor(process, artifact_root)
         finally:
@@ -194,4 +238,6 @@ def run_supervised(argv, *, artifact_root: Path, private_dir: Path, **kwargs):
     output = log_path.read_text(errors="replace")
     if failure:
         output += "\nSimulator phase liveness failed; retained scalar diagnostics.\n"
-    return subprocess.CompletedProcess(argv, 124 if failure else process.returncode, output)
+    return subprocess.CompletedProcess(
+        argv, 124 if failure else process.returncode, output
+    )

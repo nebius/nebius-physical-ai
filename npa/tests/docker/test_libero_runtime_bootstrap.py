@@ -290,13 +290,19 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     caller_assertion_path.chmod(0o600)
     authorization_path = tmp_path / "customer-authorization.json"
     profile_bytes = b'{"fixture":"libero-executable-profile"}'
-    profile_path = module.EXECUTABLE_PROFILE_ROOT / authorization["run_id"] / module.EXECUTABLE_PROFILE_NAME
+    profile_path = (
+        module.EXECUTABLE_PROFILE_ROOT
+        / authorization["run_id"]
+        / module.EXECUTABLE_PROFILE_NAME
+    )
     profile_path.parent.mkdir(mode=0o770, parents=True)
     profile_path.write_bytes(profile_bytes)
     profile_path.chmod(0o440)
     authorization["workflow_profile_sha256"] = _sha(profile_bytes)
     authorization["signature"]["signature_b64"] = module.base64.b64encode(
-        customer_key.sign(module._customer_authorization_signature_payload(authorization))
+        customer_key.sign(
+            module._customer_authorization_signature_payload(authorization)
+        )
     ).decode("ascii")
     authorization_sha256 = _write_json(authorization_path, authorization)
     args = argparse.Namespace(
@@ -327,9 +333,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
                 caller_bytes
             ).decode("ascii"),
             "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": _sha(caller_bytes),
-            "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": str(
-                caller_trust_root
-            ),
+            "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": str(caller_trust_root),
             "NPA_LIBERO_AUTHENTICATED_CALLER_FILE": str(caller_assertion_path),
         }
     )
@@ -746,7 +750,10 @@ def test_sudo_allowlist_preserves_real_profile_bound_signature_validation(
     keep = set(line.split('env_keep += "', 1)[1].split('"', 1)[0].split())
     environment = module._runtime_execution_environment(Path(args.cache_root))
     filtered = {name: value for name, value in environment.items() if name in keep}
-    assert filtered["NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256"] == fixture["profile_sha256"]
+    assert (
+        filtered["NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256"]
+        == fixture["profile_sha256"]
+    )
     assert module.STORAGE_SECRET_ENV_NAMES.isdisjoint(filtered)
     for name in tuple(os.environ):
         monkeypatch.delenv(name)
@@ -797,9 +804,7 @@ def test_s3_object_url_refuses_noncanonical_segments(object_key: str) -> None:
 def _install_fake_materializers(
     monkeypatch, module, fixture: dict[str, object], *, python_exit: int = 0
 ) -> None:
-    def fetch_source(
-        root: Path, source: dict[str, object], *, deadline=None
-    ) -> None:
+    def fetch_source(root: Path, source: dict[str, object], *, deadline=None) -> None:
         del deadline
         source_root = root / "source"
         files = {
@@ -1031,8 +1036,8 @@ def test_customer_authorization_payload_cannot_substitute_authenticated_signer(
             Path(args.authorization),
             args.authorization_sha256,
             json.loads(Path(args.manifest).read_text(encoding="utf-8")),
-        module.EXPECTED_RUNTIME_MANIFEST_SHA256,
-    )
+            module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+        )
 
 
 def test_customer_authorization_requires_external_signer_registration(tmp_path) -> None:
@@ -1110,9 +1115,7 @@ def test_absent_or_stale_authenticated_signer_refuses_before_network_or_cache(
 ) -> None:
     module, args, _fixture_values = _fixture(tmp_path)
     if caller_fingerprint is None:
-        monkeypatch.delenv(
-            "NPA_LIBERO_AUTHENTICATED_CALLER_B64", raising=False
-        )
+        monkeypatch.delenv("NPA_LIBERO_AUTHENTICATED_CALLER_B64", raising=False)
     else:
         monkeypatch.setenv(
             "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256",
@@ -1268,7 +1271,9 @@ def test_customer_authorization_rejects_empty_profile_digest(
     ).decode("ascii")
     authorization_bytes = json.dumps(authorization, sort_keys=True).encode() + b"\n"
 
-    with pytest.raises(module.CustomerAcceptanceRequired, match="authorization wrong scope"):
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="authorization wrong scope"
+    ):
         module._validate_customer_authorization_bytes(
             authorization_bytes,
             hashlib.sha256(authorization_bytes).hexdigest(),
@@ -1296,10 +1301,14 @@ def test_executable_profile_bytes_are_verified_before_cache_effect(
     assert not Path(args.cache_root).exists()
 
 
-def test_customer_run_reuses_signature_without_caller_or_storage_services(monkeypatch, tmp_path):
+def test_customer_run_reuses_signature_without_caller_or_storage_services(
+    monkeypatch, tmp_path
+):
     module, args, fixture = _fixture(tmp_path)
     monkeypatch.setenv("NPA_LIBERO_RUNTIME_DELIVERY", module.CUSTOMER_RUN_MODE)
-    monkeypatch.setattr(module, "_customer_run_key", lambda: fixture["customer_public_key"])
+    monkeypatch.setattr(
+        module, "_customer_run_key", lambda: fixture["customer_public_key"]
+    )
     monkeypatch.delenv("NPA_LIBERO_AUTHENTICATED_CALLER_B64")
     monkeypatch.delenv("NPA_LIBERO_AUTHENTICATED_CALLER_SHA256")
     caller, key, signer = module._authenticated_caller_binding_from_environment()
@@ -1307,7 +1316,10 @@ def test_customer_run_reuses_signature_without_caller_or_storage_services(monkey
     manifest = json.loads(Path(args.manifest).read_bytes())
     payload = Path(args.authorization).read_bytes()
     accepted, _ = module._validate_customer_authorization_bytes(
-        payload, args.authorization_sha256, manifest, fixture["manifest_sha"],
+        payload,
+        args.authorization_sha256,
+        manifest,
+        fixture["manifest_sha"],
         authenticated_signer_sha256=signer,
     )
     assert accepted["run_id"] == fixture["run_id"]
@@ -1316,20 +1328,36 @@ def test_customer_run_reuses_signature_without_caller_or_storage_services(monkey
     changed = json.dumps(tampered).encode()
     with pytest.raises(module.CustomerAcceptanceRequired):
         module._validate_customer_authorization_bytes(
-            changed, _sha(changed), manifest, fixture["manifest_sha"],
+            changed,
+            _sha(changed),
+            manifest,
+            fixture["manifest_sha"],
             authenticated_signer_sha256=signer,
         )
     assert not Path(args.cache_root).exists()
 
 
-def test_customer_mode_must_be_present_in_customer_signed_profile(monkeypatch, tmp_path):
+def test_customer_mode_must_be_present_in_customer_signed_profile(
+    monkeypatch, tmp_path
+):
     module, _args, fixture = _fixture(tmp_path)
     monkeypatch.setenv("NPA_LIBERO_RUNTIME_DELIVERY", module.CUSTOMER_RUN_MODE)
     with pytest.raises(module.BootstrapRefusal, match="mode is absent"):
         module._validate_executable_profile_digest(fixture["profile_sha256"])
     profile = module._executable_profile_path()
     profile.chmod(0o600)
-    payload = json.dumps([{"resources": {"kubernetes": {"pod_config": {"spec": {"automountServiceAccountToken": False}}}}, "envs": {"NPA_LIBERO_RUNTIME_DELIVERY": module.CUSTOMER_RUN_MODE}}]).encode()
+    payload = json.dumps(
+        [
+            {
+                "resources": {
+                    "kubernetes": {
+                        "pod_config": {"spec": {"automountServiceAccountToken": False}}
+                    }
+                },
+                "envs": {"NPA_LIBERO_RUNTIME_DELIVERY": module.CUSTOMER_RUN_MODE},
+            }
+        ]
+    ).encode()
     profile.write_bytes(payload)
     profile.chmod(0o440)
     module._validate_executable_profile_digest(_sha(payload))
@@ -1341,20 +1369,30 @@ def test_unnamed_supervisor_handoff_remains_distinct_from_authorization_file():
         handoff.write(b"synthetic-public-key")
         handoff.flush()
         assert os.fstat(handoff.fileno()).st_nlink == 0
-        assert module._read_private_regular_descriptor(
-            handoff.fileno(), limit=1024, owner_uid=os.getuid(),
-            input_name="supervisor handoff", allow_unlinked=True,
-        ) == b"synthetic-public-key"
+        assert (
+            module._read_private_regular_descriptor(
+                handoff.fileno(),
+                limit=1024,
+                owner_uid=os.getuid(),
+                input_name="supervisor handoff",
+                allow_unlinked=True,
+            )
+            == b"synthetic-public-key"
+        )
         with pytest.raises(module.BootstrapRefusal, match="owner-private"):
             module._read_private_regular_descriptor(
-                handoff.fileno(), limit=1024, owner_uid=os.getuid(),
+                handoff.fileno(),
+                limit=1024,
+                owner_uid=os.getuid(),
                 input_name="customer authorization file",
             )
 
 
 def test_customer_signer_environment_binding_is_required(monkeypatch, tmp_path) -> None:
     module, args, fixture = _fixture(tmp_path)
-    monkeypatch.setenv("NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", "0" * 64)
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", "0" * 64
+    )
     with pytest.raises(module.CustomerAcceptanceRequired, match="signer binding"):
         module._validate_customer_authorization(
             Path(args.authorization),
@@ -1369,9 +1407,13 @@ def test_download_deadline_refuses_before_transport(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(
         module,
         "_open_https_download",
-        lambda *_args, **_kwargs: pytest.fail("expired authorization reached transport"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "expired authorization reached transport"
+        ),
     )
-    with pytest.raises(module.CustomerAcceptanceRequired, match="expired or replayable"):
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="expired or replayable"
+    ):
         module._download_verified(
             tmp_path / "artifact",
             url="https://files.pythonhosted.org/artifact.whl",
@@ -1529,7 +1571,9 @@ def test_real_fd_anchored_venv_install_survives_publication(
         archive.writestr("fd_fixture.py", "VALUE = 42\ndef main(): print(VALUE)\n")
         script = zipfile.ZipInfo("fd_fixture-1.0.data/scripts/fd_script.py")
         script.external_attr = (stat.S_IFREG | 0o755) << 16
-        archive.writestr(script, "#!python\nimport fd_fixture; print(fd_fixture.VALUE)\n")
+        archive.writestr(
+            script, "#!python\nimport fd_fixture; print(fd_fixture.VALUE)\n"
+        )
         archive.writestr(
             "fd_fixture-1.0.dist-info/METADATA",
             "Metadata-Version: 2.1\nName: fd-fixture\nVersion: 1.0\n",
@@ -1554,8 +1598,11 @@ def test_real_fd_anchored_venv_install_survives_publication(
     cache = tmp_path / "cache"
     cache.mkdir(mode=0o700)
     artifact = {
-        "name": "fd-fixture", "filename": wheel.name, "url": "fixture",
-        "sha256": _sha(payload), "size_bytes": len(payload),
+        "name": "fd-fixture",
+        "filename": wheel.name,
+        "url": "fixture",
+        "sha256": _sha(payload),
+        "size_bytes": len(payload),
     }
     with module._open_cache_root_descriptor(cache, create=False) as descriptor:
         anchored = Path("/proc") / str(os.getpid()) / "fd" / str(descriptor)
@@ -1571,9 +1618,13 @@ def test_real_fd_anchored_venv_install_survives_publication(
         else:
             published = cache / "published"
         module._install_runtime(
-            partial, [artifact], [f"fd-fixture==1.0 --hash=sha256:{_sha(payload)}"],
+            partial,
+            [artifact],
+            [f"fd-fixture==1.0 --hash=sha256:{_sha(payload)}"],
             published_root=published,
-            deadline=datetime.now(timezone.utc) + timedelta(minutes=5) if bounded else None,
+            deadline=datetime.now(timezone.utc) + timedelta(minutes=5)
+            if bounded
+            else None,
         )
         assert (partial / "venv/bin/__pycache__").is_dir()
         assert module._inventory_entries(partial)  # Blanket no-symlink check.
@@ -1588,15 +1639,26 @@ def test_real_fd_anchored_venv_install_survives_publication(
         "assert site.getsitepackages()[0].startswith(sys.prefix); "
         "subprocess.run([sys.executable, '-c', 'import fd_fixture; print(fd_fixture.VALUE)'], check=True)"
     )
-    assert subprocess.check_output(
-        [str(published / "venv/bin/python"), "-c", command], text=True, env=environment
-    ).strip() == "42"
-    assert subprocess.check_output(
-        [str(published / "venv/bin/fd-fixture")], text=True, env=environment
-    ).strip() == "42"
-    assert subprocess.check_output(
-        [str(published / "venv/bin/fd_script.py")], text=True, env=environment
-    ).strip() == "42"
+    assert (
+        subprocess.check_output(
+            [str(published / "venv/bin/python"), "-c", command],
+            text=True,
+            env=environment,
+        ).strip()
+        == "42"
+    )
+    assert (
+        subprocess.check_output(
+            [str(published / "venv/bin/fd-fixture")], text=True, env=environment
+        ).strip()
+        == "42"
+    )
+    assert (
+        subprocess.check_output(
+            [str(published / "venv/bin/fd_script.py")], text=True, env=environment
+        ).strip()
+        == "42"
+    )
     assert "pip " in subprocess.check_output(
         [str(published / "venv/bin/pip"), "--version"], text=True, env=environment
     )
@@ -1725,12 +1787,30 @@ def test_source_build_recursive_mount_scope_and_read_only_children(tmp_path) -> 
         module._validate_read_only_system_submounts(root, row.replace(" ro,", " rw,"))
     with pytest.raises(module.BootstrapRefusal, match="inventory is invalid"):
         module._validate_read_only_system_submounts(root, "malformed")
-    seccomp = json.loads((ROOT / "npa/src/npa/workflows/byof/profiles/libero-customer-seccomp.json").read_bytes())
+    seccomp = json.loads(
+        (
+            ROOT / "npa/src/npa/workflows/byof/profiles/libero-customer-seccomp.json"
+        ).read_bytes()
+    )
     mount_rules = [item for item in seccomp["syscalls"] if "mount" in item["names"]]
-    assert all(item["args"][0]["index"] == 3 and item["args"][0]["op"] == "SCMP_CMP_EQ" for item in mount_rules)
-    assert {item["args"][0]["value"] for item in mount_rules} == {0, 4096, 20480, 278528, 2101281, 2101287}
-    apparmor = (ROOT / "npa/src/npa/workflows/byof/profiles/libero-customer-apparmor").read_text()
-    recursive_rules = [line.strip() for line in apparmor.splitlines() if "rbind" in line]
+    assert all(
+        item["args"][0]["index"] == 3 and item["args"][0]["op"] == "SCMP_CMP_EQ"
+        for item in mount_rules
+    )
+    assert {item["args"][0]["value"] for item in mount_rules} == {
+        0,
+        4096,
+        20480,
+        278528,
+        2101281,
+        2101287,
+    }
+    apparmor = (
+        ROOT / "npa/src/npa/workflows/byof/profiles/libero-customer-apparmor"
+    ).read_text()
+    recursive_rules = [
+        line.strip() for line in apparmor.splitlines() if "rbind" in line
+    ]
     assert recursive_rules == [
         "mount options=(rw,rbind) /{bin,sbin,lib,lib64,usr,usr/bin,usr/sbin,usr/lib,usr/lib64}/ -> /workspace/.cache/npa/libero/**/.source-build-sandbox/{bin,sbin,lib,lib64,usr}/,"
     ]
@@ -1826,7 +1906,9 @@ def test_source_fetch_propagates_authorization_deadline_to_every_subprocess(
 def test_source_fetch_capture_terminates_the_process_group_at_expiry() -> None:
     module = _load_module()
     started = datetime.now(timezone.utc)
-    with pytest.raises(module.CustomerAcceptanceRequired, match="expired or replayable"):
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="expired or replayable"
+    ):
         module._run_capture(
             ["/bin/sh", "-ceu", "sleep 10"],
             deadline=started + timedelta(milliseconds=50),
@@ -1990,6 +2072,7 @@ def test_execute_returns_the_exact_smoke_exit_code(monkeypatch, tmp_path) -> Non
             assert "capture_output" not in kwargs
             assert "text" not in kwargs
             return original_run(command, **kwargs)
+
     monkeypatch.setattr(module.subprocess, "run", smoke)
 
     class Completed:
@@ -2131,6 +2214,7 @@ def test_execute_rejects_post_smoke_cache_identity_drift(
             assert "capture_output" not in kwargs
             assert "text" not in kwargs
             return original_run(command, **kwargs)
+
     monkeypatch.setattr(module.subprocess, "run", smoke)
 
     class Completed:
@@ -2503,7 +2587,9 @@ def test_failed_materialization_removes_partial_cache(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(
         module,
         "_fetch_inputs",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("fixture failure")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("fixture failure")
+        ),
     )
 
     with pytest.raises(RuntimeError, match="fixture failure"):
@@ -3126,7 +3212,11 @@ def _valid_upload_payloads(module, run_id: str) -> dict[str, bytes]:
         "solution": "libero",
         "capability": "libero_spatial_bc_rnn_train_reload_heldout",
         "capabilities_exercised": ["libero_spatial_bc_rnn_train_reload_heldout"],
-        "source": {"repository": "https://example.invalid/libero", "revision": "r", "license": "MIT"},
+        "source": {
+            "repository": "https://example.invalid/libero",
+            "revision": "r",
+            "license": "MIT",
+        },
         "dataset": {
             "repository": "dataset",
             "revision": "r",
@@ -3139,7 +3229,12 @@ def _valid_upload_payloads(module, run_id: str) -> dict[str, bytes]:
             "license": "CC-BY-4.0",
             "attribution": "LIBERO",
         },
-        "task_language_model": {"repository": "model", "revision": "r", "license": "Apache-2.0", "delivery": "runtime_fetch"},
+        "task_language_model": {
+            "repository": "model",
+            "revision": "r",
+            "license": "Apache-2.0",
+            "delivery": "runtime_fetch",
+        },
     }
     summary = {
         "status": "success",
@@ -3158,7 +3253,15 @@ def _valid_upload_payloads(module, run_id: str) -> dict[str, bytes]:
     return {
         "libero-smoke.json": json.dumps(smoke).encode(),
         "npa_byof_summary.json": json.dumps(summary).encode(),
-        "npa_runtime_bootstrap.json": json.dumps({"schema": metadata["schema"], "solution": metadata["solution"], "status": "ready", "run_id": run_id, "manifest_sha256": digest}).encode(),
+        "npa_runtime_bootstrap.json": json.dumps(
+            {
+                "schema": metadata["schema"],
+                "solution": metadata["solution"],
+                "status": "ready",
+                "run_id": run_id,
+                "manifest_sha256": digest,
+            }
+        ).encode(),
         "npa_runtime_metadata.json": json.dumps(metadata).encode(),
     }
 
@@ -3384,8 +3487,14 @@ def test_real_completion_record_satisfies_closed_output_schemas(tmp_path, mutati
     root.mkdir()
     (root / "entry").write_bytes(b"synthetic inventory content")
     record = module._complete_record(
-        root, manifest, "a" * 64, "b" * 64, "c" * 64,
-        "synthetic-run", "d" * 64, "e" * 64,
+        root,
+        manifest,
+        "a" * 64,
+        "b" * 64,
+        "c" * 64,
+        "synthetic-run",
+        "d" * 64,
+        "e" * 64,
     )
     assert len(record["source_tree"]) == 40
     if mutation == "unknown":
@@ -3394,14 +3503,27 @@ def test_real_completion_record_satisfies_closed_output_schemas(tmp_path, mutati
         record["source_tree"] = "f" * 64
     elif mutation == "task_hash":
         record["task_bddl_sha256"] = "f" * 40
-    bootstrap = {**record, "status": "ready", "cache_path": str(root),
-                 "warm_reuse": False, "governing_terms_fetched_this_invocation": True}
-    for name, value in (("npa_runtime_metadata.json", record), ("npa_runtime_bootstrap.json", bootstrap)):
+    bootstrap = {
+        **record,
+        "status": "ready",
+        "cache_path": str(root),
+        "warm_reuse": False,
+        "governing_terms_fetched_this_invocation": True,
+    }
+    for name, value in (
+        ("npa_runtime_metadata.json", record),
+        ("npa_runtime_bootstrap.json", bootstrap),
+    ):
         if mutation:
             with pytest.raises(module.BootstrapRefusal):
                 module._canonical_output_payload(name, json.dumps(value).encode())
         else:
-            assert json.loads(module._canonical_output_payload(name, json.dumps(value).encode())) == value
+            assert (
+                json.loads(
+                    module._canonical_output_payload(name, json.dumps(value).encode())
+                )
+                == value
+            )
 
 
 def test_output_upload_allowlist_excludes_checkpoint_and_raw_logs():
@@ -3676,27 +3798,34 @@ def test_supervisor_evidence_rejects_group_writable_and_symlinked_files(
     with pytest.raises(module.BootstrapRefusal, match="unavailable"):
         module._immutable_supervisor_bytes(link, 1024)
 
-def test_runtime_storage_trust_root_requires_an_immutable_mounted_file(tmp_path, monkeypatch) -> None:
+
+def test_runtime_storage_trust_root_requires_an_immutable_mounted_file(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_module()
     key = bytes(range(32))
-    mounted = tmp_path / 'output-storage-authorization-public-key.b64'
-    monkeypatch.setattr(module, 'OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY', mounted)
-    monkeypatch.setattr(module, 'OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID', os.getuid())
-    monkeypatch.setenv('NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256', 'f' * 64)
-    with pytest.raises(module.BootstrapRefusal, match='unavailable'):
+    mounted = tmp_path / "output-storage-authorization-public-key.b64"
+    monkeypatch.setattr(module, "OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY", mounted)
+    monkeypatch.setattr(
+        module, "OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID", os.getuid()
+    )
+    monkeypatch.setenv(
+        "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256", "f" * 64
+    )
+    with pytest.raises(module.BootstrapRefusal, match="unavailable"):
         module._trusted_output_storage_authorization_public_key()
     mounted.write_bytes(module.base64.b64encode(key))
     mounted.chmod(0o444)
     assert module._trusted_output_storage_authorization_public_key() == key
     mounted.chmod(0o644)
-    with pytest.raises(module.BootstrapRefusal, match='mutable or invalid'):
+    with pytest.raises(module.BootstrapRefusal, match="mutable or invalid"):
         module._trusted_output_storage_authorization_public_key()
 
 
 def _navigation_terms(uuid: bytes) -> bytes:
     return (
         b'<html>\n        <nav class="global-nav" id="meganavigation' + uuid + b'">\n'
-        b'Governing legal text remains entirely hash bound.\n'
+        b"Governing legal text remains entirely hash bound.\n"
         b'\t        id : "meganavigation' + uuid + b'",\n'
         b'\t        method : "navigation-megamenu",\n</html>\n'
     )
@@ -3704,108 +3833,137 @@ def _navigation_terms(uuid: bytes) -> bytes:
 
 def test_terms_navigation_normalization_retains_every_other_byte() -> None:
     module = _load_module()
-    first = _navigation_terms(b'f9ec807f_5dd5_43f7_a392_e8f423436671')
-    second = _navigation_terms(b'364b6441_f425_439f_a728_0cd4473283b3')
-    expected = _navigation_terms(b'00000000_0000_0000_0000_000000000000')
+    first = _navigation_terms(b"f9ec807f_5dd5_43f7_a392_e8f423436671")
+    second = _navigation_terms(b"364b6441_f425_439f_a728_0cd4473283b3")
+    expected = _navigation_terms(b"00000000_0000_0000_0000_000000000000")
     assert first != second
     assert module._canonicalize_nvidia_terms(first) == expected
     assert module._canonicalize_nvidia_terms(second) == expected
     assert len(expected) == len(first) == len(second)
 
 
-@pytest.mark.parametrize('mutation', ['mismatch', 'extra', 'malformed', 'wrong_nav', 'wrong_method'])
+@pytest.mark.parametrize(
+    "mutation", ["mismatch", "extra", "malformed", "wrong_nav", "wrong_method"]
+)
 def test_terms_navigation_normalization_refuses_unexpected_structure(mutation) -> None:
     module = _load_module()
-    uuid = b'f9ec807f_5dd5_43f7_a392_e8f423436671'
+    uuid = b"f9ec807f_5dd5_43f7_a392_e8f423436671"
     content = _navigation_terms(uuid)
-    if mutation == 'mismatch':
-        content = content.replace(uuid, b'364b6441_f425_439f_a728_0cd4473283b3', 1)
-    elif mutation == 'extra':
-        content += b'meganavigation' + uuid
-    elif mutation == 'malformed':
-        content = content.replace(uuid, b'not-a-uuid')
-    elif mutation == 'wrong_nav':
-        content = content.replace(b'global-nav', b'legal-text')
+    if mutation == "mismatch":
+        content = content.replace(uuid, b"364b6441_f425_439f_a728_0cd4473283b3", 1)
+    elif mutation == "extra":
+        content += b"meganavigation" + uuid
+    elif mutation == "malformed":
+        content = content.replace(uuid, b"not-a-uuid")
+    elif mutation == "wrong_nav":
+        content = content.replace(b"global-nav", b"legal-text")
     else:
-        content = content.replace(b'navigation-megamenu', b'legal-text')
-    with pytest.raises(module.BootstrapRefusal, match='navigation identity'):
+        content = content.replace(b"navigation-megamenu", b"legal-text")
+    with pytest.raises(module.BootstrapRefusal, match="navigation identity"):
         module._canonicalize_nvidia_terms(content)
 
 
-@pytest.mark.parametrize('tamper', ['none', 'legal_text', 'other_html', 'raw_hash'])
+@pytest.mark.parametrize("tamper", ["none", "legal_text", "other_html", "raw_hash"])
 def test_verified_terms_download_uses_explicit_canonical_identity(
     monkeypatch, tmp_path, capsys, tamper
 ) -> None:
     import io
+
     module = _load_module()
-    original = _navigation_terms(b'f9ec807f_5dd5_43f7_a392_e8f423436671')
-    payload = _navigation_terms(b'364b6441_f425_439f_a728_0cd4473283b3')
+    original = _navigation_terms(b"f9ec807f_5dd5_43f7_a392_e8f423436671")
+    payload = _navigation_terms(b"364b6441_f425_439f_a728_0cd4473283b3")
     expected = module._canonicalize_nvidia_terms(original)
-    if tamper == 'legal_text':
-        payload = payload.replace(b'Governing', b'Modified!')
-    elif tamper == 'other_html':
-        payload = payload.replace(b'<html>', b'<HTML>')
+    if tamper == "legal_text":
+        payload = payload.replace(b"Governing", b"Modified!")
+    elif tamper == "other_html":
+        payload = payload.replace(b"<html>", b"<HTML>")
 
     class Response(io.BytesIO):
         def getheader(self, name):
-            return str(len(payload)) if name == 'Content-Length' else None
+            return str(len(payload)) if name == "Content-Length" else None
 
-    monkeypatch.setattr(module, '_open_https_download', lambda *_a, **_k: (io.BytesIO(), Response(payload)))
-    target = tmp_path / 'terms'
-    kwargs = dict(url=module.NVIDIA_SOFTWARE_TERMS_URL, sha256=_sha(expected), size=len(expected), terms=True, terms_normalization=module.NVIDIA_TERMS_NORMALIZATION)
-    if tamper == 'raw_hash':
-        kwargs.pop('terms_normalization')
-    if tamper != 'none':
-        with pytest.raises(module.BootstrapRefusal, match='immutable identity'):
+    monkeypatch.setattr(
+        module,
+        "_open_https_download",
+        lambda *_a, **_k: (io.BytesIO(), Response(payload)),
+    )
+    target = tmp_path / "terms"
+    kwargs = dict(
+        url=module.NVIDIA_SOFTWARE_TERMS_URL,
+        sha256=_sha(expected),
+        size=len(expected),
+        terms=True,
+        terms_normalization=module.NVIDIA_TERMS_NORMALIZATION,
+    )
+    if tamper == "raw_hash":
+        kwargs.pop("terms_normalization")
+    if tamper != "none":
+        with pytest.raises(module.BootstrapRefusal, match="immutable identity"):
             module._download_verified(target, **kwargs)
         assert not target.exists()
-        assert not target.with_name('.terms.partial').exists()
+        assert not target.with_name(".terms.partial").exists()
     else:
         module._download_verified(target, **kwargs)
         assert target.read_bytes() == expected
         receipt = json.loads(capsys.readouterr().err)
-        assert receipt['raw_sha256'] == _sha(payload)
-        assert receipt['canonical_sha256'] == _sha(expected)
-        assert receipt['normalization'] == module.NVIDIA_TERMS_NORMALIZATION
+        assert receipt["raw_sha256"] == _sha(payload)
+        assert receipt["canonical_sha256"] == _sha(expected)
+        assert receipt["normalization"] == module.NVIDIA_TERMS_NORMALIZATION
 
 
-@pytest.mark.parametrize('change', ['runtime', 'other_url', 'unknown_scheme', 'large'])
-def test_terms_normalization_cannot_apply_to_other_downloads(monkeypatch, tmp_path, change) -> None:
+@pytest.mark.parametrize("change", ["runtime", "other_url", "unknown_scheme", "large"])
+def test_terms_normalization_cannot_apply_to_other_downloads(
+    monkeypatch, tmp_path, change
+) -> None:
     module = _load_module()
-    kwargs = dict(url=module.NVIDIA_SOFTWARE_TERMS_URL, sha256='a' * 64, size=20, terms=True, terms_normalization=module.NVIDIA_TERMS_NORMALIZATION)
-    if change == 'runtime':
-        kwargs['terms'] = False
-    elif change == 'other_url':
-        kwargs['url'] = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
-    elif change == 'unknown_scheme':
-        kwargs['terms_normalization'] = 'strip-html'
+    kwargs = dict(
+        url=module.NVIDIA_SOFTWARE_TERMS_URL,
+        sha256="a" * 64,
+        size=20,
+        terms=True,
+        terms_normalization=module.NVIDIA_TERMS_NORMALIZATION,
+    )
+    if change == "runtime":
+        kwargs["terms"] = False
+    elif change == "other_url":
+        kwargs["url"] = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+    elif change == "unknown_scheme":
+        kwargs["terms_normalization"] = "strip-html"
     else:
-        kwargs['size'] = 1024 * 1024 + 1
-    monkeypatch.setattr(module, '_open_https_download', lambda *_a, **_k: pytest.fail('network reached'))
-    with pytest.raises(module.BootstrapRefusal, match='normalization is invalid'):
-        module._download_verified(tmp_path / 'terms', **kwargs)
+        kwargs["size"] = 1024 * 1024 + 1
+    monkeypatch.setattr(
+        module, "_open_https_download", lambda *_a, **_k: pytest.fail("network reached")
+    )
+    with pytest.raises(module.BootstrapRefusal, match="normalization is invalid"):
+        module._download_verified(tmp_path / "terms", **kwargs)
 
 
-@pytest.mark.parametrize('change', ['none', 'unknown_scheme', 'wrong_id', 'wrong_url', 'null'])
+@pytest.mark.parametrize(
+    "change", ["none", "unknown_scheme", "wrong_id", "wrong_url", "null"]
+)
 def test_manifest_binds_only_nvidia_navigation_normalization(tmp_path, change) -> None:
     module, args, _ = _fixture(tmp_path)
     manifest = json.loads(Path(args.manifest).read_bytes())
-    term = next(term for term in manifest['governing_terms'] if term['id'] == 'nvidia-software-license')
+    term = next(
+        term
+        for term in manifest["governing_terms"]
+        if term["id"] == "nvidia-software-license"
+    )
     before = module._governing_terms_identity(manifest)
-    term['normalization'] = module.NVIDIA_TERMS_NORMALIZATION
-    term['url'] = module.NVIDIA_SOFTWARE_TERMS_URL
-    if change == 'unknown_scheme':
-        term['normalization'] = 'strip-html'
-    elif change == 'wrong_id':
-        term['id'] = 'libero-mit'
-    elif change == 'wrong_url':
-        term['url'] += '?unreviewed=true'
-    elif change == 'null':
-        term['normalization'] = None
+    term["normalization"] = module.NVIDIA_TERMS_NORMALIZATION
+    term["url"] = module.NVIDIA_SOFTWARE_TERMS_URL
+    if change == "unknown_scheme":
+        term["normalization"] = "strip-html"
+    elif change == "wrong_id":
+        term["id"] = "libero-mit"
+    elif change == "wrong_url":
+        term["url"] += "?unreviewed=true"
+    elif change == "null":
+        term["normalization"] = None
     module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(Path(args.manifest), manifest)
-    if change == 'none':
+    if change == "none":
         module._validate_manifest(Path(args.manifest))
         assert before != module._governing_terms_identity(manifest)
     else:
-        with pytest.raises(module.BootstrapRefusal, match='normalization is invalid'):
+        with pytest.raises(module.BootstrapRefusal, match="normalization is invalid"):
             module._validate_manifest(Path(args.manifest))

@@ -20,21 +20,51 @@ def project(studio, tmp_path):
     draft = importlib.import_module("film_draft")
     source = tmp_path / "source.png"
     source.write_bytes(b"source image bytes")
-    assets = {"source": {"path": "source.png", "kind": "image", "sha256": draft._hash(source)}}
+    assets = {
+        "source": {"path": "source.png", "kind": "image", "sha256": draft._hash(source)}
+    }
     (tmp_path / "assets.json").write_text(json.dumps(assets))
-    scene = {"id": "opening", "duration": 4, "layout": "screen", "title": ["A goal"],
-             "assets": ["source"], "labels": ["SIMULATION"], "narration": "Unrecorded text"}
+    scene = {
+        "id": "opening",
+        "duration": 4,
+        "layout": "screen",
+        "title": ["A goal"],
+        "assets": ["source"],
+        "labels": ["SIMULATION"],
+        "narration": "Unrecorded text",
+    }
     pending = {**scene, "id": "later", "assets": ["not-produced-yet"]}
-    (tmp_path / "story.json").write_text(json.dumps({"title": "Film", "duration": 8, "scenes": [scene, pending]}))
+    (tmp_path / "story.json").write_text(
+        json.dumps({"title": "Film", "duration": 8, "scenes": [scene, pending]})
+    )
     path = tmp_path / "film-project.json"
-    path.write_text(json.dumps({"storyboard": "story.json", "assets": "assets.json",
-                                "voice_dir": "missing-narration", "output_dir": "renders"}))
+    path.write_text(
+        json.dumps(
+            {
+                "storyboard": "story.json",
+                "assets": "assets.json",
+                "voice_dir": "missing-narration",
+                "output_dir": "renders",
+            }
+        )
+    )
     return path, draft
 
 
-def test_registry_resolves_independent_projects_relative_to_registry(studio, tmp_path, monkeypatch):
+def test_registry_resolves_independent_projects_relative_to_registry(
+    studio, tmp_path, monkeypatch
+):
     registry = tmp_path / "studio.json"
-    registry.write_text(json.dumps({"projects": {"exec": "exec/project.json", "inference": "inference/project.json"}}))
+    registry.write_text(
+        json.dumps(
+            {
+                "projects": {
+                    "exec": "exec/project.json",
+                    "inference": "inference/project.json",
+                }
+            }
+        )
+    )
     monkeypatch.chdir(tmp_path.parent)
     projects = studio._projects(registry)
     assert projects["exec"] == tmp_path / "exec/project.json"
@@ -44,17 +74,30 @@ def test_registry_resolves_independent_projects_relative_to_registry(studio, tmp
 
 def test_architecture_draft_needs_no_media_or_credentials(studio, tmp_path):
     draft = importlib.import_module("film_draft")
-    scene = {"id": "infrastructure", "duration": 12, "layout": "architecture",
-             "title": ["Connect the workflow"], "subtitle": "", "eyebrow": "",
-             "assets": [], "labels": [], "narration": "Use the right infrastructure.",
-             "controller": "Workbench", "architecture_note": "Reference deployment.",
-             "compute_nodes": [{"title": "Compute", "purpose": "Inference", "models": ["Model"]}],
-             "storage_node": {"title": "Storage", "detail": "Run outputs"}}
+    scene = {
+        "id": "infrastructure",
+        "duration": 12,
+        "layout": "architecture",
+        "title": ["Connect the workflow"],
+        "subtitle": "",
+        "eyebrow": "",
+        "assets": [],
+        "labels": [],
+        "narration": "Use the right infrastructure.",
+        "controller": "Workbench",
+        "architecture_note": "Reference deployment.",
+        "compute_nodes": [
+            {"title": "Compute", "purpose": "Inference", "models": ["Model"]}
+        ],
+        "storage_node": {"title": "Storage", "detail": "Run outputs"},
+    }
     story = tmp_path / "story.json"
     assets = tmp_path / "assets.json"
     story.write_text(json.dumps({"title": "Film", "scenes": [scene]}))
     assets.write_text("{}")
-    _, _, selected, required = draft._inputs({"storyboard": story, "assets": assets}, "infrastructure")
+    _, _, selected, required = draft._inputs(
+        {"storyboard": story, "assets": assets}, "infrastructure"
+    )
     assert selected == {**scene, "footer": "Film"}
     assert required == {}
     assert draft.render._rectangles(scene) == []
@@ -63,7 +106,17 @@ def test_architecture_draft_needs_no_media_or_credentials(studio, tmp_path):
         draft.render._validate_layout(scene)
 
 
-@pytest.mark.parametrize("projects", [[], {"list": "p.json"}, {"init": "p.json"}, {"search": "p.json"}, {"exec": {}}, {"Exec": "p.json"}])
+@pytest.mark.parametrize(
+    "projects",
+    [
+        [],
+        {"list": "p.json"},
+        {"init": "p.json"},
+        {"search": "p.json"},
+        {"exec": {}},
+        {"Exec": "p.json"},
+    ],
+)
 def test_invalid_registry_fails_before_running_a_command(studio, tmp_path, projects):
     path = tmp_path / "studio.json"
     path.write_text(json.dumps({"projects": projects}))
@@ -71,12 +124,16 @@ def test_invalid_registry_fails_before_running_a_command(studio, tmp_path, proje
         studio._projects(path)
 
 
-def test_studio_preserves_freeform_authoring_options_and_selected_project(studio, tmp_path):
+def test_studio_preserves_freeform_authoring_options_and_selected_project(
+    studio, tmp_path
+):
     project = tmp_path / "project with spaces.json"
     options = ["--prompt", "A technical film about simulation", "--duration", "75"]
     command = studio._command(project, "brief", options)
     assert command[2:] == ["brief", "--project", str(project), *options]
-    assert studio._command(project, "draft", ["--scene", "one"])[1].endswith("film_draft.py")
+    assert studio._command(project, "draft", ["--scene", "one"])[1].endswith(
+        "film_draft.py"
+    )
     with pytest.raises(ValueError, match="selects --project"):
         studio._command(project, "final", ["--project=another.json"])
 
@@ -84,8 +141,11 @@ def test_studio_preserves_freeform_authoring_options_and_selected_project(studio
 def test_selected_command_help_reaches_the_draft_parser(studio, tmp_path, monkeypatch):
     registry = tmp_path / "studio.json"
     registry.write_text(json.dumps({"projects": {"inference": "project.json"}}))
-    monkeypatch.setattr(studio.sys, "argv", ["studio.py", "--registry", str(registry),
-                                           "inference", "draft", "--help"])
+    monkeypatch.setattr(
+        studio.sys,
+        "argv",
+        ["studio.py", "--registry", str(registry), "inference", "draft", "--help"],
+    )
     calls = []
 
     def run(command, **kwargs):
@@ -102,10 +162,21 @@ def test_selected_command_help_reaches_the_draft_parser(studio, tmp_path, monkey
 def _fake_clip(draft, tmp_path, monkeypatch):
     clip = tmp_path / "cached.mp4"
     clip.write_bytes(b"verified scene")
-    monkeypatch.setattr(draft.render, "_probe", lambda path: {
-        "streams": [{"codec_type": "video", "width": 960, "height": 540,
-                     "nb_frames": "120", "r_frame_rate": "30/1"}],
-    })
+    monkeypatch.setattr(
+        draft.render,
+        "_probe",
+        lambda path: {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 960,
+                    "height": 540,
+                    "nb_frames": "120",
+                    "r_frame_rate": "30/1",
+                }
+            ],
+        },
+    )
     monkeypatch.setattr(draft, "_environment", lambda: {})
     monkeypatch.setattr(draft.render, "_scene_job", lambda *args: (clip, True))
     return clip
@@ -124,7 +195,9 @@ def test_draft_works_without_narration_or_other_scenes_media(project, monkeypatc
 
 
 @pytest.mark.parametrize("changed", ["source.png", "story.json", "film-project.json"])
-def test_draft_retains_previous_output_when_inputs_change_during_render(project, monkeypatch, changed):
+def test_draft_retains_previous_output_when_inputs_change_during_render(
+    project, monkeypatch, changed
+):
     path, draft = project
     clip = _fake_clip(draft, path.parent, monkeypatch)
     target = draft._draft(path, "opening")
@@ -141,7 +214,9 @@ def test_draft_retains_previous_output_when_inputs_change_during_render(project,
     assert target.read_bytes() == original
 
 
-def test_watcher_tracks_selected_media_and_keeps_paths_during_partial_json_edit(project):
+def test_watcher_tracks_selected_media_and_keeps_paths_during_partial_json_edit(
+    project,
+):
     path, _ = project
     watch = importlib.import_module("film_watch")
     paths = watch._watch_paths(path, "opening")

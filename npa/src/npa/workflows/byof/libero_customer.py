@@ -5,6 +5,7 @@ provides its verification key directly; no caller or storage signing service is
 required because the workload receives neither a service-account token nor
 storage credentials. It does not turn a mode selector into terms acceptance.
 """
+
 from __future__ import annotations
 
 import base64
@@ -24,25 +25,36 @@ MODE_ENV = "NPA_LIBERO_RUNTIME_DELIVERY"
 KEY_FILE_ENV = "NPA_LIBERO_CUSTOMER_RUN_PUBLIC_KEY_FILE"
 IMAGE_FILE_ENV = "NPA_LIBERO_CUSTOMER_IMAGE_MANIFEST_FILE"
 CONTROLLER_CONTEXT_ENV = "NPA_LIBERO_CUSTOMER_CONTROLLER_CONTEXT"
-PROFILE = Path(__file__).parent / "profiles/byof-solution-smoke-libero-customer-b200-gpu.yaml"
+PROFILE = (
+    Path(__file__).parent / "profiles/byof-solution-smoke-libero-customer-b200-gpu.yaml"
+)
 SECRET_NAMES = (
     "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
     "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256",
     "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256",
 )
-FORBIDDEN_WORKER_ENV = frozenset({
-    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-    "NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "KUBECONFIG",
-    "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "NGC_API_KEY",
-    "NPA_LIBERO_AUTHENTICATED_CALLER_B64",
-    "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
-})
+FORBIDDEN_WORKER_ENV = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "KUBECONFIG",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "NGC_API_KEY",
+        "NPA_LIBERO_AUTHENTICATED_CALLER_B64",
+        "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+    }
+)
 
 
 def selected(documents: Sequence[Mapping[str, Any]]) -> bool:
     modes = {
         str((document.get("envs") or {}).get(MODE_ENV) or "")
-        for document in documents if document.get("resources")
+        for document in documents
+        if document.get("resources")
     }
     if not modes or modes == {""}:
         return False
@@ -52,22 +64,37 @@ def selected(documents: Sequence[Mapping[str, Any]]) -> bool:
 
 
 def controller_context(
-    process_env: Mapping[str, str], workload_context: str, *, workload_namespace: str | None = None,
+    process_env: Mapping[str, str],
+    workload_context: str,
+    *,
+    workload_namespace: str | None = None,
 ) -> str:
     """Separate namespaces using two explicit aliases of the same private identity."""
     controller = process_env.get(CONTROLLER_CONTEXT_ENV, "")
     kubeconfig = process_env.get("KUBECONFIG", "")
-    if not controller or not workload_context or controller == workload_context or not kubeconfig:
-        raise ValueError("LIBERO requires distinct explicit controller and workload contexts")
+    if (
+        not controller
+        or not workload_context
+        or controller == workload_context
+        or not kubeconfig
+    ):
+        raise ValueError(
+            "LIBERO requires distinct explicit controller and workload contexts"
+        )
     config = yaml.safe_load(private_bytes(Path(kubeconfig)))
     if not isinstance(config, dict):
         raise ValueError("LIBERO private kubeconfig must be a mapping")
 
     def inventory(kind: str) -> dict[str, Any]:
         records = config.get(kind) or []
-        if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+        if not isinstance(records, list) or any(
+            not isinstance(item, dict) for item in records
+        ):
             raise ValueError("LIBERO kubeconfig inventory is invalid")
-        if any(not isinstance(item.get("name"), str) or not item["name"] for item in records):
+        if any(
+            not isinstance(item.get("name"), str) or not item["name"]
+            for item in records
+        ):
             raise ValueError("LIBERO kubeconfig inventory has missing names")
         result = {item.get("name"): item for item in records}
         if len(result) != len(records):
@@ -76,32 +103,52 @@ def controller_context(
 
     contexts = inventory("contexts")
     if set(contexts) != {workload_context, controller}:
-        raise ValueError("LIBERO kubeconfig must contain only the two authorized contexts")
+        raise ValueError(
+            "LIBERO kubeconfig must contain only the two authorized contexts"
+        )
     worker = (contexts.get(workload_context) or {}).get("context") or {}
     manager = (contexts.get(controller) or {}).get("context") or {}
     if (
-        not isinstance(worker, dict) or not isinstance(manager, dict)
-        or not worker.get("cluster") or worker.get("cluster") != manager.get("cluster")
-        or not worker.get("user") or worker.get("user") != manager.get("user")
-        or not worker.get("namespace") or not manager.get("namespace")
+        not isinstance(worker, dict)
+        or not isinstance(manager, dict)
+        or not worker.get("cluster")
+        or worker.get("cluster") != manager.get("cluster")
+        or not worker.get("user")
+        or worker.get("user") != manager.get("user")
+        or not worker.get("namespace")
+        or not manager.get("namespace")
         or worker["namespace"] == manager["namespace"]
-        or (workload_namespace is not None and worker["namespace"] != workload_namespace)
+        or (
+            workload_namespace is not None and worker["namespace"] != workload_namespace
+        )
     ):
-        raise ValueError("LIBERO contexts require the same cluster and user with distinct explicit namespaces")
+        raise ValueError(
+            "LIBERO contexts require the same cluster and user with distinct explicit namespaces"
+        )
     clusters, users = inventory("clusters"), inventory("users")
     if set(clusters) != {worker["cluster"]} or set(users) != {worker["user"]}:
-        raise ValueError("LIBERO kubeconfig must contain only its one shared cluster and user")
+        raise ValueError(
+            "LIBERO kubeconfig must contain only its one shared cluster and user"
+        )
     cluster = clusters[worker["cluster"]].get("cluster") or {}
     user = users[worker["user"]].get("user") or {}
     if not isinstance(cluster, dict) or not isinstance(user, dict):
         raise ValueError("LIBERO kubeconfig cluster or user is invalid")
     endpoint = urlsplit(cluster.get("server") or "")
     if (
-        endpoint.scheme != "https" or not endpoint.hostname or endpoint.username or endpoint.password
-        or endpoint.query or endpoint.fragment or cluster.get("insecure-skip-tls-verify")
-        or not cluster.get("certificate-authority-data") or not user
+        endpoint.scheme != "https"
+        or not endpoint.hostname
+        or endpoint.username
+        or endpoint.password
+        or endpoint.query
+        or endpoint.fragment
+        or cluster.get("insecure-skip-tls-verify")
+        or not cluster.get("certificate-authority-data")
+        or not user
     ):
-        raise ValueError("LIBERO contexts require one verified HTTPS endpoint, embedded CA and user")
+        raise ValueError(
+            "LIBERO contexts require one verified HTTPS endpoint, embedded CA and user"
+        )
     return controller
 
 
@@ -110,7 +157,9 @@ def validate_profile(documents: Sequence[Mapping[str, Any]]) -> None:
     tasks = [item for item in documents if item.get("resources")]
     template = list(yaml.safe_load_all(PROFILE.read_text()))[1]
     if len(tasks) != 1 or not selected(tasks):
-        raise ValueError("LIBERO customer execution requires its single packaged profile")
+        raise ValueError(
+            "LIBERO customer execution requires its single packaged profile"
+        )
     task = tasks[0]
     if set(task) - (set(template) | {"config"}):
         raise ValueError("LIBERO customer task adds an unsupported field")
@@ -129,11 +178,17 @@ def validate_profile(documents: Sequence[Mapping[str, Any]]) -> None:
     configured = (task.get("config") or {}).get("kubernetes")
     if kubernetes is not None and configured is not None and kubernetes != configured:
         raise ValueError("LIBERO customer pod declarations differ")
-    if (configured or kubernetes) != expected.pop("kubernetes") or resources != expected:
+    if (configured or kubernetes) != expected.pop(
+        "kubernetes"
+    ) or resources != expected:
         raise ValueError("LIBERO customer resource or immutable mount contract differs")
     envs = task.get("envs") or {}
-    if set(envs) != set(template["envs"]) or any(name in envs for name in FORBIDDEN_WORKER_ENV):
-        raise ValueError("LIBERO customer environment is not the closed credentialless profile")
+    if set(envs) != set(template["envs"]) or any(
+        name in envs for name in FORBIDDEN_WORKER_ENV
+    ):
+        raise ValueError(
+            "LIBERO customer environment is not the closed credentialless profile"
+        )
     dynamic = {"NPA_BYOF_RUN_ID", "BYOF_IMAGE", "NPA_LIBERO_EXECUTABLE_PROFILE_B64"}
     for name, value in envs.items():
         if name not in dynamic and not name.startswith("NPA_LIBERO_EXPECTED_"):
@@ -142,14 +197,18 @@ def validate_profile(documents: Sequence[Mapping[str, Any]]) -> None:
 
 
 def validate_authorization(
-    process_env: Mapping[str, str], *, image_manifest: dict[str, Any],
-    run_id: str, profile_sha256: str,
+    process_env: Mapping[str, str],
+    *,
+    image_manifest: dict[str, Any],
+    run_id: str,
+    profile_sha256: str,
 ) -> tuple[dict[str, Any], str]:
     """Verify the same v2 evidence using the actual customer's private handoff."""
     from npa.deploy.images import (
         _libero_trust_root_bytes,
         validate_libero_customer_runtime_authorization,
     )
+
     key_path = process_env.get(KEY_FILE_ENV, "")
     key = _libero_trust_root_bytes(key_path, label="customer-run signer")
     payload = base64.b64decode(
@@ -159,11 +218,14 @@ def validate_authorization(
     if not identity:
         raise ValueError("actual customer identity is absent from the private handoff")
     return validate_libero_customer_runtime_authorization(
-        payload, image_manifest=image_manifest, run_id=run_id,
+        payload,
+        image_manifest=image_manifest,
+        run_id=run_id,
         customer_identity_sha256=identity,
         customer_signer_public_key_sha256=hashlib.sha256(key).hexdigest(),
         executable_profile_sha256=profile_sha256,
-        public_key_file=key_path, customer_run=True,
+        public_key_file=key_path,
+        customer_run=True,
     )
 
 
@@ -178,9 +240,12 @@ def private_bytes(path: Path, *, limit: int = 2 * 1024 * 1024) -> bytes:
     finally:
         os.close(descriptor)
     if (
-        not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
-        or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) & 0o077
-        or len(data) > limit or len(data) != before.st_size
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or len(data) > limit
+        or len(data) != before.st_size
         or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     ):
@@ -188,19 +253,36 @@ def private_bytes(path: Path, *, limit: int = 2 * 1024 * 1024) -> bytes:
     return data
 
 
-def image_manifest(process_env: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+def image_manifest(
+    process_env: Mapping[str, str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Read reviewed technical image evidence, independently of customer consent."""
     from npa.deploy.images import (
-        libero_image_manifest, libero_publication_lineage_values,
+        libero_image_manifest,
+        libero_publication_lineage_values,
         validate_libero_qualified_image_manifest,
     )
+
     supplied = process_env.get(IMAGE_FILE_ENV, "")
-    manifest = json.loads(private_bytes(Path(supplied))) if supplied else libero_image_manifest()
+    manifest = (
+        json.loads(private_bytes(Path(supplied)))
+        if supplied
+        else libero_image_manifest()
+    )
     canonical = libero_image_manifest()
-    for field in ("customer_acceptance", "runtime_manifest_sha256", "runtime_requirements_sha256", "runtime_artifact_review"):
+    for field in (
+        "customer_acceptance",
+        "runtime_manifest_sha256",
+        "runtime_requirements_sha256",
+        "runtime_artifact_review",
+    ):
         if manifest.get(field) != canonical.get(field):
-            raise ValueError("customer-run image evidence differs from reviewed runtime")
-    qualification = validate_libero_qualified_image_manifest(manifest, customer_run=True)
+            raise ValueError(
+                "customer-run image evidence differs from reviewed runtime"
+            )
+    qualification = validate_libero_qualified_image_manifest(
+        manifest, customer_run=True
+    )
     repo = Path(__file__).resolve().parents[5]
     libero_publication_lineage_values(
         qualification, repo, development_sha=qualification["development_sha"]

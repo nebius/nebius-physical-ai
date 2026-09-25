@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from npa.orchestration.npa_workflow.run_state import (
     PAIDF_WORKFLOW_NAME,
+    RUN_SCHEMA_VERSION,
     paidf_artifact_prefix,
     paidf_workflow_prefix,
 )
@@ -492,7 +493,9 @@ def resolve_run(
 
     from npa.orchestration.npa_workflow.first_run_state import terminal_run_evidence
 
-    terminal_evidence = terminal_run_evidence(project=ledger_project, run_id=resolved_id)
+    terminal_evidence = terminal_run_evidence(
+        project=ledger_project, run_id=resolved_id
+    )
     if terminal_evidence:
         result.found = True
         result.source = "project_run_terminal_ledger"
@@ -587,7 +590,8 @@ def resolve_run(
     result.managed_job = managed
     managed_outcome: ResolutionOutcome = (
         cast(ResolutionOutcome, managed.outcome)
-        if managed.outcome in {"found", "absent", "unavailable", "not_supplied", "skipped"}
+        if managed.outcome
+        in {"found", "absent", "unavailable", "not_supplied", "skipped"}
         else "unavailable"
     )
     detail = managed.error
@@ -653,7 +657,11 @@ def resolve_run(
             )
             result.verification_unavailable = True
 
-    if planned_only_candidate and not result.found and not result.verification_unavailable:
+    if (
+        planned_only_candidate
+        and not result.found
+        and not result.verification_unavailable
+    ):
         later_checks = [
             check
             for check in result.checks
@@ -713,17 +721,33 @@ def list_resolved_artifacts(
         raise WorkflowStateError(
             "run was found via managed-job evidence but its artifact location is unavailable"
         )
-    is_paidf = (
+    manifest_schema = (
+        str(resolution.manifest.get("schema_version") or "")
+        if isinstance(resolution.manifest, dict)
+        else ""
+    )
+    # Declarative outputs may use any path below the exact run root. The
+    # historical ``artifacts/`` convention applies only to raw schema-v1 runs.
+    state_prefix = state.prefix.rstrip("/")
+    declarative_run_root = state_prefix.removesuffix("/npa-workflow")
+    has_declarative_control_prefix = (
+        manifest_schema == RUN_SCHEMA_VERSION
+        and state_prefix.endswith("/npa-workflow")
+        and str((resolution.manifest or {}).get("run_prefix_uri") or "").rstrip("/")
+        == f"s3://{state.bucket}/{declarative_run_root}"
+    )
+    uses_run_root_layout = (
         resolution.workflow_name == PAIDF_WORKFLOW_NAME
         or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
         or resolution.manifest_pending
+        or has_declarative_control_prefix
     )
-    if not is_paidf:
+    if not uses_run_root_layout:
         from npa.orchestration.skypilot.workflow_state import list_artifacts
 
         return list_artifacts(state, stage or None)
 
-    run_prefix = state.prefix.rstrip("/").removesuffix("/npa-workflow") + "/"
+    run_prefix = declarative_run_root + "/"
     objects: list[str] = []
     try:
         paginator = state.client().get_paginator("list_objects_v2")

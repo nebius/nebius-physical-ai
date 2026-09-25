@@ -25,6 +25,7 @@ import pytest
 from npa.agent_backend.shipping import SHIPPED_BACKEND_MODULES
 from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_viewer_runtime import _sha256_file
+from npa.cli.agent_workflow import generate_workflow_yaml
 
 
 def test_sha256_file_streams_recording_without_read_bytes(
@@ -58,65 +59,20 @@ def _isolate_rendered_agent_backend_package():
     _clear_rendered_agent_backend_modules()
 
 
-def test_artifact_route_uses_source_qualified_run_ref() -> None:
-    from fastapi import FastAPI, HTTPException
-    from fastapi.responses import JSONResponse
-    from fastapi.testclient import TestClient
+def test_artifact_routes_use_the_shipped_shared_policy(monkeypatch) -> None:
+    body = _render_backend_body(monkeypatch)
 
-    from npa.agent_backend.artifact_routes import (
-        ArtifactRouteDeps,
-        register_artifact_routes,
-    )
-
-    class _Artifact:
-        key = "nested/root/category/run-one/reports/run.mcap"
-
-        def to_dict(self):
-            return {"key": self.key, "render": "mcap"}
-
-    artifact = _Artifact()
-    resolution = SimpleNamespace(
-        run_id="run-one",
-        run_ref="npa1_canonical",
-        bucket="configured-bucket",
-        artifacts=[artifact],
-    )
-    seen: dict[str, str] = {}
-
-    def _resolve(_buckets, **kwargs):
-        seen["run_ref"] = kwargs["run_ref_or_id"]
-        return resolution
-
-    app = FastAPI()
-    register_artifact_routes(
-        app,
-        ArtifactRouteDeps(
-            s3_client=lambda: (
-                object(),
-                {"bucket": "configured-bucket", "prefix": "nested/root"},
-            ),
-            discovery_prefix=lambda _settings, prefix: prefix,
-            list_runs_cached=lambda *_args, **_kwargs: None,
-            list_runs_cached_multi=lambda *_args, **_kwargs: None,
-            list_buckets=lambda _s3, _settings: ["configured-bucket"],
-            validate_run_id=lambda value: value,
-            find_artifacts=lambda *_args, **_kwargs: ("", []),
-            resolve_run=_resolve,
-            summarize_run=lambda *_args, **_kwargs: None,
-            discovery_excludes=lambda: set(),
-            list_artifacts=lambda *_args, **_kwargs: [],
-            select_preferred=lambda items: items[0] if items else None,
-            http_exception=HTTPException,
-            json_response=JSONResponse,
-        ),
-    )
-    response = TestClient(app).get(
-        "/artifacts/run/run-one", params={"run_ref": "npa1_exact"}
-    )
-    assert response.status_code == 200
-    assert seen == {"run_ref": "npa1_exact"}
-    assert response.json()["run_ref"] == "npa1_canonical"
-    assert response.json()["artifacts"] == [{"key": artifact.key, "render": "mcap"}]
+    assert "from agent_backend.artifact_routes import (" in body
+    for helper in (
+        "artifact_run_snapshot_scope",
+        "build_artifact_run_list_response",
+        "decide_artifact_run_lookup",
+        "build_artifact_run_detail_response",
+    ):
+        assert helper in body
+        assert f"{helper}(" in body
+    assert "ArtifactRouteDeps" not in body
+    assert "register_artifact_routes" not in body
 
 
 def _render_backend_body(monkeypatch) -> str:
@@ -152,7 +108,7 @@ def _render_backend_body(monkeypatch) -> str:
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path="unit-test-ssh-key",
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",
@@ -198,12 +154,189 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert "POST /api/agent/gpu-allocation/consent" in body
 
 
+def test_rendered_artifact_reads_use_an_identity_isolated_from_state_writes(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_identity"
+    )
+    deployment = {
+        "NPA_AGENT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_S3_PREFIX": "deployment/runs",
+        "NPA_AGENT_S3_ENDPOINT": "https://deployment.example",
+        "AWS_ACCESS_KEY_ID": "deployment-access",
+        "AWS_SECRET_ACCESS_KEY": "deployment-secret",
+        "AWS_REGION": "deployment-region",
+    }
+    artifact = {
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE": "isolated-read",
+        "NPA_AGENT_ARTIFACT_S3_BUCKET": "artifact-bucket",
+        "NPA_AGENT_ARTIFACT_S3_PREFIX": "preserved/runs",
+        "NPA_AGENT_ARTIFACT_S3_ENDPOINT": "https://artifact.example",
+        "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID": "artifact-access",
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY": "artifact-secret",
+        "NPA_AGENT_ARTIFACT_S3_REGION": "artifact-region",
+        "NPA_AGENT_ARTIFACT_SOURCES_B64": module.base64.urlsafe_b64encode(
+            json.dumps(
+                [
+                    {
+                        "project_id": "artifact-project",
+                        "bucket": "artifact-bucket",
+                        "resolved_prefix": "preserved/runs",
+                    },
+                    {
+                        "project_id": "second-artifact-project",
+                        "bucket": "second-artifact-bucket",
+                        "resolved_prefix": "other/runs",
+                    },
+                ]
+            ).encode("utf-8")
+        ).decode("ascii"),
+    }
+    for key, value in {**deployment, **artifact}.items():
+        monkeypatch.setenv(key, value)
+
+    assert module._agent_artifact_s3_settings() == {
+        "bucket": "artifact-bucket",
+        "prefix": "",
+        "endpoint": "https://artifact.example",
+        "access_key": "artifact-access",
+        "secret_key": "artifact-secret",
+        "region": "artifact-region",
+        "credential_mode": "isolated-read",
+        "credential_status": "ready",
+        "credential_reason": "isolated_read_identity_configured",
+    }
+    expected_deployment = {
+        "bucket": "deployment-bucket",
+        "endpoint": "https://deployment.example",
+        "access_key": "deployment-access",
+        "secret_key": "deployment-secret",
+        "region": "deployment-region",
+        "prefix": "npa-agent/session-state",
+    }
+    assert module._state_s3_settings() == expected_deployment
+    assert module._agent_s3_settings() == {
+        **expected_deployment,
+        "prefix": "deployment/runs",
+    }
+
+    # Never form a mixed credential pair from a partial artifact-read channel.
+    monkeypatch.delenv("NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY")
+    assert module._agent_artifact_s3_settings() == {
+        "bucket": "",
+        "prefix": "",
+        "endpoint": "",
+        "access_key": "",
+        "secret_key": "",
+        "region": "artifact-region",
+        "credential_mode": "isolated-read",
+        "credential_status": "blocked",
+        "credential_reason": "artifact_read_identity_incomplete",
+    }
+
+
+def test_rendered_artifact_write_migration_is_explicit_and_scope_bound(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_migration"
+    )
+    deployment = {
+        "NPA_AGENT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_S3_ENDPOINT": "https://deployment.example",
+        "AWS_ACCESS_KEY_ID": "deployment-access",
+        "AWS_SECRET_ACCESS_KEY": "deployment-secret",
+        "AWS_REGION": "deployment-region",
+    }
+    source = module.base64.urlsafe_b64encode(
+        json.dumps(
+            [
+                {
+                    "project_id": "deployment-project",
+                    "bucket": "deployment-bucket",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ]
+        ).encode("utf-8")
+    ).decode("ascii")
+    artifact = {
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE": "deployment-write-migration",
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION": ("deployment-write-exact-source-v1"),
+        "NPA_AGENT_ARTIFACT_SOURCES_B64": source,
+        "NPA_AGENT_ARTIFACT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_ARTIFACT_S3_ENDPOINT": "https://deployment.example",
+        "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID": "deployment-access",
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY": "deployment-secret",
+        "NPA_AGENT_ARTIFACT_S3_REGION": "deployment-region",
+    }
+    for key, value in {**deployment, **artifact}.items():
+        monkeypatch.setenv(key, value)
+
+    settings = module._agent_artifact_s3_settings()
+    assert settings["credential_mode"] == "deployment-write-migration"
+    assert settings["credential_status"] == "ready"
+    assert settings["credential_reason"] == "explicit_deployment_write_migration"
+
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_S3_BUCKET", "different-bucket")
+    blocked = module._agent_artifact_s3_settings()
+    assert blocked["credential_status"] == "blocked"
+    assert blocked["credential_reason"] == "artifact_read_identity_scope_mismatch"
+    assert blocked["access_key"] == blocked["secret_key"] == ""
+
+
+def test_rendered_artifact_reads_block_when_read_identity_is_absent(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_absent"
+    )
+    monkeypatch.setenv("NPA_AGENT_S3_BUCKET", "deployment-bucket")
+    monkeypatch.setenv("NPA_AGENT_S3_ENDPOINT", "https://deployment.example")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "deployment-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "deployment-secret")
+
+    settings = module._agent_artifact_s3_settings()
+    assert settings["credential_mode"] == "unconfigured"
+    assert settings["credential_status"] == "blocked"
+    assert settings["credential_reason"] == "artifact_read_identity_absent"
+    assert settings["bucket"] == settings["access_key"] == settings["secret_key"] == ""
+
+
+def test_rendered_agent_s3_client_bounds_interactive_discovery(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_s3_timeout_backend"
+    )
+    monkeypatch.setenv("NPA_AGENT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("NPA_AGENT_S3_ENDPOINT", "https://storage.example.test")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    captured: dict[str, object] = {}
+
+    def build_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(module, "build_s3_client", build_client)
+
+    _client, settings = module._agent_s3_client()
+
+    assert settings["bucket"] == "test-bucket"
+    assert captured["connect_timeout"] == 3.0
+    assert captured["read_timeout"] == 8.0
+    assert captured["retries"] == {"total_max_attempts": 1, "mode": "standard"}
+
+
 def test_rendered_backend_routes_models_and_parameters_without_overriding_configuration(
     monkeypatch, tmp_path
 ) -> None:
     # Source-archive packaging has separate coverage; this test executes the
     # rendered backend and shipped helpers without building an unused upload.
-    monkeypatch.setattr("npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
     module = _import_rendered_backend(
         monkeypatch, tmp_path, module_name="npa_rendered_model_routing_backend"
     )
@@ -217,13 +350,26 @@ def test_rendered_backend_routes_models_and_parameters_without_overriding_config
 
     monkeypatch.setattr(module, "_provider_chat", provider_chat)
     for tier, expected_model, expected_extra in (
-        ("cheap", "nvidia/Nemotron-3_5-Lightning", {"chat_template_kwargs": {"enable_thinking": False}}),
-        ("standard", "nvidia/Nemotron-3_5-Lightning", {"chat_template_kwargs": {"enable_thinking": False}}),
+        (
+            "cheap",
+            "nvidia/Nemotron-3_5-Lightning",
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        ),
+        (
+            "standard",
+            "nvidia/Nemotron-3_5-Lightning",
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        ),
         ("reasoning", "MiniMaxAI/MiniMax-M3", {}),
-        ("vision", "MiniMaxAI/MiniMax-M3", {"chat_template_kwargs": {"thinking_mode": "disabled"}}),
+        (
+            "vision",
+            "MiniMaxAI/MiniMax-M3",
+            {"chat_template_kwargs": {"thinking_mode": "disabled"}},
+        ),
     ):
         _, provider, selected = module._chat_with_resilience(
-            messages=[{"role": "user", "content": "A synthetic routing request"}], tier=tier
+            messages=[{"role": "user", "content": "A synthetic routing request"}],
+            tier=tier,
         )
         assert provider == "token_factory"
         assert selected == expected_model
@@ -247,7 +393,9 @@ def test_rendered_backend_routes_models_and_parameters_without_overriding_config
     # models after routing deliberately excludes them. Explicit choices still
     # remain authoritative, including custom endpoints absent from /models.
     monkeypatch.setattr(module, "LLM_MODELS_ENV", "nvidia/Nemotron-3_5-Lightning")
-    monkeypatch.setattr(module, "_available_llm_models", lambda: ["nvidia/Nemotron-3_5-Lightning"])
+    monkeypatch.setattr(
+        module, "_available_llm_models", lambda: ["nvidia/Nemotron-3_5-Lightning"]
+    )
     calls.clear()
     with pytest.raises(module.HTTPException, match="No eligible model") as raised:
         module._chat_with_resilience(messages=[], tier="vision")
@@ -596,6 +744,32 @@ def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
     assert captured["preemptible"] is True
 
 
+def test_rendered_mk8s_provision_does_not_promote_unknown_preflight_to_ready(
+    monkeypatch, tmp_path
+) -> None:
+    """A chat confirmation must not bypass a fail-closed capacity plan."""
+    import sys
+
+    from npa import provisioning
+
+    module_name = "npa_rendered_mk8s_unknown_preflight"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+
+    class Result:
+        def to_dict(self):
+            return {"status": "unknown", "preflight": {"decision": "unknown"}}
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(provisioning, "provision_if_absent", lambda **_kwargs: Result())
+    try:
+        result = module._provision_agent_infra("project-alias", "target", dry_run=True)
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert result["ok"] is False
+    assert result["status"] == "unknown"
+
+
 def test_rendered_mk8s_confirmation_binds_storage_and_validation_switches(
     monkeypatch, tmp_path
 ) -> None:
@@ -622,6 +796,188 @@ def test_rendered_mk8s_confirmation_binds_storage_and_validation_switches(
             )
     finally:
         sys.modules.pop(module_name, None)
+
+
+def test_rendered_chat_mk8s_preflights_then_requires_click_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """Chat runs a safe preflight; only the returned token can provision."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-confirmation-state.json"
+    module._STATE_STORE = None
+    calls: list[bool] = []
+
+    def provision(project, cluster_name, *, dry_run, **_kwargs):
+        calls.append(dry_run)
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(
+        module, "_agent_k8s_backends", lambda _project="": {"has_infra": False}
+    )
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[
+                {"role": "user", "content": "deploy an mk8s cluster for my workflow"}
+            ],
+            model="unused",
+        )
+        assert initial["grounded"] is True
+        assert initial["needs_confirmation"] is True
+        assert initial["infra_deployment"] == {
+            "phase": "ready_for_confirmation",
+            "status": "ready",
+            "needs_confirmation": True,
+        }
+        assert initial["confirm_token"]
+        assert calls == [True]
+        assert "project" not in initial["reply"].lower()
+        assert "/api/infra/mk8s/provision" in initial["reply"]
+        assert "npa provision-if-absent" in initial["reply"]
+
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[
+                {"role": "user", "content": "deploy an mk8s cluster for my workflow"}
+            ],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+        assert confirmed["infra_deployment"]["phase"] == "submitted"
+        assert confirmed["needs_confirmation"] is False
+        assert calls == [True, False]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_chat_mk8s_cpu_only_request_binds_confirmed_shape(
+    monkeypatch, tmp_path
+) -> None:
+    """A CPU-only chat request must preserve its exact shape through confirmation."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_cpu_only_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-cpu-only-state.json"
+    module._STATE_STORE = None
+    calls: list[tuple[bool, dict]] = []
+
+    def provision(_project, _cluster_name, *, dry_run, desired, **_kwargs):
+        calls.append((dry_run, desired))
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(
+        module, "_agent_k8s_backends", lambda _project="": {"has_infra": False}
+    )
+    prompt = "Deploy a CPU-only MK8s cluster for the Token Factory workload."
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}], model="unused"
+        )
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert initial["needs_confirmation"] is True
+    assert confirmed["needs_confirmation"] is False
+    assert [dry_run for dry_run, _desired in calls] == [True, False]
+    assert calls[0][1] == calls[1][1]
+    assert calls[0][1]["cpu_nodes"] == 1
+    assert calls[0][1]["gpu_nodes"] == 0
+    assert "CPU-only" in initial["reply"]
+
+
+def test_rendered_chat_mk8s_rtx_rendering_request_binds_profile(
+    monkeypatch, tmp_path
+) -> None:
+    """The named GPU profile remains identical from preflight to confirmation."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_rtx_rendering_confirmation"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-rtx-rendering-state.json"
+    module._STATE_STORE = None
+    calls: list[tuple[bool, dict]] = []
+    cluster_names: list[str] = []
+
+    def provision(_project, cluster_name, *, dry_run, desired, **_kwargs):
+        calls.append((dry_run, desired))
+        cluster_names.append(cluster_name)
+        return {"ok": True, "status": "planned" if dry_run else "submitted"}
+
+    monkeypatch.setattr(module, "_provision_agent_infra", provision)
+    monkeypatch.setattr(
+        module, "_agent_k8s_backends", lambda _project="": {"has_infra": False}
+    )
+    prompt = (
+        "Provision one on-demand RTX rendering GPU node in an MK8s cluster "
+        "named demo-gpu-target for this workflow."
+    )
+    try:
+        initial = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}], model="unused"
+        )
+        confirmed = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": prompt}],
+            model="unused",
+            confirm_token=initial["confirm_token"],
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert initial["needs_confirmation"] is True
+    assert confirmed["needs_confirmation"] is False
+    assert [dry_run for dry_run, _desired in calls] == [True, False]
+    assert calls[0][1] == calls[1][1]
+    assert cluster_names == ["demo-gpu-target", "demo-gpu-target"]
+    assert {
+        key: calls[0][1][key]
+        for key in ("gpu_nodes", "gpu_workload_profile", "gpu_cuda_smoke")
+    } == {
+        "gpu_nodes": 1,
+        "gpu_workload_profile": "rtx-rendering",
+        "gpu_cuda_smoke": True,
+    }
+    assert "RTX rendering GPU node" in initial["reply"]
+    assert "explicitly named Kubernetes cluster" in initial["reply"]
+
+
+def test_rendered_chat_mk8s_unknown_preflight_never_issues_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """Unknown quota evidence is a no-mutation stop, not a confirmable action."""
+    import sys
+
+    module_name = "npa_rendered_chat_mk8s_unknown_preflight"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "chat-mk8s-unknown-state.json"
+    module._STATE_STORE = None
+    monkeypatch.setattr(module, "_agent_project_alias", lambda _value: "project-alias")
+    monkeypatch.setattr(
+        module,
+        "_provision_agent_infra",
+        lambda *_args, **_kwargs: {"ok": False, "status": "unknown"},
+    )
+    try:
+        response = module._agent_chat_with_tools(
+            raw_messages=[{"role": "user", "content": "provision an mk8s cluster"}],
+            model="unused",
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert response["grounded"] is True
+    assert response["needs_confirmation"] is False
+    assert "confirm_token" not in response
+    assert response["infra_deployment"]["phase"] == "preflight"
+    assert response["infra_deployment"]["status"] == "unknown"
 
 
 def test_rendered_mk8s_dry_run_backend_validation_error_is_clean_400(
@@ -686,6 +1042,12 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
     module_name = "npa_rendered_session_status_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     run_id = "agent-run-local-status"
+    recordings_dir = tmp_path / "recordings"
+    recordings_dir.mkdir()
+    recording = recordings_dir / "session.rrd"
+    recording.write_bytes(b"RRF2-session")
+    monkeypatch.setattr(module, "RECORDINGS_DIR", recordings_dir)
+    local_rrd_uri = recording.resolve().as_uri()
     details = module._default_sim2real_run_details(run_id)
     state = {
         "latest_submit": {"run_id": run_id},
@@ -708,7 +1070,7 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         viewer = {
             "run_id": run_id,
             "source_type": "workflow_history",
-            "rrd_uri": "file:///opt/npa-agent/recordings/session.rrd",
+            "rrd_uri": local_rrd_uri,
             "camera": "workspace",
         }
         state["sim_viz_runs"] = {run_id: viewer}
@@ -716,7 +1078,7 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         monkeypatch.setattr(module, "_save_state", lambda _state: None)
         monkeypatch.setattr(
             module,
-            "_agent_s3_client",
+            "_agent_artifact_s3_client",
             lambda: (_ for _ in ()).throw(
                 AssertionError("session load-run must not scan artifact buckets")
             ),
@@ -724,45 +1086,111 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         loaded = module.sim_viz_load_run({"run_id": run_id})
         assert loaded["sim_viz"]["run_id"] == run_id
         assert loaded["sim_viz"]["rrd_uri"].endswith("session.rrd")
+        explicit_local = module.sim_viz_load_run(
+            {
+                "run_id": run_id,
+                "rrd_uri": local_rrd_uri,
+            }
+        )
+        assert explicit_local["sim_viz"]["rrd_uri"].endswith("session.rrd")
     finally:
         sys.modules.pop(module_name, None)
 
 
-def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
+def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
     monkeypatch, tmp_path
 ) -> None:
-    """An exact URI disambiguates same-named runs without weakening membership."""
+    """Only a server-issued source tuple plus inventory key authorizes a load."""
     import sys
 
     module_name = "npa_rendered_exact_artifact_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     uri = "s3://bucket-b/team/run-1/reports/preview.mp4"
+    key = "team/run-1/reports/preview.mp4"
     authorization: dict[str, str] = {}
 
     def _authorize(**kwargs):
         authorization.update(
             run_id=str(kwargs["run_id"]),
-            key=str(kwargs["key"]),
-            bucket=str(kwargs["bucket"]),
+            run_ref=str(kwargs["run_ref"]),
+            bucket=str(kwargs["resource_bucket"]),
+            project_id=str(kwargs["project_id"]),
+            prefix=str(kwargs["resolved_prefix"]),
         )
-        return "bucket-b", str(kwargs["key"]), "run-1"
+        return "bucket-b", "project-b", "team"
 
     try:
         monkeypatch.setattr(module, "RECORDINGS_DIR", tmp_path / "recordings")
-
-        class _S3:
-            def head_object(self, **_kwargs):
-                return {"ContentLength": 24}
-
-        monkeypatch.setattr(
-            module, "_agent_s3_client", lambda: (_S3(), {"bucket": "bucket-a"})
-        )
-        monkeypatch.setattr(module, "_resolve_accessible_run_artifact", _authorize)
         monkeypatch.setattr(
             module,
-            "resolve_run_artifacts",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                AssertionError("plain run IDs must use exact URI membership")
+            "_agent_artifact_s3_client",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("raw URI rejection must precede S3 initialization")
+            ),
+        )
+        with pytest.raises(module.HTTPException) as raw_uri:
+            module.sim_viz_load_artifact(
+                {
+                    "run_id": "run-1",
+                    "run_ref": "npa1_server_issued",
+                    "key": key,
+                    "project_id": "project-b",
+                    "resource_bucket": "bucket-b",
+                    "resolved_prefix": "team",
+                    "source_selected": True,
+                    "s3_uri": uri,
+                }
+            )
+        assert raw_uri.value.status_code == 400
+        assert raw_uri.value.detail["code"] == "raw_artifact_uri_not_supported"
+        assert raw_uri.value.detail["migration"]["remove_field"] == "s3_uri"
+
+        with pytest.raises(module.HTTPException) as incomplete:
+            module.sim_viz_load_artifact(
+                {"run_id": "run-1", "run_ref": "npa1_server_issued", "key": key}
+            )
+        assert incomplete.value.status_code == 400
+        assert incomplete.value.detail["code"] == "exact_artifact_source_required"
+        assert incomplete.value.detail["missing_fields"] == [
+            "project_id",
+            "resource_bucket",
+            "resolved_prefix",
+            "source_selected",
+        ]
+
+        s3 = object()
+        lease = {"begin": 0, "end": 0}
+        monkeypatch.setattr(
+            module,
+            "_begin_agent_artifact_access",
+            lambda: lease.__setitem__("begin", lease["begin"] + 1),
+        )
+        monkeypatch.setattr(
+            module,
+            "_end_agent_artifact_access",
+            lambda: lease.__setitem__("end", lease["end"] + 1),
+        )
+        monkeypatch.setattr(
+            module, "_agent_artifact_s3_client", lambda: (s3, {"bucket": "bucket-a"})
+        )
+        monkeypatch.setattr(module, "_authorize_exact_run_ref_source", _authorize)
+        artifact = module.Artifact(
+            "run-1", key, uri, 24, "2031-01-01T00:00:00Z", "video", False
+        )
+        monkeypatch.setattr(
+            module,
+            "_resolved_artifact_for_content",
+            lambda client, _settings, **kwargs: (
+                (
+                    "run-1",
+                    "bucket-b",
+                    artifact,
+                )
+                if client is s3
+                and kwargs["key"] == key
+                and kwargs["resolved_prefix"] == "team"
+                and kwargs["source_authorized"] is True
+                else pytest.fail("unexpected exact artifact resolution")
             ),
         )
         monkeypatch.setattr(
@@ -775,12 +1203,6 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
             )[-1],
         )
         monkeypatch.setattr(module, "_load_state", lambda: {})
-        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
-        monkeypatch.setattr(
-            module,
-            "_artifact_source_metadata",
-            lambda *_args: ("bucket-b", "project-b", "team"),
-        )
         monkeypatch.setattr(
             module,
             "_apply_loaded_artifact",
@@ -790,9 +1212,17 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
             },
         )
 
-        run_ref = module.encode_run_ref("bucket-b", "team", "run-1")
+        run_ref = "npa1_server_issued"
         loaded = module.sim_viz_load_artifact(
-            {"run_id": "run-1", "run_ref": run_ref, "s3_uri": uri}
+            {
+                "run_id": "run-1",
+                "run_ref": run_ref,
+                "key": key,
+                "project_id": "project-b",
+                "resource_bucket": "bucket-b",
+                "resolved_prefix": "team",
+                "source_selected": True,
+            }
         )
         assert loaded["ok"] is True
         assert loaded["render"] == "video"
@@ -800,20 +1230,12 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
         assert loaded["run_ref"] == run_ref
         assert authorization == {
             "run_id": "run-1",
-            "key": "team/run-1/reports/preview.mp4",
+            "run_ref": run_ref,
             "bucket": "bucket-b",
+            "project_id": "project-b",
+            "prefix": "team",
         }
-        with pytest.raises(module.HTTPException) as mismatch:
-            module.sim_viz_load_artifact(
-                {
-                    "run_id": "run-1",
-                    "run_ref": module.encode_run_ref(
-                        "bucket-b", "another-team", "run-1"
-                    ),
-                    "s3_uri": uri,
-                }
-            )
-        assert mismatch.value.status_code == 400
+        assert lease == {"begin": 1, "end": 1}
     finally:
         sys.modules.pop(module_name, None)
 
@@ -899,6 +1321,14 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(
                 },
                 "latest_submit": {"run_id": "verify-run"},
                 "sim2real_runs": {"verify-run": {"status": "completed"}},
+                "workflow_executions": {
+                    "submitted-run": {
+                        "run_id": "submitted-run",
+                        "status": "RUNNING",
+                        "state": "running",
+                        "submission_state": "submitting durable workflow",
+                    }
+                },
             }
         )
         assert normalized["sim_viz"] == selected
@@ -906,6 +1336,14 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(
         assert list(normalized["sim_viz_runs"]) == ["customer-run"]
         assert normalized["latest_submit"] == {}
         assert normalized["sim2real_runs"] == {}
+        assert normalized["workflow_executions"] == {
+            "submitted-run": {
+                "run_id": "submitted-run",
+                "status": "RUNNING",
+                "state": "running",
+                "submission_state": "submitting durable workflow",
+            }
+        }
 
         stock_only = module._normalize_loaded_state(
             {
@@ -936,6 +1374,56 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(
             f"/deployments/{module.DEPLOYMENT['deployment_id']}/"
             in module._state_s3_key()
         )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_artifact_only_execution_snapshots_preserve_browser_safe_status(
+    monkeypatch, tmp_path
+) -> None:
+    """Artifact-only session state retains durable execution status after reload."""
+    import sys
+
+    module_name = "npa_rendered_artifact_only_execution_snapshots"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.PRELOAD_STOCK_DEMO = False
+    try:
+        monkeypatch.setattr(
+            module,
+            "_load_state",
+            lambda: {
+                "workflow_executions": {
+                    "older": {
+                        "run_id": "older",
+                        "status": "SUCCEEDED",
+                        "submitted_at": "2026-01-01T00:00:00Z",
+                    },
+                    "newer": {
+                        "run_id": "newer",
+                        "status": "RUNNING",
+                        "state": "running",
+                        "submission_state": "submitting durable workflow",
+                        "submitted_at": "2026-01-02T00:00:00Z",
+                        "private_detail": "must-not-reach-browser",
+                    },
+                }
+            },
+        )
+
+        assert module._workflow_execution_snapshots() == [
+            {
+                "run_id": "newer",
+                "status": "RUNNING",
+                "state": "running",
+                "submission_state": "submitting durable workflow",
+                "submitted_at": "2026-01-02T00:00:00Z",
+            },
+            {
+                "run_id": "older",
+                "status": "SUCCEEDED",
+                "submitted_at": "2026-01-01T00:00:00Z",
+            },
+        ]
     finally:
         sys.modules.pop(module_name, None)
 
@@ -1131,7 +1619,7 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path="unit-test-ssh-key",
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",
@@ -1198,7 +1686,7 @@ def _capture_setup_script(
     agent_module._bootstrap_agent_stack(
         host="203.0.113.50",
         ssh_user="ubuntu",
-        ssh_key_path="/tmp/key",
+        ssh_key_path="unit-test-ssh-key",
         project_alias="smoke",
         project_id="project-id",
         tenant_id="tenant-id",
@@ -1228,6 +1716,16 @@ def test_bootstrap_installs_auth_with_protected_stdin(monkeypatch) -> None:
     assert "password" not in commands[0].split("| sudo htpasswd", 1)[1]
     assert 'sudo chown root:www-data "$stage/auth"' in setup
     assert 'sudo mv -fT -- "$stage/auth" /etc/nginx/.npa-agent-htpasswd' in setup
+
+
+def test_bootstrap_pins_backend_durable_config_identity(monkeypatch) -> None:
+    setup = _capture_setup_script(monkeypatch)
+    unit = setup.split(
+        "cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null\n",
+        1,
+    )[1].split("\nUNIT", 1)[0]
+
+    assert "Environment=NPA_CONFIG_DIR=/root/.npa" in unit
 
 
 def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> None:
@@ -1345,17 +1843,26 @@ def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
     monkeypatch.setattr(module, "_load_session_run_if_known", lambda **_kwargs: None)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (object(), {"bucket": "bucket", "prefix": ""}),
     )
-    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: artifacts)
+    monkeypatch.setattr(
+        module,
+        "_load_scoped_legacy_run_artifacts",
+        lambda **_kwargs: (
+            "artifact-only-run",
+            "bucket",
+            "project",
+            "category",
+            artifacts,
+            "server-issued-run-ref",
+        ),
+    )
     monkeypatch.setattr(module, "_load_state", lambda: state)
     monkeypatch.setattr(module, "_save_state", lambda value: state.update(value))
     monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
 
-    response = module.sim_viz_load_run(
-        {"run_id": "artifact-only-run", "prefix": "category"}
-    )
+    response = module.sim_viz_load_run({"run_id": "artifact-only-run"})
 
     sim_viz = response["sim_viz"]
     assert response["artifacts_available"] is True
@@ -1399,7 +1906,17 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
     monkeypatch.setattr(
         module,
         "_agent_k8s_backends",
-        lambda _project: {"has_infra": True, "configured": ["existing"]},
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [
+                {
+                    "cluster_name": "existing-cluster",
+                    "context": "existing-context",
+                    "kubeconfig": str(tmp_path / "kubeconfig"),
+                }
+            ],
+        },
     )
 
     def provision(project, cluster_name, **kwargs):
@@ -1429,12 +1946,833 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
     assert provisions == [
         {
             "project": "demo",
-            "cluster_name": "npa-cluster",
+            "cluster_name": "existing-cluster",
             "dry_run": True,
             "validate": False,
             "skip_s3": True,
         }
     ]
+
+
+def test_workflow_prepare_confirms_infra_when_cloud_discovery_has_no_context(
+    monkeypatch, tmp_path
+) -> None:
+    """A discovered cluster is not runnable until the Agent owns its context."""
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_workflow_discovered_only_backend",
+    )
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "discovered-only"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "states": []},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [],
+            "local_clusters": [],
+            "cloud_clusters": [{"name": "discovered-cluster"}],
+        },
+    )
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", lambda *_args: "token")
+
+    response = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "discovered-only-run",
+            "project": "demo",
+            "allow_provision": True,
+            "prepare_execution": True,
+        }
+    )
+
+    assert response["ok"] is False
+    assert response["needs_confirmation"] is True
+    assert response["confirm_token"] == "token"
+    assert response["proposed_action"] == {
+        "action": "provision_infra",
+        "project": "demo",
+        "cluster_name": "npa-cluster",
+        "via": "workflows/submit",
+        "dry_run": False,
+    }
+
+
+def test_workflow_prepare_confirms_adoption_for_exact_discovered_cluster(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_workflow_adopt_discovered_backend",
+    )
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "adopt-discovered"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "states": []},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [],
+            "local_clusters": [],
+            "cloud_clusters": [{"name": "npa-cluster", "status": "RUNNING"}],
+        },
+    )
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", lambda *_args: "token")
+
+    response = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "adopt-discovered-run",
+            "project": "demo",
+            "allow_provision": True,
+            "prepare_execution": True,
+        }
+    )
+
+    assert response["ok"] is False
+    assert response["needs_confirmation"] is True
+    assert response["proposed_action"] == {
+        "action": "adopt_infra",
+        "project": "demo",
+        "cluster_name": "npa-cluster",
+        "via": "workflows/submit",
+        "dry_run": False,
+    }
+
+
+def test_agent_adopts_confirmed_discovered_cluster(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_adopt_agent_infra_backend"
+    )
+    calls: list[tuple[list[str], dict]] = []
+
+    def run_npa(args, **kwargs):
+        calls.append((list(args), kwargs))
+        return {}
+
+    monkeypatch.setattr(module, "_run_agent_npa_json", run_npa)
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_operation_env",
+        lambda project, context: {
+            "NPA_SKYPILOT_PROJECT": project,
+            "KUBECONFIG": context,
+        },
+    )
+
+    assert module._adopt_agent_infra("demo", "npa-cluster") == {
+        "ok": True,
+        "status": "adopted",
+        "actions": ["k8s:adopted explicitly confirmed existing backend"],
+    }
+    assert calls == [
+        (
+            [
+                "cluster",
+                "kubeconfig",
+                "--project",
+                "demo",
+                "--cluster-name",
+                "npa-cluster",
+            ],
+            {
+                "timeout_s": 180,
+                "expect_json": False,
+                "extra_env": {"NPA_SKYPILOT_PROJECT": "demo", "KUBECONFIG": ""},
+            },
+        )
+    ]
+
+
+def test_workflow_gpu_preflight_blocks_before_execution_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    """A GPU workflow must not reach the runtime when its target has no GPUs."""
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_gpu_preflight_backend"
+    )
+    state: dict[str, object] = {}
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("apiVersion: npa.workflow/v0.0.1\n", encoding="utf-8")
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "gpu-required"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "steps": [{"state": "gpu-stage"}]},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "configured": [
+                {"cluster_name": "gpu-target", "context": "gpu-target-context"}
+            ],
+        },
+    )
+    monkeypatch.setattr(module, "_write_workflow_temp_yaml", lambda _text: yaml_path)
+    monkeypatch.setattr(module, "_run_agent_npa_json", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(module, "_workflow_yaml_requests_gpu", lambda _yaml: True)
+    monkeypatch.setattr(
+        module, "_agent_context_has_schedulable_gpu", lambda **_kwargs: False
+    )
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda value: state.update(value))
+    monkeypatch.setattr(module, "_save_workflow_draft", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+
+    response = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "gpu-preflight",
+            "project": "demo",
+            "prepare_execution": True,
+        }
+    )
+
+    assert response["ok"] is False
+    assert response["gpu_preflight"] == {"required": True, "status": "blocked"}
+    assert response["run_id"] == "gpu-preflight"
+    assert "no schedulable GPU capacity" in response["reason"]
+
+
+def test_workflow_gpu_request_detection_and_context_capacity(
+    monkeypatch, tmp_path
+) -> None:
+    """GPU detection is declarative and capacity ignores unready GPU nodes."""
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_gpu_capacity_helpers"
+    )
+    assert module._workflow_yaml_requests_gpu(
+        """\
+apiVersion: npa.workflow/v0.0.1
+resources:
+  accelerated:
+    accelerators: RTXPRO6000:1
+states:
+  run:
+    resources: accelerated
+"""
+    )
+    assert not module._workflow_yaml_requests_gpu(
+        """\
+apiVersion: npa.workflow/v0.0.1
+resources:
+  cpu:
+    cpus: 4
+states:
+  run:
+    resources: cpu
+"""
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_operation_env",
+        lambda _project, _context: {"PATH": "/usr/bin"},
+    )
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(
+            {
+                "items": [
+                    {
+                        "status": {
+                            "conditions": [{"type": "Ready", "status": "False"}],
+                            "allocatable": {"nvidia.com/gpu": "1"},
+                        }
+                    },
+                    {
+                        "status": {
+                            "conditions": [{"type": "Ready", "status": "True"}],
+                            "allocatable": {"nvidia.com/gpu": "1"},
+                        }
+                    },
+                ]
+            }
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: Completed())
+    assert module._agent_context_has_schedulable_gpu(
+        project="demo", kubernetes_context="context"
+    )
+
+
+def test_agent_provision_adds_named_gpu_profile_to_adopted_empty_target(
+    monkeypatch, tmp_path
+) -> None:
+    """A confirmed RTX profile augments an adopted CPU-only target once."""
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_adopted_gpu_profile"
+    )
+    from npa import provisioning
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "configured": [{"cluster_name": "npa-cluster", "context": "npa-cluster"}]
+        },
+    )
+    monkeypatch.setattr(
+        module, "_agent_context_has_schedulable_gpu", lambda **_kwargs: False
+    )
+    additions: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        module,
+        "_agent_add_gpu_node_group",
+        lambda **kwargs: (
+            additions.append(kwargs)
+            or {"ok": True, "status": "ready", "actions": ["gpu-node-group"]}
+        ),
+    )
+    provision_calls: list[dict[str, object]] = []
+
+    class Result:
+        def to_dict(self):
+            return {"status": "ok", "actions": ["validated"]}
+
+    monkeypatch.setattr(
+        provisioning,
+        "provision_if_absent",
+        lambda **kwargs: provision_calls.append(kwargs) or Result(),
+    )
+
+    response = module._provision_agent_infra(
+        "demo",
+        "npa-cluster",
+        desired={"gpu_nodes": 1, "gpu_workload_profile": "rtx-rendering"},
+    )
+
+    assert additions == [
+        {
+            "project": "demo",
+            "cluster_name": "npa-cluster",
+            "requested": {
+                "gpu_type": "rtx6000",
+                "node_count": 1,
+                "gpu_driver_mode": "operator",
+            },
+        }
+    ]
+    assert len(provision_calls) == 1
+    assert response["ok"] is True
+    assert response["actions"] == ["gpu-node-group", "validated"]
+
+
+def test_agent_execution_resolves_catalog_secret_hints(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_secret_hints_backend"
+    )
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        generate_workflow_yaml("token-factory-deployment-review"), encoding="utf-8"
+    )
+
+    assert module._agent_workflow_secret_envs(
+        yaml_path, run_id="catalog-secret-hints"
+    ) == ("NEBIUS_TOKEN_FACTORY_KEY",)
+
+
+def test_workflow_execution_requires_and_uses_action_bound_confirmation(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_workflow_execute_backend"
+    )
+    state: dict[str, object] = {}
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("apiVersion: npa.workflow/v0.0.1\n", encoding="utf-8")
+    commands: list[tuple[list[str], object, bool]] = []
+    command_envs: list[tuple[list[str], dict[str, str]]] = []
+    issued: list[tuple[dict, str]] = []
+    consumed: list[tuple[str, dict]] = []
+    monkeypatch.setattr(module, "_resolve_workflow_yaml", lambda _body: "workflow")
+    monkeypatch.setattr(
+        module,
+        "validate_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "name": "confirmed-workflow"},
+    )
+    monkeypatch.setattr(
+        module,
+        "plan_workflow_yaml_text",
+        lambda *_args, **_kwargs: {"ok": True, "steps": [{"state": "generate"}]},
+    )
+    monkeypatch.setattr(module, "_agent_project_alias", lambda value: value or "demo")
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda _project: {
+            "has_infra": True,
+            "project": "demo",
+            "configured": [
+                {
+                    "cluster_name": "existing-cluster",
+                    "context": "existing-context",
+                    "kubeconfig": str(tmp_path / "kubeconfig"),
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(module, "_write_workflow_temp_yaml", lambda _text: yaml_path)
+    monkeypatch.setattr(
+        module, "_agent_workflow_requires_staged_source", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_secret_envs",
+        lambda *_args, **_kwargs: ("NEBIUS_TOKEN_FACTORY_KEY",),
+    )
+
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda context: {"KUBECONFIG": f"selected/{context}/kubeconfig"},
+    )
+    # Exercise the legacy shared-controller path independently of any isolated
+    # SkyPilot environment inherited by the test process.
+    monkeypatch.setattr(module, "_agent_command_env", lambda: {})
+
+    def run_npa(args, *, timeout_s=300, expect_json=True, extra_env=None):
+        commands.append((list(args), timeout_s, expect_json))
+        command_envs.append((list(args), dict(extra_env or {})))
+        if "run-spec" in args:
+            return {"ok": True, "steps": [{"state": "generate"}]}
+        if args[:3] == ["workbench", "workflow", "stage-src"]:
+            return {}
+        if args[:2] == ["skypilot", "bootstrap"]:
+            return {}
+        if args[:2] == ["skypilot", "bind-controller"]:
+            return {}
+        assert args[:3] == ["workbench", "workflow", "submit"]
+        return {
+            "run_id": "confirmed-run",
+            "workflow": "confirmed-workflow",
+            "status": "SUCCEEDED",
+            "steps": [{"state": "generate"}],
+        }
+
+    monkeypatch.setattr(module, "_run_agent_npa_json", run_npa)
+    monkeypatch.setattr(module, "_load_state", lambda: dict(state))
+
+    def save_state(value):
+        state.clear()
+        state.update(value)
+
+    monkeypatch.setattr(module, "_save_state", save_state)
+
+    def mutate_state(fn):
+        current = dict(state)
+        result = fn(current)
+        save_state(current)
+        return result
+
+    monkeypatch.setattr(module, "_mutate_state", mutate_state)
+    monkeypatch.setattr(module, "_save_workflow_draft", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+
+    class InlineThread:
+        def __init__(self, *, target, **_kwargs):
+            self.target = target
+
+        def start(self) -> None:
+            self.target()
+
+    monkeypatch.setattr(module.threading, "Thread", InlineThread)
+
+    def issue_token(action, digest):
+        issued.append((action, digest))
+        state["agent_act"] = {
+            "confirm_token": "single-use-token",
+            "confirm_digest": digest,
+            "pending_action": action,
+        }
+        return "single-use-token"
+
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", issue_token)
+    monkeypatch.setattr(
+        module,
+        "_consume_workflow_confirmation",
+        lambda *, confirm_token, expected_action: consumed.append(
+            (confirm_token, expected_action)
+        ),
+    )
+
+    prepared = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "confirmed-run",
+            "project": "demo",
+            "prepare_execution": True,
+        }
+    )
+
+    assert prepared["needs_confirmation"] is True
+    assert prepared["submit_mode"] == "agent-live-infra-confirm-required"
+    assert prepared["proposed_action"]["action"] == "execute_workflow"
+    assert prepared["proposed_action"]["kubernetes_context"] == "existing-context"
+    assert issued and issued[0][0] == prepared["proposed_action"]
+    assert state["agent_act"]["confirm_token"] == "single-use-token"
+    assert all("submit" not in command for command, _timeout, _json in commands)
+
+    completed = module.submit_npa_workflow(
+        {
+            "yaml": "workflow",
+            "run_id": "confirmed-run",
+            "project": "demo",
+            "execute": True,
+            "confirm_token": "single-use-token",
+        }
+    )
+
+    assert consumed == [("single-use-token", prepared["proposed_action"])]
+    submit_commands = [
+        (command, timeout, expect_json)
+        for command, timeout, expect_json in commands
+        if command[:3] == ["workbench", "workflow", "submit"]
+    ]
+    assert len(submit_commands) == 1
+    assert "--runtime" in submit_commands[0][0]
+    assert "--infra" in submit_commands[0][0]
+    assert "k8s/existing-context" in submit_commands[0][0]
+    assert "--secret-env" in submit_commands[0][0]
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in submit_commands[0][0]
+    assert "--isolated-config-dir" not in submit_commands[0][0]
+    assert submit_commands[0][0][-2:] == ["--output-format", "json"]
+    assert submit_commands[0][1] is None
+    assert submit_commands[0][2] is True
+    source_commands = [
+        (command, timeout, expect_json)
+        for command, timeout, expect_json in commands
+        if command[:3] == ["workbench", "workflow", "stage-src"]
+    ]
+    assert source_commands == [
+        (
+            [
+                "workbench",
+                "workflow",
+                "stage-src",
+                "--project",
+                "demo",
+                "--run-id",
+                "confirmed-run-source",
+            ],
+            900,
+            False,
+        )
+    ]
+    assert commands.index(source_commands[0]) < commands.index(
+        (["skypilot", "bootstrap", "--save"], 600, False)
+    )
+    assert (["skypilot", "bootstrap", "--save"], 600, False) in commands
+    assert (
+        [
+            "skypilot",
+            "bind-controller",
+            "--project",
+            "demo",
+            "--context",
+            "existing-context",
+            "--json",
+        ],
+        300,
+        False,
+    ) in commands
+    context_bound_commands = [
+        env
+        for command, env in command_envs
+        if command[:2] in (["skypilot", "bootstrap"], ["skypilot", "bind-controller"])
+        or command[:3]
+        in (
+            ["workbench", "workflow", "run-spec"],
+            ["workbench", "workflow", "stage-src"],
+            ["workbench", "workflow", "submit"],
+        )
+    ]
+    assert context_bound_commands
+    assert all(
+        env
+        == {
+            "KUBECONFIG": "selected/existing-context/kubeconfig",
+            "NPA_SKYPILOT_PROJECT": "demo",
+        }
+        for env in context_bound_commands
+    )
+    assert completed["submit_mode"] == "agent-live-infra-executing"
+    assert completed["execution"] == {
+        "run_id": "confirmed-run",
+        "workflow": "confirmed-workflow",
+        "status": "RUNNING",
+        "state": "running",
+        "lifecycle_state": "",
+        "submission_state": "accepted",
+        "steps": 1,
+    }
+    assert state["workflow_executions"]["confirmed-run"] == {
+        "run_id": "confirmed-run",
+        "workflow": "confirmed-workflow",
+        "status": "SUCCEEDED",
+        "state": "succeeded",
+        "lifecycle_state": "",
+        "submission_state": "",
+        "steps": 1,
+        "submitted_at": state["workflow_executions"]["confirmed-run"]["submitted_at"],
+        "started_at": state["workflow_executions"]["confirmed-run"]["started_at"],
+        "finished_at": state["workflow_executions"]["confirmed-run"]["finished_at"],
+        "error": "",
+    }
+    status = module.workflow_execution_status("confirmed-run")
+    assert status["ok"] is True
+    assert status["execution"]["state"] == "succeeded"
+    assert status["execution"]["status"] == "SUCCEEDED"
+
+
+def test_workflow_confirmation_binds_assume_decision(monkeypatch, tmp_path) -> None:
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_workflow_confirmation_decision_backend",
+    )
+    state: dict[str, object] = {}
+
+    def mutate_state(fn):
+        current = dict(state)
+        result = fn(current)
+        state.clear()
+        state.update(current)
+        return result
+
+    monkeypatch.setattr(module, "_mutate_state", mutate_state)
+    prepared = module._workflow_execution_action(
+        yaml_text="workflow",
+        run_id="run-confirmed-decision",
+        project="demo",
+        cluster_name="existing-cluster",
+        kubernetes_context="existing-context",
+        workflow_name="confirmed-workflow",
+        assume_decision="approved",
+    )
+    state["agent_act"] = {
+        "confirm_token": "single-use-token",
+        "confirm_digest": module._workflow_confirmation_digest(prepared),
+        "pending_action": prepared,
+    }
+    changed_decision = {**prepared, "assume_decision": "rejected"}
+
+    with pytest.raises(module.HTTPException, match="invalid or expired confirmation"):
+        module._consume_workflow_confirmation(
+            confirm_token="single-use-token", expected_action=changed_decision
+        )
+
+    assert state["agent_act"] == {
+        "confirm_token": "",
+        "confirm_digest": "",
+        "pending_action": None,
+    }
+
+
+def test_agent_execution_skips_shared_controller_binding_for_isolated_state(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_isolated_workflow_controller_backend",
+    )
+    observed: list[bool] = []
+
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda _context: {"KUBECONFIG": "selected-kubeconfig"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_execute_workflow_yaml",
+        lambda *_args, **kwargs: (
+            observed.append(kwargs["bind_shared_controller"]) or {}
+        ),
+    )
+
+    module._execute_agent_workflow_yaml(
+        "apiVersion: npa.workflow/v0.0.1\n",
+        run_id="isolated-run",
+        project="demo",
+        kubernetes_context="selected-context",
+    )
+
+    assert observed == [False]
+
+
+def test_agent_execution_binds_project_credentials_before_workflow_commands(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.npa_workflow import submit_credentials
+
+    module = _import_rendered_backend(
+        monkeypatch,
+        tmp_path,
+        module_name="npa_rendered_project_scoped_workflow_backend",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda _context: {"KUBECONFIG": "selected-kubeconfig"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky"},
+    )
+    monkeypatch.setattr(
+        submit_credentials,
+        "resolve_submit_credentials",
+        lambda **_kwargs: submit_credentials.SubmitCredentialContext(
+            endpoint_url="https://storage.test.invalid",
+            access_key_id="test-access",
+            secret_access_key="test-secret",
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_execute_workflow_yaml",
+        lambda *_args, **kwargs: captured.update(kwargs) or {},
+    )
+    command_envs: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        module,
+        "_run_agent_npa_json",
+        lambda *_args, extra_env=None, **_kwargs: (
+            command_envs.append(dict(extra_env or {})) or {}
+        ),
+    )
+
+    module._execute_agent_workflow_yaml(
+        "apiVersion: npa.workflow/v0.0.1\n",
+        run_id="project-bound-run",
+        project="demo",
+        kubernetes_context="selected-context",
+    )
+
+    captured["run_npa_json"](["workbench", "workflow", "submit"])
+
+    assert command_envs == [
+        {
+            "NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/owned/agent-sky",
+            "KUBECONFIG": "selected-kubeconfig",
+            "NPA_SKYPILOT_PROJECT": "demo",
+            "AWS_ACCESS_KEY_ID": "test-access",
+            "AWS_SECRET_ACCESS_KEY": "test-secret",
+            "AWS_ENDPOINT_URL_S3": "https://storage.test.invalid",
+            "AWS_ENDPOINT_URL": "https://storage.test.invalid",
+            "NEBIUS_S3_ENDPOINT": "https://storage.test.invalid",
+            "NPA_STORAGE_ENDPOINT": "https://storage.test.invalid",
+            "S3_ENDPOINT_URL": "https://storage.test.invalid",
+        }
+    ]
+
+
+def test_workflow_execution_failure_observability_is_safe_and_actionable(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_failure_observability_backend"
+    )
+
+    observed = module._workflow_execution_failure_observability(
+        RuntimeError("SkyPilot API connection refused while launching")
+    )
+
+    assert observed == {
+        "failure_category": "sky_api_transport",
+        "recovery_decision": "",
+    }
+
+    structured = module._workflow_execution_failure_observability(
+        type(
+            "StructuredFailure",
+            (),
+            {
+                "detail": json.dumps(
+                    {
+                        "transaction": {
+                            "category": "kubernetes_transport",
+                            "recovery_decision": "readiness_blocked",
+                        }
+                    }
+                )
+            },
+        )()
+    )
+    assert structured == {
+        "failure_category": "kubernetes_transport",
+        "recovery_decision": "readiness_blocked",
+    }
+
+
+def test_agent_npa_failure_prefers_safe_structured_transaction(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_safe_transaction_backend"
+    )
+
+    detail = module._safe_structured_transaction_detail(
+        json.dumps(
+            {
+                "transaction": {
+                    "category": "kubernetes_transport",
+                    "recovery_decision": "readiness_blocked",
+                    "raw_error": "must not be reflected",
+                }
+            }
+        )
+    )
+
+    assert json.loads(detail) == {
+        "transaction": {
+            "category": "kubernetes_transport",
+            "recovery_decision": "readiness_blocked",
+        }
+    }
+    assert module._safe_structured_transaction_detail("not json") == ""
 
 
 @pytest.mark.parametrize(
@@ -1449,7 +2787,7 @@ def test_workflow_dry_run_plans_provision_even_with_existing_infra(
         ("gpu_allocation_fallback", "def record_attempt"),
         ("gpu_allocation_routes", "def register_gpu_allocation_routes"),
         ("access_approval", "def classify_followup"),
-        ("artifact_routes", "def register_artifact_routes"),
+        ("artifact_routes", "def build_artifact_run_list_response"),
         ("canonical_mcap", "def prepare_canonical_mcap"),
         ("foxglove_cloud", "class FoxgloveCloudClient"),
         ("leisaac", "def normalize_manifest"),
@@ -1562,7 +2900,7 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
     )
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (s3, {"bucket": "deployment-bucket", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -1570,6 +2908,8 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         "_agent_access_report",
         lambda **_kwargs: pytest.fail("exact source must not rebuild tenant access"),
     )
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: object())
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
     authorization_calls = []
     monkeypatch.setattr(
         module,
@@ -1655,7 +2995,10 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         assert cached_selected["source_fingerprint"]
         assert len(authorization_calls) == 3
         with module._FOXGLOVE_EXACT_INVENTORY_LOCK:
-            module._FOXGLOVE_EXACT_INVENTORY_CACHE.clear()
+            assert module._FOXGLOVE_EXACT_INVENTORY_CACHE
+        module._invalidate_agent_artifact_discovery()
+        with module._FOXGLOVE_EXACT_INVENTORY_LOCK:
+            assert module._FOXGLOVE_EXACT_INVENTORY_CACHE == {}
         fallback_selected = module._foxglove_resolve_artifact(
             {
                 "run_id": "run-one",
@@ -1693,7 +3036,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     monkeypatch.setattr(module, "_save_state", lambda _state: None)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (
             object(),
             {"bucket": "artifact-bucket", "prefix": "nested/root"},
@@ -1702,31 +3045,41 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     monkeypatch.setattr(
         module, "_agent_s3_buckets", lambda _s3, _settings: ["artifact-bucket"]
     )
+    ref_one = module.encode_run_ref(
+        "artifact-bucket", "nested/root/category-one", "run-one"
+    )
+    ref_two = module.encode_run_ref(
+        "artifact-bucket", "nested/root/category-two", "run-two"
+    )
     selections = {
-        "npa1_source_one": (
+        ref_one: (
             "run-one",
             "nested/root/category-one",
             b"first recording bytes",
         ),
-        "npa1_source_two": (
+        ref_two: (
             "run-two",
             "nested/root/category-two",
             b"second, different recording bytes",
         ),
     }
 
-    def _resolve(_buckets, *, base_prefix, run_ref_or_id, s3):
-        assert base_prefix == "nested/root"
-        selection = selections.get(run_ref_or_id)
-        if selection is None:
-            selection = next(
-                candidate
-                for candidate in selections.values()
-                if module.encode_run_ref("artifact-bucket", candidate[1], candidate[0])
-                == run_ref_or_id
-            )
+    def _authorize(**kwargs):
+        selection = selections[str(kwargs["run_ref"])]
         run_id, source_prefix, _body = selection
+        assert kwargs["run_id"] == run_id
+        assert kwargs["resource_bucket"] == "artifact-bucket"
+        assert kwargs["project_id"] == "artifact-project"
+        assert kwargs["resolved_prefix"] == source_prefix
+        return "artifact-bucket", "artifact-project", source_prefix
+
+    def _resolve_content(_s3, _settings, **kwargs):
+        run_id = str(kwargs["run_id"])
+        source_prefix = str(kwargs["resolved_prefix"])
         key = f"{source_prefix}/{run_id}/reports/run.rrd"
+        assert kwargs["key"] == key
+        assert kwargs["requested_bucket"] == "artifact-bucket"
+        assert kwargs["source_authorized"] is True
         artifact = module.Artifact(
             run_id,
             key,
@@ -1736,9 +3089,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             "rerun",
             True,
         )
-        return module.RunResolution(
-            run_id, "artifact-bucket", source_prefix, [artifact]
-        )
+        return run_id, "artifact-bucket", artifact
 
     def _download(s3_uri, destination, *, s3):
         body = next(
@@ -1762,7 +3113,8 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         published_capabilities.append(capability)
         return capability
 
-    monkeypatch.setattr(module, "resolve_run_artifacts", _resolve)
+    monkeypatch.setattr(module, "_authorize_exact_run_ref_source", _authorize)
+    monkeypatch.setattr(module, "_resolved_artifact_for_content", _resolve_content)
     monkeypatch.setattr(module, "download_s3_uri", _download)
     monkeypatch.setattr(module, "_publish_rrd_recording", _publish)
     monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
@@ -1776,7 +3128,15 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             key = f"{source_prefix}/{run_id}/reports/run.rrd"
             responses.append(
                 module.sim_viz_load_artifact(
-                    {"run_id": run_id, "run_ref": run_ref, "key": key}
+                    {
+                        "run_id": run_id,
+                        "run_ref": run_ref,
+                        "key": key,
+                        "project_id": "artifact-project",
+                        "resource_bucket": "artifact-bucket",
+                        "resolved_prefix": source_prefix,
+                        "source_selected": True,
+                    }
                 )
             )
 
@@ -1784,13 +3144,9 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             "run-one",
             "run-two",
         ]
-        snapshots = state["sim_viz_runs"]
-        ref_one = module.encode_run_ref(
-            "artifact-bucket", "nested/root/category-one", "run-one"
-        )
-        ref_two = module.encode_run_ref(
-            "artifact-bucket", "nested/root/category-two", "run-two"
-        )
+        snapshots = {
+            item["artifact_run_ref"]: item for item in state["sim_viz_runs"].values()
+        }
         assert set(snapshots) == {ref_one, ref_two}
         assert snapshots[ref_one]["artifact_key"].endswith(
             "category-one/run-one/reports/run.rrd"
@@ -1799,16 +3155,16 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             "category-two/run-two/reports/run.rrd"
         )
         assert snapshots[ref_one]["served_recording_sha256"] == (
-            hashlib.sha256(selections["npa1_source_one"][2]).hexdigest()
+            hashlib.sha256(selections[ref_one][2]).hexdigest()
         )
         assert snapshots[ref_one]["served_recording_size_bytes"] == len(
-            selections["npa1_source_one"][2]
+            selections[ref_one][2]
         )
         assert snapshots[ref_two]["served_recording_sha256"] == (
-            hashlib.sha256(selections["npa1_source_two"][2]).hexdigest()
+            hashlib.sha256(selections[ref_two][2]).hexdigest()
         )
         assert snapshots[ref_two]["served_recording_size_bytes"] == len(
-            selections["npa1_source_two"][2]
+            selections[ref_two][2]
         )
         assert (
             snapshots[ref_one]["served_recording_sha256"]
@@ -1822,11 +3178,11 @@ def test_source_qualified_rrd_loads_keep_independent_history(
 
         # History selection must reload A's exact S3 bytes after B was active,
         # publish a fresh capability, and keep the two source identities separate.
-        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_two"][2]
+        assert module.RECORDING_PATH.read_bytes() == selections[ref_two][2]
         selected_one = module.sim_viz_select_run(
             {"run_id": "run-one", "run_ref": ref_one}
         )["sim_viz"]
-        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_one"][2]
+        assert module.RECORDING_PATH.read_bytes() == selections[ref_one][2]
         assert selected_one["run_id"] == "run-one"
         assert selected_one["artifact_run_ref"] == ref_one
         assert selected_one["artifact_key"].endswith(
@@ -1837,7 +3193,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         )
         assert (
             selected_one["served_recording_sha256"]
-            == hashlib.sha256(selections["npa1_source_one"][2]).hexdigest()
+            == hashlib.sha256(selections[ref_one][2]).hexdigest()
         )
         assert selected_one["artifact_preview_url"] == published_capabilities[-1]
         assert (
@@ -1992,28 +3348,27 @@ def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
         render="json",
         inline=True,
     )
-    resolution = module.RunResolution(
-        run_id,
-        "artifact-bucket",
-        "nested/root",
-        [artifact],
-    )
     try:
         monkeypatch.setattr(module, "_load_state", lambda: state)
         monkeypatch.setattr(module, "_save_state", lambda _state: None)
         monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
         monkeypatch.setattr(
             module,
-            "_agent_s3_client",
+            "_agent_artifact_s3_client",
             lambda: (object(), {"bucket": "artifact-bucket", "prefix": ""}),
         )
         monkeypatch.setattr(
-            module, "_agent_s3_buckets", lambda *_args, **_kwargs: ["artifact-bucket"]
+            module,
+            "_load_scoped_legacy_run_artifacts",
+            lambda **_kwargs: (
+                run_id,
+                "artifact-bucket",
+                "project",
+                "nested/root",
+                [artifact],
+                "server-issued-run-ref",
+            ),
         )
-        monkeypatch.setattr(
-            module, "resolve_run_artifacts", lambda *_args, **_kwargs: resolution
-        )
-        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
 
         loaded = module.sim_viz_load_run({"run_id": run_id})
 
@@ -2084,7 +3439,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (
             object(),
             {"bucket": "configured-bucket", "prefix": "nested/root"},
@@ -2103,17 +3458,31 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail == {
             "schema": "npa.agent.api_error/v1",
-            "contract_version": "npa.agent.load-artifact.v2",
-            "code": "run_id_required_for_s3_uri",
-            "message": "run_id or server-issued run_ref is required with s3_uri",
+            "contract_version": "npa.agent.load-artifact.v3",
+            "code": "raw_artifact_uri_not_supported",
+            "message": (
+                "s3_uri is not an artifact authorization selector. Discover the "
+                "run and submit its exact server-issued source tuple."
+            ),
             "migration": {
-                "required_fields": ["run_id", "s3_uri"],
-                "preferred_fields": ["run_ref", "key"],
+                "remove_field": "s3_uri",
+                "required_fields": [
+                    "run_id",
+                    "run_ref",
+                    "key",
+                    "project_id",
+                    "resource_bucket",
+                    "resolved_prefix",
+                    "source_selected",
+                ],
                 "discover_via": [
                     "GET /api/artifacts/runs",
                     "GET /api/artifacts/run/{run_id_or_run_ref}",
                 ],
-                "security_boundary": "only server-discovered inventory objects may be loaded",
+                "security_boundary": (
+                    "only exact server-issued source tuples and inventory keys "
+                    "authorize artifact reads"
+                ),
             },
         }
         for key in ("../secret", "folder/../secret", "folder\\secret", "bad\x00key"):
@@ -2190,6 +3559,8 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 }
             )
         assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "raw_artifact_uri_not_supported"
+        assert exc_info.value.detail["migration"]["remove_field"] == "rrd_uri"
         with pytest.raises(module.HTTPException) as exc_info:
             module.sim_viz_load_run(
                 {
@@ -2199,6 +3570,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 }
             )
         assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "raw_artifact_uri_not_supported"
     finally:
         sys.modules.pop(module_name, None)
 
@@ -2251,7 +3623,7 @@ def test_rendered_backend_registers_no_shadowed_routes(monkeypatch, tmp_path) ->
         sys.modules.pop(module_name, None)
 
 
-def test_rendered_exact_query_prefers_durable_default_source_without_ui_scope(
+def test_rendered_exact_query_refreshes_durable_source_without_claiming_partial_complete(
     monkeypatch, tmp_path
 ) -> None:
     module_name = "npa_rendered_configured_artifact_source_backend"
@@ -2266,11 +3638,17 @@ def test_rendered_exact_query_prefers_durable_default_source_without_ui_scope(
         project_id="project-exact",
         resolved_prefix="preserved/runs",
     )
-    calls: list[str] = []
+    calls: list[dict[str, object]] = []
+    source_probe_calls: list[tuple[str, str]] = []
+
+    def probe_configured_source(bucket: str, prefix: str):
+        source_probe_calls.append((bucket, prefix))
+        return module.BucketProbe("available", "available")
+
     try:
         monkeypatch.setattr(
             module,
-            "_agent_s3_client",
+            "_agent_artifact_s3_client",
             lambda: (object(), {"bucket": "primary-bucket", "prefix": ""}),
         )
         monkeypatch.setattr(
@@ -2284,64 +3662,518 @@ def test_rendered_exact_query_prefers_durable_default_source_without_ui_scope(
                 },
             ),
         )
-        monkeypatch.setattr(
-            module,
-            "_find_configured_exact_run_sources",
-            lambda _s3, queried: (calls.append(queried) or [found], (), True),
+        report = module.discover_agent_access(
+            tenant_id="tenant-test",
+            deployment_project_id="deployment-project",
+            configured_sources=[
+                {
+                    "project_id": "project-exact",
+                    "bucket": "bucket-exact",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ],
+            list_projects=lambda _tenant: (_ for _ in ()).throw(
+                module.AccessProbeError("unavailable", "list tenant projects")
+            ),
+            list_buckets=lambda _project: (_ for _ in ()).throw(
+                module.AccessProbeError("denied", "list project buckets")
+            ),
+            probe_bucket=lambda _bucket: module.BucketProbe(
+                "denied", "denied", "Bucket-root listing is denied."
+            ),
+            probe_configured_source=probe_configured_source,
         )
+        monkeypatch.setattr(module, "_agent_access_report", lambda **_kwargs: report)
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+
+        class _ConfiguredPage:
+            runs = [found]
+            total_runs = 1
+            truncated = False
+            discovery_complete = True
+            source_errors = ()
+
+        def list_configured(sources, **kwargs):
+            calls.append({"sources": tuple(sources), **kwargs})
+            return _ConfiguredPage()
+
+        monkeypatch.setattr(module, "list_runs_cached_sources", list_configured)
         monkeypatch.setattr(
             module,
-            "_agent_access_report",
-            lambda **_kwargs: module.discover_agent_access(
-                tenant_id="tenant-test",
-                deployment_project_id="deployment-project",
-                configured_sources=[
-                    {
-                        "project_id": "project-exact",
-                        "bucket": "bucket-exact",
-                        "resolved_prefix": "preserved/runs",
-                    }
-                ],
-                list_projects=lambda _tenant: (_ for _ in ()).throw(
-                    module.AccessProbeError("unavailable", "list tenant projects")
-                ),
-                list_buckets=lambda _project: (_ for _ in ()).throw(
-                    module.AccessProbeError("denied", "list project buckets")
-                ),
-                probe_bucket=lambda _bucket: module.BucketProbe(
-                    "available", "available"
-                ),
+            "list_runs_cached_multi",
+            lambda *_args, **_kwargs: pytest.fail(
+                "an exact configured bucket must not be reinterpreted generically"
             ),
         )
 
         for _fresh_session in range(2):
             response = module.artifacts_runs(limit=100, q=run_id)
             assert response["count"] == 1
-            assert response["total_runs"] == 1
-            assert response["query_complete"] is True
-            assert response["pagination_complete"] is True
+            assert response["total_runs"] is None
+            assert response["query_complete"] is False
+            assert response["pagination_complete"] is False
             assert response["runs"][0]["run_id"] == run_id
             assert response["runs"][0]["project_id"] == "project-exact"
             assert response["runs"][0]["bucket"] == "bucket-exact"
             assert response["runs"][0]["resolved_prefix"] == "preserved/runs"
-        assert calls == [run_id, run_id]
+            assert any(
+                item.get("code") == "artifact_search_incomplete"
+                for item in response["source_errors"]
+            )
+        assert len(calls) == 2
+        assert source_probe_calls == [("bucket-exact", "preserved/runs")]
+        assert all(call["refresh_sync"] is True for call in calls)
+        assert all(
+            call["sources"][0].identity
+            == ("project-exact", "bucket-exact", "preserved/runs")
+            for call in calls
+        )
 
+        _ConfiguredPage.runs = []
+        _ConfiguredPage.total_runs = 0
+        empty = module.artifacts_runs(limit=100, q=run_id)
+        assert empty["count"] == 0
+        assert empty["total_runs"] is None
+        assert empty["query_complete"] is False
+        with pytest.raises(module.HTTPException) as outside_source:
+            module.artifacts_runs(prefix="another/run-parent")
+        assert outside_source.value.status_code == 403
+
+        recording = module.Artifact(
+            run_id=run_id,
+            key=f"preserved/runs/{run_id}/reports/final.rrd",
+            s3_uri=f"s3://bucket-exact/preserved/runs/{run_id}/reports/final.rrd",
+            size=128,
+            last_modified="2031-01-01T00:00:00Z",
+            render="rerun",
+            inline=False,
+        )
+        monkeypatch.setattr(
+            module,
+            "find_run_sources_across_buckets",
+            lambda buckets, **_kwargs: ([], (), True),
+        )
         monkeypatch.setattr(
             module,
             "_find_configured_exact_run_sources",
-            lambda _s3, queried: (calls.append(queried) or [], (), True),
+            lambda _s3, queried, **_kwargs: (
+                [found] if queried == run_id else [],
+                (),
+                True,
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                artifacts=[recording],
+                truncated=False,
+                next_cursor="",
+                page_size=1000,
+            ),
+        )
+        monkeypatch.setattr(module, "_summary_documents_for_run", lambda *_args: {})
+        exact = module.artifacts_for_run(run_id)
+        assert exact["run_id"] == run_id
+        assert exact["project_id"] == "project-exact"
+        assert exact["resolved_prefix"] == "preserved/runs"
+        assert exact["source_resolution_complete"] is False
+        assert exact["run_ref"] == found.run_ref
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_configured_prefix_does_not_hide_duplicate_in_inventory_bucket(
+    monkeypatch, tmp_path
+) -> None:
+    """Direct-parent config and whole-bucket inventory remain independent."""
+    import json
+    import sys
+
+    module_name = "npa_rendered_overlapping_artifact_source_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "duplicate-run"
+    direct = module.RunSummary(
+        run_id,
+        "2031-01-02T00:00:00Z",
+        1,
+        "reports/direct.rrd",
+        bucket="shared-bucket",
+        project_id="shared-project",
+        resolved_prefix="configured/runs",
+    )
+    generic = module.RunSummary(
+        run_id,
+        "2031-01-01T00:00:00Z",
+        1,
+        "reports/generic.rrd",
+        bucket="shared-bucket",
+        project_id="shared-project",
+        resolved_prefix="other/runs",
+    )
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="shared-project",
+        configured_sources=[
+            {
+                "project_id": "shared-project",
+                "bucket": "shared-bucket",
+                "resolved_prefix": "configured/runs",
+            }
+        ],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "shared-project", "name": "Shared Project"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource", "name": "shared-bucket"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+    direct_page = module.RunListPage(
+        runs=[direct], truncated=False, total_runs=1, limit=10_000
+    )
+    generic_page = module.RunListPage(
+        runs=[generic], truncated=False, total_runs=1, limit=10_000
+    )
+    list_calls: list[dict[str, object]] = []
+    exact_calls: list[dict[str, object]] = []
+    lease = {"begin": 0, "end": 0}
+
+    def _begin():
+        lease["begin"] += 1
+        return report
+
+    def _end():
+        lease["end"] += 1
+
+    def _list_generic(buckets, **kwargs):
+        list_calls.append({"buckets": list(buckets), **kwargs})
+        return generic_page
+
+    def _find_generic(buckets, **kwargs):
+        exact_calls.append({"buckets": list(buckets), **kwargs})
+        return [generic], (), True
+
+    try:
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (
+                object(),
+                {"bucket": "shared-bucket", "prefix": ""},
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "_configured_agent_artifact_sources",
+            lambda: (
+                {
+                    "project_id": "shared-project",
+                    "bucket": "shared-bucket",
+                    "resolved_prefix": "configured/runs",
+                },
+            ),
+        )
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", _begin)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", _end)
+        monkeypatch.setattr(module, "_discovery_exclude_roots", lambda: {"state"})
+        monkeypatch.setattr(
+            module, "list_runs_cached_sources", lambda *_args, **_kwargs: direct_page
+        )
+        monkeypatch.setattr(module, "list_runs_cached_multi", _list_generic)
+
+        listed = module.artifacts_runs(limit=100, q=run_id)
+        assert listed["count"] == 2
+        assert {item["run_ref"] for item in listed["runs"]} == {
+            direct.run_ref,
+            generic.run_ref,
+        }
+        assert list_calls[0]["buckets"] == ["shared-bucket"]
+        assert list_calls[0]["base_prefix"] == ""
+        assert list_calls[0]["exclude"] == {"state"}
+
+        monkeypatch.setattr(module, "find_run_sources_across_buckets", _find_generic)
+        monkeypatch.setattr(
+            module,
+            "_find_configured_exact_run_sources",
+            lambda *_args, **_kwargs: ([direct], (), True),
+        )
+        ambiguous = module.artifacts_for_run(run_id)
+        assert ambiguous.status_code == 409
+        payload = json.loads(ambiguous.body)
+        assert payload["error"]["code"] == "ambiguous_run_id"
+        assert {item["run_ref"] for item in payload["sources"]} == {
+            direct.run_ref,
+            generic.run_ref,
+        }
+        assert exact_calls[0]["buckets"] == ["shared-bucket"]
+        assert exact_calls[0]["base_prefix"] == ""
+        assert exact_calls[0]["exclude"] == {"state"}
+        assert lease == {"begin": 2, "end": 2}
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_default_artifact_credentials_keep_nonempty_prefix_as_layout_hint(
+    monkeypatch, tmp_path
+) -> None:
+    """Fallback credentials scan the bucket root but parse their nested layout."""
+    import sys
+
+    module_name = "npa_rendered_default_artifact_prefix_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "paidf-prefix-layout-run"
+    run = module.RunSummary(
+        run_id=run_id,
+        last_modified="2031-01-01T00:00:00Z",
+        artifact_count=1,
+        has_viewable=True,
+        bucket="deployment-bucket",
+        project_id="deployment-project",
+        resolved_prefix="deployment/runs/category",
+    )
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"deployment/runs/category/{run_id}/report.rrd",
+        s3_uri=(f"s3://deployment-bucket/deployment/runs/category/{run_id}/report.rrd"),
+        size=128,
+        last_modified="2031-01-01T00:00:00Z",
+        render="rerun",
+        inline=True,
+    )
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="deployment-project",
+        fallback_buckets=[],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "deployment-project", "name": "Deployment"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource", "name": "deployment-bucket"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+    list_bases: list[str] = []
+    exact_bases: list[str] = []
+
+    try:
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (
+                object(),
+                {"bucket": "deployment-bucket", "prefix": "deployment/runs"},
+            ),
+        )
+        monkeypatch.setattr(module, "_configured_agent_artifact_sources", lambda: ())
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+
+        def list_generic(_buckets, **kwargs):
+            list_bases.append(str(kwargs.get("base_prefix") or ""))
+            return module.RunListPage([run], False, 1, 10_000)
+
+        monkeypatch.setattr(module, "list_runs_cached_multi", list_generic)
+        listed = module.artifacts_runs(limit=100, q=run_id)
+        assert listed["runs"][0]["run_id"] == run_id
+        assert list_bases == ["deployment/runs"]
+
+        def find_generic(_buckets, **kwargs):
+            exact_bases.append(str(kwargs.get("base_prefix") or ""))
+            return [run], (), True
+
+        monkeypatch.setattr(module, "find_run_sources_across_buckets", find_generic)
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                [artifact], False, "", 1000
+            ),
+        )
+        monkeypatch.setattr(module, "_summary_documents_for_run", lambda *_args: {})
+        detail = module.artifacts_for_run(run_id)
+        assert detail["run_ref"] == run.run_ref
+        assert detail["resolved_prefix"] == "deployment/runs/category"
+        assert exact_bases == ["deployment/runs"]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_configured_bucket_root_is_not_reparsed_as_a_generic_category(
+    monkeypatch, tmp_path
+) -> None:
+    import sys
+
+    module_name = "npa_rendered_root_artifact_source_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "root-direct-run"
+    run = module.RunSummary(
+        run_id=run_id,
+        last_modified="2031-01-01T00:00:00Z",
+        artifact_count=1,
+        has_viewable=True,
+        bucket="shared-bucket",
+        project_id="shared-project",
+        resolved_prefix="",
+    )
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"{run_id}/reports/final.rrd",
+        s3_uri=f"s3://shared-bucket/{run_id}/reports/final.rrd",
+        size=128,
+        last_modified="2031-01-01T00:00:00Z",
+        render="rerun",
+        inline=True,
+    )
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="shared-project",
+        configured_sources=[
+            {
+                "project_id": "shared-project",
+                "bucket": "shared-bucket",
+                "resolved_prefix": "",
+            }
+        ],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "shared-project", "name": "Shared"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource", "name": "shared-bucket"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+
+    try:
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (object(), {"bucket": "shared-bucket", "prefix": ""}),
+        )
+        monkeypatch.setattr(
+            module,
+            "_configured_agent_artifact_sources",
+            lambda: (
+                {
+                    "project_id": "shared-project",
+                    "bucket": "shared-bucket",
+                    "resolved_prefix": "",
+                },
+            ),
+        )
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+        monkeypatch.setattr(
+            module,
+            "list_runs_cached_sources",
+            lambda *_args, **_kwargs: module.RunListPage([run], False, 1, 10_000),
         )
         monkeypatch.setattr(
             module,
             "list_runs_cached_multi",
             lambda *_args, **_kwargs: pytest.fail(
-                "empty configured exact search must not fall through"
+                "a configured root already covers the whole bucket"
             ),
         )
-        empty = module.artifacts_runs(limit=100, q=run_id)
-        assert empty["count"] == 0
-        assert empty["total_runs"] == 0
-        assert empty["query_complete"] is True
+
+        listed = module.artifacts_runs(limit=100, q=run_id)
+        assert [item["run_id"] for item in listed["runs"]] == [run_id]
+
+        monkeypatch.setattr(
+            module,
+            "find_run_sources_across_buckets",
+            lambda *_args, **_kwargs: pytest.fail(
+                "exact lookup must not reinterpret a configured root generically"
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "_find_configured_exact_run_sources",
+            lambda *_args, **_kwargs: ([run], (), True),
+        )
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                [artifact], False, "", 1000
+            ),
+        )
+        monkeypatch.setattr(module, "_summary_documents_for_run", lambda *_args: {})
+        detail = module.artifacts_for_run(run_id)
+        assert detail["run_ref"] == run.run_ref
+        assert detail["resolved_prefix"] == ""
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_cold_search_forces_source_refresh_before_filtering(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_cold_artifact_search_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run = module.RunSummary(
+        "paidf-cold-run",
+        "2031-01-01T00:00:00Z",
+        1,
+        "reports/result.rrd",
+        bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="physical-ai-data-factory",
+    )
+    try:
+        report = module.discover_agent_access(
+            tenant_id="tenant-test",
+            deployment_project_id="project-test",
+            fallback_buckets=[],
+            list_projects=lambda _tenant: [
+                {"metadata": {"id": "project-test", "name": "Project Test"}}
+            ],
+            list_buckets=lambda _project: [
+                {"metadata": {"id": "bucket-resource", "name": "bucket-test"}}
+            ],
+            probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+        )
+        monkeypatch.setattr(module, "_agent_access_report", lambda **_kwargs: report)
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+        )
+        refresh_values: list[bool] = []
+
+        class _Page:
+            runs = [run]
+            total_runs = 1
+            truncated = False
+            discovery_complete = True
+            source_errors = ()
+
+        def discover(_buckets, **kwargs):
+            refresh_values.append(bool(kwargs.get("refresh_sync")))
+            return (
+                _Page()
+                if kwargs.get("refresh_sync")
+                else type(
+                    "StaleEmpty",
+                    (),
+                    {
+                        "runs": [],
+                        "total_runs": 0,
+                        "truncated": False,
+                        "discovery_complete": True,
+                        "source_errors": (),
+                    },
+                )()
+            )
+
+        monkeypatch.setattr(module, "list_runs_cached_multi", discover)
+        response = module.artifacts_runs(limit=20, q="paidf")
+        assert [item["run_id"] for item in response["runs"]] == ["paidf-cold-run"]
+        assert response["query_complete"] is True
+        assert refresh_values == [True]
     finally:
         sys.modules.pop(module_name, None)
 
@@ -2378,9 +4210,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             }
 
     try:
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: object())
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
         s3 = FakeS3()
         monkeypatch.setattr(
-            module, "_agent_s3_client", lambda: (s3, {"bucket": "bucket"})
+            module, "_agent_artifact_s3_client", lambda: (s3, {"bucket": "bucket"})
         )
         monkeypatch.setattr(
             module,
@@ -2411,7 +4245,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
         stale = FakeS3(total=11)
         monkeypatch.setattr(
-            module, "_agent_s3_client", lambda: (stale, {"bucket": "bucket"})
+            module, "_agent_artifact_s3_client", lambda: (stale, {"bucket": "bucket"})
         )
         with pytest.raises(module.HTTPException) as exc_info:
             module._artifact_content_response(
@@ -2607,10 +4441,21 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         now=lambda: "2026-08-06T23:30:00+00:00",
     )
     monkeypatch.setattr(module, "_agent_access_report", lambda *, refresh=False: report)
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: report
+    )
     access_payload = module.agent_access(refresh=True)
     assert access_payload["apiVersion"] == "npa.agent.access/v1"
     assert access_payload["identity"]["tenant_id"] == "tenant-test"
     assert access_payload["projects"][0]["id"] == "project-test"
+    assert access_payload["artifact_credentials"] == {
+        "mode": "unconfigured",
+        "status": "blocked",
+        "reason": "artifact_read_identity_absent",
+        "source_scope": "none",
+    }
 
     called: dict[str, object] = {}
 
@@ -2624,12 +4469,22 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     def _list_runs(buckets, **kwargs):
         called["buckets"] = list(buckets)
         called["project_map"] = dict(kwargs.get("bucket_projects") or {})
+        called["cold_start_async"] = kwargs.get("cold_start_async")
         return _RunPage()
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: None
+    )
+    pending = module.artifacts_runs(limit=20)
+    assert pending["pagination_complete"] is False
+    assert pending["source_errors"][0]["code"] == "artifact_access_pending"
+    monkeypatch.setattr(
+        module, "_agent_access_report_for_artifact_discovery", lambda: report
     )
     monkeypatch.setattr(module, "list_runs_cached_multi", _list_runs)
     scoped = module.artifacts_runs(
@@ -2639,6 +4494,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     )
     assert called["buckets"] == ["bucket-test"]
     assert called["project_map"] == {"bucket-test": "project-test"}
+    assert called["cold_start_async"] is True
     assert scoped["resource_scope"] == {
         "project_id": "project-test",
         "bucket": "bucket-test",
@@ -2784,8 +4640,10 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         "max_objects": 1000,
         "continue_with": [
             "next_cursor",
-            "resolved_prefix",
+            "run_ref",
+            "project_id",
             "resource_bucket",
+            "resolved_prefix",
             "source_selected",
         ],
     }
@@ -2863,9 +4721,15 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
         load_patch.setattr(
             module,
-            "resolve_run_artifacts",
+            "_load_scoped_legacy_run_artifacts",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                module.AmbiguousRunError("foreign-run-1", ["source-a", "source-b"])
+                module.HTTPException(
+                    status_code=409,
+                    detail=(
+                        "run selection is ambiguous; use its server-issued "
+                        "run_ref or exact source tuple"
+                    ),
+                )
             ),
         )
         with pytest.raises(module.HTTPException) as ambiguous_load:
@@ -2964,8 +4828,9 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         lambda *_args, **_kwargs: ([source], (), False),
     )
     incomplete_unique = module.artifacts_for_run("foreign-run-1")
-    assert incomplete_unique.status_code == 503
-    assert b'"code":"artifact_search_incomplete"' in incomplete_unique.body
+    assert incomplete_unique["run_id"] == "foreign-run-1"
+    assert incomplete_unique["source_resolution_complete"] is False
+    assert incomplete_unique["access"]["status"] == "available"
     # A fully-qualified source is still safe when unrelated candidates were
     # truncated: the exact bucket + prefix tuple itself was server-discovered.
     exact_incomplete_page = module.artifacts_for_run(
@@ -2979,7 +4844,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -3045,7 +4910,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (_S3(), {"bucket": "bucket-test", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -3152,7 +5017,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (_ManifestS3(), {"bucket": "bucket-test", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -3363,7 +5228,14 @@ def test_rendered_visual_turn_with_approval_words_stays_on_vision_path(
     }
     captured: dict[str, object] = {}
 
-    def visual_chat(*, messages, requested_model="", tier="standard", interactive=True):
+    def visual_chat(
+        *,
+        messages,
+        requested_model="",
+        tier="standard",
+        interactive=True,
+        use_model_router=False,
+    ):
         captured.update(
             messages=messages,
             requested_model=requested_model,
@@ -3500,9 +5372,7 @@ def test_grounded_status_preserves_video_readiness(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(module, "_rerun_ready_state", lambda **_kwargs: True)
     try:
         reply, used, _suggested, _yaml, _validation, intent = (
-            module._maybe_toolground_chat_reply(
-                "what is the current sim2real status"
-            )
+            module._maybe_toolground_chat_reply("what is the current sim2real status")
         )
         assert intent == "sim2real_status"
         assert used == ["sim-viz/status"]
@@ -3570,9 +5440,11 @@ def test_scoped_mp4_content_and_download_stream_real_bytes_for_get_head_and_rang
             return {"Body": io.BytesIO(media), "ContentLength": len(media)}
 
     s3 = FakeS3()
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: object())
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (s3, {"bucket": bucket, "prefix": prefix}),
     )
 
@@ -3607,7 +5479,7 @@ def test_scoped_mp4_content_and_download_stream_real_bytes_for_get_head_and_rang
         assert unscoped_download.status_code == 400
         assert (
             unscoped_download.json()["detail"]["code"]
-            == "exact_artifact_source_required"
+            == "raw_artifact_uri_not_supported"
         )
 
         full = client.get("/artifacts/content", params=params)
@@ -3704,8 +5576,10 @@ def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None
     """
     body = _render_backend_body(monkeypatch)
 
-    assert '@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])' in body
-    assert '@app.get("/sim-viz/rrd-blob")' not in body
+    assert '@app.get("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_get")' in body
+    assert (
+        '@app.head("/sim-viz/rrd-blob", operation_id="sim_viz_rrd_blob_head")' in body
+    )
 
 
 def test_rendered_backend_skips_unreadable_ssh_key_candidates(
@@ -3738,13 +5612,155 @@ def test_rendered_backend_skips_unreadable_ssh_key_candidates(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_exports_hcl_ssh_key_path_for_cluster_provisioning(
+    monkeypatch, tmp_path
+) -> None:
+    """The service backend must emit the Terraform-compatible HCL object form."""
+    module_name = "npa_rendered_hcl_ssh_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    candidate = "/home/ubuntu/.ssh/id_ed25519.pub"
+    real_isfile = module.os.path.isfile
+    real_access = module.os.access
+    monkeypatch.delenv("TF_VAR_ssh_public_key", raising=False)
+    monkeypatch.setattr(
+        module.os.path,
+        "isfile",
+        lambda value: True if str(value) == candidate else real_isfile(value),
+    )
+    monkeypatch.setattr(
+        module.os,
+        "access",
+        lambda value, mode: (
+            True if str(value) == candidate else real_access(value, mode)
+        ),
+    )
+    try:
+        env = module._agent_command_env()
+        assert (
+            env["TF_VAR_ssh_public_key"] == '{path="/home/ubuntu/.ssh/id_ed25519.pub"}'
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_uses_dedicated_agent_skypilot_state(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_isolated_skypilot_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("NPA_AGENT_ISOLATED_RECOVERY_REBIND", raising=False)
+    try:
+        environment = module._agent_command_env()
+        assert environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] == (
+            "/opt/npa-agent/skypilot-state"
+        )
+        assert environment["NPA_AGENT_ISOLATED_RECOVERY_REBIND"] == "v1"
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_preserves_metadata_profile_home(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_metadata_profile_home"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", "/agent-home/.nebius/config.yaml")
+    try:
+        assert module._agent_command_env()["HOME"] == "/agent-home"
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_preserves_agent_config_when_metadata_home_changes(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_metadata_profile_config"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    agent_home = tmp_path / "agent-home"
+    config_root = agent_home / ".npa"
+    config_root.mkdir(parents=True)
+    (config_root / "config.yaml").write_text("default_project: configured\n")
+    metadata_home = tmp_path / "metadata-home"
+    monkeypatch.setenv("HOME", str(agent_home))
+    monkeypatch.delenv("NPA_CONFIG_DIR", raising=False)
+    monkeypatch.setenv(
+        "NPA_NEBIUS_CONFIG", str(metadata_home / ".nebius" / "config.yaml")
+    )
+    try:
+        env = module._agent_command_env()
+        assert env["HOME"] == str(metadata_home)
+        assert env["NPA_CONFIG_DIR"] == str(config_root)
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_keeps_agent_runtime_when_building_workflow_env(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_agent_workflow_environment"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    agent_env = {
+        "NPA_CONFIG_DIR": "/agent/config",
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR": "/agent/scheduler",
+        "NPA_AGENT_ISOLATED_RECOVERY_REBIND": "v1",
+    }
+    monkeypatch.setattr(module, "_agent_command_env", lambda: dict(agent_env))
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_context_env",
+        lambda _context: {"KUBECONFIG": "/agent/kubeconfig"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_submit_env",
+        lambda _project, _environment: {"NPA_SKYPILOT_PROJECT": "agent-project"},
+    )
+    try:
+        assert module._agent_workflow_operation_env(
+            "agent-project", "agent-context"
+        ) == {
+            **agent_env,
+            "KUBECONFIG": "/agent/kubeconfig",
+            "NPA_SKYPILOT_PROJECT": "agent-project",
+        }
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_backend_normalizes_relative_agent_config_dir(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_relative_agent_config"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    agent_home = tmp_path / "agent-home"
+    config_root = agent_home / ".npa"
+    config_root.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(agent_home))
+    monkeypatch.setenv("NPA_CONFIG_DIR", "~/.npa")
+    try:
+        assert module._agent_command_env()["NPA_CONFIG_DIR"] == str(config_root)
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_agent_bootstrap_exposes_authorized_key_to_cluster_lifecycle() -> None:
+    from npa.cli import agent as agent_module
+
+    script_source = Path(agent_module.__file__).read_text(encoding="utf-8")
+
+    assert "NPA_SSH_PUBLIC_KEY={agent_cluster_ssh_key_path}" in script_source
+    assert "EnvironmentFile=-/opt/npa-agent/cluster.env" in script_source
+
+
 @pytest.fixture
 def preload_backend_body(monkeypatch):
     from npa.cli import agent as agent_module
 
-    monkeypatch.setattr(agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        agent_module, "_stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
     return _render_backend_body(monkeypatch)
-
 
 
 def _preload_function(name: str, namespace: dict, source: str):
@@ -3781,18 +5797,23 @@ def _startup(tmp_path, snapshot, body):
     }
     observed = {"published": [], "saved": []}
     namespace = {
+        "hashlib": hashlib,
+        "json": json,
         "PRELOAD_STOCK_DEMO": True,
         "RRD_PATH": recording,
         "DEFAULT_SIM_VIZ": {"run_id": "franka-demo"},
         "_load_state": lambda: state,
         "_save_state": lambda value: observed["saved"].append(copy.deepcopy(value)),
-        "_publish_rrd_recording": lambda value: observed["published"].append(value) or "/recording.rrd",
+        "_publish_rrd_recording": lambda value: (
+            observed["published"].append(value) or "/recording.rrd"
+        ),
         "_served_recording_is_run_specific": lambda: False,
         "_rerun_iframe_url": lambda *_args, **_kwargs: "/rerun/",
         "_rerun_ready_state": lambda **_kwargs: True,
         "_now_iso": lambda: "2026-01-01T00:00:00Z",
         "resolve_run_source": lambda *_args: ("artifact_storage", "Artifacts"),
     }
+    _preload_function("_sim_viz_history_key", namespace, body)
     _preload_function("_record_sim_viz_run", namespace, body)
     hook = _preload_function("_boot_preload_sim_viz", namespace, body)
     return hook, state, observed, namespace
@@ -3804,13 +5825,19 @@ def _startup(tmp_path, snapshot, body):
         _preload_source("image"),
         _preload_source("mcap"),
         _preload_source("future-viewer-kind"),
-        _preload_source("rerun"),  # Selected source exists, but its recording is not ready.
+        _preload_source(
+            "rerun"
+        ),  # Selected source exists, but its recording is not ready.
         {"run_id": "report-only", "preview_status": "no_previewable_recording"},
         {"run_id": "legacy-media", "artifact_uri": "s3://example-artifacts/media.bin"},
     ],
 )
-def test_stock_preload_preserves_explicit_artifact_selection(tmp_path, snapshot, preload_backend_body):
-    hook, state, observed, _namespace = _startup(tmp_path, snapshot, preload_backend_body)
+def test_stock_preload_preserves_explicit_artifact_selection(
+    tmp_path, snapshot, preload_backend_body
+):
+    hook, state, observed, _namespace = _startup(
+        tmp_path, snapshot, preload_backend_body
+    )
     before = copy.deepcopy(state)
     hook()
     assert state == before
@@ -3826,11 +5853,54 @@ def test_stock_preload_initializes_an_empty_workspace(tmp_path, preload_backend_
     assert len(observed["published"]) == len(observed["saved"]) == 1
 
 
+def test_viewer_history_preserves_project_distinct_sources(preload_backend_body):
+    namespace = {
+        "hashlib": hashlib,
+        "json": json,
+        "DEFAULT_SIM_VIZ": {},
+        "resolve_run_source": lambda *_args: ("artifact_storage", "Artifacts"),
+    }
+    history_key = _preload_function(
+        "_sim_viz_history_key", namespace, preload_backend_body
+    )
+    record = _preload_function("_record_sim_viz_run", namespace, preload_backend_body)
+    lookup = _preload_function("_sim_viz_for_run", namespace, preload_backend_body)
+    common = {
+        "run_id": "same-run",
+        "artifact_run_ref": "npa1_same_bucket_prefix_run",
+        "bucket": "same-bucket",
+        "resolved_prefix": "preserved/runs",
+        "artifact_render": "rerun",
+    }
+    first = {**common, "project_id": "project-one", "artifact_key": "one.rrd"}
+    second = {**common, "project_id": "project-two", "artifact_key": "two.rrd"}
+    state = {"sim_viz_runs": {}}
+
+    record(state, first)
+    first_key = history_key(first)
+    record(state, second)
+    second_key = history_key(second)
+
+    assert first_key != second_key
+    assert set(state["sim_viz_runs"]) == {first_key, second_key}
+    assert state["active_run_ref"] == common["artifact_run_ref"]
+    assert state["active_run_history_key"] == second_key
+    assert lookup(state, run_id="same-run")["project_id"] == "project-two"
+    state["active_run_history_key"] = first_key
+    assert lookup(state, run_id="same-run")["project_id"] == "project-one"
+
+
 @pytest.mark.parametrize("already_specific", [False, True])
 @pytest.mark.parametrize("render", ["rerun", "RERUN"])
-def test_stock_preload_retains_existing_rrd_preload_behavior(tmp_path, already_specific, render, preload_backend_body):
-    snapshot = dict(_preload_source(render), rrd_uri="file:///opt/npa-agent/recordings/selected.rrd")
-    hook, state, observed, namespace = _startup(tmp_path, snapshot, preload_backend_body)
+def test_stock_preload_retains_existing_rrd_preload_behavior(
+    tmp_path, already_specific, render, preload_backend_body
+):
+    snapshot = dict(
+        _preload_source(render), rrd_uri="file:///opt/npa-agent/recordings/selected.rrd"
+    )
+    hook, state, observed, namespace = _startup(
+        tmp_path, snapshot, preload_backend_body
+    )
     namespace["_served_recording_is_run_specific"] = lambda: already_specific
     hook()
     for key, value in snapshot.items():
@@ -3841,12 +5911,18 @@ def test_stock_preload_retains_existing_rrd_preload_behavior(tmp_path, already_s
 
 def _lookup(body, state, requested=""):
     namespace = {"DEFAULT_SIM_VIZ": {"run_id": "franka-demo"}}
-    return _preload_function("_sim_viz_for_run", namespace, body)(state, run_id=requested)
+    return _preload_function("_sim_viz_for_run", namespace, body)(
+        state, run_id=requested
+    )
 
 
-def test_active_exact_source_outranks_a_polluted_basename_and_other_source(preload_backend_body):
+def test_active_exact_source_outranks_a_polluted_basename_and_other_source(
+    preload_backend_body,
+):
     selected = _preload_source()
-    other = dict(selected, artifact_run_ref="npa1_other_source", bucket="other-example-bucket")
+    other = dict(
+        selected, artifact_run_ref="npa1_other_source", bucket="other-example-bucket"
+    )
     state = {
         "active_run_id": selected["run_id"],
         "active_run_ref": selected["artifact_run_ref"],
@@ -3869,18 +5945,26 @@ def test_explicit_different_run_never_borrows_active_source(preload_backend_body
     state = {
         "active_run_id": selected["run_id"],
         "active_run_ref": selected["artifact_run_ref"],
-        "sim_viz_runs": {selected["artifact_run_ref"]: selected, "different-run": other},
+        "sim_viz_runs": {
+            selected["artifact_run_ref"]: selected,
+            "different-run": other,
+        },
     }
     assert _lookup(preload_backend_body, state, "different-run") == other
 
 
 @pytest.mark.parametrize("active_ref", ["", "missing-ref", "mismatched-ref"])
-def test_invalid_active_reference_keeps_existing_lookup_semantics(active_ref, preload_backend_body):
+def test_invalid_active_reference_keeps_existing_lookup_semantics(
+    active_ref, preload_backend_body
+):
     direct = {"run_id": "public-shapes", "stage": "running"}
     state = {
         "active_run_id": direct["run_id"],
         "active_run_ref": active_ref,
-        "sim_viz_runs": {"public-shapes": direct, "mismatched-ref": {"run_id": "different-run"}},
+        "sim_viz_runs": {
+            "public-shapes": direct,
+            "mismatched-ref": {"run_id": "different-run"},
+        },
     }
     assert _lookup(preload_backend_body, state) == direct
 
@@ -3890,18 +5974,27 @@ def test_ambiguous_unselected_sources_remain_unresolved(preload_backend_body):
     state = {
         "active_run_id": "different-run",
         "active_run_ref": "",
-        "sim_viz_runs": {"ref-a": selected, "ref-b": dict(selected, bucket="other-example-bucket")},
+        "sim_viz_runs": {
+            "ref-a": selected,
+            "ref-b": dict(selected, bucket="other-example-bucket"),
+        },
     }
-    assert _lookup(preload_backend_body, state, "public-shapes") == {"run_id": "public-shapes"}
+    assert _lookup(preload_backend_body, state, "public-shapes") == {
+        "run_id": "public-shapes"
+    }
 
 
-def test_invalid_active_reference_with_empty_run_keeps_current_state(preload_backend_body):
+def test_invalid_active_reference_with_empty_run_keeps_current_state(
+    preload_backend_body,
+):
     current = {"run_id": "retained-context", "stage": "pending"}
     state = {
         "active_run_id": "",
         "active_run_ref": "malformed-ref",
         "sim_viz": current,
-        "sim_viz_runs": {"malformed-ref": {"run_id": "", "bucket": "wrong-example-bucket"}},
+        "sim_viz_runs": {
+            "malformed-ref": {"run_id": "", "bucket": "wrong-example-bucket"}
+        },
     }
     assert _lookup(preload_backend_body, state) == current
 
@@ -3910,7 +6003,9 @@ def test_invalid_active_reference_with_empty_run_keeps_current_state(preload_bac
 def test_workflow_chat_operates_on_supplied_yaml_before_catalog_or_status(
     monkeypatch, tmp_path, operation
 ):
-    module = _import_rendered_backend(monkeypatch, tmp_path, module_name="workflow_operation_backend")
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="workflow_operation_backend"
+    )
     spec = """apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 metadata:
@@ -3926,51 +6021,319 @@ states:
 """
     state = {"workflow_draft": {"yaml": "invalid saved draft"}}
     monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
-    monkeypatch.setattr(module, "_save_state", lambda _: pytest.fail("read-only operation wrote state"))
+    monkeypatch.setattr(
+        module, "_save_state", lambda _: pytest.fail("read-only operation wrote state")
+    )
     question = f"{operation.title()} this workflow YAML and report its status and toolRefs.\n```yaml\n{spec}```"
-    response = module._agent_chat_with_tools(raw_messages=[{"role": "user", "content": question}], model="unused")
+    response = module._agent_chat_with_tools(
+        raw_messages=[{"role": "user", "content": question}], model="unused"
+    )
     assert response["grounded"] is True
     assert response["workflow_validation"]["ok"] is True
     assert "supplied-workflow" in response["reply"]
     assert "Sim2Real status" not in response["reply"]
     assert "Workbench tool catalog" not in response["reply"]
     if operation == "plan":
-        assert response["workflow_validation"]["plan"]["steps"][0]["tool_ref"] == "workbench.insights.record"
+        assert (
+            response["workflow_validation"]["plan"]["steps"][0]["tool_ref"]
+            == "workbench.insights.record"
+        )
         assert "Planning only" in response["reply"]
     else:
         assert response["apis_used"] == ["workflows/validate"]
     missing = module._agent_chat_with_tools(
-        raw_messages=[{"role": "user", "content": f"{operation.title()} the saved workflow YAML"}], model="unused"
+        raw_messages=[
+            {"role": "user", "content": f"{operation.title()} the saved workflow YAML"}
+        ],
+        model="unused",
     )
     assert missing["workflow_validation"]["ok"] is False
     assert "validation failed" in missing["reply"]
 
 
 def test_selected_run_artifact_chat_preserves_exact_source(monkeypatch, tmp_path):
-    module = _import_rendered_backend(monkeypatch, tmp_path, module_name="selected_artifact_chat_backend")
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="selected_artifact_chat_backend"
+    )
     from npa.workflows.artifacts import encode_run_ref
 
     ref = encode_run_ref("example-bucket", "synthetic/metrics", "metrics")
-    selected = {"run_id": "metrics", "run_ref": ref, "bucket": "example-bucket",
-                "project_id": "example-project", "resolved_prefix": "synthetic/metrics"}
-    state = {"active_run_id": "metrics", "active_run_ref": ref, "sim_viz_runs": {ref: selected}}
+    selected = {
+        "run_id": "metrics",
+        "run_ref": ref,
+        "bucket": "example-bucket",
+        "project_id": "example-project",
+        "resolved_prefix": "synthetic/metrics",
+    }
+    state = {
+        "active_run_id": "metrics",
+        "active_run_ref": ref,
+        "sim_viz_runs": {ref: selected},
+    }
     monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
-    monkeypatch.setattr(module, "artifacts_runs", lambda **_: pytest.fail("selected run widened to global discovery"))
+    monkeypatch.setattr(
+        module,
+        "artifacts_runs",
+        lambda **_: pytest.fail("selected run widened to global discovery"),
+    )
     calls = []
 
     def list_selected(run_ref, **scope):
         calls.append((run_ref, scope))
-        return {"ok": True, "count": 2, "preferred": {"key": "synthetic/metrics/report.json", "render": "json"}}
+        return {
+            "ok": True,
+            "count": 2,
+            "preferred": {"key": "synthetic/metrics/report.json", "render": "json"},
+        }
 
     monkeypatch.setattr(module, "artifacts_for_run", list_selected)
     result = module._agent_chat_with_tools(
-        raw_messages=[{"role": "user", "content": "What can I view for the selected task-owned run?"}], model="unused"
+        raw_messages=[
+            {
+                "role": "user",
+                "content": "What can I view for the selected task-owned run?",
+            }
+        ],
+        model="unused",
     )
     assert result["grounded"] is True
-    assert calls == [(ref, {"resource_bucket": "example-bucket", "project_id": "example-project",
-                            "resolved_prefix": "synthetic/metrics", "source_selected": True})]
+    assert calls == [
+        (
+            ref,
+            {
+                "resource_bucket": "example-bucket",
+                "project_id": "example-project",
+                "resolved_prefix": "synthetic/metrics",
+                "source_selected": True,
+            },
+        )
+    ]
     assert "report.json" in result["reply"] and "`2`" in result["reply"]
-    assert "example-bucket" not in result["reply"] and "synthetic/metrics" not in result["reply"]
+    assert (
+        "example-bucket" not in result["reply"]
+        and "synthetic/metrics" not in result["reply"]
+    )
+
+
+def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
+    monkeypatch, tmp_path
+):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_chat_backend"
+    )
+    state = {
+        "workflow_executions": {
+            "private-workflow-run": {
+                "status": "succeeded",
+                "submitted_at": "2026-09-16T12:00:00Z",
+            }
+        }
+    }
+    exact_selection = {
+        "run_id": "private-artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "key": "private/prefix/rollout.rrd",
+        "resource_bucket": "private-bucket",
+        "project_id": "private-project",
+        "resolved_prefix": "private/prefix",
+        "source_selected": True,
+    }
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda: {"cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}]},
+    )
+    monkeypatch.setattr(
+        module, "_visual_evidence_selection", lambda _state, **_: exact_selection
+    )
+    calls = []
+
+    def load_artifact(payload):
+        calls.append(payload)
+        return {
+            "sim_viz": {
+                "artifact_render": "rerun",
+                "rrd_uri": "s3://private/rollout.rrd",
+            }
+        }
+
+    monkeypatch.setattr(module, "sim_viz_load_artifact", load_artifact)
+    monkeypatch.setattr(
+        module,
+        "sim_viz_status",
+        lambda: {"artifact_render": "rerun", "rrd_uri": "s3://private/rollout.rrd"},
+    )
+
+    response = module._agent_chat_with_tools(
+        raw_messages=[
+            {
+                "role": "user",
+                "content": "Show live cloud evidence and a real RRD artifact.",
+            }
+        ],
+        model="unused",
+    )
+
+    assert calls == [exact_selection]
+    assert response["live_evidence"] == {
+        "cloud_status_counts": {"running": 2},
+        "workflow_status": "succeeded",
+        "artifact_loaded": True,
+        "artifact_render": "rerun",
+    }
+    assert response["grounded"] is True
+    assert "2 running" in response["reply"]
+    assert "private-bucket" not in response["reply"]
+    assert "private/prefix" not in response["reply"]
+
+
+def test_live_evidence_prefers_a_verified_active_visual_artifact(monkeypatch, tmp_path):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_active_artifact_backend"
+    )
+    state = {
+        "sim_viz": {
+            "run_id": "artifact-run",
+            "artifact_run_ref": "npa1_exact_source_ref",
+            "artifact_key": "workflows/visual/output.rrd",
+            "artifact_render": "rerun",
+            "bucket": "example-bucket",
+            "project_id": "example-project",
+            "resolved_prefix": "workflows/visual",
+        }
+    }
+    monkeypatch.setattr(
+        module,
+        "artifacts_runs",
+        lambda **_: pytest.fail("active evidence widened to discovery"),
+    )
+
+    assert module._visual_evidence_selection(state) == {
+        "run_id": "artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "key": "workflows/visual/output.rrd",
+        "resource_bucket": "example-bucket",
+        "project_id": "example-project",
+        "resolved_prefix": "workflows/visual",
+        "source_selected": True,
+    }
+
+
+def test_live_evidence_chat_can_select_a_real_video_from_active_source(
+    monkeypatch, tmp_path
+):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_video_backend"
+    )
+    state = {
+        "sim_viz": {
+            "run_id": "artifact-run",
+            "artifact_run_ref": "npa1_exact_source_ref",
+            "artifact_key": "workflows/visual/output.rrd",
+            "artifact_render": "rerun",
+            "bucket": "example-bucket",
+            "project_id": "example-project",
+            "resolved_prefix": "workflows/visual",
+        }
+    }
+    monkeypatch.setattr(module, "_load_state", lambda: copy.deepcopy(state))
+    monkeypatch.setattr(module, "_agent_k8s_backends", lambda: {"cloud_clusters": []})
+    exact_calls = []
+
+    def list_active_source(run_ref, **scope):
+        exact_calls.append((run_ref, scope))
+        return {
+            "artifacts": [
+                {"key": "workflows/visual/output.rrd", "render": "rerun"},
+                {"key": "workflows/visual/rollout.mp4", "render": "video"},
+            ]
+        }
+
+    monkeypatch.setattr(module, "artifacts_for_run", list_active_source)
+    loaded = []
+
+    def load_video(payload):
+        loaded.append(payload)
+        return {
+            "sim_viz": {
+                "artifact_render": "video",
+                "artifact_preview_url": "/api/artifacts/file/video",
+            }
+        }
+
+    monkeypatch.setattr(module, "sim_viz_load_artifact", load_video)
+    monkeypatch.setattr(
+        module,
+        "sim_viz_status",
+        lambda: {
+            "artifact_render": "video",
+            "artifact_preview_url": "/api/artifacts/file/video",
+        },
+    )
+
+    response = module._agent_chat_with_tools(
+        raw_messages=[
+            {
+                "role": "user",
+                "content": "Show live cloud evidence and a real MP4 artifact.",
+            }
+        ],
+        model="unused",
+    )
+
+    assert exact_calls == [
+        (
+            "npa1_exact_source_ref",
+            {
+                "resource_bucket": "example-bucket",
+                "project_id": "example-project",
+                "resolved_prefix": "workflows/visual",
+                "source_selected": True,
+            },
+        )
+    ]
+    assert loaded and loaded[0]["key"] == "workflows/visual/rollout.mp4"
+    assert response["live_evidence"]["artifact_render"] == "video"
+    assert "real `video` artifact loaded in **View**" in response["reply"]
+    assert "example-bucket" not in response["reply"]
+    assert "workflows/visual" not in response["reply"]
+
+
+def test_live_evidence_retries_a_warming_artifact_inventory(monkeypatch, tmp_path):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="live_evidence_warming_inventory_backend"
+    )
+    row = {
+        "run_id": "artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "bucket": "example-bucket",
+        "project_id": "example-project",
+        "resolved_prefix": "workflows/visual",
+    }
+    pages = iter([{"runs": []}, {"runs": [row]}])
+    monkeypatch.setattr(module, "artifacts_runs", lambda **_: next(pages))
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        module,
+        "artifacts_for_run",
+        lambda *_args, **_kwargs: {
+            "run_id": "artifact-run",
+            "run_ref": "npa1_exact_source_ref",
+            "artifacts": [{"key": "workflows/visual/output.rrd", "render": "rerun"}],
+        },
+    )
+
+    assert module._visual_evidence_selection() == {
+        "run_id": "artifact-run",
+        "run_ref": "npa1_exact_source_ref",
+        "key": "workflows/visual/output.rrd",
+        "resource_bucket": "example-bucket",
+        "project_id": "example-project",
+        "resolved_prefix": "workflows/visual",
+        "source_selected": True,
+    }
+
 
 def test_rendered_action_catalog_returns_every_registered_tool_ref(
     monkeypatch, tmp_path
@@ -4041,4 +6404,7 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
     assert calls[0]["status"] == "ok"
     assert calls[0]["observation"] == {"tool_refs": expected}
     catalog_observation = {"tool": "tools_catalog", "result": {"tool_refs": expected}}
-    assert json.dumps(catalog_observation, sort_keys=True) in planner_inputs[1][-1]["content"]
+    assert (
+        json.dumps(catalog_observation, sort_keys=True)
+        in planner_inputs[1][-1]["content"]
+    )

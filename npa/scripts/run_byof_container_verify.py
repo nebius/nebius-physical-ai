@@ -877,16 +877,24 @@ def _verify_libero_storage_configmap(item: dict[str, Any]) -> None:
         or set(data) != {key_name}
         or item.get("binaryData")
     ):
-        raise RuntimeError("LIBERO storage verification ConfigMap is not immutable or closed")
+        raise RuntimeError(
+            "LIBERO storage verification ConfigMap is not immutable or closed"
+        )
     try:
         key = base64.b64decode(data[key_name], validate=True)
     except (ValueError, TypeError) as exc:
-        raise RuntimeError("LIBERO storage verification ConfigMap key is invalid") from exc
+        raise RuntimeError(
+            "LIBERO storage verification ConfigMap key is invalid"
+        ) from exc
     qualification = validate_libero_qualified_image_manifest(libero_image_manifest())
-    if len(key) != 32 or hashlib.sha256(key).hexdigest() != qualification[
-        "output_storage_authorization_public_key_sha256"
-    ]:
-        raise RuntimeError("LIBERO storage verification ConfigMap key differs from qualification")
+    if (
+        len(key) != 32
+        or hashlib.sha256(key).hexdigest()
+        != qualification["output_storage_authorization_public_key_sha256"]
+    ):
+        raise RuntimeError(
+            "LIBERO storage verification ConfigMap key differs from qualification"
+        )
 
 
 def _verify_libero_runtime_key_configmap(item: dict[str, Any]) -> None:
@@ -894,7 +902,9 @@ def _verify_libero_runtime_key_configmap(item: dict[str, Any]) -> None:
     name = (item.get("metadata") or {}).get("name")
     if name == LIBERO_CALLER_VERIFICATION_CONFIGMAP:
         key_name = "authenticated-caller-public-key.b64"
-        path = Path(os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE", ""))
+        path = Path(
+            os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE", "")
+        )
     elif name == LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP:
         identity = os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "")
         if re.fullmatch(r"[0-9a-f]{64}", identity) is None:
@@ -902,10 +912,14 @@ def _verify_libero_runtime_key_configmap(item: dict[str, Any]) -> None:
         key_name = identity + ".b64"
         path = Path(os.environ.get("NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE", ""))
         if path.name != key_name:
-            raise RuntimeError("LIBERO independent customer registration filename differs")
+            raise RuntimeError(
+                "LIBERO independent customer registration filename differs"
+            )
     else:
         raise RuntimeError("LIBERO runtime verification ConfigMap is unknown")
-    encoded = _stable_owner_private_bytes(path, label="provided runtime verification key", limit=1024)
+    encoded = _stable_owner_private_bytes(
+        path, label="provided runtime verification key", limit=1024
+    )
     try:
         key = base64.b64decode(encoded, validate=True)
     except (ValueError, binascii.Error) as exc:
@@ -917,21 +931,31 @@ def _verify_libero_runtime_key_configmap(item: dict[str, Any]) -> None:
         or item.get("data") != {key_name: encoded.decode("ascii")}
         or item.get("binaryData")
     ):
-        raise RuntimeError("LIBERO runtime verification ConfigMap differs from provided immutable root")
+        raise RuntimeError(
+            "LIBERO runtime verification ConfigMap differs from provided immutable root"
+        )
 
 
-def _libero_reviewed_mount_contract(customer_identity_sha256: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _libero_reviewed_mount_contract(
+    customer_identity_sha256: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Read the operator-reviewed profile, binding the registration before signing."""
     if re.fullmatch(r"[0-9a-f]{64}", customer_identity_sha256) is None:
         raise RuntimeError("LIBERO customer registration identity is invalid")
-    profile = Path(__file__).resolve().parents[1] / "src/npa/workflows/byof/profiles" / LIBERO_PROFILE_FILENAME
+    profile = (
+        Path(__file__).resolve().parents[1]
+        / "src/npa/workflows/byof/profiles"
+        / LIBERO_PROFILE_FILENAME
+    )
     document = list(yaml.safe_load_all(profile.read_text()))[1]
     spec = document["resources"]["kubernetes"]["pod_config"]["spec"]
     mounts = spec["containers"][0]["volumeMounts"]
     for mount in mounts:
         for field in ("mountPath", "subPath"):
             if field in mount:
-                mount[field] = mount[field].replace(LIBERO_CUSTOMER_IDENTITY_PLACEHOLDER, customer_identity_sha256)
+                mount[field] = mount[field].replace(
+                    LIBERO_CUSTOMER_IDENTITY_PLACEHOLDER, customer_identity_sha256
+                )
     return spec["volumes"], mounts
 
 
@@ -953,8 +977,10 @@ def _libero_namespaced_inventory(
         },
         "secrets": set(),
         "configmaps": {
-            "kube-root-ca.crt", LIBERO_STORAGE_VERIFICATION_CONFIGMAP,
-            LIBERO_CALLER_VERIFICATION_CONFIGMAP, LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP,
+            "kube-root-ca.crt",
+            LIBERO_STORAGE_VERIFICATION_CONFIGMAP,
+            LIBERO_CALLER_VERIFICATION_CONFIGMAP,
+            LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP,
         },
         "services": set(),
     }
@@ -988,7 +1014,8 @@ def _libero_namespaced_inventory(
                 if metadata["name"] == LIBERO_STORAGE_VERIFICATION_CONFIGMAP:
                     _verify_libero_storage_configmap(item)
                 elif metadata["name"] in {
-                    LIBERO_CALLER_VERIFICATION_CONFIGMAP, LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP
+                    LIBERO_CALLER_VERIFICATION_CONFIGMAP,
+                    LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP,
                 }:
                     _verify_libero_runtime_key_configmap(item)
                 else:
@@ -1001,10 +1028,20 @@ def _libero_namespaced_inventory(
                         or not data["ca.crt"].strip()
                         or item.get("binaryData")
                     ):
-                        raise RuntimeError("LIBERO root-CA ConfigMap has an unexpected shape")
+                        raise RuntimeError(
+                            "LIBERO root-CA ConfigMap has an unexpected shape"
+                        )
                 if not metadata.get("uid") or metadata.get("namespace") != namespace:
                     raise RuntimeError("LIBERO ConfigMap has no namespace-bound UID")
-                records.append(_sha256_json({"metadata": metadata, "data": item.get("data"), "immutable": item.get("immutable")}))
+                records.append(
+                    _sha256_json(
+                        {
+                            "metadata": metadata,
+                            "data": item.get("data"),
+                            "immutable": item.get("immutable"),
+                        }
+                    )
+                )
             inventory["configmap_records"] = sorted(records)
     return inventory
 
@@ -1254,16 +1291,25 @@ def _bind_libero_runtime_contract(
         != authenticated_customer_identity
     ):
         raise ValueError("LIBERO authenticated caller identity differs")
-    expected_volumes, expected_mounts = _libero_reviewed_mount_contract(authenticated_customer_identity)
+    expected_volumes, expected_mounts = _libero_reviewed_mount_contract(
+        authenticated_customer_identity
+    )
     for document in skypilot_task_documents(documents):
-        spec = (document.get("config") or {}).get("kubernetes", {}).get("pod_config", {}).get("spec", {})
+        spec = (
+            (document.get("config") or {})
+            .get("kubernetes", {})
+            .get("pod_config", {})
+            .get("spec", {})
+        )
         containers = spec.get("containers") or []
         if (
             spec.get("volumes") != expected_volumes
             or len(containers) != 1
             or containers[0].get("volumeMounts") != expected_mounts
         ):
-            raise ValueError("LIBERO provided trust-root mounts must be bound before customer signing")
+            raise ValueError(
+                "LIBERO provided trust-root mounts must be bound before customer signing"
+            )
     encoded_authorization = os.environ.get(
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64", ""
     ).strip()
@@ -1286,12 +1332,20 @@ def _bind_libero_runtime_contract(
         )
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
-    registration = Path(os.environ.get("NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE", ""))
+    registration = Path(
+        os.environ.get("NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE", "")
+    )
     if registration.name != authenticated_customer_identity + ".b64":
         raise ValueError("LIBERO independent customer registration filename differs")
-    registered_key = _stable_owner_private_bytes(registration, label="customer signer registration", limit=1024)
-    if registered_key != str(customer_authorization.get("customer_signer_public_key_b64", "")).encode("ascii"):
-        raise ValueError("LIBERO independent customer registration differs from verified signer")
+    registered_key = _stable_owner_private_bytes(
+        registration, label="customer signer registration", limit=1024
+    )
+    if registered_key != str(
+        customer_authorization.get("customer_signer_public_key_b64", "")
+    ).encode("ascii"):
+        raise ValueError(
+            "LIBERO independent customer registration differs from verified signer"
+        )
     if (
         os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256", "").strip()
         != authorization_sha256
@@ -1524,13 +1578,17 @@ def _libero_payload_pod_record(
     pod_security = spec.get("securityContext") or {}
     if (
         pod_security.get("runAsNonRoot") is not True
-        or (pod_security.get("seccompProfile") or {}) != (
+        or (pod_security.get("seccompProfile") or {})
+        != (
             {"type": "Localhost", "localhostProfile": "npa-libero-customer-v1.json"}
-            if binding.customer_run else {"type": "RuntimeDefault"}
+            if binding.customer_run
+            else {"type": "RuntimeDefault"}
         )
-        or (binding.customer_run and pod_security.get("appArmorProfile") != {
-            "type": "Localhost", "localhostProfile": "npa-libero-customer-v1"
-        })
+        or (
+            binding.customer_run
+            and pod_security.get("appArmorProfile")
+            != {"type": "Localhost", "localhostProfile": "npa-libero-customer-v1"}
+        )
     ):
         raise RuntimeError("LIBERO payload Pod security context is not confined")
     container = containers[0]
@@ -1541,9 +1599,11 @@ def _libero_payload_pod_record(
         or security.get("allowPrivilegeEscalation") is not binding.customer_run
         or security.get("readOnlyRootFilesystem") is not True
         or set(capabilities.get("drop") or ()) != {"ALL"}
-        or set(capabilities.get("add") or ()) != (
+        or set(capabilities.get("add") or ())
+        != (
             {"SETUID", "SETGID", "NET_BIND_SERVICE", "SYS_CHROOT"}
-            if binding.customer_run else set()
+            if binding.customer_run
+            else set()
         )
         or any(port.get("hostPort") for port in (container.get("ports") or ()))
     ):
@@ -1553,22 +1613,32 @@ def _libero_payload_pod_record(
         from npa.workflows.byof.libero_customer import PROFILE
 
         customer_profile = list(yaml.safe_load_all(PROFILE.read_text()))[1]
-        customer_spec = customer_profile["resources"]["kubernetes"]["pod_config"]["spec"]
+        customer_spec = customer_profile["resources"]["kubernetes"]["pod_config"][
+            "spec"
+        ]
         expected_volumes = customer_spec["volumes"]
         expected_mounts = customer_spec["containers"][0]["volumeMounts"]
     else:
-        expected_volumes, expected_mounts = _libero_reviewed_mount_contract(binding.customer_identity_sha256)
+        expected_volumes, expected_mounts = _libero_reviewed_mount_contract(
+            binding.customer_identity_sha256
+        )
     expected_by_name = {volume["name"]: volume for volume in expected_volumes}
     volume_types: dict[str, str] = {}
     for volume in volumes:
-        if not isinstance(volume, dict) or not volume.get("name") or volume["name"] in volume_types:
+        if (
+            not isinstance(volume, dict)
+            or not volume.get("name")
+            or volume["name"] in volume_types
+        ):
             raise RuntimeError("LIBERO payload volume identity is invalid")
         name = volume["name"]
         if binding.customer_run and any(
             "serviceAccountToken" in item
             for item in (volume.get("projected") or {}).get("sources", [])
         ):
-            raise RuntimeError("LIBERO customer Pod may not mount a service-account token")
+            raise RuntimeError(
+                "LIBERO customer Pod may not mount a service-account token"
+            )
         kinds = set(volume) - {"name"}
         if name in expected_by_name:
             if volume != expected_by_name[name]:
@@ -1577,7 +1647,9 @@ def _libero_payload_pod_record(
             raise RuntimeError("LIBERO payload Pod contains a forbidden volume")
         volume_types[name] = next(iter(kinds))
     safe_writable_roots = (
-        "/workspace", str(PurePosixPath("/") / "tmp"), str(PurePosixPath("/dev") / "shm"),
+        "/workspace",
+        str(PurePosixPath("/") / "tmp"),
+        str(PurePosixPath("/dev") / "shm"),
     )
     mounts = container.get("volumeMounts") or []
     for mount in mounts:
@@ -1585,7 +1657,9 @@ def _libero_payload_pod_record(
         name = str(mount.get("name") or "")
         if name in expected_by_name:
             if mount not in expected_mounts:
-                raise RuntimeError("LIBERO payload Pod contains an unreviewed required mount")
+                raise RuntimeError(
+                    "LIBERO payload Pod contains an unreviewed required mount"
+                )
         elif any(
             mount_path == required["mountPath"]
             or required["mountPath"].startswith(mount_path.rstrip("/") + "/")
@@ -1594,7 +1668,10 @@ def _libero_payload_pod_record(
             raise RuntimeError("LIBERO payload Pod shadows a reviewed mount")
         elif volume_types.get(name) is None or (
             mount.get("readOnly") is not True
-            and not any(mount_path == root or mount_path.startswith(root + "/") for root in safe_writable_roots)
+            and not any(
+                mount_path == root or mount_path.startswith(root + "/")
+                for root in safe_writable_roots
+            )
         ):
             raise RuntimeError("LIBERO payload Pod contains a broad writable mount")
     if any(volume["name"] not in volume_types for volume in expected_volumes) or any(
@@ -2160,12 +2237,18 @@ def render_workflow(
             if identity:
                 if re.fullmatch(r"[0-9a-f]{64}", identity) is None:
                     raise ValueError("LIBERO customer registration identity is invalid")
-                pod = (doc.get("config") or {}).get("kubernetes", {}).get("pod_config", {})
+                pod = (
+                    (doc.get("config") or {})
+                    .get("kubernetes", {})
+                    .get("pod_config", {})
+                )
                 for container in (pod.get("spec") or {}).get("containers", []):
                     for mount in container.get("volumeMounts", []):
                         for field in ("mountPath", "subPath"):
                             if field in mount:
-                                mount[field] = mount[field].replace(LIBERO_CUSTOMER_IDENTITY_PLACEHOLDER, identity)
+                                mount[field] = mount[field].replace(
+                                    LIBERO_CUSTOMER_IDENTITY_PLACEHOLDER, identity
+                                )
     return docs
 
 

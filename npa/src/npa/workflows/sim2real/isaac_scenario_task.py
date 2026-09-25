@@ -400,7 +400,9 @@ def apply_scenario_reset(env: Any, env_ids: Any, asset_cfg: Any) -> None:
     set_masses_index = getattr(asset, "set_masses_index", None)
     if callable(set_masses_index):
         body_mass = asset.data.body_mass
-        body_mass = body_mass if isinstance(body_mass, torch.Tensor) else body_mass.torch
+        body_mass = (
+            body_mass if isinstance(body_mass, torch.Tensor) else body_mass.torch
+        )
         default_mass = asset.data.default_mass
         default_mass = (
             default_mass

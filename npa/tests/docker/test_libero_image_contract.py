@@ -212,9 +212,11 @@ def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
     ssh_dir.mkdir()
     ssh_config = tmp_path / "sshd_config"
     ssh_config.write_text("UsePAM yes\n")
-    guard_source = guard_source.replace("/etc/ssh", str(ssh_dir)).replace(
-        "/opt/npa/libero/sshd_config", str(ssh_config)
-    ).replace("/run/sshd", str(tmp_path / "sshd-run"))
+    guard_source = (
+        guard_source.replace("/etc/ssh", str(ssh_dir))
+        .replace("/opt/npa/libero/sshd_config", str(ssh_config))
+        .replace("/run/sshd", str(tmp_path / "sshd-run"))
+    )
     guard = bin_dir / "npa-skypilot-bootstrap-guard"
     guard.write_text(
         guard_source.replace("/usr/bin/ssh-keygen", str(real_keygen)),
@@ -248,7 +250,9 @@ def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
     assert calls.read_text(encoding="utf-8") == "-A\n"
 
 
-def test_skypilot_root_shell_dispatch_only_verifies_exact_baked_ssh_limits(tmp_path) -> None:
+def test_skypilot_root_shell_dispatch_only_verifies_exact_baked_ssh_limits(
+    tmp_path,
+) -> None:
     source = (IMAGE_ROOT / "skypilot-bootstrap-guard.sh").read_text()
     expected = 'echo "MaxSessions 200" >> /etc/ssh/sshd_config; echo "MaxStartups 150:30:200" >> /etc/ssh/sshd_config; (systemctl reload sshd || service ssh reload); '
     current, baked = tmp_path / "current.conf", tmp_path / "baked.conf"
@@ -259,24 +263,38 @@ def test_skypilot_root_shell_dispatch_only_verifies_exact_baked_ssh_limits(tmp_p
     fake_id.write_text("#!/bin/sh\nprintf '0\\n'\n")
     fake_id.chmod(0o755)
     daemon = tmp_path / "sshd"
-    daemon.write_text("#!/bin/sh\nprintf 'maxsessions 200\\nmaxstartups 150:30:200\\n'\n")
+    daemon.write_text(
+        "#!/bin/sh\nprintf 'maxsessions 200\\nmaxstartups 150:30:200\\n'\n"
+    )
     daemon.chmod(0o755)
     # Redirect only verifier filesystem operands; the accepted argv stays exact.
     source = source.replace("guard_owner_uid=0", f"guard_owner_uid={os.getuid()}")
     source = source.replace("/usr/sbin/sshd", str(daemon))
     before, rest = source.split("    if [ -L /etc/ssh/sshd_config ]", 1)
-    rest = rest.replace("/etc/ssh/sshd_config", str(current)).replace("/opt/npa/libero/sshd_config", str(baked))
+    rest = rest.replace("/etc/ssh/sshd_config", str(current)).replace(
+        "/opt/npa/libero/sshd_config", str(baked)
+    )
     guard = tmp_path / "bash"
     guard.write_text(before + "    if [ -L " + str(current) + " ]" + rest)
     guard.chmod(0o755)
     environment = {"PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
+
     def run(args):
-        return subprocess.run([guard, *args], env=environment, capture_output=True, text=True)
+        return subprocess.run(
+            [guard, *args], env=environment, capture_output=True, text=True
+        )
+
     accepted = run(["-c", expected])
     assert accepted.returncode == 0, accepted.stderr
     assert "SSH_LIMITS_VERIFIED" in accepted.stdout
     assert current.read_bytes() == baked.read_bytes()
-    for args in (["-c", "id"], ["-c", expected + "id"], ["-c", expected, "extra"], ["-s"], []):
+    for args in (
+        ["-c", "id"],
+        ["-c", expected + "id"],
+        ["-c", expected, "extra"],
+        ["-s"],
+        [],
+    ):
         assert run(args).returncode == 87
     current.write_text("MaxSessions 1\n")
     assert run(["-c", expected]).returncode == 87
@@ -427,11 +445,16 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
         for item in manifest["governing_terms"]
     )
-    normalized = [item for item in manifest["governing_terms"] if "normalization" in item]
+    normalized = [
+        item for item in manifest["governing_terms"] if "normalization" in item
+    ]
     assert len(normalized) == 1
     assert normalized[0]["id"] == "nvidia-software-license"
     assert normalized[0]["normalization"] == "nvidia-navigation-uuid-v1"
-    assert normalized[0]["sha256"] == "3f13fbe637d25533777fff3785752b530401c10055acfcffe28540f33263e17f"
+    assert (
+        normalized[0]["sha256"]
+        == "3f13fbe637d25533777fff3785752b530401c10055acfcffe28540f33263e17f"
+    )
     assert "ACCEPT_" not in serialized
     assert manifest["customer_runtime_authorization"] == {
         "schema": "npa.libero.customer-runtime-authorization.v2",
@@ -540,37 +563,56 @@ def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
     assert "docker history" not in text
 
 
-def test_publication_plan_accepts_neutral_build_without_runtime_authorization(tmp_path) -> None:
+def test_publication_plan_accepts_neutral_build_without_runtime_authorization(
+    tmp_path,
+) -> None:
     workflow = yaml.safe_load(PUBLICATION_WORKFLOW.read_text())
-    plan = next(step for step in workflow['jobs']['resolve']['steps']
-                if step.get('name') == 'Resolve immutable public development plan')
-    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-    output = tmp_path / 'github-output'
+    plan = next(
+        step
+        for step in workflow["jobs"]["resolve"]["steps"]
+        if step.get("name") == "Resolve immutable public development plan"
+    )
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    output = tmp_path / "github-output"
     result = subprocess.run(
-        ['bash', '-c', plan['run']], cwd=ROOT, capture_output=True, text=True,
-        env={**os.environ, 'TARGET': 'ghcr.io/nebius/nebius-physical-ai',
-             'DEVELOPMENT_SHA': head, 'BUILD_TOOLS': 'libero', 'CLEANUP_TOOLS': '',
-             'LEROBOT_VERSION': '', 'GITHUB_OUTPUT': str(output)}, check=False,
+        ["bash", "-c", plan["run"]],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "TARGET": "ghcr.io/nebius/nebius-physical-ai",
+            "DEVELOPMENT_SHA": head,
+            "BUILD_TOOLS": "libero",
+            "CLEANUP_TOOLS": "",
+            "LEROBOT_VERSION": "",
+            "GITHUB_OUTPUT": str(output),
+        },
+        check=False,
     )
     assert result.returncode == 0, result.stderr
-    values = dict(line.split('=', 1) for line in output.read_text().splitlines())
-    matrix = json.loads(values['build_matrix'])
-    assert matrix[0]['tool'] == 'libero'
-    assert matrix[0]['image'].endswith('npa-libero:dev-' + head)
-    assert values['build_count'] == '1'
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    matrix = json.loads(values["build_matrix"])
+    assert matrix[0]["tool"] == "libero"
+    assert matrix[0]["image"].endswith("npa-libero:dev-" + head)
+    assert values["build_count"] == "1"
 
 
 def test_publication_keeps_pre_and_post_byte_gates_separate_from_runtime() -> None:
     text = PUBLICATION_WORKFLOW.read_text()
-    assert 'libero_qualified_image_manifest' not in text
-    assert 'NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY' not in text
-    assert text.count('npa/scripts/scan_image_libero_payload.py') == 3
-    assert text.count('--record-image-inventory') == 1
-    assert text.count('--expected-image-inventory-sha256') == 1
-    assert text.index('--record-image-inventory') < text.index('docker push "$IMAGE"')
-    assert text.index('--expected-image-inventory-sha256') > text.index('docker push "$IMAGE"')
-    assert '--verify-build-oci' in text
-    assert 'libero-base-provenance.intoto.json' in text
-    assert 'libero-base-sbom.intoto.json' in text
-    assert '--provenance=mode=max' in text
-    assert '--sbom=true' in text
+    assert "libero_qualified_image_manifest" not in text
+    assert "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY" not in text
+    assert text.count("npa/scripts/scan_image_libero_payload.py") == 3
+    assert text.count("--record-image-inventory") == 1
+    assert text.count("--expected-image-inventory-sha256") == 1
+    assert text.index("--record-image-inventory") < text.index('docker push "$IMAGE"')
+    assert text.index("--expected-image-inventory-sha256") > text.index(
+        'docker push "$IMAGE"'
+    )
+    assert "--verify-build-oci" in text
+    assert "libero-base-provenance.intoto.json" in text
+    assert "libero-base-sbom.intoto.json" in text
+    assert "--provenance=mode=max" in text
+    assert "--sbom=true" in text

@@ -17,7 +17,9 @@ from npa.orchestration.skypilot.resources import (
         ("l40s", "L40S:1", "gpu-l40s-d_1gpu-16vcpu-96gb"),
     ],
 )
-def test_resources_for_nebius_gpu_specs(gpu: str, accelerator: str, instance_type: str) -> None:
+def test_resources_for_nebius_gpu_specs(
+    gpu: str, accelerator: str, instance_type: str
+) -> None:
     resources = resources_for_npa_spec({"backend": "nebius", "gpu": gpu, "count": 1})
 
     assert resources["cloud"] == "nebius"
@@ -55,7 +57,9 @@ def test_invalid_gpu_type_raises_typed_error() -> None:
 
 
 def test_rtx6000_is_not_a_nebius_vm_spec() -> None:
-    with pytest.raises(InvalidResourceSpecError, match="unsupported GPU type 'rtx6000'"):
+    with pytest.raises(
+        InvalidResourceSpecError, match="unsupported GPU type 'rtx6000'"
+    ):
         resources_for_npa_spec({"backend": "nebius", "gpu": "rtx6000", "count": 1})
 
 

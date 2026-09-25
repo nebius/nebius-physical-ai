@@ -44,6 +44,50 @@ def cpu_placement_requirement() -> str:
     )
 
 
+def _config_is_enabled(value: Any) -> bool:
+    """Return whether a config flag uses an enabled truthy string form."""
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_source_sha(value: str) -> bool:
+    """Return whether a value is an exact lowercase 40-character hexadecimal SHA."""
+    return len(value) == 40 and all(char in "0123456789abcdef" for char in value)
+
+
+def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
+    """Mirror the renderer's two independent ``config.source_sha`` gates.
+
+    ``skypilot_render.build_skypilot_task_doc`` normalizes the value with
+    ``strip().lower()`` and then (1) rejects any non-empty value that is not an
+    exact 40-character hexadecimal SHA regardless of baked mode, and (2) requires
+    a value to be present when ``require_baked_npa`` is enabled. Reproduce both so
+    a missing or malformed attestation is reported by preflight rather than as a
+    per-step render error.
+    """
+    issues: list[Issue] = []
+    require_baked = _config_is_enabled(config.get("require_baked_npa"))
+    source_sha_value = str(config.get("source_sha") or "").strip().lower()
+    if source_sha_value and not _is_source_sha(source_sha_value):
+        issues.append(
+            (
+                "config.source_sha is not an exact 40-character hexadecimal source "
+                "attestation",
+                "set --var source_sha=<40-hex> to the exact source commit the "
+                "attested immutable task images were built from",
+            )
+        )
+    elif require_baked and not source_sha_value:
+        issues.append(
+            (
+                "config.source_sha is missing while config.require_baked_npa is "
+                "enabled",
+                "set --var source_sha=<40-hex> to the exact source commit the "
+                "attested immutable task images were built from",
+            )
+        )
+    return issues
+
+
 def static_prerequisites(
     config: Mapping[str, Any],
     *,
@@ -70,6 +114,8 @@ def static_prerequisites(
                 "verify the exact bytes",
             )
         )
+
+    issues.extend(_source_sha_issues(config))
 
     pvc = str(config.get("isaac_cache_pvc") or "").strip()
     if not pvc:
@@ -149,7 +195,17 @@ def static_prerequisites(
 
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
-        repos = ["nvidia/Cosmos-Transfer2.5-2B"]
+        # Derive the gated repos from the sim2real capability's single source of
+        # truth so this pre-launch gate matches `health access --capability
+        # sim2real`. Cosmos Transfer (Stage 3) also fetches the pinned
+        # Predict2.5 tokenizer and the Cosmos Guardrail weights at runtime;
+        # probing only Cosmos-Transfer2.5-2B here let a run pass preflight and
+        # then fail inside Stage 3 on an unaccepted dependency.
+        from npa.workbench.model_access import gated_hf_repos
+
+        repos = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+        if not repos:
+            repos = ["nvidia/Cosmos-Transfer2.5-2B"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)
@@ -257,10 +313,9 @@ def kubernetes_prerequisites(
             except json.JSONDecodeError:
                 pvc = {}
         modes = set((pvc.get("spec") or {}).get("accessModes") or [])
-        if (
-            (pvc.get("status") or {}).get("phase") != "Bound"
-            or "ReadWriteMany" not in modes
-        ):
+        if (pvc.get("status") or {}).get(
+            "phase"
+        ) != "Bound" or "ReadWriteMany" not in modes:
             issues.append(
                 (
                     f"Isaac cache PVC {pvc_name!r} is missing or is not Bound ReadWriteMany "
