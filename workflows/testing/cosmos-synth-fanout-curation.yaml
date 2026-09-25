@@ -23,9 +23,9 @@ kind: Workflow
 metadata:
   name: cosmos-synth-fanout-curation
   description: >
-    Fan-out synthetic-data generation with Cosmos Transfer 2.5 followed by Voxel51
-    (FiftyOne) curation: seed dataset -> N Cosmos Transfer shard jobs (one GPU each)
-    -> merge/index -> FiftyOne curation. Fan-out topology; GPU synth + CPU curation tiers.
+    Planning-only fan-out blueprint: two Cosmos Transfer 2.5 GPU shard jobs
+    with distinct output prefixes, followed by unfinished merge/index and
+    FiftyOne launch stages. It does not yet merge an index or complete curation.
 
 config:
   bucket: example-bucket

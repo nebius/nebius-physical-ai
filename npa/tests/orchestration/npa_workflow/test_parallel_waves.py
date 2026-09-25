@@ -455,6 +455,21 @@ def test_cosmos_synth_fanout_has_one_parallel_wave_then_serial_stubs() -> None:
     ]
     assert waves[0].max_concurrency == 2
 
+    rendered = render_skypilot_job_group_yaml(
+        spec,
+        waves[0].steps,
+        run_id="cosmos-fanout",
+        options=_render_options(),
+        name="cosmos-synth-shards",
+    )
+    assert_no_unresolved_placeholders(rendered)
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc is not None]
+    assert docs[0] == {"name": "cosmos-synth-shards", "execution": "parallel"}
+    assert [doc["name"] for doc in docs[1:]] == ["synth-shard-a", "synth-shard-b"]
+    for task, shard, other in ((docs[1], "a", "b"), (docs[2], "b", "a")):
+        assert f"/synthetic/shard-{shard}/" in task["run"]
+        assert f"/synthetic/shard-{other}/" not in task["run"]
+
 
 def test_cosmos_synth_fanout_rejects_mismatched_shard_override() -> None:
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
