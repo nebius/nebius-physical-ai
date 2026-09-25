@@ -1626,8 +1626,9 @@ def test_workflow_logs_after_driver_crash_without_task_timeline(
     assert payload["live_verification_scope"] == "query_transport_only"
 
 
+@pytest.mark.parametrize("job_status", ["RUNNING", "SUCCEEDED"])
 def test_workflow_logs_json_reports_successful_empty_runtime_tail(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, job_status: str
 ) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
@@ -1653,6 +1654,12 @@ def test_workflow_logs_json_reports_successful_empty_runtime_tail(
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", empty_logs
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *args, **kwargs: WorkflowResult(
+            status=job_status, job_id="42", returncode=0
+        ),
     )
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._resolve_sky_bin",
@@ -1683,6 +1690,73 @@ def test_workflow_logs_json_reports_successful_empty_runtime_tail(
     assert "transport only" in payload["live_verification_note"]
     assert payload["log"] == payload["stderr"] == ""
     assert log_calls[0]["isolated_config_dir"] == tmp_path
+
+
+def test_workflow_logs_manifest_job_pending_skips_blocking_log_query(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_workflow_log_waves(
+        fake_s3,
+        [
+            {
+                "key": "wave-1",
+                "kind": "serial",
+                "states": ["qualify"],
+                "attempt": 1,
+                "status": "running",
+                "job_id": "42",
+                "tasks": [{"task_id": 0, "task_name": "qualify", "status": "PENDING"}],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *args, **kwargs: WorkflowResult(
+            status="PENDING", job_id="42", returncode=0
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._stalled_job_blockers",
+        lambda *args, **kwargs: [
+            {
+                "reason": "DiagnosticsUnavailable",
+                "message": "no worker pod has been scheduled yet",
+                "source": "kubernetes_api",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
+        lambda **kwargs: pytest.fail("PENDING payload logs must not be queried"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            uri,
+            "--stage",
+            "qualify",
+            "--isolated-config-dir",
+            str(tmp_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["manifest_state"] == "available"
+    assert payload["managed_job_state"] == "PENDING"
+    assert payload["payload_execution_state"] == "not_started"
+    assert payload["live_log_state"] == "not_started"
+    assert payload["verification_status"] == "VERIFIED"
+    assert payload["live_verified"] is True
+    assert payload["log"] == payload["stderr"] == ""
+    assert payload["blockers"][0]["source"] == "kubernetes_api"
 
 
 def test_workflow_status_binds_every_live_query_to_isolated_controller(
@@ -3363,6 +3437,186 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
     assert cancelled["outcome"] == "cancelled"
     assert cancelled["sky_job_id"] == "81"
     assert cleanup_calls == ["81"]
+
+
+@pytest.mark.parametrize(
+    (
+        "extra_args",
+        "expected_job_state",
+        "expected_log_state",
+        "expected_verification",
+    ),
+    [
+        ([], "PENDING", "not_started", "VERIFIED"),
+        (["--cached"], "SUBMITTED", "not_attempted", "CACHED"),
+    ],
+)
+def test_workflow_logs_pending_job_returns_without_payload_log_query(
+    monkeypatch,
+    extra_args,
+    expected_job_state,
+    expected_log_state,
+    expected_verification,
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    run_id = f"logs-pending-{'cached' if extra_args else 'live'}"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {
+                "name": "physical-ai-data-factory",
+                "run_prefix_uri": f"s3://bucket/physical-ai-data-factory/{run_id}",
+                "steps": [{"state": "qualify", "status": "submitted"}],
+            },
+            "launch": {"status": "submitted", "sky_job_id": "91"},
+        },
+    )
+    evidence = ManagedJobEvidence(
+        "found",
+        job_id="91",
+        status="PENDING",
+        task_rows=({"task_id": 0, "task_name": "qualify", "status": "PENDING"},),
+        workload_observable=False,
+        workload_evidence="controller provisioning",
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: evidence,
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._stalled_job_blockers",
+        lambda *args, **kwargs: [
+            {
+                "reason": "Provisioning",
+                "message": "worker pod has not started",
+                "source": "kubernetes_api",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        lambda *args, **kwargs: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
+        lambda **kwargs: pytest.fail("pending non-follow logs must not be queried"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            run_id,
+            "--project",
+            "paidf",
+            "--stage",
+            "qualify",
+            "--json",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["managed_job_state"] == expected_job_state
+    assert payload["live_log_state"] == expected_log_state
+    assert payload["verification_status"] == expected_verification
+    assert payload["log"] == payload["stderr"] == ""
+    assert payload["blockers"][0]["source"] == "kubernetes_api"
+    if extra_args:
+        assert "intentionally skipped" in payload["reason"]
+    else:
+        assert "no live log query was attempted" in payload["reason"]
+
+
+def test_workflow_logs_follow_still_queries_pending_job(monkeypatch) -> None:
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    run_id = "logs-pending-follow"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {
+                "name": "physical-ai-data-factory",
+                "run_prefix_uri": f"s3://bucket/physical-ai-data-factory/{run_id}",
+                "steps": [{"state": "qualify", "status": "submitted"}],
+            },
+            "launch": {"status": "submitted", "sky_job_id": "92"},
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: ManagedJobEvidence(
+            "found",
+            job_id="92",
+            status="PENDING",
+            task_rows=({"task_id": 0, "task_name": "qualify", "status": "PENDING"},),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._stalled_job_blockers",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        lambda *args, **kwargs: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value="": "pinned-sky"
+    )
+    calls = []
+
+    def follow_logs(**kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess([], 0, "started\n", "")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", follow_logs
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            run_id,
+            "--project",
+            "paidf",
+            "--stage",
+            "qualify",
+            "--follow",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["log"] == "started\n"
+    assert calls[0]["follow"] is True
+    assert calls[0]["timeout"] == 86400
 
 
 @pytest.mark.parametrize("with_receipt", [True, False], ids=["receipt", "managed-job"])

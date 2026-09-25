@@ -130,6 +130,162 @@ def _live_log_contract(stdout: str, stderr: str) -> dict[str, str]:
     }
 
 
+def _pending_log_contract(
+    pending: Mapping[str, object],
+    *,
+    run_id: str,
+    stage: str,
+    job_id: str,
+    cached: bool,
+    max_output_chars: int,
+) -> dict[str, object]:
+    """Describe a stage whose payload has not produced queryable logs."""
+
+    last_known = pending.get("last_known")
+    last_known_state = (
+        str(last_known.get("state") or "") if isinstance(last_known, Mapping) else ""
+    )
+    managed_job_state = str(
+        last_known_state if cached else pending.get("status") or "UNKNOWN"
+    ).upper()
+    reason = (
+        "live controller logs intentionally skipped (--cached)"
+        if cached
+        else (
+            f"managed job is {managed_job_state}; its payload has not started, "
+            "so no live log query was attempted"
+        )
+    )
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "stage": stage,
+        "managed_job_id": job_id,
+        "managed_job_state": managed_job_state,
+        "manifest_state": "pending",
+        "payload_execution_state": "not_observed" if cached else "not_started",
+        "live_log_state": "not_attempted" if cached else "not_started",
+        "cached_log_state": "unavailable" if cached else "not_requested",
+        "log": "",
+        "stderr": "",
+        "reason": reason,
+        "diagnostics": list(pending.get("diagnostics") or []),
+        "blockers": list(pending.get("blockers") or []),
+        "resolution_source": str(pending.get("resolution_source") or ""),
+        "resolution_checks": list(pending.get("resolution_checks") or []),
+        "verification_status": str(pending.get("verification_status") or ""),
+        "live_verified": bool(pending.get("live_verified")),
+        "last_known": last_known,
+        "live_verification": pending.get("live_verification"),
+    }
+    bounded_log, log_metadata = _bounded_log_text("", max_output_chars)
+    payload["log"] = bounded_log
+    payload.update(log_metadata)
+    return payload
+
+
+def _emit_pending_logs(payload: Mapping[str, object], *, json_output: bool) -> None:
+    """Emit the explicit no-payload-logs contract."""
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    typer.echo(str(payload.get("managed_job_state") or "PENDING"))
+    typer.echo(f"payload logs: {payload.get('live_log_state')}")
+    typer.echo(f"cause: {payload.get('reason')}")
+    blockers = payload.get("blockers")
+    if isinstance(blockers, list):
+        for blocker in blockers:
+            if not isinstance(blocker, Mapping):
+                continue
+            detail = str(blocker.get("reason") or "Pending")
+            if blocker.get("message"):
+                detail = f"{detail} - {blocker['message']}"
+            typer.echo(f"diagnostic: {detail}")
+
+
+def _verified_prestart_log_status(
+    job_id: str,
+    *,
+    project: str,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+) -> dict[str, object] | None:
+    """Return verified pre-start evidence without asking SkyPilot for logs."""
+
+    from npa.orchestration.skypilot.workflow import workflow_status
+
+    try:
+        live = workflow_status(
+            job_id,
+            sky_bin=sky_bin or None,
+            isolated_config_dir=isolated_config_dir,
+        )
+    except Exception:  # noqa: BLE001 - ordinary log retrieval remains the fallback
+        return None
+    state = str(live.status or "").upper()
+    if not live.ok or state not in {"PENDING", "STARTING"}:
+        return None
+    return _prestart_status_payload(
+        job_id,
+        state=state,
+        project=project,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+    )
+
+
+def _prestart_status_payload(
+    job_id: str,
+    *,
+    state: str,
+    project: str,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+) -> dict[str, object]:
+    """Build the verified provenance for one pre-start managed job."""
+
+    from npa.verification import VERIFIED, apply_verification, utc_now
+
+    observed_at = utc_now()
+    retry_command = (
+        f"npa workbench workflow status {job_id}"
+        + (f" --project {project}" if project else "")
+        + _isolated_controller_option(isolated_config_dir)
+    )
+    payload: dict[str, object] = {
+        "status": state,
+        "resolution_source": "live_scheduler",
+        "resolution_checks": [
+            {
+                "source": "managed_job_status",
+                "outcome": "found",
+                "detail": f"exact managed job {job_id} is {state}",
+            }
+        ],
+        "diagnostics": [
+            f"Exact managed job {job_id} is {state}; payload logs are not available yet."
+        ],
+    }
+    blockers = _stalled_job_blockers(
+        job_id,
+        state,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+    )
+    if blockers:
+        payload["blockers"] = blockers
+    return apply_verification(
+        payload,
+        status=VERIFIED,
+        target=job_id,
+        last_known_state=state,
+        last_known_at=observed_at,
+        last_known_source="live_scheduler",
+        retry_command=retry_command,
+        attempted_at=observed_at,
+    )
+
+
 def _isolated_controller_option(path: Path | None) -> str:
     """Render the controller binding for a machine-actionable retry command."""
 
@@ -6928,6 +7084,7 @@ def logs_cmd(
                     sky_bin=sky_bin,
                     startup_failure_threshold=3,
                     isolated_config_dir=isolated_config_dir,
+                    cached=cached,
                 )
                 if not selected_stage:
                     selected_stage = str(pending.get("active_stage_name") or "")
@@ -6938,6 +7095,20 @@ def logs_cmd(
                         "but its manifest is pending and no exact managed-job identity "
                         "is available for logs"
                     )
+                managed_job_state = str(pending.get("status") or "").upper()
+                if cached or (
+                    not follow and managed_job_state in {"PENDING", "STARTING"}
+                ):
+                    payload = _pending_log_contract(
+                        pending,
+                        run_id=resolution.run_id,
+                        stage=selected_stage,
+                        job_id=job_id,
+                        cached=cached,
+                        max_output_chars=max_output_chars,
+                    )
+                    _emit_pending_logs(payload, json_output=json_output)
+                    return
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
@@ -7192,6 +7363,36 @@ def logs_cmd(
                     # The one-shot renderer emits one task per planned step.
                     # Job-level logs need neither its renamed task nor an assumed ID.
                     live_stage = ""
+                prestart = (
+                    None
+                    if follow
+                    else _verified_prestart_log_status(
+                        job_id,
+                        project=project,
+                        sky_bin=sky_bin,
+                        isolated_config_dir=isolated_config_dir,
+                    )
+                )
+                if prestart is not None:
+                    payload = _pending_log_contract(
+                        prestart,
+                        run_id=resolution.run_id,
+                        stage=selected_stage,
+                        job_id=job_id,
+                        cached=False,
+                        max_output_chars=max_output_chars,
+                    )
+                    payload.update(
+                        {
+                            "attempt": source_payload["attempt"],
+                            "manifest_state": "available",
+                            "persisted_stages": available,
+                            "stage_ledger_state": source_payload["stage_ledger_state"],
+                            "provenance": source_payload["provenance"],
+                        }
+                    )
+                    _emit_pending_logs(payload, json_output=json_output)
+                    return
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,

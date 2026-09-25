@@ -107,6 +107,11 @@ reported as `VERIFICATION_UNAVAILABLE` with exit code 2; it is not verified stag
 output. For JSON output, live-query verification covers transport only:
 `live_log_state: available` means the query returned stdout or stderr bytes, while
 `live_log_state: empty` means the query succeeded without returning log bytes.
+When the exact managed job is still `PENDING` or `STARTING`, a non-following
+live request returns immediately with `live_log_state: not_started`, an empty
+log, and the verified status diagnostics. This means the payload has not
+started; it is not a successful empty execution. Use `--follow` to wait for
+payload logs. A `--cached` request never substitutes a live controller query.
 
 SkyPilot managed-job IDs are local to their controller state. If submission used
 an isolated SkyPilot state root, pass that same absolute path as
