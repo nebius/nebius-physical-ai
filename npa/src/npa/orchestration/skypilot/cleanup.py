@@ -2001,22 +2001,26 @@ def sky_environment(
     # even though every other probe sees the exact selected NPA kubeconfig.
     # Link the first (highest-precedence) KUBECONFIG into the isolated default
     # location.  This keeps auth live and operator-owned without copying a
-    # credential-bearing file into run state.
+    # credential-bearing file into run state.  When KUBECONFIG is unset the
+    # operator relies on the default ``~/.kube/config``; fall back to the source
+    # HOME's copy (mirroring the ``.nebius`` link above) so isolated submits do
+    # not collapse to ``contexts: []`` and reject every ``--infra k8s/<context>``.
     raw_kubeconfig = str(env.get("KUBECONFIG") or "").strip()
     if raw_kubeconfig:
         selected_kubeconfig = Path(raw_kubeconfig.split(os.pathsep, 1)[0]).expanduser()
-        if selected_kubeconfig.is_file():
-            isolated_kubeconfig = home / ".kube" / "config"
-            isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
-            selected_target = selected_kubeconfig.resolve()
-            if isolated_kubeconfig.is_symlink():
-                if isolated_kubeconfig.resolve(strict=False) != selected_target:
-                    isolated_kubeconfig.unlink()
-            if (
-                not isolated_kubeconfig.exists()
-                and not isolated_kubeconfig.is_symlink()
-            ):
-                isolated_kubeconfig.symlink_to(selected_target)
+    elif provider_home and provider_home != home:
+        selected_kubeconfig = provider_home / ".kube" / "config"
+    else:
+        selected_kubeconfig = None
+    if selected_kubeconfig is not None and selected_kubeconfig.is_file():
+        isolated_kubeconfig = home / ".kube" / "config"
+        isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+        selected_target = selected_kubeconfig.resolve()
+        if isolated_kubeconfig.is_symlink():
+            if isolated_kubeconfig.resolve(strict=False) != selected_target:
+                isolated_kubeconfig.unlink()
+        if not isolated_kubeconfig.exists() and not isolated_kubeconfig.is_symlink():
+            isolated_kubeconfig.symlink_to(selected_target)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)
     # SkyPilot otherwise derives its user hash from the unchanged operator and
