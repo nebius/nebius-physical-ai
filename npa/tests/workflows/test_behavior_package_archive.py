@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 
 import pytest
 
 from npa.workflows.behavior_challenge.package_archive import (
+    build_manifest_archive,
     extract_manifest_archive,
     verify_manifest_archive,
 )
@@ -237,3 +239,131 @@ def test_files_mapping_cannot_override_its_path_key(tmp_path: Path) -> None:
         verify_manifest_archive(
             archive, expected_root=".", expected_manifest_sha256=_sha(manifest)
         )
+
+
+def _source(tmp_path: Path, files: dict[str, tuple[bytes, int]]) -> tuple[Path, str]:
+    source = tmp_path / "source"
+    source.mkdir()
+    manifest = _manifest(files)
+    (source / "MANIFEST.json").write_bytes(manifest)
+    for name, (payload, mode) in files.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        path.chmod(mode)
+    return source, _sha(manifest)
+
+
+@pytest.mark.parametrize("root", [".", "outer/package"])
+def test_builder_roundtrips_reproducibly_without_unlisted_files(
+    tmp_path: Path, root: str
+) -> None:
+    files = {"worker.py": (b"pass\n", 0o755), "data/caf\u00e9.json": (b"{}", 0o644)}
+    source, digest = _source(tmp_path, files)
+    (source / "._worker.py").write_bytes(b"macOS resource fork")
+    (source / "private-token").write_bytes(b"must not enter the archive")
+    outputs = [tmp_path / "first.tar.gz", tmp_path / "second.tar.gz"]
+    for number, output in enumerate(outputs):
+        os.utime(source / "worker.py", (number + 10, number + 10))
+        build_manifest_archive(
+            source, output, expected_root=root, expected_manifest_sha256=digest
+        )
+    assert outputs[0].read_bytes() == outputs[1].read_bytes()
+    extracted = extract_manifest_archive(
+        outputs[0],
+        tmp_path / "readback",
+        expected_root=root,
+        expected_manifest_sha256=digest,
+    )
+    assert {
+        str(p.relative_to(extracted)) for p in extracted.rglob("*") if p.is_file()
+    } == {"MANIFEST.json", *files}
+    for name, (payload, mode) in files.items():
+        assert (extracted / name).read_bytes() == payload
+        assert (extracted / name).stat().st_mode & 0o777 == mode
+
+
+@pytest.mark.parametrize("change", ["payload", "mode", "manifest", "missing"])
+def test_builder_mismatch_publishes_nothing_and_cleans_owned_scratch(
+    tmp_path: Path, change: str
+) -> None:
+    source, digest = _source(tmp_path, {"worker.py": (b"pass\n", 0o755)})
+    if change == "payload":
+        (source / "worker.py").write_bytes(b"changed")
+    elif change == "mode":
+        (source / "worker.py").chmod(0o644)
+    elif change == "manifest":
+        (source / "MANIFEST.json").write_bytes(b"{}")
+    else:
+        (source / "worker.py").unlink()
+    with pytest.raises((ValueError, FileNotFoundError)):
+        build_manifest_archive(
+            source,
+            tmp_path / "result.tar.gz",
+            expected_root=".",
+            expected_manifest_sha256=digest,
+        )
+    assert list(tmp_path.iterdir()) == [source]
+
+
+@pytest.mark.parametrize("link", ["root", "ancestor", "payload", "manifest"])
+def test_builder_rejects_symlinked_source_paths(tmp_path: Path, link: str) -> None:
+    source, digest = _source(tmp_path, {"data/worker.py": (b"pass\n", 0o755)})
+    target = (
+        source
+        if link == "root"
+        else source
+        / {
+            "ancestor": "data",
+            "payload": "data/worker.py",
+            "manifest": "MANIFEST.json",
+        }[link]
+    )
+    moved = tmp_path / "outside"
+    target.rename(moved)
+    target.symlink_to(moved, target_is_directory=moved.is_dir())
+    with pytest.raises(OSError):
+        build_manifest_archive(
+            source,
+            tmp_path / "result.tar.gz",
+            expected_root=".",
+            expected_manifest_sha256=digest,
+        )
+    assert not (tmp_path / "result.tar.gz").exists()
+
+
+def test_builder_rejects_fifo_without_waiting_for_a_writer(tmp_path: Path) -> None:
+    source, digest = _source(tmp_path, {"worker.py": (b"pass\n", 0o755)})
+    (source / "worker.py").unlink()
+    os.mkfifo(source / "worker.py")
+    with pytest.raises(ValueError, match="regular file"):
+        build_manifest_archive(
+            source,
+            tmp_path / "result.tar.gz",
+            expected_root=".",
+            expected_manifest_sha256=digest,
+        )
+    assert not (tmp_path / "result.tar.gz").exists()
+
+
+def test_builder_cannot_overwrite_a_concurrently_created_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.workflows.behavior_challenge import package_archive
+
+    source, digest = _source(tmp_path, {"worker.py": (b"pass\n", 0o755)})
+    output = tmp_path / "result.tar.gz"
+    verify = package_archive.verify_manifest_archive
+
+    def concurrent_writer(*args: object, **kwargs: object) -> dict:
+        result = verify(*args, **kwargs)
+        output.write_bytes(b"another publisher")
+        return result
+
+    monkeypatch.setattr(package_archive, "verify_manifest_archive", concurrent_writer)
+    with pytest.raises(FileExistsError):
+        build_manifest_archive(
+            source, output, expected_root=".", expected_manifest_sha256=digest
+        )
+    assert output.read_bytes() == b"another publisher"
+    assert set(tmp_path.iterdir()) == {source, output}

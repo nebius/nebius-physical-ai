@@ -1,13 +1,19 @@
-"""Verify and extract manifest-backed workflow packages without hidden payloads."""
+"""Build, verify, and extract workflow packages from frozen file manifests."""
 
 from __future__ import annotations
 
 import hashlib
+import gzip
+import io
 import json
+import os
 import re
+import stat
 import tarfile
+import tempfile
+from contextlib import ExitStack, contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterator
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -196,6 +202,101 @@ def verify_manifest_archive(
     root = _root(expected_root)
     with tarfile.open(archive, "r:gz") as bundle:
         return _verify_bundle(bundle, root, expected_manifest_sha256)
+
+
+@contextmanager
+def _source_stream(source: Path, relative: PurePosixPath) -> Iterator[Any]:
+    with ExitStack() as stack:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory = os.open(source, flags)
+        stack.callback(os.close, directory)
+        for part in relative.parts[:-1]:
+            directory = os.open(part, flags, dir_fd=directory)
+            stack.callback(os.close, directory)
+        descriptor = os.open(
+            relative.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory,
+        )
+        stream = stack.enter_context(os.fdopen(descriptor, "rb"))
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError(f"package source must be a regular file: {relative}")
+        yield stream
+
+
+def _add_source_member(
+    bundle: tarfile.TarFile, source: Path, prefix: str, path: str, row: dict
+) -> None:
+    with _source_stream(source, _relative(path, "payload")) as stream:
+        if _identity(stream) != {key: row[key] for key in ("bytes", "sha256")}:
+            raise ValueError(f"package source payload differs: {path}")
+        if stat.S_IMODE(os.fstat(stream.fileno()).st_mode) != int(row["mode"], 8):
+            raise ValueError(f"package source mode differs: {path}")
+        stream.seek(0)
+        member = tarfile.TarInfo(prefix + path)
+        member.size = row["bytes"]
+        member.mode = int(row["mode"], 8)
+        bundle.addfile(member, stream)
+
+
+def _write_manifest_bundle(
+    source: Path, output: Path, manifest: bytes, rows: dict, root: PurePosixPath | None
+) -> None:
+    prefix = "" if root is None else root.as_posix() + "/"
+    with output.open("xb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+            with tarfile.open(
+                fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT
+            ) as bundle:
+                member = tarfile.TarInfo(prefix + "MANIFEST.json")
+                member.size, member.mode = len(manifest), 0o644
+                bundle.addfile(member, io.BytesIO(manifest))
+                for path, row in sorted(rows.items()):
+                    _add_source_member(bundle, source, prefix, path, row)
+
+
+def _approved_source_manifest(source: Path, expected: str) -> tuple[bytes, dict]:
+    if _SHA256.fullmatch(expected) is None:
+        raise ValueError("expected package manifest SHA-256 differs")
+    with _source_stream(source, PurePosixPath("MANIFEST.json")) as stream:
+        manifest = stream.read()
+    if hashlib.sha256(manifest).hexdigest() != expected:
+        raise ValueError("package manifest bytes differ")
+    return manifest, _rows(json.loads(manifest))
+
+
+def build_manifest_archive(
+    source: Path, archive: Path, *, expected_root: str, expected_manifest_sha256: str
+) -> Path:
+    """Build a reproducible archive containing only a frozen manifest's files.
+
+    Args:
+        source: Local directory containing MANIFEST.json and its payload files.
+        archive: New gzip tar path beneath an existing trusted parent directory.
+        expected_root: Exact archive prefix, or "." for a flat archive.
+        expected_manifest_sha256: SHA-256 of the already approved manifest.
+    Returns:
+        Archive path, published only after complete archive verification.
+    Raises:
+        FileExistsError: The output already exists, including a dangling symlink.
+        OSError: Source files cannot be opened safely or output cannot be written.
+        ValueError: Paths, identities, modes, root, or inventory differ.
+        TypeError: The manifest shape differs.
+    """
+    root = _root(expected_root)
+    if archive.exists() or archive.is_symlink():
+        raise FileExistsError(archive)
+    manifest, rows = _approved_source_manifest(source, expected_manifest_sha256)
+    with tempfile.TemporaryDirectory(dir=archive.parent) as temporary:
+        staged = Path(temporary) / "package.tar.gz"
+        _write_manifest_bundle(source, staged, manifest, rows, root)
+        verify_manifest_archive(
+            staged,
+            expected_root=expected_root,
+            expected_manifest_sha256=expected_manifest_sha256,
+        )
+        os.link(staged, archive)
+    return archive
 
 
 def extract_manifest_archive(

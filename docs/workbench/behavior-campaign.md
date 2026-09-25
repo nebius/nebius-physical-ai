@@ -74,6 +74,33 @@ The worker recomputes that identity and checks the checkpoint archive bytes
 before starting the policy. This prevents a changed controller from inheriting
 an earlier policy's completed cases.
 
+### Package frozen workflow code
+
+Use `build_manifest_archive()` to package an already reviewed `MANIFEST.json`.
+It copies only the declared payloads, checks their bytes and permissions, and
+verifies the finished archive before publishing it to a new local path. Source
+files and directories must be regular files and real directories; symlinks and
+special files are rejected. The output does not include unlisted files, macOS
+resource forks, local ownership, or timestamps. Identical manifest bytes,
+payloads, permissions, and archive root produce identical archive bytes.
+
+```python
+from pathlib import Path
+from npa.workflows.behavior_challenge.package_archive import build_manifest_archive
+
+build_manifest_archive(
+    Path("/private/reviewed-worker"),
+    Path("/private/worker.tar.gz"),
+    expected_root="reviewed-worker",
+    expected_manifest_sha256=approved_manifest_sha256,
+)
+```
+
+Freeze the returned archive's digest in the workflow inputs. The worker can then
+call `extract_manifest_archive()` with that same explicit root and manifest
+digest. A changed source file requires a new reviewed manifest; an existing
+output is never replaced.
+
 Released-specialist reporting adds independently frozen receipts and their
 expected SHA-256 values. Before constructing the durable case store, the worker
 downloads every development and baseline original, verifies its declared hash,
