@@ -175,6 +175,15 @@ text output identify every source they checked.
 
 Unrelated nested S3 keys are never guessed as runs.
 
+Per-stage status reads use the same cause-aware boundary. A genuinely missing
+optional status object may fall back to manifest evidence; denied, throttled,
+or unreachable storage makes `status` return
+`VERIFICATION_UNAVAILABLE`/exit 2 while retaining the manifest's last-known
+state. `cancel` makes no cancellation call and records only a
+verification-failed receipt for the same uncertainty.
+Client setup and response-body failures also remain unavailable, even when
+their underlying exception resembles a missing file or key.
+
 If a shell cannot resolve the project storage location, point status at the
 prefix explicitly:
 

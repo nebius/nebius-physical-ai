@@ -4923,7 +4923,10 @@ def _durable_workflow_status(
         resolution_diagnostics,
         resolve_run,
     )
-    from npa.orchestration.skypilot.workflow_state import read_stage_status
+    from npa.orchestration.skypilot.workflow_state import (
+        WorkflowStateError,
+        read_stage_status,
+    )
 
     resolution = resolve_run(
         run_id,
@@ -5369,16 +5372,22 @@ def _durable_workflow_status(
             attempted_at=attempted_at,
         )
     stages: dict[str, dict[str, object]] = {}
+    legacy_verification_errors: list[str] = []
     for stage, info in (manifest.get("stages", {}) or {}).items():
         stage_info = dict(info) if isinstance(info, dict) else {"name": str(stage)}
-        stage_status = read_stage_status(state, str(stage))
-        if stage_status:
-            stage_info.update(stage_status)
+        try:
+            stage_status = read_stage_status(state, str(stage))
+        except WorkflowStateError as exc:
+            legacy_verification_errors.append(
+                f"stage {stage} status verification failed: {exc}"
+            )
+        else:
+            if stage_status:
+                stage_info.update(stage_status)
         stages[str(stage)] = stage_info
 
     job_id = str(manifest.get("sky_job_id") or "")
     live_status = ""
-    legacy_verification_errors: list[str] = []
     if job_id and not cached:
         try:
             live = workflow_status(job_id, sky_bin=sky_bin or None)
@@ -5412,7 +5421,8 @@ def _durable_workflow_status(
     blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
     if blockers:
         legacy_payload["blockers"] = blockers
-    last_known = str(status or manifest.get("status") or "UNKNOWN")
+    manifest_status = str(manifest.get("status") or manifest.get("state") or "")
+    last_known = status if status and status != "UNKNOWN" else manifest_status or status
     if cached:
         verification_status = CACHED
         reason = "live controller query intentionally skipped (--cached)"
