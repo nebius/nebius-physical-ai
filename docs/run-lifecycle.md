@@ -40,7 +40,9 @@ prints the exact build command for anything missing. It unions every declared
 decision outcome, and `--infra k8s/<cluster>` lets the pull check verify that
 exact cluster's declared pull-secret authority. `submit` uses the same complete
 image plan by default, so a branch-specific missing image surfaces before the
-run instead of as an `ImagePullBackOff` on the cluster.
+run instead of as an `ImagePullBackOff` on the cluster. If complete-path
+planning itself fails, `preflight-images` exits before any registry or
+Kubernetes probe; it never reports that failure as `images: none`.
 
 ### Quota is arithmetic, and it is checked first
 
@@ -172,6 +174,15 @@ text output identify every source they checked.
 | `CACHED` | The explicit offline mode (`--cached`). Not live-verified, and not automation-trustworthy |
 
 Unrelated nested S3 keys are never guessed as runs.
+
+Per-stage status reads use the same cause-aware boundary. A genuinely missing
+optional status object may fall back to manifest evidence; denied, throttled,
+or unreachable storage makes `status` return
+`VERIFICATION_UNAVAILABLE`/exit 2 while retaining the manifest's last-known
+state. `cancel` makes no cancellation call and records only a
+verification-failed receipt for the same uncertainty.
+Client setup and response-body failures also remain unavailable, even when
+their underlying exception resembles a missing file or key.
 
 If a shell cannot resolve the project storage location, point status at the
 prefix explicitly:
