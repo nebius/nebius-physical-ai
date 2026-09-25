@@ -18,7 +18,7 @@ RUNNER_FILES = (
 MANUAL_GATES = {
     "NPA_NAMESPACE_LIVE_E2E": (
         "requires an explicitly selected disposable cluster with administrator access; "
-        "creates namespace RBAC, temporary identities, and CPU pods"
+        "creates namespaces, temporary client contexts, and CPU pods"
     ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "

@@ -25,7 +25,7 @@
 
 
 For shared Kubernetes clusters, use [team namespaces](docs/workbench/namespaces.md) to configure
-researcher access and private SkyPilot contexts with `npa workbench namespace`.
+namespace selection and private SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 

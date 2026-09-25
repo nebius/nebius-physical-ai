@@ -52,7 +52,7 @@ def context_namespace(*, context: str = "", kubeconfig: str = "") -> str:
             raise ValueError
         namespace = selected["context"].get("namespace") or "default"
         return validate_namespace(namespace)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             "selected Kubernetes context has an invalid namespace"
         ) from exc

@@ -1,50 +1,26 @@
-# Team namespaces
+# Kubernetes namespaces
 
-Use `npa workbench namespace` to give a research team its own Kubernetes
-resource names, Secrets, services, and access bindings on an existing cluster.
-The administrator applies access; each researcher prepares a private context
-using their own authenticated kubeconfig.
+Workbench uses the namespace in the selected kubeconfig context for Kubernetes
+workflows. **If that context has no namespace, the default is `default`.**
+Selecting a namespace is native behavior; no feature flag or new identity system
+is required. Existing Kubernetes credentials, permissions, and SkyPilot workload
+identity settings continue to apply.
 
-## Administrator setup
-
-Choose a dedicated namespace and use the exact administrator context. Preview
-the manifests without contacting the cluster:
+## Create or reuse a namespace
 
 ```bash
-npa workbench namespace apply "research" --context "$KUBE_CONTEXT" \
-  --user "$RESEARCHER_USERNAME" --group "$RESEARCHER_GROUP" --dry-run
-npa workbench namespace apply "research" --context "$KUBE_CONTEXT" \
-  --user "$RESEARCHER_USERNAME" --group "$RESEARCHER_GROUP"
+npa workbench namespace apply "research" --context "$KUBE_CONTEXT" --dry-run
+npa workbench namespace apply "research" --context "$KUBE_CONTEXT"
 ```
 
-`--user` and `--group` are repeatable **complete membership lists**. Reapply
-with the desired list to remove previous grants; omit both to remove all
-researcher grants managed by this command. Other administrators' bindings
-remain authoritative. These are Kubernetes authentication usernames and groups,
-not display names. The command does not create identity-provider accounts.
+`apply` creates only a Namespace. If it already exists, the command returns
+`status: existing` without changing its labels, service accounts, roles, or
+bindings. Namespace creation requires your existing identity to have that
+permission. Selecting an existing namespace does not require creating one.
 
-The command creates a namespace, an `npa-workbench` service account, and two
-namespace-scoped bindings to Kubernetes' built-in `edit` role. Researchers and
-the service account also receive read-only node, runtime-class, storage-class,
-and exact namespace discovery. No access to another namespace's Pods or Secrets
-is granted. Existing resources must carry this command's ownership labels;
-foreign resources and server-side apply conflicts fail without forced adoption.
-An interrupted apply may have created some objects; reapply the same desired
-membership to converge them.
+## Select a namespace
 
-Members of a namespace share trust: `edit` permits reading its Secrets and
-running Pods as its service accounts. Keep administrator credentials and
-privileged service accounts outside team namespaces. Kubernetes RBAC grants
-are additive, so existing cluster-wide roles can still give a principal wider
-access. Namespaces do not themselves isolate network traffic, host access, S3,
-or the SkyPilot API. Configure network/admission policies and independent
-object-storage permissions to match your environment. No quotas or job limits
-are added.
-
-## Researcher setup and submission
-
-Authenticate with your **own** Kubernetes identity, then prepare a new private
-directory. The source kubeconfig and its current context are unchanged:
+Prepare a private copy of your authenticated context:
 
 ```bash
 npa workbench namespace context "research" --context "$KUBE_CONTEXT" \
@@ -52,56 +28,66 @@ npa workbench namespace context "research" --context "$KUBE_CONTEXT" \
 export KUBECONFIG="$HOME/.npa/research-client/kubeconfig"
 export SKYPILOT_GLOBAL_CONFIG="$HOME/.npa/research-client/sky.yaml"
 export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$HOME/.npa/research-client/runtime"
-kubectl --context "$KUBE_CONTEXT" get pods
 npa workbench workflow submit "$WORKFLOW_PATH" \
   --project "$NPA_PROJECT_ALIAS" --infra "k8s/$KUBE_CONTEXT"
 ```
 
-The context command prints paths as JSON, never credentials. Its directory is
-mode `0700` and files are `0600`; existing destinations are refused. The exported
-kubeconfig retains the source identity's permissions. Do not distribute an
-administrator's exported context as researcher credentials.
+The source kubeconfig remains unchanged. The output retains its context name,
+cluster, and credentials, and sets the requested namespace. Configuration paths
+are printed as JSON; credentials are never printed. The new directory is `0700`
+and files are `0600`. Existing destinations are refused.
 
-SkyPilot uses the namespace in this context as its provider namespace. Its
-generated config selects the precreated `npa-workbench` service account through
-`kubernetes.remote_identity`, avoiding automatic broad workload RBAC creation.
-The separate runtime directory keeps the local API and job state scoped to this
-client; use the same environment for status, logs and cancellation.
-Controller teardown remains an administrator operation with provider ownership
-verification and cluster-wide controller inventory.
-Isolated SkyPilot execution requires a Linux operator host. An independently
-operated remote API must be configured with the corresponding namespace and
-identity on the server; changing a client context alone cannot change that
-server's backend credentials. Do not combine this local runtime with another
-API endpoint.
+Existing SkyPilot settings are copied from `--sky-config`, otherwise
+`SKYPILOT_GLOBAL_CONFIG`, otherwise `~/.sky/config.yaml` if present. Only the
+allowed cloud/context are narrowed to Kubernetes and the selected context.
+Settings such as `kubernetes.remote_identity` are preserved. This command does
+not choose a new service account or grant permissions. With no existing config,
+SkyPilot's normal workload identity behavior applies.
 
-Registry pull-secret checks and automatic model-cache PVC discovery follow the
-selected context namespace. Controller health probes and job diagnostics use
-that namespace too. Put referenced Secrets and PVCs there. Explicit
-model-cache namespace overrides remain available. Kubernetes service deploy
-commands still take their own `--namespace research` flag; use the service's
-namespace-qualified DNS endpoint in a workflow.
+Use the same environment for submit, status, logs, and cancellation. The separate
+runtime directory keeps the local API and job state tied to this context.
+Isolated SkyPilot execution requires a Linux operator host. A separately operated
+remote API must have the corresponding namespace and credentials configured on
+its server; a client context cannot replace that server's credentials.
 
-GPU capacity checks that require a cluster-wide Pod inventory need an
-operator with that additional read permission. This namespace role deliberately
-does not grant it. SkyPilot object-store FUSE mounts and ingress also require
-separate administrator setup; ordinary application S3 reads/writes can use
-namespace-scoped credentials. See the pinned
+## Defaults and resource placement
+
+| Selection | Workflow namespace |
+| --- | --- |
+| Context has no namespace | `default` |
+| Context sets a namespace | That namespace |
+| `namespace context "default"` | Explicitly `default` |
+
+SkyPilot derives pod placement from the context namespace. Setting
+`pod_config.metadata.namespace` alone is insufficient: SkyPilot replaces it with
+the provider namespace. Registry pull-secret checks, model-cache PVC discovery,
+controller health probes, and job diagnostics follow that same context.
+An unreadable context never silently selects another namespace's Secret or PVC.
+Explicit model-cache namespace overrides remain available.
+
+Kubernetes service deployment commands retain their existing `--namespace` flags
+and historical defaults (`workbench` or `default`, depending on the service).
+Pass the selected namespace there as well and use the namespace-qualified service
+DNS name when connecting from a workflow.
+
+Namespace selection does not change RBAC, network policy, object-storage access,
+GPU capacity permissions, or controller administration. Existing permission
+requirements for those operations still apply. See the pinned
 [SkyPilot Kubernetes permission contract](https://github.com/skypilot-org/skypilot/blob/v0.12.2/docs/source/cloud-setup/cloud-permissions/kubernetes.rst).
 
-## Python and validation
+## Python and live validation
 
 ```python
 from pathlib import Path
 from npa.sdk.workbench.namespace import apply_namespace, write_namespace_context
 
-plan = apply_namespace("research", context="cluster-context", users=("researcher",), dry_run=True)
-# Each caller exports their own credentials after administrator setup.
+apply_namespace("research", context="cluster-context")
 settings = write_namespace_context("research", context="cluster-context", output_dir=Path("research-client"))
 ```
 
-The opt-in live suite uses an explicitly selected disposable cluster, creates
-two unique namespaces, and verifies actual API denials and CPU pod placement:
+The opt-in live suite creates two unique namespaces on an explicitly selected
+disposable cluster. It verifies independent same-name resources, unchanged
+existing access, actual CPU pod placement, and the `default` fallback:
 
 ```bash
 NPA_INTEGRATION_E2E=1 NPA_NAMESPACE_LIVE_E2E=1 \
@@ -109,8 +95,7 @@ NPA_INTEGRATION_E2E=1 NPA_NAMESPACE_LIVE_E2E=1 \
   npa/.venv/bin/python -m pytest npa/tests/e2e/test_namespaces_live.py -q
 ```
 
-It cleans up only its generated namespaces and discovery bindings. Application
-cleanup remains explicit: cancel managed jobs, verify they have stopped, remove
-services/PVCs after preserving data, and only then let the administrator delete
-the team's namespace and its labeled discovery ClusterRole/ClusterRoleBinding.
-Namespace membership updates never delete workloads or storage.
+The suite deletes only its own namespaces and temporary default-namespace
+resource. For application cleanup, cancel managed jobs and verify they have
+stopped before removing their controller or namespace. Preserve any required
+artifacts and PVC data first; namespace selection never deletes storage.

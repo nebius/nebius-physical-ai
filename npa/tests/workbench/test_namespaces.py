@@ -1,4 +1,4 @@
-"""Prove namespace ownership, access scope, and private context handling."""
+"""Prove native namespace selection preserves existing access and private config."""
 
 from __future__ import annotations
 
@@ -15,113 +15,75 @@ from npa.clients import kubernetes_namespace as resolver
 from npa.workbench import namespaces
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "",
-        "UPPER",
-        "a.b",
-        "-team",
-        "team-",
-        "a" * 64,
-        "default",
-        "kube-system",
-        "skypilot-system",
-    ],
-)
-def test_invalid_or_system_namespaces_are_rejected(name):
+@pytest.mark.parametrize("name", ["", "UPPER", "a.b", "-team", "team-", "a" * 64])
+def test_invalid_namespace_names_are_rejected(name):
     with pytest.raises(ValueError):
         namespaces.namespace_manifests(name)
 
 
-def test_access_is_scoped_and_cluster_discovery_is_read_only():
-    manifests = namespaces.namespace_manifests(
-        "team-a", users=("researcher",), groups=("researchers",)
-    )
-    role = next(item for item in manifests if item["kind"] == "ClusterRole")
-    assert all(set(rule["verbs"]) <= {"get", "list", "watch"} for rule in role["rules"])
-    assert not any(
-        "pods" in rule["resources"] or "secrets" in rule["resources"]
-        for rule in role["rules"]
-    )
-    for binding in (item for item in manifests if item["kind"] == "RoleBinding"):
-        assert binding["metadata"]["namespace"] == "team-a"
-        assert binding["roleRef"]["name"] == "edit"
-    assert (
-        len(
-            {
-                item["metadata"]["name"]
-                for item in manifests
-                if item["kind"] == "ClusterRole"
-            }
-        )
-        == 1
-    )
-    other = namespaces.namespace_manifests("team-b")
-    assert role["metadata"]["name"] != next(
-        item["metadata"]["name"] for item in other if item["kind"] == "ClusterRole"
-    )
-
-
-@pytest.mark.parametrize(
-    "subject", ["", " someone", "system:authenticated", "line\nbreak"]
-)
-def test_unsafe_subjects_are_rejected(subject):
-    with pytest.raises(ValueError):
-        namespaces.namespace_manifests("team-a", users=(subject,))
-
-
-def test_dry_run_is_offline_and_complete(monkeypatch):
+def test_dry_run_is_offline_and_contains_only_the_namespace(monkeypatch):
     monkeypatch.setattr(
         namespaces,
         "run_kubectl",
         lambda *args, **kwargs: pytest.fail("network during dry run"),
     )
     result = CliRunner().invoke(
-        app, ["apply", "team-a", "--context", "cluster", "--user", "alice", "--dry-run"]
+        app, ["apply", "team-a", "--context", "cluster", "--dry-run"]
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["status"] == "planned"
-    assert len(payload["manifests"]) == 6
+    assert payload["manifests"] == [
+        {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "team-a"}}
+    ]
 
 
-def test_foreign_objects_prevent_all_mutation(monkeypatch):
+@pytest.mark.parametrize("name", ["team-a", "default"])
+def test_existing_namespace_is_reused_without_labels_or_access_changes(
+    monkeypatch, name
+):
     calls = []
 
     def run(args, **kwargs):
         calls.append(args)
-        return KubectlResult(0, json.dumps({"metadata": {"labels": {}}}))
+        return KubectlResult(0, f"namespace/{name}")
 
     monkeypatch.setattr(namespaces, "run_kubectl", run)
-    with pytest.raises(ValueError, match="unmanaged Namespace"):
-        namespaces.apply_namespace("team-a", context="cluster")
-    assert all(args[0] == "get" for args in calls)
+    assert namespaces.apply_namespace(name, context="cluster")["status"] == "existing"
+    assert len(calls) == 1 and calls[0][0] == "get"
 
 
-def test_reapply_reconciles_members_without_force_or_other_namespaces(monkeypatch):
-    manifests = namespaces.namespace_manifests("team-a", users=("old-member",))
-    objects = {(item["kind"], item["metadata"]["name"]): item for item in manifests}
-    applied = []
+def test_missing_namespace_is_created_without_rbac(monkeypatch):
+    calls = []
 
     def run(args, **kwargs):
-        assert kwargs["context"] == "cluster"
-        if args[0] == "get":
-            return KubectlResult(0, json.dumps(objects[(args[1], args[2])]))
-        assert "--force-conflicts" not in args
-        applied.extend(json.loads(kwargs["stdin"])["items"])
+        calls.append((args, kwargs))
         return KubectlResult(0)
 
     monkeypatch.setattr(namespaces, "run_kubectl", run)
-    namespaces.apply_namespace("team-a", context="cluster", users=("new-member",))
-    assert "old-member" not in json.dumps(applied)
-    assert "new-member" in json.dumps(applied)
-    assert all(
-        item["metadata"].get("namespace", "team-a") == "team-a" for item in applied
-    )
+    result = namespaces.apply_namespace("team-a", context="cluster")
+    assert result["status"] == "created"
+    assert calls[1][0] == ["create", "-f", "-"]
+    assert json.loads(calls[1][1]["stdin"])["kind"] == "Namespace"
+    assert len(calls) == 2
 
 
-def test_private_context_preserves_identity_and_source(monkeypatch, tmp_path):
+def test_denied_namespace_read_never_attempts_creation(monkeypatch):
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return KubectlResult(1, stderr="private-credential-output")
+
+    monkeypatch.setattr(namespaces, "run_kubectl", run)
+    with pytest.raises(ValueError, match="check access") as error:
+        namespaces.apply_namespace("team-a", context="cluster")
+    assert "private-credential-output" not in str(error.value)
+    assert len(calls) == 1
+
+
+@pytest.fixture
+def source_context(monkeypatch):
     document = {
         "apiVersion": "v1",
         "kind": "Config",
@@ -132,36 +94,91 @@ def test_private_context_preserves_identity_and_source(monkeypatch, tmp_path):
         "users": [{"name": "own-user", "user": {"token": "synthetic-test-token"}}],
     }
     original = json.dumps(document)
+    monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
+    monkeypatch.setattr(
+        namespaces,
+        "run_kubectl",
+        lambda args, **kwargs: KubectlResult(
+            0, original if args[0] == "config" else "namespace/team-a"
+        ),
+    )
+    return document
 
-    def run(args, **kwargs):
-        return KubectlResult(0, original if args[0] == "config" else "namespace/team-a")
 
-    monkeypatch.setattr(namespaces, "run_kubectl", run)
-    output = tmp_path / "team"
+@pytest.mark.parametrize("name", ["team-a", "default"])
+def test_private_context_preserves_identity_and_source(source_context, tmp_path, name):
+    original = json.dumps(source_context)
+    output = tmp_path / "client"
     result = namespaces.write_namespace_context(
-        "team-a", context="cluster", output_dir=output
+        name, context="cluster", output_dir=output
     )
     selected = yaml.safe_load((output / "kubeconfig").read_text())
     assert selected["contexts"][0]["context"] == {
         "cluster": "cluster",
         "user": "own-user",
-        "namespace": "team-a",
+        "namespace": name,
     }
-    assert selected["users"] == document["users"]
-    assert json.dumps(document) == original
+    assert selected["users"] == source_context["users"]
+    assert json.dumps(source_context) == original
     assert "synthetic-test-token" not in json.dumps(result)
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
-    assert stat.S_IMODE((output / "kubeconfig").stat().st_mode) == 0o600
-    assert (
-        yaml.safe_load((output / "sky.yaml").read_text())["kubernetes"][
-            "remote_identity"
-        ]
-        == "npa-workbench"
-    )
+    for path in (output / "kubeconfig", output / "sky.yaml"):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    sky = yaml.safe_load((output / "sky.yaml").read_text())
+    assert sky["kubernetes"] == {"allowed_contexts": ["cluster"]}
     with pytest.raises(FileExistsError):
+        namespaces.write_namespace_context(name, context="cluster", output_dir=output)
+
+
+@pytest.mark.parametrize("selection", ["explicit", "environment", "default"])
+def test_existing_skypilot_identity_and_settings_are_preserved(
+    source_context, tmp_path, monkeypatch, selection
+):
+    source = tmp_path / "sky-source.yaml"
+    if selection == "default":
+        source = namespaces.Path.home() / ".sky/config.yaml"
+        source.parent.mkdir(parents=True, exist_ok=True)
+    settings = {
+        "jobs": {"controller": {"resources": {"cpus": 2}}},
+        "kubernetes": {
+            "remote_identity": "existing-worker",
+            "networking": "portforward",
+        },
+    }
+    source.write_text(yaml.safe_dump(settings))
+    if selection == "environment":
+        monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(source))
+    output = tmp_path / "client"
+    namespaces.write_namespace_context(
+        "team-a",
+        context="cluster",
+        output_dir=output,
+        sky_config=source if selection == "explicit" else None,
+    )
+    result = yaml.safe_load((output / "sky.yaml").read_text())
+    assert result["jobs"] == settings["jobs"]
+    assert result["kubernetes"] == {
+        **settings["kubernetes"],
+        "allowed_contexts": ["cluster"],
+    }
+    assert yaml.safe_load(source.read_text()) == settings
+
+
+@pytest.mark.parametrize("invalid", ["[private", "[one, two]", "kubernetes: []"])
+def test_invalid_sky_config_fails_before_creating_output(
+    source_context, tmp_path, invalid
+):
+    source = tmp_path / "invalid.yaml"
+    source.write_text(invalid)
+    with pytest.raises(ValueError) as error:
         namespaces.write_namespace_context(
-            "team-a", context="cluster", output_dir=output
+            "team-a",
+            context="cluster",
+            output_dir=tmp_path / "client",
+            sky_config=source,
         )
+    assert "private" not in str(error.value)
+    assert not (tmp_path / "client").exists()
 
 
 @pytest.mark.parametrize(
@@ -184,6 +201,9 @@ def test_effective_namespace_matches_context(monkeypatch, configured, expected):
         KubectlResult(1, stderr="credential-private"),
         KubectlResult(0, "{}"),
         KubectlResult(0, "not-json"),
+        KubectlResult(
+            0, json.dumps({"contexts": [{"name": "cluster", "context": None}]})
+        ),
     ],
 )
 def test_namespace_resolution_fails_closed_without_private_output(monkeypatch, result):

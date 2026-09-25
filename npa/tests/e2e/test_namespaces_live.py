@@ -1,4 +1,4 @@
-"""Exercise native namespace access and CPU placement on an owned live cluster."""
+"""Exercise namespace creation, existing access, default selection, and CPU placement."""
 
 from __future__ import annotations
 
@@ -12,11 +12,8 @@ import uuid
 import pytest
 import yaml
 
-from npa.workbench.namespaces import (
-    apply_namespace,
-    namespace_manifests,
-    write_namespace_context,
-)
+from npa.clients.kubernetes_namespace import context_namespace
+from npa.workbench.namespaces import apply_namespace, write_namespace_context
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(0)]
@@ -33,31 +30,6 @@ def _run(args, kubeconfig, context, *, payload=None):
     )
 
 
-def _account_config(admin, context, namespace, directory):
-    source = _run(
-        ["config", "view", "--raw", "--minify", "--flatten", "-o", "json"],
-        admin,
-        context,
-    )
-    token = _run(["create", "token", "npa-workbench", "-n", namespace], admin, context)
-    assert source.returncode == token.returncode == 0, "Could not prepare test identity"
-    config = json.loads(source.stdout)
-    config["users"] = [
-        {"name": "namespace-test", "user": {"token": token.stdout.strip()}}
-    ]
-    config["contexts"][0]["context"]["user"] = "namespace-test"
-    path = directory / f"{namespace}-source"
-    path.write_text(yaml.safe_dump(config))
-    path.chmod(0o600)
-    settings = write_namespace_context(
-        namespace,
-        context=context,
-        kubeconfig=str(path),
-        output_dir=directory / namespace,
-    )
-    return Path(settings["kubeconfig"])
-
-
 @pytest.fixture(scope="module")
 def live_namespaces(tmp_path_factory):
     if (
@@ -70,22 +42,20 @@ def live_namespaces(tmp_path_factory):
     assert context and admin, "Select the exact disposable cluster and kubeconfig"
     directory = tmp_path_factory.mktemp("namespace-clients")
     directory.chmod(0o700)
-    names = [f"npa-test-{uuid.uuid4().hex[:12]}" for _ in range(2)]
-    created = []
+    original = Path(admin).read_bytes()
+    created, clients = [], []
     try:
-        for name in names:
-            absent = _run(
-                ["get", "namespace", name, "--ignore-not-found", "-o", "name"],
-                admin,
-                context,
-            )
-            assert absent.returncode == 0 and not absent.stdout.strip(), (
-                "Test namespace must be new"
-            )
+        for _ in range(2):
+            name = f"npa-test-{uuid.uuid4().hex[:12]}"
+            result = apply_namespace(name, context=context, kubeconfig=admin)
+            assert result["status"] == "created", "Test namespace must be new"
             created.append(name)
-            apply_namespace(name, context=context, kubeconfig=admin)
-        clients = [_account_config(admin, context, name, directory) for name in names]
-        yield context, admin, names, clients
+            settings = write_namespace_context(
+                name, context=context, kubeconfig=admin, output_dir=directory / name
+            )
+            clients.append(Path(settings["kubeconfig"]))
+        assert Path(admin).read_bytes() == original, "Source kubeconfig was modified"
+        yield context, admin, created, clients, directory
     finally:
         for name in created:
             result = _run(
@@ -94,28 +64,18 @@ def live_namespaces(tmp_path_factory):
                 context,
             )
             assert result.returncode == 0, "Owned test namespace cleanup failed"
-            for document in namespace_manifests(name):
-                if document["kind"] in {"ClusterRole", "ClusterRoleBinding"}:
-                    result = _run(
-                        [
-                            "delete",
-                            document["kind"],
-                            document["metadata"]["name"],
-                            "--ignore-not-found",
-                        ],
-                        admin,
-                        context,
-                    )
-                    assert result.returncode == 0, (
-                        "Owned discovery binding cleanup failed"
-                    )
 
 
 def test_same_resource_name_resolves_in_each_private_context(live_namespaces):
-    context, _admin, names, clients = live_namespaces
+    context, _admin, names, clients, _directory = live_namespaces
     for namespace, client in zip(names, clients, strict=True):
         result = _run(
-            ["create", "configmap", "shared-name", f"--from-literal=team={namespace}"],
+            [
+                "create",
+                "configmap",
+                "shared-name",
+                f"--from-literal=namespace={namespace}",
+            ],
             client,
             context,
         )
@@ -126,37 +86,27 @@ def test_same_resource_name_resolves_in_each_private_context(live_namespaces):
         assert result.returncode == 0, "Namespaced read failed"
         document = json.loads(result.stdout)
         assert document["metadata"]["namespace"] == namespace
-        assert document["data"]["team"] == namespace
+        assert document["data"]["namespace"] == namespace
 
 
-def test_actual_cross_namespace_and_cluster_mutations_are_denied(live_namespaces):
-    context, _admin, names, clients = live_namespaces
-    for index, client in enumerate(clients):
-        other = names[1 - index]
-        for args in (
-            ["get", "secrets", "-n", other],
-            ["get", "pods", "-n", other],
-            ["create", "configmap", "forbidden", "-n", other],
-            [
-                "create",
-                "rolebinding",
-                "escalation",
-                "--clusterrole=admin",
-                "--serviceaccount=default:default",
-            ],
-            [
-                "create",
-                "clusterrolebinding",
-                "namespace-escalation-test",
-                "--dry-run=server",
-                "--clusterrole=cluster-admin",
-                "--serviceaccount=default:default",
-            ],
-        ):
-            result = _run(args, client, context)
-            assert result.returncode != 0 and "forbidden" in result.stderr.lower(), (
-                "Expected real Kubernetes RBAC denial"
-            )
+def test_reusing_an_existing_namespace_preserves_its_access(live_namespaces):
+    context, admin, names, _clients, _directory = live_namespaces
+    namespace = names[0]
+    resources = [
+        "get",
+        "roles,rolebindings,serviceaccounts",
+        "-n",
+        namespace,
+        "-o",
+        "json",
+    ]
+    before = _run(resources, admin, context)
+    assert before.returncode == 0
+    result = apply_namespace(namespace, context=context, kubeconfig=admin)
+    assert result["status"] == "existing"
+    after = _run(resources, admin, context)
+    assert after.returncode == 0
+    assert json.loads(before.stdout) == json.loads(after.stdout)
 
 
 def _completed_pod(client, context):
@@ -179,7 +129,7 @@ def _completed_pod(client, context):
 
 
 def test_cpu_pods_execute_in_each_selected_namespace(live_namespaces):
-    context, _admin, names, clients = live_namespaces
+    context, _admin, names, clients, _directory = live_namespaces
     image = os.environ.get(
         "NPA_NAMESPACE_LIVE_IMAGE", "docker.io/library/busybox:1.37.0"
     )
@@ -190,7 +140,6 @@ def test_cpu_pods_execute_in_each_selected_namespace(live_namespaces):
             "metadata": {"name": "same-job"},
             "spec": {
                 "restartPolicy": "Never",
-                "serviceAccountName": "npa-workbench",
                 "containers": [
                     {
                         "name": "proof",
@@ -210,23 +159,36 @@ def test_cpu_pods_execute_in_each_selected_namespace(live_namespaces):
         }
         result = _run(["create", "-f", "-"], client, context, payload=pod)
         assert result.returncode == 0, "CPU pod creation failed"
-        finished = _completed_pod(client, context)
-        assert finished["metadata"]["namespace"] == namespace
+        assert _completed_pod(client, context)["metadata"]["namespace"] == namespace
         result = _run(["logs", "same-job"], client, context)
         assert result.returncode == 0 and result.stdout == namespace
 
 
-def test_reapply_removes_researcher_membership(live_namespaces):
-    context, admin, names, _clients = live_namespaces
-    namespace = names[0]
-    user = f"npa-test-user-{uuid.uuid4().hex[:12]}"
-    apply_namespace(namespace, context=context, kubeconfig=admin, users=(user,))
-    args = ["auth", "can-i", "create", "pods", "-n", namespace, "--as", user]
-    assert _run(args, admin, context).returncode == 0, (
-        "Researcher grant was ineffective"
+def test_unset_namespace_uses_kubernetes_default(live_namespaces):
+    context, admin, _names, _clients, directory = live_namespaces
+    result = _run(
+        ["config", "view", "--minify", "--flatten", "--raw", "-o", "json"],
+        admin,
+        context,
     )
-    apply_namespace(namespace, context=context, kubeconfig=admin)
-    result = _run(args, admin, context)
-    assert result.returncode != 0 and result.stdout.strip() == "no", (
-        "Removed researcher retained this grant"
+    assert result.returncode == 0
+    document = json.loads(result.stdout)
+    document["contexts"][0]["context"].pop("namespace", None)
+    client = directory / "unset-namespace"
+    client.write_text(yaml.safe_dump(document))
+    client.chmod(0o600)
+    assert context_namespace(context=context, kubeconfig=str(client)) == "default"
+    name = f"npa-default-{uuid.uuid4().hex[:12]}"
+    created = _run(
+        ["create", "configmap", name, "--from-literal=proof=default"], client, context
     )
+    assert created.returncode == 0, "Default namespace creation failed"
+    try:
+        observed = _run(["get", "configmap", name, "-o", "json"], client, context)
+        assert observed.returncode == 0
+        assert json.loads(observed.stdout)["metadata"]["namespace"] == "default"
+    finally:
+        deleted = _run(["delete", "configmap", name, "--wait=true"], client, context)
+        assert deleted.returncode == 0, (
+            "Owned default-namespace resource cleanup failed"
+        )

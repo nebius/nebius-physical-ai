@@ -5,13 +5,13 @@
 ```text
 Usage: npa workbench namespace [OPTIONS] COMMAND [ARGS]...
 
-Manage team namespaces and researcher access.
+Create or select Kubernetes namespaces.
 
 Options
 --help  Show this message and exit.
 Commands
-apply  Apply team access; omitted members lose this command's previous grants.
-context  Prepare private client configuration without changing the source context.
+apply  Create a missing namespace; reuse existing namespaces without changing access.
+context  Select a namespace privately, preserving existing credentials and access.
 ```
 
 ## Options
@@ -24,8 +24,8 @@ context  Prepare private client configuration without changing the source contex
 
 | Command | Description |
 | --- | --- |
-| `apply` | Apply team access; omitted members lose this command's previous grants. |
-| `context` | Prepare private client configuration without changing the source context. |
+| `apply` | Create a missing namespace; reuse existing namespaces without changing access. |
+| `context` | Select a namespace privately, preserving existing credentials and access. |
 
 ## Examples
 

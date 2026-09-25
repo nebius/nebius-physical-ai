@@ -880,7 +880,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # this verb has no service or YAML env tier to stay coherent with.
         "ltx2",
         "mjlab",
-        # Namespace/RBAC administration is host-side platform configuration.
+        # Namespace selection is host-side platform configuration.
         # CLI and SDK share namespaces.py; no payload service or toolRef applies.
         "namespace",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
