@@ -382,7 +382,9 @@ def build_lance_store(uri: str, table_name: str, *, dim: int) -> _LanceVectorSto
             pa.field("vector", pa.list_(pa.float32(), int(dim))),
         ]
     )
-    if table_name in db.table_names():
+    listed_tables = db.list_tables()
+    table_names = getattr(listed_tables, "tables", listed_tables)
+    if table_name in table_names:
         table = db.open_table(table_name)
     else:
         table = db.create_table(table_name, schema=schema)
