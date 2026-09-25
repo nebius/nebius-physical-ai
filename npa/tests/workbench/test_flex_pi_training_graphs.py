@@ -25,6 +25,7 @@ def compiled_model(monkeypatch):
         assert options == {"backend": "cudagraphs", "fullgraph": True, "dynamic": False}
 
         def execute(*args, **kwargs):
+            assert torch._dynamo.config.optimize_ddp is False
             calls.append(True)
             counters["compiled_graphs"] = 1
             return function(*args, **kwargs)
@@ -77,6 +78,24 @@ def test_capture_wrapper_preserves_state_gradients_and_eager_evaluation(compiled
     receipt = model._npa_training_graphs.receipt()
     assert receipt["compiled_training_calls"] == 3
     assert receipt["eager_evaluation_calls"] == 2
+
+
+def test_native_ddp_configuration_restored_after_capture_and_failure(compiled_model):
+    fixture = compiled_model
+    torch, state = fixture.torch, fixture.model._npa_training_graphs
+    sample = torch.ones(1, 2, dtype=torch.float64)
+    with torch._dynamo.config.patch(optimize_ddp=True):
+        fixture.model.mot(sample).sum().backward()
+        assert torch._dynamo.config.optimize_ddp is True
+
+        def fail(*args, **kwargs):
+            assert torch._dynamo.config.optimize_ddp is False
+            raise RuntimeError("capture failed")
+
+        state.compiled = fail
+        with pytest.raises(RuntimeError, match="capture failed"):
+            fixture.model.mot(sample)
+        assert torch._dynamo.config.optimize_ddp is True
 
 
 def test_compile_invocation_alone_is_not_capture_proof(compiled_model):

@@ -114,13 +114,19 @@ class _TrainingGraphs:
 
     def forward(self, *args, **kwargs):
         import torch
+        import torch._dynamo
 
         self.check()
         # Evaluation keeps the exact eager path; only training needs capture.
         if not self.module.training or not torch.is_grad_enabled():
             self.evaluation_calls += 1
             return self.original(*args, **kwargs)
-        result = self.compiled(*args, **kwargs)
+        # Dynamo's DDP optimizer can partition even a fullgraph compilation.
+        # Keep this capture boundary whole: its saved forward tensors must stay
+        # alive until its one AOT backward completes. Native DDP and no_sync
+        # still handle gradient reduction outside this compiled module.
+        with torch._dynamo.config.patch(optimize_ddp=False):
+            result = self.compiled(*args, **kwargs)
         self.training_calls += 1
         self.check()
         return result
