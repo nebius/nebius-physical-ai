@@ -339,7 +339,13 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     installer = (
         DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"
     ).read_text(encoding="utf-8")
-    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in installer
+    snapshot_config = (
+        DOCKER_ROOT / "common" / "configure_ubuntu_snapshot.sh"
+    ).read_text(encoding="utf-8")
+    assert "configure-ubuntu-snapshot" in installer
+    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in snapshot_config
+    assert "ubuntu:22.04" in snapshot_config
+    assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer
     assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
     assert 'linux_libc_dev_version="6.8.0-138.138"' in installer

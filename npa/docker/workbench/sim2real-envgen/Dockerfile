@@ -18,6 +18,8 @@ COPY docker/workbench/common/sim2real-genesis-requirements.txt \
     /opt/npa/sim2real-genesis-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
+    /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \

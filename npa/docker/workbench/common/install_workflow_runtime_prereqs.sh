@@ -9,18 +9,17 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# The Genesis-derived Sim2Real images currently inherit Ubuntu 22.04. Keep the
-# mapping explicit and fail closed if their base changes: silently pointing an
-# unknown release at a moving mirror would make the supposedly immutable image
-# depend on build time.
+/usr/local/bin/configure-ubuntu-snapshot "${snapshot}"
+
+# The Genesis-derived Sim2Real images currently inherit Ubuntu 22.04, while
+# LanceDB inherits Ubuntu 24.04. Keep the userspace-header version tied to the
+# release selected by the shared snapshot configurator.
 . /etc/os-release
 case "${ID}:${VERSION_ID}" in
   ubuntu:22.04)
-    suites="jammy jammy-updates jammy-backports jammy-security"
     linux_libc_dev_version="5.15.0-190.200"
     ;;
   ubuntu:24.04)
-    suites="noble noble-updates noble-backports noble-security"
     linux_libc_dev_version="6.8.0-138.138"
     ;;
   *)
@@ -28,16 +27,6 @@ case "${ID}:${VERSION_ID}" in
     exit 1
     ;;
 esac
-
-rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
-  /etc/apt/sources.list.d/*.sources
-printf '%s\n' \
-  'Types: deb' \
-  "URIs: https://snapshot.ubuntu.com/ubuntu/${snapshot}/" \
-  "Suites: ${suites}" \
-  'Components: main restricted universe multiverse' \
-  'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
-  > /etc/apt/sources.list.d/ubuntu.sources
 
 apt-get update
 # NVIDIA's Genesis-derived base contains development packages whose declared
