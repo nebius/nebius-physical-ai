@@ -151,9 +151,18 @@ def test_plain_fixture_is_valid_real_usd(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(
     "asset",
-    ["../escape.usda", "https://host/scene.usda", "/tmp/asset.usda", "missing.png"],
+    [
+        "../escape.usda",
+        "https://host/scene.usda",
+        pytest.param(
+            lambda directory: str(directory / "asset.usda"), id="absolute-path"
+        ),
+        "missing.png",
+    ],
 )
 def test_real_usd_asset_dependencies_must_be_contained_and_declared(tmp_path, asset):
+    if callable(asset):
+        asset = asset(tmp_path)
     root = tmp_path / "bundle"
     request = write_fixture(root)
     layer = Sdf.Layer.FindOrOpen(str(root / "scene.usda"))
