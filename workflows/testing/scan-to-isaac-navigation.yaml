@@ -1,0 +1,84 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: scan-to-isaac-navigation
+  executionMode: runtime
+  description: >
+    Assemble an existing reconstructed visual USD scene and an explicitly supplied
+    static collision mesh into a portable USDZ, then verify operator-specified
+    collision ray probes in Isaac Sim PhysX. Requires measured scale/alignment and
+    scene inputs; does not reconstruct collision geometry or run a navigation policy.
+
+config:
+  bucket: example-bucket
+  prefix: "scan-to-isaac-navigation/{{run.id}}"
+  source_overlay: true
+  # Required worker-readable prefix containing scene.json and its relative assets.
+  # Empty input fails closed; there is no stock-scene substitution.
+  input_path: ""
+  assembly_image: "tool://content-agents"
+  # Override with an immutable registry/image@sha256 digest for execution.
+  # The report records this operator declaration, not an introspected pod digest.
+  isaac_image: "tool://isaac-lab"
+  run_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  assembled_uri: "{{config.run_uri}}/assembled"
+  reports_uri: "{{config.run_uri}}/reports"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: "{{config.assembly_image}}"
+  rtx:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.isaac_image}}"
+
+initial: prepare
+
+states:
+  prepare:
+    description: Validate source assets and transforms, author static USD colliders, and package dependencies.
+    resources: cpu
+    run:
+      argv:
+        - /opt/venv/bin/python
+        - -m
+        - npa.workbench.nurec.navigation_scene
+        - --input-path
+        - "{{config.input_path}}"
+        - --output-path
+        - "{{config.assembled_uri}}"
+    inputs:
+      - uri: "{{config.input_path}}"
+        schema: npa.nurec.navigation_input.v1
+    outputs:
+      - uri: "{{config.assembled_uri}}/scene.usdz"
+      - uri: "{{config.assembled_uri}}/provenance.json"
+    next: physics
+
+  physics:
+    description: Open the packaged scene in Isaac Sim and require actual PhysX ray hits at measured distances.
+    needs: [prepare]
+    resources: rtx
+    run:
+      argv:
+        - /isaac-sim/python.sh
+        - -m
+        - npa.workbench.nurec.navigation_probe
+        - --runtime-image
+        - "{{config.isaac_image}}"
+        - --input-path
+        - "{{config.assembled_uri}}"
+        - --output-path
+        - "{{config.reports_uri}}"
+    inputs:
+      - uri: "{{config.assembled_uri}}/scene.usdz"
+      - uri: "{{config.assembled_uri}}/provenance.json"
+    outputs:
+      - uri: "{{config.reports_uri}}/physics_validation.json"
+    terminal: true

@@ -20,6 +20,10 @@ MANUAL_GATES = {
         "requires an explicitly selected disposable cluster with administrator access; "
         "creates namespaces, temporary client contexts, and CPU pods"
     ),
+    "NPA_SCAN_TO_ISAAC_LIVE": (
+        "requires operator-supplied scene, calibrated collision geometry, ray probes, "
+        "and an immutable Isaac image; run with docs/workbench/guides/scan-to-isaac-navigation.md"
+    ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
         "run with docs/workbench/token-factory-robot-sdg.md"

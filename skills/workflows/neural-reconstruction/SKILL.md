@@ -188,6 +188,33 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
   before changing the pending validation status; older NuRec results do not
   qualify.
 
+## Static Navigation Scene Handoff
+
+Use `workflows/testing/scan-to-isaac-navigation.yaml` to combine an existing
+NuRec visual USD/USDZ with independently supplied, triangulated collision USD.
+The workflow reuses reconstruction outputs; it does not duplicate NCore or
+COLMAP ingress. See `docs/workbench/guides/scan-to-isaac-navigation.md` for the
+input manifest, module adapters, calibration convention, and live test.
+
+- Require explicit source units, coordinate registration, capture-provenance
+  digest, collision geometry, and expected physics ray intersections. Gaussian
+  splats alone are visual assets, never collision surfaces.
+- Audit raw Sdf layers before composition, recursively including nested USDZ,
+  inactive prims and unselected variants. Reject external dependencies,
+  OmniScripting/OmniGraph declarations, time samples and value clips; preserve
+  ordinary shaders and contained neural volume payloads.
+- Export portable USDZ with static triangle colliders and geometry/input hashes.
+  Publish only to fresh prefixes using permanent conditional claims, immutable
+  member writes, and a verified completion seal. Retry failures in a new prefix.
+- Run the native PhysX probe through the Isaac interpreter on RTX infrastructure.
+  Supply an immutable Isaac image declaration; reports bind both scene and exact
+  assembly-provenance hashes, actual Isaac/PhysX versions, and the declaration's
+  explicitly unverified image-attestation scope.
+- CPU tests prove assembly and containment. Native GPU acceptance, NuRec
+  rendering, automatic RGB-D collision reconstruction, robot clearance, and
+  navigation-policy quality remain unverified. The live test requires operator
+  assets and must run before claiming physics acceptance.
+
 ## The rig -> world Pose Edge (the thing that breaks first)
 
 NRE's NCore data source requires a `("rig", "world")` pose-graph edge:

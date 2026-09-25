@@ -917,6 +917,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "scan-to-isaac-navigation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires operator-supplied reconstructed visual USD, static collision "
+            "mesh, measured coordinate transforms, capture lineage, and ray probes. "
+            "Use the dedicated opt-in scene handoff live test with these inputs."
+        ),
+        notes=(
+            "Real USD scene assembly and portable packaging on CPU, then native "
+            "Isaac Sim PhysX ray probes on RTX. No navigation-policy success claim."
+        ),
+    ),
+    SubmitLiveCase(
         "content-agents-rigid-object.yaml",
         "gpu",
         secret_envs=(
