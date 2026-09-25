@@ -1,5 +1,10 @@
 # Self-hosted Workbench specialists
 
+The [multi-model repair campaign](specialists-multimodel-repair.md) shows Flash
+and full GLM making production code changes and verifying six-case MuJoCo/LeRobot
+runs. It preserves the router's all-Flash decisions and distinguishes the
+explicit full-GLM review assignments from automatic routing.
+
 Run independent agents on your own Linux or macOS host. LangGraph checkpoints
 persist each task's conversation and next step; Workbench owns task assignment,
 tool permissions, operation receipts and source patches. Model inference uses
