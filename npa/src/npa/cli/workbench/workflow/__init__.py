@@ -31,6 +31,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
+    from npa.orchestration.npa_workflow.interpreter import ExecutionPlan
     from npa.orchestration.npa_workflow.run_state import RunStateStore
     from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
     from npa.orchestration.npa_workflow.submit_credentials import (
@@ -8257,6 +8258,49 @@ def validate_spec_cmd(
         typer.echo(f"states: {', '.join(sorted(spec.states))}")
 
 
+def _check_static_plan_render(
+    spec: NpaWorkflowSpec,
+    plan: ExecutionPlan,
+    *,
+    run_id: str,
+) -> dict[str, object]:
+    """Render a static plan locally and return a secret-free proof."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        assert_no_unresolved_placeholders,
+        render_skypilot_yaml,
+    )
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id=run_id,
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    assert_no_unresolved_placeholders(rendered)
+    task_count = sum(
+        1
+        for document in yaml.safe_load_all(rendered)
+        if isinstance(document, dict) and "resources" in document
+    )
+    return {
+        "status": "valid",
+        "tasks": task_count,
+        "sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+        "provider_actions": False,
+        "registry_secrets_materialized": False,
+    }
+
+
+def _emit_render_check(render_check: Mapping[str, object]) -> None:
+    """Print one compact human-readable production-render result."""
+
+    typer.echo(
+        f"render: valid (tasks={render_check['tasks']} sha256={render_check['sha256']})"
+    )
+
+
 @app.command("plan-spec")
 def plan_spec_cmd(
     yaml_path: Path = typer.Argument(help="NPA workflow spec path."),
@@ -8286,6 +8330,14 @@ def plan_spec_cmd(
             "with their concurrency batches) instead of the flat step list."
         ),
     ),
+    check_render: bool = typer.Option(
+        False,
+        "--check-render/--no-check-render",
+        help=(
+            "Run the resolved static plan through the production SkyPilot renderer "
+            "without contacting a provider or materializing registry secrets."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON plan."),
 ) -> None:
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
@@ -8312,6 +8364,11 @@ def plan_spec_cmd(
     resolved_run_id = run_id or f"{spec.name}-plan"
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
+        render_check = (
+            _check_static_plan_render(spec, plan, run_id=resolved_run_id)
+            if check_render is True
+            else None
+        )
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
@@ -8323,10 +8380,14 @@ def plan_spec_cmd(
         if json_output:
             payload = wave_plan.to_dict()
             payload["access_requirements"] = _workflow_access_requirement_payload(spec)
+            if render_check is not None:
+                payload["render_check"] = render_check
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
         typer.echo(f"waves: {len(wave_plan.waves)}")
+        if render_check is not None:
+            _emit_render_check(render_check)
         for wave in wave_plan.waves:
             states = ", ".join(step.state for step in wave.steps)
             suffix = (
@@ -8342,6 +8403,8 @@ def plan_spec_cmd(
     if json_output:
         payload = plan.to_dict()
         payload["access_requirements"] = _workflow_access_requirement_payload(spec)
+        if render_check is not None:
+            payload["render_check"] = render_check
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
@@ -8349,6 +8412,8 @@ def plan_spec_cmd(
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     typer.echo(f"workflow: {plan.workflow}")
+    if render_check is not None:
+        _emit_render_check(render_check)
     access = _workflow_access_requirement_payload(spec)
     if access["hf"] or access["ngc"]:
         typer.echo(

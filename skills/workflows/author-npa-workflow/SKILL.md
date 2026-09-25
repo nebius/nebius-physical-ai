@@ -107,7 +107,7 @@ when execution is requested.
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
-npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --json
+npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --check-render --json
 npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo --plan-only
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
@@ -117,6 +117,11 @@ npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
 For npa.workflow specs it plans → renders serial SkyPilot YAML → `sky jobs launch`.
 Use `--plan-only` to inspect the rendered YAML without launching. Dynamic
 branches still need `--assume-decision`.
+
+Use `plan-spec --check-render` during authoring. It exercises the production
+SkyPilot renderer locally with registry-secret materialization disabled, so pod
+configuration and first-party image startup-contract failures surface before
+provider preflight or submission.
 
 Live infra (required before merge):
 

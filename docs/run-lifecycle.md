@@ -26,7 +26,8 @@ delete a temporary Kubernetes probe pod when bootstrap evidence is absent:
 
 ```bash
 npa workbench workflow validate-spec "<spec.yaml>"
-npa workbench workflow plan-spec "<spec.yaml>" --run-id "<run-id>" --var bucket="<bucket>"
+npa workbench workflow plan-spec "<spec.yaml>" --run-id "<run-id>" \
+  --var bucket="<bucket>" --check-render
 npa workbench workflow preflight-images "<spec.yaml>" \
   --project "<alias>" --infra "k8s/<cluster>" --var bucket="<bucket>"
 ```
@@ -34,6 +35,12 @@ npa workbench workflow preflight-images "<spec.yaml>" \
 Use the same target and overrides throughout; public images need no `--registry`.
 The [workflow quick start](workbench/npa-workflow-guide.md#quick-start) shows the
 complete sequence.
+
+`plan-spec --check-render` also sends the resolved static plan through the same
+SkyPilot renderer used for submission. It catches pod configuration and
+first-party image startup-contract errors that schema validation cannot see. The
+check stays local, does not contact a provider, and does not materialize registry
+secrets.
 
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
 prints the exact build command for anything missing. It unions every declared
