@@ -113,6 +113,7 @@ def test_actual_choice_drives_langgraph_without_jev_or_changed_grants(routed):
         == "synthetic/reasoning"
     )
     assert route["status"] == "accepted" and route["api_call_attempted"] is True
+    assert route["model_verified"] is True
     assert route["usage"] == {
         "input_tokens": 100,
         "output_tokens": 8,
@@ -177,6 +178,7 @@ def test_invalid_or_abstained_route_preserves_usage_and_blocks_generation(
     result = routed.team.work_once("repair")
     assert result["status"] == "needs_attention"
     assert result["route"]["model_selection"]["usage"]["input_tokens"] == 100
+    assert result["route"]["model_selection"]["model_verified"] is (defect != "model")
     assert routed.worker.calls == []
     routed.team.reconcile("task", retry=True)
     assert routed.team.work_once("repair")["status"] == "needs_attention"

@@ -83,6 +83,21 @@ def test_missing_key_preserves_unavailable_receipt_without_api_spend(evidence):
     assert result["responses"][0]["reason"] == "missing_credential"
 
 
+@pytest.mark.parametrize("verified", [True, False])
+def test_router_usage_requires_the_reported_classifier_identity(evidence, verified):
+    selection = {
+        "provider": "token_factory",
+        "model": "synthetic/classifier",
+        "model_verified": verified,
+        "status": "accepted" if verified else "unavailable",
+        "api_call_attempted": True,
+        "usage": {"input_tokens": 100, "output_tokens": 20},
+    }
+    result = evidence._router_usage(_receipt(selection))
+    assert result["usage_complete"] is verified
+    assert result["responses"][0]["usage"] == selection["usage"]
+
+
 @pytest.mark.parametrize("attempted", ["unknown", None, 1])
 def test_durable_pre_call_intent_cannot_hide_possible_api_effect(evidence, attempted):
     result = evidence._router_usage(
