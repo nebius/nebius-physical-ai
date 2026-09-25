@@ -67,7 +67,13 @@ pair, not a repeated statistical estimate for the delegation mode.
 
 All six measured arms together cost $2.74082–$3.18494 in these model
 API equivalents, including setup uncertainty. The machine-readable evidence
-retains all six; no measured arm was dropped.
+retains all six; no measured arm was dropped. Runs occurred on 2026-09-25 UTC.
+
+Separately, the committed opt-in live test passed both copied PAIDF Cosmos3 and
+Sim2Real specification repairs through actual routing, generation, Workbench
+validation and planning. Its two classifier and 14 Flash responses cost an
+estimated $0.01198848; they are outside the timed comparisons. It submitted no
+GPU workload.
 
 ## How to run the stack
 

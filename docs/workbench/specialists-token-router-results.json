@@ -2741,5 +2741,27 @@
   "all_measured_arms_model_api_equivalent_with_setup_sensitivity_usd": {
     "minimum": 2.74081893,
     "maximum": 3.18493893
+  },
+  "measured_date_utc": "2026-09-25",
+  "separate_live_workflow_validation": {
+    "tests_passed": 1,
+    "workflow_repairs_passed": 2,
+    "models": {
+      "nvidia/Nemotron-3_5-Lightning": {
+        "responses": 2,
+        "input_tokens": 318,
+        "output_tokens": 40,
+        "tariff_estimate_usd": 2.868e-05
+      },
+      "zai-org/GLM-5.3-Flash": {
+        "responses": 14,
+        "input_tokens": 77382,
+        "output_tokens": 705,
+        "tariff_estimate_usd": 0.0119598
+      }
+    },
+    "total_tofa_tariff_estimate_usd": 0.01198848,
+    "excluded_from_timed_comparisons": true,
+    "remote_gpu_jobs_submitted": 0
   }
 }
