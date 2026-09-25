@@ -8,8 +8,21 @@ import pytest
 from npa.orchestration.npa_workflow.run_state import (
     RunManifest,
     RunStateStore,
+    is_paidf_input_workflow_name,
     reconcile_submitted_manifest,
 )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "physical-ai-data-factory",
+        "paidf-cosmos3",
+        "nvidia-paidf-vda-cosmos-transfer25",
+    ],
+)
+def test_submit_recognizes_every_paidf_input_workflow(name: str) -> None:
+    assert is_paidf_input_workflow_name(name)
 
 
 def test_run_state_store_roundtrip() -> None:
@@ -533,6 +546,10 @@ def test_run_state_store_prefix_output_scans_all_zero_byte_pages(
         {"Key": "runs/demo/output/missing-size.json"},
         {"Key": "runs/demo/output/invalid-size.json", "Size": "invalid"},
         {"Key": "runs/demo/output/negative-size.json", "Size": -1},
+        *(
+            {"Key": "runs/demo/output/invalid.json", "Size": size}
+            for size in [False, True, 0.5, 1.5, "0", None]
+        ),
     ],
 )
 def test_run_state_store_prefix_output_rejects_malformed_size(
@@ -639,6 +656,242 @@ def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
     )
     with pytest.raises(PermissionError):
         store.read_runtime_state()
+
+
+@pytest.mark.parametrize(
+    "corrupt_body",
+    ['{"schema_version":', "[]", b'\xff\xfe{"schema_version":'],
+)
+def test_read_runtime_state_rejects_corrupt_ledger(
+    corrupt_body: str | bytes,
+) -> None:
+    """Corrupt durable state must never be mistaken for an absent resume ledger."""
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    corrupt = Store(
+        bucket="bucket",
+        prefix="runs/demo",
+        reader=lambda *_args: corrupt_body,
+        writer=lambda *_: pytest.fail("corrupt state must never be overwritten"),
+    )
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ) as error:
+        corrupt.read_runtime_state()
+    assert "runs/demo/npa-workflow/runtime.json" in str(error.value)
+    assert "s3://bucket" not in str(error.value)
+
+
+SEMANTIC_CORRUPTION_CASES = (
+    "empty_object",
+    "missing_run_id",
+    "missing_workflow",
+    "mismatched_run_id",
+    "mismatched_workflow",
+    "missing_schema_version",
+    "unsupported_schema_version",
+    "waves_string",
+    "waves_non_object_entry",
+    "stages_string",
+    "decisions_object",
+    "plan_migrations_string",
+    "watermarks_array",
+    "api_version_array",
+)
+
+
+def _semantic_runtime_payload(case: str) -> dict[str, object]:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    payload = RuntimeRunState(workflow="demo", run_id="demo-1").to_dict()
+    if case == "empty_object":
+        return {}
+    if case.startswith("missing_"):
+        payload.pop(case.removeprefix("missing_"))
+    elif case == "mismatched_run_id":
+        payload["run_id"] = "other-run"
+    elif case == "mismatched_workflow":
+        payload["workflow"] = "other-workflow"
+    elif case == "unsupported_schema_version":
+        payload["schema_version"] = "npa.workflow.runtime.v999"
+    elif case == "waves_string":
+        payload["waves"] = "corrupt-but-valid-json"
+    elif case == "waves_non_object_entry":
+        payload["waves"] = [
+            {"key": "done", "status": "succeeded"},
+            "corrupt-entry",
+        ]
+    elif case == "stages_string":
+        payload["stages"] = "corrupt-but-valid-json"
+    elif case == "decisions_object":
+        payload["decisions"] = {"decision": "promote"}
+    elif case == "plan_migrations_string":
+        payload["plan_migrations"] = "corrupt-but-valid-json"
+    elif case == "watermarks_array":
+        payload["watermarks"] = []
+    elif case == "api_version_array":
+        payload["api_version"] = ["wrong-type"]
+    return payload
+
+
+@pytest.mark.parametrize("case", SEMANTIC_CORRUPTION_CASES)
+def test_read_runtime_state_rejects_semantically_corrupt_or_mismatched_ledger(
+    case: str,
+) -> None:
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.run_state import (
+        RunStateStore as Store,
+        runtime_key,
+    )
+
+    key = runtime_key("runs/demo")
+    original = (
+        json.dumps(_semantic_runtime_payload(case), sort_keys=True) + "\n"
+    ).encode()
+    objects = {key: original}
+    writes: list[str] = []
+
+    def writer(_bucket: str, object_key: str, body: bytes) -> None:
+        writes.append(object_key)
+        objects[object_key] = body
+
+    store = Store(
+        bucket="bucket",
+        prefix="runs/demo",
+        reader=lambda _bucket, object_key: objects[object_key],
+        writer=writer,
+    )
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ) as error:
+        store.read_runtime_state(
+            expected_workflow="demo",
+            expected_run_id="demo-1",
+        )
+
+    assert writes == []
+    assert objects[key] == original
+    assert key in str(error.value)
+    assert "s3://bucket" not in str(error.value)
+
+
+def test_read_runtime_state_accepts_legacy_v1_without_additive_fields() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        RUNTIME_SCHEMA_VERSION,
+        RunStateStore as Store,
+    )
+
+    payload = {
+        "schema_version": RUNTIME_SCHEMA_VERSION,
+        "workflow": "demo",
+        "run_id": "demo-1",
+        "waves": [],
+    }
+    store = Store(
+        bucket="bucket",
+        prefix="runs/demo",
+        reader=lambda *_args: json.dumps(payload),
+    )
+
+    state = store.read_runtime_state(
+        expected_workflow="demo",
+        expected_run_id="demo-1",
+    )
+
+    assert state is not None
+    assert state.waves == []
+    assert state.stages == []
+    assert state.decisions == []
+    assert state.plan_migrations == []
+    assert state.watermarks == {}
+
+
+@pytest.mark.parametrize("error_code", ["AccessDenied", "SlowDown", "InternalError"])
+def test_read_runtime_state_propagates_s3_read_failures(
+    error_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only an absent object may initialize an empty production resume ledger."""
+
+    from botocore.exceptions import ClientError
+
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    class FailingS3:
+        def get_object(self, **_kwargs: object) -> dict[str, object]:
+            raise ClientError({"Error": {"Code": error_code}}, "GetObject")
+
+    class FailingStorage:
+        _s3 = FailingS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FailingStorage(),
+    )
+
+    with pytest.raises(ClientError) as error:
+        Store(bucket="bucket", prefix="runs/demo").read_runtime_state()
+    assert error.value.response["Error"]["Code"] == error_code
+
+
+def test_read_runtime_state_propagates_s3_transport_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botocore.exceptions import EndpointConnectionError
+
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    failure = EndpointConnectionError(endpoint_url="https://storage.example.invalid")
+
+    class FailingS3:
+        def get_object(self, **_kwargs: object) -> dict[str, object]:
+            raise failure
+
+    class FailingStorage:
+        _s3 = FailingS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FailingStorage(),
+    )
+
+    with pytest.raises(EndpointConnectionError) as error:
+        Store(bucket="bucket", prefix="runs/demo").read_runtime_state()
+    assert error.value is failure
+
+
+def test_read_runtime_state_returns_none_for_missing_s3_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botocore.exceptions import ClientError
+
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    class MissingS3:
+        def get_object(self, **_kwargs: object) -> dict[str, object]:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+
+    class MissingStorage:
+        _s3 = MissingS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: MissingStorage(),
+    )
+
+    assert (
+        Store(bucket="bucket", prefix="runs/missing").read_runtime_state(
+            expected_workflow="demo",
+            expected_run_id="demo-1",
+        )
+        is None
+    )
 
 
 # ── Resource-honest manifests for submitted runs ─────────────────────────────
@@ -911,3 +1164,16 @@ def test_manifest_completion_alias_is_not_a_runtime_ledger_state(runtime_status)
     )
     with pytest.raises(ValueError, match="lifecycle status is missing or unsupported"):
         runtime_workflow_lifecycle(manifest, {"status": runtime_status})
+
+
+@pytest.mark.parametrize("contents", [None, {}, "", False, 0])
+def test_prefix_listing_rejects_falsey_malformed_contents(contents, mocker):
+    from npa.orchestration.npa_workflow.run_state import s3_prefix_has_nonempty_object
+
+    client = mocker.Mock()
+    client.list_objects_v2.return_value = {
+        "Contents": contents,
+        "IsTruncated": False,
+    }
+    with pytest.raises(RuntimeError, match="malformed object records"):
+        s3_prefix_has_nonempty_object(client, bucket="unit-bucket", prefix="runs/unit/")

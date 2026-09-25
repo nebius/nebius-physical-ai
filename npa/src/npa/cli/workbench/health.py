@@ -119,6 +119,16 @@ def _token_factory_verifier() -> list[str]:
     return TokenFactoryClient(config=config).list_models()
 
 
+def _encord_verifier() -> str:
+    """Authenticate and make the cheapest read-only Encord call."""
+
+    from npa.workbench.encord.client import _default_user_client
+
+    client = _default_user_client()
+    next(iter(client.list_storage_folders(page_size=1)), None)
+    return "storage folders listable"
+
+
 def _ngc_auth_verifier(api_key: str) -> str:
     """Authenticate through NGC token exchange without implying all entitlements."""
 
@@ -204,6 +214,7 @@ def _credential_probes(
             aws_secret_access_key=credentials.s3_secret_access_key,
         ),
         token_factory_verifier=_token_factory_verifier,
+        encord_verifier=_encord_verifier,
         nebius_profile_verifier=_nebius_profile_verifier,
     )
 
@@ -303,7 +314,7 @@ def access_command(
     offline: bool = typer.Option(
         False,
         "--offline",
-        help="Skip live Hugging Face probes; only check that a token is present.",
+        help="Skip live HF and NGC probes; only check credential presence.",
     ),
     save_env_credentials: bool = typer.Option(
         False,
@@ -388,9 +399,9 @@ def access_command(
 
     ngc_validator = None
     if not offline:
-        from npa.workbench.nurec.nurec import check_ngc_image_access
+        from npa.workbench.model_access import check_ngc_artifact_access
 
-        ngc_validator = check_ngc_image_access
+        ngc_validator = check_ngc_artifact_access
 
     if prepare:
         from npa.workbench.access_approval import (

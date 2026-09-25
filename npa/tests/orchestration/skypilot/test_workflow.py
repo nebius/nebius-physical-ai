@@ -214,6 +214,83 @@ def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> No
     assert caught.value.__cause__.__cause__ is capacity
 
 
+def test_load_base_config_distinguishes_omitted_from_explicit_missing(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "selected-but-missing.yaml"
+
+    assert workflow_module._load_base_config(None) == {}
+    with pytest.raises(bin_module.SkyPilotConfigError, match=re.escape(str(missing))):
+        workflow_module._load_base_config(missing)
+
+
+def test_submit_rejects_explicit_missing_config_before_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    missing = tmp_path / "selected-but-missing.yaml"
+    monkeypatch.setattr(
+        workflow_module,
+        "_preflight_prepared_submission",
+        lambda *args, **kwargs: pytest.fail("must fail before SkyPilot preflight"),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must fail before provider launch"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match=re.escape(str(missing))) as caught:
+        submit_workflow(
+            yaml_path,
+            "run-missing-global-config",
+            config_path=missing,
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert caught.value.launch_attempted is False
+    assert caught.value.transaction is None
+    assert isinstance(caught.value.__cause__, bin_module.SkyPilotConfigError)
+
+
+def test_submit_keeps_launch_unknown_for_failure_after_preparation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+
+    def fail_after_preparation(*args, **kwargs):
+        raise ValueError("post-preparation failure")
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_local_api_daemon_cwd_locked",
+        fail_after_preparation,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must not start a provider launch"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="post-preparation failure") as caught:
+        submit_workflow(
+            yaml_path,
+            "run-post-preparation-failure",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert caught.value.launch_attempted is None
+    assert caught.value.transaction is None
+
+
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text(
@@ -1457,6 +1534,28 @@ def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     assert env["HOME"] == str(isolated / "home")
 
 
+def test_sky_environment_links_default_kubeconfig_when_unset(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    operator_home = tmp_path / "operator"
+    default_kubeconfig = operator_home / ".kube" / "config"
+    default_kubeconfig.parent.mkdir(parents=True)
+    default_kubeconfig.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts: []\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+
+    isolated = tmp_path / "isolated"
+    sky_environment(isolated)
+
+    isolated_kubeconfig = isolated / "home" / ".kube" / "config"
+    assert isolated_kubeconfig.is_symlink()
+    assert isolated_kubeconfig.resolve() == default_kubeconfig.resolve()
+
+
 def test_submit_workflow_require_controller_up_uses_canonical_preflight(
     monkeypatch, tmp_path
 ) -> None:
@@ -1842,6 +1941,7 @@ def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
     assert result.healthy is False
     assert result.outcome == "cwd_unusable"
     assert "getcwd" in result.error
+    assert "--all-namespaces" not in calls[0]
     assert calls[0][-4:] == [
         "--selector",
         "skypilot-cluster-name=sky-jobs-controller-test",

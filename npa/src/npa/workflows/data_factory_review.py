@@ -129,7 +129,7 @@ _MANIFEST = _fields(
 )
 _EVALUATOR = _fields(
     _COMMON + " score passed threshold clip_count passed_clips engines generated_at "
-    "alignment_mode appearance_mode attribute_sample_policy attribute_threshold "
+    "alignment_mode appearance_mode attribute_evidence_mode attribute_sample_policy attribute_threshold "
     "batch_policy temporal_mode",
     clips=[_CLIP],
     upstream=_fields("license", repo="reference"),
@@ -163,7 +163,7 @@ _FINAL = _fields(
     written_uri="reference",
 )
 _CANDIDATE = _fields(
-    "candidate_id iteration clip_id run_disposition candidate_passed promotion_eligible score "
+    "candidate_id iteration clip_id run_disposition candidate_disposition candidate_passed promotion_eligible score "
     "failed_attributes hallucination_status source_comparison_entity output_media_entity",
     attribute_results=[_CHECK],
     hallucination=_METRIC,

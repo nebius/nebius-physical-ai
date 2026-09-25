@@ -113,6 +113,14 @@ ALLOWLIST: dict[tuple[str, ...], str] = {
         "retargeting",
         "workflow",
     ): "stale command; #520 tracks fixing the docs",
+    # Design-doc proposals: commands that do not exist yet, proposed in a
+    # design doc and tracked by their issue. Remove the entry when the
+    # command lands.
+    (
+        "workbench",
+        "token-factory",
+        "issue-key",
+    ): "proposed Phase 2 command in docs/workbench/identity-rbac-audit.md; #524",
 }
 
 
