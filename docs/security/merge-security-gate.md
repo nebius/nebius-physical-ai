@@ -33,7 +33,11 @@ and final checks wait for their declared dependencies and an available runner.
 Organization runner limits can still cause waiting.
 Queue proof now shares the secret-scan runner, while full precheck collection
 overlaps smoke and guardrail execution on one runner. Both precheck results remain
-blocking. Optional priority/test runner labels separate candidate validation from
+blocking. The shared secret-scan job uses GitHub's default job timeout: full-history
+checkout, queue-evidence verification, scanning, and cleanup must all complete
+before it can report success. A short job timeout can reject a clean candidate
+even after the scanner reports no leaks.
+Optional priority/test runner labels separate candidate validation from
 background audits when operators provision that capacity; their defaults preserve
 standard runner behavior. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
@@ -76,8 +80,12 @@ Those boundaries motivate three complementary maintained scanners:
 
 The gate materializes regular files from the actual target commit and the
 proposed merge commit, scans both with the same policy and vulnerability database,
-and subtracts matching occurrences. Identities include the file, rule, and
-expression or package version. Moving lines does not create a finding; adding a
+and subtracts matching occurrences. Within each revision, source/workflow scanning
+overlaps dependency resolution and scanning; their reports remain separate and
+both must complete successfully. Revisions stay sequential to share one freshly
+downloaded vulnerability database and dependency resolution cache without races.
+Identities include the file, rule, and expression or package version.
+Moving lines does not create a finding; adding a
 second occurrence or moving vulnerable code to another file does. Existing
 findings remain visible in private reports and are not silently accepted through
 a committed baseline file. A fix followed by a later reintroduction fails against
@@ -160,8 +168,11 @@ and that the patched AnyIO pin passes. Unit regressions cover each protected
 manifest, duplicate findings, removals, required inventories, and gate exit codes.
 
 The customer confidentiality scan retains every raw redacted finding and reports
-raw, dispositioned, and unresolved counts separately. One NCore-specific source
-correction recognizes only lines 633 and 640 of the exact regular Git `100644`
+raw, dispositioned, and unresolved counts separately. Its installation omits
+application dependencies because the scanner and source-attribution verifier use
+only Python's standard library; detection and proof checks are unchanged.
+One NCore-specific source correction recognizes only lines 633 and 640 of the
+exact regular Git `100644`
 file at
 `npa/docker/workbench/ncore/notices/cpython/LICENSE.third-party`. Before those two
 locations can be dispositioned, the scanner verifies the complete notice bytes

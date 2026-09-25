@@ -18,7 +18,7 @@ npa workbench detection-training deploy --namespace workbench --gpu-type "<h100|
 ```
 
 > This pipeline reproduces LanceDB's autonomous-vehicle perception walkthrough on
-> Nebius Physical AI Workbench (adding a FiftyOne/Voxel51 review stage). See
+> Nebius Physical AI Workbench. See
 > LanceDB's [Unifying the AV ML Stack](https://www.lancedb.com/blog/unifying-the-av-ml-stack-lancedb)
 > blog and the [lancedb/training object-detection](https://github.com/lancedb/training/tree/main/object-detection)
 > reference code.
@@ -31,14 +31,18 @@ The workflow composes the BDD100K reproduction stages:
 4. Create the three failure-mode materialized views with `POST /create-mv`.
 5. Train one detector per failure-mode view with `POST /train`.
 6. Evaluate each trained detector with `POST /eval`.
-7. Launch a FiftyOne App on loopback and review it through authenticated SSH or Kubernetes port-forwarding.
+
+Workflow completion means that all three evaluation stages wrote their declared
+`metrics.json` artifacts. Human inspection is a separate post-run activity: load
+the resulting dataset and metrics into FiftyOne, then review them through an
+authenticated SSH tunnel or Kubernetes port-forward.
 
 SkyPilot 0.12.2 supports serial pipelines and all-parallel job groups, but not
 mixed dependency graphs in one YAML. This pipeline therefore serializes the
 three training tasks and three evaluation tasks. The logical DAG is still:
 
 ```text
-ingest -> CPU backfill -> CLIP backfill -> materialized views -> training x3 -> eval x3 -> FiftyOne app
+ingest -> CPU backfill -> CLIP backfill -> materialized views -> training x3 -> eval x3
 ```
 
 ## Prerequisites: Provision Infrastructure
@@ -205,7 +209,7 @@ npa/.venv/bin/python npa/scripts/run_bdd100k_pipeline.py \
   --output-json /tmp/bdd100k-validation.json
 ```
 
-Expected result: exit code `0`, all 11 tasks return `0`, no failures, and the
+Expected result: exit code `0`, all 10 tasks return `0`, no failures, and the
 recorded request order is
 `import-bdd100k -> 6x backfill -> 3x create-mv` (LanceDB) and
 `3x train -> 3x eval` (detection-training). Confirm the summary:
@@ -287,11 +291,12 @@ registry override selects the equivalent images in your namespace:
 - `ghcr.io/nebius/nebius-physical-ai/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z`
 - `ghcr.io/nebius/nebius-physical-ai/npa-detection-training:runtime-v1-20260905`
 
-The optional final FiftyOne app can still be replaced with a BYO registry image:
-
-- `<your-registry>/<namespace>/npa-fiftyone:<fiftyone-image-tag>`
-
-The final FiftyOne toolRef is a review hook, not an App deployment. Deploy or register the review workbench separately and run `npa workbench fiftyone open` to access its loopback listener through verified SSH or Kubernetes port-forwarding. Keep that command running while reviewing. The App has access to service-readable files and must not have unauthenticated public ingress.
+FiftyOne is not part of the executable workflow. For optional post-run human
+inspection, deploy or register the review workbench separately, load the
+completed run's artifacts, and run `npa workbench fiftyone open` to access its
+loopback listener through verified SSH or Kubernetes port-forwarding. Keep that
+command running while reviewing. The App has access to service-readable files
+and must not have unauthenticated public ingress.
 
 ## Output Layout
 

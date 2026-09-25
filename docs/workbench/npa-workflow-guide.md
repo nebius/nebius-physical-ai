@@ -96,7 +96,7 @@ Reference specs (all pytest-guarded):
 | `av-night-scene-hardening.yaml` | AV night-scene hardening — fan-out into two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
-| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
+| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → export → native SONIC eval |
 | `groot-1-7-finetune.yaml` | GR00T N1.7 operational pipeline: deterministic real-data split, parameterized distributed optimizer smoke, immutable checkpoint, aligned offline inference, honest learning outcome, native RRD/MCAP, S3 publication, and deployed-agent viewer verification |
 | `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool workbench specs |
 
@@ -322,7 +322,12 @@ queue, and persistent user identity. Its endpoint and process ownership are
 recorded before startup and verified again on reconnect. A conflicting endpoint,
 foreign listener, or changed executing identity blocks submission. Preserve this
 directory when reconnecting to existing jobs; an unrelated local SkyPilot API
-is never adopted or stopped as part of that isolated runtime.
+is never adopted or stopped as part of that isolated runtime. This isolates
+SkyPilot state and process ownership, not the selected provider files: the
+isolated home contains live symlinks to the operator's Nebius configuration and
+kubeconfig, so reads and writes through those paths reach the source files. Use
+dedicated task-owned provider configuration when credential helpers or other
+submit-time clients must not update shared operator files.
 
 The actual resolved output directories, file-parent prefixes, run-ledger prefix,
 and any source-staging destination receive a unique write/readback probe using
