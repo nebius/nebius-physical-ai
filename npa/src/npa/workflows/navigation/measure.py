@@ -105,7 +105,10 @@ def verify_reset(adapter, env, cases, tolerance: float) -> dict:
     headings = np.asarray([case.heading_rad for case in cases])
     error = (state["heading_rad"] - headings + np.pi) % (2 * np.pi) - np.pi
     if np.max(np.abs(error)) > tolerance:
-        raise ValueError("adapter reset did not apply heading_rad")
+        raise ValueError(
+            "adapter reset did not apply heading_rad: "
+            f"maximum wrapped error {np.max(np.abs(error)):.6g} rad"
+        )
     return state
 
 

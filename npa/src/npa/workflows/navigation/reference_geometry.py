@@ -15,10 +15,46 @@ def spawn_scene(prim_path, cfg, translation=None, orientation=None):
         ValueError: Collision geometry is missing or is not static triangle meshes.
     """
     from isaaclab.sim import spawn_from_usd
-    from pxr import Usd, UsdGeom, UsdPhysics
 
     validate_scene_frame(cfg.usd_path)
     root = spawn_from_usd(prim_path, cfg, translation, orientation)
+    owner = _physics_owner(root)
+    points, faces = _collision_triangles(root, owner)
+    _sensor_mesh(root.GetStage(), prim_path, points, faces)
+    return root
+
+
+def _physics_owner(root):
+    from pxr import Usd, UsdPhysics
+
+    scenes = [
+        prim
+        for prim in root.GetStage().Traverse(Usd.TraverseInstanceProxies())
+        if prim.IsA(UsdPhysics.Scene)
+    ]
+    owners = []
+    for prim in scenes:
+        if prim.GetPath().HasPrefix(root.GetPath()):
+            if prim.IsInstanceProxy():
+                raise ValueError("embedded physics scenes cannot be instance proxies")
+            if any(
+                child.HasAPI(UsdPhysics.CollisionAPI)
+                for child in Usd.PrimRange(prim, Usd.TraverseInstanceProxies())
+            ):
+                raise ValueError("embedded physics scene contains collision geometry")
+            prim.SetActive(False)
+        else:
+            owners.append(prim.GetPath())
+    if len(owners) != 1:
+        raise ValueError(
+            "reference requires one native physics scene outside its asset"
+        )
+    return owners[0]
+
+
+def _collision_triangles(root, owner):
+    from pxr import Usd, UsdGeom, UsdPhysics
+
     points, faces = [], []
     stage = root.GetStage()
     for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
@@ -33,11 +69,23 @@ def spawn_scene(prim_path, cfg, translation=None, orientation=None):
                 continue
             if not prim.IsA(UsdGeom.Mesh):
                 raise ValueError("reference scene colliders must be triangle meshes")
+            _bind_owner(prim, owner)
             _append_mesh(prim, points, faces)
     if not faces:
         raise ValueError("reference scene has no collision mesh triangles")
-    _sensor_mesh(stage, prim_path, points, faces)
-    return root
+    return points, faces
+
+
+def _bind_owner(prim, owner):
+    from pxr import UsdPhysics
+
+    collision = UsdPhysics.CollisionAPI(prim)
+    if prim.IsInstanceProxy():
+        targets = collision.GetSimulationOwnerRel().GetTargets()
+        if targets and targets != [owner]:
+            raise ValueError("instanced collider has a non-native physics owner")
+    else:
+        collision.CreateSimulationOwnerRel().SetTargets([owner])
 
 
 def validate_scene_frame(scene_file):

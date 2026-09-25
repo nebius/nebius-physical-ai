@@ -101,6 +101,60 @@ def test_nonmetric_source_frame_is_rejected(tmp_path):
         validate_scene_frame(str(source))
 
 
+def test_imported_physics_is_scoped_to_native_scene_without_editing_asset(tmp_path):
+    pytest.importorskip("pxr")
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from npa.workflows.navigation.reference_geometry import (
+        _collision_triangles,
+        _physics_owner,
+    )
+
+    path = tmp_path / "scene.usda"
+    source = Usd.Stage.CreateNew(str(path))
+    source.SetDefaultPrim(UsdGeom.Xform.Define(source, "/World").GetPrim())
+    UsdPhysics.Scene.Define(source, "/World/Physics")
+    mesh = UsdGeom.Mesh.Define(source, "/World/Collider")
+    mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (0, 1, 0)])
+    mesh.CreateFaceVertexCountsAttr([3])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2])
+    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim()).CreateSimulationOwnerRel().SetTargets(
+        ["/World/Physics"]
+    )
+    source.GetRootLayer().Save()
+    original = path.read_bytes()
+    stage = Usd.Stage.CreateInMemory()
+    UsdPhysics.Scene.Define(stage, "/physicsScene")
+    root = UsdGeom.Xform.Define(stage, "/World/Warehouse").GetPrim()
+    root.GetReferences().AddReference(str(path))
+    owner = _physics_owner(root)
+    points, faces = _collision_triangles(root, owner)
+    assert len(points) == 3 and faces == [0, 1, 2]
+    assert [str(p.GetPath()) for p in stage.Traverse() if p.IsA(UsdPhysics.Scene)] == [
+        "/physicsScene"
+    ]
+    collider = stage.GetPrimAtPath("/World/Warehouse/Collider")
+    assert UsdPhysics.CollisionAPI(collider).GetSimulationOwnerRel().GetTargets() == [
+        owner
+    ]
+    assert path.read_bytes() == original
+
+
+def test_physics_scene_with_geometry_cannot_be_deactivated():
+    pytest.importorskip("pxr")
+    from pxr import Usd, UsdGeom, UsdPhysics
+    from npa.workflows.navigation.reference_geometry import _physics_owner
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdPhysics.Scene.Define(stage, "/physicsScene")
+    root = UsdGeom.Xform.Define(stage, "/World/Warehouse").GetPrim()
+    UsdPhysics.Scene.Define(stage, "/World/Warehouse/Physics")
+    prim = UsdGeom.Mesh.Define(stage, "/World/Warehouse/Physics/Collider").GetPrim()
+    UsdPhysics.CollisionAPI.Apply(prim)
+    with pytest.raises(ValueError, match="contains collision geometry"):
+        _physics_owner(root)
+    assert prim.IsActive()
+
+
 def test_contact_filters_broadcast_exact_enabled_scene_colliders():
     pytest.importorskip("pxr")
     from pxr import Usd, UsdGeom, UsdPhysics

@@ -58,12 +58,30 @@ def reset_cases(env, env_ids):
         robot.data.default_joint_vel.torch[env_ids],
         env_ids=env_ids,
     )
+    _invalidate_reset_kinematics(robot.data)
     env.npa_goals[env_ids] = torch.tensor(
         [case["goal_m"] for case in selected], device=env.device
     )
     env.npa_previous_distance[env_ids] = torch.linalg.vector_norm(
         env.npa_goals[env_ids] - positions[:, :2], dim=1
     )
+
+
+def _invalidate_reset_kinematics(data):
+    # Lab 3.0.0b2.post1 pose/velocity writers leave these same-timestamp caches
+    # stale. Invalidate before command and observation resets without advancing
+    # physical time. There is no public cache-invalidation API in this pin.
+    for name in (
+        "_heading_w",
+        "_projected_gravity_b",
+        "_root_com_lin_vel_b",
+        "_root_com_ang_vel_b",
+        "_root_link_lin_vel_b",
+        "_root_link_ang_vel_b",
+        "_root_link_vel_w",
+        "_root_com_pose_w",
+    ):
+        getattr(data, name).timestamp = -1.0
 
 
 def _case_buffers(env):

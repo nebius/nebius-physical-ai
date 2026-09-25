@@ -75,11 +75,12 @@ def _physics(config, num_envs):
 
     physics = resolve_presets(config.sim.physics)
     # Coincident clones enter broadphase before peer collision filtering. Native
-    # 4,000-robot startup required 8,002,000 pairs and 44,008,192 aggregate pairs.
+    # 4,000-robot startup required 8,002,000 pairs; once that buffer was sized,
+    # the complete broadphase required 168,010,000 found/lost aggregate pairs.
     pairs = num_envs * (num_envs + 1) // 2
     requirements = {
         "gpu_found_lost_pairs_capacity": 2 * pairs,
-        "gpu_found_lost_aggregate_pairs_capacity": 12 * pairs,
+        "gpu_found_lost_aggregate_pairs_capacity": 64 * pairs,
         "gpu_total_aggregate_pairs_capacity": 2 * pairs,
     }
     for name, required in requirements.items():

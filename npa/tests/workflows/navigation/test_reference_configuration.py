@@ -84,6 +84,6 @@ def test_physics_buffers_cover_observed_coincident_population(monkeypatch):
     assert resolved == [preset]
     assert cfg.sim.physics is physics
     assert physics.gpu_found_lost_pairs_capacity > 8_002_000
-    assert physics.gpu_found_lost_aggregate_pairs_capacity > 44_008_192
+    assert physics.gpu_found_lost_aggregate_pairs_capacity > 168_010_000
     assert physics.gpu_total_aggregate_pairs_capacity > 8_002_000
     assert cfg.sim.render_interval == 40
