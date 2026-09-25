@@ -9,10 +9,37 @@ requires successful planning **and replay**, aligned finite state/action arrays
 with articulated motion, three decoded camera streams, and a fully decoded,
 nonstatic MP4 with the matching frame count. B200 is not a compatible target.
 
-Runtime delivery is implemented; the changed image and this capability still
-require exact-image and real GPU qualification. The candidate remains excluded
-from supported releases until that evidence exists. CPU refusal tests and
-synthetic HDF5/video validation tests do not establish simulator capability.
+This is an operator-run BYOF candidate, not a supported agent or CLI capability.
+The public `npa workbench byof run` command refuses RoboTwin execution, and the
+outer `npa workbench workflow submit` path remains blocked on remote-source and
+worker identity proof. The standalone script below invokes the guarded inner
+launcher from the operator host. Its results do not enable either public path
+or remove the supported-release quarantine.
+
+## Retained operator evidence and readiness
+
+The standalone operator path completed one `beat_block_hammer` episode on an
+RTX PRO 6000 using this development image:
+
+`ghcr.io/nebius/nebius-physical-ai/npa-robotwin@sha256:952ab5101953b45e4a2cfa323ac6934ad447af8443858214220cd349e5564a34`
+
+The [image build](https://github.com/nebius/nebius-physical-ai/actions/runs/35818763939)
+used source `a2fdc0b583f6201adc89b6aa15a987c32213ed84`. Retained private run
+evidence records successful planning and replay on seed 1 after attempts at
+seeds 0 and 1, 123 aligned state/action pairs, one native HDF5 episode, 124
+distinct decoded video frames, and three PNGs. Readback verified all ten
+objects, totaling 18,350,266 bytes. OIDN errors and visible grain remain in the
+record; this demonstrates functional collection and replay for one task, not
+renderer quality, policy training, or a benchmark success rate.
+
+[`byof-robotwin.readiness.json`](../../workflows/testing/byof-robotwin.readiness.json)
+tracks the checked-in normal workflow. Its runtime prerequisites remain
+`unverified` because the supported submission path has not completed that
+workload. `UNVALIDATED_PUBLICATION_TOOLS` and the release tag ending in
+`-unbuilt` continue to exclude RoboTwin from supported publication. Those
+release-policy markers do not imply that the development digest above was
+never built. New operator runs still require their own authorization, exact
+image verification, input probes, placement, storage, and cleanup checks.
 
 ## Inputs and redistribution
 
@@ -97,6 +124,13 @@ is consumed once at submission; a failed consumed attempt requires a new
 customer decision for that run and manifest. The separate CPU outer workflow
 continues to refuse an unverified remote NPA source population; this local
 entrypoint does not install NPA source in a remote controller.
+
+The host launcher removes its temporary credential copies after success and
+after any failure before it calls the inner launcher. Once launch has been
+attempted, a failure can leave remote resources in an uncertain state, so the
+owner-private recovery configuration is retained. Verify terminal state and
+owned-resource cleanup before removing that directory. The original context
+and customer receipt are never deleted by this cleanup.
 
 The installed runtime retains private compiler/simulator diagnostics under
 its owner-only `logs` directory. These logs are excluded from uploaded output.

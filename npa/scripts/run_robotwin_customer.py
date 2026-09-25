@@ -77,8 +77,50 @@ def _project_storage(project: str):
                 os.environ[name] = value
 
 
+def _launch_with_private_config(argv, authorization) -> int:
+    """Retain recovery credentials only after the launcher may have submitted."""
+    directory = Path(tempfile.mkdtemp(prefix="npa-robotwin-customer-"))
+    launch_attempted = False
+    completed = False
+    try:
+        materialized = _materialize_authorization(authorization, directory)
+        authorization = replace(
+            authorization,
+            kubeconfig_source=str(materialized.kubeconfig_path),
+            skypilot_config_source=str(materialized.skypilot_config_path),
+        )
+        with _project_storage(authorization.project):
+            launch_attempted = True
+            code = runner._run_authorized_robotwin(
+                argv[4:], authorization=authorization
+            )
+        completed = code == 0
+        return code
+    finally:
+        if completed or not launch_attempted:
+            shutil.rmtree(directory)
+        else:
+            # A failed launcher may still own remote resources. Keep the exact
+            # credentials until their terminal state and cleanup are verified.
+            print(
+                "RoboTwin recovery configuration retained in an owner-private directory.",
+                file=sys.stderr,
+            )
+
+
 def run(context: Path, decision: Path) -> int:
-    """Reuse the immutable workflow, image scan, submit, wait and cleanup path."""
+    """Validate customer inputs and run the fixed operator workload.
+
+    Args:
+        context: Owner-private runtime context.
+        decision: Customer-issued decision receipt.
+    Returns:
+        The existing BYOF launcher's exit code.
+    Raises:
+        ValueError: The workflow or runtime context is invalid.
+        CustomerDecisionError: Authorization or runtime probes refuse the run.
+        Exception: Materialization, storage, or launch fails.
+    """
     spec = load_spec(WORKFLOW)
     if not recognize_contract(spec):
         raise ValueError("RoboTwin workflow contract is unavailable")
@@ -93,31 +135,7 @@ def run(context: Path, decision: Path) -> int:
     argv = plan.steps[0].argv
     if len(plan.steps) != 1 or argv[:4] != ["npa", "workbench", "byof", "run"]:
         raise ValueError("RoboTwin workflow invocation is unavailable")
-    directory = Path(tempfile.mkdtemp(prefix="npa-robotwin-customer-"))
-    # Retain exact config bytes after failure for ownership-safe recovery.
-    # The existing launcher cancels its job and stops its owned API first.
-    completed = False
-    try:
-        materialized = _materialize_authorization(authorization, directory)
-        authorization = replace(
-            authorization,
-            kubeconfig_source=str(materialized.kubeconfig_path),
-            skypilot_config_source=str(materialized.skypilot_config_path),
-        )
-        with _project_storage(authorization.project):
-            code = runner._run_authorized_robotwin(
-                argv[4:], authorization=authorization
-            )
-        completed = code == 0
-        return code
-    finally:
-        if completed:
-            shutil.rmtree(directory)
-        else:
-            print(
-                "RoboTwin recovery configuration retained in an owner-private directory.",
-                file=sys.stderr,
-            )
+    return _launch_with_private_config(argv, authorization)
 
 
 def main(argv: list[str] | None = None) -> int:

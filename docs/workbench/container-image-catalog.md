@@ -147,15 +147,17 @@ operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
 RoboTwin 2.0 remains absent from the supported public image table. Its
 `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` release candidate stays quarantined
-pending real RTX capability. The neutral bootstrap builds from an official Ubuntu
+pending validation of the supported submission path. The neutral bootstrap builds from an official Ubuntu
 base and 84 exact snapshot packages with zero Python application distributions.
 Trusted full-SHA development publication requires complete-byte and payload
 scans, all security gates, and an anonymously verified corresponding-source annex.
 The annex covers 91 source package versions across the base and installed layers.
 Runtime vendor payload, assets, customer credentials, and outputs stay outside
-the neutral image. Customer-authorized runtime delivery is implemented; the
-changed image and actual native replay still need qualification. No real RTX
-result is claimed.
+the neutral image. A full-SHA development image was built and used for one real
+RTX operator collection/replay run; the [operator guide](byof-robotwin.md#retained-operator-evidence-and-readiness)
+records its exact digest and limited workload evidence. Public BYOF CLI execution
+and the normal-submit worker bridge remain blocked. The release tag's `-unbuilt`
+suffix is a quarantine marker, not the state of that development image.
 The independent runtime-use and
 output-rights decisions, bounded run-scoped `noncommercial` statement,
 customer-owned runtime credential/exact payload-probe contract, isolated

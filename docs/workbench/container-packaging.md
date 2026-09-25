@@ -17,11 +17,12 @@ binary packages, 63 corresponding source packages, and a complete-empty public
 Python application lock. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python
 application runtime, assets, caches, credentials, and outputs stay runtime-side.
 Customer-authorized delivery now installs the locked closure and runs the pinned
-upstream seed search/replay; exact-image and real RTX validation are still required.
+upstream seed search/replay. A retained development digest completed one RTX
+operator workload; see its [evidence scope](byof-robotwin.md#retained-operator-evidence-and-readiness).
 The trusted public development workflow requires its exact native content policy,
 complete-byte and payload scans, security gates, and public corresponding-source
-annex before push. Supported release quarantine remains until the separate real
-RTX capability passes. The bounded
+annex before push. Supported release quarantine remains while the public BYOF
+CLI and normal-submit worker bridge are blocked. The bounded
 operator statement is `noncommercial` validation/evaluation, not a general use
 grant; public artifacts use exact-revision payload probes, while gated artifacts
 require the customer's runtime-only credential and an exact entitlement probe

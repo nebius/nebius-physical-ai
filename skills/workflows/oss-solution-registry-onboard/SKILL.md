@@ -244,15 +244,19 @@ emits native RoboTwin HDF5 plus decoded MP4 evidence with hashes, sizes, action
 and frame counts, observed GPU/image identity, task success, and exit status.
 Renderer startup or task registration alone is not evidence.
 
-The Phase A image is a zero-vendor-payload public-bootstrap candidate and remains
-unbuilt/publication-quarantined. CuRobo v0.7.8 stays runtime-only and its
+The image is a zero-vendor-payload public-bootstrap candidate. A full-SHA
+development image completed one operator-run RTX collection/replay workload;
+see [the operator evidence scope](../../../docs/workbench/byof-robotwin.md#retained-operator-evidence-and-readiness).
+The public BYOF CLI and normal-submit worker bridge remain blocked, so registry
+admission and supported-release publication remain quarantined. CuRobo v0.7.8
+stays runtime-only and its
 noncommercial research/evaluation field-of-use restriction remains binding on
 use and service claims. Official assets remain a
-runtime fetch. The guarded live harness must refuse before building unless an
-authenticated customer control plane has atomically consumed a verified-issuer,
-customer/run/manifest/terms/activity/issuance/expiry/nonce/assertion-bound
-authorization. Unsigned local files and manager context are not customer
-authentication, and no provider is integrated in Phase A. The repository MIT
+runtime fetch. The standalone operator path requires an explicit customer-terminal
+decision; the existing hosted authorization boundary remains a separate interface.
+Both bind the customer, run, manifest, terms, activity, issuance, expiry, nonce,
+and assertion. Manager context alone is not customer authentication, and an
+operator result does not attest the blocked worker bridge. The repository MIT
 card classifies the two exact
 locked runtime members, `embodiments.zip` and `objects.zip`, at revision
 `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. No additional restriction was
@@ -265,8 +269,9 @@ before provisioning, with the customer's runtime-only credential when an
 artifact is gated and no generic NPA terms boolean. The harness must scan the
 pushed exact digest's rootfs and every layer for asset/cache/output bytes and
 launch only that scanned digest. Runtime fetch, a credential, a private
-registry, or a passing byte scan does not grant permission. Do not add the BYOF
-image to public GHCR or the public image catalog. Other embodiments, unselected
+registry, or a passing byte scan does not grant permission. Trusted full-SHA
+development publication is separate from admission to the supported public
+image catalog; keep the latter excluded. Other embodiments, unselected
 future task assets, the full 50-task sweep, policy training/evaluation, physical
 deployment, and their outputs remain independently deferred.
 

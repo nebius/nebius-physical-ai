@@ -22,7 +22,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
-| RoboTwin 2.0 (**runtime-fetch candidate; GPU qualification pending**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | deferred `robotwin-smoke.json` + native HDF5 + MP4 | `byof-robotwin.yaml` |
+| RoboTwin 2.0 (**operator BYOF candidate; normal submit blocked**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | operator evidence: `robotwin-smoke.json` + native HDF5 + MP4; registry admission deferred | `byof-robotwin.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
@@ -46,7 +46,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Enactic OpenArm | `openarm_mujoco_bimanual_rollout` | **accepted** | exact public development digest: 500 real `mj_step` calls, finite joint/command/energy trace, and fully decoded 100-frame H.264 render |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **accepted** | same digest on RTX PRO 6000: 64 environments × 100 real PhysX/CUDA steps with finite rewards and policy observations |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **accepted** | same digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
-| RoboTwin 2.0 | `beat_block_hammer_successful_seed_replay_collection` | **bootstrap unbuilt; qualification pending** | Phase A proves only local refusal/packaging contracts. Runtime/legal decisions, exact bytes, anonymous pull, and one STRICT-reservation-backed RTX PRO 6000 run remain pending; schema/plan checks are not execution evidence. |
+| RoboTwin 2.0 | `beat_block_hammer_successful_seed_replay_collection` | **operator evidence retained; registry admission deferred** | One RTX PRO 6000 operator run produced 123 state/action pairs and 124 decoded frames. Public CLI execution and the normal-submit worker bridge remain blocked; see [scope and digest](byof-robotwin.md#retained-operator-evidence-and-readiness). |
 | OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; exact scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` is runtime-only |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted builder regression** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
@@ -131,23 +131,21 @@ Pinned bimanual SAPIEN simulation and native data-collection candidate. The
 source is `RoboTwin-Platform/RoboTwin`
 `96c1feab536306b50c26af200044fcdf126e8904`; required runtime assets come from
 `TianxingChen/RoboTwin2.0`
-`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. A future authorized clean smoke
-would fetch and hash-check only the aggregate objects and embodiments archives,
-then use the
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. The operator workload
+fetches and hash-checks only the aggregate objects and embodiments archives,
+then uses the
 ALOHA-AgileX embodiment and custom `020_hammer` object. No asset bytes are baked
-into the image: the live harness scans the exact private image digest's rootfs
+into the image: the live harness scans the exact image digest's rootfs
 and every layer before it may submit the GPU run.
 
-The registry candidate now uses normal `npa workbench workflow submit` with a CPU-only
-outer launcher. Before any credential, image, storage, scheduler, network, or
-GPU action, the client will validate the exact immutable public workflow plus one
-owner-only manager context, converts its validated bytes to an internal value
-secret, and binds the live workload output to the manager-derived destination
-without persisting that destination or authorization evidence. The worker will
-revalidate owner-only temporary files and delegate the sole accelerator request
-to the fixed one-RTX inner profile.
-Plans and rendered YAML retain sanitized placeholders; qualification remains
-pending until that normal-submit path produces genuine private live evidence.
+The workflow describes a CPU-only outer launcher and a fixed one-RTX inner
+profile, but normal `npa workbench workflow submit` remains blocked on
+remote-source and worker identity proof. The public BYOF CLI also refuses
+RoboTwin execution. The standalone operator script can invoke the guarded inner
+launcher after authorization and input checks. Its retained GPU result is
+documented in [the operator guide](byof-robotwin.md#retained-operator-evidence-and-readiness);
+it does not establish agent or normal-submit readiness. Plans and rendered YAML
+retain sanitized placeholders, and registry admission remains deferred.
 
 | Capability | Status | Upstream basis / required evidence |
 | --- | --- | --- |
@@ -174,7 +172,7 @@ gated artifacts additionally require the customer's own runtime-only credential
 and an exact provider/artifact/revision/terms access result before provisioning.
 An explicit customer-terminal decision or the existing hosted authorization
 boundary gates runtime delivery. Supported release promotion remains
-quarantined pending exact-image and real RTX qualification, and the candidate
+quarantined pending validation of the supported submission path, and the candidate
 is absent from the supported public image table. The Hugging Face
 asset repository card classifies the exact locked `embodiments.zip` and
 `objects.zip` members at revision

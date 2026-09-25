@@ -156,6 +156,81 @@ def test_unavailable_runtime_stops_before_storage_or_launch(tmp_path, monkeypatc
     )
 
 
+def _tracked_staging(module, tmp_path, monkeypatch):
+    directories = []
+    original = module.tempfile.mkdtemp
+
+    def create(*, prefix):
+        directory = Path(original(prefix=prefix, dir=tmp_path))
+        assert directory.stat().st_mode & 0o777 == 0o700
+        directories.append(directory)
+        return str(directory)
+
+    monkeypatch.setattr(module.tempfile, "mkdtemp", create)
+    return directories
+
+
+@pytest.mark.parametrize("failure_stage", ("materialization", "storage"))
+def test_prelaunch_failure_removes_private_staging(
+    tmp_path, monkeypatch, capsys, failure_stage
+):
+    module = _load()
+    context, receipt, _ = _inputs(tmp_path)
+    monkeypatch.setattr(preflight, "RUNTIME_LOCK_STATUS", "complete")
+    monkeypatch.setattr(module, "probe_runtime_inputs", lambda *args, **kwargs: None)
+    directories = _tracked_staging(module, tmp_path, monkeypatch)
+    materialize = module._materialize_authorization
+
+    def fail_materialization(authorization, directory):
+        materialize(authorization, directory)
+        raise RuntimeError("materialization failed after writing credentials")
+
+    def storage(*args, **kwargs):
+        raise RuntimeError("project storage unavailable")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("pre-launch failure must not reach the launcher")
+
+    if failure_stage == "materialization":
+        monkeypatch.setattr(module, "_materialize_authorization", fail_materialization)
+    monkeypatch.setattr(module, "storage_env_for_project", storage)
+    monkeypatch.setattr(module.runner, "_run_authorized_robotwin", forbidden)
+    with pytest.raises(RuntimeError):
+        module.run(context, receipt)
+    assert len(directories) == 1
+    assert not directories[0].exists()
+    assert context.exists() and receipt.exists()
+    assert "recovery configuration retained" not in capsys.readouterr().err
+
+
+def test_uncertain_launch_failure_retains_private_recovery_config(
+    tmp_path, monkeypatch, capsys
+):
+    module = _load()
+    context, receipt, _ = _inputs(tmp_path)
+    monkeypatch.setattr(preflight, "RUNTIME_LOCK_STATUS", "complete")
+    monkeypatch.setattr(module, "probe_runtime_inputs", lambda *args, **kwargs: None)
+    directories = _tracked_staging(module, tmp_path, monkeypatch)
+    monkeypatch.setattr(module, "storage_env_for_project", lambda *args, **kwargs: {})
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ambient-storage-canary")
+    captured = []
+
+    def uncertain_launch(argv, *, authorization):
+        preflight._validate_materialized_config_binding(authorization)
+        captured.append(authorization)
+        raise RuntimeError("submission outcome unavailable")
+
+    monkeypatch.setattr(module.runner, "_run_authorized_robotwin", uncertain_launch)
+    with pytest.raises(RuntimeError, match="submission outcome unavailable"):
+        module.run(context, receipt)
+    assert len(directories) == len(captured) == 1
+    preflight._validate_materialized_config_binding(captured[0])
+    assert directories[0].is_dir()
+    assert context.exists() and receipt.exists()
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "ambient-storage-canary"
+    assert "recovery configuration retained" in capsys.readouterr().err
+
+
 def test_provider_exception_does_not_disclose_private_values(
     tmp_path, monkeypatch, capsys
 ):
