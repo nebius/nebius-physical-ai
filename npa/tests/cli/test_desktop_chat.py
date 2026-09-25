@@ -76,6 +76,7 @@ def chat(tmp_path):
         "/chat/api/events",
         "/chat/api/models",
         "/chat/api/workspaces",
+        "/chat/api/delivery",
     ],
 )
 def test_every_chat_route_requires_login(chat, path):
@@ -176,6 +177,91 @@ def test_send_identity_is_forwarded_and_replayed_without_a_second_turn(chat):
     sends = [call for call in rpc.call.call_args_list if call.args[0] == "turn/start"]
     assert len(sends) == 1
     assert sends[0].args[1]["clientUserMessageId"] == body["clientUserMessageId"]
+
+
+def _slow_owner(rpc, slow_method, release, sent):
+    original = rpc.call.side_effect
+
+    def call(method, params):
+        if method == "thread/turns/list":
+            return {"data": []}
+        if method == slow_method:
+            release.wait()
+        if method == "turn/start":
+            sent.set()
+            return {"accepted": True}
+        return original(method, params)
+
+    rpc.call.side_effect = call
+
+
+@pytest.mark.parametrize("slow_method", ["thread/read", "turn/start"])
+def test_async_send_acknowledges_a_slow_owner_without_replaying(chat, slow_method):
+    client, rpc = chat
+    body = {
+        "id": "existing-thread",
+        "text": "Continue",
+        "clientUserMessageId": str(uuid.uuid4()),
+    }
+    release, sent = threading.Event(), threading.Event()
+    _slow_owner(rpc, slow_method, release, sent)
+    try:
+        first = client.post(
+            "/chat/api/send", json=body, headers={"Prefer": "respond-async"}
+        )
+        assert first.status_code == 202
+        assert first.json()["state"] == "pending"
+        second = client.post(
+            "/chat/api/send", json=body, headers={"Prefer": "respond-async"}
+        )
+        assert second.json()["state"] == "pending"
+        receipt = client.get(
+            "/chat/api/delivery",
+            params={"clientUserMessageId": body["clientUserMessageId"]},
+        )
+        assert receipt.json()["state"] == "pending"
+    finally:
+        release.set()
+    assert sent.wait(5)
+    assert sum(call.args[0] == "turn/start" for call in rpc.call.call_args_list) == 1
+
+
+@pytest.mark.parametrize("identity_field", ["clientUserMessageId", "clientId"])
+@pytest.mark.parametrize("matches", [True, False])
+def test_delivery_requires_exact_user_message_identity_after_owner_timeout(
+    chat, identity_field, matches
+):
+    client, rpc = chat
+    identifier = str(uuid.uuid4())
+    body = {
+        "id": "existing-thread",
+        "text": "Continue",
+        "clientUserMessageId": identifier,
+    }
+    original = rpc.call.side_effect
+    items = [
+        {
+            "type": "userMessage",
+            identity_field: identifier if matches else str(uuid.uuid4()),
+        },
+        {"type": "commandExecution", identity_field: identifier},
+    ]
+
+    def call(method, params):
+        if method == "turn/start":
+            raise RuntimeError("Owner acknowledgment timed out")
+        if method == "thread/turns/list":
+            return {"data": [{"id": "accepted-turn", "items": items}]}
+        return original(method, params)
+
+    rpc.call.side_effect = call
+    client.post("/chat/api/send", json=body, headers={"Prefer": "respond-async"})
+    receipt = client.get(
+        "/chat/api/delivery", params={"clientUserMessageId": identifier}
+    ).json()
+    assert (receipt["state"] == "complete") is matches
+    client.post("/chat/api/send", json=body, headers={"Prefer": "respond-async"})
+    assert sum(call.args[0] == "turn/start" for call in rpc.call.call_args_list) == 1
 
 
 def test_image_only_prompt_preserves_image_input(chat):

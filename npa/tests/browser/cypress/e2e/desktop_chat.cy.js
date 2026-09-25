@@ -198,12 +198,12 @@ describe("Mobile Codex conversations", () => {
       if (identifiers.length === 1) req.reply({statusCode: 503, body: {error: "Response lost"}});
       else req.reply({accepted: true});
     }).as("sendRetry");
+    cy.intercept("GET", "/chat/api/delivery?*", {state: "missing"});
     cy.get("#prompt").type("Submit this once");
     cy.get("#send").click();
     cy.wait("@sendRetry");
-    cy.get("#notice").should("contain", "Response lost");
+    cy.get("#delivery-status").should("contain", "Checking delivery");
     cy.reload();
-    cy.get("#send").should("be.enabled").click();
     cy.wait("@sendRetry");
     cy.then(() => {
       expect(identifiers).to.have.length(2);

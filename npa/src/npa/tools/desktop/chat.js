@@ -103,18 +103,22 @@ function notice(text = "") {
   $("#notice").textContent = text;
   $("#notice").hidden = !text;
 }
-async function api(path, body) {
+async function api(path, body, headers = {}) {
   const options = { credentials: "same-origin", cache: "no-store" };
   if (body !== undefined) {
     options.method = "POST";
-    options.headers = { "Content-Type": "application/json" };
+    options.headers = { "Content-Type": "application/json", ...headers };
     options.body = JSON.stringify(body);
   }
   const response = await fetch(new URL("./api/" + path, location.href), options);
   if (response.status === 401)
-    throw new Error("Sign-in expired. Reload this page to sign in again.");
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "The request failed.");
+    throw Object.assign(new Error("Sign-in expired. Reload this page to sign in again."), {status: 401});
+  let data;
+  try { data = await response.json(); }
+  catch {
+    throw Object.assign(new Error("The connection returned an unexpected response. Checking delivery again is safe."), {status: response.ok ? 502 : response.status});
+  }
+  if (!response.ok) throw Object.assign(new Error(data.error || "The request failed."), {status: response.status});
   return data;
 }
 function closeSidebar() {
@@ -285,6 +289,7 @@ async function selectThread(id) {
     $("#title").textContent = title(state.thread);
     $("#project").textContent = state.thread.cwd || "VDI";
     await loadTurns(false, generation);
+    recoverDelivery(id).catch(error => { if (state.id === id) notice(error.message); });
   } catch (error) {
     if (generation !== state.generation) return;
     state.openFailed = true;
@@ -1223,7 +1228,48 @@ async function sendMessage(text) {
   localStorage.setItem(key, JSON.stringify(body));
   $("#clear-send").hidden = false;
   const revision = activityForChat(body.id).revision;
-  const result = await api("send", body);
+  const result = await waitForDelivery(body, true);
+  finishDelivery(body, result, revision);
+  return body;
+}
+
+const deliveryWaits = new Map();
+function waitForDelivery(body, submit = false) {
+  const id = body.clientUserMessageId;
+  if (!deliveryWaits.has(id))
+    deliveryWaits.set(id, pollDelivery(body, submit).finally(() => deliveryWaits.delete(id)));
+  return deliveryWaits.get(id);
+}
+
+async function pollDelivery(body, submit) {
+  const path = "delivery?clientUserMessageId=" + encodeURIComponent(body.clientUserMessageId);
+  while (true) {
+    try {
+      const receipt = submit ? await api("send", body, {Prefer: "respond-async"}) : await api(path);
+      if (!receipt.state && submit) return receipt;
+      submit = false;
+      if (receipt.state === "complete") return receipt.result;
+      if (receipt.state === "missing") submit = true;
+      if (receipt.state === "uncertain")
+        throw Object.assign(new Error("Delivery is unconfirmed. Check this conversation before discarding the pending send. " + (receipt.error || "")), {status: 409});
+      if (!["pending", "missing"].includes(receipt.state))
+        throw Object.assign(new Error("The service returned an invalid delivery receipt. Your draft is saved."), {status: 409});
+    } catch (error) {
+      submit = false;
+      if (error.status && error.status < 500) throw error;
+    }
+    if (state.id === body.id) {
+      $("#delivery-status").hidden = false;
+      $("#delivery-status").textContent = "Checking delivery… You can leave this page; the message keeps its original send identity.";
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+}
+
+function finishDelivery(body, result, revision) {
+  const key = "codex-send:" + body.id;
+  const pending = JSON.parse(localStorage.getItem(key) || "null");
+  if (pending?.clientUserMessageId !== body.clientUserMessageId) return;
   observeSentMessage(body, result, revision);
   if (!state.sessions.some(thread => thread.id === body.id))
     loadSessions(false, true).catch(() => {});
@@ -1234,7 +1280,22 @@ async function sendMessage(text) {
     $("#delivery-status").textContent = result.delivery?.target === "VS Code" ?
       (result.delivery.visible ? "✓ Message visible in VS Code on your Mac" : "Sent · waiting for VS Code to display the message") : "✓ Sent to this conversation";
   }
-  return body;
+}
+
+async function recoverDelivery(id) {
+  const body = JSON.parse(localStorage.getItem("codex-send:" + id) || "null");
+  if (!body || deliveryWaits.has(body.clientUserMessageId)) return;
+  const revision = activityForChat(id).revision;
+  const result = await waitForDelivery(body);
+  finishDelivery(body, result, revision);
+  if (state.id !== id) return;
+  if ($("#prompt").value === body.text) $("#prompt").value = "";
+  state.images = state.images.filter(image => !(body.images || []).includes(image));
+  renderAttachments();
+  saveDraft();
+  resizePrompt();
+  updateControls();
+  await loadTurns();
 }
 
 $("#clear-send").onclick = () => {
