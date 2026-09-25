@@ -15,6 +15,7 @@ from npa.orchestration.npa_workflow.detect import (
     is_npa_workflow_spec,
 )
 from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
@@ -1203,6 +1204,15 @@ def test_resolve_task_image_uses_override() -> None:
         options=SkypilotRenderOptions(image_overrides={"*": "cr.example/custom:1"}),
     )
     assert image == "cr.example/custom:1"
+
+
+def test_resolve_task_image_reports_quarantine_as_workflow_error() -> None:
+    with pytest.raises(NpaWorkflowError, match="no consumable public release"):
+        resolve_task_image(
+            "workbench.cosmos_evaluator.evaluate",
+            {},
+            options=SkypilotRenderOptions(),
+        )
 
 
 def test_first_party_image_rejects_uid_zero_pod_override(

@@ -726,6 +726,17 @@ def resolve_task_image(
 ) -> str:
     """Resolve a fully-qualified image ref for one planned step."""
 
+    def resolve_tool(tool: str, **kwargs: Any) -> str:
+        from npa.deploy.images import container_image_for_tool
+
+        try:
+            return container_image_for_tool(tool, **kwargs)
+        except ValueError as exc:
+            # Image quarantine is a workflow-planning failure at this boundary,
+            # not an internal exception. Keeping the domain error lets every CLI
+            # entrypoint render the same concise, actionable failure.
+            raise NpaWorkflowError(str(exc)) from exc
+
     if tool_ref in options.image_overrides:
         resolved = str(options.image_overrides[tool_ref] or "").strip()
     else:
@@ -749,8 +760,6 @@ def resolve_task_image(
                 tool = tool_image_key(tool_ref)
                 if not tool:
                     return ""
-                from npa.deploy.images import container_image_for_tool
-
                 kwargs: dict[str, Any] = {}
                 if options.registry:
                     kwargs["registry"] = options.registry
@@ -759,14 +768,12 @@ def resolve_task_image(
                         kwargs["gpu_target"] = options.gpu_target
                     if options.image_variant:
                         kwargs["image_variant"] = options.image_variant
-                resolved = container_image_for_tool(tool, **kwargs)
+                resolved = resolve_tool(tool, **kwargs)
     if resolved.startswith("tool://"):
         image_tool = resolved.removeprefix("tool://").strip()
         if not image_tool:
             raise NpaWorkflowError("tool:// image reference must name a workbench tool")
-        from npa.deploy.images import container_image_for_tool
-
-        resolved = container_image_for_tool(
+        resolved = resolve_tool(
             image_tool,
             registry=options.registry or None,
         )

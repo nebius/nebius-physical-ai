@@ -753,6 +753,32 @@ def test_plan_only_skips_runtime_only_prerequisites(
     assert "example-bucket" in result.output
 
 
+def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "quarantine-cli-contract",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            "--plan-only",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.output.startswith("Error: ")
+    assert "no consumable public release" in result.output
+    assert "operator-controlled registry/image" in result.output
+    assert not isinstance(result.exception, ValueError)
+
+
 def test_plan_only_without_source_uri_is_read_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
