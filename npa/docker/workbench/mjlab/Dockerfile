@@ -4,7 +4,7 @@ FROM python:3.12-slim-bookworm@sha256:a116514e19457bcb7af7efe9c3dd0b9b71e85b3176
 ARG NPA_SOURCE_SHA
 ARG SOURCE_DATE_EPOCH
 LABEL npa.tool="mjlab" \
-      npa.version="1.6.0-cuda12" \
+      npa.version="1.6.0-cuda13" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 ENV PYTHONUNBUFFERED=1 \
     MUJOCO_GL=egl \
@@ -28,7 +28,7 @@ RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && chmod 0440 /etc/sudoers.d/npa-runtime
 COPY docker/workbench/mjlab/requirements.lock /opt/mjlab-requirements.lock
 RUN pip install --no-cache-dir --require-hashes \
-      --extra-index-url https://download.pytorch.org/whl/cu128 \
+      --extra-index-url https://download.pytorch.org/whl/cu130 \
       -r /opt/mjlab-requirements.lock \
     && find /usr/local/lib -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test -z "$(find /usr/local/lib -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \

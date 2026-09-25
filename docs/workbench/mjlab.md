@@ -6,7 +6,7 @@ authenticated HTTP service, and declarative workflows.
 
 Use a Nebius GPU workflow for training. The image recipe is
 `npa/docker/workbench/mjlab/Dockerfile`; its pinned dependency closure includes
-PyTorch's CUDA 12.8 wheels. **The MJLab image is not a published release.** Build
+PyTorch 2.13.0's CUDA 13.0 wheels. **The MJLab image is not a published release.** Build
 an operator image and supply its complete reference in the workflow GPU resource
 profile (`image_id: docker:<your-image>`). A private operator image has passed
 native B200 and RTX PRO 6000 GPU qualification. Public promotion remains quarantined until the

@@ -88,9 +88,9 @@ def test_env_dry_run(monkeypatch):
     assert json.loads(result.stdout)["executed"] is False
 
 
-def test_invalid_paths_are_errors():
+def test_invalid_paths_are_errors(tmp_path):
     result = runner.invoke(
-        app, ["workbench", "mjlab", "train", "--output-path", "/tmp/model"]
+        app, ["workbench", "mjlab", "train", "--output-path", str(tmp_path / "model")]
     )
     assert result.exit_code == 1
     assert "s3://" in result.output

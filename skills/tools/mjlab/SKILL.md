@@ -56,9 +56,11 @@ fall back to unsafe pickle.
   outputs. H100 is the state-based workflow default; camera/video workloads need
   a compatible rendering GPU/runtime.
 - The dedicated Dockerfile has a hash-locked Linux Python 3.12 CUDA wheel closure.
-  An operator image passed native B200 and RTX PRO 6000 acceptance, including
-  eight-GPU B200 training;
-  see the guide for the exact tested artifact. It remains publication-quarantined.
+  The current recipe uses Torch 2.13.0/CUDA 13.0 and setuptools >=83 to replace
+  vulnerable dependency pins. Historical CUDA 12.8 evidence covers B200 and
+  RTX PRO 6000, including eight-GPU training; do not transfer that evidence to
+  different image bytes. See the guide for exact artifacts and measured scope.
+  The image remains publication-quarantined.
   Require an explicit operator-built image override until exact-image security,
   license and bootstrap gates pass. Do not route to SONIC's image.
 - Keep orchestration in declarative workflow YAML, not a SONIC Python runner.

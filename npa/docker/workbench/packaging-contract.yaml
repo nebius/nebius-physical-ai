@@ -480,7 +480,9 @@ images:
     notes: >-
       Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
       No checkpoints, motion datasets, credentials or populated runtime caches.
-      Operator image passed native B200 and RTX PRO 6000 train/eval/export and service qualification.
+      Historical CUDA 12.8 operator image passed native B200 and RTX PRO 6000
+      train/eval/export and service qualification. The CUDA 13.0 recipe replaces
+      vulnerable dependency pins and requires its own exact-image GPU evidence.
       Public promotion still requires built-layer license/security and bootstrap
       gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
   curobo:

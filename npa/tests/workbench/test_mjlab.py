@@ -33,7 +33,7 @@ CHECKPOINT = "s3://fixture/inputs/model.pt"
         {"num_envs": -1},
         {"gpu_count": 0},
         {"learning_rate": float("nan")},
-        {"output_path": "/tmp/output"},
+        {"output_path": "/local/output"},
         {"output_path": "https://example.org/a"},
         {"output_path": "s3://fixture/a/../b"},
         {"output_path": "s3://fixture/a?secret=x"},
@@ -234,7 +234,7 @@ def test_client_no_redirect_or_operation_timeout(monkeypatch):
     assert calls[0][1]["timeout"] is None
 
 
-def test_deploy_renders_private_service_without_credentials(monkeypatch):
+def test_deploy_renders_private_service_without_credentials(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "npa.workbench.mjlab.deployment.subprocess.run",
         lambda *a, **kw: pytest.fail("dry-run applied"),
@@ -246,8 +246,9 @@ def test_deploy_renders_private_service_without_credentials(monkeypatch):
         allowed_s3_roots=OUTPUT,
         accelerator="test-gpu",
     )
-    result = deploy(request, kubeconfig="/tmp/test kubeconfig", dry_run=True)
-    assert "--kubeconfig '/tmp/test kubeconfig'" in result["port_forward"]
+    kubeconfig = str(tmp_path / "test kubeconfig")
+    result = deploy(request, kubeconfig=kubeconfig, dry_run=True)
+    assert f"--kubeconfig '{kubeconfig}'" in result["port_forward"]
     deployment, service = result["manifest"]["items"]
     assert service["spec"]["type"] == "ClusterIP"
     container = deployment["spec"]["template"]["spec"]["containers"][0]

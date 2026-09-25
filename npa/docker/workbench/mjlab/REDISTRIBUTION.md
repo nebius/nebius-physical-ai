@@ -30,7 +30,9 @@ Source references:
 
 Regenerate the Linux Python 3.12 lock with `uv pip compile npa/pyproject.toml
 npa/docker/workbench/mjlab/build-requirements.in --extra mjlab --python-version 3.12 --python-platform x86_64-manylinux_2_28
---extra-index-url https://download.pytorch.org/whl/cu128
+--extra-index-url https://download.pytorch.org/whl/cu130
 --index-strategy unsafe-best-match --constraint npa/docker/workbench/mjlab/constraints.txt
 --generate-hashes --output-file npa/docker/workbench/mjlab/requirements.lock`.
-The constraint file pins `torch==2.11.0+cu128`.
+The constraint file pins `torch==2.13.0+cu130` and requires `setuptools>=83.0.0`.
+These replace the older CUDA 12.8 qualification image's vulnerable Torch and
+setuptools versions; historical GPU records remain bound to their original bytes.

@@ -690,7 +690,9 @@ original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
 
 MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
-publication plan. A private operator image has completed native B200 and RTX PRO 6000 GPU
-qualification; public promotion still requires the exact-image security,
+publication plan. A historical private CUDA 12.8 image completed native B200 and
+RTX PRO 6000 GPU qualification. The current CUDA 13.0 recipe replaces vulnerable
+Torch and setuptools pins and requires qualification of its own bytes;
+public promotion still requires the exact-image security,
 licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
 operator builds and workflow overrides.
