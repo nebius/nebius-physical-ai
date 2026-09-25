@@ -45,6 +45,8 @@ class DemoStageFakeS3:
         self.fail_get_bucket: str | None = None
         self.fail_put: Exception | None = None
         self.corrupt_put = False
+        self.list_calls: list[tuple[str, str, str | None]] = []
+        self.list_pages: dict[tuple[str, str, str | None], dict] = {}
 
     def add(
         self, bucket: str, key: str, body: bytes, metadata: dict[str, str] | None = None
@@ -96,12 +98,51 @@ class DemoStageFakeS3:
     def list_objects_v2(
         self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None
     ):
+        self.list_calls.append((Bucket, Prefix, ContinuationToken))
+        configured = self.list_pages.get((Bucket, Prefix, ContinuationToken))
+        if configured is not None:
+            return configured
         contents = [
             {"Key": key, "Size": len(item["Body"])}
             for (bucket, key), item in sorted(self.objects.items())
             if bucket == Bucket and key.startswith(Prefix)
         ]
         return {"IsTruncated": False, "KeyCount": len(contents), "Contents": contents}
+
+    def set_list_page(
+        self,
+        bucket: str,
+        prefix: str,
+        token: str | None,
+        page: dict,
+    ) -> None:
+        self.list_pages[(bucket, prefix, token)] = page
+
+    def set_two_page_listing(
+        self,
+        bucket: str,
+        prefix: str,
+        first_contents: list[dict],
+        second_contents: list[dict],
+        *,
+        token: str,
+    ) -> None:
+        self.set_list_page(
+            bucket,
+            prefix,
+            None,
+            {
+                "IsTruncated": True,
+                "NextContinuationToken": token,
+                "Contents": first_contents,
+            },
+        )
+        self.set_list_page(
+            bucket,
+            prefix,
+            token,
+            {"IsTruncated": False, "Contents": second_contents},
+        )
 
 
 def _access_denied() -> ClientError:
@@ -590,6 +631,118 @@ def test_prefix_artifacts_verified_by_listing(tmp_path: Path) -> None:
     s3 = DemoStageFakeS3()
     s3.add("target", "staged/dataset/a.bin", b"abc")
     s3.add("target", "staged/dataset/b.bin", b"defg")
+
+    assert (
+        verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+        == []
+    )
+
+
+def test_stage_prefix_rejects_truncated_source_page_without_token(
+    tmp_path: Path,
+) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.set_list_page(
+        "source",
+        "dataset/",
+        None,
+        {
+            "IsTruncated": True,
+            "Contents": [{"Key": "dataset/a.bin", "Size": 3}],
+        },
+    )
+
+    with pytest.raises(DemoManifestError, match="missing a continuation token"):
+        stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+    assert s3.copy_calls == []
+    assert s3.list_calls == [("source", "dataset/", None)]
+
+
+def test_stage_prefix_rejects_repeated_target_continuation_token(
+    tmp_path: Path,
+) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.add("source", "dataset/a.bin", b"abc")
+    s3.add("source", "dataset/b.bin", b"defg")
+    s3.set_list_page(
+        "target",
+        "staged/dataset/",
+        None,
+        {
+            "IsTruncated": True,
+            "NextContinuationToken": "target-page-2",
+            "Contents": [{"Key": "staged/dataset/a.bin", "Size": 3}],
+        },
+    )
+    s3.set_list_page(
+        "target",
+        "staged/dataset/",
+        "target-page-2",
+        {
+            "IsTruncated": True,
+            "NextContinuationToken": "target-page-2",
+            "Contents": [{"Key": "staged/dataset/b.bin", "Size": 4}],
+        },
+    )
+
+    with pytest.raises(DemoManifestError, match="repeated continuation token"):
+        stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+    assert s3.copy_calls == []
+
+
+def test_verify_prefix_rejects_malformed_target_pagination(tmp_path: Path) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.set_list_page(
+        "target",
+        "staged/dataset/",
+        None,
+        {
+            "IsTruncated": True,
+            "Contents": [{"Key": "staged/dataset/a.bin", "Size": 3}],
+        },
+    )
+
+    with pytest.raises(DemoManifestError, match="missing a continuation token"):
+        verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+
+def test_prefix_staging_and_verification_accept_valid_multi_page_listings(
+    tmp_path: Path,
+) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.add("source", "dataset/a.bin", b"abc")
+    s3.add("source", "dataset/b.bin", b"defg")
+    s3.set_two_page_listing(
+        "source",
+        "dataset/",
+        [{"Key": "dataset/a.bin", "Size": 3}],
+        [{"Key": "dataset/b.bin", "Size": 4}],
+        token="source-page-2",
+    )
+
+    result = stage_artifacts(
+        target_bucket="target", manifest_path=manifest, s3_client=s3
+    )
+
+    assert result == [{"name": "prefix-one", "action": "copy"}]
+    assert s3.copy_calls == [
+        ("source", "dataset/a.bin", "target", "staged/dataset/a.bin"),
+        ("source", "dataset/b.bin", "target", "staged/dataset/b.bin"),
+    ]
+
+    s3.set_two_page_listing(
+        "target",
+        "staged/dataset/",
+        [{"Key": "staged/dataset/a.bin", "Size": 3}],
+        [{"Key": "staged/dataset/b.bin", "Size": 4}],
+        token="target-page-2",
+    )
 
     assert (
         verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
