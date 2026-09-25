@@ -487,6 +487,79 @@ def test_inventory_prefers_gfd_product_over_same_node_provider_alias() -> None:
     assert inventory.to_dict()["accelerator_product"] == "NVIDIA-RTX-PRO-6000"
 
 
+def _inventory_with_node_spec(spec: dict[str, object]) -> KubernetesGpuInventory:
+    nodes = {
+        "items": [
+            {
+                "metadata": {"name": "gpu-node"},
+                "spec": spec,
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "capacity": {"nvidia.com/gpu": "2"},
+                    "allocatable": {"nvidia.com/gpu": "2"},
+                },
+            }
+        ]
+    }
+
+    def runner(cmd, **_kwargs):  # noqa: ANN001 - test stub
+        payload = {"items": []} if "pods" in cmd else nodes
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    return discover_kubernetes_gpu_inventory(context="ctx", runner=runner)
+
+
+@pytest.mark.parametrize(
+    ("spec", "schedulable", "eligible_nodes", "capacity", "exclusion"),
+    [
+        ({}, True, 1, 2, ""),
+        ({"unschedulable": False}, True, 1, 2, ""),
+        (
+            {"unschedulable": True},
+            False,
+            0,
+            0,
+            "cordoned-or-unsupported-taint",
+        ),
+    ],
+)
+def test_inventory_accepts_only_absent_or_exact_boolean_cordon_state(
+    spec: dict[str, object],
+    schedulable: bool,
+    eligible_nodes: int,
+    capacity: int,
+    exclusion: str,
+) -> None:
+    inventory = _inventory_with_node_spec(spec)
+
+    assert inventory.ready_nodes == 1
+    assert inventory.eligible_gpu_nodes == eligible_nodes
+    assert inventory.capacity == capacity
+    assert inventory.allocatable == capacity
+    assert inventory.nodes[0].schedulable is schedulable
+    assert inventory.nodes[0].capacity == 2
+    assert inventory.nodes[0].allocatable == 2
+    assert inventory.nodes[0].exclusion == exclusion
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    ["false", 0, None, [], {}],
+    ids=["string", "integer", "null", "list", "mapping"],
+)
+def test_inventory_rejects_malformed_cordon_state(malformed: object) -> None:
+    with pytest.raises(
+        KubernetesGpuCatalogError,
+        match=(
+            r"node 'gpu-node'.*spec\.unschedulable.*exact boolean.*"
+            "refusing to infer node schedulability"
+        ),
+    ):
+        _inventory_with_node_spec({"unschedulable": malformed})
+
+
 def test_unknown_gpu_is_never_fuzzy_labelled() -> None:
     inventory = KubernetesGpuInventory(
         context="ctx",
