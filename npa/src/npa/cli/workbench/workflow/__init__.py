@@ -5027,6 +5027,37 @@ def _reconcile_runtime_completion(
     return ""
 
 
+def _supervisor_status_view(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Project older terminal records without rewriting their durable evidence."""
+    from npa.orchestration.npa_workflow.runtime import terminal_recovery_guidance
+
+    view = {
+        **snapshot,
+        "observation_scope": "durable_supervisor_snapshot",
+        "current_artifact_state_verified": False,
+    }
+    attempt = snapshot.get("attempt")
+    recovery = snapshot.get("recovery")
+    if (
+        snapshot.get("phase") != "attempt_terminal"
+        or not isinstance(attempt, dict)
+        or not isinstance(recovery, dict)
+        or recovery.get("action") != "adopt_exact_attempt"
+    ):
+        return view
+    correction = terminal_recovery_guidance(attempt)
+    if correction:
+        view["attempt"] = {**attempt, **correction}
+        view["classification"] = correction["error_category"]
+        view["recovery"] = {
+            **recovery,
+            "action": correction["recovery_decision"],
+            "remediation": correction["operator_remedy"],
+        }
+        view["recovery_guidance_basis"] = "recorded_terminal_attempt"
+    return view
+
+
 def _durable_workflow_status(
     run_id: str,
     *,
@@ -5435,11 +5466,7 @@ def _durable_workflow_status(
                 run_id=run_manifest.run_id or _display_run_id(run_id)
             )
             if latest_supervision is not None:
-                run_payload["supervisor"] = {
-                    **latest_supervision,
-                    "observation_scope": "durable_supervisor_snapshot",
-                    "current_artifact_state_verified": False,
-                }
+                run_payload["supervisor"] = _supervisor_status_view(latest_supervision)
         except Exception as exc:  # noqa: BLE001 - status remains useful without enrichment
             run_payload["supervisor"] = {
                 "state": "evidence_unavailable",

@@ -505,24 +505,50 @@ class WaveAttempt:
         }
 
 
+def terminal_recovery_guidance(attempt: Mapping[str, Any]) -> dict[str, str]:
+    """Correct live-only advice using a recorded attempt's terminal outcome.
+
+    Args:
+        attempt: Runtime attempt fields, including its output-validated status.
+    Returns:
+        Replacement recovery fields, or an empty mapping when no correction applies.
+    Raises:
+        None.
+    """
+    if attempt.get("recovery_decision") != "adopt_exact_attempt":
+        return {}
+    if attempt.get("status") == "succeeded":
+        return {
+            "recovery_decision": "reuse_completed_wave",
+            "error_category": "none",
+            "operator_remedy": "The wave completed and its declared outputs were validated.",
+        }
+    sky_status = str(attempt.get("sky_status") or "")
+    if attempt.get("status") != "failed" or not is_terminal(sky_status):
+        return {}
+    category = str(attempt.get("error_category") or "none")
+    return {
+        "recovery_decision": "terminalize",
+        "error_category": "unknown" if category == "none" else category,
+        "operator_remedy": (
+            f"The managed job is terminal ({sky_status}). "
+            "Inspect the recorded error and artifacts before retrying."
+        ),
+    }
+
+
 def _refresh_terminal_recovery(attempt: WaveAttempt) -> None:
     """Replace live-only guidance after the same attempt reaches a terminal state."""
-    if attempt.recovery_decision != "adopt_exact_attempt":
-        return
-    if attempt.status == "succeeded":
-        attempt.recovery_decision = "reuse_completed_wave"
-        attempt.error_category = "none"
-        attempt.operator_remedy = (
-            "The wave completed and its declared outputs were validated."
-        )
-    elif attempt.status == "failed" and is_terminal(attempt.sky_status):
-        attempt.recovery_decision = "terminalize"
-        if attempt.error_category in {"", "none"}:
-            attempt.error_category = "unknown"
-        attempt.operator_remedy = (
-            f"The managed job is terminal ({attempt.sky_status}). "
-            "Inspect the recorded error and artifacts before retrying."
-        )
+    fields = terminal_recovery_guidance(
+        {
+            "status": attempt.status,
+            "sky_status": attempt.sky_status,
+            "recovery_decision": attempt.recovery_decision,
+            "error_category": attempt.error_category,
+        }
+    )
+    for name, value in fields.items():
+        setattr(attempt, name, value)
 
 
 def _claims_for_steps(steps: Sequence[PlanStep]) -> tuple[str, ...]:
@@ -3099,5 +3125,6 @@ __all__ = [
     "run_workflow_runtime",
     "s3_trigger_waiter",
     "secret_env_names",
+    "terminal_recovery_guidance",
     "wave_key",
 ]

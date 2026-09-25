@@ -133,6 +133,74 @@ def test_supervisor_snapshot_does_not_inherit_live_status_trust(
     latest.assert_called_once_with(run_id="run-test")
 
 
+def _legacy_terminal_snapshot(status, sky_status, category):
+    return {
+        "recorded_at": "2000-01-01T00:00:00Z",
+        "phase": "attempt_terminal",
+        "classification": category,
+        "attempt": {
+            "status": status,
+            "sky_status": sky_status,
+            "error_category": category,
+            "recovery_decision": "adopt_exact_attempt",
+            "operator_remedy": "Continue observing the exact recorded provider job.",
+        },
+        "recovery": {"action": "adopt_exact_attempt", "remediation": "keep observing"},
+    }
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize(
+    "status,sky_status,category,expected_action,expected_category",
+    [
+        ("failed", "FAILED", "none", "terminalize", "unknown"),
+        (
+            "failed",
+            "FAILED_SETUP",
+            "actionable_configuration",
+            "terminalize",
+            "actionable_configuration",
+        ),
+        ("failed", "CANCELLED", "none", "terminalize", "unknown"),
+        ("failed", "SUCCEEDED", "payload", "terminalize", "payload"),
+        ("succeeded", "SUCCEEDED", "none", "reuse_completed_wave", "none"),
+        ("failed", "RUNNING", "payload", "adopt_exact_attempt", "payload"),
+    ],
+)
+def test_old_terminal_snapshot_replaces_only_live_recovery_advice(
+    observed_status,
+    mocker,
+    cached,
+    status,
+    sky_status,
+    category,
+    expected_action,
+    expected_category,
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [_wave("train", "12", status)]
+    snapshot = _legacy_terminal_snapshot(status, sky_status, category)
+    original = json.dumps(snapshot, sort_keys=True)
+    mocker.patch(
+        "npa.orchestration.npa_workflow.supervisor.SupervisorLedger.latest",
+        return_value=snapshot,
+    )
+
+    view = _durable_workflow_status("run-test", cached=cached)["supervisor"]
+
+    assert view["recovery"]["action"] == expected_action
+    assert view["classification"] == expected_category
+    assert view["attempt"]["recovery_decision"] == expected_action
+    assert view["current_artifact_state_verified"] is False
+    assert view["recorded_at"] == snapshot["recorded_at"]
+    assert json.dumps(snapshot, sort_keys=True) == original
+    if expected_action != "adopt_exact_attempt":
+        assert view["recovery_guidance_basis"] == "recorded_terminal_attempt"
+        assert view["recovery"]["remediation"] == view["attempt"]["operator_remedy"]
+    else:
+        assert "recovery_guidance_basis" not in view
+
+
 def test_status_probes_only_claims_attributed_to_each_managed_job(
     observed_status, mocker
 ):

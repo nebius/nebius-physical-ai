@@ -205,6 +205,11 @@ beside an earlier supervisor observation that outputs were absent. The top-level
 `automation_may_trust_state` flag covers the current lifecycle-state query and
 does not make those historical artifact observations current.
 
+Status also corrects live-job adoption advice in terminal snapshots written by
+older drivers. Such views identify `recovery_guidance_basis:
+recorded_terminal_attempt`; they do not rewrite the stored event or verify
+current artifact availability. Other recovery decisions remain unchanged.
+
 When the driver records a terminal attempt, it replaces earlier live-job adoption
 advice with the terminal outcome. A failed job directs the operator to its error
 and artifacts; a completed wave is reusable only after its declared outputs pass
