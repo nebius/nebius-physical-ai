@@ -913,6 +913,123 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert meta["effective_guidance"] == 2.25
 
 
+@pytest.mark.parametrize(
+    ("provenance", "expected_conditioning", "expected_guardrails"),
+    [
+        ({}, False, True),
+        (
+            {"input_conditioned": False, "content_guardrails_enabled": False},
+            False,
+            False,
+        ),
+        (
+            {"input_conditioned": True, "content_guardrails_enabled": True},
+            True,
+            True,
+        ),
+    ],
+)
+def test_publish_transfer_clip_preserves_exact_provenance_booleans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provenance: dict[str, bool],
+    expected_conditioning: bool,
+    expected_guardrails: bool,
+) -> None:
+    video = tmp_path / "out.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(tx, "extract_frames", lambda *_args, **_kwargs: [])
+    metadata: list[dict[str, object]] = []
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            if uri.endswith("metadata.json"):
+                metadata.append(json.loads(Path(local).read_text(encoding="utf-8")))
+            return uri
+
+    clip = tx.publish_transfer_clip(
+        {"video_path": str(video), **provenance},
+        "s3://bucket/run/augment/",
+        storage_client=FakeStorage(),
+    )
+
+    assert clip["input_conditioned"] is expected_conditioning
+    assert clip["content_guardrails_enabled"] is expected_guardrails
+    assert metadata[-1]["input_conditioned"] is expected_conditioning
+    assert metadata[-1]["content_guardrails_enabled"] is expected_guardrails
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+@pytest.mark.parametrize("malformed", ["false", 0, 1.0])
+def test_publish_transfer_clip_rejects_malformed_provenance_before_upload(
+    field: str, malformed: object
+) -> None:
+    uploads: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.publish_transfer_clip(
+            {field: malformed},
+            "s3://bucket/run/augment/",
+            storage_client=FakeStorage(),
+        )
+
+    assert uploads == []
+
+
+@pytest.mark.parametrize(
+    ("provenance", "expected_conditioning", "expected_guardrails"),
+    [
+        ({}, False, True),
+        (
+            {"input_conditioned": False, "content_guardrails_enabled": False},
+            False,
+            False,
+        ),
+        (
+            {"input_conditioned": True, "content_guardrails_enabled": True},
+            True,
+            True,
+        ),
+    ],
+)
+def test_build_run_manifest_preserves_exact_provenance_booleans(
+    provenance: dict[str, bool],
+    expected_conditioning: bool,
+    expected_guardrails: bool,
+) -> None:
+    manifest = tx.build_run_manifest([{"clip": "aug-0", **provenance}])
+
+    assert manifest["input_conditioned"] is expected_conditioning
+    assert manifest["content_guardrails_enabled"] is expected_guardrails
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+@pytest.mark.parametrize("malformed", ["false", 0, 1.0])
+def test_write_run_manifest_rejects_malformed_provenance_before_upload(
+    field: str, malformed: object
+) -> None:
+    uploads: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.write_run_manifest(
+            [{"clip": "aug-0", field: malformed}],
+            "s3://bucket/run/augment/",
+            storage_client=FakeStorage(),
+        )
+
+    assert uploads == []
+
+
 def test_multi_variant_publish_writes_one_clip_per_combo(
     tmp_path: Path, monkeypatch
 ) -> None:
