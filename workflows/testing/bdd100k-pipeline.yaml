@@ -5,7 +5,8 @@ metadata:
   name: bdd100k-pipeline
   description: >
     BDD100K failure-mode pipeline — LanceDB ingest, UDF backfill, materialized
-    views, per-mode detector training and evaluation, FiftyOne review.
+    views, and per-mode detector training and evaluation. The workflow completes
+    when detector metrics are written; inspect them in FiftyOne after the run.
 
 config:
   bucket: example-bucket
@@ -144,7 +145,7 @@ states:
       - eval-rider
       - eval-nighttime
       - eval-distant
-    next: review
+    terminal: true
 
   eval-rider:
     description: Evaluate the rider model.
@@ -169,10 +170,3 @@ states:
     outputs:
       - uri: "{{config.distant_eval_uri}}metrics.json"
         schema: npa.detection_training.metrics.v1
-
-  review:
-    description: Launch FiftyOne for human review of pipeline artifacts.
-    needs: [evaluate-models]
-    toolRef: workbench.fiftyone.launch_app
-    resources: cpu
-    terminal: true

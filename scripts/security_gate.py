@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from security_dependencies import scan_dependencies
@@ -136,8 +137,14 @@ def _scan(root: Path, output: Path, cache: Path) -> list[dict]:
             raise ValueError(
                 f"Required application dependency manifest is missing: {manifest}"
             )
-    findings = scan_source(root, output / "source")
-    findings.extend(scan_dependencies(root, output / "dependencies", cache))
+    # Independent tools read one immutable snapshot and write separate reports.
+    # Revisions remain sequential so resolution and Trivy share one database safely.
+    with ThreadPoolExecutor(max_workers=2) as scans:
+        source = scans.submit(scan_source, root, output / "source")
+        dependencies = scans.submit(
+            scan_dependencies, root, output / "dependencies", cache
+        )
+        findings = source.result() + dependencies.result()
     (output / "findings.json").write_text(json.dumps(findings, indent=2))
     return findings
 
