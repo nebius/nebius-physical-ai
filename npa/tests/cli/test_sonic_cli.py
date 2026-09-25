@@ -310,7 +310,7 @@ def test_sonic_eval_container_render_rejects_h100_misroute(tmp_path) -> None:
         ["--container-image-variant", "mujoco"],
     ],
 )
-def test_sonic_onnx_eval_rejects_mujoco_image_before_evaluation(
+def test_sonic_onnx_eval_quarantine_precedes_variant_selection(
     mocker, selection
 ) -> None:
     evaluate = mocker.patch("npa.cli.workbench.sonic.eval.evaluate_onnx_policy")
@@ -328,16 +328,16 @@ def test_sonic_onnx_eval_rejects_mujoco_image_before_evaluation(
         ],
     )
     assert result.exit_code == 1
-    assert "isaac-render" in result.output
-    assert "mujoco" in result.output
+    assert "quarantined" in result.output
     evaluate.assert_not_called()
 
 
-def test_sonic_onnx_eval_resolves_render_manifest_image(mocker) -> None:
+def test_sonic_onnx_eval_accepts_explicit_operator_image(mocker) -> None:
     evaluate = mocker.patch(
         "npa.cli.workbench.sonic.eval.evaluate_onnx_policy",
         return_value={"status": "completed"},
     )
+    operator_image = "registry.example.invalid/npa-sonic:reviewed"
     result = runner.invoke(
         app,
         [
@@ -348,16 +348,14 @@ def test_sonic_onnx_eval_resolves_render_manifest_image(mocker) -> None:
             "policy.onnx",
             "--backend",
             "container",
-            "--container-gpu-target",
-            "gpu-rtx6000",
+            "--container-image",
+            operator_image,
             "--output-format",
             "json",
         ],
     )
     assert result.exit_code == 0, result.output
-    assert evaluate.call_args.kwargs["container_image"] == container_image_for_tool(
-        "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
-    )
+    assert evaluate.call_args.kwargs["container_image"] == operator_image
 
 
 def test_sonic_eval_container_render_allows_rt_core_target(mocker, tmp_path) -> None:
@@ -976,7 +974,8 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
     assert "ARG BASE_IMAGE=" in dockerfile
-    assert "FROM --platform=" not in dockerfile
+    assert "ARG NPA_BUILD_PLATFORM=linux/amd64" in dockerfile
+    assert "FROM --platform=${NPA_BUILD_PLATFORM} ${BASE_IMAGE}" in dockerfile
     # Flipped 0 -> 1: with torch installed by us rather than inherited from the
     # nvcr.io base, a Blackwell-capable build is something we can require, not hope for.
     assert "ARG REQUIRE_TORCH_SM120=1" in dockerfile
