@@ -50,7 +50,7 @@ def _call(
         if isinstance(detail, dict):
             raise AntiochOperationError(
                 str(detail.get("message") or "Antioch Workbench request failed"),
-                retryable=bool(detail.get("retryable")),
+                retryable=detail.get("retryable") is True,
                 error_type=str(detail.get("type") or "service_error"),
             )
         response.raise_for_status()
