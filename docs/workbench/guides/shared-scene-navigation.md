@@ -5,7 +5,7 @@ built-in public reference or an operator's registered Isaac Lab navigation task:
 prepare inputs → native RSL-RL train → reload checkpoint and evaluate held-out
 goals. It requires a self-contained collision USDZ and explicit reset/probe cases.
 The public bundle builder supplies a cluttered warehouse and reviewed native task;
-custom robots retain the BYOF adapter boundary. **GPU acceptance has not been run.**
+custom robots retain the BYOF adapter boundary. **Native GPU qualification is pending.**
 Proprietary robot and scene integration remains operator input.
 
 The reference extends the pinned public
@@ -29,6 +29,14 @@ and the reviewed Workbench source overlay. `source_bundle_sha256` binds all
 installed navigation Python module names and bytes before adapter import; it is
 distinct from the image digest and is not a hash of the entire overlay archive.
 Use the same source checkout to build inputs and stage runtime source.
+
+The public recipe also pins `reference_controller_sha256` for the separate
+runtime-fetched locomotion controller. The action factory verifies downloaded
+bytes before any TorchScript decoding, supplies those exact verified bytes to
+the upstream action implementation, and records the loaded identity. Both
+comparison arms retain this pin independently of the high-level checkpoint.
+The [attribution record](shared-scene-navigation.NOTICE.txt) lists its vendor URL
+and public reference digest; weights are not included in this repository.
 
 ```bash
 npa/.venv/bin/python -m npa.workflows.navigation.reference_bundle \
@@ -170,6 +178,7 @@ or overlapping reset cases are rejected.
 | `camera` | Required only for RGB-D, described below |
 | `initial_checkpoint` | Optional contained `.pt` file and SHA-256 for actual native resume or independent checkpoint evaluation |
 | `source_bundle_sha256` | Required for the built-in public reference: digest of all installed navigation modules, checked before import; optional for image-owned external adapters |
+| `reference_controller_sha256` | Required only for the built-in reference: exact runtime-fetched low-level controller bytes, verified before native loading |
 
 Each case contains `id`, nonnegative integer `seed`, `position_m: [x,y,z]`,
 `heading_rad` and `goal_m: [x,y]`, all finite world-frame SI values. Episode

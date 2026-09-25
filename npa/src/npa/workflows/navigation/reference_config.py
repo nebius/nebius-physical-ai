@@ -15,10 +15,7 @@ from isaaclab_tasks.manager_based.navigation.config.anymal_c.navigation_env_cfg 
 )
 
 from npa.workflows.navigation import reference_mdp as mdp
-from npa.workflows.navigation.reference_geometry import (
-    spawn_scene,
-    validate_scene_frame,
-)
+from npa.workflows.navigation.reference_geometry import spawn_scene
 
 
 @configclass
@@ -36,6 +33,7 @@ class ReferenceConfig(NavigationEnvCfg):
     npa_cases: list = []
     npa_training: bool = True
     npa_scene_prim: str = "/World/Warehouse"
+    npa_reference_controller_sha256: str = ""
 
 
 def build_config(scene_file, scene_prim, num_envs, cases, training):
@@ -53,7 +51,6 @@ def build_config(scene_file, scene_prim, num_envs, cases, training):
         ValueError: Native versions are outside the supported reference contract.
     """
     _register()
-    validate_scene_frame(scene_file)
     config = ReferenceConfig()
     config.npa_cases, config.npa_training = cases, training
     config.npa_scene_prim = scene_prim
@@ -130,6 +127,9 @@ def _support_sensor(config, scene_prim):
 
 
 def _task(config):
+    from npa.workflows.navigation.reference_controller import create_action
+
+    config.actions.pre_trained_policy_action.class_type = create_action
     config.events.reset_base = EventTermCfg(func=mdp.reset_cases, mode="reset")
     config.commands.pose_command.class_type = mdp.FixedGoalCommand
     config.commands.pose_command.debug_vis = False

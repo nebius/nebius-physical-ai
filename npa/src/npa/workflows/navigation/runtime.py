@@ -112,6 +112,10 @@ def _verify_training_binding(training, recipe, source):
         )
     if training.get("runtime", {}).get("scene_sha256") != recipe.scene_sha256:
         raise ValueError("training evidence does not bind the evaluated scene")
+    if recipe.reference_controller_sha256 is not None:
+        controller = training.get("runtime", {}).get("reference_controller", {})
+        if controller.get("sha256") != recipe.reference_controller_sha256:
+            raise ValueError("training evidence does not bind the reference controller")
 
 
 def _case_digest(recipe):
@@ -192,6 +196,8 @@ def _probes(adapter, env, wrapped, recipe, output):
 def _execute(args, recipe, adapter, config):
     import gymnasium as gym
 
+    # Import Kit's USD only after AppLauncher has initialized its native libraries.
+    validate_scene_package(args.input_path / recipe.scene_file)
     env = gym.make(recipe.task, cfg=config)
     try:
         runtime = inspect_scene(env, recipe, args.input_path / recipe.scene_file)
@@ -274,7 +280,6 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _arguments(argv)
     recipe = read_recipe(args.input_path)
-    validate_scene_package(args.input_path / recipe.scene_file)
     adapter = task_adapter(recipe)
     training = args.stage == "train"
     config = _configure_environment(adapter, recipe, args.input_path, training)
@@ -305,6 +310,8 @@ def _configure_environment(adapter, recipe, source, training):
     # Kit detection must inspect only selected backends, not unused alternatives.
     config = resolve_presets(config)
     config.seed = cases[0].seed
+    if recipe.reference_controller_sha256 is not None:
+        config.npa_reference_controller_sha256 = recipe.reference_controller_sha256
     return config
 
 

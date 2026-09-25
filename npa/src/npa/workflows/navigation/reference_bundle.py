@@ -70,6 +70,7 @@ def _scene_inputs(output, scene_file, cases_file, num_envs):
 
 def _recipe(output, image, iterations, episode_steps, num_envs):
     from npa.workflows.navigation.native import source_bundle_digest
+    from npa.workflows.navigation.reference_controller import CONTROLLER_SHA256
 
     return {
         "schema_version": "npa.navigation.recipe.v1",
@@ -77,6 +78,7 @@ def _recipe(output, image, iterations, episode_steps, num_envs):
         "adapter_module": "npa.workflows.navigation.reference",
         "adapter_sha256": file_sha256(Path(__file__).with_name("reference.py")),
         "source_bundle_sha256": source_bundle_digest(),
+        "reference_controller_sha256": CONTROLLER_SHA256,
         "image": image,
         "scene_file": "scene.usdz",
         "scene_sha256": file_sha256(output / "scene.usdz"),

@@ -23,3 +23,10 @@ their separate upstream terms. They are fetched into the operator-owned runtime
 and cache through the existing Isaac procedure, not redistributed in this PR's
 source or a new image. Source licensing alone does not grant rights to those
 asset payloads or authorize publication of derived outputs.
+
+The public reference fetches the upstream Isaac 6.0 blind locomotion controller:
+https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/IsaacLab/Policies/ANYmal-C/Blind/policy.pt
+Reference SHA-256: 8cb6cfe8987bbd8da5da4031aa3ffee9e09cc644d140febd25371b84a97ac555
+Reference size: 174075 bytes. Recipes seal the controller digest independently
+of the learned high-level checkpoint. Native loading verifies the exact fetched
+bytes before decoding. This attribution record contains no controller payload.

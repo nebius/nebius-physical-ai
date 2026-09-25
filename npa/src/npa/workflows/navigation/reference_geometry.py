@@ -17,6 +17,7 @@ def spawn_scene(prim_path, cfg, translation=None, orientation=None):
     from isaaclab.sim import spawn_from_usd
     from pxr import Usd, UsdGeom, UsdPhysics
 
+    validate_scene_frame(cfg.usd_path)
     root = spawn_from_usd(prim_path, cfg, translation, orientation)
     points, faces = [], []
     stage = root.GetStage()

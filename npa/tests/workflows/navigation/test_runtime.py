@@ -55,7 +55,11 @@ def test_launcher_receives_resolved_backends_and_sealed_seed(
         "_arguments",
         lambda _: SimpleNamespace(stage=stage, input_path=source, output_path=output),
     )
-    monkeypatch.setattr(runtime, "validate_scene_package", lambda _: None)
+    monkeypatch.setattr(
+        runtime,
+        "validate_scene_package",
+        lambda _: pytest.fail("USD must not load before Kit starts"),
+    )
     monkeypatch.setattr(runtime, "read_recipe", lambda _: recipe)
     monkeypatch.setattr(
         runtime,
@@ -67,6 +71,21 @@ def test_launcher_receives_resolved_backends_and_sealed_seed(
     )
     assert runtime.main([]) == 0
     assert events == [cases[0].seed, "resolved", "Kit", resolved]
+
+
+def test_native_execution_validates_usd_before_creating_scene(
+    recipe, tmp_path, monkeypatch
+):
+    validated = []
+
+    def make(*args, **kwargs):
+        assert validated == [tmp_path / recipe.scene_file]
+        raise RuntimeError("native scene creation reached")
+
+    monkeypatch.setitem(sys.modules, "gymnasium", SimpleNamespace(make=make))
+    monkeypatch.setattr(runtime, "validate_scene_package", validated.append)
+    with pytest.raises(RuntimeError, match="native scene creation reached"):
+        runtime._execute(SimpleNamespace(input_path=tmp_path), recipe, None, None)
 
 
 def test_measurements_do_not_alias_mutating_simulator_buffers():

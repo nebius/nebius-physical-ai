@@ -132,6 +132,16 @@ class Recipe(BaseModel):
     probe: Probe
     initial_checkpoint: InitialCheckpoint | None = None
     source_bundle_sha256: Digest | None = None
+    reference_controller_sha256: Digest | None = None
+
+    @model_validator(mode="after")
+    def _reference_controller(self):
+        builtin = self.adapter_module == "npa.workflows.navigation.reference"
+        if builtin != (self.reference_controller_sha256 is not None):
+            raise ValueError(
+                "only the built-in reference requires reference_controller_sha256"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_contract(self):

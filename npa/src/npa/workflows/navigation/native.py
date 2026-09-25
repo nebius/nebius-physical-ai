@@ -132,6 +132,13 @@ def inspect_scene(env, recipe, scene_file: Path) -> dict:
         raise ValueError("native Isaac robot count or CUDA device differs from recipe")
     validate_render_gpu_target(torch.cuda.get_device_name(), what="Isaac navigation")
     _verify_scene_reference(native.sim.stage, recipe, scene_file)
+    return _runtime_inventory(native, recipe)
+
+
+def _runtime_inventory(native, recipe):
+    import torch
+    from npa.workflows.navigation.reference_controller import controller_evidence
+
     return {
         "isaaclab": version("isaaclab"),
         "isaacsim": version("isaacsim"),
@@ -147,6 +154,7 @@ def inspect_scene(env, recipe, scene_file: Path) -> dict:
         "scene_sha256": recipe.scene_sha256,
         "scene_prim": recipe.scene_prim,
         "sensors": _inspect_sensors(native.scene.sensors, recipe),
+        "reference_controller": controller_evidence(native, recipe),
     }
 
 
