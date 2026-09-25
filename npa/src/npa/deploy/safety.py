@@ -119,7 +119,11 @@ def analyze_terraform_plan(
         return PlanAnalysis(decision=PlanDecision.NO_CHANGES)
 
     if destroy_count <= 0:
-        decision = PlanDecision.IN_PLACE_UPDATE if existing_state else PlanDecision.FRESH_CREATE
+        decision = (
+            PlanDecision.IN_PLACE_UPDATE
+            if existing_state
+            else PlanDecision.FRESH_CREATE
+        )
         return PlanAnalysis(
             decision=decision,
             add_count=add_count,
@@ -148,7 +152,8 @@ def analyze_terraform_plan(
 
 def format_replacement_required_error(analysis: PlanAnalysis) -> str:
     resources = ", ".join(
-        f"{change.address} ({change.reason})" for change in analysis.replacement_resources
+        f"{change.address} ({change.reason})"
+        for change in analysis.replacement_resources
     )
     return (
         "Terraform plan would replace or destroy managed infrastructure: "

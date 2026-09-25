@@ -24,7 +24,11 @@ EXPECTED_DELIVERY = "operator-owned-runtime-cache"
 EXPECTED_CUSTOMER_GATE = "operator-owned-official-access-after-notice-and-acceptance"
 EXPECTED_ACCEPTANCE_RECORD = "customer-run-external"
 EXPECTED_ORIGINS = frozenset(
-    {"https://codeload.github.com", "https://files.pythonhosted.org", "https://github.com"}
+    {
+        "https://codeload.github.com",
+        "https://files.pythonhosted.org",
+        "https://github.com",
+    }
 )
 EXPECTED_EXCLUDED = frozenset(
     {
@@ -64,7 +68,9 @@ def _read_json(path: Path, label: str) -> tuple[dict[str, Any], bytes]:
                 or opened.st_uid not in {0, os.geteuid()}
                 or stat.S_IMODE(opened.st_mode) & 0o022
             ):
-                raise RuntimeFetchContractError(f"{label} is not a trusted stable regular file")
+                raise RuntimeFetchContractError(
+                    f"{label} is not a trusted stable regular file"
+                )
             raw = stream.read()
             after_descriptor = os.fstat(stream.fileno())
         after = path.lstat()
@@ -111,10 +117,17 @@ def _origin(url: Any, label: str) -> str:
     return f"https://{host}"
 
 
-def _validate_runtime_lock(lock: dict[str, Any], raw: bytes, manifest: dict[str, Any]) -> None:
-    _require(lock.get("schema") == RUNTIME_LOCK_SCHEMA, "runtime source lock schema changed")
+def _validate_runtime_lock(
+    lock: dict[str, Any], raw: bytes, manifest: dict[str, Any]
+) -> None:
+    _require(
+        lock.get("schema") == RUNTIME_LOCK_SCHEMA, "runtime source lock schema changed"
+    )
     _require(lock.get("status") == "complete", "runtime source lock is incomplete")
-    _require(lock.get("rights_boundary") == RIGHTS_BOUNDARY, "runtime rights boundary changed")
+    _require(
+        lock.get("rights_boundary") == RIGHTS_BOUNDARY,
+        "runtime rights boundary changed",
+    )
     delivery = lock.get("delivery")
     _require(
         delivery
@@ -129,41 +142,69 @@ def _validate_runtime_lock(lock: dict[str, Any], raw: bytes, manifest: dict[str,
         "runtime delivery boundary changed",
     )
     runtime = manifest["runtime_fetch"]
-    _require(runtime["source_lock_sha256"] == _sha256(raw, "runtime source lock"), "runtime source lock digest does not match")
+    _require(
+        runtime["source_lock_sha256"] == _sha256(raw, "runtime source lock"),
+        "runtime source lock digest does not match",
+    )
     artifacts = lock.get("artifacts")
-    _require(isinstance(artifacts, list) and artifacts, "runtime artifact inventory is empty")
+    _require(
+        isinstance(artifacts, list) and artifacts, "runtime artifact inventory is empty"
+    )
     roles: list[str] = []
     for index, artifact in enumerate(artifacts):
         _require(isinstance(artifact, dict), f"runtime artifact {index} is malformed")
-        _require(artifact.get("delivery_status") == "runtime-only", f"runtime artifact {index} is not runtime-only")
+        _require(
+            artifact.get("delivery_status") == "runtime-only",
+            f"runtime artifact {index} is not runtime-only",
+        )
         role = artifact.get("role")
-        _require(role in {"solution-source", "python-wheel"}, f"runtime artifact {index} has an unsupported role")
+        _require(
+            role in {"solution-source", "python-wheel"},
+            f"runtime artifact {index} has an unsupported role",
+        )
         roles.append(role)
         for field in ("url", "final_url"):
             origin = _origin(artifact.get(field), f"runtime artifact {index} {field}")
-            _require(origin in EXPECTED_ORIGINS, f"runtime artifact {index} origin is not approved")
+            _require(
+                origin in EXPECTED_ORIGINS,
+                f"runtime artifact {index} origin is not approved",
+            )
         _require(
-            isinstance(artifact.get("sha256"), str) and SHA256.fullmatch(artifact["sha256"]) is not None,
+            isinstance(artifact.get("sha256"), str)
+            and SHA256.fullmatch(artifact["sha256"]) is not None,
             f"runtime artifact {index} has no exact digest",
         )
-    _require(roles.count("solution-source") == 1, "runtime source closure must contain one source artifact")
+    _require(
+        roles.count("solution-source") == 1,
+        "runtime source closure must contain one source artifact",
+    )
     _require(roles.count("python-wheel") > 0, "runtime Python closure is empty")
 
 
-def _validate_corresponding_lock(lock: dict[str, Any], raw: bytes, manifest: dict[str, Any]) -> None:
-    _require(lock.get("schema") == CORRESPONDING_LOCK_SCHEMA, "corresponding-source lock schema changed")
-    _require(lock.get("status") == "complete", "corresponding-source lock is incomplete")
+def _validate_corresponding_lock(
+    lock: dict[str, Any], raw: bytes, manifest: dict[str, Any]
+) -> None:
     _require(
-        lock.get("public_corresponding_source_delivery") == "runtime-fetch-operator-owned",
+        lock.get("schema") == CORRESPONDING_LOCK_SCHEMA,
+        "corresponding-source lock schema changed",
+    )
+    _require(
+        lock.get("status") == "complete", "corresponding-source lock is incomplete"
+    )
+    _require(
+        lock.get("public_corresponding_source_delivery")
+        == "runtime-fetch-operator-owned",
         "corresponding-source delivery is not runtime-fetch-only",
     )
     _require(
         set(lock.get("runtime_fetched_material_excluded", []))
-        == EXPECTED_EXCLUDED - {"customer-credentials", "customer-data", "vendor-runtimes", "checkpoints"},
+        == EXPECTED_EXCLUDED
+        - {"customer-credentials", "customer-data", "vendor-runtimes", "checkpoints"},
         "excluded runtime material changed",
     )
     _require(
-        manifest["runtime_fetch"]["corresponding_source_lock_sha256"] == _sha256(raw, "corresponding-source lock"),
+        manifest["runtime_fetch"]["corresponding_source_lock_sha256"]
+        == _sha256(raw, "corresponding-source lock"),
         "corresponding-source lock digest does not match",
     )
 
@@ -178,12 +219,29 @@ def validate_runtime_fetch_contract(
     manifest, _manifest_raw = _read_json(manifest_path, "runtime-fetch manifest")
     _require(
         set(manifest)
-        == {"schema", "status", "tool", "image", "runtime_fetch", "excluded_from_public_image", "reason", "rights_boundary"},
+        == {
+            "schema",
+            "status",
+            "tool",
+            "image",
+            "runtime_fetch",
+            "excluded_from_public_image",
+            "reason",
+            "rights_boundary",
+        },
         "runtime-fetch manifest fields are incomplete or unsupported",
     )
-    _require(manifest["schema"] == MANIFEST_SCHEMA, "runtime-fetch manifest schema changed")
-    _require(manifest["status"] == "complete" and manifest["tool"] == "gymnasium-robotics", "runtime-fetch manifest is not complete for Gymnasium-Robotics")
-    _require(manifest["rights_boundary"] == RIGHTS_BOUNDARY, "runtime-fetch rights boundary changed")
+    _require(
+        manifest["schema"] == MANIFEST_SCHEMA, "runtime-fetch manifest schema changed"
+    )
+    _require(
+        manifest["status"] == "complete" and manifest["tool"] == "gymnasium-robotics",
+        "runtime-fetch manifest is not complete for Gymnasium-Robotics",
+    )
+    _require(
+        manifest["rights_boundary"] == RIGHTS_BOUNDARY,
+        "runtime-fetch rights boundary changed",
+    )
     image = manifest["image"]
     _require(
         image
@@ -210,15 +268,38 @@ def validate_runtime_fetch_contract(
         },
         "runtime-fetch manifest fields are incomplete or unsupported",
     )
-    _require(runtime["delivery"] == EXPECTED_DELIVERY, "runtime delivery is not operator-owned")
-    _require(set(runtime["official_origins"]) == EXPECTED_ORIGINS, "official runtime origins changed")
-    _require(runtime["customer_gate"] == EXPECTED_CUSTOMER_GATE, "customer notice/acceptance gate is missing")
-    _require(runtime["acceptance_record"] == EXPECTED_ACCEPTANCE_RECORD, "customer acceptance must remain external")
-    _require(runtime["credential_storage"] == "never-in-image-or-repository", "credential storage boundary changed")
-    _require(set(manifest["excluded_from_public_image"]) == EXPECTED_EXCLUDED, "public image exclusion set changed")
-    _require(isinstance(manifest["reason"], str) and manifest["reason"], "runtime-fetch rationale is missing")
+    _require(
+        runtime["delivery"] == EXPECTED_DELIVERY,
+        "runtime delivery is not operator-owned",
+    )
+    _require(
+        set(runtime["official_origins"]) == EXPECTED_ORIGINS,
+        "official runtime origins changed",
+    )
+    _require(
+        runtime["customer_gate"] == EXPECTED_CUSTOMER_GATE,
+        "customer notice/acceptance gate is missing",
+    )
+    _require(
+        runtime["acceptance_record"] == EXPECTED_ACCEPTANCE_RECORD,
+        "customer acceptance must remain external",
+    )
+    _require(
+        runtime["credential_storage"] == "never-in-image-or-repository",
+        "credential storage boundary changed",
+    )
+    _require(
+        set(manifest["excluded_from_public_image"]) == EXPECTED_EXCLUDED,
+        "public image exclusion set changed",
+    )
+    _require(
+        isinstance(manifest["reason"], str) and manifest["reason"],
+        "runtime-fetch rationale is missing",
+    )
     source_lock, source_raw = _read_json(source_lock_path, "runtime source lock")
-    corresponding_lock, corresponding_raw = _read_json(corresponding_lock_path, "corresponding-source lock")
+    corresponding_lock, corresponding_raw = _read_json(
+        corresponding_lock_path, "corresponding-source lock"
+    )
     _validate_runtime_lock(source_lock, source_raw, manifest)
     _validate_corresponding_lock(corresponding_lock, corresponding_raw, manifest)
     return {
@@ -236,7 +317,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-lock", type=Path, required=True)
     parser.add_argument("--corresponding-lock", type=Path, required=True)
     args = parser.parse_args(argv)
-    result = validate_runtime_fetch_contract(args.manifest, args.source_lock, args.corresponding_lock)
+    result = validate_runtime_fetch_contract(
+        args.manifest, args.source_lock, args.corresponding_lock
+    )
     print(json.dumps(result, sort_keys=True))
     return 0
 

@@ -103,43 +103,60 @@ def test_conditional_upload_hook_is_signed_and_preserves_collision_refusal(
     from botocore.exceptions import ClientError
 
     client = boto3.client(
-        "s3", endpoint_url="http://storage.invalid", region_name="us-east-1",
-        aws_access_key_id="synthetic-access", aws_secret_access_key="synthetic-secret",
+        "s3",
+        endpoint_url="http://storage.invalid",
+        region_name="us-east-1",
+        aws_access_key_id="synthetic-access",
+        aws_secret_access_key="synthetic-secret",
         config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
     client.meta.events.register(
-        "before-call.s3.PutObject", _coordinator_helpers(tmp_path)["_require_conditional_put"]
+        "before-call.s3.PutObject",
+        _coordinator_helpers(tmp_path)["_require_conditional_put"],
     )
     stored: list[bytes] = []
 
     def send(request):
         assert request.headers["If-None-Match"] == b"*"
-        signed_headers = request.headers["Authorization"].split(b"SignedHeaders=", 1)[1].split(b",", 1)[0]
+        signed_headers = (
+            request.headers["Authorization"]
+            .split(b"SignedHeaders=", 1)[1]
+            .split(b",", 1)[0]
+        )
         assert b"if-none-match" in signed_headers.split(b";")
         status = 412 if stored else 200
         if not stored:
             stored.append(request.body.read())
-        payload = b"<Error><Code>PreconditionFailed</Code></Error>" if status == 412 else b""
+        payload = (
+            b"<Error><Code>PreconditionFailed</Code></Error>" if status == 412 else b""
+        )
         raw = SimpleNamespace(stream=lambda **_kwargs: iter([payload]))
-        return AWSResponse(request.url, status, {"content-type": "application/xml"}, raw)
+        return AWSResponse(
+            request.url, status, {"content-type": "application/xml"}, raw
+        )
 
     monkeypatch.setattr(client._endpoint.http_session, "send", send)
     client.put_object(Bucket="qualification", Key="artifact.json", Body=b"original")
     with pytest.raises(ClientError, match="PreconditionFailed"):
-        client.put_object(Bucket="qualification", Key="artifact.json", Body=b"replacement")
+        client.put_object(
+            Bucket="qualification", Key="artifact.json", Body=b"replacement"
+        )
     assert stored == [b"original"]
 
 
-@pytest.mark.parametrize(("metadata", "accepted"), [
-    ({"sha256": "expected"}, True),
-    ({"Sha256": "expected"}, True),
-    ({"SHA256": "expected", "Other": "unrelated"}, True),
-    ({}, False),
-    ({"Sha256": "wrong"}, False),
-    ({"Sha256": "EXPECTED"}, False),
-    ({"sha256": "expected", "Sha256": "expected"}, False),
-    ({"sha256": "expected", "Sha256": "wrong"}, False),
-])
+@pytest.mark.parametrize(
+    ("metadata", "accepted"),
+    [
+        ({"sha256": "expected"}, True),
+        ({"Sha256": "expected"}, True),
+        ({"SHA256": "expected", "Other": "unrelated"}, True),
+        ({}, False),
+        ({"Sha256": "wrong"}, False),
+        ({"Sha256": "EXPECTED"}, False),
+        ({"sha256": "expected", "Sha256": "expected"}, False),
+        ({"sha256": "expected", "Sha256": "wrong"}, False),
+    ],
+)
 @pytest.mark.parametrize("boundary", ["upload", "live-evidence"])
 def test_qualification_hash_metadata_requires_one_exact_value(
     tmp_path: Path, metadata: dict, accepted: bool, boundary: str
@@ -150,13 +167,14 @@ def test_qualification_hash_metadata_requires_one_exact_value(
     else:
         source = (ROOT / "npa/tests/e2e/test_byof_onboarding_live_e2e.py").read_text()
         helper = next(
-            node for node in ast.parse(source).body
+            node
+            for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef)
             and node.name == "_require_gymnasium_hash_metadata"
         )
-        namespace = {}
-        exec(compile(ast.Module(body=[helper], type_ignores=[]), "live_hash", "exec"), namespace)
-        verify = namespace[helper.name]
+        helper_module = tmp_path / "live_hash.py"
+        helper_module.write_text(ast.unparse(helper) + "\n", encoding="utf-8")
+        verify = runpy.run_path(str(helper_module))[helper.name]
         refusal = AssertionError
     if accepted:
         verify({"Metadata": metadata}, "expected")
@@ -309,7 +327,10 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "env=runtime_environment" in profile
     assert "npa_pod_image_receipt.json" in profile
     assert 'params["headers"]["If-None-Match"] = "*"' in profile
-    assert 's3.meta.events.register("before-call.s3.PutObject", _require_conditional_put)' in profile
+    assert (
+        's3.meta.events.register("before-call.s3.PutObject", _require_conditional_put)'
+        in profile
+    )
     assert 'IfNoneMatch="*"' not in profile
     assert (
         "root_fd, root_descriptors, root_bindings = _open_bound_output_root(root)"
@@ -525,9 +546,7 @@ def test_coordinator_keeps_child_logs_on_verified_descriptors(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("attack", ["regular", "symlink", "directory"])
-def test_coordinator_refuses_preexisting_smoke_log(
-    tmp_path: Path, attack: str
-) -> None:
+def test_coordinator_refuses_preexisting_smoke_log(tmp_path: Path, attack: str) -> None:
     helpers = _coordinator_helpers(tmp_path)
     root = tmp_path / "output"
     root.mkdir()
@@ -773,41 +792,80 @@ def test_documentation_keeps_neutral_and_historical_evidence_separate() -> None:
 def _configuration_task(**pod_overrides: object) -> dict:
     return {
         "name": "gymnasium-robotics",
-        "config": {"kubernetes": {"pod_config": {"spec": {
-            "automountServiceAccountToken": False,
-            "securityContext": {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}},
-            "containers": [{"name": "ray-node", "securityContext": {
-                "runAsNonRoot": True, "privileged": False,
-                "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]},
-            }}],
-            **pod_overrides,
-        }}}},
+        "config": {
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {
+                        "automountServiceAccountToken": False,
+                        "securityContext": {
+                            "runAsNonRoot": True,
+                            "seccompProfile": {"type": "RuntimeDefault"},
+                        },
+                        "containers": [
+                            {
+                                "name": "ray-node",
+                                "securityContext": {
+                                    "runAsNonRoot": True,
+                                    "privileged": False,
+                                    "allowPrivilegeEscalation": False,
+                                    "capabilities": {"drop": ["ALL"]},
+                                },
+                            }
+                        ],
+                        **pod_overrides,
+                    }
+                }
+            }
+        },
     }
 
 
-@pytest.mark.parametrize("context", [
-    {}, {"runAsNonRoot": False}, {"runAsNonRoot": "true"},
-    {"runAsNonRoot": True},
-    {"runAsNonRoot": True, "seccompProfile": {"type": "Unconfined"}},
-    {"runAsNonRoot": True, "seccompProfile": {"type": "Localhost", "localhostProfile": "synthetic"}},
-])
+@pytest.mark.parametrize(
+    "context",
+    [
+        {},
+        {"runAsNonRoot": False},
+        {"runAsNonRoot": "true"},
+        {"runAsNonRoot": True},
+        {"runAsNonRoot": True, "seccompProfile": {"type": "Unconfined"}},
+        {
+            "runAsNonRoot": True,
+            "seccompProfile": {"type": "Localhost", "localhostProfile": "synthetic"},
+        },
+    ],
+)
 def test_gymnasium_configuration_requires_restrictive_pod_policy(context: dict) -> None:
     with pytest.raises(ExecutionPreflightError):
-        validate_gymnasium_task_configuration([_configuration_task(securityContext=context)])
+        validate_gymnasium_task_configuration(
+            [_configuration_task(securityContext=context)]
+        )
 
 
-@pytest.mark.parametrize(("key", "value"), [
-    ("runAsNonRoot", None), ("runAsNonRoot", False), ("runAsUser", 0),
-    ("allowPrivilegeEscalation", None), ("allowPrivilegeEscalation", True),
-    ("allowPrivilegeEscalation", 0), ("privileged", True),
-    ("capabilities", {}), ("capabilities", {"drop": []}),
-    ("capabilities", {"drop": ["NET_RAW"]}),
-    ("capabilities", {"drop": ["ALL"], "add": ["NET_ADMIN"]}),
-    ("seccompProfile", {"type": "Unconfined"}), ("procMount", "Unmasked"),
-])
-def test_gymnasium_configuration_refuses_container_privilege_expansion(key: str, value: object) -> None:
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("runAsNonRoot", None),
+        ("runAsNonRoot", False),
+        ("runAsUser", 0),
+        ("allowPrivilegeEscalation", None),
+        ("allowPrivilegeEscalation", True),
+        ("allowPrivilegeEscalation", 0),
+        ("privileged", True),
+        ("capabilities", {}),
+        ("capabilities", {"drop": []}),
+        ("capabilities", {"drop": ["NET_RAW"]}),
+        ("capabilities", {"drop": ["ALL"], "add": ["NET_ADMIN"]}),
+        ("seccompProfile", {"type": "Unconfined"}),
+        ("procMount", "Unmasked"),
+    ],
+)
+def test_gymnasium_configuration_refuses_container_privilege_expansion(
+    key: str, value: object
+) -> None:
     task = _configuration_task()
-    context = task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["securityContext"]
+    context = task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0][
+        "securityContext"
+    ]
     if value is None:
         context.pop(key)
     else:
@@ -817,46 +875,87 @@ def test_gymnasium_configuration_refuses_container_privilege_expansion(key: str,
 
 
 @pytest.mark.parametrize("containers", [[], [{"name": "synthetic-sidecar"}]])
-def test_gymnasium_configuration_requires_single_workload_container(containers: list) -> None:
+def test_gymnasium_configuration_requires_single_workload_container(
+    containers: list,
+) -> None:
     with pytest.raises(ExecutionPreflightError, match="ray-node"):
-        validate_gymnasium_task_configuration([_configuration_task(containers=containers)])
+        validate_gymnasium_task_configuration(
+            [_configuration_task(containers=containers)]
+        )
 
 
-@pytest.mark.parametrize("context", [
-    {"allowPrivilegeEscalation": True}, {"capabilities": {"drop": []}},
-    {"seccompProfile": {"type": "Unconfined"}}, {"runAsNonRoot": False},
-])
-def test_gymnasium_configuration_refuses_global_security_expansion(context: dict) -> None:
+@pytest.mark.parametrize(
+    "context",
+    [
+        {"allowPrivilegeEscalation": True},
+        {"capabilities": {"drop": []}},
+        {"seccompProfile": {"type": "Unconfined"}},
+        {"runAsNonRoot": False},
+    ],
+)
+def test_gymnasium_configuration_refuses_global_security_expansion(
+    context: dict,
+) -> None:
     with pytest.raises(ExecutionPreflightError):
-        validate_gymnasium_task_configuration([_configuration_task()], global_config={
-            "kubernetes": {"pod_config": {"spec": {
-                "containers": [{"name": "ray-node", "securityContext": context}],
-            }}},
-        })
+        validate_gymnasium_task_configuration(
+            [_configuration_task()],
+            global_config={
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "containers": [
+                                {"name": "ray-node", "securityContext": context}
+                            ],
+                        }
+                    }
+                },
+            },
+        )
 
 
 def test_gymnasium_configuration_is_explicit_in_both_task_shapes() -> None:
     profile = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
     assert validate_gymnasium_task_configuration(profile)
     resources = _workflow()["resources"]["gpu"]
-    assert resources["kubernetes"]["pod_config"]["spec"]["automountServiceAccountToken"] is False
-    assert validate_gymnasium_task_configuration([{
-        "name": "gymnasium-robotics", "resources": resources,
-    }])
+    assert (
+        resources["kubernetes"]["pod_config"]["spec"]["automountServiceAccountToken"]
+        is False
+    )
+    assert validate_gymnasium_task_configuration(
+        [
+            {
+                "name": "gymnasium-robotics",
+                "resources": resources,
+            }
+        ]
+    )
 
 
-@pytest.mark.parametrize(("key", "value"), [
-    ("runAsNonRoot", 1), ("runAsNonRoot", False),
-    ("runAsUser", 0), ("runAsUser", 1000.0), ("runAsUser", "1000"),
-    ("runAsGroup", 0), ("runAsGroup", 1001),
-    ("privileged", True), ("allowPrivilegeEscalation", 1),
-    ("capabilities", {"drop": ["ALL"]}),
-    ("capabilities", {"drop": ["ALL"], "add": ["NET_ADMIN"]}),
-    ("seccompProfile", {"type": "Unconfined"}), ("procMount", "Unmasked"),
-])
-def test_gymnasium_bootstrap_requires_exact_reviewed_context(key: str, value: object) -> None:
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("runAsNonRoot", 1),
+        ("runAsNonRoot", False),
+        ("runAsUser", 0),
+        ("runAsUser", 1000.0),
+        ("runAsUser", "1000"),
+        ("runAsGroup", 0),
+        ("runAsGroup", 1001),
+        ("privileged", True),
+        ("allowPrivilegeEscalation", 1),
+        ("capabilities", {"drop": ["ALL"]}),
+        ("capabilities", {"drop": ["ALL"], "add": ["NET_ADMIN"]}),
+        ("seccompProfile", {"type": "Unconfined"}),
+        ("procMount", "Unmasked"),
+    ],
+)
+def test_gymnasium_bootstrap_requires_exact_reviewed_context(
+    key: str, value: object
+) -> None:
     documents = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
-    context = documents[1]["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["securityContext"]
+    context = documents[1]["config"]["kubernetes"]["pod_config"]["spec"]["containers"][
+        0
+    ]["securityContext"]
     context[key] = value
     with pytest.raises(ExecutionPreflightError):
         validate_gymnasium_task_configuration(documents)
@@ -865,29 +964,39 @@ def test_gymnasium_bootstrap_requires_exact_reviewed_context(key: str, value: ob
 def test_gymnasium_configuration_survives_allocated_task_rendering() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.skypilot_render import (
-        SkypilotRenderOptions, render_skypilot_yaml,
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
     )
     from npa.orchestration.npa_workflow.spec import load_spec
 
     spec = load_spec(WORKFLOW)
     rendered = render_skypilot_yaml(
-        spec, build_plan(spec, run_id="synthetic-configuration"),
+        spec,
+        build_plan(spec, run_id="synthetic-configuration"),
         run_id="synthetic-configuration",
         options=SkypilotRenderOptions(
-            registry="registry.example", materialize_registry_secrets=False,
+            registry="registry.example",
+            materialize_registry_secrets=False,
         ),
     )
     documents = [doc for doc in yaml.safe_load_all(rendered) if doc]
-    assert documents[-1]["config"]["kubernetes"]["pod_config"]["spec"]["automountServiceAccountToken"] is False
+    assert (
+        documents[-1]["config"]["kubernetes"]["pod_config"]["spec"][
+            "automountServiceAccountToken"
+        ]
+        is False
+    )
     assert validate_gymnasium_task_configuration(documents)
 
 
 @pytest.mark.parametrize("automount", [None, True, "false", 0, 1, {}])
-def test_gymnasium_configuration_requires_literal_no_automount(automount: object) -> None:
+def test_gymnasium_configuration_requires_literal_no_automount(
+    automount: object,
+) -> None:
     with pytest.raises(ExecutionPreflightError, match="explicitly disable"):
-        validate_gymnasium_task_configuration([
-            _configuration_task(automountServiceAccountToken=automount)
-        ])
+        validate_gymnasium_task_configuration(
+            [_configuration_task(automountServiceAccountToken=automount)]
+        )
 
 
 def test_gymnasium_configuration_refuses_missing_automount() -> None:
@@ -895,35 +1004,82 @@ def test_gymnasium_configuration_refuses_missing_automount() -> None:
         validate_gymnasium_task_configuration([{"name": "gymnasium-robotics"}])
 
 
-@pytest.mark.parametrize("kind", [
-    "projected", "secret", "hostPath", "persistentVolumeClaim", "csi", "configMap",
-])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "projected",
+        "secret",
+        "hostPath",
+        "persistentVolumeClaim",
+        "csi",
+        "configMap",
+    ],
+)
 def test_gymnasium_configuration_refuses_unapproved_volume_types(kind: str) -> None:
     # Configuration-only fixtures; no mounted files, tokens, or cluster are accessed.
     with pytest.raises(ExecutionPreflightError, match="only emptyDir and downwardAPI"):
-        validate_gymnasium_task_configuration([
-            _configuration_task(volumes=[{"name": "synthetic-volume", kind: {}}])
-        ])
+        validate_gymnasium_task_configuration(
+            [_configuration_task(volumes=[{"name": "synthetic-volume", kind: {}}])]
+        )
 
 
-@pytest.mark.parametrize("pod_override", [
-    {"volumes": [{"name": "synthetic", "projected": {
-        "sources": [{"serviceAccountToken": {"path": "synthetic-token"}}],
-    }}]},
-    {"automountServiceAccountToken": True},
-    {"hostPID": True},
-    {"hostNetwork": True},
-    {"shareProcessNamespace": True},
-    {"initContainers": [{"name": "synthetic-init"}]},
-    {"ephemeralContainers": [{"name": "synthetic-debug"}]},
-    {"containers": [{"name": "synthetic", "envFrom": [{"secretRef": {"name": "synthetic"}}]}]},
-    {"containers": [{"name": "synthetic", "env": [{
-        "name": "SYNTHETIC_VALUE", "valueFrom": {"secretKeyRef": {"name": "synthetic", "key": "value"}},
-    }]}]},
-    {"containers": [{"name": "synthetic", "securityContext": {"privileged": True}}]},
-    {"containers": [{"name": "synthetic", "securityContext": {"privileged": 0}}]},
-    {"containers": [{"name": "synthetic", "volumeMounts": [{"mountPropagation": "Bidirectional"}]}]},
-])
+@pytest.mark.parametrize(
+    "pod_override",
+    [
+        {
+            "volumes": [
+                {
+                    "name": "synthetic",
+                    "projected": {
+                        "sources": [
+                            {"serviceAccountToken": {"path": "synthetic-token"}}
+                        ],
+                    },
+                }
+            ]
+        },
+        {"automountServiceAccountToken": True},
+        {"hostPID": True},
+        {"hostNetwork": True},
+        {"shareProcessNamespace": True},
+        {"initContainers": [{"name": "synthetic-init"}]},
+        {"ephemeralContainers": [{"name": "synthetic-debug"}]},
+        {
+            "containers": [
+                {"name": "synthetic", "envFrom": [{"secretRef": {"name": "synthetic"}}]}
+            ]
+        },
+        {
+            "containers": [
+                {
+                    "name": "synthetic",
+                    "env": [
+                        {
+                            "name": "SYNTHETIC_VALUE",
+                            "valueFrom": {
+                                "secretKeyRef": {"name": "synthetic", "key": "value"}
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+        {
+            "containers": [
+                {"name": "synthetic", "securityContext": {"privileged": True}}
+            ]
+        },
+        {"containers": [{"name": "synthetic", "securityContext": {"privileged": 0}}]},
+        {
+            "containers": [
+                {
+                    "name": "synthetic",
+                    "volumeMounts": [{"mountPropagation": "Bidirectional"}],
+                }
+            ]
+        },
+    ],
+)
 def test_gymnasium_configuration_refuses_global_overrides(pod_override: dict) -> None:
     with pytest.raises(ExecutionPreflightError):
         validate_gymnasium_task_configuration(
@@ -932,11 +1088,14 @@ def test_gymnasium_configuration_refuses_global_overrides(pod_override: dict) ->
         )
 
 
-@pytest.mark.parametrize("extra", [
-    {"envs": {"SYNTHETIC_API_KEY": "not-a-credential"}},
-    {"file_mounts": {"/synthetic/mount": "synthetic-local-input"}},
-    {"workdir": "synthetic-local-input"},
-])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"envs": {"SYNTHETIC_API_KEY": "not-a-credential"}},
+        {"file_mounts": {"/synthetic/mount": "synthetic-local-input"}},
+        {"workdir": "synthetic-local-input"},
+    ],
+)
 def test_gymnasium_configuration_refuses_unnecessary_task_inputs(extra: dict) -> None:
     with pytest.raises(ExecutionPreflightError):
         validate_gymnasium_task_configuration([{**_configuration_task(), **extra}])
@@ -945,11 +1104,15 @@ def test_gymnasium_configuration_refuses_unnecessary_task_inputs(extra: dict) ->
 def test_gymnasium_configuration_preserves_storage_channel_and_pure_inputs() -> None:
     task = _configuration_task(
         imagePullSecrets=[{"name": "synthetic-pull-secret"}],
-        volumes=[{"name": "scratch", "emptyDir": {}}, {"name": "metadata", "downwardAPI": {}}],
+        volumes=[
+            {"name": "scratch", "emptyDir": {}},
+            {"name": "metadata", "downwardAPI": {}},
+        ],
     )
     before = json.dumps(task, sort_keys=True)
     assert validate_gymnasium_task_configuration(
-        [task], secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]
+        [task],
+        secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"],
     )
     assert json.dumps(task, sort_keys=True) == before
     with pytest.raises(ExecutionPreflightError, match="only storage task-secret"):
@@ -957,11 +1120,18 @@ def test_gymnasium_configuration_preserves_storage_channel_and_pure_inputs() -> 
 
 
 def test_gymnasium_configuration_leaves_other_tools_unchanged() -> None:
-    task = {"name": "unrelated-tool", "config": {"kubernetes": {
-        "pod_config": {"spec": {"automountServiceAccountToken": True}},
-    }}}
+    task = {
+        "name": "unrelated-tool",
+        "config": {
+            "kubernetes": {
+                "pod_config": {"spec": {"automountServiceAccountToken": True}},
+            }
+        },
+    }
     before = json.dumps(task, sort_keys=True)
-    assert not validate_gymnasium_task_configuration([task], secret_envs=["SYNTHETIC_API_KEY"])
+    assert not validate_gymnasium_task_configuration(
+        [task], secret_envs=["SYNTHETIC_API_KEY"]
+    )
     assert json.dumps(task, sort_keys=True) == before
 
 
@@ -980,7 +1150,9 @@ def test_gymnasium_configuration_refuses_before_shared_credential_resolution(
 
 @pytest.mark.parametrize("route", ["render", "direct", "submit"])
 def test_gymnasium_direct_routes_refuse_before_runtime_operations(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, route: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    route: str,
 ) -> None:
     runner = runpy.run_path(str(ROOT / "npa/scripts/run_byof_container_verify.py"))
     fixture = tmp_path / "synthetic.yaml"
@@ -996,17 +1168,28 @@ def test_gymnasium_direct_routes_refuse_before_runtime_operations(
             runner["render_workflow"](fixture, run_id="synthetic-run")
         elif route == "direct":
             runner["_direct_launch"](
-                rendered_yaml=fixture, run_id="synthetic-run", outputs={}, sky_bin="synthetic-sky", infra="",
+                rendered_yaml=fixture,
+                run_id="synthetic-run",
+                outputs={},
+                sky_bin="synthetic-sky",
+                infra="",
             )
         else:
-            runner["_submit_and_wait"](SimpleNamespace(
-                yaml_path=fixture, solution_name="gymnasium-robotics", config_path="", secret_env=None,
-            ))
+            runner["_submit_and_wait"](
+                SimpleNamespace(
+                    yaml_path=fixture,
+                    solution_name="gymnasium-robotics",
+                    config_path="",
+                    secret_env=None,
+                )
+            )
 
 
 @pytest.mark.parametrize("unsafe", ["secret-name", "automount", "global-projection"])
 def test_gymnasium_managed_route_refuses_before_submission_preparation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unsafe: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unsafe: str,
 ) -> None:
     from npa.orchestration.skypilot import workflow as managed
 
@@ -1016,17 +1199,31 @@ def test_gymnasium_managed_route_refuses_before_submission_preparation(
     fixture = tmp_path / "synthetic-task.yaml"
     fixture.write_text(yaml.safe_dump(task), encoding="utf-8")
     config = tmp_path / "synthetic-config.yaml"
-    config.write_text(yaml.safe_dump({"kubernetes": {"pod_config": {"spec": {
-        "volumes": [{"name": "synthetic", "projected": {}}],
-    }}}}), encoding="utf-8")
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [{"name": "synthetic", "projected": {}}],
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         pytest.fail("submission preparation must not precede configuration refusal")
 
     monkeypatch.setattr(managed, "_prepare_workflow_submission", forbidden)
-    with pytest.raises(managed.SkyPilotSubmitError, match="gymnasium_credential_isolation"):
+    with pytest.raises(
+        managed.SkyPilotSubmitError, match="gymnasium_credential_isolation"
+    ):
         managed.submit_workflow(
-            fixture, "synthetic-run",
+            fixture,
+            "synthetic-run",
             config_path=config if unsafe == "global-projection" else None,
             secret_envs=["SYNTHETIC_API_KEY"] if unsafe == "secret-name" else [],
         )
@@ -1034,7 +1231,9 @@ def test_gymnasium_managed_route_refuses_before_submission_preparation(
 
 @pytest.mark.parametrize("gymnasium", [True, False])
 def test_gymnasium_managed_route_preserves_allowed_and_other_tool_preparation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, gymnasium: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    gymnasium: bool,
 ) -> None:
     from npa.orchestration.skypilot import workflow as managed
 
@@ -1051,6 +1250,9 @@ def test_gymnasium_managed_route_preserves_allowed_and_other_tool_preparation(
     monkeypatch.setattr(managed, "_prepare_workflow_submission", prepared_only)
     with pytest.raises(PreparedOnly):
         managed.submit_workflow(
-            fixture, "synthetic-run", secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
-            if gymnasium else ["SYNTHETIC_API_KEY"],
+            fixture,
+            "synthetic-run",
+            secret_envs=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+            if gymnasium
+            else ["SYNTHETIC_API_KEY"],
         )

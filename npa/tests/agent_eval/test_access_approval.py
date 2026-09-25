@@ -15,7 +15,10 @@ def test_agent_approval_conversation_is_explicit_and_resumable() -> None:
         "resume_command": "npa configure --prepare-catalog-access",
     }
 
-    assert classify_followup("prepare full catalog access", has_pending_plan=False) == "plan"
+    assert (
+        classify_followup("prepare full catalog access", has_pending_plan=False)
+        == "plan"
+    )
     assert classify_followup("yes", has_pending_plan=True) == "open"
     assert classify_followup("done", has_pending_plan=True) == "recheck"
     assert classify_followup("later", has_pending_plan=True) == "later"
@@ -25,7 +28,9 @@ def test_agent_approval_conversation_is_explicit_and_resumable() -> None:
     assert "1 NGC artifact(s)" in reply
     assert "will not click" in reply
     assert "npa configure --prepare-catalog-access" in format_later_reply(plan)
-    opened = format_open_reply({**plan, "official_urls": ["https://huggingface.co/vendor/repo"]})
+    opened = format_open_reply(
+        {**plan, "official_urls": ["https://huggingface.co/vendor/repo"]}
+    )
     assert "<https://huggingface.co/vendor/repo>" in opened
     assert "has not clicked" in opened
 

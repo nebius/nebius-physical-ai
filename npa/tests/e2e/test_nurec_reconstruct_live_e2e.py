@@ -38,9 +38,7 @@ WORKFLOW = (
     / "examples"
     / "nurec-reconstruct.yaml"
 )
-SPEC = (
-    ROOT / "workflows" / "main" / "nurec-reconstruct.yaml"
-)
+SPEC = ROOT / "workflows" / "main" / "nurec-reconstruct.yaml"
 CATEGORY = "neural-reconstruction"
 DEFAULT_IMAGE = "nvcr.io/nvidia/nre/nre-ga:26.04"
 #: Objects the run MUST publish for the capability to be considered delivered.
@@ -100,7 +98,9 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
     bucket = _require("NPA_NUREC_E2E_BUCKET")
     npa_src = _require("NPA_NUREC_E2E_NPA_SRC_S3_URI")
     infra = os.environ.get("NPA_NUREC_E2E_INFRA", "").strip()
-    base_prefix = os.environ.get("NPA_NUREC_E2E_PREFIX", "checkpoints").strip().strip("/")
+    base_prefix = (
+        os.environ.get("NPA_NUREC_E2E_PREFIX", "checkpoints").strip().strip("/")
+    )
     _require("NGC_API_KEY")
     _require("HF_TOKEN")
     endpoint = _require("AWS_ENDPOINT_URL")
@@ -109,9 +109,9 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
     # run from it (npa.workflows.artifacts._run_started_at).
     stamp = time.strftime("%Y%m%dt%H%M%S", time.gmtime())
     run_id = f"{CATEGORY}-struktur28-{stamp}z"
-    run_uri = f"s3://{bucket}/{base_prefix}/{CATEGORY}/{run_id}".replace("//", "/").replace(
-        "s3:/", "s3://"
-    )
+    run_uri = f"s3://{bucket}/{base_prefix}/{CATEGORY}/{run_id}".replace(
+        "//", "/"
+    ).replace("s3:/", "s3://")
 
     command = [
         _npa_bin(),
@@ -154,9 +154,15 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
     # The reconstruction itself is the long pole: ~14 GB image pull on a cold node,
     # then 30k 3DGUT steps, then the render pass and the upload. No budget cap is
     # imposed beyond this generous deadline.
-    deadline = time.time() + float(os.environ.get("NPA_NUREC_E2E_MAX_WAIT_SECONDS", "7200"))
+    deadline = time.time() + float(
+        os.environ.get("NPA_NUREC_E2E_MAX_WAIT_SECONDS", "7200")
+    )
     s3 = _s3_client()
-    prefix = f"{base_prefix}/{CATEGORY}/{run_id}/" if base_prefix else f"{CATEGORY}/{run_id}/"
+    prefix = (
+        f"{base_prefix}/{CATEGORY}/{run_id}/"
+        if base_prefix
+        else f"{CATEGORY}/{run_id}/"
+    )
     keys: list[str] = []
     while time.time() < deadline:
         keys = _list_run_keys(s3, bucket, prefix)
@@ -164,15 +170,25 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
             break
         time.sleep(30)
 
-    missing = [suffix for suffix in REQUIRED_SUFFIXES if not any(k.endswith(suffix) for k in keys)]
-    assert not missing, f"run {run_id} is missing {missing}; published: {sorted(keys)[:40]}"
+    missing = [
+        suffix
+        for suffix in REQUIRED_SUFFIXES
+        if not any(k.endswith(suffix) for k in keys)
+    ]
+    assert not missing, (
+        f"run {run_id} is missing {missing}; published: {sorted(keys)[:40]}"
+    )
     assert any("/novel_views/" in key and key.endswith(".png") for key in keys), (
         "the run published no novel-view frames"
     )
 
     # The agent must see the run as viewable, dated by its start, with the Rerun
     # recording auto-selected.
-    from npa.workflows.artifacts import list_artifacts, list_runs, select_preferred_artifact
+    from npa.workflows.artifacts import (
+        list_artifacts,
+        list_runs,
+        select_preferred_artifact,
+    )
 
     category_prefix = f"{base_prefix}/{CATEGORY}" if base_prefix else CATEGORY
     page = list_runs(bucket, prefix=category_prefix, s3=s3)
@@ -197,7 +213,10 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
     assert preferred.render == "rerun"
 
     # The recording must be real run data, never mistakable for the stock demo.
-    from npa.cli.agent_recordings import is_stock_demo_recording, recording_has_run_entities
+    from npa.cli.agent_recordings import (
+        is_stock_demo_recording,
+        recording_has_run_entities,
+    )
 
     local_rrd = tmp_path / "sim2real.rrd"
     s3.download_file(bucket, preferred.key, str(local_rrd))
@@ -233,13 +252,17 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
     bucket = _require("NPA_NUREC_E2E_BUCKET")
     npa_src = _require("NPA_NUREC_E2E_NPA_SRC_S3_URI")
     infra = os.environ.get("NPA_NUREC_E2E_INFRA", "").strip()
-    base_prefix = os.environ.get("NPA_NUREC_E2E_PREFIX", "checkpoints").strip().strip("/")
+    base_prefix = (
+        os.environ.get("NPA_NUREC_E2E_PREFIX", "checkpoints").strip().strip("/")
+    )
     for name in ("NGC_API_KEY", "HF_TOKEN", "AWS_ENDPOINT_URL"):
         _require(name)
 
     stamp = time.strftime("%Y%m%dt%H%M%S", time.gmtime())
     run_id = f"nurec-npa-{stamp}z"
-    prefix = f"{base_prefix}/{CATEGORY}/{run_id}" if base_prefix else f"{CATEGORY}/{run_id}"
+    prefix = (
+        f"{base_prefix}/{CATEGORY}/{run_id}" if base_prefix else f"{CATEGORY}/{run_id}"
+    )
 
     command = [
         _npa_bin(),
@@ -268,14 +291,18 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
         command.extend(["--infra", infra])
 
     env = dict(os.environ, NPA_SRC_S3_URI=npa_src)
-    submit = subprocess.run(command, capture_output=True, text=True, timeout=3600, env=env)
+    submit = subprocess.run(
+        command, capture_output=True, text=True, timeout=3600, env=env
+    )
     evidence = tmp_path / "submit-declarative.log"
     evidence.write_text((submit.stdout or "") + (submit.stderr or ""), encoding="utf-8")
     assert submit.returncode == 0, f"submit failed; see {evidence}"
     for secret in ("NGC_API_KEY", "HF_TOKEN", "AWS_SECRET_ACCESS_KEY"):
         assert os.environ[secret] not in evidence.read_text(encoding="utf-8"), secret
 
-    deadline = time.time() + float(os.environ.get("NPA_NUREC_E2E_MAX_WAIT_SECONDS", "7200"))
+    deadline = time.time() + float(
+        os.environ.get("NPA_NUREC_E2E_MAX_WAIT_SECONDS", "7200")
+    )
     s3 = _s3_client()
     scan_prefix = f"{prefix}/"
     keys: list[str] = []
@@ -300,11 +327,19 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
     # ...and the later stages actually consumed it.
     assert any("/novel_views/" in k and k.endswith(".png") for k in keys)
 
-    from npa.workflows.artifacts import list_artifacts, list_runs, select_preferred_artifact
+    from npa.workflows.artifacts import (
+        list_artifacts,
+        list_runs,
+        select_preferred_artifact,
+    )
 
     category_prefix = f"{base_prefix}/{CATEGORY}" if base_prefix else CATEGORY
     summary = next(
-        (r for r in list_runs(bucket, prefix=category_prefix, s3=s3).runs if r.run_id == run_id),
+        (
+            r
+            for r in list_runs(bucket, prefix=category_prefix, s3=s3).runs
+            if r.run_id == run_id
+        ),
         None,
     )
     assert summary is not None, f"{run_id} not listed under {category_prefix}"
@@ -315,11 +350,16 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
     )
     assert summary.started_at == encoded, f"{summary.started_at} != {encoded}"
 
-    preferred = select_preferred_artifact(list_artifacts(bucket, run_id, prefix=category_prefix, s3=s3))
+    preferred = select_preferred_artifact(
+        list_artifacts(bucket, run_id, prefix=category_prefix, s3=s3)
+    )
     assert preferred is not None
     assert preferred.key.endswith("/reports/sim2real.rrd")
 
-    from npa.cli.agent_recordings import is_stock_demo_recording, recording_has_run_entities
+    from npa.cli.agent_recordings import (
+        is_stock_demo_recording,
+        recording_has_run_entities,
+    )
 
     local_rrd = tmp_path / "declarative.rrd"
     s3.download_file(bucket, preferred.key, str(local_rrd))

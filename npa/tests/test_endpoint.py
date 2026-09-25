@@ -42,12 +42,16 @@ def test_required_ssh_always_creates_fresh_forward(endpoint, strategy, mocker):
     cfg = _cfg(endpoint=endpoint, strategy=strategy)
     process = mocker.MagicMock()
     process.poll.return_value = None
-    forward = mocker.patch("npa.clients.endpoint._open_ssh_forward", return_value=process)
+    forward = mocker.patch(
+        "npa.clients.endpoint._open_ssh_forward", return_value=process
+    )
     mocker.patch("npa.clients.endpoint._free_local_port", return_value=19090)
     tcp = mocker.patch("npa.clients.endpoint._tcp_open", return_value=True)
     mocker.patch("npa.clients.endpoint._wait_for_ssh_forward")
     mocker.patch("npa.clients.endpoint.time.sleep")
-    public = mocker.patch("npa.clients.endpoint._public_endpoint_open", return_value=True)
+    public = mocker.patch(
+        "npa.clients.endpoint._public_endpoint_open", return_value=True
+    )
     with service_endpoint(cfg, require_ssh=True) as active:
         assert active.url == "http://127.0.0.1:19090"
     forward.assert_called_once_with(cfg, 19090, 8080)
@@ -57,7 +61,9 @@ def test_required_ssh_always_creates_fresh_forward(endpoint, strategy, mocker):
 
 
 @pytest.mark.parametrize("known_hosts_source", ["operator", "provider", "standard"])
-def test_ssh_forward_requires_verified_host_keys(known_hosts_source, tmp_path, monkeypatch, mocker):
+def test_ssh_forward_requires_verified_host_keys(
+    known_hosts_source, tmp_path, monkeypatch, mocker
+):
     from npa.clients.endpoint import _open_ssh_forward
 
     operator = tmp_path / "operator-known-hosts"
@@ -72,6 +78,7 @@ def test_ssh_forward_requires_verified_host_keys(known_hosts_source, tmp_path, m
     popen = mocker.patch("npa.clients.endpoint.subprocess.Popen")
     process = _open_ssh_forward(_cfg(), 19090, 8080)
     from npa.clients.endpoint import _close_process
+
     _close_process(process)
     argv = popen.call_args.args[0]
     assert "StrictHostKeyChecking=yes" in argv
@@ -108,7 +115,9 @@ def test_required_ssh_needs_credentials_even_for_loopback_endpoint():
 
 
 def test_service_endpoint_serverless_uses_saved_public_url(mocker) -> None:
-    cfg = _cfg(strategy="ssh_fallback", endpoint="https://cosmos.example", runtime="serverless")
+    cfg = _cfg(
+        strategy="ssh_fallback", endpoint="https://cosmos.example", runtime="serverless"
+    )
     popen = mocker.patch("npa.clients.endpoint.subprocess.Popen")
 
     with service_endpoint(cfg) as active:
@@ -208,23 +217,27 @@ def test_service_endpoint_persists_self_healed_strategy_to_config(
     monkeypatch.setattr(config_module, "CONFIG_PATH", cfg_path)
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
     cfg_path.parent.mkdir(parents=True)
-    cfg_path.write_text(yaml.safe_dump({
-        "projects": {
-            "proj": {
-                "workbenches": {
-                    "fiftyone": {
-                        "endpoint": "http://vm:5151",
-                        "runtime": "byovm",
-                        "ssh": {
-                            "host": "vm",
-                            "user": "ubuntu",
-                            "key_path": "~/.ssh/id",
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "proj": {
+                        "workbenches": {
+                            "fiftyone": {
+                                "endpoint": "http://vm:5151",
+                                "runtime": "byovm",
+                                "ssh": {
+                                    "host": "vm",
+                                    "user": "ubuntu",
+                                    "key_path": "~/.ssh/id",
+                                },
+                            },
                         },
                     },
                 },
-            },
-        },
-    }))
+            }
+        )
+    )
     cfg = config_module.resolve_ssh_config(project="proj", name="fiftyone")
     assert cfg.endpoint_strategy_configured is False
     assert cfg.service_port_configured is False
@@ -261,7 +274,9 @@ def test_service_endpoint_stored_strategy_skips_legacy_probe(mocker) -> None:
     public_probe.assert_not_called()
 
 
-def test_service_endpoint_stored_ssh_strategy_persists_missing_service_port(mocker) -> None:
+def test_service_endpoint_stored_ssh_strategy_persists_missing_service_port(
+    mocker,
+) -> None:
     cfg = _cfg(strategy="ssh_fallback", strategy_configured=True, runtime="byovm")
     cfg.service_port_configured = False
     cfg.project = "proj"

@@ -19,7 +19,12 @@ def test_embedded_module_source_strips_multiline_docstring_and_future_import(
     assert "__future__" not in embedded
     assert "module docstring" not in embedded
     assert "VALUE: int = 7" in embedded
-    compile("def wrapper():\n" + "".join(f"    {line}" for line in embedded.splitlines(True)), "<embedded>", "exec")
+    compile(
+        "def wrapper():\n"
+        + "".join(f"    {line}" for line in embedded.splitlines(True)),
+        "<embedded>",
+        "exec",
+    )
 
 
 def test_embedded_module_source_keeps_non_prologue_strings(tmp_path: Path) -> None:

@@ -636,11 +636,14 @@ def test_anonymous_opener_disables_proxies_and_redirects(
 
     monkeypatch.setattr(SOURCE.urllib.request, "build_opener", build_opener)
     request = SOURCE.urllib.request.Request(response.geturl())
-    assert SOURCE._open_anonymous(
-        request,
-        60,
-        approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
-    ) is response
+    assert (
+        SOURCE._open_anonymous(
+            request,
+            60,
+            approved_addresses=((socket.AF_INET, PUBLIC_ADDRESS),),
+        )
+        is response
+    )
     assert any(
         isinstance(handler, SOURCE._PinnedHTTPSHandler) for handler in built_handlers
     )
@@ -776,7 +779,9 @@ def test_current_candidate_remains_fail_closed() -> None:
         ROOT / "npa/src/npa/deploy/gymnasium_robotics_image_manifest.json"
     ).exists()
     lock = json.loads(REAL_LOCK.read_text(encoding="utf-8"))
-    assert lock["public_corresponding_source_delivery"] == "runtime-fetch-operator-owned"
+    assert (
+        lock["public_corresponding_source_delivery"] == "runtime-fetch-operator-owned"
+    )
 
 
 def test_runtime_fetch_corresponding_source_contract_passes() -> None:
@@ -793,7 +798,9 @@ def test_runtime_fetch_corresponding_source_contract_passes() -> None:
 
 
 def test_runtime_fetch_verifier_refuses_public_record_shape(tmp_path: Path) -> None:
-    manifest = ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json"
+    manifest = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json"
+    )
     source_lock = ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json"
     lock = tmp_path / "corresponding-source.lock.json"
     payload = json.loads(REAL_LOCK.read_text(encoding="utf-8"))
@@ -802,7 +809,9 @@ def test_runtime_fetch_verifier_refuses_public_record_shape(tmp_path: Path) -> N
     lock.write_bytes(lock_bytes)
     manifest_copy = tmp_path / "runtime-fetch-manifest.json"
     manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
-    manifest_payload["runtime_fetch"]["corresponding_source_lock_sha256"] = hashlib.sha256(lock_bytes).hexdigest()
+    manifest_payload["runtime_fetch"]["corresponding_source_lock_sha256"] = (
+        hashlib.sha256(lock_bytes).hexdigest()
+    )
     manifest_copy.write_text(json.dumps(manifest_payload), encoding="utf-8")
     with pytest.raises(Exception, match="runtime-fetch-only"):
         verify_runtime_fetch_corresponding_source(manifest_copy, source_lock, lock)

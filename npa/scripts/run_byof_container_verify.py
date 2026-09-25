@@ -451,15 +451,23 @@ def _validate_gymnasium_launch_configuration(
         return
     from npa.execution_preflight import ExecutionPreflightError
 
-    if any(name in os.environ for name in ("SKYPILOT_CONFIG", "SKYPILOT_PROJECT_CONFIG")):
+    if any(
+        name in os.environ for name in ("SKYPILOT_CONFIG", "SKYPILOT_PROJECT_CONFIG")
+    ):
         raise ExecutionPreflightError(
-            "gymnasium_credential_isolation", "implicit SkyPilot configuration is forbidden"
+            "gymnasium_credential_isolation",
+            "implicit SkyPilot configuration is forbidden",
         )
     if (Path.cwd() / ".sky.yaml").exists():
         raise ExecutionPreflightError(
-            "gymnasium_credential_isolation", "implicit project configuration is forbidden"
+            "gymnasium_credential_isolation",
+            "implicit project configuration is forbidden",
         )
-    config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) if config_path else {}
+    config = (
+        yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+        if config_path
+        else {}
+    )
     validate_gymnasium_task_configuration(
         documents, solution_name=solution_name, global_config=config, secret_envs=names
     )

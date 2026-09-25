@@ -77,11 +77,14 @@ def test_repository_locks_are_complete_exact_and_machine_readable() -> None:
     requirements = (IMAGE / "requirements.lock").read_text()
     assert "# status: complete" in requirements
     assert requirements.count("--hash=sha256:") == 19
-    fetch = json.loads((IMAGE / "runtime-fetch-manifest.json").read_text())["runtime_fetch"]
+    fetch = json.loads((IMAGE / "runtime-fetch-manifest.json").read_text())[
+        "runtime_fetch"
+    ]
     for key in ("source_lock", "corresponding_source_lock"):
-        assert fetch[key + "_sha256"] == hashlib.sha256(
-            (IMAGE / fetch[key]).read_bytes()
-        ).hexdigest()
+        assert (
+            fetch[key + "_sha256"]
+            == hashlib.sha256((IMAGE / fetch[key]).read_bytes()).hexdigest()
+        )
 
 
 def test_image_build_accepts_only_the_exact_complete_pre_network_locks() -> None:

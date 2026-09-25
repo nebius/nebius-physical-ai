@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TextIO
 from urllib.parse import urlparse
 
@@ -126,7 +126,10 @@ def live_byof_built_image(e2e_project: str | None) -> str:
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_CONTAINER_RUN_ID") or f"byof-container-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_CONTAINER_RUN_ID")
+        or f"byof-container-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -182,7 +185,9 @@ def test_live_isaac_byof_workflow_validate_and_plan(
 ) -> None:
     bucket = live_bucket(e2e_project)
     path = _materialize_byof_spec(tmp_path, bucket=bucket)
-    validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
+    validate = RUNNER.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(path), "--json"]
+    )
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
     assert payload["name"] == "byof"
@@ -203,7 +208,11 @@ def test_live_isaac_byof_workflow_validate_and_plan(
     plan_payload = parse_json_payload(plan, forbidden_markers)
     steps = plan_payload.get("steps", [])
     assert steps
-    tool_refs = {step.get("tool_ref") or step.get("toolRef") for step in steps if isinstance(step, dict)}
+    tool_refs = {
+        step.get("tool_ref") or step.get("toolRef")
+        for step in steps
+        if isinstance(step, dict)
+    }
     assert "workbench.byof.repo" in tool_refs
 
 
@@ -217,7 +226,9 @@ def test_live_isaac_byof_plan_builder_matches_cli(
     spec = load_spec(path)
     plan = build_plan(spec, run_id="byof-plan-builder")
     assert plan.steps
-    assert_no_credential_leakage(json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers)
+    assert_no_credential_leakage(
+        json.dumps(plan.to_dict()), extra_forbidden=forbidden_markers
+    )
     assert any(step.tool_ref == "workbench.byof.repo" for step in plan.steps)
 
 
@@ -264,7 +275,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
     assert "<repo-url>" in workflow_yaml
     assert "<workload>" in workflow_yaml
 
-    validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0)
+    validate = ctx.post(
+        "/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=15.0
+    )
     validate.raise_for_status()
     validate_payload = validate.json()
     assert validate_payload.get("ok") is True
@@ -276,7 +289,9 @@ def test_live_agent_byof_workflow_draft_validate() -> None:
 )
 def test_live_byof_runner_container_build_push(live_byof_built_image: str) -> None:
     assert live_byof_built_image
-    assert "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    assert (
+        "npa-byof" in live_byof_built_image or "npa-isaac-lab" in live_byof_built_image
+    )
 
 
 @pytest.mark.skipif(
@@ -423,11 +438,15 @@ def test_live_byof_runner_submit_smoke(
 @pytest.fixture(scope="module")
 def live_byof_ubuntu_built_image(e2e_project: str | None) -> str:
     if os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1":
-        pytest.skip("Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.")
+        pytest.skip(
+            "Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push."
+        )
     _activate_nebius_profile()
     registry = resolve_container_registry(e2e_project)
     repo_url, repo_ref = byof_ubuntu_validation_repo()
-    run_id = os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    run_id = (
+        os.environ.get("NPA_BYOF_UBUNTU_RUN_ID") or f"byof-ubuntu-live-{os.getpid()}"
+    )
     proc = subprocess.run(
         [
             sys.executable,
@@ -480,7 +499,9 @@ def test_live_agent_oss_repo_onboard_solution_chat() -> None:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container build/push.",
 )
-def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_build_push(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     assert live_byof_ubuntu_built_image
     assert "npa-byof" in live_byof_ubuntu_built_image
 
@@ -489,7 +510,9 @@ def test_live_byof_ubuntu_oss_container_build_push(live_byof_ubuntu_built_image:
     os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 for Ubuntu OSS BYOF container metadata inspect.",
 )
-def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: str) -> None:
+def test_live_byof_ubuntu_oss_container_metadata(
+    live_byof_ubuntu_built_image: str,
+) -> None:
     repo_url, repo_ref = byof_ubuntu_validation_repo()
     meta_proc = subprocess.run(
         [
@@ -513,7 +536,8 @@ def test_live_byof_ubuntu_oss_container_metadata(live_byof_ubuntu_built_image: s
 
 
 @pytest.mark.skipif(
-    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1" or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
+    os.environ.get("NPA_BYOF_LIVE_UBUNTU") != "1"
+    or os.environ.get("NPA_BYOF_LIVE_GPU") != "1",
     reason="Set NPA_BYOF_LIVE_UBUNTU=1 and NPA_BYOF_LIVE_GPU=1 for Ubuntu container-verify SkyPilot smoke.",
 )
 def test_live_byof_ubuntu_oss_container_verify_submit(
@@ -521,7 +545,9 @@ def test_live_byof_ubuntu_oss_container_verify_submit(
     live_byof_ubuntu_built_image: str,
 ) -> None:
     registry = resolve_container_registry(e2e_project)
-    yaml_override = resolve_byof_resource_yaml(e2e_project, smoke=True, workload="container-verify")
+    yaml_override = resolve_byof_resource_yaml(
+        e2e_project, smoke=True, workload="container-verify"
+    )
     cmd = [
         sys.executable,
         str(BYOF_RUNNER),
@@ -972,9 +998,7 @@ def _gymnasium_namespace_inventory(
 ) -> dict[str, list[dict[str, object]]]:
     inventory: dict[str, list[dict[str, object]]] = {}
     for resource in GYMNASIUM_CLEANUP_RESOURCES:
-        result = _gymnasium_kubectl(
-            env, namespace, "get", resource, "--output", "json"
-        )
+        result = _gymnasium_kubectl(env, namespace, "get", resource, "--output", "json")
         assert result.returncode == 0, f"cannot inventory namespace {resource}"
         items = json.loads(result.stdout).get("items", [])
         records = []
@@ -1100,9 +1124,10 @@ def _gymnasium_admitted_volumes(spec: dict[str, object]) -> dict[str, object]:
         assert mount.pop("readOnly") is False, "unexpected shared-memory mount mode"
     if "mountPropagation" in mount:
         assert mount.pop("mountPropagation") == "None", "mount propagation forbidden"
-    assert mount == {"name": "dshm", "mountPath": "/dev/shm"}, (
-        "admitted Pod has an unapproved mount population"
-    )
+    assert mount == {
+        "name": "dshm",
+        "mountPath": PurePosixPath("/dev", "shm").as_posix(),
+    }, "admitted Pod has an unapproved mount population"
     return {"volumes": volumes, "mounts": mounts}
 
 
@@ -1319,7 +1344,9 @@ def _record_gymnasium_sky_down_logs(
     stderr: str | bytes,
 ) -> None:
     for suffix, content in (("stdout", stdout), ("stderr", stderr)):
-        decoded = content.decode(errors="replace") if isinstance(content, bytes) else content
+        decoded = (
+            content.decode(errors="replace") if isinstance(content, bytes) else content
+        )
         path = evidence_dir / f"{run_id}-sky-down-{attempt}-{suffix}.log"
         with _new_gymnasium_private_file(path) as stream:
             stream.write(decoded)
@@ -1380,9 +1407,9 @@ def _cleanup_gymnasium_run(
             config_path=config_path,
             attempt=cleanup_attempt,
         )
-    assert _gymnasium_sky_cluster_absent(
-        env, run_id=run_id, config_path=config_path
-    ), "the exact SkyPilot cluster still exists"
+    assert _gymnasium_sky_cluster_absent(env, run_id=run_id, config_path=config_path), (
+        "the exact SkyPilot cluster still exists"
+    )
     assert _wait_for_gymnasium_namespace_baseline(
         env, namespace=namespace, baseline=namespace_baseline
     ), "namespace did not return to its sealed pre-run inventory"
@@ -1431,7 +1458,8 @@ def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
 
 def _require_gymnasium_hash_metadata(response: dict, digest: str) -> None:
     hashes = [
-        value for name, value in response.get("Metadata", {}).items()
+        value
+        for name, value in response.get("Metadata", {}).items()
         if name.lower() == "sha256"
     ]
     assert hashes == [digest], "qualification object hash metadata mismatch"
@@ -1455,9 +1483,7 @@ def _gymnasium_remote_evidence(
     pages = s3.get_paginator("list_objects_v2").paginate(
         Bucket=parsed.netloc, Prefix=prefix
     )
-    observed_keys = {
-        item["Key"] for page in pages for item in page.get("Contents", [])
-    }
+    observed_keys = {item["Key"] for page in pages for item in page.get("Contents", [])}
     assert observed_keys == expected_keys, "unexpected qualification output object"
 
     def read_json(name: str) -> bytes:
@@ -1474,9 +1500,7 @@ def _gymnasium_remote_evidence(
     return artifact, summary
 
 
-def _cleanup_gymnasium_failed_output(
-    e2e_project: str | None, *, root_uri: str
-) -> None:
+def _cleanup_gymnasium_failed_output(e2e_project: str | None, *, root_uri: str) -> None:
     parsed = urlparse(root_uri)
     assert parsed.scheme == "s3" and parsed.netloc
     prefix = parsed.path.lstrip("/")
@@ -1541,12 +1565,10 @@ def test_live_gymnasium_robotics_exact_digest_capability(
     )
     namespace_baseline = _gymnasium_namespace_inventory(env, namespace=namespace)
     _require_gymnasium_empty_workload_baseline(namespace_baseline)
-    assert _gymnasium_sky_cluster_absent(
-        env, run_id=run_id, config_path=config_path
-    ), "the exact run already exists before submission"
-    _seal_gymnasium_namespace_baseline(
-        env, run_id=run_id, inventory=namespace_baseline
+    assert _gymnasium_sky_cluster_absent(env, run_id=run_id, config_path=config_path), (
+        "the exact run already exists before submission"
     )
+    _seal_gymnasium_namespace_baseline(env, run_id=run_id, inventory=namespace_baseline)
     stdout_path = evidence_dir / f"{run_id}-runner-stdout.log"
     stderr_path = evidence_dir / f"{run_id}-runner-stderr.log"
     proc: subprocess.Popen[str] | None = None

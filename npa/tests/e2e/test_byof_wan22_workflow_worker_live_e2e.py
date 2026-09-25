@@ -56,8 +56,12 @@ def _completed_run() -> _CompletedRun:
     assert controls["frames"] >= 5 and (controls["frames"] - 1) % 4 == 0
     assert controls["steps"] > 0 and controls["seed"] >= 0
     return _CompletedRun(
-        run_id, project, prefix_uri.rstrip("/") + "/", parsed.netloc,
-        parsed.path.strip("/") + "/", controls,
+        run_id,
+        project,
+        prefix_uri.rstrip("/") + "/",
+        parsed.netloc,
+        parsed.path.strip("/") + "/",
+        controls,
     )
 
 
@@ -122,7 +126,7 @@ def _verify_manifest_sources(
     }
     for source in manifest["source_objects"]:
         assert source["uri"].startswith(target.prefix_uri)
-        name = source["uri"][len(target.prefix_uri):]
+        name = source["uri"][len(target.prefix_uri) :]
         assert Path(name).name == name, "Manifest source must be a direct run artifact"
         path = directory / name
         assert path.stat().st_size == source["size_bytes"], name
@@ -138,18 +142,29 @@ def _verify_manifest_sources(
 def test_completed_standard_workflow_wan_worker(tmp_path: Path) -> None:
     target = _completed_run()
     s3 = _s3_client(target.project)
-    summary = _read_s3_json(s3, target.bucket, target.key_prefix + "npa_byof_summary.json")
+    summary = _read_s3_json(
+        s3, target.bucket, target.key_prefix + "npa_byof_summary.json"
+    )
     layout = _verify_worker_summary(summary, target)
     _download_worker_evidence(s3, target, summary, layout, tmp_path)
     evidence = validate_wan_run(tmp_path, layout)
     assert evidence["run_id"] == target.run_id
     _verify_generation(evidence, target, tmp_path)
     manifest = _verify_published_rrd(
-        s3, bucket=target.bucket, key_prefix=target.key_prefix, layout=layout,
-        run_id=target.run_id, video_path=tmp_path / layout.video_filename,
-        expected_frame_count=target.controls["frames"], expected_fps=24.0,
-        expected_rank_count=len(layout.rank_filenames), tmp_path=tmp_path,
+        s3,
+        bucket=target.bucket,
+        key_prefix=target.key_prefix,
+        layout=layout,
+        run_id=target.run_id,
+        video_path=tmp_path / layout.video_filename,
+        expected_frame_count=target.controls["frames"],
+        expected_fps=24.0,
+        expected_rank_count=len(layout.rank_filenames),
+        tmp_path=tmp_path,
     )
     _verify_manifest_sources(
-        manifest, target, tmp_path, _source_filenames(layout, summary["smoke_artifact_name"])
+        manifest,
+        target,
+        tmp_path,
+        _source_filenames(layout, summary["smoke_artifact_name"]),
     )

@@ -68,8 +68,12 @@ class FrameSelection(str, Enum):
 
 @app.command("run")
 def run_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 or local artifact path to score."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for eval JSON."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 or local artifact path to score."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 or local path for eval JSON."
+    ),
     task: str = typer.Option("sim-to-real", "--task", help="Evaluation task label."),
     task_from: str = typer.Option(
         "",
@@ -130,8 +134,12 @@ def run_cmd(
         "--timeout-s",
         help="VLM request timeout in seconds.",
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not write the result artifact."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Score a rollout artifact with a VLM backend."""
 
@@ -213,10 +221,14 @@ def _read_reasoning_payload(local: Path, uri: str) -> dict[str, Any]:
 @app.command("loop")
 def loop_cmd(
     input_path: str = typer.Option(
-        ..., "--input-path", help="S3 or local prefix containing one directory per rollout."
+        ...,
+        "--input-path",
+        help="S3 or local prefix containing one directory per rollout.",
     ),
     output_path: str = typer.Option(
-        ..., "--output-path", help="S3 or local prefix for per-rollout results and the report."
+        ...,
+        "--output-path",
+        help="S3 or local prefix for per-rollout results and the report.",
     ),
     task: str = typer.Option("sim-to-real", "--task", help="Evaluation task label."),
     backend: BackendName = typer.Option(
@@ -241,7 +253,9 @@ def loop_cmd(
         help="Rollout frame selection: final, keyframes, or sequence.",
     ),
     max_frames: int = typer.Option(
-        DEFAULT_MAX_FRAMES, "--max-frames", help="Maximum frames sent to the VLM per rollout."
+        DEFAULT_MAX_FRAMES,
+        "--max-frames",
+        help="Maximum frames sent to the VLM per rollout.",
     ),
     rubric: str = typer.Option(DEFAULT_RUBRIC, "--rubric", help="Scoring rubric text."),
     rubric_path: str = typer.Option(
@@ -255,7 +269,9 @@ def loop_cmd(
     timeout_s: float = typer.Option(
         DEFAULT_TIMEOUT_S, "--timeout-s", help="VLM request timeout in seconds."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Score every rollout under a prefix and write an aggregate task-success report.
 
@@ -350,7 +366,9 @@ def benchmark_cmd(
         "--use-fixture-scores",
         help="Honor fixture_score values for non-stub backends; stub always uses them when present.",
     ),
-    format: OutputFormat = typer.Option(OutputFormat.text, "--format", help="Console output format."),
+    format: OutputFormat = typer.Option(
+        OutputFormat.text, "--format", help="Console output format."
+    ),
 ) -> None:
     """Sweep VLM-eval configs over a labeled rollout benchmark set."""
 
@@ -371,7 +389,9 @@ def benchmark_cmd(
         )
         payload = asdict(report)
         payload["written_uri"] = benchmark_result_uri_for(output_path)
-        payload["written_uri"] = write_benchmark_report(payload, output_path=output_path)
+        payload["written_uri"] = write_benchmark_report(
+            payload, output_path=output_path
+        )
     except VlmEvalError as exc:
         _fail(str(exc))
         return
@@ -386,7 +406,9 @@ def workflow_cmd(
         envvar=DEFAULT_VLM_IMAGE_ENV,
         help="Self-hosted VLM workflow image. Also settable with NPA_VLM_IMAGE.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show the npa.workflow specs for VLM evaluation."""
 
@@ -405,7 +427,9 @@ def workflow_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show VLM eval backend status."""
 
@@ -427,7 +451,9 @@ def status_cmd(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List available VLM eval backends."""
 
@@ -504,9 +530,11 @@ def _parse_thresholds(value: str) -> list[float]:
 
 
 def _env_dry_run() -> bool:
-    return os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
-        "DRY_RUN", ""
-    ).lower() in {"1", "true", "yes"}
+    return os.environ.get("NPA_DRY_RUN", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    } or os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
 
 
 def _enum_value(value: Any) -> str:

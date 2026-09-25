@@ -7,7 +7,11 @@ from typing import Any
 
 import typer
 
-from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
+from npa.cli.path_contract import (
+    PathContractError,
+    validate_read_path,
+    validate_write_path,
+)
 from npa.workbench.robocasa.schemas import (
     DEFAULT_ENV_ID,
     DEFAULT_ITERATIONS,
@@ -17,35 +21,79 @@ from npa.workbench.robocasa.schemas import (
     RoboCasaRunRequest,
 )
 
-from npa.cli.workbench.robocasa.helpers import OutputFormat, emit, fail, request_json, resolve_endpoint
+from npa.cli.workbench.robocasa.helpers import (
+    OutputFormat,
+    emit,
+    fail,
+    request_json,
+    resolve_endpoint,
+)
 
 RUN_DONE = "completed"
 RUN_FAILED = "failed"
 
 
 def run_cmd(
-    capability: str = typer.Option(..., "--capability", help="RoboCasa capability to run."),
-    env_id: str = typer.Option(DEFAULT_ENV_ID, "--env-id", help="RoboCasa Gymnasium env id."),
+    capability: str = typer.Option(
+        ..., "--capability", help="RoboCasa capability to run."
+    ),
+    env_id: str = typer.Option(
+        DEFAULT_ENV_ID, "--env-id", help="RoboCasa Gymnasium env id."
+    ),
     output_path: str = typer.Option(
         ...,
         "--output-path",
         "--output-uri",
         help="S3 output path for artifacts (--output-uri is a compatibility alias).",
     ),
-    iterations: int = typer.Option(DEFAULT_ITERATIONS, "--iterations", help="Number of rollout iterations."),
-    num_envs: int = typer.Option(DEFAULT_NUM_ENVS, "--num-envs", help="Number of parallel envs."),
-    timeout_seconds: int = typer.Option(DEFAULT_TIMEOUT_SECONDS, "--timeout-seconds", help="Run timeout in seconds."),
-    download_assets: bool = typer.Option(True, "--download-assets/--no-download-assets", help="Download kitchen assets before running."),
+    iterations: int = typer.Option(
+        DEFAULT_ITERATIONS, "--iterations", help="Number of rollout iterations."
+    ),
+    num_envs: int = typer.Option(
+        DEFAULT_NUM_ENVS, "--num-envs", help="Number of parallel envs."
+    ),
+    timeout_seconds: int = typer.Option(
+        DEFAULT_TIMEOUT_SECONDS, "--timeout-seconds", help="Run timeout in seconds."
+    ),
+    download_assets: bool = typer.Option(
+        True,
+        "--download-assets/--no-download-assets",
+        help="Download kitchen assets before running.",
+    ),
     seed: int = typer.Option(None, "--seed", help="Random seed."),
-    checkpoint_uri: str = typer.Option("", "--checkpoint-uri", help="Exact trained checkpoint S3 prefix for policy evaluation."),
-    train_env_ids: str = typer.Option("", "--train-env-ids", help="Comma-separated RoboCasa training env ids used for disjointness proof."),
-    heldout_env_ids: str = typer.Option("", "--heldout-env-ids", help="Comma-separated held-out RoboCasa env ids to evaluate."),
-    service: bool = typer.Option(False, "--service", help="Call a deployed service endpoint."),
+    checkpoint_uri: str = typer.Option(
+        "",
+        "--checkpoint-uri",
+        help="Exact trained checkpoint S3 prefix for policy evaluation.",
+    ),
+    train_env_ids: str = typer.Option(
+        "",
+        "--train-env-ids",
+        help="Comma-separated RoboCasa training env ids used for disjointness proof.",
+    ),
+    heldout_env_ids: str = typer.Option(
+        "",
+        "--heldout-env-ids",
+        help="Comma-separated held-out RoboCasa env ids to evaluate.",
+    ),
+    service: bool = typer.Option(
+        False, "--service", help="Call a deployed service endpoint."
+    ),
     endpoint: str = typer.Option("", "--endpoint", help="RoboCasa service endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing service token."),
-    wait: bool = typer.Option(False, "--wait", help="Poll /status until the run completes."),
-    poll_seconds: float = typer.Option(30.0, "--poll-seconds", help="Poll interval when --wait is set."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing service token.",
+    ),
+    wait: bool = typer.Option(
+        False, "--wait", help="Poll /status until the run completes."
+    ),
+    poll_seconds: float = typer.Option(
+        30.0, "--poll-seconds", help="Poll interval when --wait is set."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Run a RoboCasa capability (task registration, asset check, EGL reset, or random rollout)."""
     try:
@@ -91,9 +139,7 @@ def run_cmd(
 
         local_payload = request.model_dump(mode="json")
         local_payload.pop("output_uri")
-        result = run(
-            output_path=output_path, **local_payload
-        ).model_dump(mode="json")
+        result = run(output_path=output_path, **local_payload).model_dump(mode="json")
     if wait:
         run_id = str(result.get("run_id") or "")
         result = _wait_for_run(
@@ -103,7 +149,11 @@ def run_cmd(
             poll_seconds=poll_seconds,
             timeout_seconds=timeout_seconds,
         )
-    emit(result, output=output, text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}")
+    emit(
+        result,
+        output=output,
+        text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}",
+    )
 
 
 def _wait_for_run(

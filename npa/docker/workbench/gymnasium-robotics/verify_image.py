@@ -22,7 +22,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "corresponding-source.lock.json": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
     "runtime-fetch-manifest.json": "72597bda8363f54ef1d243d6f8b2a7660aebdaf54875fd161b11b0097444f957",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "4686d636c32faf790204ba53de42228c97bc19c2ec621ec9cf3cf895afa9f23e",
+    "runtime-bootstrap.py": "dcefd3ea34c3ffb6be392a8f07329ab47608f7f6cf5bef083e250c377b4fd484",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
@@ -184,7 +184,11 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
             raise ValueError(f"reviewed immutable image file changed: /{relative}")
     for relative, record in EXPECTED_SYSTEM_WHEEL_FILES.items():
         wheel = root / relative
-        if wheel.is_symlink() or not wheel.is_file() or _sha256(wheel) != record["sha256"]:
+        if (
+            wheel.is_symlink()
+            or not wheel.is_file()
+            or _sha256(wheel) != record["sha256"]
+        ):
             raise ValueError(f"reviewed system bootstrap wheel changed: /{relative}")
     scoped_files = [
         *(lock_root / name for name in EXPECTED_LOCK_FILENAMES),
@@ -204,8 +208,7 @@ def verify(root: Path = Path("/")) -> dict[str, object]:
         "credential_present": False,
         "release_authorized": False,
         "privileged_root_paths_deferred_to_complete_byte_scan": [
-            str(path)
-            for path in PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN
+            str(path) for path in PRIVILEGED_ROOTS_DEFERRED_TO_COMPLETE_BYTE_SCAN
         ]
         if live_root
         else [],

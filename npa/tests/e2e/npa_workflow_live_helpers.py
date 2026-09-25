@@ -20,6 +20,7 @@ Those paths require separate authorization; this is not a suite-wide S3 sandbox.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+import httpx
 import pytest
 from typer.testing import Result
 
@@ -45,10 +47,23 @@ NUREC_COLMAP_REVISION = "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
 NUREC_COLMAP_MEMBER = "colmap/struktur28_colmap.zip"
 NUREC_COLMAP_SHA256 = "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
 ISAAC_ARENA_REPLAY_REVISION = "ed0fd12be862078be316c73eb7cf423ba9b1c5cd"
-ISAAC_ARENA_REPLAY_SHA256 = "154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50"
-ISAAC_ARENA_REPLAY_MEMBER = "isaaclab_arena/tests/test_data/test_demo_gr1_open_microwave.hdf5"
+ISAAC_ARENA_REPLAY_SHA256 = (
+    "154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50"
+)
+ISAAC_ARENA_REPLAY_MEMBER = (
+    "isaaclab_arena/tests/test_data/test_demo_gr1_open_microwave.hdf5"
+)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "workflows"
+# CC0 photograph by Lav Varshney; see skills/NOTICE-PAIDF-STARTER-MEDIA.
+_PAIDF_CAMERA_REVISION = "e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae"
+_PAIDF_CAMERA_URL = (
+    "https://raw.githubusercontent.com/scikit-image/scikit-image/"
+    f"{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
+)
+_PAIDF_CAMERA_SHA256 = (
+    "b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a"
+)
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
 # testsrc2 source. Keeping the bytes in the test harness makes input seeding
 # independent of an operator host's ffmpeg installation while the live worker
@@ -142,6 +157,33 @@ _CONDITIONED_COSMOS_MP4_B64 = (
 )
 
 
+def _fetch_paidf_camera_fixture() -> bytes:
+    """Fetch only the reviewed, revision-pinned public HTTPS fixture."""
+
+    parsed = urlparse(_PAIDF_CAMERA_URL)
+    expected_path = (
+        f"/scikit-image/scikit-image/{_PAIDF_CAMERA_REVISION}/skimage/data/camera.png"
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "raw.githubusercontent.com"
+        or parsed.path != expected_path
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        pytest.fail("PAIDF EVG camera fixture is not the pinned HTTPS source")
+    source_url = httpx.URL(_PAIDF_CAMERA_URL)
+    try:
+        response = httpx.get(source_url, timeout=30.0, follow_redirects=False)
+        response.raise_for_status()
+    except httpx.HTTPError:
+        pytest.fail("PAIDF EVG camera fixture could not be fetched")
+    if response.url != source_url:
+        pytest.fail("PAIDF EVG camera fixture source identity changed")
+    return response.content
+
+
 def resolve_spec_path(name: str) -> Path:
     """Resolve a live-submit spec by name across every blueprint root."""
 
@@ -171,6 +213,7 @@ DYNAMIC_SPECS = frozenset(
         "tokenfactory-cosmos-gate.yaml",
         "rl-policy-training-sim-success.yaml",
         "physical-ai-data-factory.yaml",
+        "nvidia-paidf-vda-cosmos-transfer25.yaml",
         "paidf-cosmos3.yaml",
         "token-factory-gate-loop.yaml",
     }
@@ -260,8 +303,26 @@ def seed_live_workflow_inputs(
 
     from npa.clients.project_credentials import s3_client_for_project
 
+    if spec_name == "xr1-antioch-finetune.yaml":
+        pytest.skip(
+            "XR1 requires an operator-collected, sealed Antioch dataset, pinned model assets, "
+            "and a verified SM120 runtime. Follow docs/workbench/cookbooks/xr1-antioch.md."
+        )
+
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "encord-roundtrip-smoke.yaml":
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/source.png",
+            Body=base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                validate=True,
+            ),
+            ContentType="image/png",
+        )
+        return
 
     if spec_name == "lerobot-subtask-proof.yaml":
         _seed_lerobot_subtask_dataset(client, bucket=bucket, marker=marker)
@@ -273,6 +334,131 @@ def seed_live_workflow_inputs(
 
     if spec_name == "nurec-colmap-reconstruct.yaml":
         _seed_nurec_colmap_source(client, bucket=bucket, prefix=marker)
+        return
+
+    if spec_name == "paidf-event-video-generation.yaml":
+        # Fetch public source bytes without model/registry credentials. A real
+        # photograph exercises the detector and per-person label stages.
+        image_bytes = _fetch_paidf_camera_fixture()
+        if hashlib.sha256(image_bytes).hexdigest() != _PAIDF_CAMERA_SHA256:
+            pytest.fail("PAIDF EVG camera fixture SHA-256 mismatch")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/seed.png",
+            Body=image_bytes,
+            ContentType="image/png",
+        )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture-source.json",
+            Body=json.dumps(
+                {
+                    "schema": "npa.paidf.fixture-source.v1",
+                    "source_url": _PAIDF_CAMERA_URL,
+                    "source_revision": _PAIDF_CAMERA_REVISION,
+                    "sha256": _PAIDF_CAMERA_SHA256,
+                    "bytes": len(image_bytes),
+                    "license": "CC0-1.0",
+                    "author": "Lav Varshney",
+                },
+                sort_keys=True,
+            ).encode(),
+            ContentType="application/json",
+        )
+        return
+
+    if spec_name == "paidf-image-attribute-augmentation.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed PAIDF fixtures: {exc}")
+        size = (768, 1024)
+        image = Image.new("RGB", size, (106, 113, 120))
+        draw = ImageDraw.Draw(image)
+        # Repository-authored, non-customer silhouette: enough structure for the
+        # real IAA conditioning and verifier paths without redistributing data.
+        cx, cy = size[0] // 2, size[1] // 2
+        draw.ellipse((cx - 45, cy - 220, cx + 45, cy - 130), fill=(196, 155, 116))
+        draw.rectangle((cx - 75, cy - 130, cx + 75, cy + 80), fill=(30, 75, 145))
+        draw.rectangle((cx - 70, cy + 80, cx - 10, cy + 260), fill=(35, 35, 40))
+        draw.rectangle((cx + 10, cy + 80, cx + 70, cy + 260), fill=(35, 35, 40))
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/seed.png",
+            Body=buf.getvalue(),
+            ContentType="image/png",
+        )
+        return
+
+    if spec_name == "paidf-defect-image-generation.yaml":
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:  # pragma: no cover
+            pytest.fail(f"Pillow required to seed PAIDF DIG fixtures: {exc}")
+
+        defect_types = ("MT_Blowhole", "MT_Break", "MT_Crack", "MT_Fray", "MT_Uneven")
+        root = f"{marker}/fixture/dataset"
+
+        def put_image(key: str, image: Image.Image, fmt: str) -> None:
+            buf = BytesIO()
+            image.save(buf, format=fmt)
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=buf.getvalue(),
+                ContentType="image/jpeg" if fmt == "JPEG" else "image/png",
+            )
+
+        for index in range(20):
+            clean = Image.new("RGB", (512, 512), (118 + index % 9, 122, 126))
+            draw = ImageDraw.Draw(clean)
+            for x in range(0, 512, 32):
+                draw.line((x, 0, x + 60, 512), fill=(128, 132, 136), width=2)
+            put_image(
+                f"{root}/metal_surface/clean_image/clean_{index:03d}.jpg", clean, "JPEG"
+            )
+
+        specs = []
+        for defect_index, defect in enumerate(defect_types):
+            specs.append(
+                json.dumps(
+                    {
+                        "defect_type": f"metal_surface+{defect}",
+                        "spatial_dependency": "free",
+                        "roi_prompt_defect_location": "",
+                    },
+                    sort_keys=True,
+                )
+            )
+            slug = defect.lower()
+            for index in range(5):
+                base = Image.new("RGB", (512, 512), (120, 124, 128))
+                mask = Image.new("L", (512, 512), 0)
+                defect_draw = ImageDraw.Draw(base)
+                mask_draw = ImageDraw.Draw(mask)
+                left = 80 + 47 * index
+                top = 90 + 39 * defect_index
+                box = (left, top, left + 72, top + 38)
+                defect_draw.ellipse(box, fill=(55, 38, 30))
+                mask_draw.ellipse(box, fill=255)
+                put_image(
+                    f"{root}/metal_surface/anomaly_image/{defect}/{slug}_{index:03d}.png",
+                    base,
+                    "PNG",
+                )
+                put_image(
+                    f"{root}/metal_surface/mask/{defect}/{slug}_{index:03d}_mask.png",
+                    mask,
+                    "PNG",
+                )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{root}/defect_spec.jsonl",
+            Body=("\n".join(specs) + "\n").encode(),
+            ContentType="application/x-ndjson",
+        )
         return
 
     if spec_name == "paidf-cosmos3.yaml":
@@ -322,6 +508,26 @@ def seed_live_workflow_inputs(
     if spec_name == "token-factory-gate-loop.yaml":
         # The loop captions and scores the same small batch every iteration.
         _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
+        return
+
+    if spec_name == "token-factory-robot-sdg.yaml":
+        body = b'{"id":"robot-e2e","prompt":"Extract these scene values: red cube at (-0.10,-0.08), green target at (0.10,0.08), lighting=1.0."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
+        return
+
+    if spec_name == "token-factory-sdg.yaml":
+        body = b'{"id":"e2e-sdg","prompt":"Create a training example asking for a concise paraphrase of: put the red cube in the blue tray."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
         return
 
     if spec_name == "token-factory-generate.yaml":
@@ -611,7 +817,9 @@ def _lerobot_subtask_fixture_objects() -> dict[str, bytes]:
     )
     catalog = pa.table({"subtask": ["approach", "grasp"], "subtask_index": [0, 1]})
     tasks = pa.table({"task_index": [0], "task": ["Pick up the object"]})
-    episodes = pa.table({"episode_index": [0], "length": [4], "tasks": [["Pick up the object"]]})
+    episodes = pa.table(
+        {"episode_index": [0], "length": [4], "tasks": [["Pick up the object"]]}
+    )
     info = {
         "codebase_version": "v3.0",
         "fps": 10,
@@ -643,30 +851,46 @@ def _assert_lerobot_subtask_proof(client: Any, bucket: str, marker: str) -> None
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    with client.get_object(Bucket=bucket, Key=f"{marker}/proof/subtask-proof.json")["Body"] as body:
+    with client.get_object(Bucket=bucket, Key=f"{marker}/proof/subtask-proof.json")[
+        "Body"
+    ] as body:
         payload = json.loads(body.read())
     proof = payload["proof"]
     assert payload["status"] == "verified"
     assert payload["summary"] == {
-        "episode_count": 1, "frame_count": 4, "labeled_frame_count": 4,
-        "unlabeled_frame_count": 0, "subtask_count": 2, "segment_count": 2,
+        "episode_count": 1,
+        "frame_count": 4,
+        "labeled_frame_count": 4,
+        "unlabeled_frame_count": 0,
+        "subtask_count": 2,
+        "segment_count": 2,
     }
     prefix = f"{marker}/reviewed-dataset/"
-    with client.get_object(Bucket=bucket, Key=f"{prefix}data/chunk-000/file-000.parquet")["Body"] as body:
+    with client.get_object(
+        Bucket=bucket, Key=f"{prefix}data/chunk-000/file-000.parquet"
+    )["Body"] as body:
         data = body.read()
-    with client.get_object(Bucket=bucket, Key=f"{prefix}meta/subtasks.parquet")["Body"] as body:
+    with client.get_object(Bucket=bucket, Key=f"{prefix}meta/subtasks.parquet")[
+        "Body"
+    ] as body:
         catalog = body.read()
     assert proof["source_parquet_sha256"] == hashlib.sha256(data).hexdigest()
     assert payload["source_catalog_sha256"] == hashlib.sha256(catalog).hexdigest()
     row = pq.read_table(pa.BufferReader(data)).to_pylist()[2]
-    labels = {item["subtask_index"]: item["subtask"] for item in pq.read_table(pa.BufferReader(catalog)).to_pylist()}
+    labels = {
+        item["subtask_index"]: item["subtask"]
+        for item in pq.read_table(pa.BufferReader(catalog)).to_pylist()
+    }
     for field in ("episode_index", "frame_index", "timestamp", "subtask_index"):
         assert proof[field] == row[field]
     assert proof["subtask"] == labels[row["subtask_index"]] == "grasp"
     recorded_hash = proof.pop("row_sha256")
-    assert recorded_hash == hashlib.sha256(
-        json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    assert (
+        recorded_hash
+        == hashlib.sha256(
+            json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
 
 
 def assert_lerobot_subtask_live_outputs(
@@ -1095,7 +1319,9 @@ def _seed_isaac_arena_replay(client: Any, *, bucket: str, prefix: str) -> None:
         with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
             stored_sha256 = hashlib.sha256(body.read()).hexdigest()
         if stored_sha256 != ISAAC_ARENA_REPLAY_SHA256:
-            pytest.fail("Arena replay readback differs from the pinned upstream fixture")
+            pytest.fail(
+                "Arena replay readback differs from the pinned upstream fixture"
+            )
 
 
 def _download_nurec_colmap_archive(destination: Path) -> None:
@@ -1355,7 +1581,9 @@ def _nurec_rrd_review_settings(chunks: list) -> dict:
     return settings
 
 
-def _nurec_selected_frame_identities(local: Path, settings: dict) -> set[tuple[str, int]]:
+def _nurec_selected_frame_identities(
+    local: Path, settings: dict
+) -> set[tuple[str, int]]:
     """Derive the intended review identities from ordered source render paths."""
     from npa.workflows.data_factory_viz import _frame_index, _grouped_images, _subsample
 
@@ -1448,7 +1676,7 @@ def _assert_nurec_rrd(
     import sys
 
     import yaml
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     path = local / "reports/sim2real.rrd"
     verified = subprocess.run(
@@ -1597,12 +1825,82 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    paidf_stem = name.replace(".yaml", "")
+    if name in {
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
+    }:
+        text = re.sub(
+            r'input_uri:\s*"[^"]+"',
+            f'input_uri: "s3://{bucket}/{marker}/{paidf_stem}/fixture/"',
+            text,
+            count=1,
+        )
+        image_variable = (
+            "NPA_E2E_PAIDF_IAA_IMAGE"
+            if "attribute" in name
+            else "NPA_E2E_PAIDF_EVG_IMAGE"
+        )
+        generation_image = os.environ.get(image_variable, "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", generation_image):
+            pytest.fail(
+                f"{image_variable} must name the scanned operator-built "
+                "generation compatibility image by exact digest"
+            )
+        text = re.sub(
+            r'generation_image:\s*"[^"]+"',
+            f'generation_image: "{generation_image}"',
+            text,
+            count=1,
+        )
+        labeling_images = {
+            "attribute_search_image": "NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE",
+        }
+        if name == "paidf-event-video-generation.yaml":
+            labeling_images.update(
+                detection_image="NPA_E2E_PAIDF_DETECTION_IMAGE",
+                captioning_image="NPA_E2E_PAIDF_CAPTIONING_IMAGE",
+                visual_qa_image="NPA_E2E_PAIDF_VISUAL_QA_IMAGE",
+            )
+        for config_key, environment_key in labeling_images.items():
+            image = os.environ.get(environment_key, "").strip()
+            if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+                pytest.fail(
+                    f"{environment_key} must name the scanned operator-built "
+                    "labeling compatibility image by exact digest"
+                )
+            text = re.sub(
+                rf'{config_key}:\s*"[^"]+"',
+                f'{config_key}: "{image}"',
+                text,
+                count=1,
+            )
+    elif name == "paidf-defect-image-generation.yaml":
+        text = re.sub(
+            r'dataset_uri:\s*"[^"]+"',
+            f'dataset_uri: "s3://{bucket}/{marker}/{paidf_stem}/fixture/dataset/"',
+            text,
+            count=1,
+        )
+        text = text.replace("usecase: pcb", "usecase: metal_surface", 1)
+        anomalygen_image = os.environ.get("NPA_E2E_PAIDF_ANOMALYGEN_IMAGE", "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", anomalygen_image):
+            pytest.fail(
+                "NPA_E2E_PAIDF_ANOMALYGEN_IMAGE must name the operator-built "
+                "restricted compatibility image by exact digest"
+            )
+        text = re.sub(
+            r'anomalygen_image:\s*"[^"]+"',
+            f'anomalygen_image: "{anomalygen_image}"',
+            text,
+            count=1,
+        )
     if name == "isaac-arena-evaluation-rtxpro.yaml":
         text = re.sub(
             r'(input_uri:\s*")[^"]*(")',
             lambda match: (
-                f'{match.group(1)}s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/'
-                f'input/gr1-open-microwave.hdf5{match.group(2)}'
+                f"{match.group(1)}s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/"
+                f"input/gr1-open-microwave.hdf5{match.group(2)}"
             ),
             text,
             count=1,
@@ -1772,10 +2070,14 @@ def live_credential_markers() -> list[str]:
     try:
         from npa.clients.credentials import load_credentials
 
-        storage = load_credentials().get("storage") or {}
-        for key in ("aws_access_key_id", "aws_secret_access_key"):
-            value = storage.get(key)
+        credentials = load_credentials()
+        for key in ("s3_access_key_id", "s3_secret_access_key"):
+            value = getattr(credentials, key, "")
             if isinstance(value, str) and len(value) >= 8:
+                markers.append(value)
+        for key in ("ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64"):
+            value = credentials.tokens.get(key, "")
+            if len(value) >= 8:
                 markers.append(value)
     except Exception:
         pass
@@ -1784,6 +2086,8 @@ def live_credential_markers() -> list[str]:
         "AWS_SECRET_ACCESS_KEY",
         "HF_TOKEN",
         "NEBIUS_TOKEN_FACTORY_KEY",
+        "ENCORD_SSH_KEY",
+        "ENCORD_SSH_KEY_B64",
     ):
         value = os.environ.get(env_key, "")
         if value and len(value) >= 8:

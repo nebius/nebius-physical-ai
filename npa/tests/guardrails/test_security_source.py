@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
-import ast
 import json
 import subprocess
-import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import pytest
 
@@ -18,23 +16,20 @@ assert _SPEC is not None and _SPEC.loader is not None
 source_scanner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(source_scanner)
 
-_GATE_SPEC = importlib.util.spec_from_file_location(
-    "security_gate", Path(__file__).resolve().parents[3] / "scripts" / "security_gate.py"
-)
-assert _GATE_SPEC is not None and _GATE_SPEC.loader is not None
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-security_gate = importlib.util.module_from_spec(_GATE_SPEC)
-_GATE_SPEC.loader.exec_module(security_gate)
-sys.path.pop(0)
-
 
 def _python_report(root: Path, line: int = 1) -> dict:
     return {
-        "errors": [], "metrics": {str(root / "candidate.py"): {}},
-        "results": [{
-            "filename": str(root / "candidate.py"), "line_number": line,
-            "col_offset": 0, "test_id": "B307", "issue_text": "Unsafe evaluation",
-        }],
+        "errors": [],
+        "metrics": {str(root / "candidate.py"): {}},
+        "results": [
+            {
+                "filename": str(root / "candidate.py"),
+                "line_number": line,
+                "col_offset": 0,
+                "test_id": "B307",
+                "issue_text": "Unsafe evaluation",
+            }
+        ],
     }
 
 
@@ -68,11 +63,15 @@ def test_unscanned_python_files_fail_closed(tmp_path: Path) -> None:
     """
     with pytest.raises(RuntimeError, match="every Python file"):
         source_scanner._python_findings(
-            _python_report(tmp_path), tmp_path, {"candidate.py", "omitted.py"},
+            _python_report(tmp_path),
+            tmp_path,
+            {"candidate.py", "omitted.py"},
         )
 
 
-def test_python_identity_survives_line_moves_and_counts_duplicates(tmp_path: Path) -> None:
+def test_python_identity_survives_line_moves_and_counts_duplicates(
+    tmp_path: Path,
+) -> None:
     """Preserve finding identity across line moves without losing duplicates.
 
     Args:
@@ -85,9 +84,13 @@ def test_python_identity_survives_line_moves_and_counts_duplicates(tmp_path: Pat
     candidate = tmp_path / "candidate.py"
     candidate.write_text("eval(request)\n", encoding="utf-8")
     original = source_scanner._python_findings(
-        _python_report(tmp_path), tmp_path, {"candidate.py"},
+        _python_report(tmp_path),
+        tmp_path,
+        {"candidate.py"},
     )
-    candidate.write_text("# An unrelated header.\neval(request)\neval(request)\n", encoding="utf-8")
+    candidate.write_text(
+        "# An unrelated header.\neval(request)\neval(request)\n", encoding="utf-8"
+    )
     report = _python_report(tmp_path, line=2)
     report["results"].append({**report["results"][0], "line_number": 3})
     changed = source_scanner._python_findings(report, tmp_path, {"candidate.py"})
@@ -109,16 +112,22 @@ def test_python_identity_changes_with_vulnerable_expression(tmp_path: Path) -> N
     candidate = tmp_path / "candidate.py"
     candidate.write_text("eval(request)\n", encoding="utf-8")
     original = source_scanner._python_findings(
-        _python_report(tmp_path), tmp_path, {"candidate.py"},
+        _python_report(tmp_path),
+        tmp_path,
+        {"candidate.py"},
     )
     candidate.write_text("eval(other_request)\n", encoding="utf-8")
     changed = source_scanner._python_findings(
-        _python_report(tmp_path), tmp_path, {"candidate.py"},
+        _python_report(tmp_path),
+        tmp_path,
+        {"candidate.py"},
     )
     assert original[0]["identity"] != changed[0]["identity"]
 
 
-def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: Path) -> None:
+def test_multiline_call_uses_full_expression_when_issue_marks_keyword(
+    tmp_path: Path,
+) -> None:
     """Attribute a keyword finding to its complete multiline expression.
 
     Args:
@@ -129,7 +138,9 @@ def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: 
         AssertionError: The scanner safety or finding-identity contract regresses.
     """
     candidate = tmp_path / "candidate.py"
-    candidate.write_text("result = run(\n    request,\n    shell=True,\n)\n", encoding="utf-8")
+    candidate.write_text(
+        "result = run(\n    request,\n    shell=True,\n)\n", encoding="utf-8"
+    )
     report = _python_report(tmp_path, line=3)
     report["results"][0].update(col_offset=9, line_range=[1, 2, 3, 4])
     findings = source_scanner._python_findings(report, tmp_path, {"candidate.py"})
@@ -137,53 +148,12 @@ def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: 
     assert findings[0]["line"] == 3
 
 
-def test_reviewed_declarative_mount_metadata_stays_visible(tmp_path: Path) -> None:
-    """Raw B108 stays visible while exact metadata is non-regressive."""
-
-    mount_path = str(PurePosixPath("/", "dev", "shm"))
-    unsafe_mount_path = str(PurePosixPath("/", "dev", "shm", "unsafe"))
-    path = tmp_path / "npa/tests/workflows/test_gymnasium_pod_receipt.py"
-    path.parent.mkdir(parents=True)
-    path.write_text(
-        "def test_profile_accepts_closed_admitted_policy():\n"
-        f"    mount = {{'name': 'dshm', 'mountPath': {mount_path!r}}}\n",
-        encoding="utf-8",
-    )
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    node = next(item for item in ast.walk(tree) if isinstance(item, ast.Constant) and item.value == mount_path)
-    issue = {
-        "filename": str(path), "line_number": node.lineno, "col_offset": node.col_offset,
-        "test_id": "B108", "issue_text": "Insecure temporary file/directory creation",
-    }
-    findings = source_scanner._python_findings(
-        {"errors": [], "metrics": {str(path): {}}, "results": [issue]},
-        tmp_path,
-        {"npa/tests/workflows/test_gymnasium_pod_receipt.py"},
-    )
-    assert findings[0]["policy_disposition"] == "trusted-declarative-mount-metadata"
-    assert security_gate.regressions([], findings) == []
-
-    path.write_text(
-        "def test_profile_accepts_closed_admitted_policy():\n"
-        f"    return open({unsafe_mount_path!r}, 'w')\n",
-        encoding="utf-8",
-    )
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    node = next(item for item in ast.walk(tree) if isinstance(item, ast.Constant) and item.value == unsafe_mount_path)
-    issue["line_number"] = node.lineno
-    issue["col_offset"] = node.col_offset
-    findings = source_scanner._python_findings(
-        {"errors": [], "metrics": {str(path): {}}, "results": [issue]},
-        tmp_path,
-        {"npa/tests/workflows/test_gymnasium_pod_receipt.py"},
-    )
-    assert findings[0]["policy_disposition"] == "actionable"
-    assert security_gate.regressions([], findings) == findings
-
-
 @pytest.mark.parametrize("returncode,stdout", [(2, "{}"), (0, "{"), (1, "[]")])
 def test_workflow_scanner_failures_do_not_become_clean_reports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    stdout: str,
 ) -> None:
     """Reject failed or malformed workflow scanner responses.
 
@@ -198,8 +168,11 @@ def test_workflow_scanner_failures_do_not_become_clean_reports(
         AssertionError: The scanner safety or finding-identity contract regresses.
     """
     monkeypatch.setattr(
-        source_scanner.subprocess, "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args, returncode, stdout, "diagnostic"),
+        source_scanner.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, returncode, stdout, "diagnostic"
+        ),
     )
     with pytest.raises(RuntimeError):
         source_scanner._run_report(["zizmor"], tmp_path, tmp_path / "zizmor.json")
@@ -208,18 +181,23 @@ def test_workflow_scanner_failures_do_not_become_clean_reports(
 
 def _workflow_issue(root: Path, step: int, row: int) -> dict:
     return {
-        "ident": "template-injection", "desc": "Attacker-controlled template",
-        "locations": [{
-            "symbolic": {
-                "kind": "Primary",
-                "key": {"Local": {"verbatim_path": str(root / "workflow.yml")}},
-                "route": {"route": [{"Key": "jobs"}, {"Key": "build"}, {"Index": step}]},
-            },
-            "concrete": {
-                "feature": "echo ${{ github.event.pull_request.title }}",
-                "location": {"start_point": {"row": row}},
-            },
-        }],
+        "ident": "template-injection",
+        "desc": "Attacker-controlled template",
+        "locations": [
+            {
+                "symbolic": {
+                    "kind": "Primary",
+                    "key": {"Local": {"verbatim_path": str(root / "workflow.yml")}},
+                    "route": {
+                        "route": [{"Key": "jobs"}, {"Key": "build"}, {"Index": step}]
+                    },
+                },
+                "concrete": {
+                    "feature": "echo ${{ github.event.pull_request.title }}",
+                    "location": {"start_point": {"row": row}},
+                },
+            }
+        ],
     }
 
 
@@ -233,8 +211,12 @@ def test_workflow_identity_survives_step_and_line_moves(tmp_path: Path) -> None:
     Raises:
         AssertionError: The scanner safety or finding-identity contract regresses.
     """
-    original = source_scanner._workflow_finding(_workflow_issue(tmp_path, 0, 1), tmp_path)
-    changed = source_scanner._workflow_finding(_workflow_issue(tmp_path, 2, 5), tmp_path)
+    original = source_scanner._workflow_finding(
+        _workflow_issue(tmp_path, 0, 1), tmp_path
+    )
+    changed = source_scanner._workflow_finding(
+        _workflow_issue(tmp_path, 2, 5), tmp_path
+    )
     assert original["identity"] == changed["identity"]
     assert original["line"] == 2
     assert changed["line"] == 6

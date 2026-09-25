@@ -337,9 +337,7 @@ def resolve_topology(
         control_plane_instances=max(0, int(control_plane_instances)),
         control_plane_disks=max(0, int(control_plane_disks)),
         control_plane_disk_gib=max(0, int(control_plane_disk_gib)),
-        agent_root_disk_gib=_positive_gib(
-            agent_root_disk_gib, "agent_root_disk_gib"
-        ),
+        agent_root_disk_gib=_positive_gib(agent_root_disk_gib, "agent_root_disk_gib"),
         cpu_nodes=DEFAULT_CPU_NODES
         if cpu_nodes is None or cpu_nodes < 0
         else int(cpu_nodes),

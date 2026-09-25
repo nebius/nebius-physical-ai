@@ -13,12 +13,25 @@ from typing import Any
 
 from npa.clients.storage import safe_s3_download_target
 from npa.workbench.cosmos.policy_artifacts import (
-    file_digest, materialize_bundle, policy_workspace, publish_bundle, write_local_json,
+    file_digest,
+    materialize_bundle,
+    policy_workspace,
+    publish_bundle,
+    write_local_json,
 )
 from npa.workbench.cosmos.policy_contract import (
-    ACTION_CONTRACT, EXPERIMENT, FRAMEWORK_REVISION, LIBERO_REVISION, EvalSettings, validate_summary,
+    ACTION_CONTRACT,
+    EXPERIMENT,
+    FRAMEWORK_REVISION,
+    LIBERO_REVISION,
+    EvalSettings,
+    validate_summary,
 )
-from npa.workbench.cosmos.policy_runtime import prepare_simulation_runtime, prepare_training_runtime, run_native
+from npa.workbench.cosmos.policy_runtime import (
+    prepare_simulation_runtime,
+    prepare_training_runtime,
+    run_native,
+)
 from npa.workbench.cosmos.policy_train import TRAIN_SCHEMA
 
 EVAL_SCHEMA = "npa.cosmos3.policy-eval.v1"
@@ -28,22 +41,40 @@ def _inference_overrides(bundle: Path) -> list[str]:
     # The server introspects the dataloader's action/prompt settings but never
     # instantiates it. Clear only its unused training-data root so native config
     # resolution does not depend on LIBERO_ROOT from a previous worker.
-    return [f"model.config.tokenizer.vae_path={bundle / 'Wan2.2_VAE.pth'}",
-            "dataloader_train.dataloader.datasets.libero.dataset.root=null"]
+    return [
+        f"model.config.tokenizer.vae_path={bundle / 'Wan2.2_VAE.pth'}",
+        "dataloader_train.dataloader.datasets.libero.dataset.root=null",
+    ]
 
 
-def _preflight_configuration(repo: Path, bundle: Path, env: dict[str, str], artifacts: Path) -> None:
-    code = ("import sys; from pathlib import Path; "
-            "from cosmos_framework.inference.common.config import load_config, save_config; "
-            "config = load_config('cosmos_framework/configs/base/config.py', sys.argv[1], "
-            "overrides=sys.argv[3:]); save_config(config, Path(sys.argv[2])); "
-            "print('Native inference configuration resolved')")
-    run_native([str(repo / ".venv/bin/python"), "-c", code, EXPERIMENT,
-                str(artifacts / "inference-config"), *_inference_overrides(bundle)],
-               cwd=repo, env=env, log=artifacts / "inference-configuration.log")
+def _preflight_configuration(
+    repo: Path, bundle: Path, env: dict[str, str], artifacts: Path
+) -> None:
+    code = (
+        "import sys; from pathlib import Path; "
+        "from cosmos_framework.inference.common.config import load_config, save_config; "
+        "config = load_config('cosmos_framework/configs/base/config.py', sys.argv[1], "
+        "overrides=sys.argv[3:]); save_config(config, Path(sys.argv[2])); "
+        "print('Native inference configuration resolved')"
+    )
+    run_native(
+        [
+            str(repo / ".venv/bin/python"),
+            "-c",
+            code,
+            EXPERIMENT,
+            str(artifacts / "inference-config"),
+            *_inference_overrides(bundle),
+        ],
+        cwd=repo,
+        env=env,
+        log=artifacts / "inference-configuration.log",
+    )
 
 
-def server_argv(repo: Path, bundle: Path, checkpoint: Path, port: int, seed: int) -> list[str]:
+def server_argv(
+    repo: Path, bundle: Path, checkpoint: Path, port: int, seed: int
+) -> list[str]:
     """Bind the native policy server to loopback with matching training semantics.
 
     Args:
@@ -57,16 +88,36 @@ def server_argv(repo: Path, bundle: Path, checkpoint: Path, port: int, seed: int
     Raises:
         None.
     """
-    return [str(repo / ".venv/bin/python"), "-m", "cosmos_framework.scripts.action_policy_server_libero",
-            "--experiment", EXPERIMENT, "--checkpoint-path", str(checkpoint / "model"),
-            "--experiment-overrides", *_inference_overrides(bundle),
-            "--action-normalization", "quantile_rot", "--action-stats-path", str(bundle / "action_stats.json"),
-            "--raw-action-dim", "10", "--fps", "20", "--host", "127.0.0.1",
-            "--port", str(port), "--seed", str(seed)]
+    return [
+        str(repo / ".venv/bin/python"),
+        "-m",
+        "cosmos_framework.scripts.action_policy_server_libero",
+        "--experiment",
+        EXPERIMENT,
+        "--checkpoint-path",
+        str(checkpoint / "model"),
+        "--experiment-overrides",
+        *_inference_overrides(bundle),
+        "--action-normalization",
+        "quantile_rot",
+        "--action-stats-path",
+        str(bundle / "action_stats.json"),
+        "--raw-action-dim",
+        "10",
+        "--fps",
+        "20",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--seed",
+        str(seed),
+    ]
 
 
-def evaluation_argv(python: Path, repo: Path, output: Path, port: int,
-                    settings: EvalSettings) -> list[str]:
+def evaluation_argv(
+    python: Path, repo: Path, output: Path, port: int, settings: EvalSettings
+) -> list[str]:
     """Build the matching native closed-loop simulator invocation.
 
     Args:
@@ -80,14 +131,39 @@ def evaluation_argv(python: Path, repo: Path, output: Path, port: int,
     Raises:
         None.
     """
-    return [str(python), str(repo / "cosmos_framework/simulation/libero/closed_loop_eval.py"),
-            "--server_url", f"http://127.0.0.1:{port}", "--task_suite", "libero_10",
-            "--num_trials_per_task", str(settings.trials_per_task), "--num_envs", "1",
-            "--camera", "agentview,wrist", "--image_size", "256", "--action_dim", "10",
-            "--action_space", "frame_wise_relative", "--rotation_space", "6d",
-            "--gripper_mode", "zero_one", "--mujoco_gl", "osmesa",
-            "--task_ids", ",".join(map(str, settings.task_ids)), "--seed", str(settings.seed),
-            "--save_gifs", "--output_dir", str(output)]
+    return [
+        str(python),
+        str(repo / "cosmos_framework/simulation/libero/closed_loop_eval.py"),
+        "--server_url",
+        f"http://127.0.0.1:{port}",
+        "--task_suite",
+        "libero_10",
+        "--num_trials_per_task",
+        str(settings.trials_per_task),
+        "--num_envs",
+        "1",
+        "--camera",
+        "agentview,wrist",
+        "--image_size",
+        "256",
+        "--action_dim",
+        "10",
+        "--action_space",
+        "frame_wise_relative",
+        "--rotation_space",
+        "6d",
+        "--gripper_mode",
+        "zero_one",
+        "--mujoco_gl",
+        "osmesa",
+        "--task_ids",
+        ",".join(map(str, settings.task_ids)),
+        "--seed",
+        str(settings.seed),
+        "--save_gifs",
+        "--output_dir",
+        str(output),
+    ]
 
 
 def _wait_ready(process: subprocess.Popen, port: int) -> dict[str, Any]:
@@ -106,8 +182,15 @@ def _wait_ready(process: subprocess.Popen, port: int) -> dict[str, Any]:
     raise RuntimeError("native policy server exited before model readiness")
 
 
-def _evaluate_native(repo: Path, bundle: Path, checkpoint: Path, python: Path,
-                     env: dict[str, str], artifacts: Path, settings: EvalSettings) -> None:
+def _evaluate_native(
+    repo: Path,
+    bundle: Path,
+    checkpoint: Path,
+    python: Path,
+    env: dict[str, str],
+    artifacts: Path,
+    settings: EvalSettings,
+) -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -116,11 +199,18 @@ def _evaluate_native(repo: Path, bundle: Path, checkpoint: Path, python: Path,
         process = subprocess.Popen(argv, cwd=repo, env=env, stdout=log, stderr=log)
         try:
             info = _wait_ready(process, port)
-            if Path(info.get("checkpoint", "")).resolve() != (checkpoint / "model").resolve():
+            if (
+                Path(info.get("checkpoint", "")).resolve()
+                != (checkpoint / "model").resolve()
+            ):
                 raise ValueError("policy server loaded a different checkpoint")
             write_local_json(artifacts / "server-info.json", info)
-            run_native(evaluation_argv(python, repo, artifacts / "rollouts", port, settings),
-                       cwd=repo, env=env, log=artifacts / "evaluation.log")
+            run_native(
+                evaluation_argv(python, repo, artifacts / "rollouts", port, settings),
+                cwd=repo,
+                env=env,
+                log=artifacts / "evaluation.log",
+            )
         finally:
             process.terminate()
             try:
@@ -130,8 +220,14 @@ def _evaluate_native(repo: Path, bundle: Path, checkpoint: Path, python: Path,
                 process.wait()
 
 
-def evaluate_policy(*, input_path: str, output_path: str, trials_per_task: int = 50,
-                    task_ids: str = "0,1,2,3,4,5,6,7,8,9", seed: int = 0) -> dict[str, Any]:
+def evaluate_policy(
+    *,
+    input_path: str,
+    output_path: str,
+    trials_per_task: int = 50,
+    task_ids: str = "0,1,2,3,4,5,6,7,8,9",
+    seed: int = 0,
+) -> dict[str, Any]:
     """Run real robot rollouts against the exact trained checkpoint.
 
     Args:
@@ -146,7 +242,11 @@ def evaluate_policy(*, input_path: str, output_path: str, trials_per_task: int =
         ValueError: Invalid settings, checkpoint mismatch, or incomplete evaluation.
         subprocess.CalledProcessError: Native setup or evaluation failed.
     """
-    settings = EvalSettings(trials_per_task=trials_per_task, task_ids=[int(v) for v in task_ids.split(",")], seed=seed)
+    settings = EvalSettings(
+        trials_per_task=trials_per_task,
+        task_ids=[int(v) for v in task_ids.split(",")],
+        seed=seed,
+    )
     with policy_workspace(output_path, "eval") as root:
         artifacts = root / "artifacts"
         artifacts.mkdir()
@@ -162,19 +262,31 @@ def evaluate_policy(*, input_path: str, output_path: str, trials_per_task: int =
         if file_digest(root / "bundle/action_stats.json") != report["stats_sha256"]:
             raise ValueError("checkpoint normalization statistics mismatch")
         checkpoint = safe_s3_download_target(root / "bundle", report["checkpoint"], "")
-        _evaluate_native(repo, root / "bundle", checkpoint, python, env, artifacts, settings)
+        _evaluate_native(
+            repo, root / "bundle", checkpoint, python, env, artifacts, settings
+        )
         summary = json.loads((artifacts / "rollouts/summary.json").read_text())
         validate_summary(summary, settings)
-        result = {"schema": EVAL_SCHEMA, "status": "succeeded", "summary": summary,
-                  "settings": settings.model_dump(), "training_manifest": input_path,
-                  "training": report, "framework_revision": FRAMEWORK_REVISION,
-                  "libero_revision": LIBERO_REVISION, "action_contract": ACTION_CONTRACT,
-                  "stats_sha256": file_digest(root / "bundle/action_stats.json")}
+        result = {
+            "schema": EVAL_SCHEMA,
+            "status": "succeeded",
+            "summary": summary,
+            "settings": settings.model_dump(),
+            "training_manifest": input_path,
+            "training": report,
+            "framework_revision": FRAMEWORK_REVISION,
+            "libero_revision": LIBERO_REVISION,
+            "action_contract": ACTION_CONTRACT,
+            "stats_sha256": file_digest(root / "bundle/action_stats.json"),
+        }
         return publish_bundle(artifacts, output_path, result, "evaluation.json")
 
 
 def _verify_contract(report: dict[str, Any]) -> None:
     if report.get("framework_revision") != FRAMEWORK_REVISION:
         raise ValueError("checkpoint requires a different framework revision")
-    if report.get("action_contract") != ACTION_CONTRACT or report.get("experiment") != EXPERIMENT:
+    if (
+        report.get("action_contract") != ACTION_CONTRACT
+        or report.get("experiment") != EXPERIMENT
+    ):
         raise ValueError("checkpoint action contract does not match LIBERO evaluation")

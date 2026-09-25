@@ -20,7 +20,11 @@ CORRESPONDING_LOCK = IMAGE / "corresponding-source.lock.json"
 
 
 def _copies(tmp_path: Path) -> tuple[Path, Path, Path]:
-    paths = (tmp_path / "manifest.json", tmp_path / "source-lock.json", tmp_path / "corresponding-source.lock.json")
+    paths = (
+        tmp_path / "manifest.json",
+        tmp_path / "source-lock.json",
+        tmp_path / "corresponding-source.lock.json",
+    )
     for target, source in zip(paths, (MANIFEST, SOURCE_LOCK, CORRESPONDING_LOCK)):
         target.write_bytes(source.read_bytes())
     return paths
@@ -63,7 +67,9 @@ def test_missing_customer_gate_is_not_a_publication_waiver(tmp_path: Path) -> No
 def test_corresponding_source_lock_must_be_runtime_only(tmp_path: Path) -> None:
     manifest, source_lock, corresponding_lock = _copies(tmp_path)
     payload = json.loads(corresponding_lock.read_text(encoding="utf-8"))
-    payload["public_corresponding_source_delivery"] = "withheld-until-separate-publication-acceptance"
+    payload["public_corresponding_source_delivery"] = (
+        "withheld-until-separate-publication-acceptance"
+    )
     corresponding_lock.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(RuntimeFetchContractError, match="runtime-fetch-only"):
         validate_runtime_fetch_contract(manifest, source_lock, corresponding_lock)
@@ -76,7 +82,9 @@ def test_runtime_artifact_must_remain_runtime_only(tmp_path: Path) -> None:
     source_raw = json.dumps(payload).encode()
     source_lock.write_bytes(source_raw)
     manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
-    manifest_payload["runtime_fetch"]["source_lock_sha256"] = hashlib.sha256(source_raw).hexdigest()
+    manifest_payload["runtime_fetch"]["source_lock_sha256"] = hashlib.sha256(
+        source_raw
+    ).hexdigest()
     manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
     with pytest.raises(RuntimeFetchContractError, match="not runtime-only"):
         validate_runtime_fetch_contract(manifest, source_lock, corresponding_lock)
@@ -89,7 +97,9 @@ def test_runtime_artifact_origin_must_be_official_and_immutable(tmp_path: Path) 
     source_raw = json.dumps(payload).encode()
     source_lock.write_bytes(source_raw)
     manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
-    manifest_payload["runtime_fetch"]["source_lock_sha256"] = hashlib.sha256(source_raw).hexdigest()
+    manifest_payload["runtime_fetch"]["source_lock_sha256"] = hashlib.sha256(
+        source_raw
+    ).hexdigest()
     manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
     with pytest.raises(RuntimeFetchContractError, match="origin is not approved"):
         validate_runtime_fetch_contract(manifest, source_lock, corresponding_lock)

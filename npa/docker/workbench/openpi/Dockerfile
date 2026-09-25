@@ -7,7 +7,7 @@ ARG OPENPI_SOURCE_REF=15a9616a00943ada6c20a0f158e3adb39df2ccac
 ARG NPA_SOURCE_SHA=unknown
 
 LABEL npa.tool="openpi" \
-      npa.version="pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0314" \
+      npa.version="pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0381" \
       npa.source.repo="${OPENPI_SOURCE_URL}" \
       npa.source.ref="${OPENPI_SOURCE_REF}" \
       npa.weights="operator-runtime-fetch" \
@@ -116,9 +116,9 @@ RUN python3 -m venv /opt/uv \
       'import subprocess; expected={"The package `tensorflow-cpu` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `torch` requires `nvidia-cudnn-cu12==9.5.1.17 ; platform_machine == x86_64 and sys_platform == linux`, but `9.10.2.21` is installed","The package `torch` requires `nvidia-nccl-cu12==2.26.2 ; platform_machine == x86_64 and sys_platform == linux`, but `2.27.5` is installed","The package `tensorflow` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `openpi` requires `jax[cuda12]==0.5.3`, but `0.6.2` is installed"}; result=subprocess.run(["/opt/uv/bin/uv","pip","check","--python","/opt/venv/bin/python"],capture_output=True,text=True); actual={line.replace(chr(39),"") for line in (result.stdout+result.stderr).splitlines() if line.startswith("The package `")}; assert result.returncode == 1 and actual == expected, {"returncode":result.returncode,"unexpected":sorted(actual-expected),"missing":sorted(expected-actual)}' \
     && /opt/uv/bin/uv venv --python 3.11 /opt/rerun-venv \
     && /opt/uv/bin/uv pip install --python /opt/rerun-venv/bin/python --no-cache \
-      'pyyaml==6.0.3' 'rerun-sdk==0.31.4' \
+      'pyyaml==6.0.3' 'rerun-sdk==0.38.1' \
     && /opt/rerun-venv/bin/python -c \
-      'import importlib.metadata as m, numpy, rerun, yaml; assert m.version("pyyaml") == "6.0.3" and m.version("rerun-sdk") == "0.31.4" and int(m.version("numpy").split(".")[0]) >= 2 and rerun is not None and numpy is not None and yaml is not None' \
+      'import importlib.metadata as m, numpy, rerun, yaml; assert m.version("pyyaml") == "6.0.3" and m.version("rerun-sdk") == "0.38.1" and int(m.version("numpy").split(".")[0]) >= 2 and rerun is not None and numpy is not None and yaml is not None' \
     && /opt/uv/bin/uv pip check --python /opt/rerun-venv/bin/python \
     && /opt/rerun-venv/bin/rerun rrd --help >/dev/null \
     && test ! -e /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \

@@ -16,7 +16,9 @@ SCANNER = ROOT / "npa/scripts/scan_image_gymnasium_robotics_payload.py"
 WORKFLOW = ROOT / ".github/workflows/publish-public-images.yml"
 
 
-@pytest.mark.parametrize("mutation", [None, "manifest-bytes", "duplicate", "config-digest"])
+@pytest.mark.parametrize(
+    "mutation", [None, "manifest-bytes", "duplicate", "config-digest"]
+)
 def test_workflow_authenticates_manifest_before_reading_config(
     tmp_path: Path, mutation: str | None
 ) -> None:
@@ -26,7 +28,13 @@ def test_workflow_authenticates_manifest_before_reading_config(
     fragment = textwrap.dedent(text[start:end])
     expected_config = "b" * 64
     manifest = json.dumps(
-        {"config": {"digest": "invalid" if mutation == "config-digest" else f"sha256:{expected_config}"}}
+        {
+            "config": {
+                "digest": "invalid"
+                if mutation == "config-digest"
+                else f"sha256:{expected_config}"
+            }
+        }
     ).encode()
     digest = hashlib.sha256(manifest).hexdigest()
     if mutation == "manifest-bytes":
@@ -37,7 +45,13 @@ def test_workflow_authenticates_manifest_before_reading_config(
             member.size = len(manifest)
             archive.addfile(member, io.BytesIO(manifest))
     result = subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", fragment + 'printf "%s" "$expected_config_sha256"'],
+        [
+            "bash",
+            "-euo",
+            "pipefail",
+            "-c",
+            fragment + 'printf "%s" "$expected_config_sha256"',
+        ],
         env={
             **os.environ,
             "TOOL": "gymnasium-robotics",
@@ -68,8 +82,7 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
     assert "iflen(layer_names)>MAX_ORDERED_LAYERS:" in whitespace_independent_text
     assert (
         "_validated_tar_members(path,content,max_members="
-        "MAX_NESTED_ARCHIVE_MEMBERS)"
-        in whitespace_independent_text
+        "MAX_NESTED_ARCHIVE_MEMBERS)" in whitespace_independent_text
     )
     for token in (
         '"manifest.json"',
@@ -80,9 +93,9 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         'config_rootfs.get("diff_ids") != layer_diff_ids',
         '_scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)',
         '_scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)',
-        '_scan_archive_representation_bytes(',
-        '_validate_zip_compressed_stream(path, info, content[data_start:data_end])',
-        'stream.unused_data',
+        "_scan_archive_representation_bytes(",
+        "_validate_zip_compressed_stream(path, info, content[data_start:data_end])",
+        "stream.unused_data",
         'f"decoded member: {path}"',
         'f"raw archive member: {path}"',
         "_whiteout_metadata(layer, item, path, layer_name)",
@@ -149,7 +162,9 @@ def test_product_scan_is_staged_before_push_and_after_exact_pull() -> None:
 
 def test_neutral_payload_scan_is_verified_before_development_image_push() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    source_gate = text.index("Require Gymnasium neutral payload scan before development push")
+    source_gate = text.index(
+        "Require Gymnasium neutral payload scan before development push"
+    )
     push = text.index('docker push "$IMAGE"')
     assert source_gate < push
     for token in (
@@ -157,9 +172,9 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
         '.["containerimage.digest"]',
         'payload="$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"',
         '.status == "passed"',
-        '.distributed_blob_scan_complete == true',
-        '.accepted_manifest_present == false',
-        '.release_authorized == false',
+        ".distributed_blob_scan_complete == true",
+        ".accepted_manifest_present == false",
+        ".release_authorized == false",
     ):
         assert token in text
     first_scan = text.index(
@@ -169,9 +184,9 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
     first_step_text = text[first_step:first_scan]
     assert 'if [ "$TOOL" = gymnasium-robotics ]; then' in first_step_text
     assert 'metadata_config_digest="$(jq -er' in first_step_text
-    assert 'containerimage.digest' in first_step_text
+    assert "containerimage.digest" in first_step_text
     assert '"blobs/sha256/${metadata_image_digest#sha256:}"' in first_step_text
-    assert 'sha256sum --check --status' in first_step_text
+    assert "sha256sum --check --status" in first_step_text
     first_output = text.index(
         '"$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"', first_scan
     )

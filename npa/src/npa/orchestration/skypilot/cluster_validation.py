@@ -32,12 +32,19 @@ class _ValidationSession:
         return self.record["smoke_name"]
 
     def require_target(self, kubeconfig: Path, context: str) -> None:
-        if self.record["kubeconfig"] != str(kubeconfig.resolve()) or self.record["context"] != context:
-            raise local_api.IsolatedApiError("cluster validation session targets a different kubeconfig or context")
+        if (
+            self.record["kubeconfig"] != str(kubeconfig.resolve())
+            or self.record["context"] != context
+        ):
+            raise local_api.IsolatedApiError(
+                "cluster validation session targets a different kubeconfig or context"
+            )
 
     def begin_smoke(self, name: str) -> None:
         if self.pending_smoke:
-            raise local_api.IsolatedApiError("finish the recorded owned validation smoke before another launch")
+            raise local_api.IsolatedApiError(
+                "finish the recorded owned validation smoke before another launch"
+            )
         self.record.update(phase="smoke_pending", smoke_name=name)
         self._save()
 
@@ -56,7 +63,9 @@ class _ValidationSession:
         local_api._write(self.scope / "session.json", self.record)
 
 
-_CURRENT: ContextVar[_ValidationSession | None] = ContextVar("cluster_validation_session", default=None)
+_CURRENT: ContextVar[_ValidationSession | None] = ContextVar(
+    "cluster_validation_session", default=None
+)
 
 
 def current_validation_session() -> _ValidationSession | None:
@@ -74,16 +83,26 @@ def current_validation_session() -> _ValidationSession | None:
 
 def _private_directory(path: Path) -> None:
     if path.is_symlink():
-        raise local_api.IsolatedApiError("cluster validation state must not be a symlink")
+        raise local_api.IsolatedApiError(
+            "cluster validation state must not be a symlink"
+        )
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.chmod(0o700)
 
 
-def _session_base(kubeconfig: Path, context: str, isolated_config_dir: Path | None = None) -> Path:
+def _session_base(
+    kubeconfig: Path, context: str, isolated_config_dir: Path | None = None
+) -> Path:
     if not context.strip():
-        raise local_api.IsolatedApiError("cluster validation requires an exact Kubernetes context")
-    root = _bin.resolve_isolated_config_dir(isolated_config_dir) or _bin.CONFIG_PATH.parent
-    identity = hashlib.sha256(f"{kubeconfig.resolve()}\0{context}".encode()).hexdigest()[:24]
+        raise local_api.IsolatedApiError(
+            "cluster validation requires an exact Kubernetes context"
+        )
+    root = (
+        _bin.resolve_isolated_config_dir(isolated_config_dir) or _bin.CONFIG_PATH.parent
+    )
+    identity = hashlib.sha256(
+        f"{kubeconfig.resolve()}\0{context}".encode()
+    ).hexdigest()[:24]
     return root.expanduser().absolute() / "cluster-validation" / identity
 
 
@@ -91,7 +110,9 @@ def _session_base(kubeconfig: Path, context: str, isolated_config_dir: Path | No
 def _session_lock(base: Path) -> Iterator[None]:
     local_api._require_linux_host()
     _private_directory(base)
-    descriptor = os.open(base / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(
+        base / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
+    )
     with os.fdopen(descriptor, "a") as lock:
         os.fchmod(lock.fileno(), 0o600)
         # Separate open file descriptions make flock serialize threads as well
@@ -103,13 +124,17 @@ def _session_lock(base: Path) -> Iterator[None]:
 def _read_session(base: Path) -> _ValidationSession | None:
     pointer = base / "current-session.json"
     if pointer.is_symlink():
-        raise local_api.IsolatedApiError("cluster validation recovery state must not be a symlink")
+        raise local_api.IsolatedApiError(
+            "cluster validation recovery state must not be a symlink"
+        )
     if not pointer.exists():
         return None
     try:
         selected = json.loads(pointer.read_text())
         name = selected["session"]
-        if selected["schema_version"] != 1 or not re.fullmatch(r"session-[a-f0-9]{32}", name):
+        if selected["schema_version"] != 1 or not re.fullmatch(
+            r"session-[a-f0-9]{32}", name
+        ):
             raise ValueError
         scope = base / name
         path = scope / "session.json"
@@ -124,11 +149,15 @@ def _read_session(base: Path) -> _ValidationSession | None:
             raise ValueError
         if bool(record["smoke_name"]) != (record["phase"] == "smoke_pending"):
             raise ValueError
-        if record["smoke_name"] and not re.fullmatch(r"[a-z0-9-]+-sky-smoke", record["smoke_name"]):
+        if record["smoke_name"] and not re.fullmatch(
+            r"[a-z0-9-]+-sky-smoke", record["smoke_name"]
+        ):
             raise ValueError
         return _ValidationSession(scope, record)
     except (OSError, ValueError, KeyError, TypeError):
-        raise local_api.IsolatedApiError("cluster validation recovery state is invalid; preserve its private session records") from None
+        raise local_api.IsolatedApiError(
+            "cluster validation recovery state is invalid; preserve its private session records"
+        ) from None
 
 
 def _stop_session_api(scope: Path) -> None:
@@ -136,7 +165,9 @@ def _stop_session_api(scope: Path) -> None:
         local_api.stop_isolated_api(scope)
 
 
-def _open_session(base: Path, kubeconfig: Path, context: str, project_alias: str) -> _ValidationSession:
+def _open_session(
+    base: Path, kubeconfig: Path, context: str, project_alias: str
+) -> _ValidationSession:
     previous = _read_session(base)
     if previous is not None:
         previous.require_target(kubeconfig, context)
@@ -148,12 +179,22 @@ def _open_session(base: Path, kubeconfig: Path, context: str, project_alias: str
             _finish_session(previous, None)
     scope = base / f"session-{uuid.uuid4().hex}"
     _private_directory(scope)
-    session = _ValidationSession(scope, {
-        "schema_version": 1, "scope": str(scope), "kubeconfig": str(kubeconfig.resolve()),
-        "context": context, "phase": "checking", "smoke_name": "", "project_alias": project_alias,
-    })
+    session = _ValidationSession(
+        scope,
+        {
+            "schema_version": 1,
+            "scope": str(scope),
+            "kubeconfig": str(kubeconfig.resolve()),
+            "context": context,
+            "phase": "checking",
+            "smoke_name": "",
+            "project_alias": project_alias,
+        },
+    )
     session._save()
-    local_api._write(base / "current-session.json", {"schema_version": 1, "session": scope.name})
+    local_api._write(
+        base / "current-session.json", {"schema_version": 1, "session": scope.name}
+    )
     return session
 
 
@@ -167,8 +208,12 @@ def _finish_session(session: _ValidationSession, failure: BaseException | None) 
         session.finish()
     except Exception as exc:
         if failure is None:
-            raise local_api.IsolatedApiError(f"Owned validation API cleanup is incomplete. {recovery}") from exc
-        print(f"Owned validation API cleanup is incomplete. {recovery}", file=sys.stderr)
+            raise local_api.IsolatedApiError(
+                f"Owned validation API cleanup is incomplete. {recovery}"
+            ) from exc
+        print(
+            f"Owned validation API cleanup is incomplete. {recovery}", file=sys.stderr
+        )
     if session.pending_smoke:
         message = f"Owned validation smoke removal remains unverified. {recovery}"
         if failure is None:
@@ -176,12 +221,23 @@ def _finish_session(session: _ValidationSession, failure: BaseException | None) 
         print(message, file=sys.stderr)
 
 
-def _require_session_binding(session, kubeconfig, context, isolated_config_dir, project_alias, check_only):
+def _require_session_binding(
+    session, kubeconfig, context, isolated_config_dir, project_alias, check_only
+):
     session.require_target(kubeconfig, context)
-    if isolated_config_dir is not None and session.scope.parent != _session_base(kubeconfig, context, isolated_config_dir):
-        raise local_api.IsolatedApiError("cluster validation session targets a different isolated state root")
-    if project_alias is not None and session.record.get("project_alias", "") != project_alias:
-        raise local_api.IsolatedApiError("cluster validation session targets a different selected project")
+    if isolated_config_dir is not None and session.scope.parent != _session_base(
+        kubeconfig, context, isolated_config_dir
+    ):
+        raise local_api.IsolatedApiError(
+            "cluster validation session targets a different isolated state root"
+        )
+    if (
+        project_alias is not None
+        and session.record.get("project_alias", "") != project_alias
+    ):
+        raise local_api.IsolatedApiError(
+            "cluster validation session targets a different selected project"
+        )
     if check_only and session.pending_smoke:
         raise local_api.IsolatedApiError(
             "Recorded validation smoke requires recovery before standalone verification/discovery. "
@@ -192,8 +248,12 @@ def _require_session_binding(session, kubeconfig, context, isolated_config_dir, 
 
 @contextmanager
 def cluster_validation_session(
-    kubeconfig: Path, context: str, *, isolated_config_dir: Path | None = None,
-    project_alias: str | None = None, check_only: bool = False,
+    kubeconfig: Path,
+    context: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    project_alias: str | None = None,
+    check_only: bool = False,
 ) -> Iterator[_ValidationSession]:
     """Serialize a durable owned API session across validation and smoke cleanup.
 
@@ -211,15 +271,23 @@ def cluster_validation_session(
     selected = Path(kubeconfig).expanduser().resolve()
     active = _CURRENT.get()
     if active is not None:
-        _require_session_binding(active, selected, context, isolated_config_dir, project_alias, check_only)
+        _require_session_binding(
+            active, selected, context, isolated_config_dir, project_alias, check_only
+        )
         yield active
         return
     base = _session_base(selected, context, isolated_config_dir)
     with _session_lock(base):
-        alias = project_alias if project_alias is not None else os.environ.get("NPA_SKYPILOT_PROJECT", "")
+        alias = (
+            project_alias
+            if project_alias is not None
+            else os.environ.get("NPA_SKYPILOT_PROJECT", "")
+        )
         session = _open_session(base, selected, context, alias)
         expected_alias = alias if "project_alias" in session.record else project_alias
-        _require_session_binding(session, selected, context, isolated_config_dir, expected_alias, check_only)
+        _require_session_binding(
+            session, selected, context, isolated_config_dir, expected_alias, check_only
+        )
         with _session_lifetime(session):
             yield session
 
@@ -246,13 +314,19 @@ def _named_kube_entry(document, section, name):
     entries = document.get(section, [])
     if not isinstance(entries, list):
         raise ValueError
-    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("name") == name]
+    matches = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("name") == name
+    ]
     if len(matches) != 1 or not isinstance(matches[0].get(section.rstrip("s")), dict):
         raise ValueError
     return matches[0][section.rstrip("s")]
 
 
-def resolve_validation_target(kubeconfig: Path | str | None, context: str = "") -> tuple[Path, str]:
+def resolve_validation_target(
+    kubeconfig: Path | str | None, context: str = ""
+) -> tuple[Path, str]:
     """Resolve one file and validate the selected context's actual references.
 
     Args:
@@ -263,9 +337,13 @@ def resolve_validation_target(kubeconfig: Path | str | None, context: str = "") 
     Raises:
         IsolatedApiError: The file, context, cluster, or optional user is ambiguous or invalid.
     """
-    raw = os.fspath(kubeconfig or os.environ.get("KUBECONFIG") or Path.home() / ".kube/config")
+    raw = os.fspath(
+        kubeconfig or os.environ.get("KUBECONFIG") or Path.home() / ".kube/config"
+    )
     if os.pathsep in raw:
-        raise local_api.IsolatedApiError("Standalone validation requires one kubeconfig file; select a single KUBECONFIG or --kubeconfig")
+        raise local_api.IsolatedApiError(
+            "Standalone validation requires one kubeconfig file; select a single KUBECONFIG or --kubeconfig"
+        )
     try:
         selected = Path(raw).expanduser().resolve(strict=True)
         document = yaml.safe_load(selected.read_text())
@@ -313,7 +391,9 @@ def resolve_validation_project(project: str, context: str) -> str | None:
             "adopt the exact cluster with npa cluster kubeconfig before discovery"
         )
     if cluster.project_id != environment.project_id:
-        raise local_api.IsolatedApiError("Selected project does not match the exact context's local cluster identity")
+        raise local_api.IsolatedApiError(
+            "Selected project does not match the exact context's local cluster identity"
+        )
     return alias
 
 
@@ -327,8 +407,10 @@ def validation_session(function):
     Raises:
         IsolatedApiError: Session ownership or recovery is inconsistent.
     """
+
     @wraps(function)
     def wrapped(kubeconfig_path, context, *args, **kwargs):
         with cluster_validation_session(kubeconfig_path, context):
             return function(kubeconfig_path, context, *args, **kwargs)
+
     return wrapped

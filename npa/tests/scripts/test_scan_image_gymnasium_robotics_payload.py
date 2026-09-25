@@ -33,9 +33,7 @@ assert VERIFIER_SPEC and VERIFIER_SPEC.loader
 VERIFIER = importlib.util.module_from_spec(VERIFIER_SPEC)
 sys.modules[VERIFIER_SPEC.name] = VERIFIER
 VERIFIER_SPEC.loader.exec_module(VERIFIER)
-BOOTSTRAP_SCRIPT = (
-    ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-bootstrap.py"
-)
+BOOTSTRAP_SCRIPT = ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-bootstrap.py"
 BOOTSTRAP_SPEC = importlib.util.spec_from_file_location(
     "gymnasium_runtime_bootstrap_for_scan_tests", BOOTSTRAP_SCRIPT
 )
@@ -57,9 +55,10 @@ def test_verifier_streaming_digest_is_bounded_without_file_digest(
             return super().read(size)
 
     payload = b"v" * (VERIFIER.SHA256_CHUNK_BYTES + 1)
-    assert VERIFIER._stream_sha256(RecordingStream(payload)) == hashlib.sha256(
-        payload
-    ).hexdigest()
+    assert (
+        VERIFIER._stream_sha256(RecordingStream(payload))
+        == hashlib.sha256(payload).hexdigest()
+    )
     assert read_sizes == [VERIFIER.SHA256_CHUNK_BYTES] * 3
 
 
@@ -513,7 +512,8 @@ def _docker_save_with_oci_graph(
                         "size": len(att_manifest),
                         "annotations": {
                             "vnd.docker.reference.type": "attestation-manifest",
-                            "vnd.docker.reference.digest": "sha256:" + graph_manifest_digest,
+                            "vnd.docker.reference.digest": "sha256:"
+                            + graph_manifest_digest,
                         },
                     },
                 ],
@@ -546,19 +546,21 @@ def _docker_save_with_oci_graph(
     ).encode()
     graph_files["index.json"] = root_index
     for descriptor, raw in zip(layer_descriptors, layer_raw, strict=True):
-        graph_files["blobs/sha256/" + descriptor["digest"].removeprefix("sha256:")] = raw
+        graph_files["blobs/sha256/" + descriptor["digest"].removeprefix("sha256:")] = (
+            raw
+        )
     if unreferenced_blob:
         stray = b"unreferenced graph blob"
-        graph_files[
-            "blobs/sha256/" + hashlib.sha256(stray).hexdigest()
-        ] = stray
+        graph_files["blobs/sha256/" + hashlib.sha256(stray).hexdigest()] = stray
     _append_outer_files(path, graph_files)
     return config_digest, diff_ids
 
 
 def _gzip_layer(content: bytes, *, filename: str = "") -> bytes:
     stream = io.BytesIO()
-    with gzip.GzipFile(filename=filename, mode="wb", fileobj=stream, mtime=0) as archive:
+    with gzip.GzipFile(
+        filename=filename, mode="wb", fileobj=stream, mtime=0
+    ) as archive:
         archive.write(content)
     return stream.getvalue()
 
@@ -594,9 +596,7 @@ def _oci_layout(
         _gzip_layer(raw_layers[0]),
         _gzip_layer(raw_layers[1], filename=layer_filename) + layer_suffix,
     ]
-    descriptors = [
-        _oci_descriptor(content, layer_media_type) for content in compressed
-    ]
+    descriptors = [_oci_descriptor(content, layer_media_type) for content in compressed]
     if layer_digest is not None:
         descriptors[1]["digest"] = layer_digest
     if layer_size_delta:
@@ -629,7 +629,10 @@ def _oci_layout(
         manifest, "application/vnd.oci.image.manifest.v1+json"
     )
     manifest_descriptor["platform"] = {"architecture": "amd64", "os": "linux"}
-    blobs = {config_descriptor["digest"]: config, manifest_descriptor["digest"]: manifest}
+    blobs = {
+        config_descriptor["digest"]: config,
+        manifest_descriptor["digest"]: manifest,
+    }
     blobs.update(
         (descriptor["digest"], content)
         for descriptor, content in zip(descriptors, compressed, strict=True)
@@ -856,9 +859,7 @@ def test_oci_layout_refuses_cumulative_nested_budget_across_members(
     files["opt/second-fixture.zip"] = _zip_with_files({"second.txt": b"nested"})
     image = tmp_path / f"cumulative-{field}.tar"
     _oci_layout(image, files)
-    descriptor_budgets, _materialized_budget = _measure_oci_nested_archive_budget(
-        files
-    )
+    descriptor_budgets, _materialized_budget = _measure_oci_nested_archive_budget(files)
     largest_individual = max(item[field] for item in descriptor_budgets)
     assert largest_individual > 0
     assert sum(item[field] for item in descriptor_budgets) > largest_individual
@@ -897,9 +898,7 @@ def test_oci_layout_refuses_cumulative_budget_in_materialized_layers(
     files["opt/second-fixture.zip"] = _zip_with_files({"second.txt": b"nested"})
     image = tmp_path / f"materialized-{field}.tar"
     _oci_layout(image, files)
-    descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(
-        files
-    )
+    descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(files)
     materialized = materialized_budget[field]
     assert materialized > 0
     monkeypatch.setattr(SCAN, limit_name, materialized - 1)
@@ -921,9 +920,7 @@ def test_oci_layout_accepts_exact_scanwide_nested_budget_boundaries(
     }
     image = tmp_path / "exact-scanwide-budget.tar"
     _oci_layout(image, files)
-    descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(
-        files
-    )
+    descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(files)
     totals = materialized_budget
     monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_MEMBERS", totals["member_count"])
     monkeypatch.setattr(
@@ -1153,8 +1150,9 @@ def test_source_and_built_graph_trust_roots_are_pinned() -> None:
         "d80e779c65744d8c710cb981f67223340ac539312ef205f679682e0359b36a2e"
     )
     assert len(SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS) == 21
-    assert SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS[0] == (
-        SCAN.EXPECTED_BASE["uncompressed_layer_digest"]
+    assert (
+        SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS[0]
+        == (SCAN.EXPECTED_BASE["uncompressed_layer_digest"])
     )
     assert all(
         re.fullmatch(r"sha256:[0-9a-f]{64}", value)
@@ -1178,9 +1176,7 @@ def test_source_and_built_graph_trust_roots_are_pinned() -> None:
             ROOT / "npa/docker/workbench/gymnasium-robotics/apt-runtime.lock.json"
         ).read_text()
     )
-    locked = {
-        item["package"]: item for item in apt["resolved_binary_packages"]
-    }
+    locked = {item["package"]: item for item in apt["resolved_binary_packages"]}
     for record in SCAN.EXPECTED_SYSTEM_WHEEL_FILES.values():
         assert locked[record["package"]]["sha256"] == record["package_sha256"]
 
@@ -1285,7 +1281,8 @@ def test_canonical_closure_preserves_member_semantics(field: str) -> None:
 @pytest.mark.parametrize("field", ["mtime", "atime", "ctime"])
 @pytest.mark.parametrize("value", ["arbitrary-content", "NaN", "Infinity", "9" * 400])
 def test_canonical_tar_timestamps_reject_nonnumeric_or_nonfinite_data(
-    field: str, value: str,
+    field: str,
+    value: str,
 ) -> None:
     item = tarfile.TarInfo("opt/empty")
     item.pax_headers = {field: value}
@@ -1293,19 +1290,28 @@ def test_canonical_tar_timestamps_reject_nonnumeric_or_nonfinite_data(
         SCAN._validate_tar_timestamps(item)
 
 
-@pytest.mark.parametrize("value", ["arbitrary-content", "2026-99-99T00:00:00Z", "2026-09-20", None])
+@pytest.mark.parametrize(
+    "value", ["arbitrary-content", "2026-99-99T00:00:00Z", "2026-09-20", None]
+)
 @pytest.mark.parametrize("history", [False, True])
 def test_canonical_oci_timestamps_reject_arbitrary_content(
-    value: object, history: bool,
+    value: object,
+    history: bool,
 ) -> None:
-    config = {"config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}, "rootfs": {"diff_ids": []}, "history": [{"created_by": "build"}]}
+    config = {
+        "config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}},
+        "rootfs": {"diff_ids": []},
+        "history": [{"created_by": "build"}],
+    }
     (config["history"][0] if history else config)["created"] = value
     with pytest.raises(ValueError, match="canonical OCI timestamp"):
         SCAN._canonical_config_sha256(config)
 
 
 @pytest.mark.parametrize("fractional_width", range(1, 10))
-def test_canonical_closure_permits_only_timestamp_and_revision_changes(fractional_width: int) -> None:
+def test_canonical_closure_permits_only_timestamp_and_revision_changes(
+    fractional_width: int,
+) -> None:
     config = {
         "config": {
             "Labels": {"org.opencontainers.image.revision": "a" * 40},
@@ -1490,7 +1496,10 @@ def test_graphless_gzip_layer_refuses_before_unbounded_expansion(
     _docker_save(image, _required())
     rendered = io.BytesIO()
     base_size = 0
-    with tarfile.open(image) as source, tarfile.open(fileobj=rendered, mode="w") as output:
+    with (
+        tarfile.open(image) as source,
+        tarfile.open(fileobj=rendered, mode="w") as output,
+    ):
         for member in source:
             body = source.extractfile(member).read() if member.isfile() else None
             if member.name == "base/layer.tar":
@@ -1678,9 +1687,13 @@ def test_credential_source_disposition_binds_path_and_complete_contents(
 ) -> None:
     source = b"password = credential_variable"
     path = "usr/lib/authentication.py"
-    monkeypatch.setattr(SCAN, "REVIEWED_CREDENTIAL_SOURCE_SHA256", {
-        path: hashlib.sha256(source).hexdigest(),
-    })
+    monkeypatch.setattr(
+        SCAN,
+        "REVIEWED_CREDENTIAL_SOURCE_SHA256",
+        {
+            path: hashlib.sha256(source).hexdigest(),
+        },
+    )
     SCAN._scan_decoded_member_bytes(f"decoded member: {path}", source)
     with pytest.raises(ValueError, match="forbidden secret signature"):
         SCAN._scan_decoded_member_bytes(f"decoded member: {path}", source + b" changed")
@@ -1690,7 +1703,9 @@ def test_credential_source_disposition_binds_path_and_complete_contents(
 
 @pytest.mark.parametrize("contents", [b"", b"payload"])
 def test_ubuntu_apt_lock_allows_only_zero_bytes(
-    tmp_path: Path, structural_scan: None, contents: bytes,
+    tmp_path: Path,
+    structural_scan: None,
+    contents: bytes,
 ) -> None:
     path = "var/cache/apt/archives/lock"
     image = tmp_path / "apt-lock.tar"
@@ -1702,7 +1717,10 @@ def test_ubuntu_apt_lock_allows_only_zero_bytes(
             SCAN._nested_archive_members("nested.tar", _tar_bytes({path: contents}))
     else:
         assert SCAN.scan(image)["status"] == "passed"
-        assert SCAN._nested_archive_members("nested.tar", _tar_bytes({path: contents})) == 1
+        assert (
+            SCAN._nested_archive_members("nested.tar", _tar_bytes({path: contents}))
+            == 1
+        )
 
 
 def test_in_pod_verifier_ignores_unreadable_locked_base_files(
@@ -1717,9 +1735,7 @@ def test_in_pod_verifier_ignores_unreadable_locked_base_files(
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         source_name = (
-            "build.sh"
-            if target.name == "npa-gymnasium-entrypoint"
-            else target.name
+            "build.sh" if target.name == "npa-gymnasium-entrypoint" else target.name
         )
         target.write_bytes((image_source / source_name).read_bytes())
     system_wheels = {}
@@ -1886,9 +1902,7 @@ def test_supported_nested_compression_accepts_neutral_bytes(kind: str) -> None:
     content = b"neutral archive member"
     if kind == "zip":
         stream = io.BytesIO()
-        with zipfile.ZipFile(
-            stream, "w", compression=zipfile.ZIP_DEFLATED
-        ) as archive:
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("neutral.txt", content)
         nested = stream.getvalue()
         expected_members = 1
@@ -1906,7 +1920,9 @@ def test_supported_nested_compression_accepts_neutral_bytes(kind: str) -> None:
 
 
 @pytest.mark.parametrize("kind", ["tar", "zip"])
-def test_nested_scan_accepts_only_declared_empty_apt_base_directories(kind: str) -> None:
+def test_nested_scan_accepts_only_declared_empty_apt_base_directories(
+    kind: str,
+) -> None:
     if kind == "tar":
         nested = _tar_bytes({}, directories={"var/cache/apt/archives": b""})
     else:
@@ -2085,9 +2101,7 @@ def test_nonzero_layer_link_body_refuses(
 
 
 def test_zip_directory_regular_file_mode_refuses() -> None:
-    nested = _zip_with_member(
-        "neutral/", content=b"", mode=stat.S_IFREG | 0o644
-    )
+    nested = _zip_with_member("neutral/", content=b"", mode=stat.S_IFREG | 0o644)
 
     with pytest.raises(ValueError, match="invalid nested ZIP directory"):
         SCAN._nested_archive_members("nested.zip", nested)
@@ -2242,7 +2256,9 @@ def test_zip_comments_refuse_without_echo(comment_kind: str) -> None:
             member.comment = marker
             archive.writestr(member, b"neutral")
 
-    with pytest.raises(ValueError, match=f"unsupported zip {comment_kind} comment") as captured:
+    with pytest.raises(
+        ValueError, match=f"unsupported zip {comment_kind} comment"
+    ) as captured:
         SCAN._validated_zip_infos("nested.zip", stream.getvalue())
     assert marker.decode() not in str(captured.value)
 
@@ -2283,8 +2299,7 @@ def test_zip_member_count_limit_refuses_before_infolist(
 
 def _multi_member_deflated_zip() -> tuple[bytes, int]:
     files = {
-        f"neutral-{index}.txt": bytes([ord("a") + index]) * 64
-        for index in range(8)
+        f"neutral-{index}.txt": bytes([ord("a") + index]) * 64 for index in range(8)
     }
     return (
         _zip_with_files(files, compression=zipfile.ZIP_DEFLATED),
@@ -2394,9 +2409,7 @@ def test_link_to_forbidden_cache_refuses(tmp_path: Path, structural_scan: None) 
 
 
 def test_nested_link_to_upstream_tree_refuses() -> None:
-    nested = _tar_bytes(
-        {}, symlinks={"neutral-link": "Gymnasium-Robotics-abcdef0"}
-    )
+    nested = _tar_bytes({}, symlinks={"neutral-link": "Gymnasium-Robotics-abcdef0"})
     with pytest.raises(ValueError, match="forbidden nested archive link"):
         SCAN._nested_archive_members("nested.tar", nested)
 
@@ -2407,9 +2420,7 @@ def test_retained_descendant_beneath_link_ancestor_refuses(
 ) -> None:
     image = tmp_path / f"{kind}-ancestor.tar"
     links = {"opt/redirect": "opt/target"}
-    kwargs = {
-        "base_symlinks" if kind == "symlink" else "base_hardlinks": links
-    }
+    kwargs = {"base_symlinks" if kind == "symlink" else "base_hardlinks": links}
     _docker_save(
         image,
         {**_required(), "opt/redirect/child": b"payload"},
@@ -2531,10 +2542,7 @@ def _complete_neutral_rootfs() -> tuple[dict[str, bytes], list[str]]:
         }
     )
     rootfs.update(
-        {
-            path: f"fixture:{path}".encode()
-            for path in SCAN.EXPECTED_SYSTEM_WHEEL_FILES
-        }
+        {path: f"fixture:{path}".encode() for path in SCAN.EXPECTED_SYSTEM_WHEEL_FILES}
     )
     diff_ids = ["sha256:" + "b" * 64]
     return rootfs, diff_ids
@@ -2560,9 +2568,7 @@ def test_scanner_runtime_distribution_baseline_matches_fetch_inputs() -> None:
         )
 
     source_lock = json.loads(
-        (
-            ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json"
-        ).read_text()
+        (ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json").read_text()
     )
     assert declared == SCAN.EXPECTED_PYTHON_DISTRIBUTIONS
     assert len(declared) == BOOTSTRAP.EXPECTED_WHEEL_COUNT

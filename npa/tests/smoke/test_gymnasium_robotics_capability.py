@@ -62,9 +62,10 @@ def test_smoke_streaming_digest_is_bounded_without_file_digest(
             return super().read(size)
 
     payload = b"s" * (smoke["SHA256_CHUNK_BYTES"] + 1)
-    assert smoke["_stream_sha256"](RecordingStream(payload)) == hashlib.sha256(
-        payload
-    ).hexdigest()
+    assert (
+        smoke["_stream_sha256"](RecordingStream(payload))
+        == hashlib.sha256(payload).hexdigest()
+    )
     assert read_sizes == [smoke["SHA256_CHUNK_BYTES"]] * 3
 
 

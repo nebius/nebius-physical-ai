@@ -398,9 +398,7 @@ def _connect_approved_address(
         if source_address:
             connection.bind(source_address)
         destination = (
-            (address, port, 0, 0)
-            if family == socket.AF_INET6
-            else (address, port)
+            (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
         )
         connection.connect(destination)
         return connection
@@ -895,7 +893,9 @@ def verify_runtime_fetch_corresponding_source(
         == "runtime-fetch-operator-owned",
         "development publication requires operator-owned runtime-fetch delivery",
     )
-    _require(result.get("payload_free") is True, "development image must remain payload-free")
+    _require(
+        result.get("payload_free") is True, "development image must remain payload-free"
+    )
     return {
         "status": "passed",
         "delivery": "runtime-fetch-operator-owned",

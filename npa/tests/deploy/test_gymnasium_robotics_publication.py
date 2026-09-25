@@ -8,7 +8,9 @@ from npa.deploy.publish_public import PublishItem, verify_validated_publication
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_neutral_candidate_has_a_development_path_but_is_not_release_publishable() -> None:
+def test_neutral_candidate_has_a_development_path_but_is_not_release_publishable() -> (
+    None
+):
     tool = "gymnasium-robotics"
     assert images.is_publicly_redistributable(tool)
     assert tool not in images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS

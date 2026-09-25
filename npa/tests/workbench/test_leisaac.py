@@ -1387,7 +1387,11 @@ def test_asset_cache_moves_to_the_durable_claim_when_one_exists(monkeypatch) -> 
 
 
 def test_asset_cache_keeps_its_pod_local_volume_without_a_claim(monkeypatch) -> None:
-    for name in ("NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_DIR"):
+    for name in (
+        "NPA_MODEL_CACHE_PVC",
+        "NPA_MODEL_CACHE_HOST_PATH",
+        "NPA_MODEL_CACHE_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     deployment = deployment_manifest(

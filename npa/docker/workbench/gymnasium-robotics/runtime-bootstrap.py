@@ -40,7 +40,9 @@ import venv
 import zipfile
 
 MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-fetch-lock.v2"
-PUBLIC_RUNTIME_CONTRACT_SCHEMA = "npa.gymnasium-robotics.public-runtime-fetch-manifest.v1"
+PUBLIC_RUNTIME_CONTRACT_SCHEMA = (
+    "npa.gymnasium-robotics.public-runtime-fetch-manifest.v1"
+)
 RECEIPT_SCHEMA = "npa.gymnasium-robotics.runtime-cache-receipt.v1"
 TREE_MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-tree-manifest.v1"
 EXPECTED_SOURCE_COMMIT = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
@@ -346,9 +348,15 @@ def _validate_public_runtime_contract(contract: Path, source_lock: Path) -> None
         payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         _refuse(f"public runtime-fetch contract is malformed: {error}")
-    if not isinstance(payload, dict) or payload.get("schema") != PUBLIC_RUNTIME_CONTRACT_SCHEMA:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != PUBLIC_RUNTIME_CONTRACT_SCHEMA
+    ):
         _refuse("public runtime-fetch contract schema is unsupported")
-    if payload.get("status") != "complete" or payload.get("tool") != "gymnasium-robotics":
+    if (
+        payload.get("status") != "complete"
+        or payload.get("tool") != "gymnasium-robotics"
+    ):
         _refuse("public runtime-fetch contract is incomplete")
     if payload.get("rights_boundary") != PUBLIC_RUNTIME_CONTRACT_RIGHTS:
         _refuse("public runtime-fetch rights boundary changed")
@@ -359,28 +367,50 @@ def _validate_public_runtime_contract(contract: Path, source_lock: Path) -> None
     }:
         _refuse("public runtime image is not payload-free")
     runtime = payload.get("runtime_fetch")
-    if not isinstance(runtime, dict) or runtime.get("delivery") != "operator-owned-runtime-cache":
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("delivery") != "operator-owned-runtime-cache"
+    ):
         _refuse("public runtime-fetch delivery is not operator-owned")
-    if runtime.get("customer_gate") != "operator-owned-official-access-after-notice-and-acceptance":
+    if (
+        runtime.get("customer_gate")
+        != "operator-owned-official-access-after-notice-and-acceptance"
+    ):
         _refuse("customer notice/acceptance gate is missing")
     if runtime.get("acceptance_record") != "customer-run-external":
         _refuse("customer acceptance must remain external")
     if runtime.get("credential_storage") != "never-in-image-or-repository":
         _refuse("runtime credential storage boundary changed")
-    if set(payload.get("excluded_from_public_image", [])) != PUBLIC_RUNTIME_CONTRACT_EXCLUDED:
+    if (
+        set(payload.get("excluded_from_public_image", []))
+        != PUBLIC_RUNTIME_CONTRACT_EXCLUDED
+    ):
         _refuse("public runtime exclusion set changed")
     source_raw = _read_trusted_input(source_lock, label="runtime lock")
-    if runtime.get("source_lock") != source_lock.name or runtime.get("source_lock_sha256") != hashlib.sha256(source_raw).hexdigest():
+    if (
+        runtime.get("source_lock") != source_lock.name
+        or runtime.get("source_lock_sha256") != hashlib.sha256(source_raw).hexdigest()
+    ):
         _refuse("public runtime source-lock binding changed")
     corresponding = source_lock.with_name("corresponding-source.lock.json")
-    corresponding_raw = _read_trusted_input(corresponding, label="corresponding-source lock")
-    if runtime.get("corresponding_source_lock") != corresponding.name or runtime.get("corresponding_source_lock_sha256") != hashlib.sha256(corresponding_raw).hexdigest():
+    corresponding_raw = _read_trusted_input(
+        corresponding, label="corresponding-source lock"
+    )
+    if (
+        runtime.get("corresponding_source_lock") != corresponding.name
+        or runtime.get("corresponding_source_lock_sha256")
+        != hashlib.sha256(corresponding_raw).hexdigest()
+    ):
         _refuse("public runtime corresponding-source binding changed")
     try:
         corresponding_payload = json.loads(corresponding_raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         _refuse(f"corresponding-source lock is malformed: {error}")
-    if not isinstance(corresponding_payload, dict) or corresponding_payload.get("public_corresponding_source_delivery") != "runtime-fetch-operator-owned":
+    if (
+        not isinstance(corresponding_payload, dict)
+        or corresponding_payload.get("public_corresponding_source_delivery")
+        != "runtime-fetch-operator-owned"
+    ):
         _refuse("corresponding-source delivery is not runtime-fetch-only")
 
 
@@ -740,9 +770,7 @@ def _connect_approved_address(
         if source_address:
             connection.bind(source_address)
         destination = (
-            (address, port, 0, 0)
-            if family == socket.AF_INET6
-            else (address, port)
+            (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
         )
         connection.connect(destination)
         return connection
@@ -991,7 +1019,9 @@ def _remove_venv_compatibility_link(runtime: Path) -> None:
 def _install_runtime(stage: Path, requirements: Path) -> None:
     stage_fd: int | None = None
     try:
-        stage_fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        stage_fd = os.open(
+            stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
         _require_directory_identity(stage, stage_fd, label="runtime installation stage")
         bound_stage = Path(f"/proc/self/fd/{stage_fd}")
         runtime = bound_stage / "runtime"
@@ -1001,20 +1031,42 @@ def _install_runtime(stage: Path, requirements: Path) -> None:
         # this path. Bootstrap pip through the same isolated handoff as installs.
         venv.EnvBuilder(with_pip=False, clear=False, symlinks=False).create(runtime)
         _remove_venv_compatibility_link(runtime)
-        pip_install = ["pip", "install", "--disable-pip-version-check", "--no-index", "--no-deps"]
+        pip_install = [
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-index",
+            "--no-deps",
+        ]
         commands = (
             ("pip bootstrap", ["ensurepip", "--upgrade", "--default-pip"]),
-            ("wheel installation", [*pip_install, "--require-hashes", "--find-links",
-                                    str(bound_stage / "wheelhouse"), "--requirement", str(requirements)]),
-            ("source installation", [*pip_install, "--no-build-isolation", str(bound_stage / "source")]),
+            (
+                "wheel installation",
+                [
+                    *pip_install,
+                    "--require-hashes",
+                    "--find-links",
+                    str(bound_stage / "wheelhouse"),
+                    "--requirement",
+                    str(requirements),
+                ],
+            ),
+            (
+                "source installation",
+                [*pip_install, "--no-build-isolation", str(bound_stage / "source")],
+            ),
         )
         for label, arguments in commands:
-            _require_directory_identity(stage, stage_fd, label="runtime installation stage")
+            _require_directory_identity(
+                stage, stage_fd, label="runtime installation stage"
+            )
             status = _execute_isolated_command(
                 [str(runtime / "bin/python"), "-I", "-m", *arguments],
                 installation_directory_fd=stage_fd,
             )
-            _require_directory_identity(stage, stage_fd, label="runtime installation stage")
+            _require_directory_identity(
+                stage, stage_fd, label="runtime installation stage"
+            )
             if status != 0:
                 _refuse(f"offline {label} failed")
     except OSError as error:
@@ -1527,7 +1579,9 @@ def prepare(
     runtime_lock = load_lock(manifest, requirements)
     contract = manifest.with_name("runtime-fetch-manifest.json")
     if not contract.is_file():
-        _refuse("public runtime-fetch contract is missing; refusing before network access")
+        _refuse(
+            "public runtime-fetch contract is missing; refusing before network access"
+        )
     _validate_public_runtime_contract(contract, manifest)
     handles: tuple[int, int, int] | None = None
     with _open_cache_directories(cache_root) as cache:
@@ -1720,7 +1774,9 @@ def _runtime_environment(directory_fd: int | None = None) -> dict[str, str]:
     }
     environment["PATH"] = RUNTIME_PATH
     if directory_fd is not None:
-        environment["NPA_GYMNASIUM_RUNTIME_ROOT"] = f"/proc/{os.getpid()}/fd/{directory_fd}"
+        environment["NPA_GYMNASIUM_RUNTIME_ROOT"] = (
+            f"/proc/{os.getpid()}/fd/{directory_fd}"
+        )
     return environment
 
 
@@ -1823,7 +1879,9 @@ def _execute_isolated_command(
                     prefix = f"/proc/self/fd/{installation_directory_fd}/"
                     bound = f"/proc/{os.getpid()}/cwd/"
                     command = [
-                        bound + argument[len(prefix):] if argument.startswith(prefix) else argument
+                        bound + argument[len(prefix) :]
+                        if argument.startswith(prefix)
+                        else argument
                         for argument in command
                     ]
                 _install_runtime_network_filter()

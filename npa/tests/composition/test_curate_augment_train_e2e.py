@@ -317,7 +317,9 @@ def _submit_fiftyone_curate(
     _write_json(artifacts_dir / "stage1-submit.json", _redact_job_raw(info.raw))
     visible = _wait_for_visible_job(settings.project_id, info.id)
     _write_json(artifacts_dir / "stage1-visible.json", _redact_job_raw(visible.raw))
-    assert _submitted_subnet_id(visible.raw), "FiftyOne curate Job spec.subnet_id is empty"
+    assert _submitted_subnet_id(visible.raw), (
+        "FiftyOne curate Job spec.subnet_id is empty"
+    )
     return job
 
 
@@ -386,7 +388,9 @@ def _submit_lerobot_train(
     job.job_id = str(payload["job_id"])
     visible = _wait_for_visible_job(settings.project_id, job.job_id)
     _write_json(artifacts_dir / "stage3-visible.json", _redact_job_raw(visible.raw))
-    assert _submitted_subnet_id(visible.raw), "LeRobot train Job spec.subnet_id is empty"
+    assert _submitted_subnet_id(visible.raw), (
+        "LeRobot train Job spec.subnet_id is empty"
+    )
     return job
 
 
@@ -426,7 +430,9 @@ def _submit_fiftyone_eval(
     _write_json(artifacts_dir / "stage4-submit.json", _redact_job_raw(info.raw))
     visible = _wait_for_visible_job(settings.project_id, info.id)
     _write_json(artifacts_dir / "stage4-visible.json", _redact_job_raw(visible.raw))
-    assert _submitted_subnet_id(visible.raw), "FiftyOne eval Job spec.subnet_id is empty"
+    assert _submitted_subnet_id(visible.raw), (
+        "FiftyOne eval Job spec.subnet_id is empty"
+    )
     return job
 
 
@@ -696,7 +702,11 @@ write_dataset()
 uploaded = upload_tree()
 print("NPA_PIPECAT_FIFTYONE_CURATE_DONE", json.dumps({{"files": len(uploaded), "seconds": round(time.time() - started, 3)}}), flush=True)
 """.strip()
-    body = "set -euo pipefail\nexport PYTHONUNBUFFERED=1\npython3 <<'PY'\n" + script + "\nPY\n"
+    body = (
+        "set -euo pipefail\nexport PYTHONUNBUFFERED=1\npython3 <<'PY'\n"
+        + script
+        + "\nPY\n"
+    )
     return _remote_bash(body)
 
 
@@ -737,7 +747,7 @@ def _cosmos_job_env(
 
 
 def _cosmos_generation_container_command() -> str:
-    job_py = r'''
+    job_py = r"""
 import importlib
 import json
 import os
@@ -901,7 +911,7 @@ def main():
 
 
 sys.exit(main())
-'''
+"""
     script = "set -euo pipefail\npython3 - <<'PY'\n" + job_py.strip() + "\nPY\n"
     return _remote_bash(script)
 
@@ -1035,7 +1045,11 @@ path.write_text(json.dumps(result, indent=2, sort_keys=True))
 upload_file(path)
 print("NPA_PIPECAT_FIFTYONE_EVAL_DONE", json.dumps(result, sort_keys=True), flush=True)
 """.strip()
-    body = "set -euo pipefail\nexport PYTHONUNBUFFERED=1\npython3 <<'PY'\n" + script + "\nPY\n"
+    body = (
+        "set -euo pipefail\nexport PYTHONUNBUFFERED=1\npython3 <<'PY'\n"
+        + script
+        + "\nPY\n"
+    )
     return _remote_bash(body)
 
 
@@ -1106,8 +1120,12 @@ def _create_job_with_lookup(
         stdout, stderr = proc.communicate(timeout=30)
     safe_stdout = _redact_text(stdout)
     safe_stderr = _redact_text(stderr)
-    (artifacts_dir / f"{label}-create-stdout.txt").write_text(safe_stdout, encoding="utf-8")
-    (artifacts_dir / f"{label}-create-stderr.txt").write_text(safe_stderr, encoding="utf-8")
+    (artifacts_dir / f"{label}-create-stdout.txt").write_text(
+        safe_stdout, encoding="utf-8"
+    )
+    (artifacts_dir / f"{label}-create-stderr.txt").write_text(
+        safe_stderr, encoding="utf-8"
+    )
     (artifacts_dir / f"{label}-create-returncode.txt").write_text(
         f"{proc.returncode}\ntimed_out={timed_out}\n",
         encoding="utf-8",
@@ -1205,7 +1223,12 @@ def _secret_job_env(settings: PipelineSettings) -> dict[str, str]:
 
 
 def _hf_token() -> str:
-    for key in ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_TOKEN"):
+    for key in (
+        "HF_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACE_TOKEN",
+    ):
         if os.environ.get(key):
             return os.environ[key]
     try:
@@ -1296,7 +1319,9 @@ def _cleanup_job(project_id: str, ref: str, artifacts_dir: Path) -> None:
     except EndpointNotFoundError:
         return
     except Exception as exc:
-        (artifacts_dir / f"cleanup-cancel-{ref}.err").write_text(str(exc), encoding="utf-8")
+        (artifacts_dir / f"cleanup-cancel-{ref}.err").write_text(
+            str(exc), encoding="utf-8"
+        )
         job_id = ref
     result = subprocess.run(
         ["nebius", "ai", "job", "delete", "--id", job_id],
@@ -1306,7 +1331,9 @@ def _cleanup_job(project_id: str, ref: str, artifacts_dir: Path) -> None:
         timeout=240,
         check=False,
     )
-    (artifacts_dir / f"cleanup-delete-{job_id}.log").write_text(result.stdout, encoding="utf-8")
+    (artifacts_dir / f"cleanup-delete-{job_id}.log").write_text(
+        result.stdout, encoding="utf-8"
+    )
     orphan = subprocess.run(
         ["nebius", "ai", "job", "get", "--id", job_id, "--format", "json"],
         text=True,
@@ -1337,14 +1364,23 @@ def _assert_lerobot_dataset_schema(
     assert episodes_path.exists()
     assert data_path.exists()
     assert (local_dir / "npa_curated_dataset_summary.json").exists()
-    videos = sorted((local_dir / "videos" / "observation.image" / "chunk-000").glob("file-*.mp4"))
+    videos = sorted(
+        (local_dir / "videos" / "observation.image" / "chunk-000").glob("file-*.mp4")
+    )
     assert len(videos) >= SMOKE_EPISODES
     assert all(path.stat().st_size > 1000 for path in videos[:SMOKE_EPISODES])
     info = json.loads(info_path.read_text(encoding="utf-8"))
     assert info["codebase_version"] == "v3.0"
     assert info["total_episodes"] == SMOKE_EPISODES
     assert info["total_frames"] == SMOKE_EPISODES * SMOKE_FRAMES_PER_EPISODE
-    for key in ("observation.image", "observation.state", "action", "next.reward", "next.done", "next.success"):
+    for key in (
+        "observation.image",
+        "observation.state",
+        "action",
+        "next.reward",
+        "next.done",
+        "next.success",
+    ):
         assert key in info["features"]
     table = pq.read_table(data_path)
     assert table.num_rows == info["total_frames"]
@@ -1372,7 +1408,9 @@ def _assert_cosmos_output_schema(
 ) -> None:
     local_dir = artifacts_dir / "stage2-cosmos-video"
     _download_s3_prefix(settings, output_path, local_dir)
-    metadata = json.loads((local_dir / "cosmos_generation_metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (local_dir / "cosmos_generation_metadata.json").read_text(encoding="utf-8")
+    )
     video_path = local_dir / "cosmos_text2world_output.mp4"
     assert metadata["status"] == "success"
     assert metadata["model_variant"] == COSMOS_MODEL_ID
@@ -1395,7 +1433,9 @@ def _assert_checkpoint_loadable(
 ) -> None:
     keys = _list_s3_keys(settings, output_path)
     config_keys = [key for key, _size in keys if key.endswith("config.json")]
-    model_keys = [(key, size) for key, size in keys if key.endswith("model.safetensors")]
+    model_keys = [
+        (key, size) for key, size in keys if key.endswith("model.safetensors")
+    ]
     assert config_keys, f"No config.json under {output_path}"
     assert model_keys, f"No model.safetensors under {output_path}"
     assert any(size > 0 for _key, size in model_keys)
@@ -1429,7 +1469,9 @@ def _assert_fiftyone_eval_schema(
     assert result["checkpoint_files"]["model_safetensors_size"] > 0
 
 
-def _download_s3_prefix(settings: PipelineSettings, output_path: str, local_dir: Path) -> None:
+def _download_s3_prefix(
+    settings: PipelineSettings, output_path: str, local_dir: Path
+) -> None:
     parsed = urlparse(output_path)
     prefix = parsed.path.lstrip("/")
     if prefix and not prefix.endswith("/"):
@@ -1450,15 +1492,21 @@ def _download_s3_prefix(settings: PipelineSettings, output_path: str, local_dir:
         client.download_file(parsed.netloc, key, str(target))
 
 
-def _list_s3_keys(settings: PipelineSettings, output_path: str) -> list[tuple[str, int]]:
+def _list_s3_keys(
+    settings: PipelineSettings, output_path: str
+) -> list[tuple[str, int]]:
     parsed = urlparse(output_path)
     prefix = parsed.path.lstrip("/")
     if prefix and not prefix.endswith("/"):
         prefix += "/"
     client = _s3_client(settings)
     keys: list[tuple[str, int]] = []
-    for page in client.get_paginator("list_objects_v2").paginate(Bucket=parsed.netloc, Prefix=prefix):
-        keys.extend((obj["Key"], int(obj.get("Size", 0))) for obj in page.get("Contents", []))
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=parsed.netloc, Prefix=prefix
+    ):
+        keys.extend(
+            (obj["Key"], int(obj.get("Size", 0))) for obj in page.get("Contents", [])
+        )
     return keys
 
 
@@ -1516,9 +1564,11 @@ def _redact_text(text: str) -> str:
         safe = re.sub(rf"({re.escape(key)}=)[^\s\"']+", r"\1<redacted>", safe)
     return re.sub(
         r'("name"\s*:\s*"([^"]+)"\s*,\s*"value"\s*:\s*)"[^"]*"',
-        lambda match: f'{match.group(1)}"<redacted>"'
-        if match.group(2) in SECRET_ENV_NAMES
-        else match.group(0),
+        lambda match: (
+            f'{match.group(1)}"<redacted>"'
+            if match.group(2) in SECRET_ENV_NAMES
+            else match.group(0)
+        ),
         safe,
     )
 
@@ -1529,7 +1579,9 @@ def _looks_secret_key(key: str) -> bool:
 
 
 def _write_json(path: Path, payload: object) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _format_result(result: subprocess.CompletedProcess[str]) -> str:

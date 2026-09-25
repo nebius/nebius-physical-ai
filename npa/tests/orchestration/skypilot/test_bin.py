@@ -8,7 +8,11 @@ import pytest
 import yaml
 
 from npa import controller_ownership as ownership
-from npa.controller_ownership import ControllerOwner, bind_controller_owner, controller_owner
+from npa.controller_ownership import (
+    ControllerOwner,
+    bind_controller_owner,
+    controller_owner,
+)
 from npa.orchestration.skypilot import _bin as bin_module
 from npa.orchestration.skypilot._bin import (
     REQUIRED_SKYPILOT_VERSION,
@@ -31,7 +35,9 @@ def _executable(path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_skypilot_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _isolated_skypilot_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     clear_skypilot_version_cache()
     monkeypatch.setattr(bin_module, "CONFIG_PATH", tmp_path / "missing-config.yaml")
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
@@ -39,7 +45,9 @@ def _isolated_skypilot_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
 
 
-def test_resolve_sky_bin_explicit_path_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_sky_bin_explicit_path_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     explicit = _executable(tmp_path / "explicit-sky")
     env = _executable(tmp_path / "env-sky")
     monkeypatch.setenv("NPA_SKYPILOT_BIN", str(env))
@@ -47,7 +55,9 @@ def test_resolve_sky_bin_explicit_path_wins(monkeypatch: pytest.MonkeyPatch, tmp
     assert resolve_sky_bin(explicit) == explicit.resolve()
 
 
-def test_resolve_sky_bin_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_sky_bin_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     env = _executable(tmp_path / "env-sky")
     monkeypatch.setenv("NPA_SKYPILOT_BIN", str(env))
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
@@ -55,7 +65,9 @@ def test_resolve_sky_bin_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert resolve_sky_bin() == env.resolve()
 
 
-def test_resolve_sky_bin_config_file_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_sky_bin_config_file_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     discovered = _executable(tmp_path / "config-sky")
     config = tmp_path / "config.yaml"
     config.write_text(f"skypilot:\n  sky_bin: {discovered}\n", encoding="utf-8")
@@ -65,15 +77,21 @@ def test_resolve_sky_bin_config_file_default(monkeypatch: pytest.MonkeyPatch, tm
     assert resolve_sky_bin() == discovered.resolve()
 
 
-def test_resolve_sky_bin_missing_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_sky_bin_missing_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
     monkeypatch.setattr(bin_module, "CONFIG_PATH", tmp_path / "missing.yaml")
 
-    with pytest.raises(SkyPilotNotInstalledError, match="SkyPilot CLI executable is not configured"):
+    with pytest.raises(
+        SkyPilotNotInstalledError, match="SkyPilot CLI executable is not configured"
+    ):
         resolve_sky_bin()
 
 
-def test_resolve_config_precedence_explicit_env_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_config_precedence_explicit_env_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     explicit = _executable(tmp_path / "explicit-sky")
     env = _executable(tmp_path / "env-sky")
     default = _executable(tmp_path / "default-sky")
@@ -170,10 +188,14 @@ def test_resolve_config_makes_relative_runtime_paths_cwd_independent(
     assert resolved.isolated_config_dir == workdir / "sky-state"
 
 
-def test_resolve_config_rejects_unknown_config_keys(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_config_rejects_unknown_config_keys(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     sky = _executable(tmp_path / "sky")
     config = tmp_path / "config.yaml"
-    config.write_text(f"skypilot:\n  sky_bin: {sky}\n  typo_key: true\n", encoding="utf-8")
+    config.write_text(
+        f"skypilot:\n  sky_bin: {sky}\n  typo_key: true\n", encoding="utf-8"
+    )
     monkeypatch.setattr(bin_module, "CONFIG_PATH", config)
 
     with pytest.raises(SkyPilotConfigError, match="typo_key.*Valid keys"):
@@ -338,7 +360,9 @@ def test_malformed_owner_is_left_to_ownership_validation(
     assert controller_owner() is None
 
 
-def test_ensure_skypilot_version_accepts_required_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ensure_skypilot_version_accepts_required_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     clear_skypilot_version_cache()
     sky = _executable(tmp_path / "sky")
     calls: list[list[str]] = []
@@ -349,7 +373,9 @@ def test_ensure_skypilot_version_accepts_required_version(monkeypatch: pytest.Mo
             return bin_module.subprocess.CompletedProcess(
                 cmd, 0, stdout="3.12 34.1.0\n", stderr=""
             )
-        return bin_module.subprocess.CompletedProcess(cmd, 0, stdout=f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n", stderr="")
+        return bin_module.subprocess.CompletedProcess(
+            cmd, 0, stdout=f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n", stderr=""
+        )
 
     monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
 
@@ -361,12 +387,16 @@ def test_ensure_skypilot_version_accepts_required_version(monkeypatch: pytest.Mo
     ]
 
 
-def test_ensure_skypilot_version_rejects_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ensure_skypilot_version_rejects_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     clear_skypilot_version_cache()
     sky = _executable(tmp_path / "sky")
 
     def fake_run(cmd, **kwargs):
-        return bin_module.subprocess.CompletedProcess(cmd, 0, stdout="SkyPilot 0.12.1\n", stderr="")
+        return bin_module.subprocess.CompletedProcess(
+            cmd, 0, stdout="SkyPilot 0.12.1\n", stderr=""
+        )
 
     monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
 
@@ -389,7 +419,11 @@ def test_ensure_skypilot_version_rejects_runtime_drift_before_mutation(
     sky = _executable(tmp_path / "bin" / "sky")
 
     def fake_run(cmd, **kwargs):
-        output = f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n" if cmd[-1] == "--version" else runtime
+        output = (
+            f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n"
+            if cmd[-1] == "--version"
+            else runtime
+        )
         return bin_module.subprocess.CompletedProcess(cmd, 0, stdout=output, stderr="")
 
     monkeypatch.setattr(bin_module.subprocess, "run", fake_run)

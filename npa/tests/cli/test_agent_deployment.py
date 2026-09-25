@@ -198,7 +198,9 @@ def test_adopt_legacy_remote_identity_keeps_matching_remote_namespace(
     assert adopted["source_tree"] == expected["source_tree"]
 
 
-def test_adopt_legacy_remote_identity_rejects_another_agent_name(source_repo: Path) -> None:
+def test_adopt_legacy_remote_identity_rejects_another_agent_name(
+    source_repo: Path,
+) -> None:
     expected = _manifest(source_repo)
     remote = dict(expected)
     remote["deployment_name"] = "another-agent"

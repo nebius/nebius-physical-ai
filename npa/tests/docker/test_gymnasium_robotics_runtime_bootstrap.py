@@ -27,7 +27,9 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-bootstrap.py"
 LOCK = ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json"
 REQUIREMENTS = ROOT / "npa/docker/workbench/gymnasium-robotics/requirements.lock"
-CORRESPONDING_LOCK = ROOT / "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json"
+CORRESPONDING_LOCK = (
+    ROOT / "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json"
+)
 SPEC = importlib.util.spec_from_file_location("gymnasium_runtime_bootstrap", SCRIPT)
 assert SPEC and SPEC.loader
 BOOTSTRAP = importlib.util.module_from_spec(SPEC)
@@ -36,7 +38,9 @@ SPEC.loader.exec_module(BOOTSTRAP)
 PUBLIC_ADDRESS = "8.8.8.8"
 
 
-def _evaluate_network_policy(*, syscall: int, family: int = 0, arch: int = 0xC000003E) -> int:
+def _evaluate_network_policy(
+    *, syscall: int, family: int = 0, arch: int = 0xC000003E
+) -> int:
     """Interpret filter data only: no socket, syscall, fork, or kernel probe."""
     fields = {0: syscall, 4: arch, 16: family}
     policy = BOOTSTRAP._runtime_network_policy()
@@ -59,7 +63,9 @@ def _evaluate_network_policy(*, syscall: int, family: int = 0, arch: int = 0xC00
 
 @pytest.mark.parametrize("syscall", [41, 53])
 @pytest.mark.parametrize("family", [0, 2, 10, 16, 17, 40, 255, 0xFFFFFFFF])
-def test_runtime_network_policy_refuses_nonlocal_socket_families(syscall: int, family: int) -> None:
+def test_runtime_network_policy_refuses_nonlocal_socket_families(
+    syscall: int, family: int
+) -> None:
     assert _evaluate_network_policy(syscall=syscall, family=family) == 0x00050001
 
 
@@ -69,7 +75,9 @@ def test_runtime_network_policy_preserves_unix_ipc(syscall: int) -> None:
 
 
 @pytest.mark.parametrize("syscall", [425, 426, 427, 0x40000000, 0x40000029, 0xFFFFFFFF])
-def test_runtime_network_policy_refuses_ring_and_alternate_abi_numbers(syscall: int) -> None:
+def test_runtime_network_policy_refuses_ring_and_alternate_abi_numbers(
+    syscall: int,
+) -> None:
     assert _evaluate_network_policy(syscall=syscall, family=1) == 0x00050001
 
 
@@ -79,11 +87,15 @@ def test_runtime_network_policy_refuses_unreviewed_architectures(arch: int) -> N
 
 
 @pytest.mark.parametrize("syscall", [0, 1, 3, 9, 16, 60, 202])
-def test_runtime_network_policy_preserves_ordinary_egl_and_file_syscalls(syscall: int) -> None:
+def test_runtime_network_policy_preserves_ordinary_egl_and_file_syscalls(
+    syscall: int,
+) -> None:
     assert _evaluate_network_policy(syscall=syscall) == 0x7FFF0000
 
 
-def test_runtime_network_policy_mocked_installation_uses_exact_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_network_policy_mocked_installation_uses_exact_instructions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[int] = []
 
     def record(option: int, argument: int, pointer: Any = None) -> None:
@@ -92,7 +104,10 @@ def test_runtime_network_policy_mocked_installation_uses_exact_instructions(monk
             assert calls == [BOOTSTRAP.PR_SET_NO_NEW_PRIVS, BOOTSTRAP.PR_SET_SECCOMP]
             assert argument == BOOTSTRAP.SECCOMP_MODE_FILTER
             program = pointer._obj
-            actual = tuple((row.code, row.jt, row.jf, row.k) for row in program.filter[:program.len])
+            actual = tuple(
+                (row.code, row.jt, row.jf, row.k)
+                for row in program.filter[: program.len]
+            )
             assert actual == BOOTSTRAP._runtime_network_policy()
         else:
             assert option == BOOTSTRAP.PR_SET_NO_NEW_PRIVS and argument == 1
@@ -104,7 +119,9 @@ def test_runtime_network_policy_mocked_installation_uses_exact_instructions(monk
 
 
 @pytest.mark.parametrize("failed_call", [1, 2])
-def test_runtime_network_policy_mocked_installation_fails_closed(monkeypatch: pytest.MonkeyPatch, failed_call: int) -> None:
+def test_runtime_network_policy_mocked_installation_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, failed_call: int
+) -> None:
     calls: list[int] = []
 
     def refuse(option: int, *_args: Any) -> None:
@@ -119,8 +136,12 @@ def test_runtime_network_policy_mocked_installation_fails_closed(monkeypatch: py
     assert len(calls) == failed_call
 
 
-def test_runtime_network_policy_mocked_installation_refuses_other_machine(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(BOOTSTRAP.os, "uname", lambda: mock.Mock(machine="synthetic-other"))
+def test_runtime_network_policy_mocked_installation_refuses_other_machine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        BOOTSTRAP.os, "uname", lambda: mock.Mock(machine="synthetic-other")
+    )
     prctl = mock.Mock(side_effect=AssertionError("must refuse before installation"))
     monkeypatch.setattr(BOOTSTRAP, "_prctl", prctl)
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="reviewed amd64"):
@@ -253,7 +274,9 @@ def test_pinned_runtime_https_connection_preserves_tls_hostname(
     )
     connection.connect()
     raw_socket.connect.assert_called_once_with((PUBLIC_ADDRESS, 443))
-    context.wrap_socket.assert_called_once_with(raw_socket, server_hostname="github.com")
+    context.wrap_socket.assert_called_once_with(
+        raw_socket, server_hostname="github.com"
+    )
     assert connection.sock is wrapped_socket
 
 
@@ -281,9 +304,7 @@ def test_pinned_runtime_https_connection_uses_only_approved_addresses(
         mock.call(socket.AF_INET6, socket.SOCK_STREAM),
     ]
     failed_socket.close.assert_called_once_with()
-    accepted_socket.connect.assert_called_once_with(
-        ("2606:4700:4700::1111", 443, 0, 0)
-    )
+    accepted_socket.connect.assert_called_once_with(("2606:4700:4700::1111", 443, 0, 0))
 
 
 def test_pinned_runtime_https_connection_refuses_after_all_addresses_fail(
@@ -513,15 +534,21 @@ def _write_inputs(
                 },
                 "runtime_fetch": {
                     "source_lock": manifest.name,
-                    "source_lock_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                    "source_lock_sha256": hashlib.sha256(
+                        manifest.read_bytes()
+                    ).hexdigest(),
                     "corresponding_source_lock": corresponding.name,
-                    "corresponding_source_lock_sha256": hashlib.sha256(corresponding.read_bytes()).hexdigest(),
+                    "corresponding_source_lock_sha256": hashlib.sha256(
+                        corresponding.read_bytes()
+                    ).hexdigest(),
                     "delivery": "operator-owned-runtime-cache",
                     "customer_gate": "operator-owned-official-access-after-notice-and-acceptance",
                     "acceptance_record": "customer-run-external",
                     "credential_storage": "never-in-image-or-repository",
                 },
-                "excluded_from_public_image": sorted(BOOTSTRAP.PUBLIC_RUNTIME_CONTRACT_EXCLUDED),
+                "excluded_from_public_image": sorted(
+                    BOOTSTRAP.PUBLIC_RUNTIME_CONTRACT_EXCLUDED
+                ),
                 "rights_boundary": BOOTSTRAP.PUBLIC_RUNTIME_CONTRACT_RIGHTS,
             }
         ),
@@ -1188,7 +1215,10 @@ def test_exec_path_uses_descriptor_bound_interpreter_and_runtime_root() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert 'bound_root = Path(f"/proc/self/fd/{directory_fd}")' in source
     assert 'f"/proc/self/fd/{directory_fd}"' in source
-    assert 'python_name = f"/proc/{os.getpid()}/fd/{directory_fd}/runtime/bin/python"' in source
+    assert (
+        'python_name = f"/proc/{os.getpid()}/fd/{directory_fd}/runtime/bin/python"'
+        in source
+    )
     assert "os.execve(" in source
     assert "python_fd," in source
     assert 'result["_runtime_monitor_fd"]' in source
@@ -1282,7 +1312,9 @@ def _execute_script_from_runtime(tmp_path: Path, source: str) -> int:
     )
 
 
-def test_runtime_nested_python_survives_close_fds_and_cwd_change(tmp_path: Path) -> None:
+def test_runtime_nested_python_survives_close_fds_and_cwd_change(
+    tmp_path: Path,
+) -> None:
     probe = """
 import os,socket,subprocess,sys
 from pathlib import Path
@@ -1611,7 +1643,9 @@ def test_only_standard_venv_compatibility_link_is_removed(tmp_path: Path) -> Non
         BOOTSTRAP._remove_venv_compatibility_link(runtime)
 
 
-def test_installer_cwd_binding_survives_nested_close_fds_and_cwd_change(tmp_path: Path) -> None:
+def test_installer_cwd_binding_survives_nested_close_fds_and_cwd_change(
+    tmp_path: Path,
+) -> None:
     stage = tmp_path / "stage"
     stage.mkdir()
     BOOTSTRAP.venv.EnvBuilder(with_pip=False, symlinks=False).create(stage / "runtime")
@@ -1633,11 +1667,21 @@ assert result.returncode == 0
 """
     try:
         assert not os.get_inheritable(descriptor)
-        with mock.patch.dict(os.environ, {"SYNTHETIC_INSTALL_SECRET": "not-a-real-secret"}):
-            assert BOOTSTRAP._execute_isolated_command(
-                [f"/proc/self/fd/{descriptor}/runtime/bin/python", "-I", "-c", probe],
-                installation_directory_fd=descriptor,
-            ) == 0
+        with mock.patch.dict(
+            os.environ, {"SYNTHETIC_INSTALL_SECRET": "not-a-real-secret"}
+        ):
+            assert (
+                BOOTSTRAP._execute_isolated_command(
+                    [
+                        f"/proc/self/fd/{descriptor}/runtime/bin/python",
+                        "-I",
+                        "-c",
+                        probe,
+                    ],
+                    installation_directory_fd=descriptor,
+                )
+                == 0
+            )
         assert not os.get_inheritable(descriptor)
     finally:
         os.close(descriptor)
@@ -1645,7 +1689,9 @@ assert result.returncode == 0
 
 @pytest.mark.parametrize("replace_stage", [False, True])
 def test_installer_retains_stage_identity_and_external_requirements(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_stage: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replace_stage: bool,
 ) -> None:
     stage = tmp_path / "stage"
     stage.mkdir()
@@ -1666,7 +1712,9 @@ def test_installer_retains_stage_identity_and_external_requirements(
 
     monkeypatch.setattr(BOOTSTRAP, "_execute_isolated_command", install)
     if replace_stage:
-        with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="installation stage identity changed"):
+        with pytest.raises(
+            BOOTSTRAP.BootstrapRefusal, match="installation stage identity changed"
+        ):
             BOOTSTRAP._install_runtime(stage, requirements)
         assert len(calls) == 1
     else:
@@ -1680,7 +1728,9 @@ def test_installer_retains_stage_identity_and_external_requirements(
 
 @pytest.mark.parametrize("unsafe", ["symlink", "writable", "owner"])
 def test_installer_refuses_unsafe_stage_before_venv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe: str,
 ) -> None:
     stage = tmp_path / "stage"
     stage.mkdir()

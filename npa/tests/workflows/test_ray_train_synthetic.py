@@ -37,7 +37,9 @@ def load(name):
     return module
 
 
-def test_runtime_preparation_creates_private_directories_and_preserves_prior_attempt(tmp_path):
+def test_runtime_preparation_creates_private_directories_and_preserves_prior_attempt(
+    tmp_path,
+):
     prepare = load("cluster/prepare")
     root = tmp_path / "runtime"
     prepare._create_runtime_root(root)
@@ -59,7 +61,9 @@ def test_runtime_preparation_rejects_shared_parent_without_creating_files(tmp_pa
 
 
 @pytest.mark.parametrize("symlink_location", ["parent", "runtime"])
-def test_runtime_preparation_cannot_follow_preexisting_symlinks(tmp_path, symlink_location):
+def test_runtime_preparation_cannot_follow_preexisting_symlinks(
+    tmp_path, symlink_location
+):
     target = tmp_path / "target"
     target.mkdir()
     link = tmp_path / "link"
@@ -80,8 +84,12 @@ def test_runtime_preparation_rejects_another_owners_parent(tmp_path, monkeypatch
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("content", [b"", b"a\x00b\xff" * (1024 * 1024 + 1)], ids=["empty", "multi_chunk"])
-def test_artifact_hashing_supports_python310_and_multiple_chunks(tmp_path, monkeypatch, content):
+@pytest.mark.parametrize(
+    "content", [b"", b"a\x00b\xff" * (1024 * 1024 + 1)], ids=["empty", "multi_chunk"]
+)
+def test_artifact_hashing_supports_python310_and_multiple_chunks(
+    tmp_path, monkeypatch, content
+):
     monkeypatch.delattr(hashlib, "file_digest", raising=False)
     path = tmp_path / "artifact.bin"
     path.write_bytes(content)
@@ -93,33 +101,81 @@ def test_artifact_hashing_supports_python310_and_multiple_chunks(tmp_path, monke
 @pytest.fixture
 def recipe():
     """Supply a tiny explicit protocol fixture, unrelated to real CUDA evidence."""
-    return dict(workers=2, steps=4, samples_per_rank=8, checkpoint_interval=2,
-                learning_rate=0.1, seed=7, fail_after_step=0)
+    return dict(
+        workers=2,
+        steps=4,
+        samples_per_rank=8,
+        checkpoint_interval=2,
+        learning_rate=0.1,
+        seed=7,
+        fail_after_step=0,
+    )
 
 
 @pytest.fixture
 def journal(recipe):
     """Supply finite deterministic rows for validation and actual RRD roundtrips."""
-    return [dict(optimizer_step=step, loss=1 / step, gradient_norm=0.5, parameter_delta=0.1,
-                 learning_rate=0.1, samples_per_second=10., ranks=[dict(
-                     rank=rank, world_size=2, device_type="cuda", device_fingerprint=str(rank) * 64,
-                     node_fingerprint=str(rank + 2) * 64,
-                     parameter_sha256="a" * 64, restored_from_step=0,
-                 ) for rank in range(2)]) for step in range(1, 5)]
+    return [
+        dict(
+            optimizer_step=step,
+            loss=1 / step,
+            gradient_norm=0.5,
+            parameter_delta=0.1,
+            learning_rate=0.1,
+            samples_per_second=10.0,
+            ranks=[
+                dict(
+                    rank=rank,
+                    world_size=2,
+                    device_type="cuda",
+                    device_fingerprint=str(rank) * 64,
+                    node_fingerprint=str(rank + 2) * 64,
+                    parameter_sha256="a" * 64,
+                    restored_from_step=0,
+                )
+                for rank in range(2)
+            ],
+        )
+        for step in range(1, 5)
+    ]
 
 
-@pytest.mark.parametrize("key,value", [("workers", 1), ("steps", 0), ("steps", 1), ("samples_per_rank", -1),
-                                      ("checkpoint_interval", 0), ("learning_rate", float("nan")),
-                                      ("learning_rate", 1.1), ("fail_after_step", 3), ("fail_after_step", 4)])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("workers", 1),
+        ("steps", 0),
+        ("steps", 1),
+        ("samples_per_rank", -1),
+        ("checkpoint_interval", 0),
+        ("learning_rate", float("nan")),
+        ("learning_rate", 1.1),
+        ("fail_after_step", 3),
+        ("fail_after_step", 4),
+    ],
+)
 def test_invalid_recipe_fails_before_ray(key, value, recipe):
     recipe[key] = value
     with pytest.raises(ValueError):
         load("train").validate_recipe(recipe)
 
 
-@pytest.mark.parametrize("mutation", ["missing_step", "duplicate_step", "nan_loss", "zero_update",
-                                      "cpu_rank", "wrong_world", "missing_rank", "same_device",
-                                      "divergent_model", "no_learning", "wrong_lr"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_step",
+        "duplicate_step",
+        "nan_loss",
+        "zero_update",
+        "cpu_rank",
+        "wrong_world",
+        "missing_rank",
+        "same_device",
+        "divergent_model",
+        "no_learning",
+        "wrong_lr",
+    ],
+)
 def test_bad_progress_or_rank_evidence_cannot_be_exported(mutation, journal, recipe):
     if mutation == "missing_step":
         journal.pop()
@@ -193,7 +249,9 @@ def test_worker_rejects_torch_drift_before_training(version, monkeypatch, recipe
         load("train").train_loop(recipe)
 
 
-def test_runtime_provenance_survives_weights_only_checkpoint_reload(tmp_path, monkeypatch):
+def test_runtime_provenance_survives_weights_only_checkpoint_reload(
+    tmp_path, monkeypatch
+):
     """TorchVersion is a str subclass that the safe unpickler does not allow."""
     torch = pytest.importorskip("torch")
     monkeypatch.setitem(sys.modules, "ray", SimpleNamespace(__version__="2.58.0"))
@@ -212,8 +270,10 @@ def exported(tmp_path, journal, recipe):
     report = {"run_name": "synthetic-test", "recipe": recipe}
     (tmp_path / "metrics.json").write_text(json.dumps(journal))
     (tmp_path / "state.pt").write_bytes(b"explicit non-Torch checksum fixture")
-    report.update(checkpoint_sha256=train.digest(tmp_path / "state.pt"),
-                  journal_sha256=train.digest(tmp_path / "metrics.json"))
+    report.update(
+        checkpoint_sha256=train.digest(tmp_path / "state.pt"),
+        journal_sha256=train.digest(tmp_path / "metrics.json"),
+    )
     train.write_recording(tmp_path / "metrics.rrd", journal, report)
     report["rrd_sha256"] = train.digest(tmp_path / "metrics.rrd")
     (tmp_path / "result.json").write_text(json.dumps(report))
@@ -224,20 +284,27 @@ def exported(tmp_path, journal, recipe):
 def write_hashes(directory):
     """Bind test export bytes independently of the RRD contents."""
     train = load("train")
-    (directory / "SHA256SUMS").write_text("".join(
-        f"{train.digest(path)}  {path.name}\n" for path in sorted(directory.iterdir())
-        if path.name != "SHA256SUMS"
-    ))
+    (directory / "SHA256SUMS").write_text(
+        "".join(
+            f"{train.digest(path)}  {path.name}\n"
+            for path in sorted(directory.iterdir())
+            if path.name != "SHA256SUMS"
+        )
+    )
 
 
 def test_complete_rrd_timeline_roundtrip(exported):
     assert load("inspect_results").inspect(exported) == dict(
-        artifacts_verified=4, optimizer_steps_decoded=4, metric_entities_decoded=5,
+        artifacts_verified=4,
+        optimizer_steps_decoded=4,
+        metric_entities_decoded=5,
         checkpoint_events_decoded=2,
     )
 
 
-def test_downloaded_artifacts_can_be_inspected_without_python311_hashlib_api(exported, monkeypatch):
+def test_downloaded_artifacts_can_be_inspected_without_python311_hashlib_api(
+    exported, monkeypatch
+):
     monkeypatch.delattr(hashlib, "file_digest", raising=False)
     assert load("inspect_results").inspect(exported)["artifacts_verified"] == 4
 
@@ -250,7 +317,7 @@ def test_checksum_corruption_is_rejected(exported):
 
 def test_rehashed_journal_cannot_hide_rrd_value_drift(exported, journal):
     changed = copy.deepcopy(journal)
-    changed[1]["loss"] = 99.
+    changed[1]["loss"] = 99.0
     report = json.loads((exported / "result.json").read_text())
     report.pop("rrd_sha256")
     load("train").write_recording(exported / "metrics.rrd", changed, report)
@@ -264,8 +331,9 @@ def test_rehashed_journal_cannot_hide_rrd_value_drift(exported, journal):
 def test_rrd_missing_step_cannot_pass_last_step_only_check(exported, journal, recipe):
     report = json.loads((exported / "result.json").read_text())
     report.pop("rrd_sha256")
-    load("train").write_recording(exported / "metrics.rrd", [journal[0], *journal[2:]],
-                                 report)
+    load("train").write_recording(
+        exported / "metrics.rrd", [journal[0], *journal[2:]], report
+    )
     report["rrd_sha256"] = load("train").digest(exported / "metrics.rrd")
     (exported / "result.json").write_text(json.dumps(report))
     write_hashes(exported)
@@ -280,9 +348,20 @@ def test_manifest_cannot_escape_export_directory(exported):
 
 
 def test_cli_rejects_local_storage_before_ray(tmp_path):
-    result = subprocess.run([sys.executable, str(EXAMPLE / "train.py"), "--storage-path", str(tmp_path / "checkpoints"),
-                             "--output-dir", str(tmp_path / "out"), "--run-name", "test"],
-                            capture_output=True, text=True)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(EXAMPLE / "train.py"),
+            "--storage-path",
+            str(tmp_path / "checkpoints"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--run-name",
+            "test",
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert result.returncode != 0
     assert "run-scoped unsigned s3://" in result.stderr
     assert not (tmp_path / "out").exists()
@@ -299,8 +378,16 @@ def test_cluster_is_guarded_native_train_resource_profile():
     assert "ray stop" not in (EXAMPLE / "cluster/start.sh").read_text()
 
 
-@pytest.mark.parametrize("uri", ["local/checkpoints", "s3://bucket", "s3://bucket/a/../b",
-                                 "s3://bucket/a?signature=secret", "s3://user:pass@bucket/a"])
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "local/checkpoints",
+        "s3://bucket",
+        "s3://bucket/a/../b",
+        "s3://bucket/a?signature=secret",
+        "s3://user:pass@bucket/a",
+    ],
+)
 def test_storage_rejects_ambiguous_or_unsigned_destination(uri):
     with pytest.raises(ValueError, match="unsigned"):
         load("artifacts").storage(uri)
@@ -367,7 +454,10 @@ def test_retry_partial_upload_preserves_exact_rrd_bytes(exported, tmp_path):
     artifacts.publish(filesystem, "exports", exported)
     assert (remote / "exports/metrics.rrd").read_bytes() == rrd_bytes
     artifacts.download(filesystem, "exports", tmp_path / "retried")
-    assert load("inspect_results").inspect(tmp_path / "retried")["optimizer_steps_decoded"] == 4
+    assert (
+        load("inspect_results").inspect(tmp_path / "retried")["optimizer_steps_decoded"]
+        == 4
+    )
 
 
 def test_unlisted_private_file_blocks_all_uploads(exported, tmp_path):
@@ -402,7 +492,9 @@ def test_checksum_manifest_cannot_follow_external_symlink(exported, tmp_path):
 
 
 @pytest.mark.parametrize("first_fails", [False, True])
-def test_live_cleanup_reconciles_lost_response_and_attempts_every_owned_job(tmp_path, first_fails):
+def test_live_cleanup_reconciles_lost_response_and_attempts_every_owned_job(
+    tmp_path, first_fails
+):
     """A lost submission response or one cancel error must not orphan later Jobs."""
     path = Path(__file__).parents[1] / "e2e/test_ray_train_synthetic_live.py"
     spec = importlib.util.spec_from_file_location("train_live_cleanup_contract", path)
@@ -413,7 +505,9 @@ def test_live_cleanup_reconciles_lost_response_and_attempts_every_owned_job(tmp_
 
     class Client:
         def list_jobs(self):
-            return [SimpleNamespace(submission_id=name) for name in active | set(stopped)]
+            return [
+                SimpleNamespace(submission_id=name) for name in active | set(stopped)
+            ]
 
         def get_job_status(self, job):
             return SimpleNamespace(is_terminal=lambda: job not in active)
@@ -427,17 +521,27 @@ def test_live_cleanup_reconciles_lost_response_and_attempts_every_owned_job(tmp_
         def get_job_logs(self, job):
             return f"Preserved {job}"
 
-    errors = live._cancel_owned_jobs(Client(), ["accepted-response-lost", "second-owned"], tmp_path)
+    errors = live._cancel_owned_jobs(
+        Client(), ["accepted-response-lost", "second-owned"], tmp_path
+    )
     assert "second-owned" in stopped
     assert "someone-else" in active
     assert (tmp_path / "second-owned.log").stat().st_mode & 0o077 == 0
     if first_fails:
-        assert errors == [{"job": "accepted-response-lost", "phase": "cancel", "error": "ConnectionError"}]
+        assert errors == [
+            {
+                "job": "accepted-response-lost",
+                "phase": "cancel",
+                "error": "ConnectionError",
+            }
+        ]
     else:
         assert not errors and "accepted-response-lost" in stopped
 
 
-@pytest.mark.parametrize("failure", ["listing_unavailable", "listing_omits_pending", "status_unavailable"])
+@pytest.mark.parametrize(
+    "failure", ["listing_unavailable", "listing_omits_pending", "status_unavailable"]
+)
 def test_exact_id_cleanup_does_not_depend_on_inventory(tmp_path, failure):
     """Enumeration omissions and API outages must not suppress known-ID stop attempts."""
     path = Path(__file__).parents[1] / "e2e/test_ray_train_synthetic_live.py"
@@ -463,20 +567,26 @@ def test_exact_id_cleanup_does_not_depend_on_inventory(tmp_path, failure):
         def get_job_logs(self, job):
             return f"Stopped {job}"
 
-    assert not live._cancel_owned_jobs(Client(), ["accepted-response-lost", "second-owned"], tmp_path)
+    assert not live._cancel_owned_jobs(
+        Client(), ["accepted-response-lost", "second-owned"], tmp_path
+    )
     assert stopped == ["accepted-response-lost", "second-owned"]
 
 
 def test_documented_tunnel_fails_when_its_forward_cannot_bind():
     """Keep OpenSSH's forwarding failure gate on the documented detached tunnel."""
     guide = (EXAMPLE / "README.md").read_text()
-    tunnel = guide.split('ssh -M -S "$TRAIN_SOCKET"', 1)[1].split('export RAY_API=', 1)[0]
+    tunnel = guide.split('ssh -M -S "$TRAIN_SOCKET"', 1)[1].split("export RAY_API=", 1)[
+        0
+    ]
     assert "-o ExitOnForwardFailure=yes" in tunnel
     assert "unset RAY_ADDRESS RAY_API_SERVER_ADDRESS" in tunnel
 
 
 @pytest.mark.parametrize("override", ["RAY_ADDRESS", "RAY_API_SERVER_ADDRESS"])
-def test_live_endpoint_override_is_rejected_before_any_native_client_contact(tmp_path, monkeypatch, override):
+def test_live_endpoint_override_is_rejected_before_any_native_client_contact(
+    tmp_path, monkeypatch, override
+):
     """Run the live entrypoint with an unrelated inherited endpoint and forbid Ray contact."""
     import builtins
 
@@ -485,24 +595,37 @@ def test_live_endpoint_override_is_rejected_before_any_native_client_contact(tmp
     live = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(live)
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"address": "http://127.0.0.1:18265", "evidence_dir": str(tmp_path / "evidence")}))
+    config.write_text(
+        json.dumps(
+            {
+                "address": "http://127.0.0.1:18265",
+                "evidence_dir": str(tmp_path / "evidence"),
+            }
+        )
+    )
     config.chmod(0o600)
     monkeypatch.setenv("NPA_RAY_TRAIN_LIVE_CONFIG", str(config))
     monkeypatch.setenv(override, "http://127.0.0.1:18266")
     original_import = builtins.__import__
 
     def forbid_ray_contact(name, *args, **kwargs):
-        assert not name.startswith("ray"), "Conflicting endpoint must fail before any native client import"
+        assert not name.startswith("ray"), (
+            "Conflicting endpoint must fail before any native client import"
+        )
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", forbid_ray_contact)
-    with pytest.raises(ValueError, match="Unset RAY_ADDRESS and RAY_API_SERVER_ADDRESS"):
+    with pytest.raises(
+        ValueError, match="Unset RAY_ADDRESS and RAY_API_SERVER_ADDRESS"
+    ):
         live.test_native_train_cuda_recovery_artifacts_and_cancel()
     assert not (tmp_path / "evidence").exists()
 
 
 @pytest.mark.parametrize("torch_version", ["2.13.0+cu130", "2.13.0+cpu"])
-def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monkeypatch, torch_version):
+def test_driver_binds_descendant_state_clients_to_application_ray(
+    tmp_path, monkeypatch, torch_version
+):
     """A Jobs driver must override inherited discovery settings for Train's actors."""
     import os
 
@@ -519,27 +642,81 @@ def test_driver_binds_descendant_state_clients_to_application_ray(tmp_path, monk
         # Model a descendant inheriting the service environment plus native
         # runtime overrides, including the State API's higher-priority setting.
         child = {**os.environ, **kwargs.get("runtime_env", {}).get("env_vars", {})}
-        connected.append((kwargs["address"], child.get("RAY_API_SERVER_ADDRESS") or child.get("RAY_ADDRESS")))
+        connected.append(
+            (
+                kwargs["address"],
+                child.get("RAY_API_SERVER_ADDRESS") or child.get("RAY_ADDRESS"),
+            )
+        )
         raise ConnectionBoundary
 
-    monkeypatch.setitem(sys.modules, "ray", SimpleNamespace(__version__="2.58.0", init=initialize))
-    monkeypatch.setitem(sys.modules, "ray.train", SimpleNamespace(
-        **{name: object for name in ("CheckpointConfig", "FailureConfig", "RunConfig", "ScalingConfig")}))
-    monkeypatch.setitem(sys.modules, "ray.train.torch", SimpleNamespace(TorchConfig=object, TorchTrainer=object))
-    monkeypatch.setitem(sys.modules, "artifacts", SimpleNamespace(
-        storage=lambda _: (None, "synthetic/checkpoints"), publish=lambda *args: None))
-    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(__version__=torch_version))
+    monkeypatch.setitem(
+        sys.modules, "ray", SimpleNamespace(__version__="2.58.0", init=initialize)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "ray.train",
+        SimpleNamespace(
+            **{
+                name: object
+                for name in (
+                    "CheckpointConfig",
+                    "FailureConfig",
+                    "RunConfig",
+                    "ScalingConfig",
+                )
+            }
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "ray.train.torch",
+        SimpleNamespace(TorchConfig=object, TorchTrainer=object),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "artifacts",
+        SimpleNamespace(
+            storage=lambda _: (None, "synthetic/checkpoints"),
+            publish=lambda *args: None,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules, "torch", SimpleNamespace(__version__=torch_version)
+    )
     expected = ConnectionBoundary if torch_version == "2.13.0+cu130" else RuntimeError
     with pytest.raises(expected):
-        load("train").main(["--storage-path", "s3://synthetic/checkpoints", "--run-name", "regression",
-                            "--output-dir", str(tmp_path / "export")])
-    assert connected == ([(selected, selected)] if expected is ConnectionBoundary else [])
+        load("train").main(
+            [
+                "--storage-path",
+                "s3://synthetic/checkpoints",
+                "--run-name",
+                "regression",
+                "--output-dir",
+                str(tmp_path / "export"),
+            ]
+        )
+    assert connected == (
+        [(selected, selected)] if expected is ConnectionBoundary else []
+    )
 
 
-@pytest.mark.parametrize("damage", ["missing_buffer", "missing_parameter", "wrong_shape", "nonfinite", "learning_rate", "momentum"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_buffer",
+        "missing_parameter",
+        "wrong_shape",
+        "nonfinite",
+        "learning_rate",
+        "momentum",
+    ],
+)
 def test_damaged_sgd_checkpoint_cannot_claim_momentum_restoration(damage):
     """Exercise real CPU SGD state; optional Torch is installed for reference validation."""
-    torch = pytest.importorskip("torch", reason="Reference checkpoint checks require optional matching Torch")
+    torch = pytest.importorskip(
+        "torch", reason="Reference checkpoint checks require optional matching Torch"
+    )
     model = torch.nn.Linear(8, 1)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
     model(torch.ones(4, 8)).square().sum().backward()
@@ -556,7 +733,9 @@ def test_damaged_sgd_checkpoint_cannot_claim_momentum_restoration(damage):
     elif damage == "nonfinite":
         checkpoint["state"][first]["momentum_buffer"].fill_(float("nan"))
     else:
-        checkpoint["param_groups"][0]["lr" if damage == "learning_rate" else "momentum"] = 0.5
+        checkpoint["param_groups"][0][
+            "lr" if damage == "learning_rate" else "momentum"
+        ] = 0.5
     restored = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
     restored.load_state_dict(checkpoint)
     with pytest.raises(ValueError, match="Checkpoint optimizer"):
@@ -565,7 +744,9 @@ def test_damaged_sgd_checkpoint_cannot_claim_momentum_restoration(damage):
 
 def test_complete_sgd_checkpoint_restores_exact_momentum():
     """A valid real optimizer checkpoint retains every buffer's exact bytes."""
-    torch = pytest.importorskip("torch", reason="Reference checkpoint checks require optional matching Torch")
+    torch = pytest.importorskip(
+        "torch", reason="Reference checkpoint checks require optional matching Torch"
+    )
     model = torch.nn.Linear(8, 1)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.8)
     model(torch.ones(4, 8)).square().sum().backward()
@@ -574,4 +755,7 @@ def test_complete_sgd_checkpoint_restores_exact_momentum():
     restored.load_state_dict(copy.deepcopy(optimizer.state_dict()))
     load("train").validate_optimizer_checkpoint(restored, model)
     for parameter in model.parameters():
-        assert torch.equal(restored.state[parameter]["momentum_buffer"], optimizer.state[parameter]["momentum_buffer"])
+        assert torch.equal(
+            restored.state[parameter]["momentum_buffer"],
+            optimizer.state[parameter]["momentum_buffer"],
+        )

@@ -76,9 +76,19 @@ def test_shipped_kinova_yaml_parses():
 def test_shipped_template_yaml_parses_with_auto():
     spec = ob.load_onboarding_spec(TEMPLATE_YAML)
     # The template defers everything derivable to auto.
-    for fld in ("ee_link", "base_link", "joint_names", "gripper_joint_names",
-                "n_arm_joints", "n_gripper_joints", "home_qpos", "kp", "kv",
-                "gripper_open", "gripper_close"):
+    for fld in (
+        "ee_link",
+        "base_link",
+        "joint_names",
+        "gripper_joint_names",
+        "n_arm_joints",
+        "n_gripper_joints",
+        "home_qpos",
+        "kp",
+        "kv",
+        "gripper_open",
+        "gripper_close",
+    ):
         assert spec.robot.is_auto(fld), f"{fld} should be auto in the template"
     assert spec.task.goal_pos_auto is True
 
@@ -107,7 +117,10 @@ def test_auto_morphology_recorded_not_required():
 
 def test_stock_franka_needs_no_asset():
     spec = ob.parse_onboarding_spec(
-        {"robot": {"name": "franka", "robot_source": "stock_franka"}, "task": {"skill": "lift"}}
+        {
+            "robot": {"name": "franka", "robot_source": "stock_franka"},
+            "task": {"skill": "lift"},
+        }
     )
     assert spec.robot.is_stock_franka
     assert spec.robot.robot_uri == ""
@@ -115,8 +128,10 @@ def test_stock_franka_needs_no_asset():
 
 def test_preset_seeds_source():
     spec = ob.parse_onboarding_spec(
-        {"robot": {"name": "ur", "preset": "ur5e", "usd_path": "https://x/ur.urdf"},
-         "task": {"skill": "reach"}}
+        {
+            "robot": {"name": "ur", "preset": "ur5e", "usd_path": "https://x/ur.urdf"},
+            "task": {"skill": "reach"},
+        }
     )
     # urdf asset -> byo_urdf; reach does not require a gripper.
     assert spec.robot.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF
@@ -129,32 +144,49 @@ def test_preset_seeds_source():
 def test_reject_visual_mesh_robot():
     with pytest.raises(ob.OnboardingSpecError, match="infer robot_source"):
         ob.parse_onboarding_spec(
-            {"robot": {"name": "x", "usd_path": "https://x/arm.obj"}, "task": {"skill": "lift"}}
+            {
+                "robot": {"name": "x", "usd_path": "https://x/arm.obj"},
+                "task": {"skill": "lift"},
+            }
         )
 
 
 def test_reject_unknown_skill():
     with pytest.raises(ob.OnboardingSpecError, match="task.skill"):
         ob.parse_onboarding_spec(
-            {"robot": {"name": "franka", "robot_source": "stock_franka"},
-             "task": {"skill": "weld"}}
+            {
+                "robot": {"name": "franka", "robot_source": "stock_franka"},
+                "task": {"skill": "weld"},
+            }
         )
 
 
 def test_reject_gripperless_lift():
     with pytest.raises(ob.OnboardingSpecError, match="requires a gripper"):
         ob.parse_onboarding_spec(
-            {"robot": {"name": "ur10", "usd_path": "https://x/ur.usd",
-                       "n_arm_joints": 6, "n_gripper_joints": 0},
-             "task": {"skill": "lift"}}
+            {
+                "robot": {
+                    "name": "ur10",
+                    "usd_path": "https://x/ur.usd",
+                    "n_arm_joints": 6,
+                    "n_gripper_joints": 0,
+                },
+                "task": {"skill": "lift"},
+            }
         )
 
 
 def test_gripperless_reach_is_allowed():
     spec = ob.parse_onboarding_spec(
-        {"robot": {"name": "ur10", "usd_path": "https://x/ur.usd",
-                   "n_arm_joints": 6, "n_gripper_joints": 0},
-         "task": {"skill": "reach"}}
+        {
+            "robot": {
+                "name": "ur10",
+                "usd_path": "https://x/ur.usd",
+                "n_arm_joints": 6,
+                "n_gripper_joints": 0,
+            },
+            "task": {"skill": "reach"},
+        }
     )
     assert spec.task.skill == "reach"
 
@@ -162,26 +194,37 @@ def test_gripperless_reach_is_allowed():
 def test_reject_bad_goal_pos():
     with pytest.raises(ob.OnboardingSpecError, match="goal_pos"):
         ob.parse_onboarding_spec(
-            {"robot": {"name": "franka", "robot_source": "stock_franka"},
-             "task": {"skill": "place", "goal_pos": [1.0, 2.0]}}
+            {
+                "robot": {"name": "franka", "robot_source": "stock_franka"},
+                "task": {"skill": "place", "goal_pos": [1.0, 2.0]},
+            }
         )
 
 
 def test_reject_out_of_range_threshold():
     with pytest.raises(ob.OnboardingSpecError, match="success_threshold"):
         ob.parse_onboarding_spec(
-            {"robot": {"name": "franka", "robot_source": "stock_franka"},
-             "task": {"skill": "lift", "success_threshold": 1.5}}
+            {
+                "robot": {"name": "franka", "robot_source": "stock_franka"},
+                "task": {"skill": "lift", "success_threshold": 1.5},
+            }
         )
 
 
 def test_reject_inconsistent_explicit_vectors():
     with pytest.raises(ob.OnboardingSpecError, match="share a length"):
         ob.parse_onboarding_spec(
-            {"robot": {"name": "x", "usd_path": "https://x/arm.usd",
-                       "n_arm_joints": 2, "n_gripper_joints": 0,
-                       "kp": [1, 2], "kv": [1, 2, 3]},
-             "task": {"skill": "reach"}}
+            {
+                "robot": {
+                    "name": "x",
+                    "usd_path": "https://x/arm.usd",
+                    "n_arm_joints": 2,
+                    "n_gripper_joints": 0,
+                    "kp": [1, 2],
+                    "kv": [1, 2, 3],
+                },
+                "task": {"skill": "reach"},
+            }
         )
 
 
@@ -195,6 +238,9 @@ def test_reject_missing_blocks():
 def test_reject_bad_schema():
     with pytest.raises(ob.OnboardingSpecError, match="schema"):
         ob.parse_onboarding_spec(
-            {"schema": "npa.sim2real.onboarding.v999",
-             "robot": {"robot_source": "stock_franka"}, "task": {"skill": "lift"}}
+            {
+                "schema": "npa.sim2real.onboarding.v999",
+                "robot": {"robot_source": "stock_franka"},
+                "task": {"skill": "lift"},
+            }
         )

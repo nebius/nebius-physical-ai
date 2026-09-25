@@ -39,7 +39,9 @@ def resolve_subnet(
 
     project = str(project_id or "").strip()
     if not project:
-        raise SubnetResolutionError("Project ID is required to resolve a Serverless Job subnet.")
+        raise SubnetResolutionError(
+            "Project ID is required to resolve a Serverless Job subnet."
+        )
 
     networks = _list_vpc_resources(project, "network")
     subnets = _list_vpc_resources(project, "subnet")

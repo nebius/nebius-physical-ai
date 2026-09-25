@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import signal
 import subprocess
 import sys
@@ -30,6 +30,8 @@ PROFILE = ROOT / (
     "npa/src/npa/workflows/byof/profiles/"
     "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu.yaml"
 )
+
+
 def test_profile_defers_runtime_fetch_until_after_admitted_receipt_validation() -> None:
     """Setup must not install fetched code before the run-phase receipt gate."""
 
@@ -46,9 +48,7 @@ def test_profile_defers_runtime_fetch_until_after_admitted_receipt_validation() 
         "/usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py || exit $?"
     ]
     assert "owner-side Pod image receipt" in run
-    assert run.index("owner-side Pod image receipt") < run.index(
-        "run-smoke"
-    )
+    assert run.index("owner-side Pod image receipt") < run.index("run-smoke")
 
 
 class _RunningProcess:
@@ -88,7 +88,15 @@ def _pod(*, image_id: str) -> dict[str, object]:
                         "allowPrivilegeEscalation": True,
                         "capabilities": {
                             "drop": ["ALL"],
-                            "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "SYS_CHROOT", "NET_BIND_SERVICE"],
+                            "add": [
+                                "CHOWN",
+                                "DAC_OVERRIDE",
+                                "FOWNER",
+                                "SETUID",
+                                "SETGID",
+                                "SYS_CHROOT",
+                                "NET_BIND_SERVICE",
+                            ],
                         },
                     },
                     "resources": {
@@ -129,7 +137,11 @@ def test_admitted_policy_accepts_only_reviewed_ipc_population(
     if shared_memory:
         spec["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
         spec["containers"][0]["volumeMounts"] = [
-            {"name": "dshm", "mountPath": "/dev/shm", "readOnly": False}
+            {
+                "name": "dshm",
+                "mountPath": PurePosixPath("/dev", "shm").as_posix(),
+                "readOnly": False,
+            }
         ]
     facts = live._gymnasium_admitted_pod_policy(pod, namespace=NAMESPACE, run_id=RUN_ID)
     assert facts["service_account"] == service_account
@@ -262,7 +274,7 @@ def test_admission_population_and_mount_changes_are_refused(
     pod = _pod(image_id=f"containerd://{DIGEST}")
     spec = pod["spec"]
     spec["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
-    mount = {"name": "dshm", "mountPath": "/dev/shm"}
+    mount = {"name": "dshm", "mountPath": PurePosixPath("/dev", "shm").as_posix()}
     spec["containers"][0]["volumeMounts"] = [mount]
     if mutation == "sidecar":
         spec["containers"].append({"name": "injected", "image": IMAGE})
@@ -335,7 +347,9 @@ def test_profile_accepts_closed_admitted_policy(
     policy["service_account"] = service_account
     if shared_memory:
         policy["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
-        policy["mounts"] = [{"name": "dshm", "mountPath": "/dev/shm"}]
+        policy["mounts"] = [
+            {"name": "dshm", "mountPath": PurePosixPath("/dev", "shm").as_posix()}
+        ]
     result = _validate_synthetic_receipt(tmp_path, receipt)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == f"containerd://{DIGEST}"
@@ -464,7 +478,13 @@ def test_profile_refuses_unapproved_ipc_mount_options(
     receipt = _synthetic_profile_receipt()
     policy = receipt["admitted_pod_policy"]
     policy["volumes"] = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
-    policy["mounts"] = [{"name": "dshm", "mountPath": "/dev/shm", key: value}]
+    policy["mounts"] = [
+        {
+            "name": "dshm",
+            "mountPath": PurePosixPath("/dev", "shm").as_posix(),
+            key: value,
+        }
+    ]
     result = _validate_synthetic_receipt(tmp_path, receipt)
     assert result.returncode != 0
     assert "Pod policy receipt" in result.stderr

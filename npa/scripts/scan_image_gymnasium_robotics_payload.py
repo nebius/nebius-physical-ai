@@ -238,9 +238,9 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "apt-runtime.lock.json": "edcfbf171c6d13b2bfddabc596c0adc29bda8bebd696ec497be6265d863c28b2",
     "corresponding-source.lock.json": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "4686d636c32faf790204ba53de42228c97bc19c2ec621ec9cf3cf895afa9f23e",
+    "runtime-bootstrap.py": "dcefd3ea34c3ffb6be392a8f07329ab47608f7f6cf5bef083e250c377b4fd484",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
-    "verify_image.py": "a75ff3c13e9b2eebb007cc3ac4e8950044f4cf72351daeea8d212ac0f6874e1d",  # gitleaks:allow; public file-content SHA-256
+    "verify_image.py": "d8b0ef0d75f282d2178f94dd1666c5905ba429f31a9f55660ee4e4a39d4705b9",  # gitleaks:allow; public file-content SHA-256
     "runtime-fetch-manifest.json": "72597bda8363f54ef1d243d6f8b2a7660aebdaf54875fd161b11b0097444f957",
 }
 EXPECTED_SOURCE_FIELDS = {
@@ -313,9 +313,7 @@ def _docker_save_config_digest(config_name: str) -> str:
     return match.group(1)
 
 
-def _raw_member(
-    archive: tarfile.TarFile, name: str, *, max_bytes: int
-) -> bytes:
+def _raw_member(archive: tarfile.TarFile, name: str, *, max_bytes: int) -> bytes:
     member = archive.getmember(name)
     if not member.isfile():
         raise ValueError(f"archive member is not a regular file: {name}")
@@ -347,7 +345,9 @@ def _repeated_docker_layer_member_is_identical(
         duplicate.offset_data : duplicate.offset_data + duplicate.size
     ]
     digest = name.rsplit("/", 1)[-1]
-    return first_raw == duplicate_raw and hashlib.sha256(first_raw).hexdigest() == digest
+    return (
+        first_raw == duplicate_raw and hashlib.sha256(first_raw).hexdigest() == digest
+    )
 
 
 def _archive_path_identity(metadata: os.stat_result) -> tuple[int, ...]:
@@ -424,9 +424,7 @@ def _container_archive_bytes(path: Path) -> bytes:
 
     try:
         absolute, before_chain = _trusted_archive_chain(path)
-        parent, descriptor, before = _open_archive_at_parent(
-            absolute, before_chain[-1]
-        )
+        parent, descriptor, before = _open_archive_at_parent(absolute, before_chain[-1])
     except (OSError, ValueError) as error:
         raise ValueError("container archive is unsafe or unavailable") from error
     try:
@@ -517,46 +515,47 @@ def _scan_archive_representation_bytes(
 # password prompts and credential-variable assignments, not secret values.
 # These dispositions bind both the reviewed path and complete file contents.
 REVIEWED_CREDENTIAL_SOURCE_SHA256 = {
-    'usr/bin/gpasswd': 'b9ef1bde0bde1b6839a0f55d43a606645723436932f072e3bf71e4c1a0ed4c06',  # gitleaks:allow; public file-content SHA-256
-    'usr/bin/newgrp': '572ab15948df3969e929b902641c3a42e76dce7d71a22fbc58011ca89d8d965e',
-    'usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1': 'ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98',
-    'usr/lib/x86_64-linux-gnu/libpam.so.0.85.1': '9e1c85dcceeedd56568874afa04c52bbd051fb8bac52c3e1f5feeb1eed14238a',
-    'usr/lib/x86_64-linux-gnu/security/pam_exec.so': '1ac881f3eb2383762917afb8197ecd0122dccf355156b70787c73d2947c5c6b1',
-    'usr/lib/x86_64-linux-gnu/security/pam_extrausers.so': '612255329df214295d2e8eca01d79b830fe8c94ce7d87178e371c19c01afc0a2',
-    'usr/lib/x86_64-linux-gnu/security/pam_stress.so': '4418b929b99608b048f138af777f2a2b9a6fe5a8d4af7242929308f9f1b9c68b',
-    'usr/lib/x86_64-linux-gnu/security/pam_userdb.so': '38843ca2240952995c74582fabb65614e846427eb5e99fe362d8edd736bed3d9',
-    'usr/share/pam-configs/unix': '66528ec667294fd2eaa1418ad4372f51e0c9a8fbe628275242276ca070639276',
-    'usr/bin/cvtsudoers': '193f1e6bacae37805201b8f3bd06daad7b344d2e4c58e3dbd1b36fe55da272b1',
-    'usr/bin/openssl': '30cc7c491903d6d8bca54406889c0334a167777397458214b5bd498c51b6fd97',
-    'usr/bin/ssh': '31430165113e51a046f3b9fa2a60ec98e073cc6c0411a081b3b1d76ed6a4eb6a',
-    'usr/bin/ssh-add': 'd8f8bc11af29c8f61b545191c981b1ea9d1c6c2bfdf61f4841ad5588af783067',
-    'usr/bin/ssh-keygen': '5175ddce2146fc8a03ab8e1ef25a1b0382dd3cb209484f7ae11ac782171c0d04',  # gitleaks:allow; public file-content SHA-256
-    'usr/lib/openssh/ssh-keysign': '7a7bf85b1dbe297da7508fc389d1ff27c54678d502e83214a7f9040d86ac4022',  # gitleaks:allow; public file-content SHA-256
-    'usr/lib/python3/dist-packages/botocore/credentials.py': 'd4b5d5f206cee8142b12e8a19a30db201e43dac83d60259120168d626e00e671',  # gitleaks:allow; public file-content SHA-256
-    'usr/lib/python3/dist-packages/botocore/data/acm/2015-12-08/service-2.json': '660c100f2f5f23e37e592e1681ac9f6a2f9a0a09b8e89b2aa566d1778f41ad22',
-    'usr/lib/python3/dist-packages/botocore/httpsession.py': 'f0e0b9664e5af63fb762800ccbad17708e8f9cd97a0ca8c20faee9ab8a47157e',
-    'usr/lib/python3/dist-packages/botocore/session.py': '290ec2132af23fd9da4ec9c76b224476139b500e004bfd7c5496138241050371',
-    'usr/lib/python3/dist-packages/requests/adapters.py': 'bff1668d4e4a67bea4f98b6d4a1658079469ac8ce184bf18df3816f69e1e050f',
-    'usr/lib/python3/dist-packages/requests/auth.py': '87e1cb955c7d8fcaca57985f480c9c3f60293928254f3efb474b73eea09b6c41',  # gitleaks:allow; public file-content SHA-256
-    'usr/lib/python3/dist-packages/requests/sessions.py': 'f8bbd3ceb3ed7ad493ad1ddbbb1bb85e176032b2452c1d6ae43ecffbe2f65e1c',
-    'usr/lib/python3/dist-packages/urllib3/connection.py': '470683be25f74bf9781a6a884d04001982ed46dc8e79edc4d4e6243ba26bc771',
-    'usr/lib/python3/dist-packages/urllib3/connectionpool.py': '576d2852bfc99cadc1852e0a609b98cb4d243f5c6619a5a02a71f29dc69e9ddb',
-    'usr/lib/python3/dist-packages/urllib3/contrib/_securetransport/low_level.py': 'd780e1a7f8e299ae49f36e286df157e6804e4588809d42ed509fd307c084b1c6',
-    'usr/lib/python3/dist-packages/urllib3/contrib/pyopenssl.py': '97a5b3a5cef4d6cf200e7620f94ae26a45ae49f254d2f7cd323d3757dc9c0947',
-    'usr/lib/python3/dist-packages/urllib3/contrib/socks.py': 'c5baacf8ff941c7e4be5afdd2afc4a7ad17257d94abb191c57d2bd3a2c9dfa02',
-    'usr/lib/python3/dist-packages/urllib3/util/__pycache__/ssl_.cpython-312.pyc': 'cda36f1be5a92c7263f6213f312b9da7dd798b79ed5484813a6b2a7a97658184',
-    'usr/lib/python3/dist-packages/urllib3/util/ssl_.py': '485473cdc8046fe82b32768b3e5506f2a8daca0e5582fbdff61997cb87b876d2',
-    'usr/lib/python3.12/__pycache__/getpass.cpython-312.pyc': 'b536111082a164d2b58fb74024074c2e5d34c52f858e921b1898558b6294d644',
-    'usr/lib/python3.12/__pycache__/nntplib.cpython-312.pyc': '8897e42279db5be80d880b4e834a4a3fad9e90c27d4a192fab619d0993ef0ff0',
-    'usr/lib/python3.12/logging/handlers.py': '9bee4f9ee58c3a8858ef8a5f5ba597600667eddaa404e2653dfd1079b219e6bc',
-    'usr/lib/python3.12/netrc.py': '229da6d0cbe6a10295be6c64ac3806420ea018124c09e4887410548fc2fc8b5d',
-    'usr/lib/python3.12/nntplib.py': '6a76a94b951b273aa87335d7c9c4d7273e4c59485c784b057f681443b32d9004',
-    'usr/lib/python3.12/urllib/parse.py': 'a67b5694763137dbac085adbf0c22821d435ec8ca22d3bd3786d2c9f4ee748d5',
-    'usr/lib/python3.12/urllib/request.py': '96ae4b051b87eb7694da24f5fa75bf3931486b49b755699934bf15ab0ca5829d',
-    'usr/libexec/sudo/sudoers.so': '4955ef472c43e5749b1076ec902164d43f23bc095266d87358b424aaa7a3a4a0',
-    'usr/sbin/sshd': 'f30333b455e6fe10536d544992ea3dfa87cc1d83b8af7945a815c86f8b4f6f6d',
-    'usr/sbin/visudo': '0fc25209fe0348b2a52cd117f540c05ce4235f8a18bac011de6381c89f3f1c6e',
+    "usr/bin/gpasswd": "b9ef1bde0bde1b6839a0f55d43a606645723436932f072e3bf71e4c1a0ed4c06",  # gitleaks:allow; public file-content SHA-256
+    "usr/bin/newgrp": "572ab15948df3969e929b902641c3a42e76dce7d71a22fbc58011ca89d8d965e",
+    "usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+    "usr/lib/x86_64-linux-gnu/libpam.so.0.85.1": "9e1c85dcceeedd56568874afa04c52bbd051fb8bac52c3e1f5feeb1eed14238a",
+    "usr/lib/x86_64-linux-gnu/security/pam_exec.so": "1ac881f3eb2383762917afb8197ecd0122dccf355156b70787c73d2947c5c6b1",
+    "usr/lib/x86_64-linux-gnu/security/pam_extrausers.so": "612255329df214295d2e8eca01d79b830fe8c94ce7d87178e371c19c01afc0a2",
+    "usr/lib/x86_64-linux-gnu/security/pam_stress.so": "4418b929b99608b048f138af777f2a2b9a6fe5a8d4af7242929308f9f1b9c68b",
+    "usr/lib/x86_64-linux-gnu/security/pam_userdb.so": "38843ca2240952995c74582fabb65614e846427eb5e99fe362d8edd736bed3d9",
+    "usr/share/pam-configs/unix": "66528ec667294fd2eaa1418ad4372f51e0c9a8fbe628275242276ca070639276",
+    "usr/bin/cvtsudoers": "193f1e6bacae37805201b8f3bd06daad7b344d2e4c58e3dbd1b36fe55da272b1",
+    "usr/bin/openssl": "30cc7c491903d6d8bca54406889c0334a167777397458214b5bd498c51b6fd97",
+    "usr/bin/ssh": "31430165113e51a046f3b9fa2a60ec98e073cc6c0411a081b3b1d76ed6a4eb6a",
+    "usr/bin/ssh-add": "d8f8bc11af29c8f61b545191c981b1ea9d1c6c2bfdf61f4841ad5588af783067",
+    "usr/bin/ssh-keygen": "5175ddce2146fc8a03ab8e1ef25a1b0382dd3cb209484f7ae11ac782171c0d04",  # gitleaks:allow; public file-content SHA-256
+    "usr/lib/openssh/ssh-keysign": "7a7bf85b1dbe297da7508fc389d1ff27c54678d502e83214a7f9040d86ac4022",  # gitleaks:allow; public file-content SHA-256
+    "usr/lib/python3/dist-packages/botocore/credentials.py": "d4b5d5f206cee8142b12e8a19a30db201e43dac83d60259120168d626e00e671",  # gitleaks:allow; public file-content SHA-256
+    "usr/lib/python3/dist-packages/botocore/data/acm/2015-12-08/service-2.json": "660c100f2f5f23e37e592e1681ac9f6a2f9a0a09b8e89b2aa566d1778f41ad22",
+    "usr/lib/python3/dist-packages/botocore/httpsession.py": "f0e0b9664e5af63fb762800ccbad17708e8f9cd97a0ca8c20faee9ab8a47157e",
+    "usr/lib/python3/dist-packages/botocore/session.py": "290ec2132af23fd9da4ec9c76b224476139b500e004bfd7c5496138241050371",
+    "usr/lib/python3/dist-packages/requests/adapters.py": "bff1668d4e4a67bea4f98b6d4a1658079469ac8ce184bf18df3816f69e1e050f",
+    "usr/lib/python3/dist-packages/requests/auth.py": "87e1cb955c7d8fcaca57985f480c9c3f60293928254f3efb474b73eea09b6c41",  # gitleaks:allow; public file-content SHA-256
+    "usr/lib/python3/dist-packages/requests/sessions.py": "f8bbd3ceb3ed7ad493ad1ddbbb1bb85e176032b2452c1d6ae43ecffbe2f65e1c",
+    "usr/lib/python3/dist-packages/urllib3/connection.py": "470683be25f74bf9781a6a884d04001982ed46dc8e79edc4d4e6243ba26bc771",
+    "usr/lib/python3/dist-packages/urllib3/connectionpool.py": "576d2852bfc99cadc1852e0a609b98cb4d243f5c6619a5a02a71f29dc69e9ddb",
+    "usr/lib/python3/dist-packages/urllib3/contrib/_securetransport/low_level.py": "d780e1a7f8e299ae49f36e286df157e6804e4588809d42ed509fd307c084b1c6",
+    "usr/lib/python3/dist-packages/urllib3/contrib/pyopenssl.py": "97a5b3a5cef4d6cf200e7620f94ae26a45ae49f254d2f7cd323d3757dc9c0947",
+    "usr/lib/python3/dist-packages/urllib3/contrib/socks.py": "c5baacf8ff941c7e4be5afdd2afc4a7ad17257d94abb191c57d2bd3a2c9dfa02",
+    "usr/lib/python3/dist-packages/urllib3/util/__pycache__/ssl_.cpython-312.pyc": "cda36f1be5a92c7263f6213f312b9da7dd798b79ed5484813a6b2a7a97658184",
+    "usr/lib/python3/dist-packages/urllib3/util/ssl_.py": "485473cdc8046fe82b32768b3e5506f2a8daca0e5582fbdff61997cb87b876d2",
+    "usr/lib/python3.12/__pycache__/getpass.cpython-312.pyc": "b536111082a164d2b58fb74024074c2e5d34c52f858e921b1898558b6294d644",
+    "usr/lib/python3.12/__pycache__/nntplib.cpython-312.pyc": "8897e42279db5be80d880b4e834a4a3fad9e90c27d4a192fab619d0993ef0ff0",
+    "usr/lib/python3.12/logging/handlers.py": "9bee4f9ee58c3a8858ef8a5f5ba597600667eddaa404e2653dfd1079b219e6bc",
+    "usr/lib/python3.12/netrc.py": "229da6d0cbe6a10295be6c64ac3806420ea018124c09e4887410548fc2fc8b5d",
+    "usr/lib/python3.12/nntplib.py": "6a76a94b951b273aa87335d7c9c4d7273e4c59485c784b057f681443b32d9004",
+    "usr/lib/python3.12/urllib/parse.py": "a67b5694763137dbac085adbf0c22821d435ec8ca22d3bd3786d2c9f4ee748d5",
+    "usr/lib/python3.12/urllib/request.py": "96ae4b051b87eb7694da24f5fa75bf3931486b49b755699934bf15ab0ca5829d",
+    "usr/libexec/sudo/sudoers.so": "4955ef472c43e5749b1076ec902164d43f23bc095266d87358b424aaa7a3a4a0",
+    "usr/sbin/sshd": "f30333b455e6fe10536d544992ea3dfa87cc1d83b8af7945a815c86f8b4f6f6d",
+    "usr/sbin/visudo": "0fc25209fe0348b2a52cd117f540c05ce4235f8a18bac011de6381c89f3f1c6e",
 }
+
 
 def _scan_decoded_member_bytes(
     label: str,
@@ -575,7 +574,10 @@ def _scan_decoded_member_bytes(
     if skip_text_policy:
         return
     path = label.removeprefix("decoded member: ")
-    reviewed_source = REVIEWED_CREDENTIAL_SOURCE_SHA256.get(path) == hashlib.sha256(content).hexdigest()
+    reviewed_source = (
+        REVIEWED_CREDENTIAL_SOURCE_SHA256.get(path)
+        == hashlib.sha256(content).hexdigest()
+    )
     if SECRET_TEXT.search(content) and not reviewed_source:
         raise ValueError(f"forbidden secret signature: {label}")
     if VENDOR_TEXT.search(content):
@@ -769,7 +771,9 @@ def _validate_zip_data_descriptor(
         info.compress_size,
         info.file_size,
     ):
-        raise ValueError(f"zip data descriptor does not match central directory: {path}")
+        raise ValueError(
+            f"zip data descriptor does not match central directory: {path}"
+        )
 
 
 def _zip_central_filename_bytes(path: str, info: zipfile.ZipInfo) -> bytes:
@@ -804,7 +808,9 @@ def _validate_zip_compressed_stream(
     else:
         raise ValueError(f"unsupported zip compression: {path}")
     if len(expanded) != info.file_size or zlib.crc32(expanded) != info.CRC:
-        raise ValueError(f"zip compressed stream does not match central directory: {path}")
+        raise ValueError(
+            f"zip compressed stream does not match central directory: {path}"
+        )
 
 
 def _reserve_zip_expansion(
@@ -928,9 +934,7 @@ def _validated_zip_infos(
         descriptor = content[data_end:next_offset]
         if local_flags & 0x08:
             if (local_crc, local_compressed_size, local_size) != (0, 0, 0):
-                raise ValueError(
-                    f"zip local descriptor metadata is not zero: {path}"
-                )
+                raise ValueError(f"zip local descriptor metadata is not zero: {path}")
             _validate_zip_data_descriptor(path, descriptor, info)
         elif descriptor or (
             local_crc != info.CRC
@@ -979,18 +983,14 @@ def _decompress(
                 raise ValueError(f"ambiguous compressed stream: {path}")
         elif kind == "bzip2":
             decompressor = bz2.BZ2Decompressor()
-            expanded = decompressor.decompress(
-                content, max_length=max_bytes + 1
-            )
+            expanded = decompressor.decompress(content, max_length=max_bytes + 1)
             if len(expanded) > max_bytes:
                 raise ValueError(f"expanded stream exceeds scan bound: {path}")
             if not decompressor.eof or decompressor.unused_data:
                 raise ValueError(f"ambiguous compressed stream: {path}")
         else:
             decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_AUTO)
-            expanded = decompressor.decompress(
-                content, max_length=max_bytes + 1
-            )
+            expanded = decompressor.decompress(content, max_length=max_bytes + 1)
             if len(expanded) > max_bytes:
                 raise ValueError(f"expanded stream exceeds scan bound: {path}")
             if not decompressor.eof or decompressor.unused_data:
@@ -1170,7 +1170,13 @@ def _nested_archive_members(
                 for member in archive:
                     safe = _safe(member.name)
                     allowed_empty_base_dir = (
-                        (member.isdir() or (member.isfile() and safe == "var/cache/apt/archives/lock"))
+                        (
+                            member.isdir()
+                            or (
+                                member.isfile()
+                                and safe == "var/cache/apt/archives/lock"
+                            )
+                        )
                         and member.size == 0
                         and safe in ALLOWED_EMPTY_BASE_PATHS
                     )
@@ -1210,11 +1216,12 @@ def _nested_archive_members(
                         resolved = _resolved_link_target(
                             safe, target_text, relative=member.issym()
                         )
-                        if FORBIDDEN_PATH.search(
-                            target_text.lstrip("/")
-                        ) or FORBIDDEN_PATH.search(resolved) or UPSTREAM_TREE_PATH.search(
-                            target_text.lstrip("/")
-                        ) or UPSTREAM_TREE_PATH.search(resolved):
+                        if (
+                            FORBIDDEN_PATH.search(target_text.lstrip("/"))
+                            or FORBIDDEN_PATH.search(resolved)
+                            or UPSTREAM_TREE_PATH.search(target_text.lstrip("/"))
+                            or UPSTREAM_TREE_PATH.search(resolved)
+                        ):
                             raise ValueError(
                                 f"forbidden nested archive link: {path}:{safe}"
                             )
@@ -1318,9 +1325,7 @@ def _layers(
         [
             (
                 layer_name,
-                _raw_member(
-                    archive, layer_name, max_bytes=MAX_LAYER_ARCHIVE_BYTES
-                ),
+                _raw_member(archive, layer_name, max_bytes=MAX_LAYER_ARCHIVE_BYTES),
             )
             for layer_name in names
         ]
@@ -1397,7 +1402,10 @@ def _layers_from_bytes(
                     FORBIDDEN_PATH.search(path)
                     and not allowed_system_wheel
                     and not (
-                        (item.isdir() or (item.isfile() and path == "var/cache/apt/archives/lock"))
+                        (
+                            item.isdir()
+                            or (item.isfile() and path == "var/cache/apt/archives/lock")
+                        )
                         and item.size == 0
                         and path in ALLOWED_EMPTY_BASE_PATHS
                     )
@@ -1443,11 +1451,12 @@ def _layers_from_bytes(
                     resolved = _resolved_link_target(
                         path, target, relative=item.issym()
                     )
-                    if FORBIDDEN_PATH.search(
-                        target.lstrip("/")
-                    ) or FORBIDDEN_PATH.search(resolved) or UPSTREAM_TREE_PATH.search(
-                        target.lstrip("/")
-                    ) or UPSTREAM_TREE_PATH.search(resolved):
+                    if (
+                        FORBIDDEN_PATH.search(target.lstrip("/"))
+                        or FORBIDDEN_PATH.search(resolved)
+                        or UPSTREAM_TREE_PATH.search(target.lstrip("/"))
+                        or UPSTREAM_TREE_PATH.search(resolved)
+                    ):
                         raise ValueError(
                             f"forbidden image link target: {path} -> {target}"
                         )
@@ -1490,9 +1499,7 @@ def _layers_from_bytes(
                 break
             ancestor = entries.get(parent_name)
             if ancestor is not None and ancestor["kind"] in {"symlink", "hardlink"}:
-                raise ValueError(
-                    f"retained descendant has a link ancestor: {path}"
-                )
+                raise ValueError(f"retained descendant has a link ancestor: {path}")
         if record["kind"] == "hardlink":
             target = record["resolved_link_target"]
             if target not in entries or entries[target]["kind"] != "regular":
@@ -1556,37 +1563,43 @@ def _locked_python_distributions(raw: bytes) -> dict[str, str]:
 # Independent member closure: reviewed reference plus the explicit deterministic
 # build cleanup and reviewed NPA files. Every member is bound, including files
 # hidden by later layers. Only timestamps and the separately verified revision vary.
-EXPECTED_CANONICAL_CONFIG_SHA256 = 'e2f05d5d405492d028e3e2a9682aa38821b47a7957daa7d19bab47d892c83361'
-EXPECTED_CANONICAL_LAYER_SHA256 = (
-    '9c9ba303f1155de79657da48833d0b1c80ab4cde0449b9bb8013096336b992f1',
-    '73e6fc4e984caa7bb8593375c1c3b06e138906656ffb35f06192691861188243',
-    '5c33c59fe045a5af65d27334b2fd1f509b71aa1ca986bf3b38dcabceb6501d6c',
-    'e86b8526d35f8446e9df6bc0c82f4080857b31a16e6ea20f572a529334860f16',
-    'fec6dd0175deae0b4d0529936783b682c9436d11183cfc845b814bd10512c8c7',
-    'e98ae05eb8864789bbe1a5ef0df92f0d428eaba337c189377bf1da306095e7fc',
-    '38fa48b313974fec18580b5cf088011ab733af5998ade39953fd194482415617',
-    '109326d939ccebbe807a1b0c175c033c5ff71deabcaa36896793214c2650341d',
-    'c1dace677b83aa54d1b5a5d650b766d04dba80dbf5db7678069424107e908912',
-    '4ca8f3361b402401501aac431c4741c8b42c3a96b508f5ed5794a1a41d44840c',
-    '73daaeeafb9d494ffad6c0b142dbc03785abb760a3fdd7f67448422ec8304d20',
-    '1f9be8fd8a7021eb3aa1f1bfc67f93918adba351dde96f9cbf0f610ac9807325',
-    'f2eaa1ce0c8ec626a20ef4f5064e61cf0f9626ba8b1df99bc8b9f72ea09734d8',
-    '3b6f97d60680fb30327f10fd2ae39c3aa3005e2913fca3ade3f2a549253493cc',
-    'd35bf8a657b05495643a86095720c1508f0f3e7af302fb137158efdb8fcd87ff',
-    '6a1402467a860af7d89392ef3a268f4694601f009816e4ad104484b0568858eb',
-    '6c9e6f75450344894a1c6e431bf033818bc37b7c923adc5f1e743157b41bb79d',
-    'dffd1efd4f9cb4eb6f134d47ad21ccd6d2239e5a650bd9593dae6ee5baeb35b4',
-    'be1bbe789b60202a6e8666435ffd8ac6ef607d595e9a51999e201e306aca1731',
-    '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
-    '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+EXPECTED_CANONICAL_CONFIG_SHA256 = (
+    "e2f05d5d405492d028e3e2a9682aa38821b47a7957daa7d19bab47d892c83361"
 )
+EXPECTED_CANONICAL_LAYER_SHA256 = (
+    "9c9ba303f1155de79657da48833d0b1c80ab4cde0449b9bb8013096336b992f1",
+    "73e6fc4e984caa7bb8593375c1c3b06e138906656ffb35f06192691861188243",
+    "5c33c59fe045a5af65d27334b2fd1f509b71aa1ca986bf3b38dcabceb6501d6c",
+    "e86b8526d35f8446e9df6bc0c82f4080857b31a16e6ea20f572a529334860f16",
+    "fec6dd0175deae0b4d0529936783b682c9436d11183cfc845b814bd10512c8c7",
+    "e98ae05eb8864789bbe1a5ef0df92f0d428eaba337c189377bf1da306095e7fc",
+    "38fa48b313974fec18580b5cf088011ab733af5998ade39953fd194482415617",
+    "109326d939ccebbe807a1b0c175c033c5ff71deabcaa36896793214c2650341d",
+    "c1dace677b83aa54d1b5a5d650b766d04dba80dbf5db7678069424107e908912",
+    "4ca8f3361b402401501aac431c4741c8b42c3a96b508f5ed5794a1a41d44840c",
+    "73daaeeafb9d494ffad6c0b142dbc03785abb760a3fdd7f67448422ec8304d20",
+    "1f9be8fd8a7021eb3aa1f1bfc67f93918adba351dde96f9cbf0f610ac9807325",
+    "f2eaa1ce0c8ec626a20ef4f5064e61cf0f9626ba8b1df99bc8b9f72ea09734d8",
+    "3b6f97d60680fb30327f10fd2ae39c3aa3005e2913fca3ade3f2a549253493cc",
+    "ab2a5f1a7758869da9482da07bf1f95aabea15b8e8a7be0311c586534da41547",
+    "6a1402467a860af7d89392ef3a268f4694601f009816e4ad104484b0568858eb",
+    "56b436f447082f717fe13ecc58e44efe52086682499f0420bc4eb9f42c95e75c",
+    "dffd1efd4f9cb4eb6f134d47ad21ccd6d2239e5a650bd9593dae6ee5baeb35b4",
+    "be1bbe789b60202a6e8666435ffd8ac6ef607d595e9a51999e201e306aca1731",
+    "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+)
+
 
 def _validate_tar_timestamps(item: tarfile.TarInfo) -> None:
     timestamps = {"mtime": item.mtime}
-    timestamps.update({
-        key: value for key, value in item.pax_headers.items()
-        if key in {"mtime", "atime", "ctime"}
-    })
+    timestamps.update(
+        {
+            key: value
+            for key, value in item.pax_headers.items()
+            if key in {"mtime", "atime", "ctime"}
+        }
+    )
     for value in timestamps.values():
         if re.fullmatch(r"-?[0-9]+(?:\.[0-9]+)?", str(value)) is None:
             raise ValueError("invalid canonical TAR timestamp")
@@ -1604,7 +1617,9 @@ def _discard_oci_timestamp(record: dict[str, object]) -> None:
     try:
         # Python 3.10 cannot parse every allowed fractional width. The regex
         # already validates the fraction; validate calendar/time without it.
-        datetime.fromisoformat(re.sub(r"\.[0-9]{1,9}", "", value).replace("Z", "+00:00"))
+        datetime.fromisoformat(
+            re.sub(r"\.[0-9]{1,9}", "", value).replace("Z", "+00:00")
+        )
     except ValueError as error:
         raise ValueError("invalid canonical OCI timestamp") from error
 
@@ -1804,9 +1819,7 @@ def _neutral_candidate(
         or not apt.get("resolved_source_packages")
     ):
         raise ValueError("neutral bootstrap APT/source closure is incomplete")
-    binaries = {
-        item.get("package"): item for item in apt["resolved_binary_packages"]
-    }
+    binaries = {item.get("package"): item for item in apt["resolved_binary_packages"]}
     for record in EXPECTED_SYSTEM_WHEEL_FILES.values():
         package = binaries.get(record["package"])
         if not package or package.get("sha256") != record["package_sha256"]:
@@ -1887,9 +1900,7 @@ def _oci_blob(
         # ordinary rootfs files; descriptor/config/attestation blobs still get
         # complete recursive archive inspection at this boundary.
         if media_type not in OCI_LAYER_MEDIA_TYPES:
-            _nested_archive_members(
-                f"raw OCI {label} blob", raw, budget=nested_budget
-            )
+            _nested_archive_members(f"raw OCI {label} blob", raw, budget=nested_budget)
         elif scan_layer_text_policy:
             _nested_archive_members(
                 f"raw OCI {label} blob",
@@ -1999,7 +2010,9 @@ def _oci_manifest_candidates(
         annotations = descriptor.get("annotations") or {}
         if not isinstance(annotations, dict):
             raise ValueError("OCI descriptor annotations are malformed")
-        attestation = annotations.get("vnd.docker.reference.type") == "attestation-manifest"
+        attestation = (
+            annotations.get("vnd.docker.reference.type") == "attestation-manifest"
+        )
         for layer_index, layer_descriptor in enumerate(layers):
             _oci_blob(
                 archive,
@@ -2018,9 +2031,7 @@ def _oci_manifest_candidates(
     return candidates
 
 
-def _strict_oci_layer(
-    label: str, raw: bytes, *, media_type: str
-) -> bytes:
+def _strict_oci_layer(label: str, raw: bytes, *, media_type: str) -> bytes:
     compression = OCI_LAYER_MEDIA_TYPES.get(media_type)
     if compression is None:
         raise ValueError(f"unsupported OCI runtime layer media type: {label}")
@@ -2037,7 +2048,9 @@ def _strict_oci_layer(
         if len(decoded) > MAX_LAYER_ARCHIVE_BYTES:
             raise ValueError(f"OCI layer exceeds scan bound: {label}")
     empty_tar = len(decoded) == 1024 and not any(decoded)
-    if len(decoded) > MAX_LAYER_ARCHIVE_BYTES or not (empty_tar or _looks_like_tar(decoded)):
+    if len(decoded) > MAX_LAYER_ARCHIVE_BYTES or not (
+        empty_tar or _looks_like_tar(decoded)
+    ):
         raise ValueError(f"OCI layer is not one bounded tar stream: {label}")
     return decoded
 
@@ -2220,11 +2233,11 @@ def scan_oci_layout(
                 scan_layer_text_policy=False,
             )
             assert isinstance(descriptor, dict)
-            decoded = _strict_oci_layer(
-                f"layer-{position}", raw, media_type=media_type
-            )
+            decoded = _strict_oci_layer(f"layer-{position}", raw, media_type=media_type)
             digest = descriptor.get("digest") if isinstance(descriptor, dict) else None
-            if isinstance(digest, str) and graph_budget.text_policy_scanned.get(digest, False):
+            if isinstance(digest, str) and graph_budget.text_policy_scanned.get(
+                digest, False
+            ):
                 pre_scanned_text_digests.add(hashlib.sha256(decoded).hexdigest())
             layers.append((f"layer-{position}.tar", decoded))
             normalized_descriptors.append(
@@ -2317,9 +2330,7 @@ def _bind_docker_save_oci_graph(
         raise ValueError("Docker-save OCI layout version is unsupported")
 
     config_digest = _docker_save_config_digest(config_name)
-    config_aliases = {
-        f"blobs/sha256/{config_digest}": config_name
-    }
+    config_aliases = {f"blobs/sha256/{config_digest}": config_name}
     graph_referenced: set[str] = set()
     nested_budget = _NestedArchiveBudget()
     graph_budget = _OciDescriptorGraphBudget()
@@ -2341,7 +2352,9 @@ def _bind_docker_save_oci_graph(
             "Docker-save OCI runnable manifest does not bind manifest.json config"
         )
     selected_layers = selected.get("layers")
-    if not isinstance(selected_layers, list) or len(selected_layers) != len(layer_names):
+    if not isinstance(selected_layers, list) or len(selected_layers) != len(
+        layer_names
+    ):
         raise ValueError(
             "Docker-save OCI runnable manifest does not bind manifest.json layers"
         )
@@ -2350,9 +2363,7 @@ def _bind_docker_save_oci_graph(
     ):
         if not isinstance(descriptor, dict):
             raise ValueError("Docker-save OCI layer descriptor is malformed")
-        raw = _raw_member(
-            archive, layer_name, max_bytes=MAX_LAYER_ARCHIVE_BYTES
-        )
+        raw = _raw_member(archive, layer_name, max_bytes=MAX_LAYER_ARCHIVE_BYTES)
         expected_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         if descriptor.get("digest") != expected_digest:
             raise ValueError(
@@ -2393,7 +2404,9 @@ def scan(
             if prior is not None and not _repeated_docker_layer_member_is_identical(
                 archive_bytes, prior, member, name
             ):
-                raise ValueError("Docker save contains duplicate normalized member paths")
+                raise ValueError(
+                    "Docker save contains duplicate normalized member paths"
+                )
             outer_by_name.setdefault(name, member)
         outer_names = set(outer_by_name)
         manifest_raw = _raw_member(
@@ -2480,9 +2493,7 @@ def scan(
             )
         raw_layers: list[tuple[str, bytes]] = []
         for name in layers:
-            stored = _raw_member(
-                archive, name, max_bytes=MAX_LAYER_ARCHIVE_BYTES
-            )
+            stored = _raw_member(archive, name, max_bytes=MAX_LAYER_ARCHIVE_BYTES)
             _scan_raw_blob_bytes(f"stored layer bytes: {name}", stored)
             if stored.startswith(b"\x1f\x8b"):
                 decoded = _decompress(

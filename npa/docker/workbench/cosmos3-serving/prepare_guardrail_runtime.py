@@ -28,7 +28,9 @@ def materialize_symlinks(root: Path) -> int:
         replaced += 1
     remaining = [str(path) for path in root.rglob("*") if path.is_symlink()]
     if remaining:
-        raise RuntimeError(f"guardrail runtime tree still contains symlinks: {remaining}")
+        raise RuntimeError(
+            f"guardrail runtime tree still contains symlinks: {remaining}"
+        )
     return replaced
 
 

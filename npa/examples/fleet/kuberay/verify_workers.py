@@ -35,7 +35,9 @@ def _verify_results(head, workers, results):
         values = [value * value for value in range(index * 10000, (index + 1) * 10000)]
         assert result["node_id"] == worker != head
         assert result["sum"] == sum(values)
-        assert result["sha256"] == hashlib.sha256(json.dumps(values).encode()).hexdigest()
+        assert (
+            result["sha256"] == hashlib.sha256(json.dumps(values).encode()).hexdigest()
+        )
 
 
 def main():
@@ -51,19 +53,32 @@ def main():
     """
     ray.init(address="auto")
     head = ray.get_runtime_context().get_node_id()
-    workers = sorted(node["NodeID"] for node in ray.nodes()
-                     if node["Alive"] and node["NodeID"] != head)
+    workers = sorted(
+        node["NodeID"]
+        for node in ray.nodes()
+        if node["Alive"] and node["NodeID"] != head
+    )
     assert workers, "No live Ray workers"
     pending_shards = []
     for index, node in enumerate(workers):
         strategy = NodeAffinitySchedulingStrategy(node_id=node, soft=False)
-        pending_shards.append(compute_shard.options(scheduling_strategy=strategy).remote(index))
+        pending_shards.append(
+            compute_shard.options(scheduling_strategy=strategy).remote(index)
+        )
     results = ray.get(pending_shards)
     _verify_results(head, workers, results)
-    print("KUBERAY_RESULT=" + json.dumps({
-        "ray_version": ray.__version__, "head_node_id": head,
-        "worker_count": len(workers), "results": results,
-    }), flush=True)
+    print(
+        "KUBERAY_RESULT="
+        + json.dumps(
+            {
+                "ray_version": ray.__version__,
+                "head_node_id": head,
+                "worker_count": len(workers),
+                "results": results,
+            }
+        ),
+        flush=True,
+    )
     ray.shutdown()
 
 
