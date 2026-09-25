@@ -380,7 +380,7 @@ jobs:
       - name: Use the verified LIBERO containerd image store
         if: matrix.tool == 'libero'
         id: libero-docker
-        uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5.5.0
         with:
           version: v29.1.3
           set-host: true
