@@ -47,8 +47,6 @@ def _settings(settings, changes):
 
 
 def _native_snapshot(env):
-    import omni.physx
-    import omni.timeline
     import warp as wp
 
     view = env.scene["robot"].root_view
@@ -61,14 +59,41 @@ def _native_snapshot(env):
     state = {
         name: wp.to_torch(value).detach().clone() for name, value in arrays.items()
     }
+    return {"state": state, "clocks": _native_clocks(env)}
+
+
+def _native_clocks(env):
+    import omni.timeline
+    from isaacsim.core.experimental.utils import stage as stage_utils
+    from isaacsim.core.simulation_manager.impl.extension import (
+        acquire_simulation_manager_interface,
+    )
+
+    # Lab replaces the public manager class; this accessor retains Kit's binding.
+    manager = acquire_simulation_manager_interface()
+    stage = stage_utils.get_current_stage(backend="fabric")
+    prim = stage.GetPrimAtPath("/ExternalSimulationTime")
+    clock = prim.GetAttribute("omni:time") if prim else None
+    if manager is None or not clock:
+        raise RuntimeError("native simulation-manager or Fabric clock is unavailable")
     clocks = {
-        "physics_seconds": omni.physx.get_physx_interface().get_simulation_time(),
+        "physics_seconds": manager.get_simulation_time(),
+        "simulation_manager_step_count": manager.get_num_physics_steps(),
+        "fabric_seconds": clock.Get(),
         "timeline_seconds": omni.timeline.get_timeline_interface().get_current_time(),
         "physics_step_count": env.sim.get_physics_step_count(),
     }
+    if not all(isinstance(value, (int, float)) for value in clocks.values()):
+        raise RuntimeError(f"native render clocks must be numeric: {clocks}")
     if not all(np.isfinite(list(clocks.values()))):
-        raise RuntimeError("native render clocks must be finite")
-    return {"state": state, "clocks": clocks}
+        raise RuntimeError(f"native render clocks must be finite: {clocks}")
+    if clocks["physics_seconds"] <= 0 or clocks["simulation_manager_step_count"] <= 0:
+        raise RuntimeError(
+            f"native physics events did not advance before capture: {clocks}"
+        )
+    if abs(clocks["physics_seconds"] - clocks["fabric_seconds"]) > 1e-9:
+        raise RuntimeError(f"native physics and Fabric clocks disagree: {clocks}")
+    return clocks
 
 
 def _check_frozen(before, after):
@@ -189,6 +214,7 @@ def renderer_evidence(annotators, camera, transform, native):
     )
     return {
         "native_clocks": native["clocks"],
+        "native_clock_source": "isaacsim.core.simulation_manager.native_step_events",
         "reference_time": reference,
         "observed_camera": {key: value.tolist() for key, value in observed.items()},
         "expected_camera": {key: value.tolist() for key, value in expected.items()},

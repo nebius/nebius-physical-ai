@@ -165,17 +165,9 @@ def test_native_snapshot_copies_actual_physx_buffers(monkeypatch):
         get_dof_positions=lambda: torch.zeros(4, 12),
         get_dof_velocities=lambda: torch.zeros(4, 12),
     )
-    physx = SimpleNamespace(
-        get_physx_interface=lambda: SimpleNamespace(get_simulation_time=lambda: 24.0)
+    monkeypatch.setattr(
+        evidence, "_native_clocks", lambda env: {"physics_seconds": 24.0}
     )
-    timeline = SimpleNamespace(
-        get_timeline_interface=lambda: SimpleNamespace(get_current_time=lambda: 0.0)
-    )
-    monkeypatch.setitem(
-        sys.modules, "omni", SimpleNamespace(physx=physx, timeline=timeline)
-    )
-    monkeypatch.setitem(sys.modules, "omni.physx", physx)
-    monkeypatch.setitem(sys.modules, "omni.timeline", timeline)
     monkeypatch.setitem(
         sys.modules, "warp", SimpleNamespace(to_torch=lambda value: value)
     )
@@ -189,3 +181,79 @@ def test_native_snapshot_copies_actual_physx_buffers(monkeypatch):
     assert before["state"]["root_transforms"][3, 0] == 0
     with pytest.raises(RuntimeError, match="root_transforms"):
         evidence._check_frozen(before, after)
+
+
+@pytest.fixture
+def native_clock_api(monkeypatch):
+    import sys
+
+    values = {"seconds": 24.0, "steps": 4800, "fabric": 24.0}
+    manager = SimpleNamespace(
+        get_simulation_time=lambda: values["seconds"],
+        get_num_physics_steps=lambda: values["steps"],
+    )
+    extension = SimpleNamespace(acquire_simulation_manager_interface=lambda: manager)
+    attribute = SimpleNamespace(Get=lambda: values["fabric"])
+    prim = SimpleNamespace(
+        GetAttribute=lambda name: attribute if name == "omni:time" else None
+    )
+    stage = SimpleNamespace(
+        GetPrimAtPath=lambda path: prim if path == "/ExternalSimulationTime" else None
+    )
+    stage_utils = SimpleNamespace(
+        get_current_stage=lambda *, backend: stage if backend == "fabric" else None
+    )
+    timeline = SimpleNamespace(
+        get_timeline_interface=lambda: SimpleNamespace(get_current_time=lambda: 0.0)
+    )
+    modules = {
+        "omni": SimpleNamespace(timeline=timeline),
+        "omni.timeline": timeline,
+        "isaacsim.core.experimental.utils": SimpleNamespace(stage=stage_utils),
+        "isaacsim.core.simulation_manager.impl.extension": extension,
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    env = SimpleNamespace(sim=SimpleNamespace(get_physics_step_count=lambda: 4800))
+    return env, values, extension, stage
+
+
+def test_clock_uses_unpatched_existing_native_binding(native_clock_api):
+    env, _, _, _ = native_clock_api
+    assert evidence._native_clocks(env) == {
+        "physics_seconds": 24.0,
+        "simulation_manager_step_count": 4800,
+        "fabric_seconds": 24.0,
+        "timeline_seconds": 0.0,
+        "physics_step_count": 4800,
+    }
+
+
+@pytest.mark.parametrize(
+    "name,value,error",
+    [
+        ("seconds", None, "numeric"),
+        ("seconds", float("nan"), "finite"),
+        ("seconds", 0, "did not advance"),
+        ("steps", 0, "did not advance"),
+        ("fabric", 23.8, "disagree"),
+    ],
+)
+def test_clock_rejects_unobserved_or_inconsistent_events(
+    native_clock_api, name, value, error
+):
+    env, values, _, _ = native_clock_api
+    values[name] = value
+    with pytest.raises(RuntimeError, match=error):
+        evidence._native_clocks(env)
+
+
+@pytest.mark.parametrize("missing", ["manager", "fabric"])
+def test_clock_never_creates_missing_native_state(native_clock_api, missing):
+    env, _, extension, stage = native_clock_api
+    if missing == "manager":
+        extension.acquire_simulation_manager_interface = lambda: None
+    else:
+        stage.GetPrimAtPath = lambda path: None
+    with pytest.raises(RuntimeError, match="unavailable"):
+        evidence._native_clocks(env)

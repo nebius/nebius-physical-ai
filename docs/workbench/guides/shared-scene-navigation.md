@@ -114,8 +114,12 @@ simulation delta. Capture temporarily enables the scheduler disabled by the pinn
 Lab headless rendering preset and restores settings afterward. Two frozen render
 passes flush annotations. Each accepted frame must match its authored camera
 pose, intrinsics and resolution, and its rational renderer time must match actual
-native PhysX time. Uncached native root transforms, root velocities, joint state,
-physics step count and clocks must remain unchanged across rendering. The native
+native simulation-manager time backed by physics step events, with the same time
+read independently from Fabric. The recorder uses the existing native extension
+interface because pinned Lab replaces Isaac's public manager class. It never
+creates or writes a renderer clock. Uncached native root transforms, root
+velocities, joint state, native and Lab step counts, and clocks must remain
+unchanged across rendering. The native
 time origin follows the preceding controls; it is distinct from the video's
 relative rollout time. Native qualification of this capture correction is pending.
 Artifacts include `rendered-rollout/*.png`, frame measurements,
