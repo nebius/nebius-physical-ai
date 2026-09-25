@@ -1622,6 +1622,18 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.augmented_frames_uri}}",
         ],
     ),
+    "workbench.isaac_lab.prepare_rgbd_reference": ToolEntry(
+        name="workbench.isaac_lab.prepare_rgbd_reference",
+        description="Collect the public warehouse with MDL dependencies and prepare a 265-pose RGB-D rig input.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "prepare-reference",
+            "--output-path",
+            "{{config.capture_input_prefix}}",
+        ],
+    ),
     "workbench.isaac_lab.capture_rgbd": ToolEntry(
         name="workbench.isaac_lab.capture_rgbd",
         description="Render a calibrated RGB-D rig with Isaac Sim and publish verified synchronized data.",

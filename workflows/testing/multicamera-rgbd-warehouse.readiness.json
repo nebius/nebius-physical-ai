@@ -1,0 +1,56 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "3b6a1a1779875eacb2d803728f430deb3ea3f624802ac5c18a7168f639f36215",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec --run-id preview succeeded for prepare, capture and validate. Native execution is pending.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-warehouse.yaml --run-id preview --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Native USD/MDL collection prepares a public warehouse; Replicator captures 265 poses with four 1280x720 RGB-D cameras; a separate CPU stage validates decoded data and source-attributed fused clouds. CPU tests do not prove native GPU behavior.",
+      "evidence": [
+        "npa/tests/workflows/test_isaac_rgbd.py",
+        "npa/tests/workflows/test_isaac_rgbd_runtime.py",
+        "npa/tests/workflows/test_isaac_rgbd_usd.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The example bucket must be replaced with a fresh operator-owned writable run prefix; no live storage probe was performed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The public warehouse root URL was reachable and its raw USD layer passed static checks. Complete native USD/MDL dependency collection and capture remain unverified.",
+      "evidence": [
+        "npa/tests/workflows/test_isaac_rgbd_usd.py"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Operator S3 credentials and runtime bootstrap use requirements were not exercised.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Offline rendering proves source_overlay plus staged source for the existing Isaac image and CPU worker. Actual worker installation and immutable-image availability were not exercised.",
+      "evidence": [
+        "npa/tests/workflows/test_isaac_rgbd_runtime.py::test_render_stages_branch_source_in_gpu_and_cpu_tasks"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Isaac Sim 6.0.1.0 on an RT-core GPU is required. This macOS authoring host did not execute capture; actual calibration/freshness and reference-time semantics remain live acceptance gates.",
+      "evidence": [
+        "npa/tests/e2e/test_multicamera_rgbd_live.py"
+      ]
+    }
+  }
+}

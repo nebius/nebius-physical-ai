@@ -72,6 +72,14 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "multicamera-rgbd-warehouse.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="Native warehouse collection and 265-pose rendering still need live qualification.",
+        notes="Public runtime-fetched warehouse with full USD/MDL dependencies; four 1280x720 RGB-D streams and independently verified fused clouds.",
+    ),
+    SubmitLiveCase(
         "multicamera-rgbd-capture.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

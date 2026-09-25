@@ -56,6 +56,8 @@ def _open_scene(root, request):
         )
     if stage.GetPrimAtPath("/NpaRgbdCapture"):
         raise ValueError("scene uses the reserved /NpaRgbdCapture prim")
+    # Package root layers are read-only; rig opinions belong to this capture session.
+    stage.SetEditTarget(stage.GetSessionLayer())
     return stage
 
 

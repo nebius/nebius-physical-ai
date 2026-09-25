@@ -224,11 +224,24 @@ Isaac image already contains an older NPA package. Before opening any supplied
 stage in Kit, inspect every hashed USD layer through raw Sdf traversal, including
 inactive and unselected variants. Reject scripting APIs/properties, graph
 content, time samples and value clips, then reject composition errors after
-opening. Reject package/USDZ dependencies throughout the bundle, including
-package-relative paths and renamed packages detected by USD file-format/ZIP
-inspection; do not skip an opaque dependency merely because its suffix is not
-USD. Preserve ordinary textures. Do not describe these checks as a sandbox for
-arbitrary USD plugins.
+opening. Portable USDZ roots and nested packages are supported: inspect every
+archive member in private audit directories, including unused layers, and reject
+traversal, symlinks, duplicate/colliding names, compression and renamed packages.
+Explicit package-relative member paths remain unsupported. Author capture cameras
+into the writable session layer. Relative dependencies may use parent components
+only when the resolved path stays in the hashed bundle or package. Preserve ordinary
+textures. Do not describe these checks as a sandbox for arbitrary USD plugins.
+
+`workflows/testing/multicamera-rgbd-warehouse.yaml` runtime-collects the public
+NVIDIA full warehouse with native `omni.kit.usd.collect` (USD and MDL dependencies),
+then captures 265 poses over 66 meters using four 1280x720 cameras. Preparation is
+`npa.workflows.isaac_rgbd.cli prepare-reference --output-path <s3-prefix>` in the
+Isaac interpreter. Missing assets, native collection errors and content-audit
+failures stop preparation. Vendor assets stay in operator storage. This is a
+public authored reference, not a scan reconstruction or robot navigation result;
+GPU acceptance remains pending. Point-cloud output includes a per-frame fused
+world cloud retaining camera and pixel indices; validation recomputes it from
+the original RGB-D bytes rather than trusting cloud hashes alone.
 
 The contract requires Z-up meter scenes, finite rigid transforms, zero-skew
 pinhole calibration, and strictly increasing sampled timestamps. Depth is

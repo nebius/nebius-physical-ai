@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import posixpath
+import re
+import tempfile
+import zipfile
+
 from .contract import _contained, _sha256
+from .packages import _extract_package
 
 
 def _executable_schema(name):
@@ -61,30 +68,55 @@ def _asset_file_format(path):
 
     if Ar.IsPackageRelativePath(str(path)):
         raise ValueError(
-            "packaged USD dependencies and package-relative paths are unsupported"
+            "explicit package-relative paths are unsupported; reference the USDZ root"
         )
     file_format = Sdf.FileFormat.FindByExtension(str(path))
+    if zipfile.is_zipfile(path):
+        if path.suffix != ".usdz":
+            raise ValueError("packaged USD must use the USDZ filename extension")
+        return "package"
     if file_format and file_format.IsPackage():
-        raise ValueError("packaged USD dependencies, including USDZ, are unsupported")
-    # CanRead for USDZ is extension-sensitive. USD's ZIP reader also detects
-    # valid packages renamed to texture or generic asset suffixes, without extraction.
-    if Sdf.ZipFile.Open(str(path)).GetFileNames():
-        raise ValueError(
-            "packaged USD dependencies are unsupported regardless of filename"
-        )
+        raise ValueError("USDZ dependency is not a readable package")
     if file_format and file_format.formatId not in {"usd", "usda", "usdc"}:
         raise ValueError("scene dependencies use an unsupported USD file-format plugin")
     return file_format
 
 
-def _check_scene_files(root, request):
-    from pxr import Ar, Sdf, UsdUtils
+def _dependency_name(root, parent, asset, names, package):
+    from pxr import Ar
 
-    for name, digest in request["files"].items():
+    if Ar.IsPackageRelativePath(asset):
+        raise ValueError("explicit package-relative USD dependencies are unsupported")
+    if not re.fullmatch(r"[A-Za-z0-9_./-]+", asset) or asset.startswith("/"):
+        raise ValueError("USD dependency must be a contained relative asset path")
+    if any(
+        part.startswith(".") and part not in {".", ".."} for part in asset.split("/")
+    ):
+        raise ValueError("USD dependencies cannot contain hidden components")
+    relative_parent = parent.resolve().relative_to(root.resolve()).as_posix()
+    name = posixpath.normpath(posixpath.join(relative_parent, asset))
+    _contained(root, name)
+    if name in names:
+        return name
+    # USDZ resolves relative to the authored layer first, then the archive root.
+    if package:
+        name = posixpath.normpath(asset)
+        _contained(root, name)
+        if name in names:
+            return name
+    raise ValueError("USD dependency is absent from the hashed input bundle")
+
+
+def _check_tree(root, names, *, package=False):
+    from pxr import Sdf, UsdUtils
+
+    for name in names:
         path = _contained(root, name)
-        if not path.is_file() or _sha256(path) != digest:
-            raise ValueError("scene bundle contains a missing or hash-mismatched asset")
-        if _asset_file_format(path) is None:
+        file_format = _asset_file_format(path)
+        if file_format == "package":
+            _check_package(path)
+            continue
+        if file_format is None:
             continue
         layer = Sdf.Layer.FindOrOpen(str(path))
         if not layer:
@@ -92,13 +124,20 @@ def _check_scene_files(root, request):
         _check_layer(layer)
         for group in UsdUtils.ExtractExternalReferences(str(path)):
             for asset in group:
-                if Ar.IsPackageRelativePath(asset):
-                    raise ValueError(
-                        "package-relative USD dependencies are unsupported"
-                    )
-                target = _contained(path.parent, asset)
-                relative = target.relative_to(root.resolve()).as_posix()
-                if relative not in request["files"]:
-                    raise ValueError(
-                        "USD dependency is absent from the hashed input bundle"
-                    )
+                _dependency_name(root, path.parent, asset, names, package)
+
+
+def _check_package(path):
+    with tempfile.TemporaryDirectory(prefix="npa-rgbd-usdz-audit-") as directory:
+        root = Path(directory)
+        names = _extract_package(path, root)
+        # Inspect every member, even unused layers and nested archives, before Kit.
+        _check_tree(root, names, package=True)
+
+
+def _check_scene_files(root, request):
+    for name, digest in request["files"].items():
+        path = _contained(root, name)
+        if not path.is_file() or _sha256(path) != digest:
+            raise ValueError("scene bundle contains a missing or hash-mismatched asset")
+    _check_tree(root, request["files"])

@@ -64,6 +64,8 @@ def _publish(root, manifest, output_path, storage=None):
         attempt + "/" + name: digest for name, digest in manifest["files"].items()
     }
     for frame in published["frames"]:
+        if frame["fused_cloud"] is not None:
+            frame["fused_cloud"]["path"] = attempt + "/" + frame["fused_cloud"]["path"]
         for view in frame["views"]:
             view["artifacts"] = {
                 kind: attempt + "/" + name for kind, name in view["artifacts"].items()

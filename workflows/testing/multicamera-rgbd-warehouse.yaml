@@ -1,0 +1,63 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: multicamera-rgbd-warehouse
+  description: >
+    Collect NVIDIA's public full warehouse with native USD/MDL dependency
+    resolution, render four calibrated 1280x720 RGB-D streams at 265 sampled
+    poses over a 66-meter reference route, and verify every decoded artifact
+    including fused world colored point clouds. GPU acceptance remains pending.
+
+config:
+  bucket: example-bucket
+  prefix: "multicamera-rgbd-warehouse/{{run.id}}"
+  source_overlay: true
+  capture_input_prefix: "s3://{{config.bucket}}/{{config.prefix}}/input"
+  capture_input_uri: "{{config.capture_input_prefix}}/request.json"
+  capture_uri: "s3://{{config.bucket}}/{{config.prefix}}/capture"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation.json"
+
+resources:
+  rtx:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: prepare
+states:
+  prepare:
+    description: Collect real vendor USD, MDL modules and textures; audit and publish an immutable calibrated input.
+    toolRef: workbench.isaac_lab.prepare_rgbd_reference
+    resources: rtx
+    outputs:
+      - uri: "{{config.capture_input_uri}}"
+        schema: npa.isaac.rgbd.request.v1
+    next: capture
+  capture:
+    description: Capture every reference pose and publish RGB, depth, masks and source-attributed fused points.
+    toolRef: workbench.isaac_lab.capture_rgbd
+    resources: rtx
+    inputs:
+      - uri: "{{config.capture_input_uri}}"
+        schema: npa.isaac.rgbd.request.v1
+    outputs:
+      - uri: "{{config.capture_uri}}/manifest.json"
+        schema: npa.isaac.rgbd.dataset.v1
+    next: validate
+  validate:
+    description: Independently download all capture bytes and verify decoded geometry, synchronization and fusion provenance.
+    toolRef: workflow.rgbd.validate
+    resources: cpu
+    inputs:
+      - uri: "{{config.capture_uri}}/manifest.json"
+        schema: npa.isaac.rgbd.dataset.v1
+    outputs:
+      - uri: "{{config.validation_uri}}"
+        schema: npa.isaac.rgbd.validation.v1
+    terminal: true

@@ -151,8 +151,9 @@ def validate_request(request):
         ".usd",
         ".usda",
         ".usdc",
+        ".usdz",
     }:
-        raise ValueError("scene must name a declared USD layer; USDZ is not supported")
+        raise ValueError("scene must name a declared USD layer or USDZ package")
     if "request.json" in request["files"]:
         raise ValueError("request.json is reserved for the request manifest")
     cameras = request["cameras"]

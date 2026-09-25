@@ -30,6 +30,7 @@ from .geometry import (
     _usd_camera_parameters,
     backproject,
 )
+from .fusion import _validate_fused_cloud, _write_fused_cloud
 
 
 def _reference_time(value):
@@ -100,22 +101,23 @@ def _write_frame(root, request, index, snapshots, simulation_time_s):
     if set(snapshots) != {camera["id"] for camera in cameras}:
         raise ValueError("renderer did not return every camera exactly once")
     sample = request["trajectory"][index]
+    views = [
+        _write_view(
+            root, camera, sample, index, snapshots[camera["id"]], request["pointcloud"]
+        )
+        for camera in cameras
+    ]
     return {
         "index": index,
         "timestamp_ns": sample["timestamp_ns"],
         "simulation_time_s": simulation_time_s,
         "T_world_rig": sample["T_world_rig"],
-        "views": [
-            _write_view(
-                root,
-                camera,
-                sample,
-                index,
-                snapshots[camera["id"]],
-                request["pointcloud"],
-            )
-            for camera in cameras
-        ],
+        "views": views,
+        "fused_cloud": (
+            _write_fused_cloud(root, index, cameras, views)
+            if request["pointcloud"]
+            else None
+        ),
     }
 
 
@@ -206,7 +208,11 @@ def _validate_view(root, view, camera, sample, manifest):
 
 
 def _validate_frame(root, frame, index, manifest):
-    _keys(frame, "index timestamp_ns simulation_time_s T_world_rig views", "frame")
+    _keys(
+        frame,
+        "index timestamp_ns simulation_time_s T_world_rig views fused_cloud",
+        "frame",
+    )
     request = manifest["request"]
     sample = request["trajectory"][index]
     if (
@@ -231,6 +237,7 @@ def _validate_frame(root, frame, index, manifest):
         _validate_view(root, view, camera, sample, manifest)
         for camera, view in zip(cameras, frame["views"], strict=True)
     )
+    _validate_fused_cloud(root, frame, cameras, manifest)
     return pixels, times[0]
 
 
@@ -281,6 +288,13 @@ def _validate_provenance(manifest):
         )
 
 
+def _frame_artifacts(frame):
+    names = [name for view in frame["views"] for name in view["artifacts"].values()]
+    if frame["fused_cloud"] is not None:
+        names.append(frame["fused_cloud"]["path"])
+    return names
+
+
 def validate_dataset(root, manifest=None):
     """Decode all RGB-D bytes and verify hashes, geometry, synchronization, and coverage.
 
@@ -305,9 +319,7 @@ def validate_dataset(root, manifest=None):
         if previous is not None and reference <= previous:
             raise ValueError("render reference time did not advance; stale capture")
         pixels, previous = pixels + count, reference
-        used.extend(
-            name for view in frame["views"] for name in view["artifacts"].values()
-        )
+        used.extend(_frame_artifacts(frame))
     if len(set(used)) != len(used) or set(used) != set(manifest["files"]):
         raise ValueError(
             "dataset artifacts must have unique, exhaustive frame ownership"
@@ -319,6 +331,7 @@ def validate_dataset(root, manifest=None):
         "cameras": len(manifest["request"]["cameras"]),
         "views": sum(len(frame["views"]) for frame in manifest["frames"]),
         "valid_depth_pixels": pixels,
+        "fused_points": pixels if manifest["request"]["pointcloud"] else 0,
     }
 
 

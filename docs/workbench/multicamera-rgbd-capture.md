@@ -105,13 +105,19 @@ lengths must be positive; principal points must lie inside the image; skew and
 lens distortion are unsupported. Input focal lengths and principal points are
 in pixels. Non-square pixels and off-center principal points are supported.
 
-Scene layers must declare `metersPerUnit=1` and `upAxis="Z"`. Supported USD
-layers are `.usd`, `.usda`, and `.usdc`; packaged USD/USDZ is unsupported anywhere
-in the bundle, including nested dependencies. Preflight uses USD package-path
-and file-format inspection plus the USD ZIP reader to reject renamed packages;
-ordinary texture files remain supported. Author asset paths
-as plain contained relative POSIX paths without upward traversal, network
-locations, hidden components, or expansion tokens. All referenced layers,
+Scene layers must declare `metersPerUnit=1` and `upAxis="Z"`. Supported inputs
+are `.usd`, `.usda`, `.usdc`, and self-contained `.usdz` packages, including the
+scan-to-Isaac workflow's portable `scene.usdz`. Declare the complete package's
+SHA256 in `files`; its internal members need no separate request entries.
+Preflight extracts packages only into private audit directories and checks
+every member, including unused layers and nested packages, before opening the
+original package in Kit. Archive traversal, duplicates, case/prefix collisions,
+symlinks, special files, compression, encryption and renamed packages are rejected.
+Cameras are authored into the writable session layer, preserving package bytes.
+Explicit `archive.usdz[member.usd]` paths remain unsupported; reference the
+package root instead. Normal relative dependencies, including `./` and contained
+parent paths, are supported. They cannot escape their bundle/archive or use network
+locations, hidden components or expansion tokens. All referenced layers,
 payloads, value clips and textures must be declared. Time-sampled properties
 and executable OmniGraph nodes are rejected. Raw Sdf layer, prim and property
 preflight runs before Kit opens the scene, including inactive prims and all
@@ -148,6 +154,18 @@ Each camera at every sample has:
 | `render_calibration` | Renderer-reported aperture, offset, focal length, view transform and resolution |
 | `render_reference_time` | Exact numerator/denominator from that render product's `ReferenceTime` annotator |
 
+With `pointcloud: true`, every frame also owns `fused.npz`. It concatenates all
+valid world-frame backprojections in sorted camera order; it performs no voxel
+averaging, deduplication, temporal fusion or learned encoding. Arrays are
+`xyz_world_m` (float64 N×3), `rgb` (uint8 N×3), `camera_index` (uint32 N) and
+`pixel_index` (uint64 N, row-major index in the original image). The frame's
+`fused_cloud` record supplies the camera-ID order, method and hashed artifact
+path. Its timestamp, render synchronization and calibrated transforms are the
+same frame's validated source records. The CPU validator independently decodes
+the original RGB/depth and checks every fused point, color and source index;
+updating the file hash cannot hide a changed cloud. `pointcloud: false` omits
+both per-view and fused points and records `fused_cloud: null`.
+
 Depth zero means invalid; NaN, infinity, negative, zero and out-of-range raw
 depths are masked to zero. A view with no valid depth pixels fails the capture.
 Axial depth is **not Euclidean ray range**. The optical frame is +X right, +Y
@@ -172,10 +190,52 @@ The CPU stage downloads every declared object again, verifies hashes, decodes
 all images/arrays with NumPy pickle loading disabled, checks exhaustive unique
 frame ownership and cross-camera alignment, and independently recomputes every
 optional colored point cloud. It writes `validation.json` with actual frame,
-camera, view and valid-depth-pixel counts plus the manifest SHA256. It does not
+camera, view, valid-depth-pixel and fused-point counts plus the manifest SHA256. It does not
 train an encoder or qualify simulation-to-real performance. Missing or corrupt
 data, unsupported runtime versions and S3 failures propagate as nonzero stage
 failures. The shared Franka Kit lifecycle ensures shutdown cannot hide them.
+
+## Public warehouse workload
+
+[`multicamera-rgbd-warehouse.yaml`](../../workflows/testing/multicamera-rgbd-warehouse.yaml)
+prepares the complete public warehouse, captures it, and validates the uploaded
+data through the standard workflow runtime:
+
+```bash
+npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml
+npa workbench workflow submit workflows/testing/multicamera-rgbd-warehouse.yaml \
+  --run-id '<unique-run-id>' --stage-src --var 'bucket=<your-bucket>' \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+Preparation invokes `npa.workflows.isaac_rgbd.cli prepare-reference --output-path
+s3://<your-bucket>/<input-prefix>` in `/isaac-sim/python.sh`. The stage uses the
+native `omni.kit.usd.collect.Collector`, with missing USD and other assets treated
+as failures. It collects and remaps MDL module imports and their texture defaults,
+as well as USD references. USD-only dependency extraction is insufficient for
+this asset. The complete collected tree passes the same static and containment
+audit as a supplied scene, and publication commits `request.json` only after all
+hashed files upload under a unique attempt prefix. Input `reference.json` records
+the public source-to-file mapping and source terms. No vendor assets are baked
+into an image or committed to this repository.
+
+The source is NVIDIA's Isaac 6.0
+[`full_warehouse.usd`](https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/Environments/Simple_Warehouse/full_warehouse.usd),
+under the [Isaac Sim Additional Software and Materials License](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/common/licenses.html)
+and the normal Isaac bootstrap terms. The URL identifies a vendor version tree;
+the downloaded file hashes identify the actual run's bytes. Keep collected vendor
+assets in operator-controlled storage; this workflow grants no redistribution rights.
+
+The reference rig has front/left/rear/right cameras, each 1280×720, 100° horizontal
+pinhole field of view, 0.15 m offset and 0.05–100 m depth range. It samples a 66 m
+warehouse aisle route every 0.25 m at 1.5 m height: **265 rig poses, 1,060 RGB-D
+views**, plus per-view clouds and 265 fused clouds. Virtual timestamps are 250 ms
+apart. The route turns at sampled waypoints; it does not model a robot controller
+or certify collision-free motion. The full point outputs can occupy tens of
+gigabytes, so both workers need corresponding staging space and storage access.
+This public authored environment demonstrates the capture workload; it is not
+a reconstructed site or a reproduction of any operator's camera calibration.
+Native collection and GPU capture still require live acceptance.
 
 ## Opt-in live acceptance
 
@@ -210,6 +270,8 @@ it does not vendor runtime code or assets:
   The installed extension version is recorded in every capture.
 - [OpenUSD dependency extraction](https://openusd.org/release/api/dependencies_8h.html)
   documents nonrecursive enumeration of layer, payload and asset references.
+- [Native asset collector](https://docs.omniverse.nvidia.com/kit/docs/omni.kit.usd.collect/3.0.1/omni.kit.usd.collect/omni.kit.usd.collect.Collector.html)
+  documents collection of USD and material dependencies and explicit failure options.
 - [OmniScripting schema 1.0.1](https://docs.omniverse.nvidia.com/kit/docs/omni.usd.schema.omniscripting/1.0.1/Overview.html)
   documents the applied API and script asset attribute rejected by preflight.
 

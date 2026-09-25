@@ -182,32 +182,35 @@ def test_snapshot_requires_real_sensor_metadata(monkeypatch):
         runtime._snapshot(sensor)
 
 
-def test_workflow_uses_isaac_image_route_and_cpu_validator():
+@pytest.mark.parametrize(
+    "workflow", ["multicamera-rgbd-capture", "multicamera-rgbd-warehouse"]
+)
+def test_workflow_uses_isaac_image_route_and_cpu_validator(workflow):
     from npa.orchestration.npa_workflow.skypilot_render import tool_image_key
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    path = (
-        Path(__file__).resolve().parents[3]
-        / "workflows/testing/multicamera-rgbd-capture.yaml"
-    )
+    path = Path(__file__).resolve().parents[3] / f"workflows/testing/{workflow}.yaml"
     spec = load_spec(path)
     capture, validate = spec.states["capture"], spec.states["validate"]
     assert tool_image_key(capture.tool_ref) == "isaac-lab"
     assert not tool_image_key(validate.tool_ref)
     assert capture.next == "validate" and validate.terminal
+    if "prepare" in spec.states:
+        assert tool_image_key(spec.states["prepare"].tool_ref) == "isaac-lab"
+        assert spec.states["prepare"].next == "capture"
 
 
-def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch):
+@pytest.mark.parametrize(
+    "workflow", ["multicamera-rgbd-capture", "multicamera-rgbd-warehouse"]
+)
+def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch, workflow):
     import yaml
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
     source = "s3://example-bucket/staged-source/npa"
     monkeypatch.setenv("NPA_SRC_S3_URI", source)
-    path = (
-        Path(__file__).resolve().parents[3]
-        / "workflows/testing/multicamera-rgbd-capture.yaml"
-    )
+    path = Path(__file__).resolve().parents[3] / f"workflows/testing/{workflow}.yaml"
     prepared = prepare_npa_workflow_for_submit(
         path, run_id="source-proof", render_options=SkypilotRenderOptions()
     )
@@ -217,7 +220,12 @@ def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch):
             for doc in yaml.safe_load_all(prepared.skypilot_yaml_path.read_text())
             if doc
         ]
-        capture, validation = docs[1:]
+        capture, validation = docs[-2:]
+        if workflow.endswith("warehouse"):
+            prepare = docs[1]
+            assert "prepare-reference" in prepare["run"]
+            assert prepare["envs"]["NPA_SRC_OVERLAY"] == "1"
+            assert "/isaac-sim/python.sh" in prepare["setup"]
         assert capture["envs"]["NPA_SRC_OVERLAY"] == "1"
         assert capture["envs"]["NPA_SRC_S3_URI"] == source
         assert "/isaac-sim/python.sh" in capture["setup"]

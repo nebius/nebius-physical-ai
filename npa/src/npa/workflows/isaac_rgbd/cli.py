@@ -34,6 +34,8 @@ def build_parser():
         command.add_argument("--output-path", required=True)
     fixture = commands.add_parser("fixture")
     fixture.add_argument("--output-path", required=True)
+    reference = commands.add_parser("prepare-reference")
+    reference.add_argument("--output-path", required=True)
     return parser
 
 
@@ -78,6 +80,13 @@ def main(argv=None):
         root = Path(directory)
         if args.operation == "capture":
             _capture(args, root)
+        elif args.operation == "prepare-reference":
+            from .reference import prepare_reference
+
+            request = prepare_reference(args.output_path, root)
+            print(
+                json.dumps({"prepared": True, "rig_poses": len(request["trajectory"])})
+            )
         else:
             report = validate_s3(args.input_path, args.output_path, root)
             print(_json_bytes(report).decode(), end="")

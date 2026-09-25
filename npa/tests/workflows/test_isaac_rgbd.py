@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from npa.workflows.isaac_rgbd import contract, dataset, geometry, transport
+from npa.workflows.isaac_rgbd import contract, dataset, geometry, reference, transport
 from npa.workflows.isaac_rgbd.fixture import write_fixture
 
 
@@ -221,6 +221,7 @@ def test_decodes_complete_aligned_dataset_and_masks_invalid_depth(captured):
         "cameras": 4,
         "views": 12,
         "valid_depth_pixels": 240,
+        "fused_points": 240,
     }
     assert [view["camera_id"] for view in manifest["frames"][0]["views"]] == [
         "front",
@@ -456,3 +457,127 @@ def test_no_pointcloud_is_supported(rig_request, tmp_path):
         tmp_path, camera, sample, 0, _snapshot(camera, sample, 0), False
     )
     assert set(view["artifacts"]) == {"rgb", "depth", "mask"}
+
+
+def test_fusion_preserves_all_views_and_original_pixel_indices(captured):
+    root, manifest = captured
+    frame = manifest["frames"][0]
+    fused = frame["fused_cloud"]
+    assert fused["camera_ids"] == ["front", "left", "rear", "right"]
+    with np.load(root / fused["path"], allow_pickle=False) as cloud:
+        assert cloud["xyz_world_m"].shape == (80, 3)
+        np.testing.assert_array_equal(cloud["camera_index"], np.repeat(range(4), 20))
+        np.testing.assert_array_equal(cloud["pixel_index"], np.tile(range(4, 24), 4))
+        for index, view in enumerate(frame["views"]):
+            with np.load(
+                root / view["artifacts"]["points"], allow_pickle=False
+            ) as points:
+                np.testing.assert_array_equal(
+                    cloud["xyz_world_m"][index * 20 : (index + 1) * 20],
+                    points["xyz_world_m"],
+                )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["position", "color", "pixel", "camera", "extra", "missing", "nan"]
+)
+def test_fusion_decoded_provenance_refuses_rehashed_corruption(captured, mutation):
+    root, manifest = captured
+    name = manifest["frames"][0]["fused_cloud"]["path"]
+    with np.load(root / name, allow_pickle=False) as archive:
+        arrays = {key: archive[key] for key in archive.files}
+    if mutation in {"extra", "missing"}:
+        arrays = {
+            key: np.concatenate([value, value[:1]])
+            if mutation == "extra"
+            else value[:-1]
+            for key, value in arrays.items()
+        }
+    elif mutation == "nan":
+        arrays["xyz_world_m"][0, 0] = np.nan
+    else:
+        key = {
+            "position": "xyz_world_m",
+            "color": "rgb",
+            "pixel": "pixel_index",
+            "camera": "camera_index",
+        }[mutation]
+        arrays[key][0] += 1
+    np.savez(root / name, **arrays)
+    manifest["files"][name] = contract._sha256(root / name)
+    with pytest.raises(ValueError, match="fused cloud"):
+        dataset.validate_dataset(root, manifest)
+
+
+def test_fusion_binds_camera_order_and_artifact_hash(captured):
+    root, manifest = captured
+    fused = manifest["frames"][0]["fused_cloud"]
+    fused["camera_ids"].reverse()
+    with pytest.raises(ValueError, match="source camera order"):
+        dataset.validate_dataset(root, manifest)
+    fused["camera_ids"].reverse()
+    (root / fused["path"]).write_bytes(b"corrupt fused points")
+    with pytest.raises(ValueError, match="SHA256"):
+        dataset.validate_dataset(root, manifest)
+
+
+def test_reference_route_is_complete_and_distinct_from_qualification_fixture(tmp_path):
+    root = tmp_path / "collected"
+    write_fixture(root)
+    (root / "request.json").unlink()
+    scene = root / "scene.usda"
+    request = reference._write_reference_request(
+        root, scene, {reference._SOURCE_URL: str(scene)}
+    )
+    assert len(request["trajectory"]) == 265
+    assert len(request["cameras"]) == 4
+    assert {(camera["width"], camera["height"]) for camera in request["cameras"]} == {
+        (1280, 720)
+    }
+    positions = np.asarray([sample["T_world_rig"] for sample in request["trajectory"]])[
+        :, :3, 3
+    ]
+    distances = np.linalg.norm(np.diff(positions, axis=0), axis=1)
+    np.testing.assert_allclose(distances, 0.25)
+    assert distances.sum() == 66
+    assert request["trajectory"][-1]["timestamp_ns"] == 66_000_000_000
+    assert "reference.json" in request["files"]
+    assert (
+        contract._read_json(root / "reference.json")["route_collision_free_verified"]
+        is False
+    )
+
+
+def test_reference_input_roundtrip_is_immutable_and_keeps_dependency_layout(tmp_path):
+    root = tmp_path / "collected"
+    write_fixture(root)
+    (root / "request.json").unlink()
+    request = reference._write_reference_request(root, root / "scene.usda", {})
+    storage = _MemoryStorage()
+    destination = "s3://test-bucket/reference"
+    reference._publish_reference(root, request, destination, storage)
+    assert storage.writes[-1] == destination + "/request.json"
+    downloaded, scope = transport._acquire(
+        destination + "/request.json", tmp_path / "download", storage
+    )
+    assert scope == "supplied-usd"
+    assert downloaded["scene"].startswith("inputs/")
+    assert downloaded["cameras"] == request["cameras"]
+    with pytest.raises(ValueError, match="already exists"):
+        reference._publish_reference(root, request, destination, storage)
+
+
+def test_reference_upload_failure_does_not_commit_request(tmp_path, monkeypatch):
+    root = tmp_path / "collected"
+    request = write_fixture(root)
+    storage = _MemoryStorage()
+
+    def fail(*_args):
+        raise OSError("reference upload failed")
+
+    monkeypatch.setattr(storage, "upload_file", fail)
+    with pytest.raises(OSError, match="upload failed"):
+        reference._publish_reference(
+            root, request, "s3://test-bucket/reference", storage
+        )
+    assert not storage.writes
