@@ -72,7 +72,7 @@ def materialize(source: str, destination: Path) -> Path:
     """
     if not source:
         raise ValueError(
-            "input-path requires an operator scene bundle with collision geometry"
+            "input-path requires a contained scene or calibrated scan bundle"
         )
     if source.startswith("s3://"):
         StorageClient.from_environment().download_directory(source, str(destination))

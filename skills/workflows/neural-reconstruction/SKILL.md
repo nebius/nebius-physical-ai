@@ -224,7 +224,7 @@ input manifest, module adapters, calibration convention, and live test.
   assembly-provenance hashes, actual Isaac/PhysX versions, and the declaration's
   explicitly unverified image-attestation scope.
 - CPU tests prove assembly and containment. Native GPU acceptance, NuRec
-  rendering, automatic RGB-D collision reconstruction, robot clearance, and
+  rendering, metric RGB-D GPU execution, robot clearance, and
   navigation-policy quality remain unverified. The live test requires operator
   assets and must run before claiming physics acceptance.
 

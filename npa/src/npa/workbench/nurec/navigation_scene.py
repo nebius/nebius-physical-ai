@@ -1,4 +1,4 @@
-"""Assemble a portable navigation scene from NuRec visuals and supplied collision USD."""
+"""Compose supplied USD or measured RGB-D surfaces into portable navigation scenes."""
 
 from __future__ import annotations
 
