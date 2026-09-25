@@ -14,7 +14,7 @@
       "status": "verified",
       "reason": "The graph invokes real operator adapters for reconstruction, fine-tuning, and paired navigation evaluation; contract tests verify evidence checks and fail-closed missing inputs. No navigation workload has run.",
       "evidence": [
-        "npa/tests/workflows/field_failure/test_workflow.py",
+        "npa/tests/workflows/field_failure/test_field_failure_workflow.py",
         "npa/tests/workflows/field_failure/test_evidence.py",
         "docs/workbench/cookbooks/field-failure-policy-improvement.md"
       ]
