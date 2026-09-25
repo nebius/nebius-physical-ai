@@ -52,7 +52,7 @@ def _sample_time(row: dict[str, Any], manifest: dict[str, Any]) -> float:
 def _qualifies(row: dict[str, Any], lift_m: float) -> bool:
     truth = row.get("simulator_ground_truth") or {}
     return (
-        bool(truth.get("stable_grasp"))
+        truth.get("stable_grasp") is True
         and float(truth.get("object_lift_m") or 0) >= lift_m
     )
 
@@ -68,7 +68,10 @@ def _lift_evidence(
         return None
     if manifest.get("source") != "byo_isaac_policy_rollout":
         return None
-    if manifest.get("sim_backend") != "isaac" or not manifest.get("policy_trained"):
+    if (
+        manifest.get("sim_backend") != "isaac"
+        or manifest.get("policy_trained") is not True
+    ):
         return None
     checkpoint_sha = str(manifest.get("policy_checkpoint_sha256") or "")
     if (
@@ -94,6 +97,10 @@ def _lift_evidence(
         if not isinstance(row, dict):
             current = []
             continue
+        truth = row.get("simulator_ground_truth") or {}
+        stable_grasp = truth.get("stable_grasp")
+        if stable_grasp is not True and stable_grasp is not False:
+            return None
         timestamp = _sample_time(row, manifest)
         if _qualifies(row, minimum_lift_m):
             if current:
