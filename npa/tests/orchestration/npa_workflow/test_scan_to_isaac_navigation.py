@@ -89,7 +89,7 @@ def test_scene_render_preserves_source_and_separate_cpu_rtx_images(monkeypatch) 
     )
     for task in tasks:
         assert task["envs"]["NPA_SRC_OVERLAY"] == "1"
-        assert "/tmp/npa-src-overlay/src" in task["run"]
+        assert task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/source-fixture"
 
 
 def test_scene_live_case_requires_operator_inputs_and_readiness_matches_bytes() -> None:
