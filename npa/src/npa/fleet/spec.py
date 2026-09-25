@@ -635,6 +635,25 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return result
 
 
+def _boolean_from(data: dict[str, Any], field_name: str, *, default: bool) -> bool:
+    """Return a strictly typed boolean field from a parsed mapping."""
+
+    if field_name not in data:
+        return default
+    value = data[field_name]
+    if not isinstance(value, bool):
+        raise FleetSpecError(f"{field_name} must be a boolean")
+    return value
+
+
+def _optional_boolean_from(data: dict[str, Any], field_name: str) -> bool | None:
+    """Return a strictly typed optional boolean from a parsed mapping."""
+
+    if field_name not in data:
+        return None
+    return _boolean_from(data, field_name, default=False)
+
+
 def _node_pool_from(
     data: dict[str, Any] | None, *, default_platform: str
 ) -> NodePoolSpec | None:
@@ -646,14 +665,13 @@ def _node_pool_from(
         preset=str(data.get("preset", "")),
         disk_size_gib=int(data.get("disk_size_gib", 0) or 0),
         capacity_block_group=str(data.get("capacity_block_group", "") or "").strip(),
-        preemptible=bool(data.get("preemptible", False)),
+        preemptible=_boolean_from(data, "preemptible", default=False),
     )
 
 
 def _cluster_from(
     data: dict[str, Any], *, backend_explicit: bool = False
 ) -> ClusterSpec:
-    enable_gpu = data.get("enable_gpu_cluster", None)
     try:
         mig = mig_spec_from_mapping(data.get("mig"))
         kuberay = kuberay_spec_from_mapping(data.get("kuberay"))
@@ -666,9 +684,9 @@ def _cluster_from(
         gpu_nodes=_node_pool_from(
             data.get("gpu_nodes"), default_platform="gpu-rtx6000"
         ),
-        enable_gpu_cluster=None if enable_gpu is None else bool(enable_gpu),
+        enable_gpu_cluster=_optional_boolean_from(data, "enable_gpu_cluster"),
         infiniband_fabric=str(data.get("infiniband_fabric", "") or ""),
-        enable_filestore=bool(data.get("enable_filestore", False)),
+        enable_filestore=_boolean_from(data, "enable_filestore", default=False),
         existing_filestore=str(data.get("existing_filestore", "") or ""),
         filestore_disk_size_gibibytes=int(
             data.get("filestore_disk_size_gibibytes", 1024)
@@ -685,14 +703,14 @@ def _cluster_from(
             data.get("managed_driver_preset", DEFAULT_MANAGED_DRIVER_PRESET)
             or DEFAULT_MANAGED_DRIVER_PRESET
         ),
-        allow_unsafe_nvswitch_operator=bool(
-            data.get("allow_unsafe_nvswitch_operator", False)
+        allow_unsafe_nvswitch_operator=_boolean_from(
+            data, "allow_unsafe_nvswitch_operator", default=False
         ),
         gpu_health_stabilization_seconds=int(
             data.get("gpu_health_stabilization_seconds", DEFAULT_STABILIZATION_SECONDS)
         ),
         gpu_health_timeout_minutes=int(data.get("gpu_health_timeout_minutes", 60)),
-        gpu_cuda_smoke=bool(data.get("gpu_cuda_smoke", True)),
+        gpu_cuda_smoke=_boolean_from(data, "gpu_cuda_smoke", default=True),
         gpu_cuda_smoke_image=str(
             data.get("gpu_cuda_smoke_image", DEFAULT_CUDA_SMOKE_IMAGE)
             or DEFAULT_CUDA_SMOKE_IMAGE
@@ -719,7 +737,7 @@ def _object_storage_from(data: Any) -> ObjectStorageSpec | None:
             "project.object_storage has unsupported field(s): " + ", ".join(unknown)
         )
     return ObjectStorageSpec(
-        enabled=bool(data.get("enabled", True)),
+        enabled=_boolean_from(data, "enabled", default=True),
         storage_class=str(data.get("storage_class", "standard") or "standard"),
         size_gibibytes=int(data.get("size_gibibytes", 0) or 0),
         bucket_name=str(data.get("bucket_name", "") or "").strip(),

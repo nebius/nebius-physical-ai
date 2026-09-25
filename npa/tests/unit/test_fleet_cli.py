@@ -144,6 +144,95 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
     assert cluster.resolved_enable_gpu_cluster() is False
 
 
+@pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None])
+@pytest.mark.parametrize(
+    "field_path",
+    [
+        ("defaults", "cpu_nodes", "preemptible"),
+        ("defaults", "gpu_nodes", "preemptible"),
+        ("defaults", "enable_gpu_cluster"),
+        ("defaults", "enable_filestore"),
+        ("defaults", "allow_unsafe_nvswitch_operator"),
+        ("defaults", "gpu_cuda_smoke"),
+        ("projects", 0, "clusters", 0, "cpu_nodes", "preemptible"),
+        ("projects", 0, "clusters", 0, "gpu_nodes", "preemptible"),
+        ("projects", 0, "clusters", 0, "enable_gpu_cluster"),
+        ("projects", 0, "clusters", 0, "enable_filestore"),
+        ("projects", 0, "clusters", 0, "allow_unsafe_nvswitch_operator"),
+        ("projects", 0, "clusters", 0, "gpu_cuda_smoke"),
+        ("projects", 0, "object_storage", "enabled"),
+    ],
+)
+def test_fleet_boolean_fields_reject_non_booleans(
+    field_path: tuple[str | int, ...], invalid_value: object
+) -> None:
+    data = _base_mapping()
+    data["projects"][0]["object_storage"] = {"size_gibibytes": 1}
+    data["projects"][0]["clusters"] = [{"cpu_nodes": {}, "gpu_nodes": {}}]
+    target = data
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = invalid_value
+
+    with pytest.raises(FleetSpecError, match="must be a boolean"):
+        spec_from_mapping(data)
+
+
+def test_fleet_boolean_fields_preserve_merged_boolean_values() -> None:
+    data = _base_mapping()
+    data["defaults"].update(
+        {
+            "cpu_nodes": {**data["defaults"]["cpu_nodes"], "preemptible": True},
+            "gpu_nodes": {
+                **data["defaults"]["gpu_nodes"],
+                "platform": "gpu-h200-sxm",
+                "preset": "8gpu-128vcpu-1600gb",
+                "preemptible": False,
+            },
+            "enable_gpu_cluster": True,
+            "infiniband_fabric": "fabric-a",
+            "enable_filestore": True,
+            "allow_unsafe_nvswitch_operator": True,
+            "gpu_cuda_smoke": False,
+        }
+    )
+    data["projects"] = [
+        {
+            "name": "a",
+            "object_storage": {"enabled": False},
+            "clusters": [
+                {"name": "default"},
+                {
+                    "name": "overridden",
+                    "cpu_nodes": {"preemptible": False},
+                    "gpu_nodes": {"preemptible": True},
+                    "enable_gpu_cluster": False,
+                    "enable_filestore": False,
+                    "allow_unsafe_nvswitch_operator": False,
+                    "gpu_cuda_smoke": True,
+                },
+            ],
+        }
+    ]
+
+    spec = spec_from_mapping(data)
+    spec.validate()
+    inherited, overridden = spec.projects[0].clusters
+    assert inherited.cpu_nodes.preemptible is True
+    assert inherited.gpu_nodes.preemptible is False
+    assert inherited.enable_gpu_cluster is True
+    assert inherited.enable_filestore is True
+    assert inherited.allow_unsafe_nvswitch_operator is True
+    assert inherited.gpu_cuda_smoke is False
+    assert overridden.cpu_nodes.preemptible is False
+    assert overridden.gpu_nodes.preemptible is True
+    assert overridden.enable_gpu_cluster is False
+    assert overridden.enable_filestore is False
+    assert overridden.allow_unsafe_nvswitch_operator is False
+    assert overridden.gpu_cuda_smoke is True
+    assert spec.projects[0].object_storage.enabled is False
+
+
 def test_rtx_8gpu_preset_auto_disables_gpu_cluster() -> None:
     cluster = ClusterSpec(
         name="rtx",
