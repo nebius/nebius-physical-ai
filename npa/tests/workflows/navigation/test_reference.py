@@ -128,3 +128,19 @@ def test_contact_reduction_excludes_support_and_detects_obstacles(monkeypatch):
         ),
     )
     assert data._obstacle_forces().tolist() == [20.0, 5.0]
+
+
+def test_real_support_measurements_reject_holes_low_pose_tilt_and_flight():
+    torch = pytest.importorskip("torch")
+    from npa.workflows.navigation.reference_validity import validity_from_measurements
+
+    clearance = torch.full((5, 5), 0.6)
+    clearance[1, 2] = float("inf")
+    clearance[2, :] = 0.15
+    clearance[4, :] = 1.0
+    upright = torch.tensor([1.0, 1.0, 1.0, 0.2, 1.0])
+    result = validity_from_measurements(clearance, upright)
+    assert result["physical_failure"].tolist() == [False, True, True, True, True]
+    assert result["ground_support_fraction"][1].item() == pytest.approx(0.8)
+    assert torch.isfinite(result["ground_clearance_m"]).all()
+    assert result["upright_cosine"][3].item() == pytest.approx(0.2)

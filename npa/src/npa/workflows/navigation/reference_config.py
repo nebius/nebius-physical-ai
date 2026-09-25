@@ -95,6 +95,7 @@ def _register():
 
 
 def _perception(config, scene_prim):
+    _support_sensor(config, scene_prim)
     config.scene.navigation_ranges = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
         mesh_prim_paths=[scene_prim + "/NpaRaycastMesh"],
@@ -114,6 +115,20 @@ def _perception(config, scene_prim):
     config.actions.pre_trained_policy_action.low_level_observations.enable_corruption = False
 
 
+def _support_sensor(config, scene_prim):
+    from npa.workflows.navigation.reference_validity import footprint_pattern
+
+    config.scene.ground_support = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base",
+        mesh_prim_paths=[scene_prim + "/NpaRaycastMesh"],
+        ray_alignment="yaw",
+        max_distance=1.2,
+        pattern_cfg=patterns.PatternBaseCfg(func=footprint_pattern),
+        update_period=0.0,
+        debug_vis=False,
+    )
+
+
 def _task(config):
     config.events.reset_base = EventTermCfg(func=mdp.reset_cases, mode="reset")
     config.commands.pose_command.class_type = mdp.FixedGoalCommand
@@ -122,7 +137,10 @@ def _task(config):
     config.episode_length_s = 30.0
     config.rewards.progress = RewardTermCfg(func=mdp.progress, weight=3.0)
     config.rewards.obstacle = RewardTermCfg(func=mdp.collision, weight=-25.0)
-    config.rewards.termination_penalty.func = mdp.collision
+    config.rewards.physical_failure = RewardTermCfg(
+        func=mdp.physical_failure, weight=-25.0
+    )
+    config.rewards.termination_penalty.func = mdp.failure
     config.rewards.orientation_tracking = None
     config.terminations.base_contact = TerminationTermCfg(func=mdp.terminate)
     config.terminations.time_out = TerminationTermCfg(func=mdp.timeout, time_out=True)

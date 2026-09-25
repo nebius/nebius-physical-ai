@@ -58,6 +58,8 @@ def measure(env):
         RuntimeError: Native contact instrumentation is not initialized.
     """
     native = env.unwrapped
+    from npa.workflows.navigation.reference_validity import physical_state
+
     robot = native.scene["robot"]
     command = native.command_manager.get_term("pose_command")
     values = {
@@ -66,6 +68,7 @@ def measure(env):
         "goal_m": command.pos_command_w[:, :2],
         "obstacle_contact": native.npa_contacts.obstacle,
         "peer_contact": native.npa_contacts.peer,
+        **physical_state(native),
     }
     return {key: value.detach().cpu().numpy().copy() for key, value in values.items()}
 

@@ -151,6 +151,7 @@ def _rollout(env, wrapped, policy, adapter, recipe, frame=None):
         reached = np.linalg.norm(state["position_m"][:, :2] - state["goal_m"], axis=1)
         active &= (reached > recipe.goal_tolerance_m) & (state["obstacle_contact"] == 0)
         active &= state["peer_contact"] == 0
+        active &= state["physical_failure"] == 0
         if not active.any():
             break
     return trajectory

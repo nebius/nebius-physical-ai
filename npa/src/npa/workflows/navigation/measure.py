@@ -26,11 +26,27 @@ def snapshot(adapter, env, count: int) -> dict:
         "heading_rad": (count,),
         "obstacle_contact": (count,),
         "peer_contact": (count,),
+        "physical_failure": (count,),
+        "upright_cosine": (count,),
+        "ground_clearance_m": (count,),
     }
     result = {key: finite_array(raw[key], shape, key) for key, shape in shapes.items()}
     if any((result[key] < 0).any() for key in ("obstacle_contact", "peer_contact")):
         raise ValueError("contact magnitudes cannot be negative")
+    _physical_measurements(raw, result, count)
     return result
+
+
+def _physical_measurements(raw, result, count):
+    if not np.isin(result["physical_failure"], [0, 1]).all():
+        raise ValueError("physical_failure must contain boolean indicators")
+    if (np.abs(result["upright_cosine"]) > 1.00001).any():
+        raise ValueError("upright_cosine must be a vertical alignment cosine")
+    if (result["ground_clearance_m"] < 0).any():
+        raise ValueError("ground_clearance_m cannot be negative")
+    for key in ("minimum_ground_clearance_m", "ground_support_fraction"):
+        if key in raw:
+            result[key] = finite_array(raw[key], (count,), key)
 
 
 def observations(value) -> dict:
@@ -78,6 +94,8 @@ def verify_reset(adapter, env, cases, tolerance: float) -> dict:
     if check is not None:
         check()
     state = snapshot(adapter, env, len(cases))
+    if state["physical_failure"].any():
+        raise ValueError("adapter reset produced a physically invalid robot pose")
     for key, expected in (
         ("position_m", [c.position_m for c in cases]),
         ("goal_m", [c.goal_m for c in cases]),
@@ -175,9 +193,9 @@ def _probe_controls(adapter, env, wrapped, recipe, parked, baseline):
     if any(
         np.any(row["state"][key] > probe.tolerance)
         for row in baseline
-        for key in ("obstacle_contact", "peer_contact")
+        for key in ("obstacle_contact", "peer_contact", "physical_failure")
     ):
-        raise ValueError("free-space baseline has contacts")
+        raise ValueError("free-space baseline has contacts or physical failure")
     overlap = _probe_trace(
         adapter,
         env,
@@ -221,19 +239,27 @@ def episode_rows(cases, trajectory: list[dict], tolerance: float) -> list[dict]:
         positions = np.asarray([s["position_m"][index] for s in active])
         distance = float(np.linalg.norm(positions[-1, :2] - case.goal_m))
         contacts = sum(s["obstacle_contact"][index] > 0 for s in active[1:])
-        peers = sum(s["peer_contact"][index] > 0 for s in active[1:])
         rows.append(
-            {
-                "case_id": case.id,
-                "seed": case.seed,
-                "steps": len(active) - 1,
-                "goal_distance_m": distance,
-                "collision_steps": int(contacts),
-                "peer_collision_steps": int(peers),
-                "path_length_m": float(
-                    np.linalg.norm(np.diff(positions, axis=0), axis=1).sum()
-                ),
-                "success": bool(distance <= tolerance and not contacts and not peers),
-            }
+            _episode_row(case, active, positions, index, distance, contacts, tolerance)
         )
     return rows
+
+
+def _episode_row(case, active, positions, index, distance, contacts, tolerance):
+    peers = sum(s["peer_contact"][index] > 0 for s in active[1:])
+    failures = sum(s["physical_failure"][index] > 0 for s in active)
+    return {
+        "case_id": case.id,
+        "seed": case.seed,
+        "steps": len(active) - 1,
+        "goal_distance_m": distance,
+        "collision_steps": int(contacts),
+        "peer_collision_steps": int(peers),
+        "physical_failure_steps": int(failures),
+        "path_length_m": float(
+            np.linalg.norm(np.diff(positions, axis=0), axis=1).sum()
+        ),
+        "success": bool(
+            distance <= tolerance and not contacts and not peers and not failures
+        ),
+    }

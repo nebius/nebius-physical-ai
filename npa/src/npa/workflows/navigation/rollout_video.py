@@ -87,6 +87,9 @@ class _Capture:
             "goal_distance_m": float(np.linalg.norm(position[:2] - state["goal_m"][0])),
             "obstacle_contact_n": float(state["obstacle_contact"][0]),
             "peer_contact_n": float(state["peer_contact"][0]),
+            "physical_failure": bool(state["physical_failure"][0]),
+            "upright_cosine": float(state["upright_cosine"][0]),
+            "ground_clearance_m": float(state["ground_clearance_m"][0]),
         }
         self.rows.append(row)
         self._write_frame(pixels[..., :3], row)
@@ -101,7 +104,7 @@ class _Capture:
         draw.text((8, 6), label, fill=(255, 255, 255))
         draw.text(
             (8, 24),
-            f"Obstacle={row['obstacle_contact_n']:.2f} N | Peer={row['peer_contact_n']:.2f} N | population={self.env.num_envs}",
+            f"Obstacle={row['obstacle_contact_n']:.2f} N | Peer={row['peer_contact_n']:.2f} N | Failed={row['physical_failure']} | population={self.env.num_envs}",
             fill=(255, 255, 255),
         )
         frame.save(self.frames / f"{row['step']:06d}.png")

@@ -149,7 +149,35 @@ def terminate(env):
     """
     if env.npa_probe or not env.cfg.npa_training:
         return torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
-    return (collision(env) > 0) | (_distance(env) < 0.5)
+    return (failure(env) > 0) | (_distance(env) < 0.5)
+
+
+def physical_failure(env):
+    """Penalize measured falls, missing floor and unsupported reference poses.
+
+    Args:
+        env: Native reference environment.
+    Returns:
+        Per-robot physical failure indicators.
+    Raises:
+        RuntimeError: Physical measurements are invalid.
+    """
+    from npa.workflows.navigation.reference_validity import physical_state
+
+    return physical_state(env)["physical_failure"].float()
+
+
+def failure(env):
+    """Combine physical and contact failures for native training termination.
+
+    Args:
+        env: Native reference environment.
+    Returns:
+        Per-robot failure indicators without conflating reported failure kinds.
+    Raises:
+        RuntimeError: Physical measurements are invalid.
+    """
+    return torch.maximum(collision(env), physical_failure(env))
 
 
 def timeout(env):

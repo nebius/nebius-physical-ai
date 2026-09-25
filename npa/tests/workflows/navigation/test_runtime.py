@@ -61,6 +61,7 @@ def test_evaluation_fails_closed_on_invalid_native_transitions(
         "goal_m": np.array([case.goal_m for case in recipe.eval_cases]),
         "obstacle_contact": np.zeros(2),
         "peer_contact": np.zeros(2),
+        "physical_failure": np.zeros(2),
     }
     measured = {key: array.copy() for key, array in initial.items()}
     if failure == "changed-goal":

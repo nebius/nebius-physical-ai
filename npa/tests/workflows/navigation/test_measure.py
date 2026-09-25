@@ -16,6 +16,9 @@ def state(recipe, offset=0.0):
         "heading_rad": np.zeros(recipe.num_envs),
         "obstacle_contact": np.zeros(recipe.num_envs),
         "peer_contact": np.zeros(recipe.num_envs),
+        "physical_failure": np.zeros(recipe.num_envs),
+        "upright_cosine": np.ones(recipe.num_envs),
+        "ground_clearance_m": np.full(recipe.num_envs, 0.6),
         "active": np.ones(recipe.num_envs, dtype=bool),
     }
 
@@ -43,8 +46,38 @@ def test_success_after_collision_is_not_recovered(recipe):
     assert rows[0]["steps"] == 1
 
 
+def test_goal_xy_while_fallen_is_never_success(recipe):
+    initial, fallen, later = state(recipe), state(recipe), state(recipe)
+    fallen["position_m"][:, :2] = fallen["goal_m"]
+    fallen["position_m"][:, 2] = -3.0
+    fallen["physical_failure"][:] = 1
+    later["position_m"][:, :2] = later["goal_m"]
+    later["active"][:] = False
+    rows = measure.episode_rows(recipe.eval_cases, [initial, fallen, later], 0.2)
+    assert all(not row["success"] for row in rows)
+    assert all(row["physical_failure_steps"] == 1 for row in rows)
+    assert all(row["collision_steps"] == 0 for row in rows)
+
+
+@pytest.mark.parametrize("value", [-1, 0.5, 2])
+def test_physical_failure_must_be_boolean(recipe, value):
+    data = state(recipe)
+    data["physical_failure"][0] = value
+    with pytest.raises(ValueError, match="boolean"):
+        measure.snapshot(SimpleNamespace(measure=lambda _: data), None, 2)
+
+
 @pytest.mark.parametrize(
-    "key", ["position_m", "goal_m", "obstacle_contact", "peer_contact"]
+    "key",
+    [
+        "position_m",
+        "goal_m",
+        "obstacle_contact",
+        "peer_contact",
+        "physical_failure",
+        "upright_cosine",
+        "ground_clearance_m",
+    ],
 )
 def test_missing_measurements_rejected(recipe, key):
     data = state(recipe)

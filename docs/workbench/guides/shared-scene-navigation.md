@@ -48,6 +48,17 @@ USD collision schemas. The adapter derives its range mesh from those exact
 colliders, without adding a floor or modifying collision surfaces. Choose root
 heights from measured floor elevation and the public robot's stance.
 
+The built-in task requires flat supported routes. Five native downward rays at
+the center and corners of a 0.70 × 0.46 m footprint must hit the actual imported
+collision mesh. Root clearance must stay within 0.25–0.85 m, the five floor
+heights must differ by at most 0.15 m, and the root upright cosine must remain at
+least 0.5. Missing floor, falling, excessive tilt or clearance outside that
+envelope produces `physical_failure`, independently of obstacle contact. Training
+penalizes and terminates those episodes; evaluation cannot score them as success.
+Raw world root positions, upright cosine, clearance and support diagnostics are
+retained. Custom BYOF tasks must implement their own physically valid support
+definition and report it through the same measurement contract.
+
 The contact instrumentation samples native PhysX at every physics substep. It
 classifies nonvertical contact normals as obstacles, counts every base contact,
 and excludes ordinary vertical foot support. Unexpected net contacts after
@@ -173,7 +184,7 @@ The installed adapter implements:
 | --- | --- |
 | `configure(*, task, scene_file, scene_prim, num_envs, cases, training)` | Register/import the existing task and return its native Isaac config. Reference the exact provided USDZ once at `scene_prim`; create robot articulations in that shared world. Preserve task action/reward and registered RSL configuration. Install the supplied reset distribution. During evaluation disable automatic termination/resets and command resampling; Workbench ends measurement at goal/contact/horizon. |
 | `reset(env, cases)` | Apply every supplied deterministic root pose, heading and goal, reset joints/controller/history/seed, synchronize sensor state and recompute observations. Do not advance simulation unexpectedly or change scene/isolation settings. |
-| `measure(env)` | Return NumPy-compatible finite `position_m [N,3]`, `heading_rad [N]`, `goal_m [N,2]`, nonnegative `obstacle_contact [N]`, and `peer_contact [N]` from actual simulator pose/command/contact data. Contacts are magnitudes accumulated across physics substeps, including terminal transitions. Exclude floor/support contacts from obstacle collision. Zeroing contact signals is invalid. |
+| `measure(env)` | Return NumPy-compatible finite `position_m [N,3]`, `heading_rad [N]`, `goal_m [N,2]`, nonnegative `obstacle_contact [N]`, `peer_contact [N]`, boolean `physical_failure [N]`, `upright_cosine [N]`, and nonnegative `ground_clearance_m [N]` from actual simulator pose/command/contact/support data. Physical failure includes falls and unsupported poses using the task's support definition. Contacts are accumulated across physics substeps, including terminal transitions; ordinary floor support is excluded from obstacle collision. Zeroing failure/contact signals is invalid. |
 | `probe_mode(env)` | Context manager: disable stochastic observation corruption and automatic resets for deterministic diagnostic transitions, restore original settings afterward. Preserve collision filtering, geometry, sensor selection and control dynamics. |
 | `visibility_paths(env)` | RGB-D only: return `robot_roots`, `attachment_roots`, `camera_prims`. List every robot articulation root, detached attachment subtree and one observing camera per robot, in robot order. Paths are checked on the live USD stage. |
 
@@ -265,8 +276,9 @@ following files from its accepted attempt. Logical stages are beneath
 | camera stages | Actual `camera-probes.npz` parked/peer/moved RGB and depth arrays with hashes and visibility inventory |
 
 A policy load failure aborts; there is no random-action substitute. Goal success
-requires reaching the metric goal tolerance with no prior obstacle or peer
-contact. Native auto-reset during evaluation is rejected to prevent scoring a
+requires reaching the metric goal tolerance with no prior obstacle contact, peer
+contact or physical failure. Per-episode `physical_failure_steps` remains separate
+from contact counts. Native auto-reset during evaluation is rejected to prevent scoring a
 replacement episode. A completed evaluation below `minimum_success_rate` writes
 its evidence and then fails the workflow. Native failures publish a failure
 record and available logs; they never create a success receipt.
