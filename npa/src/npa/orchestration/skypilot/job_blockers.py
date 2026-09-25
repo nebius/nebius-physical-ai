@@ -256,9 +256,6 @@ def inspect_job_blockers(
     cmd.extend(["-o", "json"])
     if namespace.strip():
         cmd.extend(["-n", namespace.strip()])
-    else:
-        # SkyPilot's namespace is configurable, so do not assume the context default.
-        cmd.append("--all-namespaces")
     execute = runner or subprocess.run
     try:
         result = execute(
@@ -648,8 +645,6 @@ def _event_blockers(
         cmd[1:1] = ["--context", context.strip()]
     if namespace.strip():
         cmd.extend(["-n", namespace.strip()])
-    else:
-        cmd.append("--all-namespaces")
     try:
         result = runner(
             cmd,

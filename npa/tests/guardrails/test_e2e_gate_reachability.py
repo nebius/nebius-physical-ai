@@ -23,6 +23,10 @@ MANUAL_GATES = {
         "read-only pod identity checks require an operator-selected existing controller, "
         "job, task, context, kubeconfig, and SkyPilot binary"
     ),
+    "NPA_NAMESPACE_LIVE_E2E": (
+        "requires an explicitly selected disposable cluster with administrator access; "
+        "creates namespaces, temporary client contexts, and CPU pods"
+    ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
         "run with docs/workbench/token-factory-robot-sdg.md"

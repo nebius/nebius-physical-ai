@@ -34,6 +34,9 @@ source overlay. Retained live output can be checked with
 `NPA_INTEGRATION_E2E=1 NPA_ARENA_FILM_RESULT=/path/to/result.json npa/.venv/bin/python -m pytest npa/tests/e2e/test_isaac_arena_film_capture_live.py -q`.
 That check reads the complete downloaded output bundle and launches no new job.
 
+For shared Kubernetes clusters, use [team namespaces](../docs/workbench/namespaces.md) to configure
+namespace selection and private SkyPilot contexts with `npa workbench namespace`.
+
 ## Install
 
 For a persistent remote development environment, use

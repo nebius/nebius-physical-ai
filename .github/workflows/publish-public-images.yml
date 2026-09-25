@@ -578,6 +578,35 @@ jobs:
               --format table \
               "$IMAGE"
 
+      # Trivy applies --severity to every enabled scanner and has no per-scanner
+      # option, so the CRITICAL policy scan above cannot fail on a private key:
+      # Trivy ranks those HIGH, and it reports an empty secret section rather
+      # than an error. Secrets are therefore rejected in their own scan at every
+      # severity. --ignorefile is omitted deliberately, and that omission is
+      # load-bearing: an ignorefile entry suppresses matching secret findings by
+      # rule ID regardless of severity, so inheriting the vulnerability
+      # ignorefile here would reopen the hole this step exists to close. This is
+      # the split the NCore gate already uses, which is why NCore skips it.
+      - name: Pre-publication all-severity secret scan
+        if: matrix.tool != 'ncore'
+        env:
+          TRIVY_TEMP_DIR: /mnt/npa-trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e TMPDIR=/tmp/trivy \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
+              --cache-dir /tmp/trivy/cache \
+              --timeout 2562047h47m16s \
+              --scanners secret \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --exit-code 1 \
+              --format table \
+              "$IMAGE"
+
       - name: Generate pre-publication SBOM
         if: matrix.tool != 'ncore'
         env:
