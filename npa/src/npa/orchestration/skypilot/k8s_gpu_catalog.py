@@ -587,6 +587,19 @@ def _pod_resource_commitment(containers, init_containers, overhead, resource):
     return max(regular, initial) + extra
 
 
+def _node_is_unschedulable(spec: Mapping[str, object], *, node_name: str) -> bool:
+    if "unschedulable" not in spec:
+        return False
+    value = spec["unschedulable"]
+    if type(value) is not bool:
+        raise KubernetesGpuCatalogError(
+            f"Kubernetes node {node_name!r} has malformed spec.unschedulable: "
+            f"expected an exact boolean when present, got {type(value).__name__}; "
+            "refusing to infer node schedulability"
+        )
+    return value
+
+
 def discover_kubernetes_gpu_inventory(
     *,
     context: str = "",
@@ -745,7 +758,8 @@ def discover_kubernetes_gpu_inventory(
         name = str(metadata.get("name") or "")
         if name:
             labels_by_node[name] = raw_labels
-        blocked = bool(spec.get("unschedulable")) or disallowed_taint
+        blocked = _node_is_unschedulable(spec, node_name=name or "<unnamed>")
+        blocked = blocked or disallowed_taint
         node_products: set[str] = set()
         for key, value in raw_labels.items():
             if (
