@@ -16,6 +16,8 @@ from npa.workflows.sim2real.component_records import (
 from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
 from npa.workflows.sim2real.resume_state import ControllerIdentity, DurableStateStore
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 class MemoryStorage:
     def __init__(self) -> None:

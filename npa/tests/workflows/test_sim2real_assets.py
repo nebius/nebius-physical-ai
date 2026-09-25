@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from npa.workflows.sim2real_assets import (
     cameras_from_consumed_uri,
     resolve_stage_cameras,
@@ -15,6 +17,8 @@ from npa.workflows.sim2real_assets import (
     DEFAULT_CAMERA_STOCK,
 )
 from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
 
 def test_run_assets_stage_stock_writes_scene_and_robot_specs(tmp_path: Path) -> None:

@@ -16,6 +16,8 @@ from npa.workflows.sim2real_viz import (
     is_reference_stub_rollout,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 class _FakeRecording:
     pass

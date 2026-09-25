@@ -15,6 +15,8 @@ from npa.workflows.sim2real_rerun_regen import (
     sync_heldout_renders,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopConfig:
     return Sim2RealLoopConfig(
