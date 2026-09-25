@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from npa.cli.cluster.reconcile_absent import reconcile_absent_cmd
 from npa.cli.cluster.deploy import deploy_cmd
 from npa.cli.cluster.destroy import destroy_cmd
 from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
@@ -22,6 +23,7 @@ app.command("deploy")(deploy_cmd)
 app.command("destroy")(destroy_cmd)
 app.command("up")(up_cmd)
 app.command("down")(down_cmd)
+app.command("reconcile-absent")(reconcile_absent_cmd)
 app.command("status")(status_cmd)
 app.command("list")(list_cmd)
 app.command("kubeconfig")(kubeconfig_cmd)
