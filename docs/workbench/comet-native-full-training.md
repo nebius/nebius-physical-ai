@@ -86,16 +86,38 @@ path and its value contains only `bytes`, `sha256`, and `mode`.
 
 ## Qualification status
 
-Live evidence now covers two distinct scopes. A three-update full-SFT adapter
-qualification performed two native updates, saved the complete state, restored
+Live evidence covers separate update, milestone, and recovery scopes. A
+three-update full-SFT adapter qualification performed two native updates,
+saved the complete state, restored
 it in a fresh process, and matched the third update. Independent readback
 streamed all 21 original artifacts and all 36 checkpoint members, totaling
 31,561,943,065 bytes. This qualifies the adapter's update and recovery boundary;
 it did not run the 20,000-update recipe, scoring, selection, or serving.
 
-Separately, the frozen 20,000-update run published its 5,000-update full-state
-milestone. Independent readback streamed all 36 checkpoint members, totaling
-32,249,157,364 bytes, and verified that the milestone is resume-ready. Training
-then resumed through update 5,067. No trained-milestone task score, selected
-candidate, serving-parity result, later milestone, completed 20,000-update run,
-or physical-24-GB qualification is established by this evidence.
+The frozen 20,000-update run published full-state milestones at 5,000 and 10,000
+updates. Independent readback streamed all 36 checkpoint members at each
+milestone: 32,249,157,364 and 32,238,131,548 bytes, respectively. A separate
+action-expert run published a verified 5,000-update milestone with 34 checkpoint
+members totaling 15,638,896,700 bytes.
+
+The fixed task-1 TRAIN holdout loss increased from 0.00825357 at 5,000 updates
+to 0.00982462 at 10,000 updates on the same 3,840 ordered examples, a 19.03%
+regression. This is a prediction-loss measurement, not simulator task success
+or challenge Q. Checkpoint selection remains pending the frozen 15,000- and
+20,000-update comparison.
+
+A private four-GPU full-model qualification imported the 10,000-update donor,
+performed two updates, saved complete state, restored it in a fresh process,
+and matched the next update within the four-GPU topology. An independent reader
+verified all 52 published objects: the terminal manifest, 16 original evidence
+files, and 35 native checkpoint files totaling 32,224,299,460 bytes. The new
+checkpoint has logical update 10,002 and Orbax manager step 10,001. This creates
+a separate training lineage; it does not establish bitwise equivalence to
+single-GPU continuation.
+
+One warmed four-GPU update took 3.255 seconds for a global batch of 256.
+That single update does not establish sustained throughput. Longer four-GPU
+continuation and action-expert recovery remain unqualified. No selected
+candidate, current-version task score, serving-parity result, completed
+20,000-update run, or physical-24-GB qualification is established by this
+evidence. Exact operator bindings and evidence remain outside Git.
