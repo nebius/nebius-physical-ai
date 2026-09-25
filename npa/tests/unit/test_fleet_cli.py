@@ -12,6 +12,7 @@ import os
 import stat
 import sys
 import textwrap
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -2117,6 +2118,7 @@ def _tainted_gpu_reconciliation_fixture() -> tuple[dict, dict, ClusterSpec]:
             "policy": "STRICT",
             "reservation_ids": ["capacityblockgroup-test"],
         },
+        "preemptible": False,
         "network_interfaces": [{"subnet_id": "vpcsubnet-test"}],
         "filesystems": [
             {
@@ -2162,7 +2164,7 @@ def _tainted_gpu_reconciliation_fixture() -> tuple[dict, dict, ClusterSpec]:
             "name": "cluster-test-gpu",
             "parent_id": "mk8scluster-test",
         },
-        "spec": {"fixed_node_count": 2, "template": template},
+        "spec": {"fixed_node_count": 2, "template": deepcopy(template)},
         "status": {
             "state": "PROVISIONING",
             "target_node_count": 2,
@@ -2183,6 +2185,32 @@ def _tainted_gpu_reconciliation_fixture() -> tuple[dict, dict, ClusterSpec]:
         filestore_mount_tag="npa-shared-fs",
     )
     return state, provider, cluster
+
+
+def _enable_gpu_cluster_for_tainted_fixture(state: dict, provider: dict) -> ClusterSpec:
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    provider_template = provider["spec"]["template"]
+    for template in (state_template, provider_template):
+        template["resources"] = {
+            "platform": "gpu-h200-sxm",
+            "preset": "8gpu-128vcpu-1600gb",
+        }
+        template["gpu_cluster"] = {}
+    return ClusterSpec(
+        name="cluster-test",
+        cpu_nodes=NodePoolSpec(count=0),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-h200-sxm",
+            preset="8gpu-128vcpu-1600gb",
+            disk_size_gib=256,
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="us-central1-a",
+        enable_filestore=True,
+        filestore_mount_tag="npa-shared-fs",
+    )
 
 
 def test_tainted_exact_node_group_is_safely_adopted(monkeypatch, tmp_path) -> None:
@@ -2225,6 +2253,136 @@ def test_tainted_exact_node_group_is_safely_adopted(monkeypatch, tmp_path) -> No
     ]
 
 
+def test_tainted_exact_gpu_cluster_message_is_safely_adopted(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if args[1:2] == ["untaint"]:
+            return _Cap("", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result["node_group_ids"] == ["mk8snodegroup-test"]
+    assert calls[-1][1:2] == ["untaint"]
+
+
+def _assert_tainted_reconciliation_refused(
+    monkeypatch, tmp_path, state: dict, provider: dict, cluster: ClusterSpec
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+    assert all("untaint" not in call for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("evidence", "malformed"), [("provider", "true"), ("state", 1)]
+)
+def test_tainted_node_group_requires_boolean_preemptibility(
+    monkeypatch, tmp_path, evidence: str, malformed: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    provider_template = provider["spec"]["template"]
+    for template in (state_template, provider_template):
+        template["preemptible"] = True
+        template["reservation_policy"] = {}
+    malformed_template, valid_template = (
+        (provider_template, state_template)
+        if evidence == "provider"
+        else (state_template, provider_template)
+    )
+    malformed_template["preemptible"] = malformed
+    assert valid_template["preemptible"] is True
+    cluster = ClusterSpec(
+        name="cluster-test",
+        cpu_nodes=NodePoolSpec(count=0),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            disk_size_gib=256,
+            preemptible=True,
+        ),
+        enable_gpu_cluster=False,
+        enable_filestore=True,
+        filestore_mount_tag="npa-shared-fs",
+    )
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize(
+    ("evidence", "malformed"),
+    [("provider", {"unexpected": True}), ("state", "enabled")],
+)
+def test_tainted_node_group_requires_empty_gpu_cluster_message(
+    monkeypatch, tmp_path, evidence: str, malformed: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    provider_template = provider["spec"]["template"]
+    malformed_template, valid_template = (
+        (provider_template, state_template)
+        if evidence == "provider"
+        else (state_template, provider_template)
+    )
+    malformed_template["gpu_cluster"] = malformed
+    assert valid_template["gpu_cluster"] == {}
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
 def test_tainted_node_group_mismatch_refuses_before_untaint(
     monkeypatch, tmp_path
 ) -> None:
@@ -2264,8 +2422,6 @@ def test_tainted_node_group_mismatch_refuses_before_untaint(
 def test_failed_split_one_node_group_retains_taint_for_exact_replacement(
     monkeypatch, tmp_path
 ) -> None:
-    from copy import deepcopy
-
     from npa.cluster_backends import mk8s_execution as execution
     from npa.cluster_backends.mk8s_model import as_mk8s_desired
 
@@ -2324,8 +2480,6 @@ def test_failed_split_one_node_group_retains_taint_for_exact_replacement(
 def test_provider_absent_exact_split_group_retains_taint_for_recreation(
     monkeypatch, tmp_path
 ) -> None:
-    from copy import deepcopy
-
     from npa.cluster_backends import mk8s_execution as execution
     from npa.cluster_backends.mk8s_model import as_mk8s_desired
 
@@ -2569,8 +2723,6 @@ def test_stopped_placeholder_with_disk_fails_before_delete(
 def test_explicit_repair_removes_exact_failed_split_group_orphan(
     monkeypatch, tmp_path
 ) -> None:
-    from copy import deepcopy
-
     from npa.cluster_backends import mk8s_execution as execution
     from npa.cluster_backends.mk8s_model import as_mk8s_desired
 
