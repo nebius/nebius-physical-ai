@@ -79,11 +79,11 @@ def test_mismatched_stream_rejected_before_encoding(
     _assert_no_dataset_metadata(output)
 
 
-@needs_ffmpeg
 @pytest.mark.parametrize("stream", STREAMS)
 @pytest.mark.parametrize("length", [3, 5])
 def test_later_mismatched_episode_is_not_encoded_or_published(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     stream: str,
     length: int,
 ) -> None:
@@ -92,17 +92,18 @@ def test_later_mismatched_episode_is_not_encoded_or_published(
     _write_episode(raw, 1, 4)
     _change_length(raw, 1, stream, length)
 
+    def unexpected_encode(*args, **kwargs):
+        pytest.fail("Dataset validation must finish before any video encoding")
+
+    monkeypatch.setattr(sim_to_lerobot, "encode_video", unexpected_encode)
+
     with pytest.raises(
         sim_to_lerobot.AdapterError,
         match=rf"Episode 1: {stream} has {length} frames but state has 4",
     ):
         sim_to_lerobot.convert(raw, output)
 
-    for camera in CAMERAS:
-        videos = output / "videos" / f"observation.images.{camera}" / "chunk-000"
-        with av.open(str(videos / "file-000.mp4")) as container:
-            assert len(list(container.decode(video=0))) == 2
-        assert not (videos / "file-001.mp4").exists()
+    assert not list(output.rglob("*.mp4"))
     _assert_no_dataset_metadata(output)
 
 

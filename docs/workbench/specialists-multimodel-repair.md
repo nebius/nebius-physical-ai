@@ -4,6 +4,7 @@ On September 25, 2026, real Token Factory GLM Flash and full GLM workers edited
 Workbench's simulation and dataset code, corrected failed attempts, and completed
 four independently verified six-case runs. LangGraph owned their durable tool
 loops. The branch was rebased on main `f8c9e4c3a` before preparing the campaign.
+It was rebased again on `444a670e9` before final publication checks.
 [Machine-readable evidence](specialists-multimodel-repair-results.json) retains
 model usage, routing decisions, actual patches, failed checks, source hashes and
 native artifact verification.
@@ -73,6 +74,12 @@ formatted the code, split a trace helper, included the goal in finiteness checks
 and added scalar/dtype input guards with seven more regressions. Final publication
 validation is recorded separately from the model-authored revisions.
 
+The first full Linux run exposed 15 failures in an existing stream-length test
+module. Maintainer review restored its exact error messages, including empty
+streams. Six cases also expected a partial first video when a later episode was
+invalid; those now assert the stronger contract that no encoding starts until
+every episode passes validation. The expanded focused set passed 128 checks.
+
 Local dataset publication stages conversion and metadata on the same filesystem
 before rename. Conversion errors preserve raw episodes and leave no new dataset
 or provenance indices. Existing datasets and dangling destination links are
@@ -117,6 +124,7 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_robot_export_transaction.py \
   npa/tests/workbench/test_robot_export_provenance.py \
   npa/tests/workbench/test_token_factory_robot_sdg.py \
+  npa/tests/test_sim_episode_stream_lengths.py \
   npa/tests/test_adapter.py::TestConvertErrors -q
 ```
 

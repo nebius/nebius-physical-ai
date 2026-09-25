@@ -241,14 +241,14 @@ def _validate_numeric_stream(
     name: str, array: np.ndarray, ep_len: int, ep_idx: int
 ) -> None:
     """Require a finite, nonempty (T, width) state or action stream."""
+    if array.ndim == 2 and array.shape[0] != ep_len:
+        raise AdapterError(
+            f"Episode {ep_idx}: {name} has {array.shape[0]} frames "
+            f"but state has {ep_len}"
+        )
     if array.ndim != 2 or not all(array.shape):
         raise AdapterError(
             f"Episode {ep_idx}: {name} requires nonempty (T, width), got {array.shape}"
-        )
-    if array.shape[0] != ep_len:
-        raise AdapterError(
-            f"Episode {ep_idx}: {name} has {array.shape[0]} frames, expected "
-            f"{ep_len}; got shape {array.shape}"
         )
     if not np.issubdtype(array.dtype, np.number) or np.issubdtype(
         array.dtype, np.complexfloating
@@ -262,14 +262,14 @@ def _validate_camera_stream(
     name: str, array: np.ndarray, ep_len: int, ep_idx: int
 ) -> None:
     """Require uint8 RGB frames of shape (T, H, W, 3) covering every timestep."""
+    if array.ndim == 4 and array.shape[0] != ep_len:
+        raise AdapterError(
+            f"Episode {ep_idx}: {name} has {array.shape[0]} frames "
+            f"but state has {ep_len}"
+        )
     if array.ndim != 4 or not all(array.shape) or array.shape[3] != 3:
         raise AdapterError(
             f"Episode {ep_idx}: {name} requires nonempty (T, H, W, 3), got {array.shape}"
-        )
-    if array.shape[0] != ep_len:
-        raise AdapterError(
-            f"Episode {ep_idx}: {name} has {array.shape[0]} frames, expected "
-            f"{ep_len} of shape (T, H, W, 3); got shape {array.shape}"
         )
     if array.dtype != np.uint8:
         raise AdapterError(
