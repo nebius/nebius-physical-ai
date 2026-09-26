@@ -156,8 +156,8 @@ continue to block a new launch. Prior attempts remain in the run history.
 
 A durable `block_relaunch` decision remains unresolved unless the same record
 already contains verified terminal cancellation. After the reported dependency
-is repaired, resume reconciles the exact recorded job ID before doing anything
-else: a live job is adopted and polled, unavailable queue evidence remains
+is repaired, a record with provider identity is reconciled against that exact
+job ID: a live job is adopted and polled, unavailable queue evidence remains
 blocked, and neither case resets the attempt number or submits replacement
 work. A previously verified terminal attempt keeps the ordinary terminal retry
 path and does not become queue-dependent again.
@@ -192,6 +192,16 @@ completes the same attempt without submitting replacement work. Missing,
 malformed, conflicting, mismatched, or temporarily unreadable evidence remains
 blocked and retryable under the same run ID. The provider's verified terminal
 status remains factual even while output revalidation is blocked.
+
+An unreadable supervisor history blocks reconciliation without creating a reuse
+claim. Restoring access lets the same attempt reconcile its exact provider job.
+If the driver stopped after the reuse decision but before recording verified
+cancellation, resume validates the decision's identity and output declarations,
+then reconciles that exact job. A live job is adopted; a succeeded job must still
+pass output validation. A cancelled or failed job retains its terminal failure
+and launches no replacement during that resume. A later resume can request the
+ordinary explicit workload retry. An attempt already marked for reuse still
+requires its immutable cancellation proof; missing or corrupt proof stays blocked.
 
 
 `status` resolves the exact run from the selected project's receipt, the

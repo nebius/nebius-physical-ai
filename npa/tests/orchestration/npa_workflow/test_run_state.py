@@ -249,6 +249,20 @@ def test_malformed_launch_sequence_does_not_prove_prelaunch_absence(
     assert state.in_flight_wave(record["key"]) == record
 
 
+def test_missing_launch_sequence_does_not_prove_prelaunch_absence() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "job_id": "",
+        "recovery_decision": "future_preflight_decision",
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
 def test_unknown_recovery_decision_remains_in_flight() -> None:
     from npa.orchestration.npa_workflow.run_state import RuntimeRunState
 
@@ -308,7 +322,11 @@ def test_unknown_prelaunch_decision_without_launch_identity_is_resolved() -> Non
     assert state.in_flight_wave("001|serial|:train:-") is None
 
 
-def test_output_reuse_pending_terminalization_remains_in_flight() -> None:
+@pytest.mark.parametrize(
+    "recovery", ["reuse_completed_wave", "block_output_reuse_evidence"]
+)
+@pytest.mark.parametrize("sky_status", ["PENDING", "CANCELLED"])
+def test_output_reuse_recovery_remains_in_flight(recovery, sky_status) -> None:
     from npa.orchestration.npa_workflow.run_state import RuntimeRunState
 
     state = RuntimeRunState(workflow="demo", run_id="run-1")
@@ -317,16 +335,16 @@ def test_output_reuse_pending_terminalization_remains_in_flight() -> None:
             "key": "001|serial|:train:-",
             "attempt": 2,
             "status": "failed",
-            "sky_status": "PENDING",
+            "sky_status": sky_status,
             "job_id": "job-2",
             "job_name": "run-1-01-train-a2",
-            "recovery_decision": "reuse_completed_wave",
+            "recovery_decision": recovery,
         }
     )
 
     record = state.in_flight_wave("001|serial|:train:-")
     assert record is not None
-    assert record["recovery_decision"] == "reuse_completed_wave"
+    assert record["recovery_decision"] == recovery
 
 
 def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
