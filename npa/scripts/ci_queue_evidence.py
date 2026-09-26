@@ -24,7 +24,6 @@ _REQUIRED_JOBS = {
     "lint-gate / docs-drift",
     "image-security / Image policy and complete-byte security",
     "image-security / Base image CVE inventory",
-    "test-gate / test-scope",
 }
 _SHA = re.compile(r"[0-9a-f]{40}")
 
@@ -94,6 +93,21 @@ def _latest_validation(repository: str, pull: dict, now: datetime) -> dict:
     return run
 
 
+def _test_scope_succeeded(jobs: list[dict]) -> bool:
+    for job in jobs:
+        if job["conclusion"] != "success":
+            continue
+        if job["name"] == "test-gate / test-scope":
+            return True
+        if job["name"] == "gitleaks" and any(
+            step["name"] == "Select tests using the trusted base policy"
+            and step.get("conclusion") == "success"
+            for step in job.get("steps", [])
+        ):
+            return True
+    return False
+
+
 def _verify_jobs(repository: str, run: dict) -> None:
     endpoint = (
         f"repos/{repository}/actions/runs/{run['id']}"
@@ -104,6 +118,7 @@ def _verify_jobs(repository: str, run: dict) -> None:
     _require(
         _REQUIRED_JOBS <= successful, "Required PR checks are missing or unsuccessful"
     )
+    _require(_test_scope_succeeded(jobs), "Trusted test selection did not succeed")
     _require(
         all(
             job["conclusion"] in {"success", "skipped"}

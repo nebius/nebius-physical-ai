@@ -50,6 +50,7 @@ def _run():
 def _values():
     run = _run()
     jobs = evidence._REQUIRED_JOBS | {
+        "test-gate / test-scope",
         *(f"test-gate / pytest-3.12-shard-{index}" for index in range(1, 9)),
         "test-gate / coverage",
         "test-gate / browser-and-compatibility",
@@ -134,7 +135,6 @@ def test_combined_planning_job_keeps_all_independent_security_evidence_required(
         "lint-gate / docs-drift",
         "image-security / Image policy and complete-byte security",
         "image-security / Base image CVE inventory",
-        "test-gate / test-scope",
     }
 
 
@@ -142,6 +142,88 @@ def test_previous_separate_planning_job_remains_compatible(metadata):
     event, values = metadata
     values["jobs"].append({"name": "validation-plan", "conclusion": "success"})
     assert evidence.verify(REPOSITORY, event, NOW)["mode"] == "reuse"
+
+
+@pytest.mark.parametrize("prose_only", [False, True])
+def test_test_scope_can_share_the_successful_secret_scanning_runner(
+    metadata, prose_only
+):
+    """Accept complete validation after selection moves to secret scanning.
+
+    Args:
+        metadata: Authenticated GitHub metadata fixture.
+        prose_only: Whether the established prose smoke replaces full tests.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Complete validation cannot be reused.
+    """
+    event, values = metadata
+    values["jobs"] = [
+        job for job in values["jobs"] if job["name"] != "test-gate / test-scope"
+    ]
+    leaks = next(job for job in values["jobs"] if job["name"] == "gitleaks")
+    leaks["steps"] = [
+        {"name": "Select tests using the trusted base policy", "conclusion": "success"}
+    ]
+    if prose_only:
+        values["jobs"] = [
+            job for job in values["jobs"] if job["name"] in evidence._REQUIRED_JOBS
+        ]
+        values["jobs"].append({"name": "test-gate / pr-smoke", "conclusion": "success"})
+    assert evidence.verify(REPOSITORY, event, NOW)["mode"] == "reuse"
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "skipped", None])
+def test_combined_scope_step_must_succeed(metadata, conclusion):
+    """Reject unsuccessful selection even if its enclosing job reports success.
+
+    Args:
+        metadata: Authenticated GitHub metadata fixture.
+        conclusion: Unsuccessful selection result.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Incomplete selection is reused.
+    """
+    event, values = metadata
+    values["jobs"] = [
+        job for job in values["jobs"] if job["name"] != "test-gate / test-scope"
+    ]
+    leaks = next(job for job in values["jobs"] if job["name"] == "gitleaks")
+    leaks["steps"] = [
+        {"name": "Select tests using the trusted base policy", "conclusion": conclusion}
+    ]
+    with pytest.raises(ValueError, match="Trusted test selection"):
+        evidence.verify(REPOSITORY, event, NOW)
+
+
+@pytest.mark.parametrize("job_name", ["gitleaks", "pr-precheck"])
+def test_scope_evidence_cannot_be_missing_or_come_from_another_job(metadata, job_name):
+    """Require selection evidence from its actual trusted job.
+
+    Args:
+        metadata: Authenticated GitHub metadata fixture.
+        job_name: Job receiving misplaced evidence, or no evidence for gitleaks.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Unrelated or absent evidence permits reuse.
+    """
+    event, values = metadata
+    values["jobs"] = [
+        job for job in values["jobs"] if job["name"] != "test-gate / test-scope"
+    ]
+    if job_name != "gitleaks":
+        job = next(job for job in values["jobs"] if job["name"] == job_name)
+        job["steps"] = [
+            {
+                "name": "Select tests using the trusted base policy",
+                "conclusion": "success",
+            }
+        ]
+    with pytest.raises(ValueError, match="Trusted test selection"):
+        evidence.verify(REPOSITORY, event, NOW)
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled", "skipped", None])
@@ -253,7 +335,9 @@ def test_optional_reporting_does_not_hold_the_queue(metadata, status):
 def test_prose_smoke_can_replace_full_tests_but_not_security(metadata):
     event, values = metadata
     values["jobs"] = [
-        job for job in values["jobs"] if job["name"] in evidence._REQUIRED_JOBS
+        job
+        for job in values["jobs"]
+        if job["name"] in evidence._REQUIRED_JOBS | {"test-gate / test-scope"}
     ]
     values["jobs"].append({"name": "test-gate / pr-smoke", "conclusion": "success"})
     assert evidence.verify(REPOSITORY, event, NOW)["tree"] == TREE

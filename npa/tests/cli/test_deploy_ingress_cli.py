@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.clients.config import StorageConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.network import EnsureIngressResult, NetworkIngressError
 
@@ -116,6 +117,26 @@ def _patch_successful_deploy(
         mocker.patch(f"{module}.health_check_auto", return_value=(True, ""))
         mocker.patch(f"{module}.write_remote_docker_env_file")
     else:
+        mocker.patch(
+            "npa.clients.project_credential_store.project_credential_record",
+            return_value={
+                "storage": {
+                    "bucket": "s3://selected-bucket/checkpoints/",
+                    "endpoint": "https://selected-storage.example",
+                    "access_key": "selected-access",
+                    "secret_key": "selected-secret",
+                }
+            },
+        )
+        mocker.patch(
+            "npa.clients.config.resolve_project_storage",
+            return_value=StorageConfig(
+                checkpoint_bucket="s3://selected-bucket/checkpoints/",
+                endpoint_url="https://selected-storage.example",
+                aws_access_key_id="selected-access",
+                aws_secret_access_key="selected-secret",
+            ),
+        )
         mocker.patch(
             f"{module}.resolve_credentials", return_value=SimpleNamespace(tokens={})
         )
