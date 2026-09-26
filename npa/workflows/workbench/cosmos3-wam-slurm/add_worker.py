@@ -82,7 +82,9 @@ def _hosts(peers):
 
 def _export(root, peers):
     export = f"{root} {peers['worker_address']}(rw,sync,no_subtree_check,root_squash)\n"
-    Path("/etc/exports.d/wam-slurm.exports").write_text(export)
+    path = Path("/etc/exports.d/wam-slurm.exports")
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(export)
     _run("systemctl", "enable", "--now", "nfs-server")
     _run("exportfs", "-ra")
     _run(
