@@ -30,6 +30,19 @@ def test_launcher_receives_resolved_backends_and_sealed_seed(
     resolved = SimpleNamespace(physics="PhysX", seed=None)
     events = []
 
+    callbacks = _startup_callbacks(unresolved, resolved, cases, stage, builtin, events)
+    args = SimpleNamespace(
+        stage=stage,
+        input_path=source,
+        output_path=output,
+        kit_args="--/app/custom=true  --/app/other=7",
+    )
+    _stub_launcher(monkeypatch, callbacks, events, args, recipe, unresolved)
+    assert runtime.main([]) == 0
+    assert events == [cases[0].seed, "resolved", "Kit", resolved]
+
+
+def _startup_callbacks(unresolved, resolved, cases, stage, builtin, events):
     def resolve(config):
         assert config is unresolved
         events.append("resolved")
@@ -47,35 +60,34 @@ def test_launcher_receives_resolved_backends_and_sealed_seed(
         events.append("Kit")
         yield
 
+    return resolve, launch
+
+
+def _stub_launcher(monkeypatch, callbacks, events, args, recipe, unresolved):
     monkeypatch.setitem(
-        sys.modules, "isaaclab_tasks.utils", SimpleNamespace(launch_simulation=launch)
+        sys.modules,
+        "isaaclab_tasks.utils",
+        SimpleNamespace(launch_simulation=callbacks[1]),
     )
     monkeypatch.setitem(
         sys.modules,
         "isaaclab_tasks.utils.hydra",
-        SimpleNamespace(resolve_presets=resolve),
+        SimpleNamespace(resolve_presets=callbacks[0]),
     )
     monkeypatch.setitem(
         sys.modules,
         "isaaclab.utils.seed",
         SimpleNamespace(configure_seed=events.append),
     )
-    monkeypatch.setattr(
-        runtime,
-        "_arguments",
-        lambda _: SimpleNamespace(
-            stage=stage,
-            input_path=source,
-            output_path=output,
-            kit_args="--/app/custom=true  --/app/other=7",
-        ),
-    )
+    monkeypatch.setattr(runtime, "_arguments", lambda _: args)
     monkeypatch.setattr(
         runtime,
         "validate_scene_package",
         lambda _: pytest.fail("USD must not load before Kit starts"),
     )
     monkeypatch.setattr(runtime, "read_recipe", lambda _: recipe)
+    # Request validation has separate rejection tests; this fixture isolates startup.
+    monkeypatch.setattr(runtime, "_validate_control_request", lambda *args: None)
     monkeypatch.setattr(
         runtime,
         "task_adapter",
@@ -84,8 +96,6 @@ def test_launcher_receives_resolved_backends_and_sealed_seed(
     monkeypatch.setattr(
         runtime, "_execute", lambda args, recipe, adapter, config: events.append(config)
     )
-    assert runtime.main([]) == 0
-    assert events == [cases[0].seed, "resolved", "Kit", resolved]
 
 
 def test_native_execution_validates_usd_before_creating_scene(

@@ -115,11 +115,12 @@ def verify_reset(adapter, env, cases, tolerance: float) -> dict:
     return state
 
 
-def _probe_trace(adapter, env, wrapped, cases, actions, tolerance):
+def _probe_trace(adapter, env, wrapped, cases, actions, tolerance, trace=None):
     import torch
 
     verify_reset(adapter, env, cases, tolerance)
-    trace = [_trace_row(adapter, env, len(cases), wrapped.get_observations())]
+    trace = [] if trace is None else trace
+    trace.append(_trace_row(adapter, env, len(cases), wrapped.get_observations()))
     for action in actions:
         batch = torch.zeros((len(cases), len(action)), device=env.unwrapped.device)
         batch[0] = torch.tensor(action, device=batch.device)
@@ -217,15 +218,78 @@ def _probe_controls(adapter, env, wrapped, recipe, parked, baseline, output=None
     return repeat_delta, delta, contact
 
 
-def _recorded_probe(adapter, env, wrapped, recipe, cases, output, name):
+def assess_control_traces(recipe, traces, output):
+    """Apply the existing physical control gates to independently recorded arms.
+
+    Args:
+        recipe: Unchanged sealed actions, reset cases and tolerances.
+        traces: Complete solo, repeat, overlap and obstacle traces.
+        output: Directory retaining the comparison report before rejection.
+    Returns:
+        Fresh-scene isolation results, without a warm-reset claim.
+    Raises:
+        ValueError: Any original motion, contact or trace-comparison gate fails.
+    """
+    if set(traces) != {"solo", "repeat", "overlap", "obstacle"}:
+        raise ValueError("all four native controls are required")
+    solo, repeat, overlap, obstacle = (
+        traces[name] for name in ("solo", "repeat", "overlap", "obstacle")
+    )
+    _save_comparisons(output, solo, repeat, overlap)
+    motion = np.linalg.norm(
+        solo[-1]["state"]["position_m"][0] - recipe.probe.free.position_m
+    )
+    if motion <= recipe.probe.tolerance:
+        raise ValueError("free-space probe did not move; isolation cannot be inferred")
+    if any(
+        np.any(row["state"][key] > recipe.probe.tolerance)
+        for row in solo
+        for key in ("obstacle_contact", "peer_contact", "physical_failure")
+    ):
+        raise ValueError("free-space baseline has contacts or physical failure")
+    repeat_delta = _compare_traces(
+        solo, repeat, recipe.probe.tolerance, "fresh-scene repeat"
+    )
+    peer_delta = _compare_traces(solo, overlap, recipe.probe.tolerance)
+    contact = max(float(row["state"]["obstacle_contact"][0]) for row in obstacle[1:])
+    if contact <= recipe.probe.tolerance:
+        raise ValueError("obstacle positive control produced no physical contact")
+    return {
+        "passed": True,
+        "robots": recipe.num_envs,
+        "maximum_peer_delta": peer_delta,
+        "maximum_repeat_delta": repeat_delta,
+        "free_motion_m": float(motion),
+        "obstacle_contact": contact,
+        "sensor_mode": recipe.sensor_mode,
+        "camera_isolation_verified": False,
+        "control_protocol": "fresh_process_per_control.v1",
+        "warm_reset_repeatability_verified": False,
+    }
+
+
+def _recorded_probe(
+    adapter, env, wrapped, recipe, cases, output, name, retain_partial=False
+):
     recorder = getattr(adapter, "record_probe_contacts", None)
     context = recorder(env, output, name) if recorder else nullcontext()
-    with context:
-        trace = _probe_trace(
-            adapter, env, wrapped, cases, recipe.probe.actions, recipe.probe.tolerance
-        )
-    if output is not None:
-        save_trace(output, name, trace)
+    trace = []
+    try:
+        with context:
+            kwargs = {"trace": trace} if retain_partial else {}
+            measured = _probe_trace(
+                adapter,
+                env,
+                wrapped,
+                cases,
+                recipe.probe.actions,
+                recipe.probe.tolerance,
+                **kwargs,
+            )
+            trace = measured
+    finally:
+        if output is not None and trace:
+            save_trace(output, name, trace)
     return trace
 
 

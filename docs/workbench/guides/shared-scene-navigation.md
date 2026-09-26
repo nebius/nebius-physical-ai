@@ -27,6 +27,12 @@ The reference demonstrates the public task, not a proprietary controller.
 See the [component attribution](shared-scene-navigation.NOTICE.txt) for upstream
 modules and the separate runtime/asset boundary.
 
+The current built-in reference uses [fresh native control processes](navigation-fresh-controls.md)
+for its four physical controls before a separate training/evaluation process.
+This requires new native qualification; the historical results below retain
+their original warm-reset protocol and do not establish warm-reset correctness
+for reconstructed scenes.
+
 ## Public reference inputs
 
 The pinned runtime is Isaac Lab `3.0.0b2.post1`, Isaac Sim `6.0.1.0`, and RSL-RL
@@ -256,11 +262,13 @@ interface because pinned Lab replaces Isaac's public manager class. It never
 creates or writes a renderer clock. Uncached native root transforms, root
 velocities, joint state, native and Lab step counts, and clocks must remain
 unchanged across rendering. The native
-time origin follows the preceding controls; it is distinct from the video's
-relative rollout time. Native qualification passed all 301 frames in the complete
-initial-checkpoint diagnostic, all 602 frames of the original comparison and all
-342 frames of the fresh comparison. This validates the renderer and checkpoint
-reload separately from goal-success quality.
+time origin is measured within the evaluation process; it is distinct from the
+video's relative rollout time and from every control process's clock. Historical
+in-process runs qualified all 301 frames in the initial-checkpoint diagnostic,
+all 602 frames of the original comparison and all 342 frames of the fresh
+comparison. These results establish renderer and checkpoint reload behavior for
+their original source and control protocol. The fresh-process protocol requires
+separate native qualification; goal-success quality is also measured separately.
 Artifacts include `rendered-rollout/*.png`, frame measurements,
 and `rollout.mp4` when the runtime supplies FFmpeg. The PNG sequence can be encoded
 later without rerunning or reconstructing the simulation. Custom BYOF tasks

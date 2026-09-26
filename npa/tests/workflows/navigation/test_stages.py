@@ -39,7 +39,8 @@ def test_runtime_image_must_match_recipe(prepared, tmp_path, monkeypatch):
         stages.run_stage("train", str(prepared), str(tmp_path / "failed"))
 
 
-def test_native_argv_preserves_spaces_without_shell(tmp_path, monkeypatch):
+def test_native_argv_preserves_spaces_without_shell(recipe, tmp_path, monkeypatch):
+    monkeypatch.setattr(stages, "read_recipe", lambda _: recipe)
     interpreter = tmp_path / "isaac python"
     interpreter.touch()
     monkeypatch.setenv("ISAAC_LAB_PYTHON", str(interpreter))
@@ -67,7 +68,8 @@ def test_native_argv_preserves_spaces_without_shell(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("failure", ["missing", "wrong-hash", "physics", "not-loaded"])
-def test_runtime_missing_or_invalid_evidence(tmp_path, monkeypatch, failure):
+def test_runtime_missing_or_invalid_evidence(recipe, tmp_path, monkeypatch, failure):
+    monkeypatch.setattr(stages, "read_recipe", lambda _: recipe)
     interpreter = tmp_path / "native"
     interpreter.touch()
     monkeypatch.setenv("ISAAC_LAB_PYTHON", str(interpreter))

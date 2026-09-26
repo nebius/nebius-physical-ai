@@ -24,6 +24,64 @@ def save_trace(output, name, trace):
     np.savez_compressed(output / f"probe-{name}.npz", **arrays)
 
 
+def load_trace(path, population, steps):
+    """Decode complete finite control traces without loading pickled objects.
+
+    Args:
+        path: Hash-verified native NPZ artifact.
+        population: Expected full shared-scene robot count.
+        steps: Number of prescribed control actions.
+    Returns:
+        Measured trace with full state and focal observation arrays.
+    Raises:
+        ValueError: Steps, groups, population or finite values are invalid.
+    """
+    trace = [{"state": {}, "observations": {}, "native": {}} for _ in range(steps + 1)]
+    with np.load(path, allow_pickle=False) as archive:
+        if len(archive.files) != len(set(archive.files)):
+            raise ValueError("duplicate probe array")
+        for name in archive.files:
+            step, group, key = name.split("/", 2)
+            if not step.isdecimal() or str(int(step)) != step or not key:
+                raise ValueError("invalid probe array name")
+            if int(step) > steps or group not in trace[0]:
+                raise ValueError("unexpected probe step or group")
+            value = archive[name]
+            count = population if group == "state" else 1
+            if (
+                not value.ndim
+                or value.shape[0] != count
+                or not np.isfinite(value).all()
+            ):
+                raise ValueError("invalid probe population or values")
+            trace[int(step)][group][key] = value.copy()
+    _validate_loaded_trace(trace, population)
+    return trace
+
+
+def _validate_loaded_trace(trace, population):
+    from types import SimpleNamespace
+    from npa.workflows.navigation.measure import snapshot
+
+    schema = None
+    for row in trace:
+        if not row["state"] or not row["observations"]:
+            raise ValueError("incomplete probe trace")
+        if not row["native"]:
+            del row["native"]
+        raw = row["state"]
+        checked = snapshot(SimpleNamespace(measure=lambda _: raw), None, population)
+        if set(raw) != set(checked):
+            raise ValueError("unexpected measured-state fields")
+        current = {
+            group: {key: value.shape for key, value in fields.items()}
+            for group, fields in row.items()
+        }
+        if schema is not None and current != schema:
+            raise ValueError("probe streams or shapes changed")
+        schema = current
+
+
 def trace_difference(baseline, changed):
     """Describe every focal-stream delta and unexpected contact across all robots.
 

@@ -99,7 +99,9 @@ def test_independent_evaluation_needs_no_training_receipt(
     monkeypatch.setattr(
         runtime,
         "_score_checkpoint",
-        lambda *args: seen.append(args[-2]) or {"passed": False},
+        lambda env, wrapped, runner, adapter, recipe, checkpoint, output, control=None: (
+            seen.append(checkpoint) or {"passed": False}
+        ),
     )
     result = runtime._evaluate_initial(
         None, None, None, None, recipe, tmp_path, tmp_path

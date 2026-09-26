@@ -75,6 +75,9 @@ def run_stage(stage: str, input_path: str, output_path: str) -> dict:
         try:
             evidence = _native(stage, source, output)
             _carry_inputs(source, output, recipe, stage)
+        except (KeyboardInterrupt, SystemExit) as interruption:
+            _publish_interruption(output, output_path, stage, interruption)
+            raise
         except Exception:
             _record_failure(output, stage)
             publish(output, output_path)
@@ -87,7 +90,24 @@ def run_stage(stage: str, input_path: str, output_path: str) -> dict:
         return evidence
 
 
+def _publish_interruption(output, output_path, stage, interruption):
+    try:
+        _record_failure(output, stage)
+        publish(output, output_path)
+    except BaseException as evidence_error:
+        interruption.add_note(
+            f"Interrupted-stage publication failed: {type(evidence_error).__name__}"
+        )
+
+
 def _native(stage, source, output):
+    from npa.workflows.navigation.control_processes import (
+        check_native_log,
+        run_controls,
+        run_native_process,
+    )
+    from npa.workflows.navigation.control_protocol import REFERENCE
+
     interpreter = os.environ.get("ISAAC_LAB_PYTHON", "/isaac-sim/python.sh")
     if not Path(interpreter).is_file():
         raise FileNotFoundError(
@@ -105,13 +125,18 @@ def _native(stage, source, output):
         "--visualizer",
         "none",
     ]
-    with (output / "runtime.log").open("w") as log:
-        subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, check=True)
-    log = (output / "runtime.log").read_text()
-    if "PhysX error:" in log or "simulation will miss interactions" in log:
-        raise RuntimeError(
-            "Isaac reported invalid physics; inspect private runtime.log"
-        )
+    recipe = read_recipe(source)
+    if recipe.adapter_module == REFERENCE:
+        pins = run_controls(interpreter, stage, recipe, source, output)
+        run_native_process(argv + pins, output, "main", pins[1])
+    else:
+        with (output / "runtime.log").open("w") as log:
+            subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, check=True)
+        check_native_log(output / "runtime.log")
+    return _native_result(stage, output)
+
+
+def _native_result(stage, output):
     name = "training.json" if stage == "train" else "evaluation.json"
     evidence = json.loads((output / name).read_text())
     expected = "training" if stage == "train" else "evaluation"
