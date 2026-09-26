@@ -2130,22 +2130,44 @@ def _trim_lerobot_episode(
         raise PaidfInputError("could not extract the selected LeRobot episode")
 
 
+def _validate_s3_listing_page(
+    page: dict[str, Any], seen_tokens: set[str], *, has_paginator: bool
+) -> None:
+    if not page.get("IsTruncated"):
+        return
+    token = page.get("NextContinuationToken")
+    if not isinstance(token, str) or not token:
+        raise PaidfInputError("truncated input listing has no continuation token")
+    if token in seen_tokens:
+        raise PaidfInputError("input listing repeated continuation token")
+    if not has_paginator:
+        raise PaidfInputError(
+            "storage client cannot complete a truncated input listing"
+        )
+    seen_tokens.add(token)
+
+
 def _list_s3_keys(client: Any, *, bucket: str, prefix: str) -> list[str]:
-    """List a prefix across pages while remaining easy to fake in unit tests."""
+    """Collect a prefix only after validating every page's continuation contract."""
 
     paginator_factory = getattr(client.s3, "get_paginator", None)
-    if callable(paginator_factory):
+    has_paginator = callable(paginator_factory)
+    if has_paginator:
         pages = paginator_factory("list_objects_v2").paginate(
             Bucket=bucket, Prefix=prefix
         )
     else:
         pages = [client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)]
-    return [
-        str(item.get("Key") or "")
-        for page in pages
-        for item in page.get("Contents", [])
-        if str(item.get("Key") or "")
-    ]
+    keys: list[str] = []
+    seen_tokens: set[str] = set()
+    for page in pages:
+        _validate_s3_listing_page(page, seen_tokens, has_paginator=has_paginator)
+        keys.extend(
+            str(item.get("Key") or "")
+            for item in page.get("Contents", [])
+            if str(item.get("Key") or "")
+        )
+    return keys
 
 
 def _fixture_provenance(run_id: str, base_uri: str) -> dict[str, Any]:
@@ -2322,30 +2344,24 @@ def _read_provenance(client: Any, base_uri: str) -> dict[str, Any] | None:
 def _legacy_staged_video(client: Any, base_uri: str) -> str:
     bucket, prefix = _split_s3(base_uri)
     try:
-        response = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        keys = _list_s3_keys(client, bucket=bucket, prefix=prefix)
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            f"could not inspect the canonical PAIDF input prefix: {exc}"
+            "could not inspect every object in the canonical PAIDF input prefix"
         ) from exc
     videos = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "").lower().endswith(".mp4")
-        and not str(item.get("Key") or "").lower().endswith("conditioning.mp4")
+        key
+        for key in keys
+        if key.lower().endswith(".mp4") and not key.lower().endswith("conditioning.mp4")
     ]
     if len(videos) > 1:
         raise PaidfInputError(
             f"multiple uncommitted videos already exist under {base_uri}; pass one "
             "explicitly with --input-uri or use a new --run-id"
         )
-    if videos:
+    if len(videos) == 1 and len(keys) == 1:
         return f"s3://{bucket}/{videos[0]}"
-    other = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "")
-    ]
-    if other:
+    if keys:
         raise PaidfInputError(
             f"uncommitted input artifacts already exist under {base_uri}, but no source "
             "MP4 can be adopted. Use --input-video/--input-uri, --seed-fixture, or a new run id."
