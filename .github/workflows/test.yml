@@ -176,16 +176,17 @@ jobs:
         # Candidates needing the full suite use the primary interpreter.
         # Scheduled/manual audits keep all supported versions.
         python-version: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '["3.12"]' || '["3.10", "3.12", "3.14"]') }}
-        # Candidates split all tests across eight shards for a shorter critical path.
-        # The periodic three-version audit retains four per interpreter.
-        shard: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '[1, 2, 3, 4, 5, 6, 7, 8]' || '[1, 2, 3, 4]') }}
+        # Seven candidate shards retain duration balancing while leaving runner
+        # capacity for the required image-security matrix. The periodic
+        # three-version audit retains four per interpreter.
+        shard: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '[1, 2, 3, 4, 5, 6, 7]' || '[1, 2, 3, 4]') }}
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
       NPA_E2E_PROJECT_ID: project-test-00000000
       NPA_E2E_GROOT_BUCKET: test-bucket-00000000
       NPA_CI_SHARD_INDEX: ${{ matrix.shard }}
-      NPA_CI_TOTAL_SHARDS: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 8 || 4 }}
+      NPA_CI_TOTAL_SHARDS: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 7 || 4 }}
       COVERAGE_FILE: .coverage.${{ matrix.python-version }}.${{ matrix.shard }}
       NPA_CI_TIMING_OUTPUT: ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
       # The LTX-2.5 output validator decides whether a GPU run produced anything

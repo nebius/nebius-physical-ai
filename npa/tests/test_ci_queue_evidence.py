@@ -51,7 +51,7 @@ def _values():
     run = _run()
     jobs = evidence._REQUIRED_JOBS | {
         "test-gate / test-scope",
-        *(f"test-gate / pytest-3.12-shard-{index}" for index in range(1, 9)),
+        *(f"test-gate / pytest-3.12-shard-{index}" for index in range(1, 8)),
         "test-gate / coverage",
         "test-gate / browser-and-compatibility",
     }
