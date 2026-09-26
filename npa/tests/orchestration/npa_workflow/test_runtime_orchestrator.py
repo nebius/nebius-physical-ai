@@ -1271,6 +1271,197 @@ def test_runtime_reads_exact_iteration_scoped_decision_output(tmp_path: Path) ->
     ]
 
 
+def _changed_image_selection(overrides, references, change):
+    changed = dict(overrides)
+    options = {}
+    if change == "swap":
+        changed = {
+            "workbench.train": references[1],
+            "workbench.evaluate": references[0],
+        }
+    elif change == "rename":
+        changed["workbench.builder"] = changed.pop("workbench.train")
+    elif change == "add":
+        changed["workbench.publish"] = references[0]
+    elif change == "remove":
+        changed.pop("workbench.evaluate")
+    else:
+        options[change] = f"changed-{change}"
+    return changed, options
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["swap", "rename", "add", "remove", "registry", "gpu_target", "image_variant"],
+)
+def test_image_identity_binds_render_selection_inputs(change):
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"workbench.train": references[0], "workbench.evaluate": references[1]}
+    changed_overrides, options = _changed_image_selection(overrides, references, change)
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(changed_overrides, pins=pins, **options)
+    reordered = _image_selection_options(
+        dict(reversed(list(overrides.items()))),
+        pins=dict(reversed(list(pins.items()))),
+    )
+    if change == "swap":
+        assert (
+            resolve_task_image("workbench.train", {}, options=initial)
+            == pins[references[0]]
+        )
+        assert (
+            resolve_task_image("workbench.train", {}, options=changed)
+            == pins[references[1]]
+        )
+    assert _image_identity(reordered) == _image_identity(initial)
+    assert _image_identity(changed) != _image_identity(initial)
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_changed_image_selection(
+    tmp_path, pinned, outputs_exist
+):
+    bindings = _image_pin_bindings()
+    references = list(bindings) if pinned else list(bindings.values())
+    pins = bindings if pinned else {}
+    initial = _image_selection_options({"*": references[0]}, pins=pins)
+    changed = _image_selection_options({"*": references[1]}, pins=pins)
+    spec, store = _completed_replay_case(tmp_path, render_options=initial)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("field", ["registry", "gpu_target", "image_variant"])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_changed_render_selector(
+    tmp_path, field, outputs_exist
+):
+    image = next(iter(_image_pin_bindings().values()))
+    initial = _image_selection_options({"*": image})
+    changed = _image_selection_options({"*": image}, **{field: "changed"})
+    spec, store = _completed_replay_case(tmp_path, render_options=initial)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("reorder", ["pins", "selectors", "both"])
+def test_completed_replay_accepts_reordered_image_selection(tmp_path, reorder):
+    from npa.orchestration.npa_workflow.skypilot_render import plan_images
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"workbench.token_factory.caption": references[0], "*": references[1]}
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(
+        dict(reversed(list(overrides.items()))) if reorder != "pins" else overrides,
+        pins=dict(reversed(list(pins.items()))) if reorder != "selectors" else pins,
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_image_selection_replay_spec()
+    )
+    plan = build_plan(spec, run_id="rt-completed-replay-identity")
+    for selection in (initial, changed):
+        assert plan_images(
+            spec, plan.steps, run_id="rt-completed-replay-identity", options=selection
+        ) == list(pins.values())
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=changed
+    )
+    assert report.status == "succeeded"
+    assert len(report.waves) == 2
+    assert all(wave["replayed"] for wave in report.waves)
+    assert submitter.calls == []
+
+
+def _legacy_image_identity(pins, schema):
+    if schema == "values-only":
+        material = "\0".join(sorted(pins.values()))
+    else:
+        material = json.dumps(
+            {
+                "bindings": sorted(pins.items()),
+                "schema": "npa.workflow.image-pin-bindings/v2",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("schema", ["values-only", "pin-only"])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_legacy_image_identity(
+    tmp_path, schema, outputs_exist
+):
+    pins = _image_pin_bindings()
+    selection = _image_selection_options({"*": next(iter(pins))}, pins=pins)
+    spec, store = _completed_replay_case(tmp_path, render_options=selection)
+    persisted = store.read_runtime_state()
+    persisted.waves[-1]["immutable_identity"]["image_digest"] = _legacy_image_identity(
+        pins, schema
+    )
+    store.write_runtime_state(persisted)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=selection
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("selector", ["*", "workbench.train", "workbench.train.export"])
+def test_image_identity_tracks_effective_override_precedence(selector):
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"*": references[0], selector: references[0]}
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(
+        {**overrides, selector: references[1]}, pins=pins
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=initial)
+        == pins[references[0]]
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=changed)
+        == pins[references[1]]
+    )
+    assert _image_identity(initial) != _image_identity(changed)
+
+
+@pytest.mark.parametrize("field", ["image", "image_id"])
+def test_workflow_identity_binds_resource_image_selection(tmp_path, field):
+    from dataclasses import replace
+    from npa.orchestration.npa_workflow.runtime import _workflow_identity
+
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    images = list(_image_pin_bindings().values())
+    initial = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[0]}}
+    )
+    changed = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[1]}}
+    )
+    assert _workflow_identity(initial) != _workflow_identity(changed)
+
+
 def test_runtime_branch_follows_transition_goto(tmp_path: Path) -> None:
     """A promote decision routes straight to the transition target (data-dependent goto)."""
 
