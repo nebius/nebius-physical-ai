@@ -15,6 +15,7 @@
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
+**[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
 **[Python & API](docs/workbench/cli-sdk-yaml-walkthrough.md)** ·
 **[Cookbooks](docs/workbench/cookbooks/README.md)** ·
@@ -22,6 +23,9 @@
 
 </div>
 
+
+For shared Kubernetes clusters, use [team namespaces](docs/workbench/namespaces.md) to configure
+namespace selection and private SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 
@@ -247,13 +251,36 @@ Keep credentials and private infrastructure identifiers out of issue text.
 
 ## Contributing
 
+For dedicated CI capacity, operators can set the repository Actions variables
+`NPA_CI_PRIORITY_RUNNER` and `NPA_CI_TEST_RUNNER` to approved Ubuntu runner labels.
+Both default to `ubuntu-latest`; neither reserves capacity by itself. See
+[validation concurrency](CONTRIBUTING.md#validation-concurrency) for routing and setup.
+The [temporary CPU runner guide](.github/ci-runners/README.md) covers disposable
+Nebius workers. `make ci-runners-down` restores routing and safely drains the
+configured pool; `make ci-runners-status` reports its state.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment, required
 checks, and PR process. [The package README](npa/README.md#developing-and-testing-npa)
 has the shortest test commands. Update the relevant documentation and
 [root skill](skills/index.yaml) when changing behavior.
+Run `make precheck` for fast local CI checks. After committing, fetch main and run
+`make merge-precheck` to check the combined dependency inputs. The
+[merge-readiness guide](CONTRIBUTING.md#merge-readiness-and-queue-rejections)
+also explains the automatic PR comments for merge-queue rejections.
 Security disclosures: [SECURITY.md](SECURITY.md).
 
 ## License
 
 [Apache License 2.0](LICENSE). Third-party software, models, and datasets retain
 their own licenses and access terms.
+
+### MJLab robot learning
+
+[MJLab integration](docs/workbench/mjlab.md) provides native training and resume,
+measured evaluation, ONNX export, a scoped authenticated service, and CLI/SDK
+clients. Use the [train/evaluate workflow](workflows/testing/mjlab-train-eval.yaml)
+on a Nebius GPU with an explicitly built MJLab image. Native GPU acceptance
+results are recorded in the guide; public image promotion remains gated.
+`eval --video` publishes the rendered MP4 and a self-contained HTML report with
+measured episode results and checkpoint provenance.
+The former deterministic scoring placeholder has been removed.

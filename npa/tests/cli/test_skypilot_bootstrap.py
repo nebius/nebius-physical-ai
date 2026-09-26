@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import base64
+import csv
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import zipfile
 
 import pytest
 from typer.testing import CliRunner
@@ -47,6 +52,60 @@ def test_skypilot_registered_under_root_help() -> None:
 
     assert result.exit_code == 0
     assert "skypilot" in result.output
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["DRAINING_V2", "PROVISIONING", "UNKNOWN", ""],
+)
+def test_controller_rebind_refuses_unknown_managed_job_status(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    from npa import controller_ownership as ownership
+    from npa.orchestration.skypilot import cleanup as cleanup_runtime
+
+    owner = ownership.ControllerOwner(
+        project_alias="demo",
+        project_id="project-test",
+        cluster_id="cluster-test",
+        cluster_name="cluster-test",
+        context="context-test",
+        context_fingerprint="fingerprint-test",
+    )
+    monkeypatch.setattr(ownership, "resolve_controller_candidate", lambda *_args: owner)
+    monkeypatch.setattr(
+        ownership, "verify_live_controller_candidate", lambda value: value
+    )
+    bindings: list[bool] = []
+    monkeypatch.setattr(
+        ownership,
+        "bind_controller_owner",
+        lambda value, *, allow_rebind: bindings.append(allow_rebind) or value,
+    )
+    snapshot = cleanup_runtime.JobQueueSnapshot(
+        "verified_jobs",
+        ({"job_id": "17", "status": status},),
+    )
+    monkeypatch.setattr(cleanup_runtime, "_all_jobs", lambda **_kwargs: snapshot)
+
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "bind-controller",
+            "--project",
+            "demo",
+            "--context",
+            "context-test",
+            "--rebind",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Controller rebind refused" in result.output
+    assert "17" in result.output
+    assert bindings == []
 
 
 def test_skypilot_bootstrap_idempotent_existing_install(tmp_path: Path) -> None:
@@ -181,51 +240,86 @@ def test_skypilot_install_package_pins_runtime_dependencies_after_install(
     )
 
 
-def test_skypilot_bootstrap_can_install_local_tiny_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Exercises venv-creation + install mechanics with the test interpreter; the
-    # SkyPilot Python-support policy is out of scope here (and the CI matrix runs
-    # this on Python versions outside SkyPilot's supported range), so treat the
-    # interpreter as supported.
-    monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
-    package_dir = tmp_path / "fake-skypilot"
-    sky_pkg = package_dir / "sky"
-    sky_pkg.mkdir(parents=True)
-    (package_dir / "setup.py").write_text(
-        "\n".join(
-            [
-                "from setuptools import setup",
-                "setup(",
-                "    name='fake-skypilot',",
-                "    version='0.12.2',",
-                "    packages=['sky'],",
-                "    entry_points={'console_scripts': ['sky=sky.cli:main']},",
-                ")",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sky_pkg / "__init__.py").write_text("__version__ = '0.12.2'\n", encoding="utf-8")
-    (sky_pkg / "cli.py").write_text(
-        "\n".join(
-            [
-                "def main():",
-                "    import sys",
-                "    if '--version' in sys.argv:",
-                "        print('SkyPilot 0.12.2')",
-                "    elif len(sys.argv) > 1 and sys.argv[1] == 'check':",
-                "        print('checks passed')",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+def _synthetic_wheel_record(members: dict[str, bytes], record_path: str) -> bytes:
+    """Encode the wheel RECORD with hashes of the synthetic fixture bytes."""
+    record = io.StringIO(newline="")
+    writer = csv.writer(record, lineterminator="\n")
+    for name, payload in members.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+        writer.writerow((name, "sha256=" + digest.rstrip(b"=").decode(), len(payload)))
+    writer.writerow((record_path, "", ""))
+    return record.getvalue().encode()
 
+
+def _write_synthetic_wheel(
+    directory: Path,
+    name: str,
+    version: str,
+    files: dict[str, str],
+) -> Path:
+    """Create a valid pure-Python test wheel, never actual vendor software."""
+    metadata = f"{name}-{version}.dist-info"
+    members = {path: content.encode() for path, content in files.items()}
+    members[f"{metadata}/METADATA"] = (
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+        "Summary: Synthetic bootstrap installation test fixture\n\n"
+    ).encode()
+    members[f"{metadata}/WHEEL"] = (
+        "Wheel-Version: 1.0\nGenerator: npa-test-fixture\n"
+        "Root-Is-Purelib: true\nTag: py3-none-any\n\n"
+    ).encode()
+    record_path = f"{metadata}/RECORD"
+    members[record_path] = _synthetic_wheel_record(members, record_path)
+    wheel = directory / f"{name}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for path, payload in members.items():
+            archive.writestr(path, payload)
+    return wheel
+
+
+@pytest.fixture
+def offline_bootstrap_wheels(tmp_path, monkeypatch):
+    """Keep real pip and both compatibility pins local to synthetic packages."""
+    directory = tmp_path / "synthetic-wheels"
+    directory.mkdir()
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("PIP_FIND_LINKS", str(directory))
+    monkeypatch.setenv("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+    # This test covers installation, not SkyPilot's supported-Python policy.
+    monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
+    wheels = {
+        name: _write_synthetic_wheel(
+            directory,
+            name,
+            version,
+            {
+                f"{name}/__init__.py": f"__version__ = {version!r}\n",
+            },
+        )
+        for name, version in (("click", "8.1.8"), ("kubernetes", "30.1.0"))
+    }
+    wheels["sky"] = _write_synthetic_wheel(
+        directory,
+        "fake_skypilot",
+        "0.12.2",
+        {
+            "sky/__init__.py": "__version__ = '0.12.2'\n",
+            "sky/cli.py": "def main():\n    print('SkyPilot 0.12.2')\n",
+            "fake_skypilot-0.12.2.dist-info/entry_points.txt": "[console_scripts]\nsky = sky.cli:main\n",
+        },
+    )
+    return wheels
+
+
+def test_skypilot_bootstrap_can_install_local_tiny_package(
+    tmp_path: Path,
+    offline_bootstrap_wheels: dict[str, Path],
+) -> None:
     result = skypilot_cli.bootstrap_skypilot(
         venv_path=tmp_path / "sky-venv",
         python_bin=sys.executable,
-        package_spec=os.fspath(package_dir),
+        package_spec=os.fspath(offline_bootstrap_wheels["sky"]),
         extras=("test",),
     )
 
@@ -235,6 +329,45 @@ def test_skypilot_bootstrap_can_install_local_tiny_package(
     assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(
         encoding="utf-8"
     )
+    versions = subprocess.check_output(
+        [
+            str(result.path / "bin/python"),
+            "-c",
+            "import click, kubernetes, sky; "
+            "print(click.__version__, kubernetes.__version__, sky.__version__)",
+        ],
+        text=True,
+    )
+    assert versions.strip() == "8.1.8 30.1.0 0.12.2"
+    assert (
+        subprocess.check_output([str(result.sky_bin), "--version"], text=True).strip()
+        == "SkyPilot 0.12.2"
+    )
+    marker = json.loads(result.marker_path.read_text())
+    assert marker["kubernetes_client"] == "30.1.0"
+    assert marker["kubernetes_client_spec"] == skypilot_cli.KUBERNETES_CLIENT_SPEC
+
+
+@pytest.mark.parametrize("missing_package", ["click", "kubernetes"])
+def test_skypilot_bootstrap_refuses_unavailable_offline_dependency(
+    tmp_path: Path,
+    offline_bootstrap_wheels: dict[str, Path],
+    missing_package: str,
+) -> None:
+    offline_bootstrap_wheels[missing_package].unlink()
+    target = tmp_path / "sky-venv"
+    with pytest.raises(skypilot_cli.SkyPilotBootstrapError) as failure:
+        skypilot_cli.bootstrap_skypilot(
+            venv_path=target,
+            python_bin=sys.executable,
+            package_spec=os.fspath(offline_bootstrap_wheels["sky"]),
+        )
+    message = str(failure.value)
+    assert "pip failed while pinning" in message
+    assert f"No matching distribution found for {missing_package}" in message
+    assert "Retrying" not in message
+    assert "https://" not in message
+    assert not target.exists()
 
 
 @pytest.fixture
@@ -796,6 +929,90 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
     failed = runner.invoke(app, ["skypilot", "cleanup-controller", "--yes", "--json"])
     assert failed.exit_code == 2
     assert json.loads(failed.output)["outcome"] == "verification_failed"
+
+
+@pytest.mark.parametrize(
+    ("owner_mismatch", "expected_outcome", "expected_local_verified"),
+    [
+        (False, "cleaned", True),
+        (True, "degraded_local_metadata", False),
+    ],
+)
+def test_skypilot_controller_cleanup_reports_exact_owner_convergence(
+    monkeypatch: pytest.MonkeyPatch,
+    owner_mismatch: bool,
+    expected_outcome: str,
+    expected_local_verified: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.controller_ownership import ClusterOwnerIdentityMismatchError
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
+        lambda **_kwargs: SimpleNamespace(
+            ok=True,
+            outcome="cleaned",
+            remote_absence_verified=True,
+            verified=True,
+            resources_removed=["controller"],
+            errors=[],
+            commands=[["sky", "down"]],
+            project_alias="demo",
+            project_id="project-demo",
+            cluster_id="cluster-current",
+            context="context-demo",
+        ),
+    )
+    clear_calls: list[dict[str, str]] = []
+
+    def reject_mismatched_owner(project: str, **identity: str) -> bool:
+        clear_calls.append({"project": project, **identity})
+        if owner_mismatch:
+            raise ClusterOwnerIdentityMismatchError(
+                "Refusing to clear controller ownership for a different cluster id."
+            )
+        return True
+
+    monkeypatch.setattr(
+        "npa.controller_ownership.clear_controller_owner", reject_mismatched_owner
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "cleanup-controller",
+            "--project",
+            "demo",
+            "--context",
+            "context-demo",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == expected_outcome
+    assert payload["remote_absence_verified"] is True
+    assert payload["local_metadata_cleared"] is expected_local_verified
+    assert payload["verified"] is expected_local_verified
+    assert payload["overall_verified"] is expected_local_verified
+    if owner_mismatch:
+        assert (
+            "exact local ownership record could not be cleared" in payload["errors"][0]
+        )
+    else:
+        assert payload["errors"] == []
+    assert clear_calls == [
+        {
+            "project": "demo",
+            "project_id": "project-demo",
+            "cluster_id": "cluster-current",
+            "context": "context-demo",
+        }
+    ]
 
 
 def test_skypilot_controller_cleanup_forwards_explicit_orphan_recovery_attestation(

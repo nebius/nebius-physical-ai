@@ -253,10 +253,17 @@ this check. Missing frames, unlabeled rows, unknown indexes, and an absent
 requested label fail the workflow before it publishes a proof.
 
 YAML runs **after** annotation; it neither opens the editor nor discovers subtask
-boundaries. The SO-100 example above executes this same YAML locally. It is not
-evidence of a completed cloud submission; check the
-[readiness record](../../../workflows/testing/lerobot-subtask-proof.readiness.json)
-before attempting the cloud route.
+boundaries. The checked-in SO-100 example above executes this same YAML locally.
+Separately, a standard-runtime cloud execution was accepted against source
+revision `15afd79f08a4734b2b1ec9f421ed2b504ddaff8c`. Its durable S3 proof was
+downloaded and independently recomputed from the reviewed Parquet rows and label
+catalog, rather than accepted from terminal status alone. This proves exact row
+and coverage integrity only, not semantic label correctness, policy improvement,
+or robot readiness. That historical run does not qualify this checked-in
+example, the current base, or a future submission. Recheck storage, credentials,
+reviewed input, staged source, image pullability, and runtime for every new run;
+the sanitized result and its limits are in the
+[readiness record](../../../workflows/testing/lerobot-subtask-proof.readiness.json).
 
 ## Troubleshooting and completion checklist
 
