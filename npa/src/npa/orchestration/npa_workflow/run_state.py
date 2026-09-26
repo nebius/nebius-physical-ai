@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
@@ -153,36 +155,62 @@ class RuntimeRunState:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> RuntimeRunState:
+        schema_version = payload.get("schema_version")
+        if schema_version != RUNTIME_SCHEMA_VERSION:
+            raise ValueError(f"schema_version must be {RUNTIME_SCHEMA_VERSION!r}")
+
+        workflow = payload.get("workflow")
+        if not isinstance(workflow, str) or not workflow.strip():
+            raise ValueError("workflow must be a non-empty string")
+        run_id = payload.get("run_id")
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("run_id must be a non-empty string")
+
+        records: dict[str, list[dict[str, Any]]] = {}
+        for field_name in ("waves", "stages", "decisions", "plan_migrations"):
+            if field_name not in payload:
+                if field_name == "waves":
+                    raise ValueError("waves must be a list of objects")
+                records[field_name] = []
+                continue
+            value = payload[field_name]
+            if not isinstance(value, list) or any(
+                not isinstance(item, dict) for item in value
+            ):
+                raise ValueError(f"{field_name} must be a list of objects")
+            records[field_name] = [dict(item) for item in value]
+
+        watermarks = payload.get("watermarks", {})
+        if not isinstance(watermarks, dict):
+            raise ValueError("watermarks must be an object")
+
+        defaults = {
+            "api_version": "",
+            "status": "running",
+            "run_prefix_uri": "",
+            "plan_fingerprint": "",
+            "updated_at": utc_now(),
+        }
+        scalars: dict[str, str] = {}
+        for field_name, default in defaults.items():
+            if field_name in payload and not isinstance(payload[field_name], str):
+                raise ValueError(f"{field_name} must be a string")
+            scalars[field_name] = payload.get(field_name, default)
+
         return cls(
-            workflow=str(payload.get("workflow") or ""),
-            run_id=str(payload.get("run_id") or ""),
-            api_version=str(payload.get("api_version") or ""),
-            status=str(payload.get("status") or "running"),
-            run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
-            plan_fingerprint=str(payload.get("plan_fingerprint") or ""),
-            plan_migrations=[
-                dict(item)
-                for item in payload.get("plan_migrations") or []
-                if isinstance(item, dict)
-            ],
-            waves=[
-                dict(item)
-                for item in payload.get("waves") or []
-                if isinstance(item, dict)
-            ],
-            stages=[
-                dict(item)
-                for item in payload.get("stages") or []
-                if isinstance(item, dict)
-            ],
-            decisions=[
-                dict(item)
-                for item in payload.get("decisions") or []
-                if isinstance(item, dict)
-            ],
-            watermarks=dict(payload.get("watermarks") or {}),
-            updated_at=str(payload.get("updated_at") or utc_now()),
-            schema_version=str(payload.get("schema_version") or RUNTIME_SCHEMA_VERSION),
+            workflow=workflow,
+            run_id=run_id,
+            api_version=scalars["api_version"],
+            status=scalars["status"],
+            run_prefix_uri=scalars["run_prefix_uri"],
+            plan_fingerprint=scalars["plan_fingerprint"],
+            plan_migrations=records["plan_migrations"],
+            waves=records["waves"],
+            stages=records["stages"],
+            decisions=records["decisions"],
+            watermarks=dict(watermarks),
+            updated_at=scalars["updated_at"],
+            schema_version=schema_version,
         )
 
     def completed_wave(self, key: str) -> dict[str, Any] | None:
@@ -543,6 +571,89 @@ def status_key(prefix: str) -> str:
     return f"{base}/npa-workflow/status.json"
 
 
+def _prefix_page_has_content(response: Mapping[str, Any], prefix: str) -> bool:
+    contents = response.get("Contents", [])
+    if not isinstance(contents, list):
+        raise RuntimeError("S3 prefix listing returned malformed object records")
+    for item in contents:
+        if not isinstance(item, Mapping):
+            raise RuntimeError(
+                "S3 prefix listing returned an object without a valid Size"
+            )
+        object_key = item.get("Key")
+        if not isinstance(object_key, str) or not object_key.startswith(prefix):
+            raise RuntimeError(
+                "S3 prefix listing returned an object outside the requested prefix"
+            )
+        size = item.get("Size")
+        if type(size) is not int or size < 0:
+            raise RuntimeError(
+                "S3 prefix listing returned an object without a valid Size"
+            )
+        if size > 0:
+            return True
+    return False
+
+
+def _prefix_next_token(response: Mapping[str, Any], seen_tokens: set[str]) -> str:
+    truncated = response.get("IsTruncated")
+    if not isinstance(truncated, bool):
+        raise RuntimeError("S3 prefix listing returned malformed pagination")
+    token = response.get("NextContinuationToken")
+    if not truncated:
+        if token is not None and token != "":
+            raise RuntimeError("S3 prefix listing returned malformed pagination")
+        return ""
+    if not isinstance(token, str) or not token or token in seen_tokens:
+        raise RuntimeError(
+            "S3 prefix listing returned a truncated page without a new continuation token"
+        )
+    seen_tokens.add(token)
+    return token
+
+
+def s3_prefix_has_nonempty_object(client: Any, *, bucket: str, prefix: str) -> bool:
+    """Inspect every S3 page for nonempty content below an exact prefix.
+
+    Args:
+        client: S3 client used for the requested run's object store.
+        bucket: Exact bucket containing the declared output.
+        prefix: Exact directory-style output prefix, including its trailing slash.
+
+    Returns:
+        Whether a nonempty object exists; zero-byte markers are not evidence.
+
+    Raises:
+        RuntimeError: Object records or pagination cannot prove presence or absence.
+        Exception: The object store cannot complete the listing.
+    """
+    continuation_token = ""
+    seen_tokens: set[str] = set()
+    while True:
+        request: dict[str, object] = {
+            "Bucket": bucket,
+            "Prefix": prefix,
+            "MaxKeys": 1000,
+        }
+        if continuation_token:
+            request["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**request)
+        if not isinstance(response, Mapping):
+            raise RuntimeError("S3 prefix listing returned a malformed response")
+        if _prefix_page_has_content(response, prefix):
+            return True
+        continuation_token = _prefix_next_token(response, seen_tokens)
+        if not continuation_token:
+            return False
+
+
+def _corrupt_runtime_state(key: str, reason: str) -> NpaWorkflowError:
+    return NpaWorkflowError(
+        f"durable runtime state is corrupt at {key}: {reason}; "
+        "preserve it and restore a valid ledger before resuming"
+    )
+
+
 class RunStateStore:
     """Persist workflow run manifests (mock ``reader``/``writer`` in unit tests)."""
 
@@ -591,12 +702,10 @@ class RunStateStore:
         )._s3
         try:
             if uri.endswith("/"):
-                response = client.list_objects_v2(
-                    Bucket=parsed.netloc, Prefix=key, MaxKeys=1
-                )
-                return any(
-                    int(item.get("Size") or 0) > 0
-                    for item in response.get("Contents", [])
+                return s3_prefix_has_nonempty_object(
+                    client,
+                    bucket=parsed.netloc,
+                    prefix=key,
                 )
             response = client.head_object(Bucket=parsed.netloc, Key=key)
             return int(response.get("ContentLength") or 0) > 0
@@ -635,18 +744,54 @@ class RunStateStore:
         )
         return payload
 
-    def read_runtime_state(self) -> RuntimeRunState | None:
+    def read_runtime_state(
+        self,
+        *,
+        expected_workflow: str = "",
+        expected_run_id: str = "",
+    ) -> RuntimeRunState | None:
+        """Read the durable runtime ledger without collapsing corruption or I/O errors.
+
+        Args:
+            expected_workflow: Requested workflow identity for a resumed run.
+            expected_run_id: Requested run identity for a resumed run.
+
+        Returns:
+            The decoded runtime state, or ``None`` when the object does not exist.
+
+        Raises:
+            NpaWorkflowError: The object is malformed, has an invalid envelope, or
+                does not match the requested resume identity.
+            Exception: The object store denied or could not complete the read.
+        """
+        key = runtime_key(self.prefix)
         try:
-            body = self._read(runtime_key(self.prefix))
+            body = self._read(key)
         except FileNotFoundError:
             return None
+        except UnicodeDecodeError as exc:
+            raise _corrupt_runtime_state(
+                key, "content is not valid UTF-8 JSON"
+            ) from exc
         try:
             payload = json.loads(body)
-        except json.JSONDecodeError:
-            return None
+        except json.JSONDecodeError as exc:
+            raise _corrupt_runtime_state(key, "content is not valid JSON") from exc
         if not isinstance(payload, dict):
-            return None
-        return RuntimeRunState.from_dict(payload)
+            raise _corrupt_runtime_state(key, "content must be a JSON object")
+        try:
+            state = RuntimeRunState.from_dict(payload)
+        except (TypeError, ValueError) as exc:
+            raise _corrupt_runtime_state(key, str(exc)) from exc
+        if expected_run_id and state.run_id != expected_run_id:
+            raise _corrupt_runtime_state(
+                key, "run_id does not match the requested resume identity"
+            )
+        if expected_workflow and state.workflow != expected_workflow:
+            raise _corrupt_runtime_state(
+                key, "workflow does not match the requested resume identity"
+            )
+        return state
 
     def write_runtime_state(self, state: RuntimeRunState) -> dict[str, Any]:
         state.updated_at = utc_now()
@@ -770,6 +915,7 @@ class RunStateStore:
             value = self._reader(self.bucket, key)
             return value if isinstance(value, bytes) else str(value).encode("utf-8")
         from npa.clients.storage import StorageClient
+        from botocore.exceptions import ClientError
 
         client = StorageClient.from_environment(
             endpoint_url=self._endpoint_url,
@@ -778,8 +924,11 @@ class RunStateStore:
         )
         try:
             response = client._s3.get_object(Bucket=self.bucket, Key=key)
-        except Exception as exc:
-            raise FileNotFoundError(f"s3://{self.bucket}/{key}") from exc
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                raise FileNotFoundError(f"s3://{self.bucket}/{key}") from exc
+            raise
         return response["Body"].read()
 
     def _write(self, key: str, payload: Mapping[str, Any]) -> None:
