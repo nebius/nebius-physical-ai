@@ -5,8 +5,9 @@ built-in public reference or an operator's registered Isaac Lab navigation task:
 prepare inputs → native RSL-RL train → reload checkpoint and evaluate held-out
 goals. It requires a self-contained collision USDZ and explicit reset/probe cases.
 The public bundle builder supplies a cluttered warehouse and reviewed native task;
-custom robots retain the BYOF adapter boundary. **Full learning and held-out acceptance
-remain pending; native 4000-robot physical controls have passed.**
+custom robots retain the BYOF adapter boundary. **Native 4000-robot physical controls
+and 1500 PPO training iterations have completed; independently reloaded held-out
+performance and video acceptance remain pending.**
 Proprietary robot and scene integration remains operator input.
 
 The reference extends the pinned public
