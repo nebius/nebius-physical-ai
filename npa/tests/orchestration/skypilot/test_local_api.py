@@ -314,6 +314,80 @@ def test_real_listener_owned_and_same_process_adopted_on_retry(local_runtime):
     ).stat().st_mode & 0o777 == 0o600
 
 
+@pytest.fixture
+def listener_procfs(monkeypatch):
+    pid = 731
+    process_netns = Path(f"/proc/{pid}/ns/net")
+    self_netns = Path("/proc/self/ns/net")
+    process_tcp = Path(f"/proc/{pid}/net/tcp")
+    original_readlink = Path.readlink
+
+    def readlink(path: Path) -> Path:
+        if path in {process_netns, self_netns}:
+            return Path("net:[4026531840]")
+        return original_readlink(path)
+
+    monkeypatch.setattr(api.sys, "platform", "linux")
+    monkeypatch.setattr(Path, "readlink", readlink)
+    return pid, process_netns, process_tcp
+
+
+@pytest.mark.parametrize("exit_error", [FileNotFoundError, ProcessLookupError])
+def test_listener_owned_treats_exit_between_proc_reads_as_absent(
+    monkeypatch, listener_procfs, exit_error
+):
+    pid, _process_netns, process_tcp = listener_procfs
+    original_read_text = Path.read_text
+
+    def read_text(path: Path, *args, **kwargs) -> str:
+        if path == process_tcp:
+            raise exit_error(process_tcp)
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert not api._listener_owned({"port": 43127}, {"pid": pid})
+
+
+@pytest.mark.parametrize("boundary", ["namespace", "listener-table"])
+def test_listener_owned_preserves_permission_failure(
+    monkeypatch, listener_procfs, boundary
+):
+    pid, process_netns, process_tcp = listener_procfs
+    method = "readlink" if boundary == "namespace" else "read_text"
+    denied_path = process_netns if boundary == "namespace" else process_tcp
+    original = getattr(Path, method)
+
+    def denied(path: Path, *args, **kwargs):
+        if path == denied_path:
+            raise PermissionError("fixture procfs access denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, denied)
+
+    with pytest.raises(PermissionError, match="fixture procfs access denied"):
+        api._listener_owned({"port": 43127}, {"pid": pid})
+
+
+def test_listener_owned_rejects_foreign_network_namespace(monkeypatch, listener_procfs):
+    pid, process_netns, _process_tcp = listener_procfs
+    original = Path.readlink
+
+    def foreign_namespace(path: Path) -> Path:
+        if path == process_netns:
+            return Path("net:[4026531841]")
+        return original(path)
+
+    def unexpected_listener_read(*args, **kwargs):
+        pytest.fail("foreign namespace must fail before inspecting listeners")
+
+    monkeypatch.setattr(Path, "readlink", foreign_namespace)
+    monkeypatch.setattr(Path, "read_text", unexpected_listener_read)
+
+    with pytest.raises(api.IsolatedApiError, match="another network namespace"):
+        api._listener_owned({"port": 43127}, {"pid": pid})
+
+
 @pytest.mark.parametrize("missed_scans", [1, 3])
 def test_live_new_server_waits_for_process_discovery(
     local_runtime, monkeypatch, missed_scans
