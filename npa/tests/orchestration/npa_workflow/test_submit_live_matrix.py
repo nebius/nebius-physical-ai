@@ -1044,3 +1044,42 @@ def test_gpu_sweep_live_case_caps_concurrency_for_cost() -> None:
     # 4 members with maxConcurrency 2 means the runtime submits two JobGroups, which
     # is also the only live coverage of the multi-batch path.
     assert sweep.expected_parallel_tasks == 4
+
+
+def test_navigation_live_spec_uses_explicit_operator_inputs(tmp_path, monkeypatch):
+    helpers = _load_live_helpers()
+    image = "registry.example.invalid/navigation@sha256:" + "a" * 64
+    monkeypatch.setenv(
+        "NPA_NAVIGATION_INPUT_URI", "s3://fixture-bucket/navigation-input/"
+    )
+    monkeypatch.setenv("NPA_NAVIGATION_IMAGE", image)
+    path = helpers.materialize_live_spec(
+        tmp_path,
+        "shared-scene-navigation.yaml",
+        bucket="fixture-bucket",
+        run_id="fixture",
+    )
+    spec = yaml.safe_load(path.read_text())
+    config = spec["config"]
+    assert config["byof_image"] == image
+    assert config["input_uri"] == "s3://fixture-bucket/navigation-input/"
+    for stage, input_prefix in (
+        ("train", "prepared_uri"),
+        ("evaluate", "training_uri"),
+    ):
+        prefix = "{{config." + input_prefix + "}}"
+        assert spec["states"][stage]["inputs"] == [
+            {
+                "uri": prefix + "completion.json",
+                "schema": "npa.navigation.publication.v1",
+            }
+        ]
+        assert spec["states"][stage]["run"]["argv"][-2] == prefix
+    monkeypatch.delenv("NPA_NAVIGATION_IMAGE")
+    with pytest.raises(ValueError, match="exact NPA_NAVIGATION_IMAGE"):
+        helpers.materialize_live_spec(
+            tmp_path,
+            "shared-scene-navigation.yaml",
+            bucket="fixture-bucket",
+            run_id="fixture",
+        )
