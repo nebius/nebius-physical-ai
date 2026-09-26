@@ -1,0 +1,33 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: synthetic-selector-render-control
+config:
+  bucket: example-bucket
+  prefix: synthetic-selector-control
+  images_uri: s3://example-bucket/synthetic/images/
+  captions_uri: s3://example-bucket/synthetic/captions.json
+  prompts_uri: s3://example-bucket/synthetic/prompts.jsonl
+  generations_uri: s3://example-bucket/synthetic/generations.jsonl
+  caption_model: synthetic-model
+  generate_model: synthetic-model
+  max_images: 1
+  max_tokens: 8
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 1
+initial: caption
+states:
+  caption:
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    outputs:
+      - uri: '{{config.captions_uri}}'
+    next: generate
+  generate:
+    toolRef: workbench.token_factory.generate
+    resources: cpu
+    outputs:
+      - uri: '{{config.generations_uri}}'
+    terminal: true

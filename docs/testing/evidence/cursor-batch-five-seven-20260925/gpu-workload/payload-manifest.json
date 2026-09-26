@@ -1,0 +1,13 @@
+{
+  "schema": "cuda-regression-payload/v1",
+  "sha256": "8985d2527f95d2d492827ae1bb0feb860b99bb54f9cb92a469bb088c454ba357",
+  "size": 8207,
+  "files": {
+    "__main__.py": "9354a13296b5f8cf3f39530f5195163d56685585f0aac9fa7e6c66f00c60854a",
+    "regression_contract.py": "70d0b35bd75461221ccf456b43d87f867d2110d602892a4c0db957a6f46924f7",
+    "object_storage.py": "06306bd06f330aa97d6825b7eb575e45afa4b5b5f052feb54770a087f17a72fa",
+    "artifact_validation.py": "25cd8f1d437c8d7b5729f4a55cf9007d4350c95e6ce1b4bae723bcba0b14feaf",
+    "train.py": "56a01358c4cddef5719c47514f39ea0d2a7d3cb77ecca8019233ff5f8eb4373b",
+    "verify.py": "ffe7b25988a9bc4c77909cebd90e62139e0bf5b12728247e9b5c11951877bd0c"
+  }
+}

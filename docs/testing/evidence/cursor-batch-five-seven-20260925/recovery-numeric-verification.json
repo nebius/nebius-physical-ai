@@ -1,0 +1,39 @@
+{
+  "classification": "CPU consistency rechecks of actual recovery exports; not physical GPU allocation evidence",
+  "checks": {
+    "event-recovery-numeric.json": {
+      "export_sha256": "6d72b21275fedff5ed17d377626bbf3304c0a0d415052a31f94ad885c6454a84",
+      "result": {
+        "classification": "CPU consistency check of published measurements",
+        "actual_export": {
+          "steps_verified": 32,
+          "final_train_loss": 0.0016543993155160245,
+          "heldout_loss": 0.0015574999575306604
+        },
+        "copied_negative_controls": {
+          "changed_weight": "rejected",
+          "zero_parameter_motion": "rejected",
+          "missing_step": "rejected"
+        },
+        "gpu_execution_claim": false
+      }
+    },
+    "marker-recovery-numeric.json": {
+      "export_sha256": "126bc6805094926f55c8d935829392c3598f63994aad7becc8242e996d7f7745",
+      "result": {
+        "classification": "CPU consistency check of published measurements",
+        "actual_export": {
+          "steps_verified": 32,
+          "final_train_loss": 0.0016543993155160245,
+          "heldout_loss": 0.0015574999575306604
+        },
+        "copied_negative_controls": {
+          "changed_weight": "rejected",
+          "zero_parameter_motion": "rejected",
+          "missing_step": "rejected"
+        },
+        "gpu_execution_claim": false
+      }
+    }
+  }
+}

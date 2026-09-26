@@ -1,0 +1,356 @@
+{
+  "schema": "npa-gpu-regression-public-numeric/v1",
+  "classification": "actual CUDA training with independent CPU verification",
+  "source_commit": "4602cc392b7725513cf963c96b05b63d817d8cb7",
+  "payload_sha256": "8985d2527f95d2d492827ae1bb0feb860b99bb54f9cb92a469bb088c454ba357",
+  "generic_spec_sha256": "e976a197af7ff09f4f82b2039f00a6cc12992c8bbed002fe6de7ecba92854d07",
+  "metrics": {
+    "boto3_version": "1.43.89",
+    "botocore_version": "1.43.103",
+    "compute_capability": [
+      10,
+      0
+    ],
+    "cuda_version": "13.0",
+    "device_name": "NVIDIA B200",
+    "device_type": "cuda",
+    "final_train_loss": 0.0016543993155160276,
+    "heldout_loss": 0.001557499957530664,
+    "image": "docker.io/pytorch/pytorch@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407",
+    "journal": [
+      {
+        "elapsed_seconds": 0.21770940627902746,
+        "gradient_norm": 3.6853903185884076,
+        "loss": 3.253974364401865,
+        "optimizer_step": 1,
+        "parameter_delta": 0.36853903185884074,
+        "samples_per_second": 4703.51748921491
+      },
+      {
+        "elapsed_seconds": 0.012642665300518274,
+        "gradient_norm": 2.9128161274895237,
+        "loss": 2.0382184191094828,
+        "optimizer_step": 2,
+        "parameter_delta": 0.5860876241108316,
+        "samples_per_second": 80995.5793070012
+      },
+      {
+        "elapsed_seconds": 0.0014462699182331562,
+        "gradient_norm": 1.688674739708356,
+        "loss": 0.690936331094028,
+        "optimizer_step": 3,
+        "parameter_delta": 0.6374567266142529,
+        "samples_per_second": 708028.27818681
+      },
+      {
+        "elapsed_seconds": 0.001320025883615017,
+        "gradient_norm": 0.39675576268636426,
+        "loss": 0.04037136300647019,
+        "optimizer_step": 4,
+        "parameter_delta": 0.5457079123530126,
+        "samples_per_second": 775742.3643812789
+      },
+      {
+        "elapsed_seconds": 0.0012126900255680084,
+        "gradient_norm": 0.8137585802019388,
+        "loss": 0.15353891447097054,
+        "optimizer_step": 5,
+        "parameter_delta": 0.3599351395930701,
+        "samples_per_second": 844403.7457307951
+      },
+      {
+        "elapsed_seconds": 0.0014290763065218925,
+        "gradient_norm": 1.538789286850513,
+        "loss": 0.5589895664014752,
+        "optimizer_step": 6,
+        "parameter_delta": 0.14276025853176344,
+        "samples_per_second": 716546.761937595
+      },
+      {
+        "elapsed_seconds": 0.0012962659820914268,
+        "gradient_norm": 1.8021047937822265,
+        "loss": 0.7734913856067809,
+        "optimizer_step": 7,
+        "parameter_delta": 0.08923378488197617,
+        "samples_per_second": 789961.3305811309
+      },
+      {
+        "elapsed_seconds": 0.0012502139434218407,
+        "gradient_norm": 1.638487872683006,
+        "loss": 0.645296542391889,
+        "optimizer_step": 8,
+        "parameter_delta": 0.225940049753464,
+        "samples_per_second": 819059.814032555
+      },
+      {
+        "elapsed_seconds": 0.001029138918966055,
+        "gradient_norm": 1.1736825526274541,
+        "loss": 0.3359523188452038,
+        "optimizer_step": 9,
+        "parameter_delta": 0.29529202501297613,
+        "samples_per_second": 995006.5837844148
+      },
+      {
+        "elapsed_seconds": 0.000650135800242424,
+        "gradient_norm": 0.5851081568198989,
+        "loss": 0.08651059369429387,
+        "optimizer_step": 10,
+        "parameter_delta": 0.2905341302391407,
+        "samples_per_second": 1575055.5493454887
+      },
+      {
+        "elapsed_seconds": 0.0012736301869153976,
+        "gradient_norm": 0.24541116367413904,
+        "loss": 0.014484744678138957,
+        "optimizer_step": 11,
+        "parameter_delta": 0.22814725788724277,
+        "samples_per_second": 804001.0440393405
+      },
+      {
+        "elapsed_seconds": 0.0012284331023693085,
+        "gradient_norm": 0.5712452759393563,
+        "loss": 0.07484854611941454,
+        "optimizer_step": 12,
+        "parameter_delta": 0.13547972563986413,
+        "samples_per_second": 833582.226028415
+      },
+      {
+        "elapsed_seconds": 0.0013921079225838184,
+        "gradient_norm": 0.8044783123710371,
+        "loss": 0.15164311744301257,
+        "optimizer_step": 13,
+        "parameter_delta": 0.05477645599650553,
+        "samples_per_second": 735575.1543309999
+      },
+      {
+        "elapsed_seconds": 0.0013278769329190254,
+        "gradient_norm": 0.834613265077975,
+        "loss": 0.16589737943273686,
+        "optimizer_step": 14,
+        "parameter_delta": 0.07838691106632864,
+        "samples_per_second": 771155.801124564
+      },
+      {
+        "elapsed_seconds": 0.00124651612713933,
+        "gradient_norm": 0.6935627352519629,
+        "loss": 0.11671626714013844,
+        "optimizer_step": 15,
+        "parameter_delta": 0.1246143191133511,
+        "samples_per_second": 821489.572180675
+      },
+      {
+        "elapsed_seconds": 0.001313923392444849,
+        "gradient_norm": 0.45344982329399425,
+        "loss": 0.051424640347180785,
+        "optimizer_step": 16,
+        "parameter_delta": 0.1405796759743156,
+        "samples_per_second": 779345.2844268329
+      },
+      {
+        "elapsed_seconds": 0.0013853022828698158,
+        "gradient_norm": 0.22219542109404863,
+        "loss": 0.012922634484978263,
+        "optimizer_step": 17,
+        "parameter_delta": 0.12632538045992847,
+        "samples_per_second": 739188.8490060553
+      },
+      {
+        "elapsed_seconds": 0.0013184137642383575,
+        "gradient_norm": 0.2132069797878693,
+        "loss": 0.010451610767253797,
+        "optimizer_step": 18,
+        "parameter_delta": 0.0917360966200557,
+        "samples_per_second": 776690.9203891396
+      },
+      {
+        "elapsed_seconds": 0.0010209199972450733,
+        "gradient_norm": 0.33471190663412953,
+        "loss": 0.025651679292762984,
+        "optimizer_step": 19,
+        "parameter_delta": 0.05212204153600466,
+        "samples_per_second": 1003016.889436232
+      },
+      {
+        "elapsed_seconds": 0.0006210552528500557,
+        "gradient_norm": 0.3922906320247568,
+        "loss": 0.03601337004915712,
+        "optimizer_step": 20,
+        "parameter_delta": 0.03465531082755744,
+        "samples_per_second": 1648806.6002192388
+      },
+      {
+        "elapsed_seconds": 0.0013788100332021713,
+        "gradient_norm": 0.36701369831961156,
+        "loss": 0.03225305174183256,
+        "optimizer_step": 21,
+        "parameter_delta": 0.05017920374646766,
+        "samples_per_second": 742669.385442348
+      },
+      {
+        "elapsed_seconds": 0.0010961326770484447,
+        "gradient_norm": 0.2814423657466304,
+        "loss": 0.01954059582323031,
+        "optimizer_step": 22,
+        "parameter_delta": 0.06320226484239828,
+        "samples_per_second": 934193.4798963604
+      },
+      {
+        "elapsed_seconds": 0.001157195307314396,
+        "gradient_norm": 0.17598894634359852,
+        "loss": 0.007975210932240802,
+        "optimizer_step": 23,
+        "parameter_delta": 0.0634589102077588,
+        "samples_per_second": 884898.1615527685
+      },
+      {
+        "elapsed_seconds": 0.0014717411249876022,
+        "gradient_norm": 0.11489865086044167,
+        "loss": 0.003317399828204896,
+        "optimizer_step": 24,
+        "parameter_delta": 0.05268407548324026,
+        "samples_per_second": 695774.5371208717
+      },
+      {
+        "elapsed_seconds": 0.0012130672112107277,
+        "gradient_norm": 0.14049538702265055,
+        "loss": 0.004506480576912925,
+        "optimizer_step": 25,
+        "parameter_delta": 0.03645563400456708,
+        "samples_per_second": 844141.19064184
+      },
+      {
+        "elapsed_seconds": 0.0014116782695055008,
+        "gradient_norm": 0.17548217985470574,
+        "loss": 0.007062473151289665,
+        "optimizer_step": 26,
+        "parameter_delta": 0.0232504156271679,
+        "samples_per_second": 725377.7451420986
+      },
+      {
+        "elapsed_seconds": 0.0010610171593725681,
+        "gradient_norm": 0.17985137722239555,
+        "loss": 0.007596668103275118,
+        "optimizer_step": 27,
+        "parameter_delta": 0.022363642877042837,
+        "samples_per_second": 965111.6298680238
+      },
+      {
+        "elapsed_seconds": 0.0013256920501589775,
+        "gradient_norm": 0.15402217964134593,
+        "loss": 0.0057456231448705375,
+        "optimizer_step": 28,
+        "parameter_delta": 0.02770464317577094,
+        "samples_per_second": 772426.7486383445
+      },
+      {
+        "elapsed_seconds": 0.0013819891028106213,
+        "gradient_norm": 0.11199659320442408,
+        "loss": 0.003163926784017821,
+        "optimizer_step": 29,
+        "parameter_delta": 0.029917433728084437,
+        "samples_per_second": 740960.9800232428
+      },
+      {
+        "elapsed_seconds": 0.0011887028813362122,
+        "gradient_norm": 0.07564769064886365,
+        "loss": 0.0014803244732846626,
+        "optimizer_step": 30,
+        "parameter_delta": 0.027302166847614107,
+        "samples_per_second": 861443.1882666332
+      },
+      {
+        "elapsed_seconds": 0.0012076878920197487,
+        "gradient_norm": 0.06806421973918632,
+        "loss": 0.0011096167874952156,
+        "optimizer_step": 31,
+        "parameter_delta": 0.021405022282896046,
+        "samples_per_second": 847901.1893440884
+      },
+      {
+        "elapsed_seconds": 0.0013119978830218315,
+        "gradient_norm": 0.07921384865910099,
+        "loss": 0.0014323329626872022,
+        "optimizer_step": 32,
+        "parameter_delta": 0.015190731335132443,
+        "samples_per_second": 780489.0642365166
+      }
+    ],
+    "recipe": {
+      "features": 8,
+      "heldout_samples": 1024,
+      "learning_rate": 0.1,
+      "momentum": 0.8,
+      "samples": 1024,
+      "seed": 7,
+      "steps": 32
+    },
+    "torch_version": "2.13.0+cu130"
+  },
+  "checkpoint_numeric_state": {
+    "parameters": [
+      0.1324882420560705,
+      0.25418877213280866,
+      0.3836564589088559,
+      0.5033954501246669,
+      0.6293231782524574,
+      0.7573020455980732,
+      0.89356699598636,
+      1.025764255747699,
+      0.26695530439944803
+    ],
+    "momentum": [
+      -0.016516652279057555,
+      0.0026964883905529584,
+      -0.007315361434432344,
+      -0.07777596299556745,
+      -0.09149229572633638,
+      -0.07954410452614874,
+      -0.00622048609539038,
+      -0.03986440978992834,
+      0.01916182943669025
+    ],
+    "initial_parameters": [
+      -0.07,
+      -0.05,
+      -0.03,
+      -0.01,
+      0.01,
+      0.03,
+      0.05,
+      0.07,
+      -0.125
+    ],
+    "optimizer_step": 32
+  },
+  "measured_optimizer_seconds": 0.2673197789117694,
+  "timing_scope": "Measured CUDA optimizer step intervals, excluding setup, staging, scheduling and validation; not an end-to-end benchmark.",
+  "limits": "Synthetic regression only; no robot policy, native Ray, provider fault, or optimizer-resume claim.",
+  "independent_cpu_verification": {
+    "optimizer_steps_verified": 32,
+    "heldout_loss": 0.0015574999575306608,
+    "initial_train_loss": 3.2539743644018655,
+    "final_train_loss": 0.0016543993155160252,
+    "training_loss_ratio": 0.0005084242007604541,
+    "optimizer_momentum_verified": true,
+    "method": "independent host CPU checkpoint decode and scalar SGD replay"
+  },
+  "raw_artifact_hashes": {
+    "training/checkpoint.pt": {
+      "sha256": "d3b7bb71991e3f32df61fe15e4be13b750cfead45d2171519dcd5902c1bfb13b",
+      "bytes": 3101
+    },
+    "training/metrics.json": {
+      "sha256": "86d1e3834d68609ada130766fadb8d5ff56b72e5faf34d70689b188455e97746",
+      "bytes": 9117
+    },
+    "training/manifest.json": {
+      "sha256": "2b81e465b85fdd4676dc1a3fdced411f3e06255af84e986e6caa54a559f15aee",
+      "bytes": 522
+    },
+    "validation.json": {
+      "sha256": "bec2f1114bc5f28ef22fe534b3610ca6741526c3275f8d622199f95d5c44d10e",
+      "bytes": 957
+    }
+  },
+  "staged_source_fingerprint": "978ad58293411d6ca936e84c593787ab1526f0d4c822d69965448301d2ec2598"
+}

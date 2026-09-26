@@ -1,0 +1,111 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: cuda-regression-recovery-proof
+  description: >-
+    Train linear regression on a real CUDA device, publish a momentum checkpoint,
+    then independently verify every update and held-out loss using CPU arithmetic.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cuda-regression"
+  candidate_source_sha: "0000000000000000000000000000000000000000"
+  payload_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+  post_output_verification: none
+  payload_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/payload.pyz"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training"
+  validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation.json"
+  release_uri: "s3://{{config.bucket}}/{{config.prefix}}/control/release.json"
+resources:
+  cuda:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 4
+    memory: 16Gi
+    image: docker.io/pytorch/pytorch@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: docker.io/pytorch/pytorch@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407
+initial: train
+states:
+  train:
+    description: Train on CUDA and publish readback-verified actual model and momentum.
+    resources: cuda
+    inputs:
+      - uri: "{{config.payload_uri}}"
+        schema: application/zip
+    run:
+      shell: |
+        set -euo pipefail
+        umask 077
+        proof_root=$(mktemp -d /tmp/npa-cuda-regression.XXXXXXXX)
+        python3 - '{{config.payload_uri}}' '{{config.payload_sha256}}' "$proof_root/payload.pyz" <<'PY'
+        import hashlib, os, pathlib, sys
+        from urllib.parse import urlsplit
+        import boto3
+        source = urlsplit(sys.argv[1])
+        if source.scheme != 's3' or source.query or source.fragment:
+            raise ValueError('payload must be an unsigned S3 object')
+        client = boto3.client('s3', endpoint_url=os.environ['AWS_ENDPOINT_URL'])
+        response = client.get_object(Bucket=source.netloc, Key=source.path.lstrip('/'))
+        with response['Body'] as body:
+            data = body.read()
+        if hashlib.sha256(data).hexdigest() != sys.argv[2]:
+            raise ValueError('immutable payload SHA-256 mismatch')
+        pathlib.Path(sys.argv[3]).write_bytes(data)
+        PY
+        /usr/bin/python3.12 -m venv --system-site-packages --without-pip "$proof_root/runtime"
+        /usr/bin/python3.12 -m pip --python "$proof_root/runtime/bin/python" install 'boto3==1.43.89'
+        "$proof_root/runtime/bin/python" "$proof_root/payload.pyz" train \
+          --output-uri '{{config.training_uri}}' --run-id '{{run.id}}' \
+          --source-sha '{{config.candidate_source_sha}}' --payload-sha '{{config.payload_sha256}}' \
+          --post-output-verification '{{config.post_output_verification}}' \
+          --release-uri '{{config.release_uri}}'
+    outputs:
+      - uri: "{{config.training_uri}}/checkpoint.pt"
+        schema: application/octet-stream
+      - uri: "{{config.training_uri}}/metrics.json"
+        schema: cuda-regression-metrics/v1
+      - uri: "{{config.training_uri}}/manifest.json"
+        schema: cuda-regression-manifest/v1
+    next: verify
+  verify:
+    description: Recompute every update and held-out loss independently on CPU.
+    resources: cpu
+    inputs:
+      - uri: "{{config.payload_uri}}"
+        schema: application/zip
+      - uri: "{{config.training_uri}}/checkpoint.pt"
+      - uri: "{{config.training_uri}}/metrics.json"
+      - uri: "{{config.training_uri}}/manifest.json"
+    run:
+      shell: |
+        set -euo pipefail
+        umask 077
+        proof_root=$(mktemp -d /tmp/npa-cuda-regression.XXXXXXXX)
+        python3 - '{{config.payload_uri}}' '{{config.payload_sha256}}' "$proof_root/payload.pyz" <<'PY'
+        import hashlib, os, pathlib, sys
+        from urllib.parse import urlsplit
+        import boto3
+        source = urlsplit(sys.argv[1])
+        if source.scheme != 's3' or source.query or source.fragment:
+            raise ValueError('payload must be an unsigned S3 object')
+        client = boto3.client('s3', endpoint_url=os.environ['AWS_ENDPOINT_URL'])
+        response = client.get_object(Bucket=source.netloc, Key=source.path.lstrip('/'))
+        with response['Body'] as body:
+            data = body.read()
+        if hashlib.sha256(data).hexdigest() != sys.argv[2]:
+            raise ValueError('immutable payload SHA-256 mismatch')
+        pathlib.Path(sys.argv[3]).write_bytes(data)
+        PY
+        /usr/bin/python3.12 -m venv --system-site-packages --without-pip "$proof_root/runtime"
+        /usr/bin/python3.12 -m pip --python "$proof_root/runtime/bin/python" install 'boto3==1.43.89'
+        "$proof_root/runtime/bin/python" "$proof_root/payload.pyz" verify \
+          --input-uri '{{config.training_uri}}' --output-uri '{{config.validation_uri}}' \
+          --run-id '{{run.id}}' --source-sha '{{config.candidate_source_sha}}' \
+          --payload-sha '{{config.payload_sha256}}'
+    outputs:
+      - uri: "{{config.validation_uri}}"
+        schema: cuda-regression-validation/v1
+    terminal: true

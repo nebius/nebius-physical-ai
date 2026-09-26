@@ -1,0 +1,268 @@
+{
+  "schema": "npa-native-gpu-recovery-proof/v1",
+  "provenance": {
+    "source_commit": "4602cc392b7725513cf963c96b05b63d817d8cb7",
+    "staged_source_fingerprint": "978ad58293411d6ca936e84c593787ab1526f0d4c822d69965448301d2ec2598",
+    "staged_object_count": 2866,
+    "staged_source_bytes": 44958158,
+    "source_manifest_sha256": "6f1dca47563ef4e0352d630456a443bedddfc11a63b86c99ff7ae49a71694ea2",
+    "source_verification": "Full S3 object GET byte equality and exact inventory against frozen Git candidate; source staging was explicitly enabled on every invocation.",
+    "payload_sha256": "8985d2527f95d2d492827ae1bb0feb860b99bb54f9cb92a469bb088c454ba357",
+    "spec_sha256": "e976a197af7ff09f4f82b2039f00a6cc12992c8bbed002fe6de7ecba92854d07",
+    "fault_harness_sha256": "1dc63c4d03cd93989ddad3555da7299604f7d6e5486b20530316c433310e2630",
+    "effective_image_render_fields": {
+      "registry": "",
+      "image_overrides": {},
+      "image_digest_pins": {
+        "docker.io/pytorch/pytorch@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407": "docker.io/pytorch/pytorch@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407"
+      },
+      "gpu_target": "",
+      "image_variant": ""
+    },
+    "recomputed_effective_image_identity": "c26c1d87e826be562e766afe7a34496922151c84ee338b0b049d9fb6ff6cb944",
+    "running_gpu_pod_source_matches_candidate": true,
+    "running_gpu_pod_source_files": [
+      {
+        "relative_path": "src/npa/orchestration/npa_workflow/runtime.py",
+        "sha256": "690ce7ad09d056f2d76e72a603d3429eeef3752b19775735021e363caf479063"
+      },
+      {
+        "relative_path": "src/npa/orchestration/npa_workflow/run_state.py",
+        "sha256": "6bb982a83b1481befdaf83ea8fe682c2c4e53764688c0d3b57a3ebe42409d448"
+      },
+      {
+        "relative_path": "src/npa/orchestration/npa_workflow/supervisor.py",
+        "sha256": "35d4739beda4e3778afd3078a906623dbbe0541e54d0adb48699554245042578"
+      },
+      {
+        "relative_path": "src/npa/orchestration/skypilot/local_api.py",
+        "sha256": "eb71e3e1affdd8215671061f59fa738c4ed2ed3f6a0cc4c73b11ddecd25d88cd"
+      }
+    ]
+  },
+  "native_baseline": {
+    "status": "passed",
+    "gpu_family": "NVIDIA B200",
+    "gpu_driver": "580.159.04",
+    "cuda": "13.0",
+    "torch": "2.13.0+cu130",
+    "optimizer_steps": 32,
+    "independent_cpu_verification": {
+      "optimizer_steps_verified": 32,
+      "heldout_loss": 0.0015574999575306608,
+      "initial_train_loss": 3.2539743644018655,
+      "final_train_loss": 0.0016543993155160252,
+      "training_loss_ratio": 0.0005084242007604541,
+      "optimizer_momentum_verified": true,
+      "method": "independent scalar CPU analytic-gradient SGD replay"
+    }
+  },
+  "native_identical_replay": {
+    "status": "passed",
+    "classification": "native completed workflow replay",
+    "queue_count_before": 2,
+    "queue_count_after": 2,
+    "new_managed_jobs": 0,
+    "new_gpu_pods": 0,
+    "exact_attempts_unchanged": true,
+    "output_artifact_bytes_unchanged": true,
+    "compared_artifacts": [
+      {
+        "relative": "training/checkpoint.pt",
+        "sha256": "211f9ed9694ca525549ccd67eee8b1b0fb9c936f281e47f7281747a57f9ffcba",
+        "bytes": 3101
+      },
+      {
+        "relative": "training/manifest.json",
+        "sha256": "6f610b44d9d10049b5a1da5f5c5447779fb0d16da836a881b16d8ab9c7ee396e",
+        "bytes": 519
+      },
+      {
+        "relative": "training/metrics.json",
+        "sha256": "371b919f4503525821b118bf58e08a268e68aeef0202b942db7a2d0f17a411db",
+        "bytes": 9132
+      },
+      {
+        "relative": "validation.json",
+        "sha256": "5865372c8ea7aec82d0a8e514429fd66901af84cc0649e66f6ebf5258c11dbc3",
+        "bytes": 954
+      }
+    ]
+  },
+  "native_lost_local_receipt_replay": {
+    "status": "passed",
+    "classification": "native completed workflow replay",
+    "queue_count_before": 2,
+    "queue_count_after": 2,
+    "new_managed_jobs": 0,
+    "new_gpu_pods": 0,
+    "exact_attempts_unchanged": true,
+    "output_artifact_bytes_unchanged": true,
+    "compared_artifacts": [
+      {
+        "relative": "training/checkpoint.pt",
+        "sha256": "211f9ed9694ca525549ccd67eee8b1b0fb9c936f281e47f7281747a57f9ffcba",
+        "bytes": 3101
+      },
+      {
+        "relative": "training/manifest.json",
+        "sha256": "6f610b44d9d10049b5a1da5f5c5447779fb0d16da836a881b16d8ab9c7ee396e",
+        "bytes": 519
+      },
+      {
+        "relative": "training/metrics.json",
+        "sha256": "371b919f4503525821b118bf58e08a268e68aeef0202b942db7a2d0f17a411db",
+        "bytes": 9132
+      },
+      {
+        "relative": "validation.json",
+        "sha256": "5865372c8ea7aec82d0a8e514429fd66901af84cc0649e66f6ebf5258c11dbc3",
+        "bytes": 954
+      }
+    ]
+  },
+  "preserved_failed_harness_experiment": {
+    "classification": "preserved native GPU experiment with failed private fault-harness assumption",
+    "blocked_live_exit": 93,
+    "subsequent_harness_exit": 1,
+    "expected_event_boundary_reached": false,
+    "reason": "Healthy RUNNING correctly adopted the existing attempt; no transient reason was provided, so the requested cancellation boundary was not reached.",
+    "actual_recovery": "adopt_exact_attempt",
+    "workflow_status": "failed",
+    "abort_cancellation_verified": true,
+    "provider_terminal_status": "CANCELLED",
+    "queue_count_before": 3,
+    "queue_count_after": 3,
+    "new_managed_jobs": 0,
+    "new_gpu_pods": 0,
+    "exact_training_attempt_unchanged": true,
+    "training_artifact_bytes_unchanged": true,
+    "independent_cpu_output_verification": {
+      "optimizer_steps_verified": 32,
+      "heldout_loss": 0.0015574999575306608,
+      "initial_train_loss": 3.2539743644018655,
+      "final_train_loss": 0.0016543993155160252,
+      "training_loss_ratio": 0.0005084242007604541,
+      "optimizer_momentum_verified": true,
+      "method": "independent scalar CPU analytic-gradient SGD replay"
+    }
+  },
+  "blocked_live_reconciliation": {
+    "classification": "injected blocked ledger state over real live CUDA workload",
+    "exit_code": 93,
+    "observed_provider_status": "RUNNING",
+    "post_output_cuda_rounds_before_exit": 1147,
+    "persisted_attempt_status": "failed",
+    "persisted_recovery_decision": "block_relaunch",
+    "same_exact_attempt_adopted_on_resume": true,
+    "queue_count_before_resume": 4,
+    "queue_count_at_cancellation": 4,
+    "new_managed_jobs_before_cancellation": 0,
+    "new_gpu_pods_before_cancellation": 0
+  },
+  "injected_event_boundary_recovery": {
+    "status": "passed",
+    "classification": "native GPU recovery with injected reason and host exit",
+    "boundary": "after-cancellation-event",
+    "injected_exit": 91,
+    "factual_provider_status_before": "RUNNING",
+    "factual_provider_terminal_status": "CANCELLED",
+    "only_observation_field_injected": "reason_code",
+    "injected_reason": "PROVIDER_INTERRUPTION",
+    "real_cancellation_verified": true,
+    "immutable_event_sha256": "ee41d63459897a7a1d96d4ff5a46a05104f90c48b9f0b24715e78ef954f12ed5",
+    "queue_count_before_resume": 4,
+    "queue_count_after_resume": 5,
+    "new_managed_jobs_on_resume": 1,
+    "new_cpu_verification_jobs": 1,
+    "new_gpu_pods_on_resume": 0,
+    "exact_training_attempt_unchanged": true,
+    "training_output_bytes_unchanged": true,
+    "training_artifact_sha256": {
+      "checkpoint.pt": "d3b7bb71991e3f32df61fe15e4be13b750cfead45d2171519dcd5902c1bfb13b",
+      "metrics.json": "86d1e3834d68609ada130766fadb8d5ff56b72e5faf34d70689b188455e97746",
+      "manifest.json": "2b81e465b85fdd4676dc1a3fdced411f3e06255af84e986e6caa54a559f15aee"
+    },
+    "workflow_status": "succeeded",
+    "optimizer_resume_claim": false,
+    "provider_reported_fault_claim": false
+  },
+  "injected_runtime_marker_recovery": {
+    "status": "passed",
+    "classification": "native GPU recovery with injected reason and host exit",
+    "boundary": "after-runtime-marker",
+    "injected_exit": 92,
+    "factual_provider_status_before": "RUNNING",
+    "factual_provider_terminal_status": "CANCELLED",
+    "only_observation_field_injected": "reason_code",
+    "injected_reason": "PROVIDER_INTERRUPTION",
+    "real_cancellation_verified": true,
+    "immutable_event_sha256": "625917168cb48b510084302590a577595586db1365c88680de7f6f713a930bf5",
+    "queue_count_before_resume": 6,
+    "queue_count_after_resume": 7,
+    "new_managed_jobs_on_resume": 1,
+    "new_cpu_verification_jobs": 1,
+    "new_gpu_pods_on_resume": 0,
+    "exact_training_attempt_unchanged": true,
+    "training_output_bytes_unchanged": true,
+    "training_artifact_sha256": {
+      "checkpoint.pt": "af7369e20e58c8b0b5b6ed2d5c6443a2983888c5ed1f240e879236843cded228",
+      "metrics.json": "40e620d371aa67c615fb23b0583edfeb49ac6f82359456cb7ad8d07f680b8bd9",
+      "manifest.json": "dac3543f6ad4a53e2a5aff080b3b153992d45a15162c4a03face9549825aa43b"
+    },
+    "workflow_status": "succeeded",
+    "optimizer_resume_claim": false,
+    "provider_reported_fault_claim": false
+  },
+  "author_controls": {
+    "fault_hook_cpu_tests": 110,
+    "artifact_validator_cpu_tests": 15,
+    "classification": "Deterministic CPU controls, not GPU evidence."
+  },
+  "cleanup": {
+    "status": "passed",
+    "queue_history_count_before": 7,
+    "owned_active_jobs_before": 0,
+    "owned_remaining_pods": 0,
+    "controller_remote_absence_verified": true,
+    "operator_original_hashes_unchanged": true,
+    "owned_apis_stopped": 2,
+    "retained_audit_helper_mismatch": "The private audit initially expected a stopped API marker to discard its interpreter. The frozen runtime intentionally retains that field. Controller removal had already succeeded; the main API was verified stopped. The corrected audit then stopped the remaining owned validation API and verified both stopped scopes, no owned pods, and unchanged original configuration hashes. No product change or resource restart occurred."
+  },
+  "scope": "Actual single-GPU SGD training and immutable artifact reuse after controlled host-driver exits. Recovery reason classification was injected over factual RUNNING evidence; no natural provider failure, optimizer resume, robot-policy quality, Ray Train, or throughput benchmark claim.",
+  "final_acceptance": {
+    "baseline": "passed",
+    "identical_replay": "passed",
+    "lost_receipt_replay": "passed",
+    "immutable_event_crash_recovery": "passed",
+    "runtime_marker_crash_recovery": "passed",
+    "cleanup": "passed",
+    "blocked_live_same_attempt": "passed"
+  },
+  "source_commit": "4602cc392b7725513cf963c96b05b63d817d8cb7",
+  "staged_source_fingerprint": "978ad58293411d6ca936e84c593787ab1526f0d4c822d69965448301d2ec2598",
+  "payload_sha256": "8985d2527f95d2d492827ae1bb0feb860b99bb54f9cb92a469bb088c454ba357",
+  "fault_driver_sha256": "1dc63c4d03cd93989ddad3555da7299604f7d6e5486b20530316c433310e2630",
+  "public_file_hashes": {
+    "baseline-numeric.json": {
+      "sha256": "64bc4abc1ad2025a6e93591dfda7c12438ae5b77f53b6ea66a974e552414fbdf",
+      "bytes": 12104
+    },
+    "event-recovery-numeric.json": {
+      "sha256": "6d72b21275fedff5ed17d377626bbf3304c0a0d415052a31f94ad885c6454a84",
+      "bytes": 11967
+    },
+    "marker-recovery-numeric.json": {
+      "sha256": "126bc6805094926f55c8d935829392c3598f63994aad7becc8242e996d7f7745",
+      "bytes": 11975
+    },
+    "gpu-fault-driver.py": {
+      "sha256": "1dc63c4d03cd93989ddad3555da7299604f7d6e5486b20530316c433310e2630",
+      "bytes": 17248
+    },
+    "gpu-fault-tests/test_fault_driver.py": {
+      "sha256": "8609e053ebc60d30549a097736cfd8a19839e24319584aa5f6cab0a81583cbcf",
+      "bytes": 23855
+    }
+  }
+}

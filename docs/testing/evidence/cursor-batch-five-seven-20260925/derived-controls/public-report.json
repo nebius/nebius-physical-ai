@@ -1,0 +1,297 @@
+{
+  "author_validation": {
+    "all_functions_under_40_lines": true,
+    "confidentiality": "passed",
+    "format": "passed",
+    "gitleaks": "passed",
+    "linux_tests_passed": 9,
+    "local_tests_passed": 9,
+    "ruff": "passed"
+  },
+  "authoring_repairs": [
+    "Unused imports and import ordering corrected before final validation; no product or control behavior change."
+  ],
+  "baseline": {
+    "artifact_inventory_sha256": "92a5e86da65d21f70dd8223137866bd704425a70aff54aeb284230b92cb061ae",
+    "bundle_manifest_sha256": "ede22dbedbce77a974033edbdb08dfd262241bd0c00ea64b5045a133b48c5795",
+    "completed_wave_count": 2,
+    "copied_baseline_unchanged": true,
+    "independent_checkpoint_host_verification": "passed",
+    "verified_object_count": 19
+  },
+  "case_count": 9,
+  "cases": [
+    {
+      "asserted_error": null,
+      "baseline_integrity_output_checks": 4,
+      "case": "same-identity-replay",
+      "local_writes": 6,
+      "outcome": "completed_replay",
+      "output_checks": 4,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "succeeded",
+      "status": "passed"
+    },
+    {
+      "asserted_error": "IMMUTABLE_IDENTITY_MISMATCH",
+      "baseline_integrity_output_checks": 4,
+      "case": "workflow_sha256-changed",
+      "identity_field": "workflow_sha256",
+      "local_writes": 7,
+      "outcome": "immutable_identity_mismatch_blocked",
+      "output_checks": 0,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    },
+    {
+      "asserted_error": "IMMUTABLE_IDENTITY_MISMATCH",
+      "baseline_integrity_output_checks": 4,
+      "case": "workflow_sha256-missing",
+      "identity_field": "workflow_sha256",
+      "local_writes": 7,
+      "outcome": "immutable_identity_mismatch_blocked",
+      "output_checks": 0,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    },
+    {
+      "asserted_error": "IMMUTABLE_IDENTITY_MISMATCH",
+      "baseline_integrity_output_checks": 4,
+      "case": "source_sha256-changed",
+      "identity_field": "source_sha256",
+      "local_writes": 7,
+      "outcome": "immutable_identity_mismatch_blocked",
+      "output_checks": 0,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    },
+    {
+      "asserted_error": "IMMUTABLE_IDENTITY_MISMATCH",
+      "baseline_integrity_output_checks": 4,
+      "case": "source_sha256-missing",
+      "identity_field": "source_sha256",
+      "local_writes": 7,
+      "outcome": "immutable_identity_mismatch_blocked",
+      "output_checks": 0,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    },
+    {
+      "asserted_error": "IMMUTABLE_IDENTITY_MISMATCH",
+      "baseline_integrity_output_checks": 4,
+      "case": "image_digest-changed",
+      "identity_field": "image_digest",
+      "local_writes": 7,
+      "outcome": "immutable_identity_mismatch_blocked",
+      "output_checks": 0,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    },
+    {
+      "asserted_error": "IMMUTABLE_IDENTITY_MISMATCH",
+      "baseline_integrity_output_checks": 4,
+      "case": "image_digest-missing",
+      "identity_field": "image_digest",
+      "local_writes": 7,
+      "outcome": "immutable_identity_mismatch_blocked",
+      "output_checks": 0,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    },
+    {
+      "asserted_error_contains": "copied output",
+      "baseline_integrity_output_checks": 4,
+      "case": "copied-output-absent",
+      "error_origin": "injected strict readback/hash checker",
+      "local_writes": 6,
+      "outcome": "artifact_verification_failed",
+      "output_checks": 1,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    },
+    {
+      "asserted_error_contains": "copied output",
+      "baseline_integrity_output_checks": 4,
+      "case": "copied-output-corrupt",
+      "error_origin": "injected strict readback/hash checker",
+      "local_writes": 6,
+      "outcome": "artifact_verification_failed",
+      "output_checks": 1,
+      "provider_calls": {
+        "boto3.client": 0,
+        "boto3.session.Session.client": 0,
+        "canceller": 0,
+        "name_lookup_fn": 0,
+        "reconcile_fn": 0,
+        "socket.create_connection": 0,
+        "socket.socket.connect": 0,
+        "status_fn": 0,
+        "submitter": 0,
+        "subprocess.Popen": 0,
+        "timeline_fn": 0
+      },
+      "runtime_status": "failed",
+      "status": "passed"
+    }
+  ],
+  "classification": "derived fault-injected integration; not native GPU events",
+  "execution_hosts": [
+    "local host",
+    "Linux candidate"
+  ],
+  "first_execution_failure": null,
+  "harness_file_sha256": {
+    "PUBLIC_README.md": "8e1772047e1cc0a8013d2792f99035b57bf45e80582d0c3d8ed555b2746ef3ee",
+    "derived_controls.py": "da8576e53347c03a2a23d8986832cb56c474e0f76d88c3fa93fe9b4f7034ebe2",
+    "selector-fixture.readiness.json": "5a8f73885af09330960393a0f3a0566c32762e4cb8857e6e1a2aad6340d81cf5",
+    "selector-fixture.yaml": "10d4a39cad1f627e8d554f65639465d015134965ba3481fdb0571a3f29d7fb62",
+    "test_author_controls.py": "d17ff95b433e7fb0e7ccd111c4a07ff6196e0a81620453d2d0de72a887d50499"
+  },
+  "limitations": [
+    "Derived fault-injected integration is separate from native provider cancellation/crash evidence.",
+    "Absent/corrupt copied bytes raise in an injected readback checker; no claim that native boolean missing-output policy forbids replacement.",
+    "Synthetic toolRef mapping controls are renderer evidence only, without inference or GPU execution."
+  ],
+  "module_sha256": {
+    "npa.orchestration.npa_workflow.run_state": "6bb982a83b1481befdaf83ea8fe682c2c4e53764688c0d3b57a3ebe42409d448",
+    "npa.orchestration.npa_workflow.runtime": "690ce7ad09d056f2d76e72a603d3429eeef3752b19775735021e363caf479063",
+    "npa.orchestration.npa_workflow.skypilot_render": "8c71f3ee43145c682fca94fd389570aca506fc07ee76ade46afd515f4fbda104",
+    "npa.orchestration.npa_workflow.supervisor": "35d4739beda4e3778afd3078a906623dbbe0541e54d0adb48699554245042578"
+  },
+  "native_gpu_events_created_by_harness": 0,
+  "normalized_results_identical": true,
+  "provider_network_process_call_count": 0,
+  "public_packet_files": [
+    "public-report.json",
+    "derived_controls.py",
+    "test_author_controls.py",
+    "selector-fixture.yaml",
+    "selector-fixture.readiness.json",
+    "PUBLIC_README.md"
+  ],
+  "schema_version": "npa.validation.derived-gpu-controls/v1",
+  "source_sha": "4602cc392b7725513cf963c96b05b63d817d8cb7",
+  "status": "passed",
+  "synthetic_selector": {
+    "classification": "synthetic renderer control; not GPU evidence",
+    "distinct_images": 2,
+    "provider_calls": {
+      "boto3.client": 0,
+      "boto3.session.Session.client": 0,
+      "socket.create_connection": 0,
+      "socket.socket.connect": 0,
+      "subprocess.Popen": 0
+    },
+    "reordered_mapping_unchanged": true,
+    "spec_sha256": "10d4a39cad1f627e8d554f65639465d015134965ba3481fdb0571a3f29d7fb62",
+    "status": "passed",
+    "swapped_mapping_changes_identity": true,
+    "tool_refs": [
+      "workbench.token_factory.caption",
+      "workbench.token_factory.generate"
+    ]
+  }
+}

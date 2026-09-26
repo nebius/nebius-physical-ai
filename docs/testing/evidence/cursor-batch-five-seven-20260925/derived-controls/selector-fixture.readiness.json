@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "10d4a39cad1f627e8d554f65639465d015134965ba3481fdb0571a3f29d7fb62",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Synthetic renderer-only fixture resolves two catalog toolRefs and proves distinct image mappings, swap changes and reorder stability. No workload execution claimed.",
+      "evidence": [
+        "public-report.json",
+        "test_author_controls.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Synthetic renderer-only fixture resolves two catalog toolRefs and proves distinct image mappings, swap changes and reorder stability. No workload execution claimed.",
+      "evidence": [
+        "public-report.json",
+        "test_author_controls.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Synthetic fixture is for isolated rendering only; live prerequisites intentionally not exercised.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Synthetic fixture is for isolated rendering only; live prerequisites intentionally not exercised.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Synthetic fixture is for isolated rendering only; live prerequisites intentionally not exercised.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Synthetic fixture is for isolated rendering only; live prerequisites intentionally not exercised.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Synthetic fixture is for isolated rendering only; live prerequisites intentionally not exercised.",
+      "evidence": []
+    }
+  }
+}
