@@ -43,14 +43,14 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The historical warehouse qualification used a digest-pinned runtime and content-addressed reviewed source overlay. Its result remains bound to that original navigation source; the current contact-metric revision awaits separate native qualification. The public workflow template still requires an operator-supplied exact image.",
+      "reason": "Historical warehouse learning and the current reconstructed-scene baseline used digest-pinned runtimes and content-addressed source overlays. The current terrain-witness metric and fresh-process controls passed separate native qualification with navigation digest 0c70c463c94a4036c7262885eb6c14395621566c102ddedadceb4fcd52b797a1. Historical results retain their original source. The public workflow template still requires an operator-supplied exact image.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The original static-range warehouse source completed 1500 initial and 500 continuation PPO iterations. Independent fresh-cohort reloads measured 14/4000 (0.350%) baseline versus 3997/4000 (99.925%) continuation success, passing the unchanged 80% threshold with native physical controls and decoded rendering. Those results retain navigation source digest 9a0cce1c8e4b7b9cca5431d06b8cf31488b600095b0c7e7c1833e40de6403aaf and its original contact metric. The current geometry-aware foot-support revision has local Warp/tensor coverage; its separate native reconstructed-scene qualification remains pending. Reconstructed-scene policy improvement and optional RGB-D task probes remain unqualified.",
+      "reason": "The current static-range source passed all four fresh-process physical controls with 4000 robots per scene, zero repeat/peer deltas and retained obstacle contact, followed by independently verified baseline reload, all 4000 episode outcomes and 301 native frames in the reconstructed scene. Baseline success was 759/4000 (18.975%), below the fixed 80% requirement; reconstructed-scene training and improvement remain unqualified. Historical warehouse learning completed 1500 initial plus 500 continuation PPO iterations and measured 14/4000 baseline versus 3997/4000 (99.925%) continuation success on its fresh warehouse cohort. That result retains digest 9a0cce1c8e4b7b9cca5431d06b8cf31488b600095b0c7e7c1833e40de6403aaf and its original contact metric/protocol. Current qualification does not establish warm-reset correctness, 4000 camera-conditioned policies or the optional RGB-D path.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]

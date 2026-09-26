@@ -5,16 +5,18 @@ built-in public reference or an operator's registered Isaac Lab navigation task:
 prepare inputs → native RSL-RL train → reload checkpoint and evaluate held-out
 goals. It requires a self-contained collision USDZ and explicit reset/probe cases.
 The public bundle builder supplies a cluttered warehouse and reviewed native task;
-custom robots retain the BYOF adapter boundary. **The public static-range task
-passed its unchanged 80% success requirement: 3997 of 4000 fresh test cases
-(99.925%) reached within 0.5 m of their goals after 1500 initial PPO iterations
+custom robots retain the BYOF adapter boundary. **The historical procedural
+warehouse task passed its unchanged 80% success requirement: 3997 of 4000 fresh
+test cases (99.925%) reached within 0.5 m of their goals after 1500 initial PPO iterations
 and a further 500 iterations with a corrected arrival reward. Independently
 reloaded policies, physical controls and native rendered evidence were verified.**
 Proprietary robot and scene integration remains operator input.
 The 4000-robot measurements use static-scene range observations; camera-conditioned
 policy training at that population remains unqualified. The warehouse result used
-the earlier contact metric; the spherical-foot terrain-witness revision below has
-local coverage, with its separate native qualification still pending.
+the earlier contact metric and control protocol. The current source separately
+passed reconstructed-scene physical controls and rendered baseline evaluation:
+759 of 4000 cases succeeded (18.975%), below the same 80% requirement.
+Reconstructed-scene policy training and improvement remain unqualified.
 
 The reference extends the pinned public
 [Isaac Lab navigation configuration](https://github.com/isaac-sim/IsaacLab/blob/v3.0.0-beta2.patch1/source/isaaclab_tasks/isaaclab_tasks/manager_based/navigation/config/anymal_c/navigation_env_cfg.py).
@@ -29,9 +31,9 @@ modules and the separate runtime/asset boundary.
 
 The current built-in reference uses [fresh native control processes](navigation-fresh-controls.md)
 for its four physical controls before a separate training/evaluation process.
-This requires new native qualification; the historical results below retain
-their original warm-reset protocol and do not establish warm-reset correctness
-for reconstructed scenes.
+This protocol passed the reconstructed-scene qualification described below.
+The historical warehouse results retain their original warm-reset protocol;
+neither result establishes warm-reset correctness for reconstructed scenes.
 
 ## Public reference inputs
 
@@ -134,8 +136,47 @@ training rewards and termination. It does not modify physics, collision shapes,
 reset cases, actions or evaluation thresholds. The separate native acceptance
 must demonstrate unchanged physical probe trajectories, retained obstacle
 positive controls and source-bound contact evidence. CPU Warp geometry tests
-and local tensor tests cover the decision and failure paths; native acceptance
-for this revision is pending, and those tests do not prove learning convergence.
+and local tensor tests cover the decision and failure paths. The separate native
+qualification below verifies this revision's controls and baseline evaluation;
+it does not demonstrate learning convergence.
+
+## Reconstructed-scene baseline with fresh native controls
+
+On 26 September 2026, the current static-range reference completed four fresh
+native control processes and a fifth process that reloaded the original
+1500-iteration warehouse checkpoint in the reconstructed collision scene.
+Every process constructed all 4000 robots in one shared physics scene. The
+same-placement repeat and coincident-peer comparisons both had maximum measured
+state/observation delta 0.0, with zero peer contact. The focal free-space control
+traveled 3.5502147 m; the obstacle positive control measured 2475.4917 N.
+
+Independent readback verified actual sensor/body mappings, all 16000 spherical
+foot identities and resolved offsets per control process, and contact evidence
+against the source triangle mesh. The 398 original solo-control robot/interval obstacle
+measurements corrected to floor support retained their raw contact evidence.
+All 558 non-obstacle arrays matched the original solo trace exactly. These
+checks validate the revised measurement and fresh-process protocol; they do
+not show that warm resets clear native solver history.
+
+The baseline evaluation retained the full 300-step horizon and 301 rendered
+frames. Every frame passed trajectory, camera, native/Fabric clock and frozen
+physical-state checks; all 4000 episode outcomes were independently recomputed.
+The original checkpoint reached within 0.5 m in **759 / 4000 cases (18.975%)**,
+so it **failed the fixed 80% policy requirement**. This is baseline replay,
+with no reconstructed-scene policy updates or improvement claim. The earlier
+99.925% warehouse result concerns a different scene, cohort, checkpoint and
+metric/protocol version.
+
+This native evidence binds source commit
+`fd9fc2d254621112bf45b7df15fb8a80d0aba504`, navigation module digest
+`0c70c463c94a4036c7262885eb6c14395621566c102ddedadceb4fcd52b797a1`,
+and acceptance receipt SHA-256
+`906f3a2043bf35ad8350f63fc4ab9f977e594726b6e71e5ae861ea8930f748a8`.
+It qualifies static-range controls, checkpoint reload and native rendering for
+that source. Camera-conditioned policies, reconstructed-scene fine-tuning and
+held-out improvement still need their own measured results.
+
+## Historical procedural warehouse learning
 
 A native RTX PRO 6000 qualification constructed all 4000 robots in one warehouse
 and passed repeated-reset and coincident-peer controls with zero measured focal
@@ -267,8 +308,9 @@ video's relative rollout time and from every control process's clock. Historical
 in-process runs qualified all 301 frames in the initial-checkpoint diagnostic,
 all 602 frames of the original comparison and all 342 frames of the fresh
 comparison. These results establish renderer and checkpoint reload behavior for
-their original source and control protocol. The fresh-process protocol requires
-separate native qualification; goal-success quality is also measured separately.
+their original source and control protocol. The separate reconstructed-scene
+fresh-process qualification verified another 301 frames; its 18.975% baseline
+goal success remains below the policy requirement.
 Artifacts include `rendered-rollout/*.png`, frame measurements,
 and `rollout.mp4` when the runtime supplies FFmpeg. The PNG sequence can be encoded
 later without rerunning or reconstructing the simulation. Custom BYOF tasks

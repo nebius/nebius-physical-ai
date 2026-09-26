@@ -14,9 +14,14 @@ to creating a new physics scene. See NVIDIA's
 and [determinism boundary](https://nvidia-omniverse.github.io/PhysX/physx/5.8.0/docs/API.html#determinism).
 Fresh processes give the comparison arms equivalent construction history; they
 do not guarantee identical GPU trajectories. The original numerical tolerance
-and the same-placement repeat control still apply. This protocol requires its
-own native qualification. Historical warm-reset results remain evidence only
-for their original source and protocol.
+and the same-placement repeat control still apply. A reconstructed-scene native
+qualification completed all four controls with 4000 robots per process, zero
+same-placement and peer-isolation deltas, and a retained obstacle positive
+control. Its separate baseline evaluation reached 759 of 4000 goals (18.975%),
+below the fixed 80% policy requirement. See the
+[source-bound results](shared-scene-navigation.md#reconstructed-scene-baseline-with-fresh-native-controls).
+Historical warm-reset results remain evidence only for their original source
+and protocol; successful control qualification does not establish policy quality.
 
 Every control uses the original stage mode, including its environment seed,
 runner seed, checkpoint initialization, renderer startup settings, source,
