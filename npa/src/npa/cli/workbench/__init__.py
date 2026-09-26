@@ -98,6 +98,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
+    from npa.cli.workbench.gemini_robotics import app as gemini_robotics_app
     from npa.cli.workbench.namespace import app as namespace_app
     from npa.cli.workbench.molmoact import app as molmoact_app
     from npa.cli.workbench.openvla import app as openvla_app
@@ -143,6 +144,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(nurec_app, name="nurec")
     full.add_typer(sonic_app, name="sonic")
     full.add_typer(mjlab_app, name="mjlab")
+    full.add_typer(gemini_robotics_app, name="gemini-robotics")
     full.add_typer(namespace_app, name="namespace")
     full.add_typer(molmoact_app, name="molmoact")
     full.add_typer(openvla_app, name="openvla")

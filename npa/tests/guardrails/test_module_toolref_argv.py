@@ -41,6 +41,7 @@ PARSER_FACTORIES = {
     "npa.workflows.groot_visualization": "build_parser",
     "npa.workflows.groot_learning": "build_parser",
     "npa.workflows.groot_task_performance": "build_parser",
+    "npa.workflows.byof.gemini_robotics_pipeline": "build_parser",
     "npa.workflows.byof.openpi_pipeline": "build_parser",
     "npa.workflows.byof.molmoact_pipeline": "build_parser",
     "npa.workflows.byof.openvla_pipeline": "build_parser",

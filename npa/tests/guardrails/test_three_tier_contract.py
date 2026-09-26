@@ -855,6 +855,12 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).
         "foxglove",
+        # Gemini Robotics toolRefs are a provisional override-required API
+        # adapter: ER planning / adaptation / eval run against the hosted
+        # Gemini API, so there is no service or YAML env tier to stay
+        # coherent with. CLI <-> catalog argv coherence is enforced by
+        # test_module_toolref_argv.py instead.
+        "gemini-robotics",
         "genesis",
         # S3 artifact GC is a CLI-only maintenance verb (dry-run/apply against
         # manifests); it has no FastAPI service tier and no npa.workflow stage

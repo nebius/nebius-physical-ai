@@ -67,6 +67,8 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.gemini_robotics.plan": "public Gemini Robotics planning primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
+    "workbench.gemini_robotics.eval": "public Gemini Robotics evaluation primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
 }
 
 
@@ -140,6 +142,11 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "/opt/venv/bin/python",
     "-m",
     "npa.workflows.byof.openpi_full_droid",
+]
+_GEMINI_ROBOTICS_PIPELINE = [
+    "python3",
+    "-m",
+    "npa.workflows.byof.gemini_robotics_pipeline",
 ]
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
@@ -2028,6 +2035,48 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.gemini_robotics.plan": ToolEntry(
+        name="workbench.gemini_robotics.plan",
+        description=(
+            "Run ER embodied-reasoning planning via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "plan",
+            "--task",
+            "{{config.task}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-dir",
+            "{{config.output_dir}}",
+        ],
+    ),
+    "workbench.gemini_robotics.eval": ToolEntry(
+        name="workbench.gemini_robotics.eval",
+        description=(
+            "Evaluate a plan against a rubric via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "eval",
+            "--plan-path",
+            "{{config.plan_path}}",
+            "--rubric-path",
+            "{{config.rubric_path}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-dir",
+            "{{config.output_dir}}",
         ],
     ),
     "workbench.molmoact.finetune": ToolEntry(
