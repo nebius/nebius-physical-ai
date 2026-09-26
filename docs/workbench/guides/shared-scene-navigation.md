@@ -429,6 +429,13 @@ The installed adapter implements:
 | `probe_mode(env)` | Context manager: disable stochastic observation corruption and automatic resets for deterministic diagnostic transitions, restore original settings afterward. Preserve collision filtering, geometry, sensor selection and control dynamics. |
 | `visibility_paths(env)` | RGB-D only: return `robot_roots`, `attachment_roots`, `camera_prims`. List every robot articulation root, detached attachment subtree and one observing camera per robot, in robot order. Paths are checked on the live USD stage. |
 
+`runtime.scene_instances` counts the verified direct reference to the supplied
+warehouse asset. The built-in reference separately requires exactly one active
+`UsdPhysics.Scene`. For a BYOF task, the operator must verify that the actual
+physics-scene and simulation-owner mapping places all robot articulations and
+static colliders in one shared physics world. The asset-reference check does
+not verify that mapping.
+
 Robot collision filtering must exclude every other robot and preserve contacts
 with warehouse obstacles. Implement it in the task's existing collision-group
 or pair-filter setup. The runtime independently compares the focal robot's
@@ -457,6 +464,13 @@ This optional BYOF path remains unqualified on the pinned Lab preset, including
 its disabled Replicator scheduler. The public range-sensor reference and its
 rollout video qualification do not validate this separate RGB-D probe path or
 camera-conditioned policy throughput.
+
+Registering a `Camera` and passing the auxiliary focal render probe do not
+establish that the policy uses images. Camera-conditioned qualification must
+separately verify the actual `Camera.data` path through observations and any
+encoder to the actor inputs, including the sensor/channel-to-environment mapping
+and frame freshness for every claimed camera. The current checks do not enforce
+that dependency.
 
 Set `sensor_mode=rgbd` and supply a `camera` object with:
 
