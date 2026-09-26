@@ -63,6 +63,8 @@ example follows upstream LIBERO-10's training schedule.
 | `profile_report.py` | CUDA trace hashes, kernel categories and overlap-aware observed busy time |
 | `benchmark-protocol.json` | Full schedules, repeated timing runs, separate profiles, and the 90% quality target |
 | `bootstrap-controller.sh` / `slurm_controller.py` / `slurm.conf.in` | Fresh dedicated Ubuntu Slurm controller and first worker |
+| `preserve-slurm-ipc.sh` | Prevent login-session cleanup from deleting batch-job shared memory |
+| `ipc_probe.py` | Thirty-second background shared-memory survival check across SSH logout |
 | `add_worker.py` / `bootstrap-worker.sh` / `slurm_worker.py` | Private second-worker bundle, shared storage, and native Slurm join |
 | `prepare_simulation.py` / `simulation-requirements.txt` | Separate pinned Python 3.10.21 CPU LIBERO environment |
 | `evaluate.py` | Native policy servers and all ten tasks, with per-trial evidence and strict result checks |
@@ -135,6 +137,14 @@ connections, loopback and the worker's own address; `persist-firewall.sh` saves
 those rules for reboot. Multi-node joining additionally requires private peer
 addresses, shared Munge credentials and a common filesystem. This research
 deployment colocates the controller on a worker; it has no controller failover.
+
+Both bootstrap scripts run `preserve-slurm-ipc.sh`, which sets
+`RemoveIPC=no` in a systemd-logind drop-in and restarts that service. Without
+this setting, closing the last SSH session can delete shared-memory objects
+belonging to a running Slurm data loader. The campaign reproduced this failure
+with a separate background process; a normal training exit status alone is
+insufficient evidence. The reporter rejects Python tracebacks from worker
+threads as well as failed optimizer updates.
 
 `prepare_simulation.py --shared-root PATH` creates a fresh `PATH/simulation`
 with Python 3.10.21, CPU PyTorch 2.5.1, the pinned LIBERO source and the exact

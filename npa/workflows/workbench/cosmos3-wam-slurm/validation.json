@@ -37,11 +37,18 @@
   "policy_quality_measured": false,
   "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; the eight-GPU full run is executing.",
   "remaining_evidence": [
-    "Complete comparable 8/16-GPU runs; 32 GPUs when available",
+    "Complete comparable 8/16-GPU runs",
     "Repeated timing measurements, accounting and profiling traces",
     "Checkpoint-linked complete LIBERO-10 closed-loop evaluations"
   ],
   "complete_training_run_measured": false,
+  "slurm_ipc_cleanup": {
+    "default_behavior_failure_reproduced": true,
+    "RemoveIPC_no_survival_probe_passed": true,
+    "public_probe_executed": true,
+    "affected_partial_run_excluded": true,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-slurm-ipc.json"
+  },
   "slurm_runtime": {
     "version": "23.11.4",
     "deployment": "Native Slurm on dedicated reserved B200 GPU VMs",

@@ -13,4 +13,5 @@ sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     slurm-wlm=23.11.4-1.2ubuntu5 munge nfs-common libosmesa6 libgl1 \
     libglib2.0-0 cmake build-essential sysstat rdma-core infiniband-diags \
     perftest libibverbs-dev
+bash "$(dirname "$0")/preserve-slurm-ipc.sh"
 sudo /usr/bin/python3 "$(dirname "$0")/slurm_worker.py" --bundle "$WAM_WORKER_BUNDLE"

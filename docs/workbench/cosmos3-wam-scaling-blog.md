@@ -82,6 +82,16 @@ The live preparation test also found an operational issue: the native converter
 could resolve a moving processor revision. The recipe now selects the staged
 processor and VAE explicitly and pins the training tokenizer separately.
 
+The first eight-GPU attempt exposed a host setting that a short launch check
+missed. After an SSH logout, systemd-logind deleted a PyTorch data loader's
+shared-memory file. Training continued after the worker-thread exception, so
+we stopped and excluded that 302-step partial run. A separate background probe
+reproduced deletion after 10.3 seconds; with `RemoveIPC=no`, the same probe and
+the public recipe's probe both survived the full thirty-second observation
+window. Both worker bootstraps now apply this setting, and the reporter rejects
+thread tracebacks. The [before-and-after evidence](evidence/cosmos3-wam-slurm-ipc.json)
+records this operational failure separately from the fresh benchmark run.
+
 ## See what the prepared model generates
 
 Before training, we also rendered a [visual preview on the prepared B200](evidence/cosmos3-wam-b200-visual/README.md):

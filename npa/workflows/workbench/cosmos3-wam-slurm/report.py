@@ -55,6 +55,10 @@ def _work_metrics(log, warmup, steps):
 
 
 def _timings(log, warmup, steps):
+    if "Traceback (most recent call last):" in log:
+        raise ValueError(
+            "training log contains a Python failure, including worker threads"
+        )
     if "skipping optimizer step" in log:
         raise ValueError("native training skipped an unstable optimizer step")
     values = {}

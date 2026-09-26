@@ -45,6 +45,12 @@ bash "$WAM_RECIPE/bootstrap-controller.sh"
 The script requires sudo and a fresh Slurm installation. It installs Slurm
 23.11.4, enables cgroup v2 CPU/memory/device containment and exposes eight GPU
 resources. It retains sixteen GiB of host RAM outside the schedulable amount.
+It also sets `RemoveIPC=no` for systemd-logind on both workers: a Slurm job can
+outlive the operator's login session, so logout must not remove its shared
+memory. NVIDIA documents the same requirement for
+[Slurm and NCCL workloads](https://docs.nvidia.com/deeplearning/nccl/archives/nccl_2312/user-guide/docs/troubleshooting/runtime_and_mpi_issues.html).
+The campaign observed a PyTorch data-loader failure under the default setting,
+then reproduced the removal with an independent background shared-memory probe.
 The controller creates a private accounting password and stores it with mode
 0600. A dedicated firewall permits SSH, loopback, established connections and
 the worker's own address. `persist-firewall.sh` preserves it across reboots.
@@ -54,6 +60,20 @@ The final `srun` must enumerate all eight B200s. Verify `nvidia-smi topo -m`,
 have NVLink connectivity, and the InfiniBand ports should be active. These
 checks establish device availability; the training recipe additionally runs
 a real NCCL collective and verifies rank placement.
+
+To verify the IPC setting, choose a fresh systemd unit name and receipt path
+in `WAM_IPC_PROBE_UNIT` and `WAM_IPC_PROBE_OUTPUT`, then run:
+
+```bash
+sudo systemd-run --unit "$WAM_IPC_PROBE_UNIT" --uid "$USER" --property Type=exec \
+  /usr/bin/python3 "$WAM_RECIPE/ipc_probe.py" \
+  --output-path "$WAM_IPC_PROBE_OUTPUT"
+```
+
+Close all SSH sessions for that user, wait thirty seconds, then reconnect and
+read the JSON receipt. Require `survived_logout: true`. Keeping another SSH
+session open would prevent this test from exercising logout cleanup. The
+thirty-second observation window is a host-readiness test, not a training limit.
 
 Install the pinned framework and stage data/model inputs following the main
 [runbook](../../../../docs/workbench/cookbooks/cosmos3-wam-slurm.md#2-install-the-pinned-native-training-environment).

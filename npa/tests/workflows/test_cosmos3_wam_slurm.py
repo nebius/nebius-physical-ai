@@ -316,6 +316,17 @@ def test_bad_timing_evidence_is_rejected(text):
         _load("report")._timings(text, 50, 55)
 
 
+def test_successful_exit_does_not_hide_data_loader_thread_failure(tmp_path):
+    run = _completed_run(tmp_path)
+    with (run / "node-0.log").open("a") as log:
+        log.write(
+            "Traceback (most recent call last):\n"
+            "RuntimeError: could not unlink the shared memory file /torch_fixture\n"
+        )
+    with pytest.raises(ValueError, match="worker threads"):
+        _load("report")._summarize(run, 50)
+
+
 def test_scaling_requires_same_work_and_excludes_profiler(tmp_path):
     report_module = _load("report")
     baseline = report_module._summarize(_completed_run(tmp_path / "one"), 50)
