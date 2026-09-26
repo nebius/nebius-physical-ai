@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import pytest
 
@@ -22,6 +23,46 @@ from npa.guardrails.confidentiality import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize("content,expected", [("public", 0), ("private-fixture", 1)])
+def test_confidentiality_runs_without_application_dependencies(content, expected):
+    """Preserve detection and redaction with only the standard library installed.
+
+    Args:
+        content: Public or confidential synthetic input.
+        expected: Required scanner exit status.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A dependency is required or confidential input is accepted.
+    """
+    bootstrap = (
+        "import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
+        "runpy.run_module('npa.guardrails.confidentiality', run_name='__main__')"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            bootstrap,
+            str(REPO_ROOT / "npa/src"),
+            "--stdin-source",
+            "fixture",
+            "--pattern-env",
+            "SCANNER_TEST_DENYLIST",
+        ],
+        input=content,
+        capture_output=True,
+        text=True,
+        env={"SCANNER_TEST_DENYLIST": "private-fixture"},
+        check=False,
+    )
+    assert result.returncode == expected, result.stderr
+    assert "private-fixture" not in result.stdout + result.stderr
+    assert f"unresolved={expected}" in result.stdout + result.stderr
 
 
 def test_confidentiality_matcher_reports_redacted_locations_only() -> None:

@@ -186,6 +186,8 @@ def load_schema(schema: Path | None) -> dict[str, Any] | None:
         fail(f"--schema must be valid JSON: {exc.msg}")
     if not isinstance(data, dict):
         fail("--schema must be a JSON object")
+    if not data:
+        fail("--schema must define a usable Arrow schema")
     return data
 
 
@@ -193,7 +195,7 @@ def load_rows(input_path: str) -> list[dict[str, Any]]:
     if not input_path:
         return []
     if input_path.startswith("s3://"):
-        return []
+        fail("Server-side S3 import is not implemented; use a local input path")
     path = Path(input_path)
     if not path.exists():
         fail(f"--input-path does not exist: {input_path}")
@@ -228,7 +230,7 @@ def load_rows(input_path: str) -> list[dict[str, Any]]:
             if line.strip():
                 rows.append(_require_object(json.loads(line)))
         return rows
-    fail("--input-path must be a local parquet, json, jsonl, directory, or s3:// URI")
+    fail("--input-path must be a local parquet, json, jsonl, or directory path")
     return []
 
 

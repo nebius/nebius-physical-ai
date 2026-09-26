@@ -11,7 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 stage  Stage demo artifacts into an operator-owned bucket.
-verify  Verify staged demo artifacts without downloading object contents.
+verify  Verify staged demo artifacts against their manifest requirements.
 ```
 
 ## Options
@@ -25,7 +25,7 @@ verify  Verify staged demo artifacts without downloading object contents.
 | Command | Description |
 | --- | --- |
 | `stage` | Stage demo artifacts into an operator-owned bucket. |
-| `verify` | Verify staged demo artifacts without downloading object contents. |
+| `verify` | Verify staged demo artifacts against their manifest requirements. |
 
 ## Examples
 
