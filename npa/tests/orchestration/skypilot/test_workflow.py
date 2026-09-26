@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import importlib.util
 import hashlib
 import json
 import os
 import re
 import subprocess
 import threading
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -33,6 +36,150 @@ from npa.orchestration.skypilot.launch_transaction import (
 _REAL_RUN_LAUNCH_TRANSACTION = workflow_module.run_launch_transaction
 
 
+@pytest.mark.parametrize("task_ids", ([0], [0, 0], [0, 1, 2], [False, 1]))
+def test_native_cleanup_requires_exact_complete_task_membership(task_ids):
+    rows = [
+        {"job_id": 41, "job_name": "synthetic", "task_id": task, "status": "SUCCEEDED"}
+        for task in task_ids
+    ]
+    evidence = workflow_module._reconcile_native_tasks(rows, "synthetic", "41", (0, 1))
+    assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
+
+
+def test_native_cleanup_terminal_is_all_tasks_not_first_task():
+    rows = [
+        {"job_id": 41, "job_name": "synthetic", "task_id": task, "status": status}
+        for task, status in enumerate(("SUCCEEDED", "RUNNING"))
+    ]
+    evidence = workflow_module._reconcile_native_tasks(rows, "synthetic", "41", (0, 1))
+    assert evidence.status == "RUNNING"
+    rows[1]["status"] = "SUCCEEDED"
+    assert (
+        workflow_module._reconcile_native_tasks(rows, "synthetic", "41", (0, 1)).status
+        == "SUCCEEDED"
+    )
+
+
+@pytest.mark.parametrize("confidential", (False, True))
+def test_native_cleanup_changed_context_refuses_before_queue_or_cancel(
+    monkeypatch, tmp_path, confidential
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    directory = tmp_path / "private-recovery"
+    directory.mkdir(mode=0o700)
+    env = {"KUBECONFIG": str(directory / "kubeconfig")}
+    if confidential:
+        env["SYNTHETIC_SECRET"] = "synthetic-private-value"
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic",
+        env,
+        "/synthetic-sky",
+        str(directory),
+        0,
+        directory / "config",
+        job_id="41",
+        active=True,
+        submitting=False,
+        native_result=NativeLaunchResult(
+            "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+        ),
+        context_check=lambda: "d" * 64,
+        native_verified=True,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: pytest.fail("queue reached"),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("provider mutation reached")
+    )
+    assert not cleanup.request().verified
+    workflow_module._finish_failed_submission(directory, cleanup)
+    assert directory.exists()
+
+
+@pytest.mark.parametrize("confidential", (False, True))
+def test_native_result_without_completed_transaction_retains_context(
+    monkeypatch, tmp_path, confidential
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    directory = tmp_path / "private-recovery"
+    directory.mkdir(mode=0o700)
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic",
+        {"SYNTHETIC_SECRET": "synthetic-value"} if confidential else {},
+        "/synthetic-sky",
+        str(directory),
+        0,
+        directory / "config",
+        job_id="41",
+        active=True,
+        submitting=False,
+        native_result=NativeLaunchResult(
+            "attempt", "00000000-0000-4000-8000-000000000001", "41", (0,), "c" * 64
+        ),
+        context_check=lambda: "c" * 64,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: pytest.fail("incomplete transaction queried"),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("provider mutation reached")
+    )
+    assert not cleanup.request().verified
+    workflow_module._finish_failed_submission(directory, cleanup)
+    assert directory.exists()
+
+
+def test_native_pending_signal_does_not_bind_returned_result(monkeypatch, tmp_path):
+    from npa.orchestration.skypilot._managed_job_api import (
+        NativeLaunchResult,
+        NativeResultUnavailable,
+    )
+
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic",
+        {},
+        "/synthetic-sky",
+        None,
+        0,
+        tmp_path / "config",
+        active=True,
+        requested=True,
+    )
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    monkeypatch.setattr(workflow_module, "_native_launch_payload", lambda **_k: {})
+    monkeypatch.setattr(
+        workflow_module,
+        "_run_native_launch",
+        lambda *_a, **_k: (native, lambda: "c" * 64),
+    )
+    with pytest.raises(NativeResultUnavailable, match="interrupted"):
+        workflow_module._launch_with_native_cleanup(
+            cleanup,
+            controller_backend="kubernetes",
+            yaml_path=None,
+            run_id="synthetic",
+            isolated_dir=tmp_path,
+            controller="synthetic",
+            context="synthetic",
+            sky_executable="synthetic",
+            secret_envs=(),
+            environment={},
+            log_dir=tmp_path,
+            timeout=0,
+            cwd=None,
+        )
+    assert not cleanup.job_id and cleanup.native_result is None
+
+
 def _fake_sky(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -42,8 +189,496 @@ def _fake_sky(tmp_path: Path) -> Path:
     return sky
 
 
+def _terminal_native_submit_options(monkeypatch, tmp_path, confidential):
+    options = {}
+    if confidential:
+        path, bridge, target, report, env = _robotwin_bridge_fixture(
+            monkeypatch, tmp_path
+        )
+        authorization = bridge.authorization
+
+        def preflight(documents, **_kwargs):
+            documents[1]["resources"]["region"] = authorization.kubernetes_context
+            return target, report, {}
+
+        monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+        options.update(
+            robotwin_submit_context=bridge,
+            extra_env=env,
+            config_path=Path(authorization.skypilot_config_source),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            secret_envs=_robotwin_secret_envs(env),
+        )
+    else:
+        path = tmp_path / "workflow.yaml"
+        path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    return path, options
+
+
+def _terminal_native_boundaries(monkeypatch, sky, statuses, handles):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    launches, queue_calls = [], []
+
+    def launch(*_args, **_kwargs):
+        assert handles[0].active and handles[0].submitting
+        launches.append(native)
+        return native, lambda: native.context
+
+    def command_run(command, **kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        assert command == [str(sky), "jobs", "queue", "--all", "--output", "json"]
+        rows = []
+        if launches:
+            assert kwargs["env"] == handles[0].environment
+            rows = [
+                {
+                    "job_id": 41,
+                    "job_name": "synthetic-terminal",
+                    "task_id": task,
+                    "status": status,
+                }
+                for task, status in enumerate(statuses)
+            ]
+        queue_calls.append(rows)
+        return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    monkeypatch.setattr(workflow_module, "_run_native_launch", launch)
+    monkeypatch.setattr(
+        workflow_module,
+        "_wait_for_healthy_jobs_controller",
+        lambda *_a, **_k: workflow_module.ControllerHealthResult(
+            workflow_module.ControllerState.UP, "synthetic-controller"
+        ),
+    )
+    monkeypatch.setattr(subprocess, "run", command_run)
+    return native, launches, queue_calls
+
+
+@pytest.mark.parametrize("confidential", (True,))
+@pytest.mark.parametrize("mixed_success", (False, True))
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "FAILED",
+        "FAIL",
+        "FAILED_PRECHECKS",
+        "FAILED_SETUP",
+        "FAILED_RUNTIME",
+        "FAILED_CONTROLLER",
+        "FAILED_NO_RESOURCE",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+        "failed_runtime",
+    ),
+)
+def test_native_terminal_tasks_fail_submit_without_cleanup_authority(
+    monkeypatch, tmp_path, confidential, failure, mixed_success
+):
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        StabilityPolicy,
+    )
+
+    statuses = ("SUCCEEDED" if mixed_success else failure, failure)
+    path, options = _terminal_native_submit_options(monkeypatch, tmp_path, confidential)
+    sky, handles, records = _fake_sky(tmp_path), [], []
+    native, launches, queue_calls = _terminal_native_boundaries(
+        monkeypatch, sky, statuses, handles
+    )
+
+    def ready(handle):
+        handle.cleanup_on_failure = True
+        handles.append(handle)
+
+    with pytest.raises(
+        SkyPilotSubmitError, match="terminally failed or cancelled"
+    ) as caught:
+        submit_workflow(
+            path,
+            "synthetic-terminal",
+            sky_bin=sky,
+            isolated_config_dir=tmp_path / "sky-state",
+            on_launch_ready=ready,
+            transaction_recorder=records.append,
+            stability_probe=lambda: ProbeObservation(EvidenceState.READY),
+            stability_policy=StabilityPolicy(2, 0, 0, 1),
+            launch_lock_root=tmp_path / "locks",
+            **options,
+        )
+    transaction, cleanup = caught.value.transaction, handles[0]
+    assert transaction.state is LaunchState.TERMINAL_FAILURE and not transaction.ok
+    assert transaction.category is FailureCategory.WORKLOAD
+    assert transaction.launch_result is native and transaction.job_id == "41"
+    assert transaction.reconciliations[-1]["status"] == "CANCELLED"
+    assert launches == [native] and len(queue_calls) == 2
+    assert not cleanup.native_verified and not cleanup.verified and not cleanup.job_id
+    assert cleanup.native_result is None and cleanup.config_path.is_file()
+    assert not cleanup.request().verified
+    assert len(queue_calls) == 2 and cleanup.config_path.is_file()
+    assert all(record["state"] not in {"submitted", "adopted"} for record in records)
+
+
+@pytest.mark.parametrize(
+    "statuses,task_ids,expected_status,expected_state",
+    (
+        (("SUCCEEDED", "SUCCEEDED"), (0, 1), "SUCCEEDED", LaunchState.SUBMITTED),
+        (("SUCCEEDED", "RUNNING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("PENDING", "STARTING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("RECOVERING", "CANCELLING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("FAILED_RUNTIME", "RUNNING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("CANCELED", "PENDING"), (0, 1), "RUNNING", LaunchState.SUBMITTED),
+        (("FAILED_RUNTIME", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+        (("SUCCEEDED", "UNKNOWN"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+        (
+            ("FAILED_NO_RESOURCE", "UNKNOWN"),
+            (0, 1),
+            "UNKNOWN",
+            LaunchState.INDETERMINATE,
+        ),
+        (("SUCCEEDED", "UNRECOGNIZED"), (0, 1), "UNKNOWN", LaunchState.INDETERMINATE),
+        (("FAILED_RUNTIME",), (0,), "", LaunchState.INDETERMINATE),
+        (("STOPPED", "STOPPED"), (0, 2), "", LaunchState.INDETERMINATE),
+        (("CANCELED", "CANCELED"), (0, 0), "", LaunchState.INDETERMINATE),
+    ),
+)
+def test_native_task_mapping_finalizer_controls(
+    monkeypatch, tmp_path, statuses, task_ids, expected_status, expected_state
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        StabilityResult,
+    )
+
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    rows = [
+        {"job_id": 41, "job_name": "synthetic", "task_id": task, "status": status}
+        for task, status in zip(task_ids, statuses, strict=True)
+    ]
+    launches, records = [], []
+
+    def launch():
+        launches.append(native)
+        return native
+
+    def reconcile():
+        if not launches:
+            return workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            )
+        return workflow_module._reconcile_native_tasks(
+            rows, "synthetic", native.job_id, native.task_ids
+        )
+
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached")
+    )
+    try:
+        result = _REAL_RUN_LAUNCH_TRANSACTION(
+            logical_id="synthetic",
+            readiness=lambda: StabilityResult(
+                EvidenceState.READY, FailureCategory.NONE
+            ),
+            launch=launch,
+            reconcile=reconcile,
+            classify_launch_error=lambda _e: pytest.fail("retry reached"),
+            require_native_result=True,
+            lock_root=tmp_path,
+            record=records.append,
+        )
+    except LaunchTransactionError as error:
+        result = error.result
+    assert launches == [native] and result.state is expected_state
+    assert result.reconciliations[-1]["status"] == expected_status
+    assert all(record["state"] != "adopted" for record in records)
+    assert "request" not in result.to_dict() and "context" not in result.to_dict()
+    if expected_state is LaunchState.SUBMITTED:
+        assert result.launch_result is native and result.job_id == "41"
+    else:
+        assert not result.ok and all(
+            record["state"] != "submitted" for record in records
+        )
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="SUCCEEDED",
+            workload_observable=False,
+            observed_task_ids=(0, 1),
+        ),
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="SUCCEEDED",
+            workload_observable=True,
+            observed_task_ids=(),
+        ),
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="SUCCEEDED",
+            workload_observable=True,
+            observed_task_ids=(0, 0),
+        ),
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+    ),
+)
+def test_native_finalizer_independently_rejects_unobservable_or_incomplete_found(
+    monkeypatch, tmp_path, evidence
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        StabilityResult,
+    )
+
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    observations = iter(
+        [
+            workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            ),
+            evidence,
+        ]
+    )
+    records = []
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached")
+    )
+    with pytest.raises(LaunchTransactionError) as caught:
+        _REAL_RUN_LAUNCH_TRANSACTION(
+            logical_id="native-independent-evidence",
+            readiness=lambda: StabilityResult(
+                EvidenceState.READY, FailureCategory.NONE
+            ),
+            launch=lambda: native,
+            reconcile=lambda: next(observations),
+            classify_launch_error=lambda _error: pytest.fail("retry reached"),
+            require_native_result=True,
+            lock_root=tmp_path,
+            record=records.append,
+        )
+    result = caught.value.result
+    assert result.state is LaunchState.INDETERMINATE
+    assert result.job_id == ""
+    assert result.launch_result is None
+    assert all(record["state"] not in {"submitted", "adopted"} for record in records)
+
+
+def _robotwin_bridge_fixture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, object, object, dict[str, object], dict[str, str]]:
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        CUSTOMER_TERMS,
+        CUSTOMER_USE_SCOPE,
+        RobotwinSubmitContext,
+        TRANSPORT_CONTEXT_ENV,
+        encode_transport,
+        validate_context_bytes,
+    )
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+    from npa.execution_preflight import ExecutionTarget
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        SubmitCredentialContext,
+    )
+
+    context_name = "robotwin-private-context-canary"
+    output_root = "s3://robotwin-private-bucket-canary/output"
+    run_id = "robotwin-private-run-canary"
+    payload = {
+        "solution": "robotwin",
+        "ownership_provenance": "manager-issued",
+        "customer_scope_id": "robotwin-customer-canary",
+        "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+        "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+        "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+        "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+        "runtime_lock_sha256": "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e",
+        "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation": {
+            "policy": "STRICT",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+            "count": 1,
+        },
+        "project": "robotwin-private-project-canary",
+        "nebius_profile": "robotwin-private-profile-canary",
+        "kubeconfig": "/owner-only/robotwin-kubeconfig-canary",
+        "kubernetes_context": context_name,
+        "skypilot_config_path": "/owner-only/robotwin-skypilot-canary",
+        "bucket": "robotwin-private-bucket-canary",
+        "output_root": output_root,
+        "run_id": run_id,
+    }
+    raw = json.dumps(payload, sort_keys=True).encode()
+    assertion = SimpleNamespace(
+        issuer="https://customer-auth.example.invalid",
+        customer_scope_id=payload["customer_scope_id"],
+        run_id=run_id,
+        runtime_manifest_sha256=payload["runtime_lock_sha256"],
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2099-01-01T00:00:00Z",
+        decision="accepted",
+        intended_activity=CUSTOMER_USE_SCOPE,
+        terms=list(CUSTOMER_TERMS),
+        assertion_id="assertion-sky-canary-0001",
+        nonce="nonce-sky-canary-00000001",
+    )
+    kubeconfig = yaml.safe_dump(
+        {
+            "apiVersion": "v1",
+            "kind": "Config",
+            "current-context": context_name,
+            "clusters": [
+                {
+                    "name": "robotwin-cluster",
+                    "cluster": {
+                        "server": "https://cluster.example.invalid",
+                        "certificate-authority-data": "Y2E=",
+                    },
+                }
+            ],
+            "contexts": [
+                {
+                    "name": context_name,
+                    "context": {
+                        "cluster": "robotwin-cluster",
+                        "user": "robotwin-user",
+                    },
+                }
+            ],
+            "users": [
+                {"name": "robotwin-user", "user": {"token": "portable-test-token"}}
+            ],
+        },
+        sort_keys=False,
+    ).encode()
+    skypilot = (f"kubernetes:\n  allowed_contexts: [{context_name}]\n").encode()
+    materialized_dir = tmp_path / "materialized-config"
+    materialized_dir.mkdir(mode=0o700)
+    materialized_kubeconfig = materialized_dir / "kubeconfig.yaml"
+    materialized_skypilot = materialized_dir / "skypilot.yaml"
+    materialized_kubeconfig.write_bytes(kubeconfig)
+    materialized_skypilot.write_bytes(skypilot)
+    materialized_kubeconfig.chmod(0o600)
+    materialized_skypilot.chmod(0o600)
+    payload["kubeconfig"] = str(materialized_kubeconfig)
+    payload["skypilot_config_path"] = str(materialized_skypilot)
+    raw = json.dumps(payload, sort_keys=True).encode()
+    authorization = validate_context_bytes(
+        raw,
+        customer_authorization_boundary=SimpleNamespace(
+            trusted_issuer="https://customer-auth.example.invalid",
+            consume_once=lambda _request: assertion,
+        ),
+        config_bytes={
+            "kubeconfig": kubeconfig,
+            "skypilot_config_path": skypilot,
+        },
+    )
+    transport = encode_transport(authorization)
+    source_uri = "s3://control-source-bucket/npa-src/npa/" + "a" * 64
+    submit_context = RobotwinSubmitContext(
+        authorization.context_sha256,
+        authorization,
+        transport,
+        private_values=(source_uri,),
+        private_environment=(("NPA_SRC_S3_URI", source_uri),),
+    )
+    summary = f"{output_root}/{run_id}/npa_byof_summary.json"
+    target = ExecutionTarget(
+        project=payload["project"],
+        project_id="robotwin-private-project-id-canary",
+        tenant_id="robotwin-private-tenant-id-canary",
+        region="eu-north1",
+        context=context_name,
+        output_uris=(summary,),
+        output_kinds={summary: "file"},
+        credentials=SubmitCredentialContext(
+            endpoint_url="https://storage.eu-north1.nebius.cloud",
+            access_key_id="outer-access-canary",
+            secret_access_key="outer-secret-canary",
+        ),
+    )
+    report: dict[str, object] = {
+        "schema_version": "npa.execution-preflight.v1",
+        "presence": "pass",
+        "access": "pass",
+        "execution_readiness": "pass",
+        "destination_count": 1,
+        "checks": {
+            "scope": "pass",
+            "storage_owner": "pass",
+            "cluster_owner": "pass",
+            "storage_write_read": "pass",
+        },
+    }
+    monkeypatch.setenv("NPA_SRC_S3_URI", "${NPA_SRC_S3_URI}")
+    spec_path = (
+        Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
+    )
+    spec = load_spec(spec_path)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="robotwin-public-launcher"),
+        run_id="robotwin-public-launcher",
+        options=SkypilotRenderOptions(
+            materialize_registry_secrets=False,
+            aws_endpoint_url="${AWS_ENDPOINT_URL}",
+        ),
+    )
+    yaml_path = tmp_path / "robotwin-rendered.yaml"
+    yaml_path.write_text(rendered, encoding="utf-8")
+    extra_env = {
+        "KUBECONFIG": authorization.kubeconfig_source,
+        TRANSPORT_CONTEXT_ENV: transport,
+        "NPA_SRC_S3_URI": source_uri,
+        "AWS_ACCESS_KEY_ID": "outer-access-canary",
+        "AWS_SECRET_ACCESS_KEY": "outer-secret-canary",
+        "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
+        "NEBIUS_S3_ENDPOINT": "https://storage.eu-north1.nebius.cloud",
+    }
+    return yaml_path, submit_context, target, report, extra_env
+
+
 def _is_status_cmd(cmd: list[str]) -> bool:
     return len(cmd) >= 2 and cmd[1] == "status"
+
+
+def _robotwin_secret_envs(extra_env: dict[str, str]) -> tuple[str, ...]:
+    """Return the exact value-only secret names for a fixture environment."""
+
+    return tuple(name for name in extra_env if name != "KUBECONFIG")
 
 
 def _healthy_status(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -1936,6 +2571,1412 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
     ]
 
 
+def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        TRANSPORT_CONTEXT_ENV,
+    )
+
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    private_values = (
+        *authorization.redactions,
+        submit_context.transport_value,
+        *submit_context.private_values,
+        authorization.summary_uri,
+    )
+    prepared_forbidden_values = (
+        *authorization.redactions,
+        submit_context.transport_value,
+        authorization.summary_uri,
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    records: list[dict[str, object]] = []
+    captured_files: dict[str, object] = {}
+
+    def preflight(documents, **kwargs):
+        assert kwargs["infra"] == f"k8s/{authorization.kubernetes_context}"
+        assert kwargs["target"] is target
+        assert kwargs["global_config"]["kubernetes"]["allowed_contexts"] == [
+            authorization.kubernetes_context
+        ]
+        assert TRANSPORT_CONTEXT_ENV not in kwargs["extra_env"]
+        documents[1]["resources"]["region"] = authorization.kubernetes_context
+        return target, report, {}
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        if cmd[1:3] == ["jobs", "launch"]:
+            prepared_path = Path(cmd[-1])
+            kubeconfig_path = Path(kwargs["env"]["KUBECONFIG"])
+            captured_files.update(
+                prepared=prepared_path.read_text(encoding="utf-8"),
+                submission_dir=prepared_path.parent,
+                kubeconfig=kubeconfig_path.read_bytes(),
+                kubeconfig_mode=kubeconfig_path.stat().st_mode & 0o777,
+            )
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                "Job submitted, ID: 42\n"
+                f"context={authorization.kubernetes_context}\n"
+                f"output={authorization.summary_uri}\n"
+            ),
+            stderr="",
+        )
+
+    legacy_transaction = workflow_module.run_launch_transaction
+
+    def recording_transaction(**kwargs):
+        transaction = legacy_transaction(**kwargs)
+        kwargs["record"](transaction.to_dict())
+        return transaction
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", recording_transaction
+    )
+    result = submit_workflow(
+        yaml_path,
+        "robotwin-public-launcher",
+        isolated_config_dir=tmp_path / "sky-state",
+        config_path=Path(authorization.skypilot_config_source),
+        sky_bin=_fake_sky(tmp_path),
+        infra=f"k8s/{authorization.kubernetes_context}",
+        secret_envs=_robotwin_secret_envs(extra_env),
+        extra_env=extra_env,
+        project=authorization.project,
+        execution_target=target,
+        execution_preflight_report=report,
+        robotwin_submit_context=submit_context,
+        transaction_recorder=records.append,
+    )
+
+    launch_cmd, launch_kwargs = next(
+        item for item in calls if item[0][1:3] == ["jobs", "launch"]
+    )
+    control_calls = [item for item in calls if item[0] != launch_cmd]
+    serialized_argv = json.dumps(launch_cmd)
+    assert "--infra" not in launch_cmd
+    secret_pairs = [
+        launch_cmd[index : index + 2] for index in range(len(launch_cmd) - 1)
+    ]
+    for secret_name in _robotwin_secret_envs(extra_env):
+        assert secret_pairs.count(["--secret", secret_name]) == 1
+    assert all(private not in serialized_argv for private in private_values)
+    assert launch_kwargs["stdout"] == subprocess.PIPE
+    assert launch_kwargs["stderr"] == subprocess.PIPE
+    assert all(
+        TRANSPORT_CONTEXT_ENV not in kwargs["env"] for _cmd, kwargs in control_calls
+    )
+    assert all(
+        private not in kwargs["env"].values()
+        for _cmd, kwargs in control_calls
+        for private in private_values
+    )
+    prepared = str(captured_files["prepared"])
+    assert all(private not in prepared for private in prepared_forbidden_values)
+    prepared_environment = list(yaml.safe_load_all(prepared))[1]["envs"]
+    assert "NPA_SRC_S3_URI" not in prepared_environment
+    assert ["--secret", "NPA_SRC_S3_URI"] in secret_pairs
+    assert (
+        launch_kwargs["env"]["NPA_SRC_S3_URI"]
+        == dict(submit_context.private_environment)["NPA_SRC_S3_URI"]
+    )
+    assert "region:" not in prepared
+    assert not Path(captured_files["submission_dir"]).exists()
+    assert result.log_paths == {}
+    assert result.submitted_yaml_path == ""
+    assert authorization.kubernetes_context not in result.stdout
+    assert authorization.summary_uri not in result.stdout
+    assert "<redacted>" in result.stdout
+    assert result.launch_transaction["controller"]["selected_context"] == ""
+    assert all(
+        private not in json.dumps(result.launch_transaction, sort_keys=True)
+        for private in private_values
+    )
+    assert len(records) == 1
+    assert all(
+        private not in json.dumps(records, sort_keys=True) for private in private_values
+    )
+    assert captured_files["kubeconfig"] == authorization.kubeconfig_bytes
+    assert captured_files["kubeconfig_mode"] == 0o600
+
+
+@pytest.mark.parametrize("session_token", ("", "inner-session-token-canary"))
+def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, session_token: str
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        CHILD_BUCKET_ENV,
+        CHILD_CONFIG_PATH_ENV,
+        CHILD_IMAGE_ENV,
+        CHILD_OUTPUT_PREFIX_ENV,
+        CHILD_OUTPUT_ROOT_ENV,
+        CHILD_RUN_ID_ENV,
+        CHILD_RUNTIME_AUTH_ENV,
+        encode_runtime_authorization,
+        prepare_inner_submit,
+    )
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    _outer, outer_context, _target, _report, _extra = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = outer_context.authorization
+    endpoint = "https://storage.eu-north1.nebius.cloud"
+    image = authorization.bootstrap_image
+    monkeypatch.setenv("PATH", "/usr/bin:/bin:/synthetic-control-bin")
+    monkeypatch.setenv("UNBOUND_CONTROL_CANARY", "must-not-reach-control")
+    environment = {
+        "HOME": str(tmp_path / "operator-home"),
+        "PATH": os.environ["PATH"],
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "KUBECONFIG": authorization.kubeconfig_source,
+        "KUBECONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
+        "NPA_BYOF_PROJECT": authorization.project,
+        "NPA_NEBIUS_PROFILE": authorization.profile,
+        "NEBIUS_PROFILE": authorization.profile,
+        "AWS_ACCESS_KEY_ID": "inner-access-canary",
+        "AWS_SECRET_ACCESS_KEY": "inner-secret-canary",
+        "AWS_ENDPOINT_URL": endpoint,
+        "NEBIUS_S3_ENDPOINT": endpoint,
+        CHILD_BUCKET_ENV: authorization.bucket,
+        CHILD_CONFIG_PATH_ENV: authorization.skypilot_config_source,
+        CHILD_IMAGE_ENV: image,
+        CHILD_OUTPUT_PREFIX_ENV: (
+            f"{authorization.output_root}/{authorization.run_id}/"
+        ),
+        CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
+        CHILD_RUN_ID_ENV: authorization.run_id,
+        CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(authorization),
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": (authorization.context_sha256),
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "2",
+    }
+    if session_token:
+        environment["AWS_SESSION_TOKEN"] = session_token
+    inner_context = prepare_inner_submit(authorization, environment)
+    script = (
+        Path(__file__).resolve().parents[3] / "scripts/run_byof_container_verify.py"
+    )
+    spec = importlib.util.spec_from_file_location("robotwin_inner_render", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    public_workflow = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[4] / "workflows/testing/byof-robotwin.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    documents = module.render_workflow(
+        Path(__file__).resolve().parents[3]
+        / "src/npa/workflows/byof/profiles/byof-solution-smoke-robotwin-rtxpro-gpu.yaml",
+        run_id=authorization.run_id,
+        output_root=authorization.output_root,
+        image=image,
+        smoke_command=public_workflow["config"]["smoke_command"],
+        solution_name="robotwin",
+        capability_name="beat_block_hammer_successful_seed_replay_collection",
+        smoke_artifact_name="robotwin-smoke.json",
+        runtime_env=environment,
+    )
+    inner_yaml = tmp_path / "robotwin-inner.yaml"
+    module._write_yaml_documents(inner_yaml, documents, True)
+    assert len(list(yaml.safe_load_all(inner_yaml.read_text()))) == 2
+    private_values = (
+        *authorization.redactions,
+        authorization.summary_uri,
+        image,
+        environment["AWS_ACCESS_KEY_ID"],
+        environment["AWS_SECRET_ACCESS_KEY"],
+        endpoint,
+        *((session_token,) if session_token else ()),
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    records: list[dict[str, object]] = []
+
+    gpu_checks: list[str] = []
+    kubectl_environments: list[dict[str, str]] = []
+
+    def verify_gpu(_inventory, *, accelerator, **_kwargs):
+        gpu_checks.append(accelerator)
+
+    def discover_inventory(*, context, runner):
+        if context != "":
+            pytest.fail("private context reached kubectl argv")
+        result = runner(
+            ["kubectl", "get", "nodes", "-o", "json"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        kubectl_environments.append(dict(calls[-1][1]["env"]))
+        return {"context": context, "result": result.returncode}
+
+    monkeypatch.setattr(
+        k8s_gpu_catalog, "discover_kubernetes_gpu_inventory", discover_inventory
+    )
+    monkeypatch.setattr(k8s_gpu_catalog, "preflight_kubernetes_gpu_gang", verify_gpu)
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                "Job submitted, ID: 43\n"
+                f"context={authorization.kubernetes_context}\n"
+                f"output={authorization.summary_uri}\n"
+                f"session={session_token}\n"
+            ),
+            stderr="",
+        )
+
+    legacy_transaction = workflow_module.run_launch_transaction
+
+    def recording_transaction(**kwargs):
+        transaction = legacy_transaction(**kwargs)
+        kwargs["record"](transaction.to_dict())
+        return transaction
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: pytest.fail(
+            "inner bridge attempted owner-host execution-target resolution"
+        ),
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", recording_transaction
+    )
+    inner_dir = tmp_path / "inner"
+    inner_dir.mkdir()
+    result = submit_workflow(
+        inner_yaml,
+        "robotwin-inner-sanitized",
+        isolated_config_dir=tmp_path / "inner-sky-state",
+        config_path=Path(authorization.skypilot_config_source),
+        sky_bin=_fake_sky(inner_dir),
+        infra=f"k8s/{authorization.kubernetes_context}",
+        secret_envs=module.resolve_secret_envs(
+            None, solution_name="robotwin", environment=environment
+        ),
+        extra_env=module._robotwin_submit_environment(inner_context, environment),
+        project=authorization.project,
+        execution_target=None,
+        execution_preflight_report=None,
+        robotwin_submit_context=inner_context,
+        transaction_recorder=records.append,
+    )
+
+    launch_cmd, launch_kwargs = next(
+        item for item in calls if item[0][1:3] == ["jobs", "launch"]
+    )
+    control_calls = [item for item in calls if item[0] != launch_cmd]
+    assert all(
+        item[1]["env"]["PATH"] == os.environ["PATH"]
+        and "UNBOUND_CONTROL_CANARY" not in item[1]["env"]
+        for item in control_calls
+    )
+    assert "--infra" not in launch_cmd
+    assert all(private not in json.dumps(launch_cmd) for private in private_values)
+    secret_pairs = [
+        launch_cmd[index : index + 2] for index in range(len(launch_cmd) - 1)
+    ]
+    expected_secret_names = module.resolve_secret_envs(
+        None, solution_name="robotwin", environment=environment
+    )
+    for secret_name in expected_secret_names:
+        assert secret_pairs.count(["--secret", secret_name]) == 1
+    assert launch_cmd.count("--secret") == len(expected_secret_names)
+    assert all(
+        value not in kwargs["env"].values()
+        for _cmd, kwargs in control_calls
+        for value in private_values
+    )
+    assert launch_kwargs["env"][CHILD_IMAGE_ENV] == image
+    assert (
+        launch_kwargs["env"][CHILD_OUTPUT_PREFIX_ENV]
+        == environment[CHILD_OUTPUT_PREFIX_ENV]
+    )
+    assert launch_kwargs["env"]["AWS_ENDPOINT_URL"] == endpoint
+    assert launch_kwargs["env"].get("AWS_SESSION_TOKEN", "") == session_token
+    prepared = Path(result.submitted_yaml_path).read_text(encoding="utf-8")
+    assert all(private not in prepared for private in private_values)
+    assert "region:" not in prepared
+    assert "NPA_EXECUTION_OUTPUTS" not in prepared
+    prepared_document = list(yaml.safe_load_all(prepared))[1]
+    # SkyPilot's resources schema rejects Kubernetes pod settings here. Preserve
+    # the exact validated Downward API fields in its supported task config.
+    assert "kubernetes" not in prepared_document["resources"]
+    assert prepared_document["config"]["kubernetes"]["pod_config"] == {
+        "spec": {
+            "containers": [
+                {
+                    "name": "ray-node",
+                    "env": [
+                        {
+                            "name": "POD_NAME",
+                            "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
+                        },
+                        {
+                            "name": "POD_NAMESPACE",
+                            "valueFrom": {
+                                "fieldRef": {"fieldPath": "metadata.namespace"}
+                            },
+                        },
+                    ],
+                }
+            ]
+        }
+    }
+    assert prepared_document["envs"]["AWS_ENDPOINT_URL"] == "${AWS_ENDPOINT_URL}"
+    assert prepared_document["envs"]["NEBIUS_S3_ENDPOINT"] == ("${NEBIUS_S3_ENDPOINT}")
+    if session_token:
+        assert prepared_document["envs"]["AWS_SESSION_TOKEN"] == "${AWS_SESSION_TOKEN}"
+    else:
+        assert "AWS_SESSION_TOKEN" not in prepared_document["envs"]
+    assert all(
+        private not in result.stdout + result.stderr for private in private_values
+    )
+    # Confidential launches deliberately disable persisted/streamed raw logs.
+    for name in ("sky-launch.stdout.log", "sky-launch.stderr.log"):
+        log_path = Path(result.log_paths["submission_dir"]) / name
+        assert not log_path.exists()
+    assert "AWS_ENDPOINT_URL_S3" not in prepared_document["envs"]
+    assert "NPA_STORAGE_ENDPOINT" not in prepared_document["envs"]
+    assert "S3_ENDPOINT_URL" not in prepared_document["envs"]
+    assert gpu_checks == ["RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"]
+    assert len(kubectl_environments) == 1
+    assert set(kubectl_environments[0]) <= {
+        "HOME",
+        "KUBECONFIG",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "TMPDIR",
+    }
+    assert not {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_ENDPOINT_URL",
+        "NPA_SRC_S3_URI",
+    } & set(kubectl_environments[0])
+    assert result.launch_transaction["controller"]["selected_context"] == ""
+    assert all(
+        private not in json.dumps(result.launch_transaction, sort_keys=True)
+        for private in private_values
+    )
+    assert len(records) == 1
+    assert all(
+        private not in json.dumps(records, sort_keys=True) for private in private_values
+    )
+
+
+def _robotwin_inner_storage_preflight_fixture(authorization):
+    endpoint = "https://storage.eu-north1.nebius.cloud"
+    task = {
+        "resources": {"accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"},
+        "envs": {
+            "NPA_EXECUTION_OUTPUTS": json.dumps(
+                [{"uri": authorization.summary_uri, "kind": "file"}]
+            ),
+            "AWS_ENDPOINT_URL": "${AWS_ENDPOINT_URL}",
+            "NEBIUS_S3_ENDPOINT": "${NEBIUS_S3_ENDPOINT}",
+        },
+    }
+    environment = {
+        "AWS_ACCESS_KEY_ID": "inner-access-canary",
+        "AWS_SECRET_ACCESS_KEY": "inner-secret-canary",
+        "AWS_ENDPOINT_URL": endpoint,
+        "NEBIUS_S3_ENDPOINT": endpoint,
+    }
+    return [{"name": "robotwin"}, task], environment
+
+
+@pytest.mark.parametrize(
+    ("bound_token", "observed_token", "legacy_token"),
+    (
+        ("bound-session", "changed-session", ""),
+        ("bound-session", "", ""),
+        ("", "unbound-session", ""),
+        ("bound-session", "bound-session", "legacy-session"),
+    ),
+)
+def test_robotwin_inner_session_drift_refuses_before_gpu_discovery(
+    monkeypatch, tmp_path, bound_token, observed_token, legacy_token
+):
+    from npa.execution_preflight import ExecutionPreflightError
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    _yaml, context, _target, _report, _extra = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = context.authorization
+    documents, environment = _robotwin_inner_storage_preflight_fixture(authorization)
+    environment["AWS_SESSION_TOKEN"] = observed_token
+    environment["AWS_SECURITY_TOKEN"] = legacy_token
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: pytest.fail("unbound session reached GPU discovery"),
+    )
+    with pytest.raises(ExecutionPreflightError, match="storage principal changed"):
+        workflow_module._preflight_confidential_robotwin_inner(
+            documents,
+            authorization=authorization,
+            environment=environment,
+            bound_environment={"AWS_SESSION_TOKEN": bound_token},
+            global_config={
+                "kubernetes": {"allowed_contexts": [authorization.kubernetes_context]}
+            },
+        )
+
+
+@pytest.mark.parametrize("effect", ("launch", "reconcile"))
+def test_robotwin_expiry_is_rechecked_at_each_final_scheduler_effect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, effect: str
+) -> None:
+    from npa.orchestration.npa_workflow import robotwin_preflight
+
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    events: list[str] = []
+    records: list[dict[str, object]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[1]["resources"]["region"] = authorization.kubernetes_context
+        return target, report, {}
+
+    def stale(observed) -> None:
+        assert observed is authorization
+        events.append("freshness")
+        raise robotwin_preflight.RobotwinPreflightError("customer-authorization-stale")
+
+    def run_transaction(**kwargs):
+        events.append(f"transaction-{effect}")
+        return kwargs[effect]()
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: (
+            _healthy_status(cmd)
+            if _is_status_cmd(cmd)
+            else subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_run_launch",
+        lambda *_args, **_kwargs: pytest.fail("stale authority reached launch"),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_args, **_kwargs: pytest.fail("stale authority reached reconcile"),
+    )
+    monkeypatch.setattr(workflow_module, "run_launch_transaction", run_transaction)
+    monkeypatch.setattr(
+        robotwin_preflight, "require_customer_authorization_fresh", stale
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="customer-authorization-stale"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            isolated_config_dir=tmp_path / "sky-state",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+            transaction_recorder=records.append,
+            on_launch_ready=lambda _cleanup: pytest.fail(
+                "stale authority armed cleanup"
+            ),
+        )
+
+    assert events == [f"transaction-{effect}", "freshness"]
+    assert records == []
+
+
+def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path, submit_context, target, _report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("bridge mismatch reached runtime resolution"),
+    )
+
+    with pytest.raises(
+        SkyPilotSubmitError, match="submit-target-not-preverified"
+    ) as exc_info:
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report={},
+            robotwin_submit_context=submit_context,
+            on_launch_ready=lambda _cleanup: pytest.fail("refusal enabled cleanup"),
+        )
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
+@pytest.mark.parametrize("confidential", (True,))
+@pytest.mark.parametrize("failure", ("signal", "timeout", "indeterminate"))
+@pytest.mark.parametrize("real_transaction", (False, True))
+def test_submission_cleanup_retains_unknown_acceptance_with_bound_runtime(
+    monkeypatch, tmp_path, confidential, failure, real_transaction
+) -> None:
+    options = {}
+    if confidential:
+        path, bridge, target, report, env = _robotwin_bridge_fixture(
+            monkeypatch, tmp_path
+        )
+        authorization = bridge.authorization
+
+        def preflight(documents, **_kwargs):
+            documents[1]["resources"]["region"] = authorization.kubernetes_context
+            return target, report, {}
+
+        monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+        options = dict(
+            robotwin_submit_context=bridge,
+            extra_env=env,
+            config_path=Path(authorization.skypilot_config_source),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            secret_envs=_robotwin_secret_envs(env),
+        )
+    else:
+        path = tmp_path / "workflow.yaml"
+        path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    handles, calls, order = [], [], []
+    status = ["RUNNING"]
+
+    def ready(handle):
+        assert handle.active and handle.submitting
+        handle.cleanup_on_failure = True
+        assert handle.config_path.is_file()
+        handles.append(handle)
+        order.append("armed")
+
+    def launch(*_args, **_kwargs):
+        assert len(handles) == 1
+        order.append("accepted")
+        if failure == "signal":
+            handles[0].request()
+            assert not calls
+            raise SystemExit(130)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired("synthetic launch", 1)
+        raise RuntimeError("synthetic indeterminate acceptance")
+
+    def reconcile(name, **kwargs):
+        assert name == "synthetic-owned-submit"
+        if not handles:
+            assert real_transaction
+            return workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            )
+        assert handles and kwargs["env"] == handles[0].environment
+        assert Path(kwargs["env"]["SKYPILOT_GLOBAL_CONFIG"]).is_file()
+        if confidential:
+            assert Path(kwargs["env"]["KUBECONFIG"]).is_file()
+            assert not any(
+                value in kwargs["env"].values() for value in bridge.private_values
+            )
+            assert all(key not in kwargs["env"] for key in _robotwin_secret_envs(env))
+        order.append("reconcile")
+        return workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="42",
+            status=status[0],
+        )
+
+    def run(command, **kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        assert command == [str(sky), "jobs", "cancel", "--yes", "42"]
+        assert kwargs["env"] == handles[0].environment
+        assert order[-2:] == ["reconcile", "reconcile"]
+        calls.append(command)
+        status[0] = "CANCELLED"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    sky = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        workflow_module, "_native_context_digest", lambda **_k: "c" * 64
+    )
+    monkeypatch.setattr(workflow_module, "_invoke_native_bridge", launch)
+    monkeypatch.setattr(
+        workflow_module,
+        "_wait_for_healthy_jobs_controller",
+        lambda *_a, **_k: workflow_module.ControllerHealthResult(
+            workflow_module.ControllerState.UP, "synthetic-controller"
+        ),
+    )
+    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", reconcile)
+    monkeypatch.setattr(subprocess, "run", run)
+    if real_transaction:
+        from npa.orchestration.skypilot.launch_transaction import (
+            EvidenceState,
+            ProbeObservation,
+            StabilityPolicy,
+        )
+
+        options.update(
+            stability_probe=lambda: ProbeObservation(EvidenceState.READY),
+            stability_policy=StabilityPolicy(2, 0, 0, 1),
+            launch_lock_root=tmp_path / "launch-locks",
+        )
+        monkeypatch.setattr(
+            workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+        )
+    with pytest.raises(SkyPilotSubmitError):
+        submit_workflow(
+            path,
+            "synthetic-owned-submit",
+            sky_bin=sky,
+            isolated_config_dir=tmp_path / "state",
+            on_launch_ready=ready,
+            **options,
+        )
+    assert order[:2] == ["armed", "accepted"]
+    assert not calls and not handles[0].verified and not handles[0].job_id
+    assert handles[0].config_path.is_file()
+    handles[0].request()
+    assert not calls
+    assert all("down" not in command and "api" not in command for command in calls)
+
+
+@pytest.mark.parametrize("confidential", (True,))
+@pytest.mark.parametrize(
+    "scenario", ("before-launch", "receipt-signal", "receipt-exception")
+)
+@pytest.mark.parametrize("stream", ("stdout", "stderr"))
+@pytest.mark.parametrize(
+    "kind", ("successful", "unacknowledged", "failed", "ambiguous", "foreign-command")
+)
+def test_submission_cleanup_rejects_stale_launch_text_and_same_name_agreement(
+    monkeypatch, tmp_path, confidential, scenario, stream, kind
+):
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        StabilityPolicy,
+    )
+
+    options = {}
+    if confidential:
+        path, bridge, target, report, env = _robotwin_bridge_fixture(
+            monkeypatch, tmp_path
+        )
+        authorization = bridge.authorization
+
+        def preflight(documents, **_kwargs):
+            documents[1]["resources"]["region"] = authorization.kubernetes_context
+            return target, report, {}
+
+        monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+        options.update(
+            robotwin_submit_context=bridge,
+            extra_env=env,
+            config_path=Path(authorization.skypilot_config_source),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            secret_envs=_robotwin_secret_envs(env),
+        )
+    else:
+        path = tmp_path / "workflow.yaml"
+        path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    handles, launches, cancellations, record_calls = [], [], [], []
+    status = ["RUNNING"]
+
+    def ready(handle):
+        handles.append(handle)
+        handle.cleanup_on_failure = True
+        if scenario == "before-launch":
+            handle.request()
+            raise SystemExit(130)
+
+    def launch(command, **_kwargs):
+        assert scenario != "before-launch", "refusal must never invoke launch"
+        launches.append(command)
+        if scenario == "receipt-signal":
+            handles[0].request()
+        # A successful invocation may replay an earlier request's text. Neither
+        # exact argv nor agreement with an unrelated same-name row is ownership.
+        output = "Job submitted, ID: 42\n"
+        if kind == "unacknowledged":
+            output = "Request accepted without a job identity\n"
+        elif kind == "ambiguous":
+            output += "Managed Job ID: 43\n"
+        return subprocess.CompletedProcess(
+            command if kind != "foreign-command" else ["/sky", "jobs", "queue"],
+            int(kind == "failed"),
+            **{stream: output},
+        ), []
+
+    def reconcile(_name, **kwargs):
+        if not handles:
+            return workflow_module.ReconciliationEvidence(
+                workflow_module.ReconciliationState.ABSENT
+            )
+        assert kwargs["env"] == handles[0].environment
+        if confidential:
+            assert all(key not in kwargs["env"] for key in _robotwin_secret_envs(env))
+        # This active same-name record belongs to a different invocation in ALL
+        # cases, including when its ID agrees with the replayed output above.
+        return workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="42",
+            status=status[0],
+            workload_observable=True,
+            observed_task_ids=tuple(kwargs.get("expected_task_ids", ())),
+        )
+
+    def record(payload):
+        record_calls.append(payload)
+        if scenario == "receipt-exception" and payload["job_id"] == "42":
+            raise RuntimeError("synthetic post-acknowledgment failure")
+
+    def command_run(command, **kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        assert command == [str(sky), "jobs", "cancel", "--yes", "42"]
+        assert kwargs["env"] == handles[0].environment
+        cancellations.append(command)
+        status[0] = "CANCELLED"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    sky = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    monkeypatch.setattr(
+        workflow_module, "_native_context_digest", lambda **_k: "c" * 64
+    )
+
+    # Outer subprocess text is never the native IPC channel.  The
+    # receipt-exception case must first provide the complete bound native
+    # observation so the recorder callback, rather than observation decoding,
+    # is the failure under test.  Other stale-text cases intentionally leave
+    # the private channel empty and therefore fail closed before recording.
+    def invoke_native_bridge(payload, _environment, _cwd, _timeout):
+        completed, _ = launch(["synthetic-native-client"])
+        if scenario == "receipt-exception" and kind == "successful":
+            request_id = "00000000-0000-4000-8000-000000000001"
+            rows = (
+                {
+                    "event": "request",
+                    "attempt": payload["attempt"],
+                    "context": payload["context"],
+                    "request_id": request_id,
+                },
+                {
+                    "event": "result",
+                    "attempt": payload["attempt"],
+                    "context": payload["context"],
+                    "request_id": request_id,
+                    "job_id": 42,
+                    "task_ids": list(range(payload["task_count"])),
+                },
+            )
+            data = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+            os.write(payload["descriptor"], data.encode())
+            os.fsync(payload["descriptor"])
+        return completed
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_invoke_native_bridge",
+        invoke_native_bridge,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_wait_for_healthy_jobs_controller",
+        lambda *_a, **_k: workflow_module.ControllerHealthResult(
+            workflow_module.ControllerState.UP, "synthetic-controller"
+        ),
+    )
+    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", reconcile)
+    monkeypatch.setattr(subprocess, "run", command_run)
+    with pytest.raises(RuntimeError) as caught:
+        submit_workflow(
+            path,
+            "synthetic-owned-receipt",
+            sky_bin=sky,
+            isolated_config_dir=tmp_path / "sky-state",
+            on_launch_ready=ready,
+            transaction_recorder=record,
+            stability_probe=lambda: ProbeObservation(EvidenceState.READY),
+            stability_policy=StabilityPolicy(2, 0, 0, 1),
+            launch_lock_root=tmp_path / "locks",
+            **options,
+        )
+    if scenario == "receipt-exception" and kind == "successful":
+        assert str(caught.value) == "synthetic post-acknowledgment failure"
+        native_receipts = [
+            record for record in record_calls if record.get("job_id") == "42"
+        ]
+        assert len(native_receipts) == 1
+        assert native_receipts[0]["state"] == "submitted"
+    else:
+        assert not [record for record in record_calls if record.get("job_id") == "42"]
+    assert len(launches) == int(scenario != "before-launch")
+    assert not cancellations and status == ["RUNNING"]
+    handle = handles[0]
+    if scenario == "receipt-exception" and kind == "successful":
+        assert not handle.verified and handle.job_id == "42"
+    else:
+        assert not handle.verified and not handle.job_id
+    assert handle.config_path.is_file()
+    if confidential:
+        assert Path(handle.environment["KUBECONFIG"]).is_file()
+        assert all(key not in handle.environment for key in _robotwin_secret_envs(env))
+    handle.request()
+    assert not cancellations and handle.result.errors
+    assert handle.config_path.is_file()
+
+
+@pytest.mark.parametrize("active_status", ("RUNNING", "UNKNOWN", "CANCELLING"))
+@pytest.mark.parametrize("reverse", (False, True))
+def test_submission_cleanup_requires_every_task_terminal(
+    monkeypatch, active_status, reverse
+):
+    rows = [
+        {"job_name": "synthetic", "job_id": "42", "status": active_status},
+        {"job_name": "synthetic", "job_id": "42", "status": "SUCCEEDED"},
+    ]
+    if reverse:
+        rows.reverse()
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, json.dumps(rows), ""
+        ),
+    )
+    evidence = workflow_module._reconcile_managed_job_env(
+        "synthetic",
+        env={},
+        sky_executable="/sky",
+        cwd=None,
+        require_all_terminal=True,
+    )
+    assert evidence.job_id == "42"
+    assert not workflow_module._cleanup_job_terminal(evidence.status)
+    assert evidence.status == ("UNKNOWN" if active_status == "UNKNOWN" else "RUNNING")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "absent",
+        "ambiguous",
+        "unavailable",
+        "changed-id",
+        "unknown",
+        "missing-receipt",
+        "cancel-failed",
+        "not-terminal",
+    ),
+)
+def test_submission_cleanup_preserves_unverified_resources(monkeypatch, tmp_path, mode):
+    # Injected IDs exercise only downstream policy, NOT a supported ownership
+    # producer. Production CLI/queue evidence must leave the identity unset.
+    state = workflow_module.ReconciliationState
+    observations = []
+    calls = []
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic-owned",
+        {"KUBECONFIG": str(tmp_path / "kube")},
+        "/synthetic-sky",
+        str(tmp_path),
+        0,
+        tmp_path / "config",
+        active=True,
+        submitting=False,
+        job_id="" if mode == "missing-receipt" else "42",
+    )
+
+    def lookup(*_args, **_kwargs):
+        observations.append(mode)
+        selected = {
+            "absent": state.ABSENT,
+            "ambiguous": state.AMBIGUOUS,
+            "unavailable": state.UNAVAILABLE,
+        }.get(mode, state.FOUND)
+        return workflow_module.ReconciliationEvidence(
+            selected,
+            job_id="43" if mode == "changed-id" else "42",
+            status="UNKNOWN"
+            if mode == "unknown"
+            else "FAILED"
+            if mode == "missing-receipt"
+            else "RUNNING",
+        )
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        assert command == ["/synthetic-sky", "jobs", "cancel", "--yes", "42"]
+        return subprocess.CompletedProcess(
+            command, int(mode == "cancel-failed"), "", "private-canary"
+        )
+
+    monkeypatch.setattr(workflow_module, "_reconcile_managed_job_env", lookup)
+    monkeypatch.setattr(subprocess, "run", run)
+    result = cleanup.request()
+    assert bool(observations) == (mode != "missing-receipt")
+    assert result.errors and not result.verified
+    assert len(calls) == (1 if mode in {"cancel-failed", "not-terminal"} else 0)
+    assert "private-canary" not in str(result)
+
+
+def test_submission_cleanup_stays_inert_before_authorized_launch(monkeypatch, tmp_path):
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic", {}, "/sky", None, 1, tmp_path / "config"
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: pytest.fail("inactive cleanup queried provider"),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_a, **_k: pytest.fail("inactive cleanup ran command")
+    )
+    cleanup.request()
+    cleanup.finish_submit(failed=True)
+    assert not cleanup.active and not cleanup.verified
+
+
+def test_submission_cleanup_retains_private_context_on_unverified_failure(
+    monkeypatch, tmp_path
+):
+    owned = tmp_path / "owned-submission"
+    owned.mkdir(mode=0o700)
+    marker = owned / "private-config"
+    marker.write_text("synthetic private input")
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic", {}, "/sky", None, 1, marker, active=True, cleanup_on_failure=True
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_a, **_k: workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.UNAVAILABLE
+        ),
+    )
+    workflow_module._finish_failed_submission(owned, cleanup)
+    assert marker.is_file() and cleanup.result.errors and not cleanup.verified
+
+
+def test_submission_cleanup_retains_original_failure_on_interrupt(
+    monkeypatch, tmp_path
+):
+    owned = tmp_path / "owned-submission"
+    owned.mkdir(mode=0o700)
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic",
+        {},
+        "/sky",
+        None,
+        1,
+        owned / "private-config",
+        job_id="41",
+        active=True,
+        submitting=False,
+        cleanup_on_failure=True,
+    )
+    monkeypatch.setattr(
+        cleanup, "_cancel_exact", lambda: (_ for _ in ()).throw(KeyboardInterrupt())
+    )
+
+    workflow_module._finish_failed_submission(owned, cleanup)
+
+    assert cleanup.result.errors == ["exact managed-job cleanup unavailable"]
+    assert cleanup.requested and not cleanup.verified and not cleanup.busy
+    assert owned.is_dir()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "name"),
+    [
+        *(
+            ("missing-secret", name)
+            for name in (
+                "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1",
+                "NPA_SRC_S3_URI",
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+            )
+        ),
+        ("missing-value", "AWS_ACCESS_KEY_ID"),
+        ("missing-value", "AWS_SECRET_ACCESS_KEY"),
+        ("missing-value", "AWS_ENDPOINT_URL"),
+        ("missing-value", "NEBIUS_S3_ENDPOINT"),
+        ("duplicate-secret", "AWS_ACCESS_KEY_ID"),
+        ("extra-secret", "AWS_SECURITY_TOKEN"),
+    ],
+)
+def test_robotwin_outer_bridge_requires_exact_value_only_secret_set_before_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+    name: str,
+) -> None:
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    secret_envs = list(_robotwin_secret_envs(extra_env))
+    if mutation == "missing-secret":
+        secret_envs.remove(name)
+    elif mutation == "missing-value":
+        extra_env[name] = ""
+    elif mutation == "duplicate-secret":
+        secret_envs.append(name)
+    else:
+        secret_envs.append(name)
+        extra_env[name] = "private-extra-canary"
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("secret mismatch reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-input-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=secret_envs,
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+    ),
+)
+def test_robotwin_outer_bridge_binds_storage_secret_values_to_verified_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    extra_env[name] = f"different-{name.lower()}-canary"
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("storage mismatch reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-storage-binding-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
+@pytest.mark.parametrize(
+    "unexpected",
+    [
+        "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT",
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "UNBOUND_PRIVATE_OVERRIDE",
+    ],
+)
+def test_robotwin_bridge_rejects_every_unbound_extra_env_before_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unexpected: str
+) -> None:
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("unbound environment reached resolution"),
+    )
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-input-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env={**extra_env, unexpected: "private-canary"},
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
+def test_malformed_robotwin_bridge_context_is_sanitized_before_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "workflow.yaml"
+    path.write_text("name: invalid\n", encoding="utf-8")
+    private = "malformed-private-context-canary"
+    malformed = SimpleNamespace(authorization=SimpleNamespace(secret=private))
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("malformed context reached resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as caught:
+        submit_workflow(path, "run", robotwin_submit_context=malformed)
+    assert private not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_robotwin_control_plane_source_is_allowed_only_in_its_task_env() -> None:
+    source = "s3://control-source-bucket/npa-src/npa/" + "a" * 64
+    documents = [
+        {
+            "name": "outer",
+            "envs": {"NPA_SRC_S3_URI": source},
+            "metadata": {"copied-source": source},
+        }
+    ]
+
+    with pytest.raises(ValueError, match="source binding changed"):
+        workflow_module._strip_confidential_task_context(
+            documents,
+            "",
+            (source,),
+            allowed_rendered_values=(source,),
+        )
+
+
+def test_robotwin_concrete_source_document_refuses_before_file_or_runtime_effects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    documents = list(yaml.safe_load_all(yaml_path.read_text(encoding="utf-8")))
+    source = extra_env["NPA_SRC_S3_URI"]
+    documents[1]["envs"]["NPA_SRC_S3_URI"] = source
+    yaml_path.write_text(
+        yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
+    )
+    sky_bin = _fake_sky(tmp_path)
+    before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("concrete source reached runtime resolution"),
+    )
+    monkeypatch.setattr(
+        workflow_module.shutil,
+        "copy2",
+        lambda *_args, **_kwargs: pytest.fail("concrete source reached file copy"),
+    )
+    authorization = submit_context.authorization
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-contract-mismatch"):
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=sky_bin,
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+    assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*")} == before
+
+
+def test_robotwin_gpu_catalog_error_discards_private_exception_graph(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuCatalogError,
+    )
+
+    yaml_path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    authorization = submit_context.authorization
+    private = authorization.kubernetes_context
+
+    def fail_gpu_catalog(*_args, **_kwargs):
+        try:
+            raise ValueError(f"nested {private}")
+        except ValueError as cause:
+            raise KubernetesGpuCatalogError(f"catalog {private}") from cause
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", fail_gpu_catalog)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "GPU catalog refusal reached a controller or launch subprocess"
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError) as exc_info:
+        submit_workflow(
+            yaml_path,
+            "robotwin-public-launcher",
+            isolated_config_dir=tmp_path / "sky-state",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{private}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+    assert private not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
+def test_confidential_bridge_cannot_select_a_generic_workflow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    generic = tmp_path / "generic.yaml"
+    generic.write_text(
+        "name: generic\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("generic workflow reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-contract-mismatch"):
+        submit_workflow(
+            generic,
+            "generic-run",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
+def test_confidential_bridge_rejects_modified_robotwin_command_before_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path, submit_context, target, report, extra_env = _robotwin_bridge_fixture(
+        monkeypatch, tmp_path
+    )
+    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    documents[1]["run"] += "\nprintf 'unapproved command'\n"
+    path.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    authorization = submit_context.authorization
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_config",
+        lambda **_kwargs: pytest.fail("modified contract reached runtime resolution"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="submit-bridge-contract-mismatch"):
+        submit_workflow(
+            path,
+            "robotwin-public-launcher",
+            config_path=Path(authorization.skypilot_config_source),
+            sky_bin=_fake_sky(tmp_path),
+            infra=f"k8s/{authorization.kubernetes_context}",
+            secret_envs=_robotwin_secret_envs(extra_env),
+            extra_env=extra_env,
+            project=authorization.project,
+            execution_target=target,
+            execution_preflight_report=report,
+            robotwin_submit_context=submit_context,
+        )
+
+
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text("name: demo\n", encoding="utf-8")
@@ -1953,7 +3994,13 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     submit_workflow(
-        yaml_path, "run-env", isolated_config_dir=tmp_path / "isolated", sky_bin=sky_bin
+        yaml_path,
+        "run-env",
+        isolated_config_dir=tmp_path / "isolated",
+        sky_bin=sky_bin,
+        on_launch_ready=lambda _cleanup: pytest.fail(
+            "generic submission selected native cleanup"
+        ),
     )
 
     assert captured_env["HOME"] == str(tmp_path / "isolated" / "home")
@@ -2326,14 +4373,75 @@ def test_status_from_queue_payload_reports_success_after_all_dag_tasks() -> None
     assert _status_from_queue_payload(json.dumps(payload), "1") == "SUCCEEDED"
 
 
-def test_status_from_queue_payload_failure_wins() -> None:
+def test_status_from_queue_payload_waits_for_active_sibling() -> None:
     payload = [
         {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
         {"job_id": 1, "task_id": 1, "status": "FAILED"},
         {"job_id": 1, "task_id": 2, "status": "PENDING"},
     ]
 
-    assert _status_from_queue_payload(json.dumps(payload), "1") == "FAILED"
+    assert _status_from_queue_payload(json.dumps(payload), "1") == "PENDING"
+
+
+@pytest.mark.parametrize(
+    "active", ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING")
+)
+def test_status_from_queue_payload_never_finishes_while_sibling_is_active(
+    active: str,
+) -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "STOPPED"},
+        {"job_id": 1, "task_id": 1, "status": active},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == active
+
+
+def test_status_from_queue_payload_rejects_unknown_with_terminal_sibling() -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "FAILED_RUNTIME"},
+        {"job_id": 1, "task_id": 1, "status": "UNKNOWN"},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == "UNKNOWN"
+
+
+@pytest.mark.parametrize("failure", ("CANCELED", "STOPPED", "FAILED_CUSTOM"))
+def test_status_from_queue_payload_reordered_terminal_failure_wins(
+    failure: str,
+) -> None:
+    payload = [
+        {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
+        {"job_id": 1, "task_id": 1, "status": failure},
+    ]
+
+    assert _status_from_queue_payload(json.dumps(payload), "1") == failure
+
+
+@pytest.mark.parametrize("failure", ("CANCELED", "STOPPED", "FAILED_CUSTOM"))
+def test_workflow_status_reordered_terminal_failure_is_not_success(
+    monkeypatch, tmp_path, failure: str
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    payload = json.dumps(
+        [
+            {"job_id": 42, "task_id": 0, "status": "SUCCEEDED"},
+            {"job_id": 42, "task_id": 1, "status": failure},
+        ]
+    )
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=payload, stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == failure
+    assert result.status != "SUCCEEDED"
 
 
 def _controller_status_run(status: str):
@@ -2425,6 +4533,238 @@ def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
         "-c",
         "pwd -P >/dev/null && test -d /proc/1/cwd",
     ]
+
+
+def test_confidential_readiness_uses_kubeconfig_current_context() -> None:
+    private_context = "robotwin-private-context-canary"
+    calls: list[list[str]] = []
+
+    def runner(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr=f"context={private_context}"
+        )
+
+    observation = workflow_module._CurrentKubeconfigApiProbe(
+        env={"KUBECONFIG": "/owner-only/materialized"},
+        redactions=(private_context,),
+        runner=runner,
+        clock=lambda: 1.0,
+        kubectl="/usr/bin/kubectl",
+    )()
+
+    assert calls == [["/usr/bin/kubectl", "get", "--raw=/readyz"]]
+    assert private_context not in observation.evidence.stderr
+    assert "<redacted>" in observation.evidence.stderr
+
+
+def test_confidential_controller_probe_omits_context_argument() -> None:
+    private_context = "robotwin-private-context-canary"
+    calls: list[list[str]] = []
+    pod_payload = json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "controller-head",
+                        "namespace": "controller-ns",
+                        "labels": {"ray-node-type": "head"},
+                    },
+                    "status": {
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    },
+                }
+            ]
+        }
+    )
+
+    def runner(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=pod_payload if "get" in cmd else "", stderr=""
+        )
+
+    result = workflow_module._probe_kubernetes_controller_cwd(
+        "sky-jobs-controller-test",
+        context="",
+        env={"KUBECONFIG": "/owner-only/materialized"},
+        runner=runner,
+        kubectl="/usr/bin/kubectl",
+        use_current_context=True,
+        redactions=(private_context,),
+    )
+
+    assert result.healthy is True
+    assert all("--context" not in cmd for cmd in calls)
+    assert all(private_context not in json.dumps(cmd) for cmd in calls)
+
+
+def test_native_controller_probe_environment_excludes_launch_secrets() -> None:
+    environment = {
+        "KUBECONFIG": "/owner-only/materialized",
+        "HOME": "/owner-only/home",
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+        "AWS_ACCESS_KEY_ID": "synthetic-access",
+        "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+        "AWS_SESSION_TOKEN": "synthetic-session",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1": "synthetic-auth",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX": "s3://private/output",
+        "SKYPILOT_API_SERVER_ENDPOINT": "https://private-api",
+    }
+
+    assert workflow_module._controller_probe_environment(environment) == {
+        "KUBECONFIG": "/owner-only/materialized",
+        "HOME": "/owner-only/home",
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+    }
+
+
+@pytest.mark.parametrize("database_home", (True, False))
+def test_native_context_digest_sanitizes_kubectl_environment(
+    monkeypatch, tmp_path, database_home
+) -> None:
+    home = tmp_path / "home"
+    runtime = tmp_path / "runtime"
+    store = (home if database_home else runtime) / ".sky" / "api_server"
+    store.mkdir(parents=True)
+    (store / "requests.db").write_text("synthetic", encoding="utf-8")
+    config = tmp_path / "global.yaml"
+    config.write_text("api_server: {}\n", encoding="utf-8")
+    sky_executable = tmp_path / "sky" / "bin" / "sky"
+    environment = {
+        "HOME": str(home),
+        "SKY_RUNTIME_DIR": str(runtime),
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+        "KUBECONFIG": str(tmp_path / "kubeconfig"),
+        "SKYPILOT_USER_ID": "synthetic-user",
+        "SKYPILOT_GLOBAL_CONFIG": str(config),
+        "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:50123",
+        "AWS_ACCESS_KEY_ID": "synthetic-access",
+        "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+        "AWS_SESSION_TOKEN": "synthetic-session",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1": "synthetic-auth",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX": "s3://private/output",
+    }
+    digest = workflow_module.hashlib.sha256
+    record = {
+        "state": "ready",
+        "marker": "synthetic-marker",
+        "port": 50123,
+        "interpreter": str(sky_executable.parent / "python"),
+        "config_sha256": digest(config.read_bytes()).hexdigest(),
+        "environment_binding": {
+            name: digest(environment[name].encode()).hexdigest()
+            for name in ("HOME", "SKYPILOT_USER_ID", "KUBECONFIG")
+        },
+        "identity_files": [],
+    }
+    observed = {}
+    monkeypatch.setattr(local_api_module, "_locked", lambda _root: nullcontext())
+    monkeypatch.setattr(local_api_module, "_read", lambda _root: record)
+    monkeypatch.setattr(local_api_module, "_process", lambda _record: {"pid": 1})
+    monkeypatch.setattr(local_api_module, "_listener_owned", lambda *_args: True)
+    monkeypatch.setattr(
+        local_api_module, "_endpoint", lambda _record: "http://127.0.0.1:50123"
+    )
+
+    def probe(name, **kwargs):
+        assert name == "synthetic-provider-controller"
+        observed.update(kwargs["env"])
+        return workflow_module.ControllerExecutionProbe(True, "cwd_live", identity="i")
+
+    monkeypatch.setattr(workflow_module, "_probe_kubernetes_controller_cwd", probe)
+    kwargs = dict(
+        isolated_dir=tmp_path,
+        controller="synthetic-controller",
+        controller_cloud_name="synthetic-provider-controller",
+        context="",
+        sky_executable=sky_executable,
+        environment=environment,
+    )
+    if not database_home:
+        with pytest.raises(FileNotFoundError):
+            workflow_module._native_context_digest(**kwargs)
+        assert observed == {}
+        return
+    workflow_module._native_context_digest(**kwargs)
+    assert observed == {
+        "HOME": str(home),
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+        "KUBECONFIG": str(tmp_path / "kubeconfig"),
+    }
+
+
+@pytest.mark.parametrize("changed", ("", "api", "incarnation"))
+def test_cold_controller_ensure_rechecks_owned_api_and_real_incarnation(
+    monkeypatch, tmp_path, changed
+):
+    from npa.orchestration.skypilot import _managed_job_api as native
+
+    path = tmp_path / "workflow.yaml"
+    path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    probes = []
+
+    def api(**_kwargs):
+        probes.append("api")
+        return "d" * 64 if changed == "api" and len(probes) > 1 else "c" * 64
+
+    def invoke(payload, environment, _cwd, _timeout):
+        assert payload["mode"] == "ensure_controller" and payload["secrets"] == []
+        assert environment == {"KUBECONFIG": "synthetic-private-binding"}
+        request = {
+            "event": "controller_request",
+            "attempt": payload["attempt"],
+            "context": payload["context"],
+            "request_id": "00000000-0000-4000-8000-000000000001",
+            "controller": "sky-jobs-controller-synthetic",
+        }
+        native._append_observation(payload["descriptor"], request)
+        native._append_observation(
+            payload["descriptor"],
+            {
+                **request,
+                "event": "controller_result",
+                "incarnation": "e" * 64,
+                "controller_cloud_name": "sky-jobs-controller-provider-synthetic",
+            },
+        )
+
+    monkeypatch.setattr(workflow_module, "_native_api_context_digest", api)
+    monkeypatch.setattr(workflow_module, "_invoke_native_bridge", invoke)
+
+    def incarnation(**kwargs):
+        assert kwargs["controller"] == "sky-jobs-controller-synthetic"
+        assert (
+            kwargs["controller_cloud_name"] == "sky-jobs-controller-provider-synthetic"
+        )
+        return "f" * 64 if changed == "incarnation" else "e" * 64
+
+    monkeypatch.setattr(workflow_module, "_native_context_digest", incarnation)
+    kwargs = dict(
+        yaml_path=path,
+        isolated_dir=tmp_path,
+        controller="",
+        context="",
+        sky_executable="/synthetic/sky",
+        environment={"KUBECONFIG": "synthetic-private-binding"},
+        log_dir=tmp_path,
+        timeout=1,
+        cwd=tmp_path,
+    )
+    if changed:
+        with pytest.raises(native.NativeResultUnavailable):
+            workflow_module._ensure_native_controller(**kwargs)
+    else:
+        assert workflow_module._ensure_native_controller(**kwargs) == (
+            "sky-jobs-controller-synthetic",
+            "sky-jobs-controller-provider-synthetic",
+        )
+    assert len(list(tmp_path.glob("controller-ensure-*.jsonl"))) == 1
 
 
 def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:
@@ -4729,3 +7069,110 @@ def test_submit_treats_cached_controller_without_a_pod_as_absent(
     assert result.status == "SUBMITTED"
     assert result.job_id == "702"
     assert result.launch_transaction["controller"]["state"] == "absent"
+
+
+@pytest.mark.parametrize(
+    "response,returncode,empty",
+    (
+        ({"items": []}, 0, True),
+        (
+            {
+                "items": [
+                    {
+                        "metadata": {
+                            "labels": {"skypilot-cluster-name": "shortened-controller"}
+                        }
+                    }
+                ]
+            },
+            0,
+            False,
+        ),
+        ({}, 0, False),
+        ({"items": None}, 0, False),
+        ({"items": []}, 1, False),
+        ([], 0, False),
+    ),
+)
+def test_native_controller_absence_uses_selected_namespace_not_logical_label(
+    response, returncode, empty
+):
+    def run(command, **kwargs):
+        assert command[1:] == [
+            "--context",
+            "synthetic-context",
+            "get",
+            "pods",
+            "--selector",
+            "skypilot-cluster-name",
+            "--output",
+            "json",
+        ]
+        assert kwargs["env"] == {"KUBECONFIG": "synthetic-binding"}
+        return subprocess.CompletedProcess(
+            command, returncode, json.dumps(response), ""
+        )
+
+    assert (
+        workflow_module._native_controller_namespace_empty(
+            context="synthetic-context",
+            environment={
+                "KUBECONFIG": "synthetic-binding",
+                "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+            },
+            runner=run,
+        )
+        is empty
+    )
+
+
+def test_native_cleanup_rechecks_actual_provider_incarnation(monkeypatch, tmp_path):
+    from npa.orchestration.skypilot import _managed_job_api as native
+
+    checks = []
+
+    def context(**kwargs):
+        assert kwargs["controller"] == "sky-jobs-controller-logical-synthetic"
+        assert (
+            kwargs["controller_cloud_name"] == "sky-jobs-controller-provider-synthetic"
+        )
+        checks.append(kwargs)
+        return "c" * 64
+
+    def invoke(payload, *_args):
+        base = {
+            "attempt": payload["attempt"],
+            "context": payload["context"],
+            "request_id": "00000000-0000-4000-8000-000000000001",
+        }
+        native._append_observation(payload["descriptor"], {**base, "event": "request"})
+        native._append_observation(
+            payload["descriptor"],
+            {
+                **base,
+                "event": "result",
+                "job_id": 42,
+                "task_ids": [0],
+            },
+        )
+
+    monkeypatch.setattr(workflow_module, "_native_context_digest", context)
+    monkeypatch.setattr(workflow_module, "_invoke_native_bridge", invoke)
+    result, cleanup_check = workflow_module._run_native_launch(
+        {
+            "attempt": "synthetic-attempt",
+            "isolated_dir": str(tmp_path),
+            "controller": "sky-jobs-controller-logical-synthetic",
+            "controller_cloud_name": "sky-jobs-controller-provider-synthetic",
+            "kube_context": "",
+            "sky_executable": "/synthetic/sky",
+            "task_count": 1,
+        },
+        environment={},
+        control_environment={},
+        log_dir=tmp_path,
+        timeout=1,
+        cwd=tmp_path,
+    )
+    assert result.job_id == "42" and len(checks) == 2
+    assert cleanup_check() == "c" * 64 and len(checks) == 3

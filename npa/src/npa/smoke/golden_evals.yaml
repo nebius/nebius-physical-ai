@@ -34,6 +34,29 @@
 format: npa_golden_evals_v1
 
 containers:
+  robotwin:
+    image: npa-robotwin
+    dockerfile: npa/docker/workbench/robotwin/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Fail-closed zero-vendor-payload bootstrap for an independently gated
+        RoboTwin bimanual data-collection workflow.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+      network: none during refusal check
+      external_fetch: []
+      notes: >-
+        CPU refusal and byte-absence packaging evidence only. The image is
+        unbuilt and publication-quarantined; no SAPIEN, Vulkan, RTX, task-success,
+        HDF5, video, or frame capability is claimed.
+    golden_eval:
+      kind: container-smoke
+      command: bash /opt/npa/robotwin/smoke.sh
+      gpu: none
+      timeout_seconds: 120
+      status: needs-image-update
   gymnasium-robotics:
     image: npa-gymnasium-robotics
     internal: true

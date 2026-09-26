@@ -1,0 +1,58 @@
+# Sole RoboTwin workload: exactly one STRICT-bound RTX PRO 6000 Blackwell.
+# The manager context selects an exact immutable bootstrap image and the only
+# output prefix. No B200/H100/H200 or accelerator fallback is valid.
+name: byof-solution-smoke-robotwin-rtxpro-gpu
+execution: serial
+---
+name: byof-solution-smoke-robotwin-rtxpro
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 16+
+  memory: 64+
+  disk_size: 100
+  image_id: "docker:<manager-authorized-image>@sha256:<digest>"
+  kubernetes:
+    pod_config:
+      spec:
+        containers:
+          - name: ray-node
+            env:
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.name
+              - name: POD_NAMESPACE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.namespace
+envs:
+  NPA_BYOF_RUN_ID: "<manager-authorized-run-id>"
+  BYOF_REPO_ROOT: "/workspace"
+  BYOF_SMOKE_COMMAND: "/opt/npa/robotwin/robotwin-runtime run"
+  BYOF_SOLUTION_NAME: robotwin
+  BYOF_CAPABILITY_NAME: beat_block_hammer_successful_seed_replay_collection
+  BYOF_SMOKE_ARTIFACT_NAME: robotwin-smoke.json
+  BYOF_IMAGE: "<manager-authorized-image>@sha256:<digest>"
+  NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1: "<secret-value>"
+  NVIDIA_VISIBLE_DEVICES: all
+  NVIDIA_DRIVER_CAPABILITIES: all
+  VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/nvidia_icd.json
+  S3_OUTPUT_PREFIX: "s3://example-bucket/authorized-prefix/"
+  NPA_S3_BUCKET: example-bucket
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+  NEBIUS_S3_ENDPOINT: "${NEBIUS_S3_ENDPOINT}"
+setup: |
+  set -euo pipefail
+  test -x /opt/npa/robotwin/robotwin-runtime
+  /opt/npa/robotwin/robotwin-runtime health
+run: |
+  set -euo pipefail
+  export NPA_BYOF_RUN_ID="${NPA_INTERNAL_BYOF_ROBOTWIN_RUN_ID:?}"
+  export S3_OUTPUT_PREFIX="${NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX:?}"
+  export NPA_S3_BUCKET="${NPA_INTERNAL_BYOF_ROBOTWIN_BUCKET:?}"
+  export BYOF_IMAGE="${NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE:?}"
+  export NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1="${NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1:?}"
+  export NPA_SMOKE_OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+  test -s "${NPA_SMOKE_OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"

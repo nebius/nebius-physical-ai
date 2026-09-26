@@ -197,6 +197,7 @@ CONTAINER_IMAGE_NAMES = {
     "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
+    "robotwin": "npa-robotwin",
     "libero": "npa-libero",
 }
 
@@ -222,6 +223,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-evaluator",
         "content-agents",
         "ncore",
+        "robotwin",
         "libero",
         "fiftyone",
         "groot",
@@ -292,7 +294,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"openpi", "curobo", "ncore", "libero", "sam3", "robotwin"}
 )
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
 # A development candidate may use the trusted full-SHA builder before it has
@@ -455,6 +457,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
+    "robotwin": "2.0-curobo-v0.7.8-rtfetch-unbuilt",
     "libero": "public-neutral-bootstrap-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
@@ -2310,6 +2313,11 @@ def container_image_for_tool(
             "NCore has no accepted release image. Supply the validated immutable "
             "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
             "or explicitly select a dev-<full-source-sha> tag for validation."
+        )
+    if tool == "robotwin" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+        raise ValueError(
+            f"{tool!r} has no accepted release image. Supply a validated immutable "
+            "image or explicitly select a dev-<full-source-sha> tag for validation."
         )
     if tool == "sonic":
         entry = sonic_image_entry(

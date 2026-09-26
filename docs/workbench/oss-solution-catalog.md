@@ -24,6 +24,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
+| RoboTwin 2.0 (**operator BYOF candidate; normal submit blocked**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | operator evidence: `robotwin-smoke.json` + native HDF5 + MP4; registry admission deferred | `byof-robotwin.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | flex-pi (**accepted public image**) | `geyan21/flex-pi` `20c1b2b…` | strict released-checkpoint action-only inference | `actions.json` + input/result provenance | `flex-pi-b200-inference.yaml` / `flex-pi-rtxpro-inference.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
@@ -50,6 +51,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Enactic OpenArm | `openarm_mujoco_bimanual_rollout` | **accepted** | exact public development digest: 500 real `mj_step` calls, finite joint/command/energy trace, and fully decoded 100-frame H.264 render |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **accepted** | same digest on RTX PRO 6000: 64 environments × 100 real PhysX/CUDA steps with finite rewards and policy observations |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **accepted** | same digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
+| RoboTwin 2.0 | `beat_block_hammer_successful_seed_replay_collection` | **operator evidence retained; registry admission deferred** | One RTX PRO 6000 operator run produced 123 state/action pairs and 124 decoded frames. Public CLI execution and the normal-submit worker bridge remain blocked; see [scope and digest](byof-robotwin.md#retained-operator-evidence-and-readiness). |
 | OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; exact scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` is runtime-only |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted builder regression** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
@@ -194,6 +196,70 @@ MuJoCo closure, but no Isaac Sim, Isaac Lab, or Omniverse Kit bytes. Isaac is
 hash-pinned and fetched into the operator's runtime cache through the shared
 acceptance/refusal bootstrap. See [OpenArm](openarm.md) and
 `workflows/testing/openarm-simulators.yaml`.
+
+### RoboTwin 2.0
+
+Pinned bimanual SAPIEN simulation and native data-collection candidate. The
+source is `RoboTwin-Platform/RoboTwin`
+`96c1feab536306b50c26af200044fcdf126e8904`; required runtime assets come from
+`TianxingChen/RoboTwin2.0`
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. The operator workload
+fetches and hash-checks only the aggregate objects and embodiments archives,
+then uses the
+ALOHA-AgileX embodiment and custom `020_hammer` object. No asset bytes are baked
+into the image: the live harness scans the exact image digest's rootfs
+and every layer before it may submit the GPU run.
+
+The workflow describes a CPU-only outer launcher and a fixed one-RTX inner
+profile, but normal `npa workbench workflow submit` remains blocked on
+remote-source and worker identity proof. The public BYOF CLI also refuses
+RoboTwin execution. The standalone operator script can invoke the guarded inner
+launcher after authorization and input checks. Its retained GPU result is
+documented in [the operator guide](byof-robotwin.md#retained-operator-evidence-and-readiness);
+it does not establish agent or normal-submit readiness. Plans and rendered YAML
+retain sanitized placeholders, and registry admission remains deferred.
+
+| Capability | Status | Upstream basis / required evidence |
+| --- | --- | --- |
+| `sapien_vulkan_rt_renderer` | qualification pending | `SapienRenderer`, `rt` camera shader, successful `vulkaninfo`, and SAPIEN device summary from one RTX PRO 6000 (`sm_120`) |
+| `beat_block_hammer_successful_seed_search` | qualification pending | official `scripts/collect_data.py beat_block_hammer demo_clean` seed-search phase, reduced only to one episode |
+| `beat_block_hammer_successful_seed_replay` | qualification pending hard gate | official replay must finish with `check_success()` true; imports, registration, simulator startup, or a planned trajectory do not pass |
+| `robotwin_native_hdf5_collection` | qualification pending hard gate | non-empty native HDF5 with RoboTwin provenance, action/state/vision groups, positive action count, size, and SHA-256 |
+| `robotwin_rendered_mp4` | qualification pending hard gate | fully decoded MP4 with positive dimensions and exactly `action_count + 1` frames, size, and SHA-256 |
+
+The public bootstrap contains none of these bytes. Its implemented customer
+runtime compiles pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
+limits use to noncommercial research/evaluation. The operator's exact
+`noncommercial` statement for this bounded run is compatible with that field of
+use for containerization and technical workload validation/evaluation; it
+expires with the run and does not authorize hosted service or broader outputs.
+CuRobo's field-of-use limit continues to bind use and service claims and every
+generated workload. No additional generated-output restriction was found in
+the inspected authoritative terms for the five declared classes: native HDF5
+action/state data, decoded MP4, rendered frames, smoke JSON, and summary JSON.
+Hosted-service use remains unapproved even though a
+zero-vendor-payload bootstrap may be eligible for public redistribution after
+exact-byte review. Public artifacts require exact-revision payload probes;
+gated artifacts additionally require the customer's own runtime-only credential
+and an exact provider/artifact/revision/terms access result before provisioning.
+An explicit customer-terminal decision or the existing hosted authorization
+boundary gates runtime delivery. Supported release promotion remains
+quarantined pending validation of the supported submission path, and the candidate
+is absent from the supported public image table. The Hugging Face
+asset repository card classifies the exact locked `embodiments.zip` and
+`objects.zip` members at revision
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad` as MIT. Other embodiments,
+unselected future task assets, training/evaluation, physical deployment, and
+their outputs remain independently deferred. Registry credentials, runtime
+fetch, and the byte-absence scan do not grant permission. Customer-issued
+entitlement for CUDA, cuDNN, and CuRobo plus the exact applicable payload probes
+remain pre-fetch/pre-run gates. See
+[`byof-robotwin.md`](byof-robotwin.md) for the exact license, GPU, workflow, and
+artifact contract.
+
+Deferred: the 50-task sweep, randomized-background coverage, policy training or
+evaluation, other embodiments and object-license review, and physical-robot
+deployment.
 
 ### flex-pi
 

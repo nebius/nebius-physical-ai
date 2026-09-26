@@ -497,6 +497,131 @@ def _saved_image_members(format_name):
     return members
 
 
+def _attested_saved_image_members(artifact, mutation):
+    members = {}
+
+    def blob(value, media_type):
+        raw = value if isinstance(value, bytes) else json.dumps(value).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        members["blobs/sha256/" + digest] = raw
+        return {"mediaType": media_type, "digest": "sha256:" + digest, "size": len(raw)}
+
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    config_type = "application/vnd.oci.image.config.v1+json"
+    layer = blob(
+        _tar_bytes({"opt/example/readme.txt": b"example"}),
+        "application/vnd.oci.image.layer.v1.tar",
+    )
+    config = blob(
+        {
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": [layer["digest"]]},
+        },
+        config_type,
+    )
+    runtime = blob(
+        {
+            "schemaVersion": 2,
+            "mediaType": manifest_type,
+            "config": config,
+            "layers": [layer],
+        },
+        manifest_type,
+    )
+    statement = {
+        "_type": "https://in-toto.io/Statement/v0.1",
+        "subject": [{"name": "fixture", "digest": {"sha256": runtime["digest"][7:]}}],
+        "predicateType": "https://slsa.dev/provenance/v0.2",
+        "predicate": {},
+    }
+    if mutation == "subject":
+        statement["subject"][0]["digest"]["sha256"] = "0" * 64
+    elif mutation == "schema":
+        statement["_type"] = "unsupported"
+    elif mutation == "predicate":
+        statement["predicate"] = "not an object"
+    raw_statement = (
+        _tar_bytes({"isaac-sim/kit/libcarb.so": b"payload"})
+        if mutation == "runtime-tar"
+        else statement
+    )
+    predicate = blob(raw_statement, "application/vnd.in-toto+json")
+    predicate["annotations"] = {"in-toto.io/predicate-type": statement["predicateType"]}
+    if mutation == "media-type":
+        predicate["mediaType"] = "application/octet-stream"
+    att_config = blob(
+        {}
+        if artifact
+        else {
+            "architecture": "unknown",
+            "os": "unknown",
+            "rootfs": {"type": "layers", "diff_ids": [predicate["digest"]]},
+        },
+        "application/vnd.oci.empty.v1+json" if artifact else config_type,
+    )
+    if mutation == "runtime-config":
+        att_config = config
+    attestation = {
+        "schemaVersion": 2,
+        "mediaType": manifest_type,
+        "config": att_config,
+        "layers": [predicate],
+    }
+    if artifact:
+        attestation.update(
+            artifactType="application/vnd.docker.attestation.manifest.v1+json",
+            subject=runtime.copy(),
+        )
+    descriptor = blob(attestation, manifest_type)
+    descriptor.update(
+        platform={"os": "unknown", "architecture": "unknown"},
+        annotations={
+            "vnd.docker.reference.type": "attestation-manifest",
+            "vnd.docker.reference.digest": runtime["digest"],
+        },
+    )
+    if mutation == "runtime-platform":
+        descriptor["platform"] = {"os": "linux", "architecture": "amd64"}
+    runtime["platform"] = {"os": "linux", "architecture": "amd64"}
+    members["index.json"] = json.dumps(
+        {"schemaVersion": 2, "manifests": [runtime, descriptor]}
+    ).encode()
+    members["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
+    if mutation == "missing":
+        del members["blobs/sha256/" + predicate["digest"][7:]]
+    return members
+
+
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "missing",
+        "subject",
+        "schema",
+        "predicate",
+        "media-type",
+        "runtime-tar",
+        "runtime-config",
+        "runtime-platform",
+    ],
+)
+def test_saved_attestation_requires_metadata_schema_and_runtime_subject(
+    artifact, mutation
+):
+    members = _attested_saved_image_members(artifact, mutation)
+    if mutation:
+        with pytest.raises(RuntimeError, match="image archive"):
+            list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+    else:
+        paths = list(
+            scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*")
+        )
+        assert "opt/example/readme.txt" in paths
+
+
 @pytest.mark.parametrize("format_name", ["docker", "oci"])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_saved_image_scans_all_layers_without_seeking(format_name, reverse) -> None:

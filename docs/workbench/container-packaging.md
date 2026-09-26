@@ -10,6 +10,25 @@ NCore development images use the [attested OCI publication path](ncore-oci-publi
 to preserve the exact buildx index through local gates and anonymous readback.
 NCore remains quarantined pending its independent RTX acceptance.
 
+RoboTwin's `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` entry is a
+zero-vendor-payload bootstrap with a working neutral build. It pins an official Ubuntu
+22.04 linux/amd64 manifest plus a signed immutable Jammy snapshot with 84 exact
+binary packages, 63 corresponding source packages, and a complete-empty public
+Python application lock. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python
+application runtime, assets, caches, credentials, and outputs stay runtime-side.
+Customer-authorized delivery now installs the locked closure and runs the pinned
+upstream seed search/replay. A retained development digest completed one RTX
+operator workload; see its [evidence scope](byof-robotwin.md#retained-operator-evidence-and-readiness).
+The trusted public development workflow requires its exact native content policy,
+complete-byte and payload scans, security gates, and public corresponding-source
+annex before push. Supported release quarantine remains while the public BYOF
+CLI and normal-submit worker bridge are blocked. The bounded
+operator statement is `noncommercial` validation/evaluation, not a general use
+grant; public artifacts use exact-revision payload probes, while gated artifacts
+require the customer's runtime-only credential and an exact entitlement probe
+before provisioning. The default planned cache is customer-isolated,
+node-local ephemeral storage, with durable reuse still unapproved.
+
 ## SkyPilot worker bootstrap contract
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
@@ -69,6 +88,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
+| `npa-robotwin` | `robotwin/Dockerfile` | neutral development bootstrap; supported release quarantined; CPU refusal verified |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |

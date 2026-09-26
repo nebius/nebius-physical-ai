@@ -30,7 +30,7 @@ Machine-readable source of record: [`npa/docker/workbench/blackwell-dc-images.js
 
 H100 and H200 are both `sm_90`, so they share a column below.
 
-Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. All 38 accepted release references in the [public container catalog](container-image-catalog.md) resolved anonymously to their recorded digests on 2026-09-18. The retained OCI metadata identifies every runtime variant as `linux/amd64`; the aarch64 platform is therefore uncovered across the published set rather than per image.
+Also offered: `gpu-gb300` (Grace-Blackwell Ultra). Its GPU is the same `sm_103`, but the host is aarch64, and the x86_64 workbench images do not run there. The [public container catalog](container-image-catalog.md) records a September 18 anonymous digest audit of 38 accepted release references, including Flex-Pi r2. This differs from the earlier September 17 public-plan audit of 34 current tags and its separate 37-reference accepted-release manifest. Retained OCI metadata identifies every runtime variant as `linux/amd64`; the aarch64 platform is therefore uncovered across the published set rather than per image.
 
 One column below carries no recorded capability run: public-image L40S cells are supported, blocked, not routed, unverified, or CPU-only rather than verified or historical evidence. L40S is the one architecture besides RTX PRO 6000 that can render. The recorded capability runs are on H100, H200, RTX PRO 6000, B200, and B300.
 
@@ -135,6 +135,7 @@ likewise predates its current coherent release.
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
+| `npa-robotwin` (supported release candidate; quarantined) | pending build; not routed or validated | blocked (no RT cores) | pending build; exact-digest qualification not run | blocked (renderer contract is RTX-only) | blocked (renderer contract is RTX-only) |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [78] | **verified** [77] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-flex-pi` | supported | supported | **verified** [87] | **verified** [86] | supported (same-major `sm_100` coverage; not measured) |
@@ -173,6 +174,16 @@ likewise predates its current coherent release.
 **blocked** — an upstream dependency does not support the architecture. Reason and tracking link are in the manifest's per-image fields or `known_gaps`. Whether a given blocked cell can be closed at all is evaluated in [Can the blocked images support every Nebius GPU?](blocked-image-gpu-feasibility.md) — some are physical (rendering needs RT cores), others are a stale software gate or an unspent GPU hour.
 **CPU** — CPU-only image. It runs on a host with any of these GPUs; only node-pool scheduling matters.
 **not built** — no retained candidate artifact or complete current byte-scan proof exists, so no cell has image evidence behind it. Reading the Dockerfile or a reference-build graph is not evidence.
+
+`npa-robotwin`'s `unknown` / `pending-build` inventory record and the row above
+describe its quarantined supported-release candidate. Supported release and
+normal-submit worker qualification remain unverified. A separate immutable
+development image has complete-byte scans, anonymous-pull proof, and one real
+RTX PRO 6000 operator collection/replay workload; see the
+[retained development/operator evidence](byof-robotwin.md#retained-operator-evidence-and-readiness)
+and [container catalog](container-image-catalog.md). That evidence does not
+establish supported customer or agent worker acceptance. Rendering remains
+RTX-only and must not route to B200 or B300.
 
 `npa-ncore` packages CPU-only COLMAP ingestion, not NRE or a CUDA runtime.
 Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separate,

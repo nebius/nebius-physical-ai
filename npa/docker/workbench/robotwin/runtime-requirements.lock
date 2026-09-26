@@ -1,0 +1,13 @@
+# npa.robotwin.public-bootstrap-runtime-lock.v1
+status=complete-empty
+artifact-count=0
+
+# The public bootstrap intentionally installs no Python distribution, CUDA,
+# cuDNN, CuRobo, RoboTwin, simulator, model, asset, cache, or output payload.
+# Ubuntu's snapshot-locked python3-minimal package is part of apt-packages.lock
+# and exists only to run NPA's standard-library refusal bootstrap. The future
+# workload runtime remains disabled pending a complete artifact lock, an
+# authenticated customer assertion from a not-yet-integrated control plane,
+# exact upstream payload probes,
+# native-content policy, built-image evidence, storage/context, and live
+# qualification. Asset/output classification is complete and is not a gate.

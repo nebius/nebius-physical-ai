@@ -79,6 +79,33 @@ pattern detection. Whole-record regexes can also require substantial memory or
 CPU. An interrupted or exhausted scan is incomplete, with no truncation fallback.
 Functional GPU workloads and artifact inspection remain separate release gates.
 
+RoboTwin adds a separate solution scanner,
+`npa/scripts/scan_image_robotwin_payload.py`. For the public-bootstrap design it
+must reject RoboTwin/CuRobo source, CUDA/cuDNN/NVIDIA/PyTorch/SAPIEN/MPLib/Warp
+runtime bytes, asset archives and extracted trees, download/runtime caches,
+credentials or manager context, and HDF5/video/frame outputs across flattened
+rootfs, every layer, nested archives, ELF dependencies, and build history. Its
+private exact-digest input is read with a byte bound and pulled through the OCI
+Distribution API in-process. Docker credential helpers, when configured, receive
+only the registry name over standard input; no private image or repository value
+is placed in a child-process argument vector. Positional remote input is limited
+to an immutable `ghcr.io/nebius/nebius-physical-ai/npa-robotwin` public identity. The
+solution-specific policy extends the complete shared NVIDIA/CUDA path and ELF
+detectors rather than replacing them, and content signatures reject renamed or
+nested RoboTwin source and manager transport/authorization envelopes.
+
+For an in-process private pull, every selected OCI descriptor must declare an
+allowed media type and exact size. The scanner verifies the top-level and child
+manifest digests, requires one Linux/amd64 selection, rechecks Linux/amd64 in the
+image config, and matches the config's complete `rootfs.diff_ids` list to the
+uncompressed layer bytes before scanning the whiteout-aware rootfs and every
+historical layer. Missing or inconsistent graph metadata is a fatal scan error.
+
+The scanner's
+Phase A public-native policy intentionally carries unresolved detector identities
+and therefore cannot authorize a scan or publication. A later transaction must
+bind it to reviewed exact built bytes; scanning never grants runtime-use rights.
+
 ## Review specific findings locally
 
 An exact match may be a public cryptographic self-test or an inert source
@@ -128,6 +155,21 @@ validation. The hosted publication workflow continues to require zero raw
 findings by default. It has no implicit access to an operator's private review
 bundle. Do not upload that bundle as a public Actions artifact or add private
 evidence to Git to transport it.
+
+RoboTwin may explicitly supply a separate private review handoff for each of
+its pre-publication and post-pull gates. The runner exports the exact failed scan
+request to an operator-authorized private PUT object and retains the original
+inputs. A distinct GET-only capability retrieves the independent review's
+manifest and review pins. The existing adjudicator then checks every native,
+regex and literal occurrence, complete accounting, source and policy identities,
+archive/graph bindings and unchanged input snapshots. Its supported Docker-save
+verifiers are cuRobo and RoboTwin; unsupported graphs still refuse.
+
+This handoff adds no semantic roles, matching changes, automatic classifications
+or public-native exceptions. Each exact decision comes from a real independent
+review, and the raw failed report and ledger remain unchanged. All other image
+and publication gates remain required. Transport details and the four scoped
+secret names are documented in the [RoboTwin helper README](../../npa/docker/workbench/robotwin/README.md).
 
 ## Reviewed public native content
 

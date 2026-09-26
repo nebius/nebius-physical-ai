@@ -38,6 +38,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "raw predicted masks and a fully decoded overlay MP4 are retained",
         "unchanged source pixels are checked after video encoding",
     ],
+    "robotwin": [
+        "genuine missing-manager-authorization refusal executes on CPU",
+        "refusal creates no source, runtime cache, asset, or output path",
+        "zero-payload packaging check only; no SAPIEN or GPU capability claimed",
+    ],
     "gymnasium-robotics": [
         "future exact candidate runs the registered Shadow Dexterous Hand environment",
         "120 MuJoCo steps and 2,400 substeps prove contact, touch, and orientation change",

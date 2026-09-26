@@ -1,0 +1,53 @@
+{
+  "schema_version": "npa.robotwin.public-payload-literals.v1",
+  "files": [
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.31.0",
+      "sha256": "dcadda7f0f82c54ca157b6ca0a5fdc8e1128db4d778109c8e197e2f84c2ac9ba",
+      "bytes": 2008512,
+      "reason": "Static asymmetric cryptography test keys from gnutls-3.7.3/lib/crypto-selftests-pk.c. Exact first key-body lines in the shipped ELF match this official source; the functions import these constants into temporary test objects for known-answer self-tests, then deinitialize them. These are not operational credentials."
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libunistring.so.2.2.0",
+      "sha256": "9c28d59500f186fc28bf7e77e9b1a71129f66731c52ac1e974b9acd1a760911a",
+      "bytes": 1743016,
+      "reason": "The AWS-shaped sequence spans adjacent Unicode-name words ISAKIA and ISLAND in the compiled public Unicode name table; it is not an access key."
+    },
+    {
+      "path": "usr/bin/ssh",
+      "sha256": "6c1f037ffd9367e6cde9170848f7ea9e39ceb85376feffa05a579d5b95f31d21",
+      "bytes": 850984,
+      "reason": "Exact public OpenSSH ELF contains a private-key format delimiter used by its parser, without an embedded operational key."
+    },
+    {
+      "path": "usr/bin/ssh-add",
+      "sha256": "11b1118ec073d9473d056b78b3a362a3b17e844a2e49125dc54c2da9456d6113",
+      "bytes": 170416,
+      "reason": "Exact public OpenSSH ELF contains a private-key format delimiter used by its parser, without an embedded operational key."
+    },
+    {
+      "path": "usr/bin/ssh-keygen",
+      "sha256": "be8aa086322faa3befe5e8df7f5561f7461c5ea5eccc397f71246e915935f35f",
+      "bytes": 457152,
+      "reason": "Exact public OpenSSH ELF contains a private-key format delimiter used by its parser, without an embedded operational key."
+    },
+    {
+      "path": "usr/lib/openssh/ssh-keysign",
+      "sha256": "9c5972946011687c53ec38f2b5da219b00578e3f85a48e2a102f53e0c104be33",
+      "bytes": 338536,
+      "reason": "Exact public OpenSSH ELF contains a private-key format delimiter used by its parser, without an embedded operational key."
+    },
+    {
+      "path": "usr/sbin/sshd",
+      "sha256": "07590f8ed30b1f37729f2d5336a8ee783e510ffa84611277eb64aadc34172d80",
+      "bytes": 921288,
+      "reason": "Exact public OpenSSH ELF contains a private-key format delimiter used by its parser, without an embedded operational key."
+    },
+    {
+      "path": "opt/npa/robotwin/runtime-lock.json",
+      "sha256": "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e",
+      "bytes": 238246,
+      "reason": "This exact committed public schema document names the authenticated-customer-authorization schema, but contains no customer assertion or credential."
+    }
+  ]
+}

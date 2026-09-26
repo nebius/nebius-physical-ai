@@ -1,0 +1,62 @@
+# Third-party notices and runtime references
+
+The neutral bootstrap recipe selects these public operating-system inputs:
+
+- Docker Official Image `ubuntu:22.04`, linux/amd64 manifest
+  `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986`.
+  The image is maintained by Canonical and built from Canonical's official
+  Ubuntu rootfs. Exact config/layer identities and immutable official metadata
+  are recorded in `runtime-lock.json`.
+- Ubuntu Snapshot Service timestamp `20260912T000000Z`, suites `jammy`,
+  `jammy-updates`, and `jammy-security`, component `main`, architecture `amd64`.
+  `apt-packages.lock` records 84 exact binary packages, 63 exact source package
+  versions, the signed InRelease hashes, archive hashes/sizes, and each installed
+  copyright-file hash.
+- No third-party Python application distribution is baked;
+  `runtime-requirements.lock` has an artifact count of zero.
+
+The Ubuntu package archive classifies `main` as open-source software supported
+by Canonical. Ubuntu's package review requires licenses to allow redistribution
+and requires `debian/copyright` to report the licenses and copyright holders.
+The build recipe preserves and verifies each selected package's corresponding
+`/usr/share/doc/<package>/copyright` file. The exact source versions remain
+available from the same signed immutable snapshot. Ubuntu is an aggregate work;
+the package-specific licenses and Canonical's intellectual-property/trademark
+policy continue to apply. This project claims no Canonical endorsement.
+
+Authoritative references:
+
+- https://hub.docker.com/_/ubuntu
+- https://github.com/docker-library/repo-info/blob/c435ffb46ce70e116a1608c5f4f61336670ffdd5/repos/ubuntu/remote/22.04.md
+- https://snapshot.ubuntu.com/
+- https://documentation.ubuntu.com/project/how-ubuntu-is-made/concepts/package-archive/
+- https://documentation.ubuntu.com/project/maintainers/AA/aa-new-review/
+- https://ubuntu.com/legal/intellectual-property-policy
+
+Runtime-only identities (not included in image layers):
+
+- RoboTwin commit `96c1feab536306b50c26af200044fcdf126e8904`, MIT license.
+- CuRobo v0.7.8 commit `d64c4b005459db10c5dd867d8b30a87d5bda9bdb`, NVIDIA Source Code License for cuRobo, including its noncommercial research/evaluation restriction.
+- RoboTwin2.0 asset revision `785feb15aa4a4f532395ad2b1d2be5f28cb561ad`; its immutable [repository card](https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/blob/785feb15aa4a4f532395ad2b1d2be5f28cb561ad/README.md) labels the public, ungated repository MIT. That declaration classifies the two exact locked archive members. A future runtime must still perform an anonymous exact-revision payload-byte probe and verify their locked sizes and SHA-256 values.
+- CUDA and cuDNN runtime delivery and use require their exact applicable NVIDIA terms.
+
+Exact runtime terms presented before any governed fetch, install, or cache
+mutation:
+
+- CUDA 12.8.1 EULA: https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html
+- cuDNN 9.7.1 SLA: https://docs.nvidia.com/deeplearning/cudnn/backend/v9.7.1/reference/eula.html
+- CuRobo v0.7.8 license: https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE
+
+Only a customer representative authorized to bind the customer may issue the
+run-scoped entitlement for those exact records. NPA and the infrastructure
+manager do not accept or sign them for the customer. The exact asset revision
+needs no token or local acceptance flag. If a later artifact is token-gated,
+only the customer's vendor-side entitlement and exact payload probe may gate
+its runtime delivery. No generated-output restriction was found for the
+declared HDF5, MP4, frame, or JSON evidence; underlying CuRobo execution remains
+limited to noncommercial research/evaluation.
+
+These references document boundaries; they neither fetch bytes nor record
+acceptance. No RoboTwin/NVIDIA source, runtime, model, asset, cache, or output
+payload was used to resolve the neutral inputs. Built-byte notices and source
+availability still require exact-image verification before publication.

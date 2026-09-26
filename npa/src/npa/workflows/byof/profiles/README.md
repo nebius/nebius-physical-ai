@@ -45,6 +45,7 @@ allocated workflow worker.
 | `byof-solution-smoke-rtxpro-gpu.yaml` | `solution-smoke` needing CUDA/EGL/Vulkan | RTX PRO |
 | `byof-solution-smoke-gymnasium-robotics-rtxpro-gpu.yaml` | Neutral Gymnasium-Robotics development candidate populates an operator runtime cache, then runs the genuine Shadow Hand MuJoCo/touch/EGL gate; no supported release image is claimed | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
 | `byof-solution-smoke-openpi-b200-gpu.yaml` | OpenPI pi0.5 Polaris immutable-image builder regression: direct + same-pod served inference, runtime-only checkpoint; the digest then feeds `openpi-pi05-four-mode.yaml` | `B200:1` (`sm_100`) |
+| `byof-solution-smoke-robotwin-rtxpro-gpu.yaml` | RoboTwin 2.0 customer-authorized runtime fetch; the hard gate is official `beat_block_hammer` seed search/replay with native HDF5 and MP4 | exactly one `RTXPRO-6000-BLACKWELL-SERVER-EDITION` (`sm_120`), never B200 |
 | `byof-solution-smoke-wan22-rtxpro-gpu.yaml` | Wan TI2V-5B tensor-only `solution-smoke` with SM120-tested PyTorch SDPA | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
 | `byof-solution-smoke-wan22-b200-4gpu.yaml` | Wan TI2V-5B distributed `solution-smoke` with FSDP + Ulysses | one Kubernetes pod, `B200:4` |
 | `skypilot-kubernetes-rtxpro.yaml` | *not a task* — SkyPilot **global config** (`--config`) Kubernetes options (the committed file is empty) | — |

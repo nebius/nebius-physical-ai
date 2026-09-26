@@ -1,0 +1,48 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The checked-in workflow validates and plans as one CPU-only workbench.byof.repo launcher; the delegated profile remains the sole accelerator request and is exactly one RTX PRO 6000 Blackwell.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-robotwin.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-robotwin.yaml --run-id robotwin-local-plan --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Contract tests cover customer-terminal and hosted authorization, exact run/manifest/terms bindings, replay refusal, immutable bootstrap delivery, hash-verified runtime downloads, archive traversal refusal, and native HDF5/video consistency. Retained standalone operator evidence covers one RTX planning/replay episode; the blocked public CLI and normal-submit worker bridge remain unverified as execution paths.",
+      "evidence": [
+        "npa/.venv/bin/python -m pytest -q npa/tests/docker/test_robotwin_runtime_bootstrap.py npa/tests/workflows/test_byof_robotwin.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Public plans retain example-bucket. Each authorized run must verify its own output destination. Storage readback from the retained standalone operator run does not verify the blocked normal-submit path or any future run's storage.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The runtime lock records 474 exact provider archive URLs/sizes/hashes, pinned source commits/trees/licenses, and two pinned MIT asset archives. The retained standalone run fetched that closure; each new run still requires authorized payload probes and full verification. Normal-submit worker input delivery remains unverified.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "The customer-terminal notice/accept/decline path and existing hosted boundary bind the exact run/customer/manifest/CUDA12.8.1/cuDNN9.7.1/CuRobo0.7.8 terms and activity. Decisions are private, consumed once, and never accepted by the manager. A prior operator run's decision does not authorize a new run or attest the blocked worker bridge.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "A published development digest has retained anonymous-pull and standalone RTX operator evidence, documented in docs/workbench/byof-robotwin.md. The supported release remains quarantined; its -unbuilt tag is not a runnable image selection. Normal-submit exact-image delivery remains unverified, and each operator run must verify its own immutable digest.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Use remains bounded noncommercial research/evaluation. One standalone operator run exercised the inner RTX PRO 6000 profile and native collection/replay. The public BYOF CLI refuses execution, and the outer remote-source and worker identity proof remains blocked; that supported path is unverified. No B200 fallback is permitted. Every new operator run still requires its own decision, input probes, exact image, STRICT placement, storage, and cleanup evidence.",
+      "evidence": []
+    }
+  }
+}

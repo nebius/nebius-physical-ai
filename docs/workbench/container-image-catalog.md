@@ -26,15 +26,16 @@ cache in its layers. It has no accepted release build and remains release
 quarantined; it has no public image row, but now has a truthful immutable
 development-build path for byte and capability validation.
 
-The combined public plan and accepted-release manifest contain **38 current
-release tags**, all matched anonymously against their recorded digests on
-**2026-09-18**. This read-only audit includes flex-pi r2, Isaac Arena, and
-OpenArm. Retained OCI metadata identifies every runtime variant as `linux/amd64`.
-Flex-pi r2 was independently built, scanned, and run on both required GPU targets
-on **2026-09-17**. The earlier 2026-09-12 audit covered 44 table references
-(33 then-current pins and 11 historical aliases); historical aliases were not
-re-audited on September 18. Capability claims below retain the exact image and
-hardware identity that earned them.
+The accepted-release manifest contains **38 release references**, including
+Flex-Pi r2, Isaac Arena and OpenArm. The incoming Flex-Pi qualification records
+an anonymous digest audit on **2026-09-18** and retained `linux/amd64` runtime
+metadata. Flex-Pi r2 was independently built, scanned and run on both required
+GPU targets on **2026-09-17**. The earlier September 17 public-plan audit covered
+**34 current release tags**, while the accepted-release manifest then contained
+**37 references**; those are distinct populations. The 2026-09-12 audit covered
+44 table references (33 then-current pins and 11 historical aliases); those
+historical aliases were not re-audited on September 18. Capability claims below
+retain the exact image and hardware identity that earned them.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -53,10 +54,10 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **56 packaging entries** (47 redistribution-eligible
-and nine restricted) and **47 mapped tools**: 37 public-release members, two
-restricted tools, and eight quarantined tools (`antioch`, `curobo`, `libero`, `mjlab`, `ncore`,
-`openpi`, `robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+The current source inventory has **58 packaging entries** (49 redistribution-eligible
+and nine restricted) and **49 mapped tools**: 38 public-release members, two
+restricted tools, and nine quarantined tools (`antioch`, `curobo`, `libero`, `mjlab`, `ncore`,
+`openpi`, `robocasa`, `robotwin` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
 
@@ -199,6 +200,27 @@ render grain could satisfy the former pixel-delta test without useful task
 motion. The publication and state-execution facts remain valid; this run does
 not qualify RTX visual behavior. Isaac Sim/Lab and Lightwheel assets remain
 operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
+
+## BYOF bootstrap candidates excluded from supported publication
+
+RoboTwin 2.0 remains absent from the supported public image table. Its
+`npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` release candidate stays quarantined
+pending validation of the supported submission path. The neutral bootstrap builds from an official Ubuntu
+base and 84 exact snapshot packages with zero Python application distributions.
+Trusted full-SHA development publication requires complete-byte and payload
+scans, all security gates, and an anonymously verified corresponding-source annex.
+The annex covers 91 source package versions across the base and installed layers.
+Runtime vendor payload, assets, customer credentials, and outputs stay outside
+the neutral image. A full-SHA development image was built and used for one real
+RTX operator collection/replay run; the [operator guide](byof-robotwin.md#retained-operator-evidence-and-readiness)
+records its exact digest and limited workload evidence. Public BYOF CLI execution
+and the normal-submit worker bridge remain blocked. The release tag's `-unbuilt`
+suffix is a quarantine marker, not the state of that development image.
+The independent runtime-use and
+output-rights decisions, bounded run-scoped `noncommercial` statement,
+customer-owned runtime credential/exact payload-probe contract, isolated
+ephemeral-cache default, and exact-digest RTX PRO 6000 gate are documented in
+[`byof-robotwin.md`](byof-robotwin.md).
 
 ## Pending NCore conversion image
 

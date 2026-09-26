@@ -101,6 +101,8 @@ _BYOF_REPO_ARGV = [
     "{{config.capability_name}}",
     "--smoke-artifact-name",
     "{{config.smoke_artifact_name}}",
+    "--runtime-context-env",
+    "{{config.runtime_context_env}}",
     "--libero-qualified-candidate-image",
     "{{config.libero_qualified_candidate_image}}",
     "--yaml",
@@ -126,6 +128,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "runtime_context_env": "",
     "source_prune_path": "",
     "libero_qualified_candidate_image": "",
 }
@@ -1796,6 +1799,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
@@ -2234,6 +2238,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),

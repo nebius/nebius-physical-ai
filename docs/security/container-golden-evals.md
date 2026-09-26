@@ -28,6 +28,12 @@ and enforced by `npa/docker/workbench/packaging-contract.yaml`.
 The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
 and checks shell syntax. It does not execute GPU workloads.
 
+The RoboTwin Phase A golden eval is deliberately narrower than a simulator
+smoke: `robotwin-runtime assert-refusal` runs on CPU and proves the real
+missing-authorization gate creates no source, asset, cache, or output paths.
+The candidate is unbuilt and publication-quarantined, so this definition is not
+a recorded container pass and never establishes SAPIEN, Vulkan, task-success,
+HDF5/video, or RTX capability.
 Gymnasium-Robotics appears in the machine-readable manifest as an internal
 development-candidate record with `needs-image-update`. This records the future real
 MuJoCo/EGL gate without registering a supported image. The neutral candidate

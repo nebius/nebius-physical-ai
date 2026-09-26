@@ -26,7 +26,7 @@ LAYERS = {
 }
 
 
-def inspect(fd, length, expected_id, *, platform):
+def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
     """Return exact layer ranges and a hash-only receipt for every graph blob."""
     W.require(
         isinstance(expected_id, str) and W.DIGEST.fullmatch(expected_id),
@@ -283,10 +283,23 @@ def inspect(fd, length, expected_id, *, platform):
             "oci_attestation_target",
         )
         regular = {name for name, member in members.items() if member.isfile()}
-        W.require(
-            regular == stored | {"index.json", "oci-layout"},
-            "oci_unreferenced_blob_or_file",
-        )
+        metadata = {"index.json", "oci-layout"}
+        if allow_docker_manifest:
+            compatibility = W.json_object(payload("manifest.json"))
+            W.require(
+                isinstance(compatibility, list)
+                and len(compatibility) == 1
+                and isinstance(compatibility[0], dict),
+                "oci_docker_population",
+            )
+            view = compatibility[0]
+            W.require(
+                view.get("Config") == "blobs/sha256/" + config_digest[7:]
+                and view.get("Layers") == [row["name"] for row in layers],
+                "oci_docker_graph_binding",
+            )
+            metadata.add("manifest.json")
+        W.require(regular == stored | metadata, "oci_unreferenced_blob_or_file")
         W.require(
             all(
                 name in {".", "blobs", "blobs/sha256"}

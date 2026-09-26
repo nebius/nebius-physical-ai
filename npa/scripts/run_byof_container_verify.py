@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 import yaml
@@ -49,6 +49,13 @@ from npa.orchestration.skypilot import (
     submit_workflow,
     workflow_status,
 )
+from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+from npa.orchestration.skypilot.launch_transaction import (
+    ReconciliationEvidence,
+    ReconciliationState,
+    is_recognized_job_status,
+    is_terminal_failure_job_status,
+)
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
     SkyPilotNotInstalledError,
@@ -61,10 +68,26 @@ from npa.orchestration.skypilot.cleanup import (
     cluster_name_patterns_for_run,
     sky_environment,
 )
+from npa.orchestration.skypilot.local_api import stop_isolated_api
 from npa.orchestration.skypilot.signal_teardown import (
     SignalTeardown,
     install_teardown_signal_handlers,
     restore_signal_handlers,
+)
+from npa.orchestration.npa_workflow.robotwin_preflight import (
+    CHILD_BUCKET_ENV,
+    CHILD_IMAGE_ENV,
+    CHILD_OUTPUT_PREFIX_ENV,
+    CHILD_RUN_ID_ENV,
+    CHILD_RUNTIME_AUTH_ENV,
+    CONTEXT_ENV_NAMES,
+    OPTIONAL_STORAGE_SECRET_NAME,
+    RobotwinAuthorization,
+    RobotwinSubmitContext,
+    STORAGE_CREDENTIAL_SECRET_NAMES,
+    STORAGE_ENDPOINT_SECRET_NAMES,
+    prepare_inner_submit,
+    require_customer_authorization_fresh,
 )
 from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
 
@@ -127,12 +150,13 @@ LIBERO_RUNTIME_MANIFEST = (
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
-#: Operator-held runtime state that a vendor gate reads inside the pod: vendor
-#: terms acceptances and the operator's own gated-repository token. These are
-#: things a person holds or did, not workflow configuration, so they travel
-#: through SkyPilot's redacted secret channel and never appear in a rendered
-#: YAML. Unset names are dropped, so a run that holds nothing forwards nothing
-#: and the container's own gate refuses.
+#: Operator-held runtime state and pre-launch evidence that a solution gate reads
+#: inside the pod: vendor terms acceptances, a gated-repository token, or hashes
+#: of owner-only authorization/scan records. These are not workflow
+#: configuration, so they travel through SkyPilot's redacted secret channel and
+#: never appear in rendered YAML. Ordinary solutions drop unset names. RoboTwin
+#: returns its exact required name set so its bridge can reject any missing
+#: value before controller, scheduler, or GPU effects.
 #:
 #: Keyed by solution, because these are per-vendor answers and a single shared
 #: tuple quietly widens every other image's environment: a variable added for
@@ -140,6 +164,20 @@ LIBERO_RUNTIME_MANIFEST = (
 #: set in the operator's shell. A solution that is not listed forwards none.
 OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
     "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
+    # Hash of the owner-only manager authorization record. The RoboTwin smoke
+    # records it without exposing private cluster, reservation, or registry IDs.
+    "robotwin": (
+        CHILD_BUCKET_ENV,
+        CHILD_IMAGE_ENV,
+        CHILD_OUTPUT_PREFIX_ENV,
+        CHILD_RUN_ID_ENV,
+        CHILD_RUNTIME_AUTH_ENV,
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES",
+        "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256",
+        "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256",
+    ),
     "ltx2.5": (
         "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         # The gated-repository entitlement, which the container requires for the
@@ -178,23 +216,38 @@ LIBERO_PUBLIC_GROUP_NON_RESOURCE_URLS = frozenset(
 
 
 def resolve_secret_envs(
-    explicit: list[str] | None, *, solution_name: str = ""
+    explicit: list[str] | None,
+    *,
+    solution_name: str = "",
+    environment: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Return the secret env names to forward to SkyPilot.
 
     An explicit ``--secret-env`` list replaces the default storage names. The
     operator-runtime gates *this solution* reads are appended in either case, so
-    acceptance cannot fall back to rendered YAML — and a solution never receives
-    another vendor's answers. Names with no value are dropped, since SkyPilot
-    rejects a secret it cannot resolve.
+    runtime decisions/evidence cannot fall back to rendered YAML — and a
+    solution never receives another solution's values. Ordinary solutions drop
+    names with no value. RoboTwin instead returns its exact required set (plus
+    an optional session token only when present), allowing its confidential
+    bridge to refuse missing values before SkyPilot sees them.
     """
 
+    source = os.environ if environment is None else environment
+    if solution_name.strip().lower() == "robotwin":
+        names = [
+            *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+            *STORAGE_CREDENTIAL_SECRET_NAMES,
+            *STORAGE_ENDPOINT_SECRET_NAMES,
+        ]
+        if source.get(OPTIONAL_STORAGE_SECRET_NAME):
+            names.append(OPTIONAL_STORAGE_SECRET_NAME)
+        return list(dict.fromkeys(names))
     names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
-    # Customer authorization is runtime state, not workflow configuration. Always
-    # carry an explicitly set gate through SkyPilot's redacted secret channel,
-    # even when a caller supplies an otherwise explicit secret allowlist.
+    # Operator decisions/evidence are runtime state, not workflow configuration.
+    # Always carry an explicitly set gate through SkyPilot's redacted secret
+    # channel, even when a caller supplies an explicit secret allowlist.
     names.extend(OPERATOR_RUNTIME_ENVS_BY_SOLUTION.get(solution_name.strip(), ()))
-    return [name for name in dict.fromkeys(names) if os.environ.get(name)]
+    return [name for name in dict.fromkeys(names) if source.get(name)]
 
 
 def _normalize_s3_bucket(value: str) -> str:
@@ -234,6 +287,14 @@ DEFAULT_BUCKET = (
 DEFAULT_OUTPUT_ROOT = _normalize_output_root(
     os.environ.get("NPA_BYOF_OUTPUT_ROOT", ""), default_prefix="byof"
 )
+
+
+def _is_terminal_status(status: str) -> bool:
+    """Return whether a managed job has reached any canonical terminal state."""
+
+    return status in TERMINAL_STATUSES or is_terminal_failure_job_status(status)
+
+
 TERMINAL_STATUSES = {
     "ABSENT",
     "SUCCEEDED",
@@ -2171,47 +2232,60 @@ def render_workflow(
     solution_name: str = "",
     capability_name: str = "",
     smoke_artifact_name: str = "",
+    runtime_env: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     docs = _load_yaml_documents(yaml_path)
+    robotwin = solution_name.strip().lower() == "robotwin"
+    source = os.environ if runtime_env is None else runtime_env
     validate_gymnasium_task_configuration(docs, solution_name=solution_name)
     for doc in docs[1:]:
         envs = doc.get("envs")
         if not isinstance(envs, dict):
             continue
-        envs["NPA_BYOF_RUN_ID"] = run_id
+        envs["NPA_BYOF_RUN_ID"] = f"${{{CHILD_RUN_ID_ENV}}}" if robotwin else run_id
         envs["BYOF_REPO_ROOT"] = repo_root
         envs["BYOF_SMOKE_COMMAND"] = smoke_command
         envs["BYOF_SOLUTION_NAME"] = solution_name
         envs["BYOF_CAPABILITY_NAME"] = capability_name
         envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
+        if robotwin:
+            envs[CHILD_RUNTIME_AUTH_ENV] = f"${{{CHILD_RUNTIME_AUTH_ENV}}}"
         normalized_root = _normalize_output_root(output_root)
-        output_prefix = normalized_root.rstrip("/") + f"/{run_id}/"
-        envs["S3_OUTPUT_PREFIX"] = output_prefix
-        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
-            [{"uri": output_prefix, "kind": "directory"}], separators=(",", ":")
+        output_prefix = (
+            f"${{{CHILD_OUTPUT_PREFIX_ENV}}}"
+            if robotwin
+            else normalized_root.rstrip("/") + f"/{run_id}/"
         )
+        envs["S3_OUTPUT_PREFIX"] = output_prefix
+        if not robotwin:
+            envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+                [{"uri": output_prefix, "kind": "directory"}], separators=(",", ":")
+            )
         bucket = _normalize_s3_bucket(normalized_root) or _normalize_s3_bucket(
-            os.environ.get("NPA_S3_BUCKET", "")
+            source.get("NPA_S3_BUCKET", "")
         )
         if bucket:
-            envs["NPA_S3_BUCKET"] = bucket
-        storage_env = _resolved_storage_env()
-        explicit_endpoint = os.environ.get("NPA_BYOF_S3_ENDPOINT", "").strip()
+            envs["NPA_S3_BUCKET"] = f"${{{CHILD_BUCKET_ENV}}}" if robotwin else bucket
+        storage_env = {} if robotwin else _resolved_storage_env()
+        explicit_endpoint = source.get("NPA_BYOF_S3_ENDPOINT", "").strip()
         for key in (
             "AWS_ENDPOINT_URL",
             "NEBIUS_S3_ENDPOINT",
             "NPA_S3_BUCKET",
         ):
+            if robotwin and key in {"AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"}:
+                envs[key] = f"${{{key}}}"
+                continue
             value = ""
             candidates = (
                 (
                     explicit_endpoint,
                     storage_env.get(key, "").strip(),
-                    os.environ.get(key, "").strip(),
+                    source.get(key, "").strip(),
                 )
                 if explicit_endpoint
                 and key in {"AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"}
-                else (os.environ.get(key, "").strip(), storage_env.get(key, "").strip())
+                else (source.get(key, "").strip(), storage_env.get(key, "").strip())
             )
             for candidate in candidates:
                 if candidate and not (
@@ -2229,11 +2303,13 @@ def render_workflow(
             envs[key] = value
         if image:
             image_ref = image.removeprefix("docker:")
-            envs["BYOF_IMAGE"] = image_ref
+            rendered_image = f"${{{CHILD_IMAGE_ENV}}}" if robotwin else image_ref
+            envs["BYOF_IMAGE"] = rendered_image
             resources = doc.setdefault("resources", {})
             if isinstance(resources, dict):
-                resources["image_id"] = f"docker:{image_ref}"
-        _materialize_task_kubernetes_config(doc)
+                resources["image_id"] = f"docker:{rendered_image}"
+        if not robotwin:
+            _materialize_task_kubernetes_config(doc)
         if solution_name == LIBERO_SOLUTION_NAME:
             identity = os.environ.get("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "")
             if identity:
@@ -2282,8 +2358,15 @@ def _serialized_task_documents(docs: list[dict[str, Any]]) -> bytes:
     return yaml.safe_dump_all(_task_docs(docs), sort_keys=False).encode()
 
 
-def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
-    path.write_bytes(_serialized_task_documents(docs))
+def _write_yaml_documents(
+    path: Path, docs: list[dict[str, Any]], preserve_metadata: bool = False
+) -> None:
+    path.write_text(
+        yaml.safe_dump_all(
+            docs if preserve_metadata else _task_docs(docs), sort_keys=False
+        ),
+        encoding="utf-8",
+    )
 
 
 def _default_run_id() -> str:
@@ -2504,8 +2587,34 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _apply_robotwin_authorization(
+    args: argparse.Namespace,
+    authorization: RobotwinAuthorization,
+    environment: Mapping[str, str],
+) -> RobotwinSubmitContext:
+    """Bind the inner launch from an in-process validated authorization."""
+
+    if args.solution_name.strip().lower() != "robotwin":
+        raise ValueError("RoboTwin authorization cannot select another solution")
+    context = prepare_inner_submit(authorization, environment)
+    args.image = str(environment[CHILD_IMAGE_ENV])
+    args.run_id = authorization.run_id
+    args.output_root = authorization.output_root
+    args.config_path = authorization.skypilot_config_source
+    args.infra = f"k8s/{authorization.kubernetes_context}"
+    args.sky_bin = ""
+    args.direct_launch = False
+    return context
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.solution_name.strip().lower() == "robotwin":
+        print(
+            "Error: RoboTwin inner launch requires in-process validated authorization",
+            file=sys.stderr,
+        )
+        return 2
     try:
         return _submit_and_wait(args)
     except (
@@ -2517,6 +2626,23 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
+def run_authorized_robotwin(
+    argv: list[str],
+    *,
+    authorization: RobotwinAuthorization,
+    environment: Mapping[str, str],
+) -> int:
+    """Run the sole GPU launcher without serializing its authorization."""
+
+    args = _parse_args(argv)
+    context = _apply_robotwin_authorization(args, authorization, environment)
+    return _submit_and_wait(
+        args,
+        robotwin_submit_context=context,
+        authorized_env=dict(environment),
+    )
+
+
 def _wait_for_terminal(
     scheduler_job_id: str,
     *,
@@ -2526,6 +2652,7 @@ def _wait_for_terminal(
     wait_timeout: int,
     poll_interval: int,
     observation_guard: Callable[[str], None] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Poll with explicit immediate, bounded, or indefinite semantics."""
 
@@ -2542,6 +2669,7 @@ def _wait_for_terminal(
         "isolated_config_dir": isolated_config_dir,
         "config_path": config_path,
         "sky_bin": sky_bin,
+        **({"environment": environment} if environment is not None else {}),
     }
     final = workflow_status(scheduler_job_id, **status_kwargs)
     statuses.append(final.status)
@@ -2549,7 +2677,7 @@ def _wait_for_terminal(
         observation_guard(final.status)
     polls = 1
     while (
-        final.status not in TERMINAL_STATUSES
+        not _is_terminal_status(final.status)
         and wait_timeout != 0
         and (deadline is None or time.time() < deadline)
     ):
@@ -2563,10 +2691,10 @@ def _wait_for_terminal(
         "mode": mode,
         "polls": polls,
         "statuses": statuses,
-        "terminal": final.status in TERMINAL_STATUSES,
+        "terminal": _is_terminal_status(final.status),
         "deadline_exhausted": bool(
             wait_timeout > 0
-            and final.status not in TERMINAL_STATUSES
+            and not _is_terminal_status(final.status)
             and deadline is not None
             and time.time() >= deadline
         ),
@@ -2577,6 +2705,207 @@ def _wait_for_terminal(
             "workflow is not terminal; inspect SkyPilot controller/job and pod events"
         )
     return final, diagnostics
+
+
+def _robotwin_submit_environment(
+    context: RobotwinSubmitContext,
+    environment: Mapping[str, str],
+) -> dict[str, str]:
+    """Limit the inner submit environment to values required at its boundary."""
+
+    names = (
+        *DEFAULT_SECRET_ENVS,
+        *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+    )
+    selected = {
+        name: str(environment[name])
+        for name in names
+        if str(environment.get(name) or "")
+    }
+    selected["KUBECONFIG"] = context.authorization.kubeconfig_source
+    return selected
+
+
+def _robotwin_control_environment(
+    context: RobotwinSubmitContext,
+    environment: Mapping[str, str],
+) -> dict[str, str]:
+    """Return the minimal environment for a non-launch Sky control command."""
+
+    environment = {
+        name: environment[name]
+        for name in ("HOME", "PATH", "LANG", "LC_ALL")
+        if environment.get(name)
+    }
+    environment["KUBECONFIG"] = context.authorization.kubeconfig_source
+    return environment
+
+
+def _robotwin_polling_environment(cleanup: Any) -> dict[str, str]:
+    """Reuse the producer-captured control context without workload secrets."""
+
+    captured = getattr(cleanup, "environment", None)
+    if not isinstance(captured, Mapping):
+        raise SkyPilotConfigError(
+            "native polling environment unavailable; recovery state retained"
+        )
+    blocked = {
+        *DEFAULT_SECRET_ENVS,
+        *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+        *STORAGE_ENDPOINT_SECRET_NAMES,
+        *CONTEXT_ENV_NAMES,
+        "NPA_EXECUTION_OUTPUTS",
+    }
+    selected = {
+        name: str(value)
+        for name, value in captured.items()
+        if name not in blocked and str(value or "")
+    }
+    kubeconfig = str(captured.get("KUBECONFIG") or "").strip()
+    if not kubeconfig:
+        raise SkyPilotConfigError(
+            "native polling kubeconfig unavailable; recovery state retained"
+        )
+    selected["KUBECONFIG"] = kubeconfig
+    return selected
+
+
+def _bootstrap_robotwin_sky(
+    runtime_directory: Path, environment: Mapping[str, str]
+) -> str:
+    """Install the pinned worker-local SkyPilot runtime after authorization."""
+
+    code = (
+        "import sys; from pathlib import Path; "
+        "from npa.cli.skypilot import bootstrap_skypilot; "
+        "print(bootstrap_skypilot(venv_path=Path(sys.argv[1]), "
+        "python_bin=sys.executable).sky_bin)"
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(runtime_directory / "skypilot-venv"),
+        ],
+        env=dict(environment),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode or not completed.stdout.strip():
+        raise SkyPilotConfigError("worker-local SkyPilot bootstrap failed")
+    return completed.stdout.strip().splitlines()[-1]
+
+
+class _SubmitTeardown:
+    """Request exact-job cleanup without racing an in-flight launch POST."""
+
+    def __init__(self, *, cleanup_on_failure: bool) -> None:
+        self.cleanup_on_failure = cleanup_on_failure
+        self.cleanup = None
+        self.requested = False
+        self.retain_context = False
+
+    def bind(self, cleanup) -> None:
+        cleanup.cleanup_on_failure = self.cleanup_on_failure
+        self.cleanup = cleanup
+        if self.requested:
+            cleanup.request()
+
+    def teardown(self) -> CleanupResult:
+        self.requested = True
+        if self.retain_context:
+            return CleanupResult(
+                errors=["native identity mismatch; recovery state retained"]
+            )
+        if self.cleanup is None:
+            return CleanupResult(no_op=True)
+        return self.cleanup.request()
+
+    def refine_config(self, path: Path | None) -> None:
+        if self.cleanup is not None and path != self.cleanup.config_path:
+            raise SkyPilotConfigError("submission cleanup configuration mismatch")
+
+    def native_job_id(self, result: Any, logical_id: str) -> str:
+        """Consume a consistent native result; never infer ownership from its number."""
+        job_id = _native_polling_identity(result, self.cleanup, logical_id)
+        if job_id is None or self.requested:
+            self.retain_context = True
+            raise SkyPilotConfigError(
+                "native polling identity unavailable; recovery state retained"
+            )
+        return job_id
+
+    @property
+    def pending(self) -> bool:
+        return self.retain_context or (
+            self.cleanup is not None and not self.cleanup.verified
+        )
+
+
+def _stop_owned_robotwin_api(isolated_config_dir: Path) -> bool:
+    """Stop the uniquely allocated local API before removing its state root."""
+
+    try:
+        stop_isolated_api(isolated_config_dir)
+    except Exception:
+        # Keep the complete private root when ownership-safe shutdown cannot be
+        # verified; callers turn this into an unverified cleanup result.
+        return False
+    return True
+
+
+def _native_polling_identity(result: Any, cleanup: Any, logical_id: str) -> str | None:
+    """Check the native receipt and complete controller evidence without adoption."""
+    job_id = getattr(result, "job_id", None)
+    transaction = getattr(result, "launch_transaction", None)
+    native = getattr(cleanup, "native_result", None)
+    if not (
+        isinstance(job_id, str)
+        and job_id.isascii()
+        and job_id.isdecimal()
+        and not job_id.startswith("0")
+        and isinstance(transaction, dict)
+        and isinstance(native, NativeLaunchResult)
+    ):
+        return None
+    if not (
+        getattr(result, "status", None) == "SUBMITTED"
+        and getattr(result, "returncode", None) == 0
+        and not getattr(result, "error", "")
+        and transaction.get("state") == "submitted"
+        and transaction.get("identity_source") == "native_request_result"
+        and transaction.get("logical_launch_id") == logical_id
+        and transaction.get("job_id") == job_id == native.job_id
+        and getattr(cleanup, "job_id", None) == job_id
+        and getattr(cleanup, "run_id", None) == logical_id
+        and getattr(cleanup, "native_verified", False) is True
+        and getattr(cleanup, "active", False) is True
+        and getattr(cleanup, "submitting", True) is False
+        and getattr(cleanup, "requested", True) is False
+    ):
+        return None
+    lookup = getattr(cleanup, "_lookup", None)
+    if not callable(lookup):
+        return None
+    try:
+        evidence = lookup()
+    except BaseException:
+        return None
+    if not isinstance(evidence, ReconciliationEvidence):
+        return None
+    if not (
+        evidence.state is ReconciliationState.FOUND
+        and evidence.job_id == job_id
+        and evidence.workload_observable is True
+        and isinstance(evidence.status, str)
+        and is_recognized_job_status(evidence.status)
+        and tuple(evidence.observed_task_ids) == tuple(native.task_ids)
+    ):
+        return None
+    return job_id
 
 
 def _validate_gymnasium_launch_configuration(
@@ -3075,7 +3404,280 @@ def _complete_libero_cleanup(
     return cleanup, True, True
 
 
-def _submit_and_wait(args: argparse.Namespace) -> int:
+def _submit_robotwin_and_wait(
+    args: argparse.Namespace,
+    *,
+    robotwin_submit_context: RobotwinSubmitContext | None = None,
+    authorized_env: Mapping[str, str] | None = None,
+) -> int:
+    run_id = args.run_id or _default_run_id()
+    scheduler_run_id = (
+        robotwin_submit_context.authorization.inner_launch_id
+        if args.solution_name.strip().lower() == "robotwin"
+        else run_id
+    )
+    output_root = _normalize_output_root(args.output_root)
+    docs = render_workflow(
+        args.yaml_path,
+        run_id=run_id,
+        output_root=output_root,
+        image=args.image,
+        repo_root=args.repo_root,
+        smoke_command=args.smoke_command,
+        solution_name=args.solution_name,
+        capability_name=args.capability_name,
+        smoke_artifact_name=args.smoke_artifact_name,
+        runtime_env=authorized_env,
+    )
+    outputs = {
+        "root": output_root.rstrip("/") + f"/{run_id}/",
+        "summary": output_root.rstrip("/") + f"/{run_id}/npa_byof_summary.json",
+    }
+
+    if args.render_only:
+        render_dir = Path(
+            tempfile.mkdtemp(prefix=f"npa-byof-container-{scheduler_run_id}-")
+        )
+        rendered_yaml = render_dir / "byof-container.rendered.yaml"
+        _write_yaml_documents(rendered_yaml, docs, robotwin_submit_context is not None)
+        payload = (
+            {"launch_id": scheduler_run_id, "status": "rendered"}
+            if robotwin_submit_context is not None
+            else {
+                "run_id": run_id,
+                "rendered_yaml": str(rendered_yaml),
+                "outputs": outputs,
+            }
+        )
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    submit_environment = authorized_env
+    if robotwin_submit_context is not None:
+        submit_environment = _robotwin_submit_environment(
+            robotwin_submit_context, authorized_env or {}
+        )
+    else:
+        preflight_output_storage(output_root=output_root, run_id=run_id)
+
+    tmp = tempfile.mkdtemp(prefix=f"npa-byof-container-{scheduler_run_id}-")
+    teardown_guard = _SubmitTeardown(cleanup_on_failure=args.cleanup)
+    try:
+        tmp_path = Path(tmp)
+        isolated_config_dir = args.isolated_config_dir
+        if robotwin_submit_context is not None:
+            isolated_config_dir = tmp_path / "skypilot-state"
+            isolated_config_dir.mkdir(mode=0o700)
+        previous_kubeconfig = (
+            os.environ.get("KUBECONFIG") if robotwin_submit_context is None else None
+        )
+        robotwin_control_env = (
+            _robotwin_control_environment(robotwin_submit_context, authorized_env or {})
+            if robotwin_submit_context is not None
+            else None
+        )
+        sky_bin = (
+            _bootstrap_robotwin_sky(tmp_path, robotwin_control_env or {})
+            if robotwin_submit_context is not None
+            else str(
+                resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
+            )
+        )
+        try:
+            if robotwin_submit_context is not None:
+                submit_environment = _normalize_kubeconfig_current_context(
+                    tmp_path, submit_environment or {}
+                )
+                robotwin_control_env = _robotwin_control_environment(
+                    robotwin_submit_context, authorized_env or {}
+                )
+            else:
+                _normalize_kubeconfig_current_context(tmp_path)
+            rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
+            # The confidential bridge recognizes the complete frozen profile,
+            # including its metadata document, before native SDK normalization.
+            _write_yaml_documents(
+                rendered_yaml, docs, robotwin_submit_context is not None
+            )
+            infra = args.infra or _default_infra()
+            config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
+            if robotwin_submit_context is None:
+                _ensure_infra_enabled(
+                    sky_bin=sky_bin, infra=infra, config_path=config_path
+                )
+            if args.direct_launch:
+                return _direct_launch(
+                    rendered_yaml=rendered_yaml,
+                    run_id=run_id,
+                    outputs=outputs,
+                    sky_bin=sky_bin,
+                    infra=infra,
+                    config_path=config_path,
+                    cleanup=args.cleanup,
+                    secret_envs=resolve_secret_envs(
+                        args.secret_env, solution_name=args.solution_name
+                    ),
+                )
+            previous_handlers = install_teardown_signal_handlers(
+                teardown_guard.teardown
+            )
+            summary: dict[str, Any] | None = None
+            return_code = 1
+            confidential_submission_dir: Path | None = None
+            owned_api_stopped = True
+            try:
+                submit_config_path = Path(config_path) if config_path else None
+                if robotwin_submit_context is not None:
+                    # Recheck the run-scoped customer assertion immediately
+                    # before the native submit boundary; bootstrap may have
+                    # consumed enough time for an otherwise valid assertion
+                    # to expire.  No provider call or adoption may occur after
+                    # this check until submit_workflow arms the launch.
+                    require_customer_authorization_fresh(
+                        robotwin_submit_context.authorization
+                    )
+                result = submit_workflow(
+                    rendered_yaml,
+                    scheduler_run_id,
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=submit_config_path,
+                    sky_bin=sky_bin,
+                    infra=(infra),
+                    secret_envs=resolve_secret_envs(
+                        args.secret_env,
+                        solution_name=args.solution_name,
+                        environment=submit_environment,
+                    ),
+                    extra_env=submit_environment,
+                    timeout=args.submit_timeout,
+                    project=(
+                        robotwin_submit_context.authorization.project
+                        if robotwin_submit_context is not None
+                        else ""
+                    ),
+                    execution_target=None,
+                    execution_preflight_report=None,
+                    robotwin_submit_context=robotwin_submit_context,
+                    logical_launch_id=(
+                        scheduler_run_id if robotwin_submit_context is not None else ""
+                    ),
+                    on_launch_ready=teardown_guard.bind,
+                )
+                submitted_config_path = (
+                    Path(result.log_paths["config"])
+                    if result.log_paths.get("config")
+                    else None
+                )
+                if robotwin_submit_context is not None:
+                    confidential_submission_dir = Path(
+                        result.log_paths["submission_dir"]
+                    )
+                teardown_guard.refine_config(submitted_config_path)
+                polling_config_path = (
+                    submitted_config_path
+                    if robotwin_submit_context is not None
+                    else submit_config_path
+                )
+                polling_job_id = (
+                    teardown_guard.native_job_id(result, scheduler_run_id)
+                    if robotwin_submit_context is not None
+                    else scheduler_run_id
+                )
+                if robotwin_submit_context is not None:
+                    robotwin_control_env = _robotwin_polling_environment(
+                        teardown_guard.cleanup
+                    )
+                summary = (
+                    {"launch_id": scheduler_run_id, "status": "submitted"}
+                    if robotwin_submit_context is not None
+                    else {
+                        "run_id": run_id,
+                        "submit": result.__dict__,
+                        "outputs": outputs,
+                    }
+                )
+                final, wait_diagnostics = _wait_for_terminal(
+                    polling_job_id,
+                    sky_bin=sky_bin,
+                    wait_timeout=args.wait_timeout,
+                    poll_interval=args.poll_interval,
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=polling_config_path,
+                    environment=robotwin_control_env,
+                )
+                if robotwin_submit_context is not None:
+                    summary["status"] = final.status.lower()
+                    summary["returncode"] = int(final.returncode)
+                else:
+                    summary["final"] = final.__dict__
+                    summary["wait"] = wait_diagnostics
+                return_code = 0 if final.status == "SUCCEEDED" else 1
+                if (
+                    robotwin_submit_context is None
+                    and os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
+                    and final.status == "FAILED_PRECHECKS"
+                ):
+                    return_code = 0
+            finally:
+                restore_signal_handlers(previous_handlers)
+                try:
+                    if args.cleanup:
+                        teardown_guard.teardown()
+                finally:
+                    if (
+                        robotwin_submit_context is not None
+                        and not teardown_guard.pending
+                    ):
+                        owned_api_stopped = _stop_owned_robotwin_api(
+                            isolated_config_dir
+                        )
+                        if not owned_api_stopped:
+                            teardown_guard.retain_context = True
+                if (
+                    confidential_submission_dir is not None
+                    and not teardown_guard.pending
+                ):
+                    shutil.rmtree(confidential_submission_dir, ignore_errors=True)
+            if not owned_api_stopped:
+                return_code = 1
+                if summary is not None:
+                    summary["cleanup"] = "unverified; recovery state retained"
+            if args.cleanup and teardown_guard.pending:
+                return_code = 1
+                if summary is not None:
+                    summary["cleanup"] = "unverified; recovery state retained"
+            fallback = (
+                {"launch_id": scheduler_run_id, "status": "failed"}
+                if robotwin_submit_context is not None
+                else {"run_id": run_id}
+            )
+            print(json.dumps(summary or fallback, indent=2, sort_keys=True))
+            return return_code
+        finally:
+            if robotwin_submit_context is None:
+                if previous_kubeconfig is None:
+                    os.environ.pop("KUBECONFIG", None)
+                else:
+                    os.environ["KUBECONFIG"] = previous_kubeconfig
+            # A submit does not own the entire API/controller. Its separate
+            # receipt-checked shutdown must wait until every client has exited.
+    finally:
+        if not teardown_guard.pending:
+            shutil.rmtree(tmp)
+
+
+def _submit_and_wait(
+    args: argparse.Namespace,
+    *,
+    robotwin_submit_context: RobotwinSubmitContext | None = None,
+    authorized_env: Mapping[str, str] | None = None,
+) -> int:
+    if robotwin_submit_context is not None:
+        return _submit_robotwin_and_wait(
+            args,
+            robotwin_submit_context=robotwin_submit_context,
+            authorized_env=authorized_env,
+        )
     _validate_gymnasium_launch_configuration(
         _load_yaml_documents(args.yaml_path),
         solution_name=args.solution_name,
@@ -3746,28 +4348,34 @@ def _default_infra() -> str:
 
 
 def _normalize_kubeconfig_current_context(
-    tmp_path: Path, *, immutable: bool = False
-) -> None:
-    kubeconfig = os.environ.get("KUBECONFIG", "").strip()
+    tmp_path: Path,
+    environment: Mapping[str, str] | None = None,
+    *,
+    immutable: bool = False,
+) -> dict[str, str]:
+    effective = dict(os.environ if environment is None else environment)
+    kubeconfig = effective.get("KUBECONFIG", "").strip()
     context = (
-        os.environ.get("KUBECONTEXT", "")
-        or os.environ.get("NPA_BYOF_K8S_CONTEXT", "")
-        or os.environ.get("NPA_K8S_CONTEXT", "")
+        effective.get("KUBECONTEXT", "")
+        or effective.get("NPA_BYOF_K8S_CONTEXT", "")
+        or effective.get("NPA_K8S_CONTEXT", "")
     ).strip()
     if not kubeconfig or not context:
-        return
+        return effective
     if not immutable:
         path = Path(kubeconfig)
         if not path.is_file():
-            return
+            return effective
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            return
+            return effective
         data["current-context"] = context
         target = tmp_path / "kubeconfig"
         target.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-        os.environ["KUBECONFIG"] = str(target)
-        return
+        effective["KUBECONFIG"] = str(target)
+        if environment is None:
+            os.environ["KUBECONFIG"] = str(target)
+        return effective
     source = _immutable_exact_run_copy(
         Path(kubeconfig).expanduser(),
         tmp_path / "execution-kubeconfig.source",
@@ -3795,7 +4403,10 @@ def _normalize_kubeconfig_current_context(
         stream.write(payload)
         stream.flush()
         os.fsync(stream.fileno())
-    os.environ["KUBECONFIG"] = str(target)
+    effective["KUBECONFIG"] = str(target)
+    if environment is None:
+        os.environ["KUBECONFIG"] = str(target)
+    return effective
 
 
 def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:

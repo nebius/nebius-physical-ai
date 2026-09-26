@@ -23,6 +23,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
+ROBOTWIN_WORKFLOW = ROOT / "workflows" / "testing" / "byof-robotwin.yaml"
 LIBERO_YAML_PATH = (
     ROOT
     / "npa"
@@ -410,6 +411,1127 @@ def _accepted_wan_base_args(module) -> list[str]:
         "--base-image",
         f"registry.example/project/npa-wan2-2@{digest}",
     ]
+
+
+def _robotwin_context(**updates: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "solution": "robotwin",
+        "ownership_provenance": "manager-issued",
+        "customer_scope_id": "private-customer-canary",
+        "workflow_sha256": "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3",
+        "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
+        "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+        "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
+        "runtime_lock_sha256": "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e",
+        "bootstrap_image": "registry.example/private-namespace-canary/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reservation": {
+            "policy": "STRICT",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+            "count": 1,
+        },
+        "project": "private-project-canary",
+        "nebius_profile": "private-profile-canary",
+        "kubeconfig": "/private/kubeconfig-canary",
+        "kubernetes_context": "private-context-canary",
+        "skypilot_config_path": "/private/skypilot-canary.yaml",
+        "bucket": "private-bucket-canary",
+        "output_root": "s3://private-bucket-canary/robotwin-output",
+        "run_id": "robotwin-private-run-canary",
+    }
+    payload.update(updates)
+    return payload
+
+
+def _authorized_stub(payload: dict[str, object]) -> SimpleNamespace:
+    return SimpleNamespace(
+        redactions=(),
+        raw_context=json.dumps(payload, sort_keys=True).encode(),
+        context_sha256="c" * 64,
+        project=payload["project"],
+        profile=payload["nebius_profile"],
+        kubeconfig=payload["kubeconfig"],
+        kubernetes_context=payload["kubernetes_context"],
+        skypilot_config_path=payload["skypilot_config_path"],
+        bootstrap_image=payload["bootstrap_image"],
+        bucket=payload["bucket"],
+        output_root=payload["output_root"],
+        run_id=payload["run_id"],
+    )
+
+
+def _install_robotwin_context(module, monkeypatch, tmp_path, **updates: object):
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        CUSTOMER_TERMS,
+        CUSTOMER_USE_SCOPE,
+        MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+        validate_context_bytes,
+    )
+
+    monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
+    payload = _robotwin_context(**updates)
+    materialized_dir = tmp_path / "materialized-config"
+    materialized_dir.mkdir(mode=0o700)
+    materialized_paths = {}
+    for field, filename in (
+        ("kubeconfig", "kubeconfig.yaml"),
+        ("skypilot_config_path", "skypilot.yaml"),
+    ):
+        path = tmp_path / filename
+        content = (
+            "apiVersion: v1\nkind: Config\n"
+            "current-context: private-context-canary\n"
+            "clusters: [{name: robotwin-cluster, cluster: {server: "
+            "https://cluster.example.invalid, certificate-authority-data: Y2E=}}]\n"
+            "contexts: [{name: private-context-canary, context: {cluster: "
+            "robotwin-cluster, user: robotwin-user}}]\n"
+            "users: [{name: robotwin-user, user: {token: portable-test-token}}]\n"
+            if field == "kubeconfig"
+            else "kubernetes:\n  allowed_contexts: [private-context-canary]\n"
+        )
+        path.write_text(content, encoding="utf-8")
+        path.chmod(0o600)
+        payload[field] = str(path)
+        materialized = materialized_dir / filename
+        materialized.write_text(content, encoding="utf-8")
+        materialized.chmod(0o600)
+        materialized_paths[field] = materialized
+    context = tmp_path / "runtime-context.json"
+    context.write_text(json.dumps(payload), encoding="utf-8")
+    context.chmod(0o600)
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(context))
+    assertion = SimpleNamespace(
+        issuer="https://customer-auth.example.invalid",
+        customer_scope_id=payload["customer_scope_id"],
+        run_id=payload["run_id"],
+        runtime_manifest_sha256=payload["runtime_lock_sha256"],
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2099-01-01T00:00:00Z",
+        decision="accepted",
+        intended_activity=CUSTOMER_USE_SCOPE,
+        terms=list(CUSTOMER_TERMS),
+        assertion_id="assertion-runner-canary-0001",
+        nonce="nonce-runner-canary-00000001",
+    )
+    receipt_context = dict(payload)
+    if not isinstance(receipt_context.get("project"), str):
+        receipt_context["project"] = "private-project-canary"
+    if (
+        not isinstance(receipt_context.get("reservation"), dict)
+        or type(receipt_context["reservation"].get("count")) is not int
+    ):
+        receipt_context["reservation"] = {
+            "policy": "STRICT",
+            "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+            "count": 1,
+        }
+    authorization = validate_context_bytes(
+        json.dumps(receipt_context).encode(),
+        customer_authorization_boundary=SimpleNamespace(
+            trusted_issuer="https://customer-auth.example.invalid",
+            consume_once=lambda _request: assertion,
+        ),
+    )
+    receipt = tmp_path / "authenticated-customer-authorization.json"
+    receipt.write_bytes(authorization.raw_customer_authorization)
+    receipt.chmod(0o600)
+    monkeypatch.delenv(module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV, raising=False)
+    monkeypatch.setenv(MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV, str(receipt))
+    monkeypatch.setenv(
+        MATERIALIZED_KUBECONFIG_ENV, str(materialized_paths["kubeconfig"])
+    )
+    monkeypatch.setenv(
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+        str(materialized_paths["skypilot_config_path"]),
+    )
+    return payload
+
+
+def _robotwin_args(module, *extra: str) -> list[str]:
+    config = yaml.safe_load(ROBOTWIN_WORKFLOW.read_text(encoding="utf-8"))["config"]
+    return [
+        "--repo-url",
+        str(config["repo_url"]),
+        "--repo-ref",
+        str(config["repo_ref"]),
+        "--repo-token-env",
+        "GH_TOKEN",
+        "--base-profile",
+        str(config["base_profile"]),
+        "--base-image",
+        str(config["base_image"]),
+        "--build-command",
+        str(config["build_command"]),
+        "--workload",
+        str(config["workload"]),
+        "--smoke-command",
+        str(config["smoke_command"]),
+        "--solution-name",
+        "robotwin",
+        "--capability-name",
+        str(config["capability_name"]),
+        "--smoke-artifact-name",
+        str(config["smoke_artifact_name"]),
+        "--yaml",
+        str(config["resource_profile_yaml"]),
+        "--task",
+        str(config["task"]),
+        "--iterations",
+        str(config["iterations"]),
+        "--num-envs",
+        str(config["num_envs"]),
+        "--num-demos",
+        str(config["num_demos"]),
+        "--wait-timeout",
+        str(config["wait_timeout"]),
+        "--poll-interval",
+        str(config["poll_interval"]),
+        "--runtime-context-env",
+        module.ROBOTWIN_RUNTIME_CONTEXT_ENV,
+        *extra,
+    ]
+
+
+def _load_robotwin_authorization(module, argv: list[str]):
+    return module._load_runtime_authorization(module._parse_args(argv))
+
+
+def _run_authorized_robotwin(module, argv: list[str]) -> int:
+    return module._run_authorized_robotwin(
+        argv, authorization=_load_robotwin_authorization(module, argv)
+    )
+
+
+@pytest.mark.parametrize(
+    ("repo_url", "image"),
+    [
+        ("https://github.com:443/RoboTwin-Platform/RoboTwin.git/", ""),
+        (
+            "https://github.com/example/not-robotwin.git",
+            "registry.invalid/private/npa-robotwin:mutable",
+        ),
+    ],
+)
+def test_robotwin_equivalent_or_mutable_direct_script_refuses_before_side_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    repo_url: str,
+    image: str,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_load_runtime_authorization",
+        lambda *_args: pytest.fail("direct script read private authorization"),
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_repository_url",
+        lambda *_args, **_kwargs: pytest.fail("direct script reached source handling"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("direct script ran a command"),
+    )
+
+    args = _robotwin_args(module)
+    args[args.index("--solution-name") + 1] = "relabeled"
+    args[args.index("--repo-url") + 1] = repo_url
+    args[args.index("--base-image") + 1] = "registry.invalid/example/base:latest"
+    args[args.index("--smoke-command") + 1] = "true"
+    args[args.index("--capability-name") + 1] = "other-capability"
+    args[args.index("--yaml") + 1] = "other-profile.yaml"
+    if image:
+        args.extend(("--image", image))
+    assert module.main(args) == 1
+    assert (
+        "normal npa workbench workflow submit CPU launcher" in capsys.readouterr().out
+    )
+
+
+@pytest.mark.parametrize(
+    "context,error",
+    [
+        (None, "context-missing"),
+        ("{", "context-invalid-json"),
+        (json.dumps(_robotwin_context(solution="another")), "context-wrong-solution"),
+        (json.dumps(_robotwin_context(unexpected=True)), "context-schema-mismatch"),
+        (
+            json.dumps(
+                _robotwin_context(bootstrap_image="docker.io/example/public:latest")
+            ),
+            "bootstrap-image-not-immutable",
+        ),
+    ],
+)
+def test_robotwin_authorization_refuses_before_any_side_effect(
+    monkeypatch, capsys, tmp_path, context: str | None, error: str
+) -> None:
+    module = _load_module()
+    if context is None:
+        monkeypatch.delenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, raising=False)
+    else:
+        context_path = tmp_path / "context.json"
+        context_path.write_text(context, encoding="utf-8")
+        context_path.chmod(0o600)
+        monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(context_path))
+    monkeypatch.setattr(
+        module,
+        "validate_repository_url",
+        lambda *_args, **_kwargs: pytest.fail("source validation ran before refusal"),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("registry resolved before refusal"),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    with pytest.raises(ValueError, match=error):
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert capsys.readouterr().out == ""
+
+
+def test_robotwin_disabled_runtime_delivery_refuses_before_any_side_effect(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    from npa.orchestration.npa_workflow import robotwin_preflight
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        require_runtime_lock_complete,
+    )
+
+    monkeypatch.setattr(robotwin_preflight, "RUNTIME_LOCK_STATUS", "incomplete")
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
+    monkeypatch.setattr(
+        module, "require_runtime_lock_complete", require_runtime_lock_complete
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_repository_url",
+        lambda *_args, **_kwargs: pytest.fail(
+            "source validation ran before runtime-lock refusal"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail(
+            "registry resolved before runtime-lock refusal"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "command ran before runtime-lock refusal"
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="runtime-delivery-technical-gates-incomplete",
+    ):
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert capsys.readouterr().out == ""
+
+
+def test_robotwin_inline_context_refuses_before_any_side_effect(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    monkeypatch.setenv(
+        module.ROBOTWIN_RUNTIME_CONTEXT_ENV, json.dumps(_robotwin_context())
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    with pytest.raises(ValueError, match="context-file-reference-required"):
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    ("updates", "error"),
+    [
+        ({"project": {"unexpected": "object"}}, "context-project-invalid"),
+        (
+            {
+                "reservation": {
+                    "policy": "STRICT",
+                    "accelerator": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+                    "count": True,
+                }
+            },
+            "reservation-count-not-one",
+        ),
+    ],
+)
+def test_robotwin_malformed_context_types_refuse_before_any_side_effect(
+    monkeypatch, capsys, tmp_path, updates: dict[str, object], error: str
+) -> None:
+    module = _load_module()
+    _install_robotwin_context(module, monkeypatch, tmp_path, **updates)
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    with pytest.raises(ValueError, match=error):
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("field", ["kubeconfig", "skypilot_config_path"])
+def test_robotwin_missing_runtime_config_refuses_before_any_side_effect(
+    monkeypatch, capsys, tmp_path, field: str
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+    )
+
+    module = _load_module()
+    _install_robotwin_context(module, monkeypatch, tmp_path)
+    materialized_env = (
+        MATERIALIZED_KUBECONFIG_ENV
+        if field == "kubeconfig"
+        else MATERIALIZED_SKYPILOT_CONFIG_ENV
+    )
+    monkeypatch.setenv(materialized_env, str(tmp_path / "missing-private-config"))
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    label = "kubeconfig" if field == "kubeconfig" else "skypilot-config"
+    with pytest.raises(ValueError, match=f"{label}-unreadable"):
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("field", ["kubeconfig", "skypilot_config_path"])
+def test_robotwin_runtime_config_must_be_owner_only_before_any_side_effect(
+    monkeypatch, capsys, tmp_path, field: str
+) -> None:
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+    )
+
+    module = _load_module()
+    _install_robotwin_context(module, monkeypatch, tmp_path)
+    materialized_env = (
+        MATERIALIZED_KUBECONFIG_ENV
+        if field == "kubeconfig"
+        else MATERIALIZED_SKYPILOT_CONFIG_ENV
+    )
+    Path(os.environ[materialized_env]).chmod(0o644)
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    label = "kubeconfig" if field == "kubeconfig" else "skypilot-config"
+    with pytest.raises(ValueError, match=f"{label}-not-owner-only"):
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert capsys.readouterr().out == ""
+
+
+def test_robotwin_context_file_must_be_owner_only(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    context = tmp_path / "context.json"
+    context.write_text(json.dumps(_robotwin_context()), encoding="utf-8")
+    context.chmod(0o644)
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(context))
+    monkeypatch.setattr(
+        module,
+        "validate_repository_url",
+        lambda *_args, **_kwargs: pytest.fail("source validation ran before refusal"),
+    )
+
+    with pytest.raises(ValueError, match="context-not-owner-only"):
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert capsys.readouterr().out == ""
+
+    context.chmod(0o600)
+    link = tmp_path / "context-link.json"
+    link.symlink_to(context)
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, str(link))
+    with pytest.raises(ValueError, match="context-unreadable") as exc_info:
+        _load_robotwin_authorization(module, _robotwin_args(module))
+    assert str(link) not in str(exc_info.value)
+    assert capsys.readouterr().out == ""
+
+
+def test_robotwin_authorized_profile_is_environment_only(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
+    monkeypatch.setattr(
+        module, "validate_repository_url", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("authorized registry was not applied"),
+    )
+
+    monkeypatch.setattr(
+        module,
+        "_run_byof",
+        lambda _args, *, authorization, **_kwargs: (
+            0
+            if authorization.profile == payload["nebius_profile"]
+            else pytest.fail("validated profile was not retained in authorization")
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "private profile entered a subprocess argv before BYOF work"
+        ),
+    )
+
+    assert _run_authorized_robotwin(module, _robotwin_args(module)) == 0
+
+
+def test_robotwin_authorized_verifier_failure_is_not_reported_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_module()
+    args = module._parse_args(_robotwin_args(module))
+    summary: dict[str, object] = {}
+    authorization = SimpleNamespace(redactions=(), bootstrap_image="private-image")
+    monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        module,
+        "_scan_robotwin_image",
+        lambda *_a, **_k: {
+            "report_sha256": "b" * 64,
+            "archives_scanned": 2,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_authorized_live_env",
+        lambda *_a, **_k: {"PATH": "/synthetic"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_robotwin_container_verify",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 7, stdout='{"status":"failed"}\n', stderr="synthetic refusal\n"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="authorized RoboTwin verifier failed"):
+        module._run_byof(
+            args,
+            authorization=authorization,
+            summary=summary,
+            source_secrets=None,
+            redactions=(),
+            docker_env={},
+            base_candidates=["unused"],
+            base_image="unused",
+            base_profile="prebuilt",
+            image="private-image",
+            registry="unused",
+            skip_build=True,
+            skip_push=True,
+        )
+
+    assert summary["run"] == {
+        "status": "failed",
+        "returncode": 7,
+        "stdout": '{"status":"failed"}\n',
+        "stderr": "synthetic refusal\n",
+    }
+    assert '"status": "ok"' not in capsys.readouterr().out
+
+
+def test_robotwin_authorized_verifier_malformed_receipt_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    args = module._parse_args(_robotwin_args(module))
+    authorization = SimpleNamespace(
+        redactions=(),
+        bootstrap_image="private-image",
+        inner_launch_id="robotwin-inner-canary",
+    )
+    monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_scan_robotwin_image", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module,
+        "_authorized_live_env",
+        lambda *_a, **_k: {"PATH": "/synthetic"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_robotwin_container_verify",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout='{\n  "status": "succeeded",\n', stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="no complete JSON receipt"):
+        module._run_byof(
+            args,
+            authorization=authorization,
+            summary={},
+            source_secrets=None,
+            redactions=(),
+            docker_env={},
+            base_candidates=["unused"],
+            base_image="unused",
+            base_profile="prebuilt",
+            image="private-image",
+            registry="unused",
+            skip_build=True,
+            skip_push=True,
+        )
+
+
+@pytest.mark.parametrize("allocated_outer", [False, True])
+def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
+    monkeypatch, capsys, tmp_path, allocated_outer
+) -> None:
+    module = _load_module()
+    payload = _robotwin_context()
+    authorization = SimpleNamespace(
+        redactions=(),
+        context_sha256="c" * 64,
+        inner_launch_id="robotwin-inner-canary",
+        project=payload["project"],
+        profile=payload["nebius_profile"],
+        kubeconfig=payload["kubeconfig"],
+        kubernetes_context=payload["kubernetes_context"],
+        skypilot_config_path=payload["skypilot_config_path"],
+        bootstrap_image=payload["bootstrap_image"],
+        bucket=payload["bucket"],
+        output_root=payload["output_root"],
+        run_id=payload["run_id"],
+    )
+    monkeypatch.setattr(
+        module, "_load_runtime_authorization", lambda _args: authorization
+    )
+    monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
+    monkeypatch.setattr(
+        module,
+        "encode_runtime_authorization",
+        lambda value: json.dumps({"inner_launch_id": value.inner_launch_id}),
+    )
+    if allocated_outer:
+        monkeypatch.setenv("NPA_WORKFLOW_RUN_ID", "synthetic-outer-run")
+        monkeypatch.setenv("NPA_WORKFLOW_STATE", "synthetic-cpu-launcher")
+    monkeypatch.setattr(
+        module,
+        "_run_worker",
+        lambda *_args, **_kwargs: pytest.fail(
+            "RoboTwin entered generic capability worker"
+        ),
+    )
+    monkeypatch.setattr(
+        module, "validate_repository_url", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: pytest.fail("authorized registry was not applied"),
+    )
+    events: list[str] = []
+    seen_env: dict[str, str] = {}
+    seen_runner_cmd: list[str] = []
+
+    def fake_scan(image: str, **_kwargs):
+        events.append("scan")
+        assert image.endswith("@sha256:" + "a" * 64)
+        return {
+            "format": "npa_robotwin_image_byte_scan_v1",
+            "report_sha256": "b" * 64,
+            "archives_scanned": 3,
+            "status": "pass",
+        }
+
+    for name in module._ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES:
+        monkeypatch.setenv(name, f"/synthetic/{name.lower()}")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "authorized-storage-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "authorized-storage-secret")
+    real_live_env = module._authorized_live_env
+
+    def capture_live_env(authorization, scan_evidence, *, project: str, image: str):
+        events.append("live-env")
+        assert project == payload["project"]
+        assert authorization.bootstrap_image == payload["bootstrap_image"]
+        assert scan_evidence["report_sha256"] == "b" * 64
+        assert image.endswith("@sha256:" + "a" * 64)
+        return real_live_env(authorization, scan_evidence, project=project, image=image)
+
+    def fake_container_verify(cmd, *, authorization, environment):
+        events.append("runner")
+        seen_runner_cmd.extend(cmd)
+        seen_env.update(environment)
+        assert authorization.bootstrap_image == payload["bootstrap_image"]
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "launch_id": authorization.inner_launch_id,
+                    "status": "succeeded",
+                    "returncode": 0,
+                },
+                indent=2,
+            ),
+            stderr="",
+        )
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["docker", "build"]:
+            events.append("build")
+        elif cmd[:2] == ["docker", "push"]:
+            events.append("push")
+        elif cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            events.append("inspect")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Digest: sha256:" + "a" * 64 + "\n", stderr=""
+            )
+        else:
+            pytest.fail(f"unexpected external command: {cmd[0]}")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_scan_robotwin_image", fake_scan)
+    monkeypatch.setattr(module, "_authorized_live_env", capture_live_env)
+    monkeypatch.setattr(module, "_run_robotwin_container_verify", fake_container_verify)
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    assert _run_authorized_robotwin(module, _robotwin_args(module)) == 0
+    assert events == ["scan", "live-env", "runner"]
+    assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] == "b" * 64
+    assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"] == "3"
+    for name in module._ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES:
+        assert seen_env[name] == f"/synthetic/{name.lower()}"
+    assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in seen_env
+    assert module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV not in seen_env
+    for private_value in (
+        payload["bucket"],
+        payload["kubernetes_context"],
+        payload["output_root"],
+        payload["run_id"],
+        payload["skypilot_config_path"],
+        seen_env[module.ROBOTWIN_CHILD_IMAGE_ENV],
+    ):
+        assert str(private_value) not in seen_runner_cmd
+    output = capsys.readouterr().out
+    # The authorized receipt must be validated before redaction, while the
+    # printed/stored summary must never expose the run-scoped native identity.
+    assert authorization.inner_launch_id not in output
+    assert "<redacted>" in output
+    private_image = str(payload["bootstrap_image"])
+    for field in (
+        "project",
+        "nebius_profile",
+        "kubeconfig",
+        "kubernetes_context",
+        "skypilot_config_path",
+        "bootstrap_image",
+        "bucket",
+        "output_root",
+        "run_id",
+    ):
+        assert str(payload[field]) not in output
+    for derived_image_coordinate in (
+        module._repository_without_tag(private_image),
+        module._registry_path(private_image),
+        module._registry_server(private_image),
+    ):
+        assert derived_image_coordinate not in output
+
+
+def test_robotwin_image_scanner_receives_private_digest_only_on_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    image = "registry.example/private/npa-robotwin@sha256:" + "a" * 64
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "unrelated-storage-canary")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://unrelated-source-canary/prefix")
+    monkeypatch.setenv("DOCKER_CONFIG", "/owner-only/docker-config")
+
+    def fake_run(cmd: list[str], **kwargs):
+        assert image not in cmd
+        assert "--image-stdin" in cmd
+        assert kwargs["stdin"] == image
+        assert kwargs["inherit_env"] is False
+        assert kwargs["env"] == {"DOCKER_CONFIG": "/owner-only/docker-config"}
+        report_path = Path(cmd[cmd.index("--output") + 1])
+        report_path.write_text(
+            json.dumps(
+                {
+                    "format": "npa_robotwin_image_byte_scan_v1",
+                    "image": image,
+                    "status": "pass",
+                    "archives_scanned": 2,
+                    "findings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    report = module._scan_robotwin_image(image, redactions=(image,))
+
+    assert report["status"] == "pass"
+    assert report["archives_scanned"] == 2
+
+
+def test_robotwin_authorized_child_environment_drops_hostile_runtime_controls(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    payload = _robotwin_context()
+    authorization = SimpleNamespace(
+        context_sha256="c" * 64,
+        project=payload["project"],
+        profile=payload["nebius_profile"],
+        kubeconfig=payload["kubeconfig"],
+        kubernetes_context=payload["kubernetes_context"],
+        skypilot_config_path=payload["skypilot_config_path"],
+        bootstrap_image=payload["bootstrap_image"],
+        bucket=payload["bucket"],
+        output_root=payload["output_root"],
+        run_id=payload["run_id"],
+    )
+    monkeypatch.setattr(
+        module, "encode_runtime_authorization", lambda _value: "synthetic-runtime-auth"
+    )
+    for name, value in {
+        "NPA_BYOF_DIRECT_LAUNCH": "1",
+        "NPA_BYOF_INFRA": "k8s/unauthorized-context",
+        "NPA_SKYPILOT_INFRA": "k8s/unauthorized-context",
+        "NPA_SKYPILOT_BIN": "/untrusted/sky",
+        "NPA_BYOF_S3_ENDPOINT": "https://unauthorized.invalid",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE": "1",
+        "NPA_BYOF_SKIP_SKY_CHECK": "1",
+        "NPA_E2E_PROJECT": "unauthorized-project",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "authorized-storage-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "authorized-storage-secret")
+
+    env = module._authorized_live_env(
+        authorization,
+        {"report_sha256": "b" * 64, "archives_scanned": 2},
+        project=authorization.project,
+        image="registry.example/private/image@sha256:" + "a" * 64,
+    )
+
+    assert env["AWS_ACCESS_KEY_ID"] == "authorized-storage-id"
+    assert env[module.ROBOTWIN_CHILD_RUN_ID_ENV] == authorization.run_id
+    for name in (
+        "NPA_BYOF_DIRECT_LAUNCH",
+        "NPA_BYOF_INFRA",
+        "NPA_SKYPILOT_INFRA",
+        "NPA_SKYPILOT_BIN",
+        "NPA_BYOF_S3_ENDPOINT",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+        "NPA_BYOF_SKIP_SKY_CHECK",
+        "NPA_E2E_PROJECT",
+    ):
+        assert name not in env
+
+
+def test_robotwin_image_scan_failure_precedes_live_runner(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
+    monkeypatch.setattr(
+        module, "validate_repository_url", lambda *_args, **_kwargs: None
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Digest: sha256:" + "a" * 64 + "\n", stderr=""
+            )
+        if str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+            pytest.fail("live runner started after image scan failure")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    def fail_scan(*_args, **_kwargs):
+        raise RuntimeError("exact-image scan rejected runtime-only bytes")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_scan_robotwin_image", fail_scan)
+
+    assert _run_authorized_robotwin(module, _robotwin_args(module)) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "failed"
+    assert "scan rejected runtime-only bytes" in output["error"]
+
+
+def test_robotwin_rejects_unscannable_build_modes_before_commands(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+
+    assert _run_authorized_robotwin(module, _robotwin_args(module, "--skip-push")) == 1
+    assert "invocation-smoke-contract-mismatch" in capsys.readouterr().out
+
+    assert _run_authorized_robotwin(module, _robotwin_args(module, "--skip-build")) == 1
+    assert "invocation-smoke-contract-mismatch" in capsys.readouterr().out
+
+
+def test_robotwin_rejects_modified_public_smoke_contract_before_commands(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module,
+        "load_runtime_authorization",
+        lambda: _authorized_stub(payload),
+    )
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("command ran before refusal"),
+    )
+    args = _robotwin_args(module)
+    args[args.index("--repo-ref") + 1] = "main"
+
+    assert _run_authorized_robotwin(module, args) == 1
+    assert "invocation-repo_ref-mismatch" in capsys.readouterr().out
+
+    assert (
+        _run_authorized_robotwin(
+            module,
+            _robotwin_args(module, "--registry", "registry.example/public-argv"),
+        )
+        == 1
+    )
+    assert "invocation-private-coordinate-override" in capsys.readouterr().out
+
+
+def test_runtime_authorization_is_removed_from_child_environment(monkeypatch) -> None:
+    module = _load_module()
+    captured: dict[str, str] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setenv(module.ROBOTWIN_RUNTIME_CONTEXT_ENV, "secret-context-canary")
+    monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
+    module._run(["true"])
+    assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in captured
+    assert module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV not in captured
+
+
+def test_robotwin_run_boundary_discards_unsanitized_exception_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    private = "private-runner-exception-canary"
+    args = module._parse_args(_robotwin_args(module))
+
+    def fail_before_commands(*_args, **_kwargs):
+        raise ValueError(private)
+
+    monkeypatch.setattr(module, "_required_postprocess_key", fail_before_commands)
+    with pytest.raises(RuntimeError) as exc_info:
+        module._run_byof(
+            args,
+            authorization=SimpleNamespace(),
+            summary={},
+            source_secrets=None,
+            redactions=(private,),
+            docker_env={},
+            base_candidates=["unused"],
+            base_image="unused",
+            base_profile="prebuilt",
+            image="unused",
+            registry="unused",
+            skip_build=True,
+            skip_push=True,
+        )
+
+    assert str(exc_info.value) == "<redacted>"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+
+def test_robotwin_derived_runtime_secret_is_redacted_from_complete_error_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    private = "derived-runtime-secret-canary"
+    args = module._parse_args(_robotwin_args(module))
+    monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_scan_robotwin_image", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module,
+        "_authorized_live_env",
+        lambda *_a, **_k: {"AWS_SECRET_ACCESS_KEY": private},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_robotwin_container_verify",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError(private)),
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        module._run_byof(
+            args,
+            authorization=SimpleNamespace(),
+            summary={},
+            source_secrets=None,
+            redactions=(),
+            docker_env={},
+            base_candidates=["unused"],
+            base_image="unused",
+            base_profile="prebuilt",
+            image="unused",
+            registry="unused",
+            skip_build=True,
+            skip_push=True,
+        )
+    assert str(caught.value) == "<redacted>"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_robotwin_runtime_redaction_closes_over_every_value_and_normalized_alias() -> (
+    None
+):
+    module = _load_module()
+    endpoint = "https://private-endpoint-canary.invalid/private%2Fpath/"
+    image = "registry.example/private/repository-canary@sha256:" + "a" * 64
+    capability = json.dumps(
+        {
+            "schema_version": "private-capability-schema-canary",
+            "capability_id": "private-capability-id-canary",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    environment = {
+        "AWS_ACCESS_KEY_ID": "private-access-key-canary",
+        "AWS_SECRET_ACCESS_KEY": "private-secret-key-canary",
+        "AWS_SESSION_TOKEN": "private-session-token-canary",
+        "AWS_ENDPOINT_URL": endpoint,
+        "NEBIUS_S3_ENDPOINT": endpoint,
+        "KUBECONTEXT": "private-kubernetes-context-canary",
+        "NPA_BYOF_K8S_CONTEXT": "private-kubernetes-context-canary",
+        "NPA_NEBIUS_PROFILE": "private-profile-canary",
+        "NEBIUS_PROFILE": "private-profile-canary",
+        "NPA_BYOF_PROJECT": "private-project-canary",
+        module.ROBOTWIN_CHILD_IMAGE_ENV: image,
+        module.ROBOTWIN_CHILD_RUNTIME_AUTH_ENV: capability,
+    }
+    redactions = module._private_runtime_redactions(environment)
+    aliases = (
+        *environment.values(),
+        "private-endpoint-canary.invalid",
+        "/private/path",
+        "/private/path/",
+        "registry.example/private/repository-canary",
+        "private-capability-schema-canary",
+        "private-capability-id-canary",
+        "2099-01-01T00:00:00Z",
+    )
+    hostile = {alias: f"nested {alias}" for alias in aliases}
+    sanitized = module._redact_payload(hostile, redactions)
+    serialized = json.dumps(sanitized, sort_keys=True)
+
+    for alias in aliases:
+        assert alias not in serialized
+    assert "<redacted>" in serialized
+
+
+def test_authorized_subprocess_environment_does_not_inherit_runtime_controls(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    captured: dict[str, str] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    for name in (
+        "NPA_BYOF_DIRECT_LAUNCH",
+        "NPA_BYOF_INFRA",
+        "NPA_SKYPILOT_INFRA",
+        "NPA_SKYPILOT_BIN",
+        "NPA_BYOF_S3_ENDPOINT",
+        "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+    ):
+        monkeypatch.setenv(name, "hostile-canary")
+    monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
+
+    module._run(
+        ["true"],
+        env={"AUTHORIZED_CANARY": "yes"},
+        inherit_env=False,
+    )
+
+    assert captured["AUTHORIZED_CANARY"] == "yes"
+    assert not any(
+        name in captured
+        for name in (
+            "NPA_BYOF_DIRECT_LAUNCH",
+            "NPA_BYOF_INFRA",
+            "NPA_SKYPILOT_INFRA",
+            "NPA_SKYPILOT_BIN",
+            "NPA_BYOF_S3_ENDPOINT",
+            "NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE",
+        )
+    )
 
 
 def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:
@@ -1194,7 +2316,13 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
             },
         )(),
     )
-    monkeypatch.setattr(module, "storage_env_for_project", lambda *_a, **_k: {})
+    host_storage_calls = []
+
+    def host_storage(*_args, **_kwargs):
+        host_storage_calls.append(True)
+        return {}
+
+    monkeypatch.setattr(module, "storage_env_for_project", host_storage)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "manager-access")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "manager-secret")
     monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
@@ -1230,6 +2358,7 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     )
 
     assert rc == 0
+    assert host_storage_calls == []
     cmd = seen["cmd"]
     assert isinstance(cmd, list)
     assert cmd.count("--no-direct-launch") == 1

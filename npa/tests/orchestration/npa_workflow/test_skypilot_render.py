@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from npa.orchestration.npa_workflow.detect import (
     is_npa_workflow_spec,
 )
 from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
@@ -213,13 +215,152 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
 
     # Pinned so a new BYOF spec cannot skip the per-profile image assertion
     # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 18
+    assert len(paths) == 19
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
         assert isinstance(base_image, str) and base_image, path.name
         for profile in raw["resources"].values():
+            if path.name == "byof-robotwin.yaml":
+                assert "image" not in profile
+                continue
             assert profile["image"] == "{{config.base_image}}", path.name
+
+
+def test_robotwin_outer_render_is_cpu_only_image_free_and_destination_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/public")
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    plan = build_plan(spec, run_id="robotwin-public-launcher")
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robotwin-public-launcher",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    from npa.execution_preflight import skypilot_output_destinations
+
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert "accelerators" not in task["resources"]
+    assert "image" not in task["resources"]
+    assert "image_id" not in task["resources"]
+    assert task["envs"]["NPA_EXECUTION_OUTPUTS"] == "[]"
+    assert task["envs"]["NPA_SRC_S3_URI"].startswith("s3://")
+    assert skypilot_output_destinations([task]) == {}
+    assert "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in task["run"]
+    assert "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1" not in rendered
+    assert "private-bucket-canary" not in rendered
+    assert secret_env_hints_for_plan(plan.steps) == (
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+    )
+
+
+def test_robotwin_source_uri_is_process_isolated_between_renders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    ambient = "s3://ambient-source/should-remain"
+    monkeypatch.setenv("NPA_SRC_S3_URI", ambient)
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    observed: list[str] = []
+    for suffix in ("a" * 64, "b" * 64):
+        prepared = workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id=f"robotwin-{suffix[0]}",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+        try:
+            task = [
+                document
+                for document in yaml.safe_load_all(
+                    prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+                )
+                if document
+            ][-1]
+            observed.append(task["envs"]["NPA_SRC_S3_URI"])
+        finally:
+            prepared.temp_dir.cleanup()
+        assert os.environ["NPA_SRC_S3_URI"] == ambient
+    assert observed == [
+        "${NPA_SRC_S3_URI}",
+        "${NPA_SRC_S3_URI}",
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["timeout", "child", "eof", "start"],
+)
+def test_robotwin_isolated_render_failures_are_controlled(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+
+    class FakeConnection:
+        def close(self) -> None:
+            return None
+
+        def poll(self, _timeout: int) -> bool:
+            if failure == "timeout":
+                return False
+            return True
+
+        def recv(self) -> object:
+            if failure == "eof":
+                raise EOFError
+            if failure == "child":
+                return (False, "private-render-detail")
+            return (True, "unused")
+
+    class FakeProcess:
+        exitcode = 1 if failure == "child" else 0
+
+        def start(self) -> None:
+            if failure == "start":
+                raise OSError("private process detail")
+
+        def terminate(self) -> None:
+            return None
+
+        def join(self, timeout: int) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return False
+
+        def kill(self) -> None:
+            return None
+
+    class FakeContext:
+        def Pipe(self, *, duplex: bool) -> tuple[FakeConnection, FakeConnection]:
+            assert duplex is False
+            return FakeConnection(), FakeConnection()
+
+        def Process(self, **_kwargs: object) -> FakeProcess:
+            return FakeProcess()
+
+    monkeypatch.setattr(
+        workflow_cli.multiprocessing, "get_context", lambda _name: FakeContext()
+    )
+
+    with pytest.raises(NpaWorkflowError) as exc_info:
+        workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id="robotwin-failure-boundary",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+    assert "private-render-detail" not in str(exc_info.value)
+    assert "submission was not attempted" in str(exc_info.value)
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:

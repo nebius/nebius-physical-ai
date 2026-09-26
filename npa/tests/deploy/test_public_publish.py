@@ -315,7 +315,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore", "libero", "sam3"}
+        {"openpi", "curobo", "ncore", "libero", "sam3", "robotwin"}
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
@@ -399,6 +399,9 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
     assert "npa-curobo" not in names
     assert "curobo" not in publicly_publishable_tools()
     assert images.SUPPORTED_TOOL_VERSIONS["curobo"].endswith("-unbuilt")
+    assert "npa-robotwin" not in names
+    assert "robotwin" not in publicly_publishable_tools()
+    assert images.SUPPORTED_TOOL_VERSIONS["robotwin"].endswith("-unbuilt")
     for item in plan:
         assert item.target_ref.startswith("ghcr.io/example/workbench/")
 
@@ -735,6 +738,11 @@ def test_oss_tools_resolve_from_the_public_release_normally() -> None:
         "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
     )
     assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
+
+
+def test_robotwin_quarantine_blocks_implicit_public_image_resolution() -> None:
+    with pytest.raises(ValueError, match="robotwin.*no accepted release image"):
+        container_image_for_tool("robotwin", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
 
 
 # --------------------------------------------------------------------------------------

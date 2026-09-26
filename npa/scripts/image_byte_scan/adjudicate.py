@@ -784,7 +784,8 @@ def verify(args):
     verification = W.bound_json(authorization["verification_report"])
     W.require(
         verification.get("valid") is True
-        and verification.get("schema_version") == "npa.curobo.image-verification.v1",
+        and verification.get("schema_version")
+        in ("npa.curobo.image-verification.v1", "npa.robotwin.image-verification.v1"),
         "adjudication_verification_failed",
     )
     W.bound_file(authorization["archive"], secret=True)
@@ -808,7 +809,7 @@ def verify(args):
     W.require(
         report.get("authorization_sha256") == actual["authorization_sha256"]
         and report.get("archive_sha256") == actual["archive_sha256"]
-        and verification.get("docker_save_sha256") == actual["archive_sha256"]
+        and W.verification_archive_digest(verification) == actual["archive_sha256"]
         and report.get("expected_image_id") == authorization["expected_image_id"]
         and verification.get("expected_image_id") == authorization["expected_image_id"]
         and verification.get("image_config_digest") == report["image_config_digest"]

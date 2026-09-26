@@ -1205,9 +1205,14 @@ def walk_tar(reader, sink, scope, file_handler):
 
 def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
-    if verification.get("schema_version") == "npa.ncore.oci-verification.v1":
-        from . import ncore_verification as N
-
+    if verification.get("schema_version") in (
+        "npa.ncore.oci-verification.v1",
+        "npa.robotwin.image-verification.v1",
+    ):
+        if verification["schema_version"] == "npa.robotwin.image-verification.v1":
+            from . import robotwin_verification as N
+        else:
+            from . import ncore_verification as N
         result = N.inspect(fd, length, expected_id)
         N.bind(result, verification, expected_id)
         return result["layers"]
@@ -1448,13 +1453,18 @@ def verification_archive_digest(verification):
     require(verification.get("valid") is True, "verification_did_not_pass")
     schema = verification.get("schema_version")
     require(
-        schema in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"),
+        schema
+        in (
+            "npa.curobo.image-verification.v1",
+            "npa.ncore.oci-verification.v1",
+            "npa.robotwin.image-verification.v1",
+        ),
         "verification_schema",
     )
     return verification[
-        "archive_sha256"
-        if schema == "npa.ncore.oci-verification.v1"
-        else "docker_save_sha256"
+        "docker_save_sha256"
+        if schema == "npa.curobo.image-verification.v1"
+        else "archive_sha256"
     ]
 
 
@@ -1563,9 +1573,14 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         "layers": [],
     }
     try:
-        if verification["schema_version"] == "npa.ncore.oci-verification.v1":
-            from . import ncore_verification as N
-
+        if verification["schema_version"] in (
+            "npa.ncore.oci-verification.v1",
+            "npa.robotwin.image-verification.v1",
+        ):
+            if verification["schema_version"] == "npa.robotwin.image-verification.v1":
+                from . import robotwin_verification as N
+            else:
+                from . import ncore_verification as N
             result = N.inspect(fd, initial.st_size, authorization["expected_image_id"])
             N.bind(result, verification, authorization["expected_image_id"])
             layers = result["layers"]

@@ -1339,6 +1339,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "byof-robotwin.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "RoboTwin's public worker bridge is disabled pending independently "
+            "attested customer authorization; the separate operator runner owns "
+            "exact-digest RTX qualification"
+        ),
+        secret_envs=(
+            "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "The workflow validates and plans, but normal submit refuses before "
+            "provider calls. Operator-only evidence covers SAPIEN/Vulkan, task "
+            "success, HDF5 actions, decoded MP4 frames, immutable runtime assets, "
+            "and the exact pod image digest. It does not enable this worker path."
+        ),
+    ),
+    SubmitLiveCase(
         "robocasa-smoke.yaml",
         "gpu",
         secret_envs=("ROBOCASA_TOKEN",),

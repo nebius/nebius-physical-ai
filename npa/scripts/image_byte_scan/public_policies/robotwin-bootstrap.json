@@ -1,0 +1,213 @@
+{
+  "schema_version": "npa.image-native-content-policy.v1",
+  "detector_identity": {
+    "config_sha256": "4ae31a02bb25f4f1c94b024a5163f45f461692260d0656556635c98e663b9e4e",
+    "helper_sha256": "6e4891bd5e423b9c7031770c8adc8b5ec89a65ae592a7fb3fd0e59aeaa96fced"
+  },
+  "entries": [
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dcadda7f0f82c54ca157b6ca0a5fdc8e1128db4d778109c8e197e2f84c2ac9ba",
+      "record_bytes": 2008512,
+      "native_findings": [
+        {
+          "end_line": 3615,
+          "rule_id": "private-key",
+          "start_line": 3611
+        },
+        {
+          "end_line": 3619,
+          "rule_id": "private-key",
+          "start_line": 3616
+        },
+        {
+          "end_line": 3623,
+          "rule_id": "private-key",
+          "start_line": 3620
+        },
+        {
+          "end_line": 3624,
+          "rule_id": "private-key",
+          "start_line": 3624
+        },
+        {
+          "end_line": 3624,
+          "rule_id": "private-key",
+          "start_line": 3624
+        },
+        {
+          "end_line": 3628,
+          "rule_id": "private-key",
+          "start_line": 3624
+        },
+        {
+          "end_line": 3629,
+          "rule_id": "private-key",
+          "start_line": 3629
+        },
+        {
+          "end_line": 3629,
+          "rule_id": "private-key",
+          "start_line": 3629
+        },
+        {
+          "end_line": 3648,
+          "rule_id": "private-key",
+          "start_line": 3629
+        },
+        {
+          "end_line": 3675,
+          "rule_id": "private-key",
+          "start_line": 3649
+        }
+      ],
+      "semantic_role": "cryptographic-self-test",
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "617f5ce256d6a64a0afbe4bde4f90b363144d9be4d0ce2cad8f3e530d2d4691e",
+      "record_bytes": 21606,
+      "native_findings": [
+        {
+          "end_line": 257,
+          "rule_id": "nebius-generic-id",
+          "start_line": 257
+        }
+      ],
+      "semantic_role": "package-integrity-metadata",
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      }
+    },
+    {
+      "record_kind": "logical_tar_path",
+      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
+      "record_bytes": 49,
+      "native_findings": [
+        {
+          "end_line": 0,
+          "rule_id": "generic-api-key",
+          "start_line": 0
+        }
+      ],
+      "semantic_role": "public-package-path-metadata",
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      }
+    },
+    {
+      "record_kind": "logical_tar_path",
+      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
+      "record_bytes": 45,
+      "native_findings": [
+        {
+          "end_line": 0,
+          "rule_id": "generic-api-key",
+          "start_line": 0
+        }
+      ],
+      "semantic_role": "public-package-path-metadata",
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "688a3ffddc3cfb1277c333679ba75ff0946406d93238bf74b75977a23af16025",
+      "record_bytes": 30406,
+      "native_findings": [
+        {
+          "end_line": 66,
+          "rule_id": "nebius-generic-id",
+          "start_line": 66
+        },
+        {
+          "end_line": 67,
+          "rule_id": "nebius-generic-id",
+          "start_line": 67
+        }
+      ],
+      "semantic_role": "package-integrity-metadata",
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b25e002f448246d7271adb0d9e72281e33aa822b07afff4c96c476d79fe1fc80",
+      "record_bytes": 5136,
+      "native_findings": [
+        {
+          "end_line": 81,
+          "rule_id": "generic-api-key",
+          "start_line": 80
+        }
+      ],
+      "semantic_role": "public-source-symbol",
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e7f13b46d4a44126b8940d481f53e3b92f90688f2a5a81a09cb0de3333549dc0",
+      "record_bytes": 3157,
+      "native_findings": [
+        {
+          "end_line": 40,
+          "rule_id": "nebius-generic-id",
+          "start_line": 40
+        }
+      ],
+      "semantic_role": "package-integrity-metadata",
+      "operational_credential": false,
+      "public_provenance": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      },
+      "semantic_proof": {
+        "path": "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json",
+        "sha256": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888"
+      }
+    }
+  ]
+}
