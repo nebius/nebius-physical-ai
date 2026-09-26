@@ -1669,6 +1669,8 @@ def test_completed_replay_requires_current_immutable_identity(
     report, submitter = _resume_completed_case(spec, store, outputs_exist)
     assert report.status == "failed"
     assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert identity_field in report.error
+    assert "new run ID" in report.error
     assert submitter.calls == []
 
 

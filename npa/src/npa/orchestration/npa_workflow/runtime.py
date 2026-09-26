@@ -683,12 +683,17 @@ class SkyPilotWaveExecutor:
                 return adopted
 
         replayed = self.ledger.completed(key) if self.options.resume else None
-        if replayed is not None and not self._completed_replay_identity_matches(
-            replayed
-        ):
+        identity_mismatches = (
+            self._completed_replay_identity_mismatches(replayed)
+            if replayed is not None
+            else []
+        )
+        if identity_mismatches:
             raise NpaWorkflowError(
                 f"wave {key}: completed ledger replay blocked: "
-                "IMMUTABLE_IDENTITY_MISMATCH"
+                f"IMMUTABLE_IDENTITY_MISMATCH ({', '.join(identity_mismatches)}). "
+                "Restore the original workflow, staged source, and image options; "
+                "use a new run ID for changed or unverifiable inputs."
             )
         if replayed is not None:
             outputs = list(replayed.get("outputs") or [])
@@ -1667,19 +1672,22 @@ class SkyPilotWaveExecutor:
                 return False
         return True
 
-    def _completed_replay_identity_matches(self, record: Mapping[str, Any]) -> bool:
+    def _completed_replay_identity_mismatches(
+        self, record: Mapping[str, Any]
+    ) -> list[str]:
         identity = record.get("immutable_identity")
         if not isinstance(identity, Mapping):
-            return False
+            identity = {}
         expected = {
             "workflow_sha256": _workflow_identity(self.spec),
             "source_sha256": _source_identity(),
             "image_digest": _image_identity(self.render_options),
         }
-        return all(
-            bool(value) and identity.get(name) == value
+        return [
+            name
             for name, value in expected.items()
-        )
+            if not value or identity.get(name) != value
+        ]
 
     def _declared_outputs_absent(self, outputs: Sequence[Any]) -> tuple[bool, str]:
         """Prove every declared output absent for explicit in-flight recovery.
