@@ -230,6 +230,7 @@ def _run_list_total_scope(query: str, query_complete: bool) -> str:
 
 
 def _snapshot_completeness_boolean(metadata: Mapping[str, Any], field: str) -> bool:
+    """Reject malformed stored coverage before claiming an exhaustive search."""
     value = metadata.get(field)
     if type(value) is not bool:
         raise ValueError(f"run-list snapshot {field} must be a boolean")

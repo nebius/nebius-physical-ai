@@ -6408,3 +6408,105 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
         json.dumps(catalog_observation, sort_keys=True)
         in planner_inputs[1][-1]["content"]
     )
+
+
+def _snapshot_test_access(module):
+    """Build a complete discovery scope using the real access-report producer."""
+    return module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="project-test",
+        fallback_buckets=[],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "project-test", "name": "Project Test"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource-test", "name": "bucket-test"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+
+
+def _snapshot_test_page(module):
+    """Provide two real run records so continuation consumes a saved snapshot."""
+    runs = [
+        module.RunSummary(
+            f"snapshot-run-{index}",
+            "2031-01-01T00:00:00Z",
+            0,
+            None,
+            bucket="bucket-test",
+            project_id="project-test",
+            resolved_prefix="runs",
+        )
+        for index in range(2)
+    ]
+    return SimpleNamespace(
+        runs=runs,
+        total_runs=2,
+        truncated=False,
+        discovery_complete=True,
+        source_errors=(),
+    )
+
+
+@pytest.fixture
+def snapshot_route(monkeypatch, tmp_path, mocker):
+    """Use the rendered HTTP app and real cursor storage with external discovery replaced."""
+    from fastapi.testclient import TestClient
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_snapshot_completeness_backend"
+    )
+    report = _snapshot_test_access(module)
+    external = {
+        "_agent_artifact_s3_client": lambda: (
+            object(),
+            {"bucket": "bucket-test", "prefix": ""},
+        ),
+        "_configured_agent_artifact_sources": lambda: (),
+        "_agent_access_report": lambda **_kwargs: report,
+        "_agent_access_report_for_artifact_discovery": lambda: report,
+        "_begin_agent_artifact_access": lambda: report,
+        "_end_agent_artifact_access": lambda: None,
+    }
+    for name, callback in external.items():
+        monkeypatch.setattr(module, name, callback)
+    discovery = mocker.Mock(return_value=_snapshot_test_page(module))
+    monkeypatch.setattr(module, "list_runs_cached_multi", discovery)
+    return module, TestClient(module.app), discovery
+
+
+@pytest.mark.parametrize("field", ["query_complete", "source_index_truncated"])
+@pytest.mark.parametrize("omit", [False, True], ids=["malformed", "missing"])
+def test_rendered_snapshot_continuation_rejects_corrupt_coverage(
+    snapshot_route, field, omit
+):
+    module, client, discovery = snapshot_route
+    first = client.get("/artifacts/runs", params={"limit": 1})
+    assert first.status_code == 200
+    assert first.json()["query_complete"] is True
+    cursor = first.json()["next_cursor"]
+    assert cursor
+    snapshot = next(iter(module._AGENT_RUN_CURSOR_SNAPSHOTS.values()))
+    metadata = snapshot["metadata"]
+    original = dict(metadata)
+    if omit:
+        metadata.pop(field)
+    else:
+        metadata[field] = "false"
+
+    failed = client.get("/artifacts/runs", params={"limit": 1, "cursor": cursor})
+
+    assert failed.status_code == 502
+    assert failed.json()["ok"] is False
+    assert field in failed.json()["error"]
+    assert "pagination_complete" not in failed.json()
+    assert "total_runs" not in failed.json()
+    discovery.assert_called_once()
+    assert metadata != original
+    metadata.update(original)
+    restored = client.get("/artifacts/runs", params={"limit": 1, "cursor": cursor})
+    assert restored.status_code == 200
+    assert restored.json()["pagination_complete"] is True
+    assert restored.json()["runs"][0]["run_id"] == "snapshot-run-1"
+    discovery.assert_called_once()
