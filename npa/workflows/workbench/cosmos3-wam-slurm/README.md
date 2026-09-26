@@ -250,13 +250,21 @@ After the full schedule and all four 500-trial evaluations finish, run:
 
 Each `WAM_EVAL_*` value selects an `evaluate.py` output directory. The tool
 requires all four scheduled checkpoints and rejects mismatched runs, seeds,
-model hashes or trial counts. It uses the native UTC checkpoint-completion
-events and verified process duration to report training time with one-second
+model hashes, trial counts or evaluation parallelism. Keep the number of policy
+servers and simulator environments fixed across checkpoints and topologies;
+single-trial visual passes are a separate protocol. It uses the native UTC
+checkpoint-completion events and verified process duration to report training
+time with one-second
 log resolution. It identifies the first evaluated checkpoint reaching 90%
 success without estimating an unobserved crossing. Evaluation duration and
 process GPU-hours are separate from training time. Pooled Wilson intervals
 describe the recorded trial counts; they do not measure variation across
 training seeds or tasks. This reducer awaits the full live campaign results.
+
+The [completed checkpoint-500 visual check](../../../../docs/workbench/evidence/cosmos3-wam-trained-visual/README.md)
+records ten real closed-loop trials, four successes and six failures, trained
+model hashes, B200 telemetry and native prediction-versus-simulator videos.
+Its one-trial-per-task protocol is separate from the full quality benchmark.
 
 ## Measurements and cleanup
 

@@ -25,6 +25,12 @@ contains the generated MP4, synchronized source cameras, reproduction settings
 and GPU telemetry. It demonstrates base-model inference; it does not establish
 post-training success.
 
+The [trained-policy visual check](../evidence/cosmos3-wam-trained-visual/README.md)
+uses the actual update-500 checkpoint and completes one trial on each of ten
+tasks without infrastructure errors. It includes successful and unsuccessful
+rollouts and prediction-versus-simulator videos. Its four observed successes
+are illustrative evidence; full 500-trial quality measurements remain pending.
+
 ## What the experiment measures
 
 Keep framework/model/data revisions, optimizer, precision, sample cap, action

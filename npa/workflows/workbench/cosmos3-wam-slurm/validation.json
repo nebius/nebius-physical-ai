@@ -63,5 +63,18 @@
     "gpus": 8,
     "nccl_preflight": "passed",
     "soperator_execution_validated": false
+  },
+  "trained_policy_visual": {
+    "completed": true,
+    "checkpoint_step": 500,
+    "training_gpus": 8,
+    "evaluation_gpus": 1,
+    "tasks": 10,
+    "trials_per_task": 1,
+    "successes": 4,
+    "failures": 6,
+    "infrastructure_errors": 0,
+    "full_500_trial_evaluation": false,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-trained-visual/evidence.json"
   }
 }

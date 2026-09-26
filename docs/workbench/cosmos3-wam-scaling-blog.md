@@ -115,7 +115,26 @@ observations, with diffusion caching enabled, not WAM post-training timings.
 The generated arm has geometry and contact errors. This is a useful illustration
 of why a visually recognizable scene is not evidence of a successful robot
 policy. The linked record includes the videos, settings, hashes and actual GPU
-telemetry; the trained-policy evaluation remains pending.
+telemetry; the full trained-policy benchmark remains pending.
+
+## Watch a trained checkpoint act
+
+The first saved training checkpoint now has a separate
+[closed-loop visual record](evidence/cosmos3-wam-trained-visual/README.md).
+The checkpoint came from eight-B200 training; one B200 served its predicted
+actions while CPU MuJoCo rendered the resulting motion. Native comparison
+videos show the WAM's predicted camera sequence beside the actual simulator
+sequence, with front and wrist views in both panels.
+
+![Actual successful rollout from the trained checkpoint](evidence/cosmos3-wam-trained-visual/task-000-contact.png)
+
+At update 500, the completed visual pass succeeded on four tasks and failed on
+six, with no infrastructure errors. It used one initial state per task and is
+an execution check, not the required 500-trial quality measurement. The linked
+record includes every outcome, a successful basket task, an unsuccessful basket
+task, checkpoint hashes and actual B200 telemetry. Its 1,799-second process
+duration includes hashing, server setup, simulation and media writing; it is
+not training time. The fifty-trial-per-task benchmark remains pending.
 
 ## Change GPU count while preserving the experiment
 

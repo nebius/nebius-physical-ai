@@ -206,6 +206,7 @@ def test_quality_curve_rejects_wrong_checkpoint_even_with_complete_trials(
         "trials": 50,
         "record_rollouts": False,
         "workers": 8,
+        "envs": 8,
         "step": 55,
     }
     (evaluation / "settings.json").write_text(json.dumps(observed))
@@ -225,6 +226,17 @@ def test_quality_curve_rejects_inconsistent_threshold_claim(monkeypatch):
     quality["threshold_met"] = False
     with pytest.raises(ValueError, match="individual trials"):
         curve._quality_counts(quality, {"step": 500})
+
+
+@pytest.mark.parametrize("changed", ["workers", "envs"])
+def test_quality_curve_rejects_changed_evaluation_parallelism(monkeypatch, changed):
+    curve = _quality_curve(monkeypatch)
+    contract = {"workers": 8, "envs": 8, "trials": 50, "seed": 42}
+    points = [{"evaluation_contract": dict(contract)} for _ in range(4)]
+    assert curve._matching_evaluation_contract(points) == contract
+    points[2]["evaluation_contract"][changed] = 1
+    with pytest.raises(ValueError, match="evaluation workers, environments"):
+        curve._matching_evaluation_contract(points)
 
 
 def test_time_to_quality_reports_first_observed_checkpoint_and_no_crossing(monkeypatch):

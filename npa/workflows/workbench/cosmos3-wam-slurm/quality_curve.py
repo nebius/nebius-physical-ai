@@ -60,6 +60,8 @@ def _evaluation_settings(directory, run, settings):
         raise ValueError("evaluation seed or trial count differs from the protocol")
     if observed["workers"] not in range(1, 9):
         raise ValueError("invalid number of evaluation GPU workers")
+    if type(observed.get("envs")) is not int or observed["envs"] < 1:
+        raise ValueError("invalid number of parallel simulator environments")
     if observed["record_rollouts"]:
         raise ValueError(
             "illustrative video trials cannot replace the quality benchmark"
@@ -114,7 +116,17 @@ def _point(directory, run, settings, timings):
         "model_manifest_sha256": digest,
         "quality_receipt_sha256": hashlib.sha256(raw).hexdigest(),
         "task_successes": {str(task["task_id"]): task["successes"] for task in tasks},
+        "evaluation_contract": {
+            key: observed[key] for key in ("workers", "envs", "trials", "seed")
+        },
     }
+
+
+def _matching_evaluation_contract(points):
+    contract = points[0]["evaluation_contract"]
+    if any(point["evaluation_contract"] != contract for point in points):
+        raise ValueError("evaluation workers, environments, trials or seed changed")
+    return contract
 
 
 def _first_passing(points):
@@ -156,6 +168,7 @@ def _main(args):
             node["train_process_seconds"] for node in nodes
         ),
         "quality_threshold": 0.9,
+        "evaluation_contract": _matching_evaluation_contract(points),
         "points": points,
         "time_to_quality": _first_passing(points),
         "interpretation": (
