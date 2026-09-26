@@ -14,8 +14,10 @@ and native fused-optimizer checks. Native checkpoint conversion and trainer
 configuration checks passed. A one-GPU WAM attempt exhausted memory at its first
 optimizer update with FP32 parameters and EMA, even with one sample per step.
 Actual eight-GPU Slurm execution and the eight-rank NCCL preflight have now
-passed. The full training run is in progress; completed duration, scaling and
-policy quality remain unmeasured. The running deployment uses native Slurm
+passed. The full 2,000-update run completed in 7 h 50 m 33 s on eight B200s;
+the [verified report and numeric series](../../../../docs/workbench/evidence/cosmos3-wam-full-8/README.md)
+record its conditions and complete checkpoint hashes. Scaling and full policy
+quality remain unmeasured. The running deployment uses native Slurm
 23.11.4 on dedicated GPU VMs, with controller and accounting on the first
 worker. The Soperator path remains an unvalidated deployment alternative. See
 [validation.json](validation.json) and the [GPU evidence](../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json).

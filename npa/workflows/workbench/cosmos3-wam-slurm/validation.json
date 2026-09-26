@@ -1,6 +1,6 @@
 {
   "schema": "npa.cosmos3.wam-recipe-validation.v1",
-  "status": "experimental-slurm-training-in-progress",
+  "status": "experimental-eight-gpu-duration-measured",
   "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
   "upstream_toml_schema": {
     "checked": true,
@@ -42,13 +42,13 @@
     "learned_policy_executed": false,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-simulation-runtime.json"
   },
-  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; the eight-GPU full run is executing.",
+  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; eight-GPU timing repetitions, CUDA profiling and full evaluations remain pending.",
   "remaining_evidence": [
-    "Complete comparable 8/16-GPU runs",
-    "Repeated timing measurements, accounting and profiling traces",
+    "Complete comparable 16-GPU run",
+    "Repeated 8/16-GPU timing measurements and profiling traces",
     "Checkpoint-linked complete LIBERO-10 closed-loop evaluations"
   ],
-  "complete_training_run_measured": false,
+  "complete_training_run_measured": true,
   "slurm_ipc_cleanup": {
     "default_behavior_failure_reproduced": true,
     "RemoveIPC_no_survival_probe_passed": true,
@@ -76,5 +76,19 @@
     "infrastructure_errors": 0,
     "full_500_trial_evaluation": false,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-trained-visual/evidence.json"
+  },
+  "completed_training_runs": {
+    "8": {
+      "steps": 2000,
+      "checkpoint_steps": [
+        500,
+        1000,
+        1500,
+        2000
+      ],
+      "train_process_seconds": 28233.476918021002,
+      "training_gpu_hours": 62.74105981782445,
+      "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-8/evidence.json"
+    }
   }
 }

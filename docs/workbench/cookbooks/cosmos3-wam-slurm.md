@@ -12,9 +12,11 @@ dataloader. Captioned-video generator SFT does not exercise this action pathway.
 native fused Adam checks, completed native checkpoint conversion, native trainer
 dryruns for 8/16/32 GPUs, and decoded public data. A separate one-GPU WAM attempt
 failed at its first optimizer update with FP32 parameters and EMA, even at one
-sample per step. Actual eight-GPU Slurm training and its eight-rank NCCL check
-are now running successfully. The full schedule is in progress; completed
-training duration, scaling efficiency and policy success remain unmeasured.
+sample per step. The eight-GPU Slurm run completed all 2,000 updates in
+7 h 50 m 33 s, with an eight-rank NCCL check and complete checkpoint hashes.
+The [full-run evidence](../evidence/cosmos3-wam-full-8/README.md) records its
+conditions and timing scope. Scaling efficiency and full policy success remain
+unmeasured.
 The [GPU evidence record](../evidence/cosmos3-wam-b200-runtime.json)
 includes runtime versions, hashes, and the memory failure.
 Consult the [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json).

@@ -1,6 +1,6 @@
 # How long does Cosmos 3 Nano WAM post-training take on Nebius B200s?
 
-**Editorial draft — measurements pending; not ready for publication as a performance result.**
+**Editorial draft — the eight-GPU full run is measured; scaling and policy qualification remain pending.**
 
 Partners evaluating world action models tend to ask two practical questions:
 how many GPUs should they allocate, and how long will it take to get a useful
@@ -15,8 +15,10 @@ profiling, and the evidence needed to connect training time to policy quality.
 The current implementation has passed local launch and reporting tests, real
 dataset inspection, native checkpoint conversion and B200 runtime checks. An
 actual one-GPU WAM attempt exposed a memory limit described below.
-Slurm training is now running on eight B200s; completed training duration,
-multi-node scaling and policy measurements remain pending.
+The full 2,000-update Slurm run completed on eight B200s in **7 hours,
+50 minutes, 33 seconds**, consuming **62.74 training-process GPU-hours**.
+Multi-node scaling and full policy measurements remain pending. This observed
+duration applies to the recorded data, settings and operating conditions below.
 
 ## The question public launch recipes leave open
 
@@ -81,9 +83,9 @@ it does not determine the minimum GPU count under other memory settings.
 
 The failed process lasted about 96 seconds. That is diagnostic startup and
 failure time, **not training duration or time to quality**. A dedicated
-eight-GPU worker now passes the Slurm/NCCL preflight and is executing the full
+eight-GPU worker passed the Slurm/NCCL preflight and completed the full
 2,000-step schedule. The two-node comparison awaits sufficient free reserved
-capacity. Completed performance answers remain pending.
+capacity; its performance is still unmeasured.
 
 ![Eight B200s executing the actual WAM training job](evidence/cosmos3-wam-live-training/training-snapshot.png)
 
@@ -214,9 +216,25 @@ training. Its complete process duration describes those recorded campaign
 conditions. The timing repetitions and profiling runs are scheduled separately
 from evaluation and archival I/O. Each run starts from the same base checkpoint.
 
+![Measured complete eight-B200 WAM training run](evidence/cosmos3-wam-full-8/full-training.png)
+
+The [completed eight-GPU evidence](evidence/cosmos3-wam-full-8/README.md)
+contains the unmodified report, all 1,949 measured iteration records, final
+checkpoint hashes, checkpoint-ready times and NCCL proof. The native process
+took 28,233.477 seconds; Slurm recorded 28,266 seconds of allocation time,
+or 62.81 allocated GPU-hours. Neither number includes preparation, archival
+or policy evaluation.
+
+Across updates 52–2,000, the median iteration was 13.29 seconds and p95 was
+13.43 seconds. Including the four checkpoint-bearing iterations raised the
+mean to 14.098 seconds. The final checkpoint contains 177.28 GB across all
+36 model, optimizer, scheduler and trainer files. Successful process exit,
+complete checkpoints and finite updates establish completed training; the
+full policy evaluations determine whether those weights meet the task target.
+
 ## Profile the bottleneck before increasing the allocation
 
-The running experiment already exposes a substantial checkpoint pause.
+The completed eight-GPU run exposes a substantial checkpoint pause.
 Updates 1,000 and 1,500 took 404.54 and 404.40 seconds, respectively; their
 neighboring updates took 13.25–13.39 seconds. Each completed checkpoint contains
 177.28 GB of model, optimizer, scheduler and trainer state.
@@ -227,8 +245,8 @@ The [recorded timeline and numeric CSVs](evidence/cosmos3-wam-checkpoint-io/READ
 show mostly idle GPUs while the storage host writes these checkpoints. The
 gray interval includes training computation as well as saving, so its duration
 is not pure write time. Storage throughput belongs in the training-time
-discussion alongside GPU count; the completed full-run report will account
-for every periodic save.
+discussion alongside GPU count. The completed full-run report includes all
+four periodic saves, including the 404.61-second final iteration.
 
 More GPUs help only if the work can use them. A separate profiling run captures
 PyTorch traces from a representative rank on each node. The analysis follows
@@ -258,19 +276,20 @@ before training; Workbench's current absolute qualification convention is
 quality. A lower training loss alone does not. A partner's own manipulation
 tasks may require a different dataset and acceptance criterion.
 
-## Results to publish after the campaign
+## Measured results and remaining campaign work
 
-| B200 GPUs | Complete training time | Median / p95 step | Speedup / efficiency | Training GPU-hours | LIBERO-10 success | Time to quality |
+| B200 GPUs | Complete training time | Full-run median / p95 step | Repeated-run speedup / efficiency | Training GPU-hours | LIBERO-10 success | Time to quality |
 | --- | --- | --- | --- | --- | --- | --- |
-| 8 | Pending | Pending | Baseline, unmeasured | Pending | Pending | Pending |
+| 8 | 7 h 50 m 33 s | 13.29 / 13.43 s | Baseline repetitions pending | 62.74 | Pending | Pending |
 | 16 | Pending | Pending | Pending | Pending | Pending | Pending |
 
-The publication package needs matched complete runs, observed sample/token
-work, independent repetitions, scheduler accounting, representative traces and
-the full checkpoint-linked evaluation protocol. Include unsuccessful outcomes
-and uncertainty, and identify the tested driver, CUDA, PyTorch and source
-revisions. No “hours to train,” GPU recommendation or scaling chart should be
-published from the pending rows above.
+The completed eight-GPU row answers how long this particular full schedule
+took. A matched two-node run, separate timing repetitions, representative CUDA
+traces and full checkpoint-linked evaluations are still needed to answer how
+well it scales and how long it takes to reach the selected policy target.
+The final publication will retain unsuccessful outcomes and uncertainty, with
+the tested driver, CUDA, PyTorch and source revisions. Pending results cannot
+support a scaling claim or a time-to-quality recommendation.
 
 The [recipe and runbook](cookbooks/cosmos3-wam-slurm.md) are the starting point
 for collecting that evidence. Once measured, the useful answer will be specific:

@@ -1,0 +1,2 @@
+# Preserve recorder CSV bytes so SHA-256 receipts survive checkout on every platform.
+cosmos3-wam-*/*.csv -text whitespace=cr-at-eol
