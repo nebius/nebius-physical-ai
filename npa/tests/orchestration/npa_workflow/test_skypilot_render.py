@@ -1215,6 +1215,20 @@ def test_resolve_task_image_reports_quarantine_as_workflow_error() -> None:
         )
 
 
+def test_resolve_task_image_uses_active_sonic_manifest_variant() -> None:
+    image = resolve_task_image(
+        "workbench.sonic.eval",
+        {},
+        options=SkypilotRenderOptions(gpu_target="gpu-rtx6000"),
+    )
+
+    assert image == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-sonic:"
+        "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-"
+        "20260803T034152Z"
+    )
+
+
 def test_first_party_image_rejects_uid_zero_pod_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -2370,7 +2370,11 @@ def container_image_for_tool(
             f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
             f"docs/workbench/container-packaging.md."
         )
-    if tool in PUBLICATION_QUARANTINE_TOOLS and public_registry:
+    # SONIC has a capability-aware manifest with independently accepted and
+    # quarantined variants. Its tool-level release metadata remains stale for
+    # publication purposes, but consumption must defer to ``sonic_image_entry``
+    # instead of hiding the active host-mounted and MuJoCo runtime-fetch images.
+    if tool in PUBLICATION_QUARANTINE_TOOLS and public_registry and tool != "sonic":
         if tag is None:
             # Centralize the actionable error shared by direct release-tag callers.
             public_release_tag_for_tool(tool)
@@ -2388,7 +2392,20 @@ def container_image_for_tool(
             workload=workload,
         )
         image_name = str(entry["name"])
-        resolved_tag = tag or str(entry["tag"])
+        active_tag = str(entry["tag"])
+        if (
+            public_registry
+            and tag is not None
+            and tag != active_tag
+            and re.fullmatch(r"dev-[0-9a-f]{40}", tag) is None
+        ):
+            raise ValueError(
+                f"Public tag {tag!r} does not match active SONIC image variant "
+                f"{entry['id']!r} ({active_tag!r}). Use the manifest release, an "
+                "immutable dev-<full-source-sha> validation candidate, or an "
+                "explicit operator-controlled registry/image."
+            )
+        resolved_tag = tag or active_tag
     else:
         if image_variant:
             raise ValueError(

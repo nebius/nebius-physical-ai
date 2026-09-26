@@ -310,7 +310,7 @@ def test_sonic_eval_container_render_rejects_h100_misroute(tmp_path) -> None:
         ["--container-image-variant", "mujoco"],
     ],
 )
-def test_sonic_onnx_eval_quarantine_precedes_variant_selection(
+def test_sonic_onnx_eval_rejects_mujoco_image_before_evaluation(
     mocker, selection
 ) -> None:
     evaluate = mocker.patch("npa.cli.workbench.sonic.eval.evaluate_onnx_policy")
@@ -328,8 +328,36 @@ def test_sonic_onnx_eval_quarantine_precedes_variant_selection(
         ],
     )
     assert result.exit_code == 1
-    assert "quarantined" in result.output
+    assert "isaac-render" in result.output
+    assert "mujoco" in result.output
     evaluate.assert_not_called()
+
+
+def test_sonic_onnx_eval_resolves_render_manifest_image(mocker) -> None:
+    evaluate = mocker.patch(
+        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy",
+        return_value={"status": "completed"},
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            "policy.onnx",
+            "--backend",
+            "container",
+            "--container-gpu-target",
+            "gpu-rtx6000",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert evaluate.call_args.kwargs["container_image"] == container_image_for_tool(
+        "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
+    )
 
 
 def test_sonic_onnx_eval_accepts_explicit_operator_image(mocker) -> None:

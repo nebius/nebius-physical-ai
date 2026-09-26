@@ -871,7 +871,8 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
         mode = entry.multi_node_mode if entry is not None else state.multi_node_mode
         if mode not in {"forbidden", "sharded"}:
             raise NpaWorkflowError(
-                f"state {state.name}: multiNodeMode must be 'sharded', got {mode!r}"
+                f"state {state.name}: multiNodeMode must be 'forbidden' or "
+                f"'sharded', got {mode!r}"
             )
         if nodes > 1 and mode != "sharded":
             raise NpaWorkflowError(
