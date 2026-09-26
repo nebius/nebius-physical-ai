@@ -2130,22 +2130,44 @@ def _trim_lerobot_episode(
         raise PaidfInputError("could not extract the selected LeRobot episode")
 
 
+def _validate_s3_listing_page(
+    page: dict[str, Any], seen_tokens: set[str], *, has_paginator: bool
+) -> None:
+    if not page.get("IsTruncated"):
+        return
+    token = page.get("NextContinuationToken")
+    if not isinstance(token, str) or not token:
+        raise PaidfInputError("truncated input listing has no continuation token")
+    if token in seen_tokens:
+        raise PaidfInputError("input listing repeated continuation token")
+    if not has_paginator:
+        raise PaidfInputError(
+            "storage client cannot complete a truncated input listing"
+        )
+    seen_tokens.add(token)
+
+
 def _list_s3_keys(client: Any, *, bucket: str, prefix: str) -> list[str]:
-    """List a prefix across pages while remaining easy to fake in unit tests."""
+    """Collect a prefix only after validating every page's continuation contract."""
 
     paginator_factory = getattr(client.s3, "get_paginator", None)
-    if callable(paginator_factory):
+    has_paginator = callable(paginator_factory)
+    if has_paginator:
         pages = paginator_factory("list_objects_v2").paginate(
             Bucket=bucket, Prefix=prefix
         )
     else:
         pages = [client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)]
-    return [
-        str(item.get("Key") or "")
-        for page in pages
-        for item in page.get("Contents", [])
-        if str(item.get("Key") or "")
-    ]
+    keys: list[str] = []
+    seen_tokens: set[str] = set()
+    for page in pages:
+        _validate_s3_listing_page(page, seen_tokens, has_paginator=has_paginator)
+        keys.extend(
+            str(item.get("Key") or "")
+            for item in page.get("Contents", [])
+            if str(item.get("Key") or "")
+        )
+    return keys
 
 
 def _fixture_provenance(run_id: str, base_uri: str) -> dict[str, Any]:

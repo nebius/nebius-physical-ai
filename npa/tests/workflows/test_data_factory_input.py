@@ -8,7 +8,9 @@ import subprocess
 from urllib.error import URLError
 from urllib.parse import urlparse
 
+import boto3
 from botocore.exceptions import ClientError
+from botocore.stub import Stubber
 import pytest
 
 from npa.workflows import data_factory_input as dfi
@@ -1378,3 +1380,147 @@ def test_artifacts_without_commit_marker_gain_only_the_marker_on_same_byte_retry
     )
 
     assert storage.s3.uploads[before:] == [("artifacts", prefix + "provenance.json")]
+
+
+@pytest.fixture
+def native_listing_storage():
+    storage = FakeStorage()
+    storage.s3 = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        endpoint_url="https://storage.example.invalid",
+        aws_access_key_id="synthetic-access",
+        aws_secret_access_key="synthetic-secret",
+    )
+    yield storage
+    storage.s3.close()
+
+
+def _queue_native_listing(stubber, prefix, pages):
+    token = None
+    for page in pages:
+        expected = {"Bucket": "artifacts", "Prefix": prefix}
+        if token:
+            expected["ContinuationToken"] = token
+        stubber.add_response("list_objects_v2", page, expected)
+        token = page.get("NextContinuationToken")
+
+
+@pytest.mark.parametrize("token", [None, ""])
+def test_native_legacy_listing_rejects_truncated_page_without_token(
+    native_listing_storage, token
+):
+    prefix = "paidf-native/input/"
+    page = {"IsTruncated": True, "Contents": [{"Key": prefix + "capture.mp4"}]}
+    if token is not None:
+        page["NextContinuationToken"] = token
+    with Stubber(native_listing_storage.s3) as stubber:
+        _queue_native_listing(stubber, prefix, [page])
+        with pytest.raises(dfi.PaidfInputError, match="could not inspect every object"):
+            dfi._legacy_staged_video(native_listing_storage, "s3://artifacts/" + prefix)
+        stubber.assert_no_pending_responses()
+
+
+@pytest.mark.parametrize(
+    "tokens", [("second", "second"), ("second", "third", "second")]
+)
+def test_native_legacy_listing_rejects_token_cycles(native_listing_storage, tokens):
+    prefix = "paidf-native/input/"
+    pages = [
+        {"IsTruncated": True, "NextContinuationToken": token, "Contents": []}
+        for token in tokens
+    ]
+    with Stubber(native_listing_storage.s3) as stubber:
+        _queue_native_listing(stubber, prefix, pages)
+        with pytest.raises(
+            dfi.PaidfInputError, match="could not inspect every object"
+        ) as raised:
+            dfi._legacy_staged_video(native_listing_storage, "s3://artifacts/" + prefix)
+        assert "repeated continuation token" in str(raised.value.__cause__)
+        stubber.assert_no_pending_responses()
+
+
+def test_native_legacy_listing_adopts_complete_multi_page_source(
+    native_listing_storage,
+):
+    prefix = "paidf-native/input/"
+    pages = [
+        {"IsTruncated": True, "NextContinuationToken": "second", "Contents": []},
+        {"IsTruncated": False, "Contents": [{"Key": prefix + "capture.mp4"}]},
+    ]
+    with Stubber(native_listing_storage.s3) as stubber:
+        _queue_native_listing(stubber, prefix, pages)
+        assert dfi._legacy_staged_video(
+            native_listing_storage, "s3://artifacts/" + prefix
+        ) == ("s3://artifacts/" + prefix + "capture.mp4")
+        stubber.assert_no_pending_responses()
+
+
+def _queue_rejected_legacy_input(stubber, prefix, failure_mode):
+    stubber.add_client_error(
+        "get_object",
+        service_error_code="NoSuchKey",
+        expected_params={"Bucket": "artifacts", "Key": prefix + "provenance.json"},
+    )
+    first = {"IsTruncated": True, "Contents": [{"Key": prefix + "capture.mp4"}]}
+    if failure_mode == "missing_token":
+        _queue_native_listing(stubber, prefix, [first])
+        return
+    first["NextContinuationToken"] = "second"
+    _queue_native_listing(stubber, prefix, [first])
+    expected = {"Bucket": "artifacts", "Prefix": prefix, "ContinuationToken": "second"}
+    if failure_mode == "later_error":
+        stubber.add_client_error(
+            "list_objects_v2",
+            service_error_code="InternalError",
+            expected_params=expected,
+        )
+    else:
+        stubber.add_response(
+            "list_objects_v2",
+            {"IsTruncated": False, "Contents": [{"Key": prefix + "second.mp4"}]},
+            expected,
+        )
+
+
+@pytest.mark.parametrize(
+    "failure_mode", ["missing_token", "later_error", "later_conflict"]
+)
+def test_prepare_input_rejects_incomplete_native_listing_before_downstream_work(
+    native_listing_storage, monkeypatch, failure_mode
+):
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "Input listing must complete before download, derivation or upload"
+        )
+
+    monkeypatch.setattr(dfi.shutil, "which", lambda _name: "synthetic-ffmpeg")
+    monkeypatch.setattr(native_listing_storage, "download_path", forbidden)
+    for name in ("_fetch_starter", "probe_video", "_stage_file", "_upload_json"):
+        monkeypatch.setattr(dfi, name, forbidden)
+    prefix = "physical-ai-data-factory/native-pages/input/"
+    message = (
+        "multiple uncommitted"
+        if failure_mode == "later_conflict"
+        else "could not inspect every object"
+    )
+    with Stubber(native_listing_storage.s3) as stubber:
+        _queue_rejected_legacy_input(stubber, prefix, failure_mode)
+        with pytest.raises(dfi.PaidfInputError, match=message):
+            dfi.prepare_paidf_input(
+                run_id="native-pages",
+                bucket="artifacts",
+                storage_client=native_listing_storage,
+            )
+        stubber.assert_no_pending_responses()
+
+
+def test_legacy_listing_without_paginator_rejects_truncated_page():
+    storage = FakeStorage()
+    storage.s3.list_objects_v2 = lambda **kwargs: {
+        "IsTruncated": True,
+        "NextContinuationToken": "second",
+        "Contents": [{"Key": "paidf-native/input/capture.mp4"}],
+    }
+    with pytest.raises(dfi.PaidfInputError, match="could not inspect every object"):
+        dfi._legacy_staged_video(storage, "s3://artifacts/paidf-native/input/")
