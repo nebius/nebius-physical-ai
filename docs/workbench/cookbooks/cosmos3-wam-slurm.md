@@ -15,7 +15,11 @@ failed at its first optimizer update with FP32 parameters and EMA, even at one
 sample per step. The eight-GPU Slurm run completed all 2,000 updates in
 7 h 50 m 33 s, with an eight-rank NCCL check and complete checkpoint hashes.
 The [full-run evidence](../evidence/cosmos3-wam-full-8/README.md) records its
-conditions and timing scope. Scaling efficiency and full policy success remain
+conditions and timing scope. The [complete quality curve](../evidence/cosmos3-wam-quality-8/README.md)
+records 500 trials at each of four checkpoints: 45.4%, 85.6%, 92.8% and 95.0%
+success. Update 1,500 was the first scheduled checkpoint above the 90% target,
+saved after about 5 h 53 m of training and evaluated afterward. All 2,000
+trials completed without infrastructure errors. Scaling efficiency remains
 unmeasured. The [three measured timing repetitions](../evidence/cosmos3-wam-timing-8/README.md)
 establish the eight-GPU baseline: mean step 13.3080 s, with 0.0136 s sample
 standard deviation across the three run means. Their saved reports and all
@@ -34,8 +38,8 @@ The [final trained-policy visual check](../evidence/cosmos3-wam-final-visual/REA
 uses the actual update-2,000 checkpoint and completes one trial on each of ten
 tasks: nine successes, one failure and no infrastructure errors. It includes
 successful and unsuccessful rollouts, prediction-versus-simulator videos and
-GPU process attribution. These are illustrative trials; full 500-trial quality
-measurements remain pending. The [earlier update-500 visual record](../evidence/cosmos3-wam-trained-visual/README.md)
+GPU process attribution. These are illustrative trials, separate from the
+completed 500-trial quality measurements. The [earlier update-500 visual record](../evidence/cosmos3-wam-trained-visual/README.md)
 also retains every outcome.
 
 ## What the experiment measures
@@ -79,13 +83,25 @@ npa workbench health preflight --checks nebius,hf
 npa workbench health access --capability cosmos3
 ```
 
-Supply the private project, tenant and reservation IDs through the environment.
-Choose an unused cluster name and a private spec location. From the checkout:
+Initialize the common recipe paths from the Workbench checkout:
 
 ```bash
 export WAM_RECIPE="$PWD/npa/workflows/workbench/cosmos3-wam-slurm"
 export NPA_PYTHON="$PWD/npa/.venv/bin/python"
 umask 077
+```
+
+For the measured deployment, continue with the
+[native worker creation and bootstrap instructions](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md#create-the-dedicated-workers),
+then return to step 2 below. Use the same absolute shared paths on every worker.
+
+### Alternative: Soperator deployment
+
+Choose this alternative only when reproducing the recipe on Soperator. Supply
+the private project, tenant and reservation IDs through the environment, and
+choose an unused cluster name and a private spec location:
+
+```bash
 "$NPA_PYTHON" "$WAM_RECIPE/cluster.py" \
   --name "$WAM_CLUSTER_NAME" --nodes 2 --output "$WAM_CLUSTER_SPEC"
 npa soperator plan --spec "$WAM_CLUSTER_SPEC"
@@ -104,8 +120,9 @@ Two free individual GPUs are not a two-node allocation: two workers need 16
 free reserved B200 GPUs. For the four-node comparison, request four workers and
 verify 32-GPU reservation capacity first.
 
-Connect using the provider-verified login endpoint. Run Slurm inside its jail;
-the following paths must be shared and identical on every worker, not `/tmp`.
+For Soperator, connect using the provider-verified login endpoint and run Slurm
+inside its jail. The following paths must be shared and identical on every
+worker, not `/tmp`.
 Keep the training runtime, dataset, base DCP and run directories on that
 filesystem for the baseline. A later node-local SSD experiment must explicitly
 record that storage change and stage identical verified bytes on each host.
@@ -312,7 +329,11 @@ squeue -j "$WAM_JOB_ID"
 ```
 
 Once owned jobs are confirmed absent and checkpoints/evidence are retained,
-destroy the exact dedicated cluster:
+follow the [native deployment's cleanup procedure](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md#evidence-and-cleanup)
+to remove its dedicated VMs, disks and GPU-cluster resource, retaining any disk
+whose contents have not yet been verified in durable storage.
+
+For the alternative Soperator deployment, destroy its exact dedicated cluster:
 
 ```bash
 npa soperator destroy --name "$WAM_CLUSTER_NAME"

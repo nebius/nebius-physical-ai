@@ -1,6 +1,6 @@
 {
   "schema": "npa.cosmos3.wam-recipe-validation.v1",
-  "status": "experimental-eight-gpu-duration-profile-and-timing-measured",
+  "status": "experimental-eight-gpu-training-profile-timing-and-quality-measured",
   "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
   "upstream_toml_schema": {
     "checked": true,
@@ -34,7 +34,7 @@
   "single_gpu_wam_execution": "out-of-memory-at-first-optimizer-update",
   "gpu_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json",
   "b200_scaling_measured": false,
-  "policy_quality_measured": false,
+  "policy_quality_measured": true,
   "simulation_readiness": {
     "fresh_bootstrap_reproduced": true,
     "initial_states_verified": 500,
@@ -42,11 +42,11 @@
     "learned_policy_executed": false,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-simulation-runtime.json"
   },
-  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; full policy evaluations remain pending.",
+  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity.",
   "remaining_evidence": [
     "Complete comparable 16-GPU run",
     "Verified repeated 8/16-GPU timing comparison and 16-GPU profiling",
-    "Checkpoint-linked complete LIBERO-10 closed-loop evaluations"
+    "Matched complete 16-GPU checkpoint-linked LIBERO-10 quality curve"
   ],
   "complete_training_run_measured": true,
   "slurm_ipc_cleanup": {
@@ -126,5 +126,46 @@
     "full_500_trial_evaluation": false,
     "model_manifest_sha256": "4f28c9ab7e4cf172a8e05606dc2a944f4c1cf07b5c61c05160655a746ab6135c",
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-final-visual/evidence.json"
+  },
+  "completed_quality_curves": {
+    "8": {
+      "checkpoint_steps": [
+        500,
+        1000,
+        1500,
+        2000
+      ],
+      "trials_per_checkpoint": 500,
+      "total_trials": 2000,
+      "successes": [
+        227,
+        428,
+        464,
+        475
+      ],
+      "success_rates": [
+        0.454,
+        0.856,
+        0.928,
+        0.95
+      ],
+      "infrastructure_errors": 0,
+      "evaluation_contract": {
+        "workers": 8,
+        "envs": 8,
+        "trials": 50,
+        "seed": 42
+      },
+      "time_to_quality": {
+        "status": "observed_at_scheduled_checkpoint",
+        "step": 1500,
+        "train_seconds_interval": [
+          21177.321068286896,
+          21178.321068286896
+        ],
+        "preceding_evaluated_step": 1000
+      },
+      "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-quality-8/evidence.json"
+    }
   }
 }

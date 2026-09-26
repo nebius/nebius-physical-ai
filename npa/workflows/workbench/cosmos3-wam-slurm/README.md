@@ -16,8 +16,12 @@ optimizer update with FP32 parameters and EMA, even with one sample per step.
 Actual eight-GPU Slurm execution and the eight-rank NCCL preflight have now
 passed. The full 2,000-update run completed in 7 h 50 m 33 s on eight B200s;
 the [verified report and numeric series](../../../../docs/workbench/evidence/cosmos3-wam-full-8/README.md)
-record its conditions and complete checkpoint hashes. Scaling and full policy
-quality remain unmeasured. The running deployment uses native Slurm
+record its conditions and complete checkpoint hashes. The
+[complete quality curve](../../../../docs/workbench/evidence/cosmos3-wam-quality-8/README.md)
+records 45.4%, 85.6%, 92.8% and 95.0% success at updates 500, 1,000, 1,500 and
+2,000, respectively, with 500 trials per checkpoint and no infrastructure errors.
+The first passing scheduled checkpoint was saved after about 5 h 53 m of
+training. Multi-node scaling remains unmeasured. The measured deployment uses native Slurm
 23.11.4 on dedicated GPU VMs, with controller and accounting on the first
 worker. The Soperator path remains an unvalidated deployment alternative. See
 [validation.json](validation.json) and the [GPU evidence](../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json).
@@ -32,7 +36,8 @@ standard deviation across run means. The two-node comparison remains pending.
 The [final-checkpoint visual pass](../../../../docs/workbench/evidence/cosmos3-wam-final-visual/README.md)
 completed ten illustrative trials with nine successes, one failure and no
 infrastructure errors. Its videos, model hashes and eight-GPU process
-attribution establish execution; full 500-trial qualification remains pending.
+attribution establish execution. The separate full evaluations establish
+checkpoint-linked qualification; the ten-trial videos remain illustrative.
 
 ## Plan without cloud resources
 
@@ -274,7 +279,8 @@ log resolution. It identifies the first evaluated checkpoint reaching 90%
 success without estimating an unobserved crossing. Evaluation duration and
 process GPU-hours are separate from training time. Pooled Wilson intervals
 describe the recorded trial counts; they do not measure variation across
-training seeds or tasks. This reducer awaits the full live campaign results.
+training seeds or tasks. The [executed eight-GPU reduction](../../../../docs/workbench/evidence/cosmos3-wam-quality-8/README.md)
+includes every original trial result and a reproducible quality figure.
 
 The [completed checkpoint-500 visual check](../../../../docs/workbench/evidence/cosmos3-wam-trained-visual/README.md)
 records ten real closed-loop trials, four successes and six failures, trained
@@ -292,7 +298,9 @@ npa/.venv/bin/python npa/workflows/workbench/cosmos3-wam-slurm/report.py \
 
 `--warmup` defaults to 50 optimizer steps. The pinned upstream timing callback
 starts emitting regular measurements at step 52; shorter execution checks
-cannot produce a steady-state report. Missing node receipts, failed jobs,
+cannot produce a steady-state report. This timing exclusion is independent
+of the optimizer schedule's 500-update learning-rate warmup. Missing node
+receipts, failed jobs,
 missing NCCL evidence, gaps/duplicates/non-finite timings and incomplete final
 checkpoints fail reporting. Profiling runs cannot be compared as throughput
 results. Reports also retain actual processed-token throughput and native VAE
@@ -307,7 +315,8 @@ reproduce timing distributions and learning curves without publishing raw
 worker logs. It keeps checkpoint-bearing iterations in the series; distinguish
 them explicitly when discussing steady compute time.
 
-The pinned trainer saves periodic checkpoints before the iteration timer runs.
+The pinned trainer saves periodic checkpoints before the timing callback
+records the elapsed iteration time.
 Consequently, the 2,000-update series includes the writes at updates 500, 1,000,
 1,500 and 2,000. A 200-update repeat saves its final checkpoint after the timed
 loop: its 149 reported iterations, 52 through 200, measure steady training,

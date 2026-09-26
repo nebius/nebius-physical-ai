@@ -1,24 +1,30 @@
 # How long does Cosmos 3 Nano WAM post-training take on Nebius B200s?
 
-**Editorial draft — the eight-GPU full run is measured; scaling and policy qualification remain pending.**
+**Editorial draft — eight-GPU training, profiling and all four quality checkpoints are measured; the multi-node comparison remains pending.**
 
-Partners evaluating world action models tend to ask two practical questions:
-how many GPUs should they allocate, and how long will it take to get a useful
-policy? A training launch command answers neither. The answer depends on the
-data, the action representation, the distributed configuration, and what
-“useful” means for the task.
+On one reserved Nebius node with **eight B200 GPUs**, Cosmos 3 Nano WAM
+completed the full LIBERO-10 post-training schedule of 2,000 optimizer updates
+in **7 hours, 50 minutes, 33 seconds**, consuming **62.74 training-process
+GPU-hours**. The first scheduled checkpoint to meet the predeclared 90%
+benchmark target was update 1,500: **464 successes in 500 trials, or 92.8%**.
+Those weights were saved after approximately **5 hours, 53 minutes of
+training**. Their quality was verified afterward; the actual training run
+continued to update 2,000.
+The final checkpoint scored **475/500, or 95.0%**. All 2,000 evaluation trials
+across the four scheduled checkpoints completed without infrastructure errors.
 
-We have prepared a [Workbench recipe](cookbooks/cosmos3-wam-slurm.md) to measure
-Cosmos 3 Nano WAM post-training on reserved Nebius B200 nodes under Slurm. It
-covers data preparation, native training, one-node to multi-node scaling,
-profiling, and the evidence needed to connect training time to policy quality.
-The current implementation has passed local launch and reporting tests, real
-dataset inspection, native checkpoint conversion and B200 runtime checks. An
-actual one-GPU WAM attempt exposed a memory limit described below.
-The full 2,000-update Slurm run completed on eight B200s in **7 hours,
-50 minutes, 33 seconds**, consuming **62.74 training-process GPU-hours**.
-Multi-node scaling and full policy measurements remain pending. This observed
-duration applies to the recorded data, settings and operating conditions below.
+This answers the partner question for a concrete dataset, configuration and
+success criterion. It does not establish the minimum GPU count, performance
+on a partner's own tasks, or how much faster two nodes will be. The two-node
+comparison remains unmeasured.
+
+The [Workbench recipe](cookbooks/cosmos3-wam-slurm.md) covers data preparation,
+native Slurm launch, matched one-node and two-node plans, profiling, and
+checkpoint-linked evaluation. Its evidence includes native training logs,
+complete checkpoint hashes, repeated timing runs, CUDA traces, GPU telemetry
+and actual trained-policy videos. The measurements below separate completed
+training, steady iteration time and the time when qualifying weights became
+available.
 
 ## The question public launch recipes leave open
 
@@ -138,7 +144,7 @@ observations, with diffusion caching enabled, not WAM post-training timings.
 The generated arm has geometry and contact errors. This is a useful illustration
 of why a visually recognizable scene is not evidence of a successful robot
 policy. The linked record includes the videos, settings, hashes and actual GPU
-telemetry; the full trained-policy benchmark remains pending.
+telemetry; the complete trained-policy benchmark is reported below.
 
 ## Watch the final trained checkpoint act
 
@@ -232,6 +238,9 @@ full schedule therefore includes four checkpoint-bearing iterations. For the
 200-update repetitions, the final save happens after the timed loop; the
 report contains 149 steady iterations, from update 52 through 200. These
 separate repetitions provide the primary scaling comparison.
+The fifty-update timing exclusion is separate from the 500-update learning-rate
+warmup. The repeated timing windows therefore run during learning-rate warmup;
+they describe stable iteration duration, not a fully warmed-up optimizer schedule.
 
 The full eight-GPU run reused runtime and filesystem caches from preparation.
 Its temporary visualization worker also accessed shared storage during part of
@@ -318,8 +327,8 @@ partner question, checkpoints must also be evaluated on all ten tasks with
 50 initial states per task, using the matching action-policy server and
 simulator configuration.
 
-We will report task-level and aggregate success, checkpoint identity, training
-duration and evaluation compute. The target success rate must be chosen
+Each evaluation records task-level and aggregate success, checkpoint identity,
+training duration and evaluation compute. The target success rate must be chosen
 before training; Workbench's current absolute qualification convention is
 90%. The first saved checkpoint to reach the selected target defines time to
 quality. A lower training loss alone does not. A partner's own manipulation
@@ -333,22 +342,58 @@ threshold crossing between saves. The target applies to the observed success
 rate; pooled Wilson intervals describe sampling uncertainty and do not measure
 variation across tasks or independently trained seeds.
 
+All four full evaluations completed without infrastructure errors:
+
+| Saved checkpoint | Training time when saved, approximately | Successes / trials | Overall success | Evaluation process time |
+| --- | --- | --- | --- | --- |
+| 500 | 1 h 58 m 23 s | 227 / 500 | 45.4% | 45.95 min |
+| 1,000 | 3 h 55 m 47 s | 428 / 500 | 85.6% | 39.22 min |
+| 1,500 | 5 h 52 m 57 s | 464 / 500 | 92.8% | 36.58 min |
+| 2,000 | 7 h 50 m 18 s | 475 / 500 | 95.0% | 37.33 min |
+
+![Measured policy quality and every task's outcome at all four checkpoints](evidence/cosmos3-wam-quality-8/policy-quality.png)
+
+The [complete quality evidence](evidence/cosmos3-wam-quality-8/README.md)
+preserves every trial, model-component hash and evaluation duration. The reducer
+rehashes all four trained models and joins their native checkpoint-completion
+events to the corresponding evaluations. Update 1,500 is the first passing
+scheduled checkpoint. Individual task results there range from 40/50 to
+50/50; the 90% target applies to the aggregate. At update 2,000 the range is
+43/50 to 50/50. This is absolute qualification on the recorded benchmark,
+with one training seed; it does not establish improvement over a separately
+evaluated control policy or generalization to unseen task types.
+
+Checkpoint-ready timestamps have one-second resolution. The final checkpoint
+was saved about fifteen seconds before the training process exited, explaining
+the difference between its table entry and the complete training duration.
+
+The passing checkpoint's evaluation used eight B200 policy servers with eight
+simulator environments per server. Its complete process took **2,194.578
+seconds**, including model hashing, loading and parallel simulation. This
+36.6-minute evaluation is separate from the recorded training duration.
+All four evaluation processes together took **2 h 39 m 5 s**, or **21.21
+evaluation-process GPU-hours** at eight GPUs each. These durations include
+startup and simulation, and exclude campaign queue delay. They are not
+steady inference latency or the complete campaign's resource usage.
+
 ## Measured results and remaining campaign work
 
 | B200 GPUs | Complete training time | Full-run median / p95 step | Repeated step mean / across-run SD | Training GPU-hours | LIBERO-10 success | Time to quality |
 | --- | --- | --- | --- | --- | --- | --- |
-| 8 | 7 h 50 m 33 s | 13.29 / 13.43 s | 13.3080 / 0.0136 s | 62.74 | Pending | Pending |
+| 8 | 7 h 50 m 33 s | 13.29 / 13.43 s | 13.3080 / 0.0136 s | 62.74 | 95.0% at update 2,000 | About 5 h 53 m at update 1,500, verified afterward |
 | 16 | Pending | Pending | Pending | Pending | Pending | Pending |
 
 The completed eight-GPU row answers how long this particular full schedule
 took, and the separate trace establishes actual eight-GPU profiling evidence.
-Three verified timing repetitions establish the eight-GPU baseline. A matched
-two-node run and full checkpoint-linked evaluations are still needed to answer
-how well it scales and how long it takes to reach the selected policy target.
-The final publication will retain unsuccessful outcomes and uncertainty, with
-the tested driver, CUDA, PyTorch and source revisions. Pending results cannot
-support a scaling claim or a time-to-quality recommendation.
+Three verified timing repetitions establish the eight-GPU baseline, and the
+complete checkpoint evaluations establish the first observed time to the
+benchmark target and the final checkpoint's 95.0% result. A matched two-node
+run is still needed to answer how well it scales. Sixteen GPUs cannot yet be
+recommended as faster or more efficient from this evidence.
 
-The [recipe and runbook](cookbooks/cosmos3-wam-slurm.md) are the starting point
-for collecting that evidence. Once measured, the useful answer will be specific:
-this dataset, this quality target, this many B200 GPUs, and this observed time.
+The [recipe and runbook](cookbooks/cosmos3-wam-slurm.md) provide the source pins,
+data checks, native Slurm setup, launch commands and evidence reducers needed
+to repeat the experiment. The linked records preserve failures as well as
+successes and regenerate each figure from actual numeric data or rollout
+frames. Repeating the protocol does not promise identical learned weights or
+trial outcomes; preserve those new results with their own checkpoint hashes.
