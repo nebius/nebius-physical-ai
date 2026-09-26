@@ -216,6 +216,20 @@ from evaluation and archival I/O. Each run starts from the same base checkpoint.
 
 ## Profile the bottleneck before increasing the allocation
 
+The running experiment already exposes a substantial checkpoint pause.
+Updates 1,000 and 1,500 took 404.54 and 404.40 seconds, respectively; their
+neighboring updates took 13.25–13.39 seconds. Each completed checkpoint contains
+177.28 GB of model, optimizer, scheduler and trainer state.
+
+![Measured GPU and disk activity during checkpoint saves](evidence/cosmos3-wam-checkpoint-io/checkpoint-io.png)
+
+The [recorded timeline and numeric CSVs](evidence/cosmos3-wam-checkpoint-io/README.md)
+show mostly idle GPUs while the storage host writes these checkpoints. The
+gray interval includes training computation as well as saving, so its duration
+is not pure write time. Storage throughput belongs in the training-time
+discussion alongside GPU count; the completed full-run report will account
+for every periodic save.
+
 More GPUs help only if the work can use them. A separate profiling run captures
 PyTorch traces from a representative rank on each node. The analysis follows
 the path from loading and decoding data, through VAE encoding and model
