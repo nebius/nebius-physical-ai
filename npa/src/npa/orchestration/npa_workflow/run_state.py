@@ -22,13 +22,13 @@ _UNRESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
         "resume_block_output_present",
         "resume_block_output_indeterminate",
         "verified_absent_no_retry",
+        "reuse_completed_wave",
     }
 )
 _RESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
     {
         "block_relaunch",
         "readiness_blocked",
-        "reuse_completed_wave",
         "cancel_and_terminalize",
         "terminalize",
         "operator_authorized_absent_output_adoption",
