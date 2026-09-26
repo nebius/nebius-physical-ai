@@ -137,12 +137,14 @@ def record_probe_contacts(env, output, name):
         yield
         return
     from npa.workflows.navigation.contact_evidence import ContactEvidence
+    from npa.workflows.navigation.reset_evidence import ResetEvidence
 
     native = env.unwrapped
     measurements = native.npa_contacts
     previous = measurements.evidence
     measurements.evidence = ContactEvidence(native, measurements, output, name)
     try:
-        yield
+        with ResetEvidence(native, output, name).record():
+            yield
     finally:
         measurements.evidence = previous
