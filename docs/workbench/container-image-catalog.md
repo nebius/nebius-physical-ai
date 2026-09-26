@@ -26,14 +26,15 @@ cache in its layers. It has no accepted release build and remains release
 quarantined; it has no public image row, but now has a truthful immutable
 development-build path for byte and capability validation.
 
-The combined public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-17**. All **37 current release references**
-matched their recorded digests. Independent manifest and OCI config reads
-confirmed `linux/amd64` runtime metadata. This read-only audit includes both
-Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table
-references (33 then-current pins and 11 historical aliases); historical aliases
-were not re-audited on September 17. Capability results below remain tied to
-their original exact-digest evidence.
+The combined public plan and accepted-release manifest contain **38 current
+release tags**, all matched anonymously against their recorded digests on
+**2026-09-18**. This read-only audit includes flex-pi r2, Isaac Arena, and
+OpenArm. Retained OCI metadata identifies every runtime variant as `linux/amd64`.
+Flex-pi r2 was independently built, scanned, and run on both required GPU targets
+on **2026-09-17**. The earlier 2026-09-12 audit covered 44 table references
+(33 then-current pins and 11 historical aliases); historical aliases were not
+re-audited on September 18. Capability claims below retain the exact image and
+hardware identity that earned them.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -52,8 +53,8 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **57 packaging entries** (48 redistribution-eligible
-and nine restricted) and **48 mapped tools**: 37 public-release members, two
+The current source inventory has **58 packaging entries** (49 redistribution-eligible
+and nine restricted) and **49 mapped tools**: 38 public-release members, two
 restricted tools, and nine quarantined tools (`antioch`, `curobo`, `habitat-sim`,
 `libero`, `mjlab`, `ncore`, `openpi`, `robocasa` and `sam3`). These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
@@ -92,6 +93,47 @@ the independently pulled digest, both verified attestations and clean layer scan
 Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
 Gated checkpoint access and real GPU qualification remain pending; this does
 not replace the accepted SAM 2.1 release or add a supported release row.
+
+## 2026-09-17 flex-pi r2 publication
+
+`npa-flex-pi:0.1.0-cu128-r2` is bound to direct `linux/amd64` manifest
+`sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6` from source
+`8904daf36d0cc9152193b0e87a687bce7e6fca46`. It adds the JSON stdout fix and
+the fail-closed DINO checkpoint gate. The exact bytes passed source/licensing,
+full-layer payload/history, configured vulnerability/secret, SBOM/provenance,
+and anonymous full-layer pull gates. Real compiled action-only workflows then
+passed independently on one B200 and one RTX PRO 6000, each producing finite
+32×14 actions and three read-back-verified artifacts with zero restarts.
+Development and additive release tags resolve anonymously to the same digest.
+The original release tag remains unchanged. See [exact-image acceptance](flex-pi.md#r2-exact-image-acceptance).
+
+## Historical 2026-09-16 flex-pi publication
+
+`npa-flex-pi:0.1.0-cu128` is bound to direct `linux/amd64` manifest
+`sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91`.
+The guarded build verified the pinned source and licensing boundary, found no
+checkpoint, observation media, populated model cache, credential, or token in
+the layers, and passed vulnerability, secret, SBOM, provenance, OCI-history,
+and anonymous-pull gates.
+
+The exact digest then completed strict, complete-checkpoint action-only
+inference independently on RTX PRO 6000 and B200. Four Euler steps produced a
+finite 32×14 action chunk in 0.678 seconds on RTX PRO 6000. On B200, a cached
+single-GPU baseline completed in 91.823 seconds wall time, and the maximum live
+capacity run completed 24 independent one-GPU replicas in 132.0 seconds with
+24 successes and 72 read-back-verified objects. That is replica fan-out, not
+model parallelism. Peak allocated GPU memory was 25,268,430,336 bytes on both
+targets. This proves policy inference and artifact integrity for one public
+observation, not closed-loop RoboTwin task success. Checkpoint, Wan/T5/DINOv3
+assets, and observation inputs remain operator-authorized runtime fetches rather
+than redistributed payload.
+
+On 2026-09-17, the release and full-SHA development tags were anonymously
+resolved again and both remained bound to that exact digest. Without rebuilding
+or moving either tag, the maintained workflow toolRef enabled the image's
+existing `--torch-compile` path. Five paired warm samples measured 2.645× median
+speedup on RTX PRO 6000 and 2.278× on B200, with finite 32×14 actions inside the
+documented BF16 tolerance and five durable read-back objects per final target.
 
 ## Native model publication
 
@@ -346,6 +388,7 @@ and populated caches remain absent from the public image.
 | SONIC MuJoCo | `npa-sonic-mujoco` | `0.2.0-runtime` | 2026-08-17 | Independently rebuilt from pinned Apache-2.0 SONIC source on a digest-pinned public Python base with a hash-locked PyTorch/MuJoCo closure. The exact accepted digest passed the real B200 Unitree G1 rollout and payload gates. |
 | Wan 2.2 TI2V-5B | `npa-wan2-2` | `2.2-ti2v5b-rtfetch-cu130-20260817` | 2026-08-17 | Wan 2.2 text/image-to-video generation from Apache-2.0 source on an OSS dependency base. CUDA PyTorch and `nvidia-*` wheels are runtime-fetched under their upstream package terms. The accepted exact digest passed the zero-payload, SPDX/SLSA, vulnerability, and single-GPU TI2V/MP4/Rerun gates; the current four-GPU path remains deferred. |
 | Alpamayo 2 Super 34B | `npa-alpamayo2-super` | `0.1.0-cu128-r3` | 2026-09-16 | Real surround-view VLA trajectory inference through NVIDIA's Apache-2.0 source. OpenMDW-1.1 weights and the separately gated/non-transferable PhysicalAI-AV sample data are fetched only at runtime under the operator's Hugging Face identity. The exact payload-clean r3 digest, built from the source commit containing the HTTPConnection healthcheck fix, and real workflow were validated independently on B200 and RTX PRO 6000. See the [operator guide](alpamayo2-super.md). |
+| flex-pi 6B world-action policy | `npa-flex-pi` | `0.1.0-cu128-r2` | 2026-09-17 | Runtime-fetch packaging for the pinned MIT flex-pi source and released RoboTwin checkpoint. The exact payload-clean digest completed strict full-state action-only inference independently on B200 and RTX PRO 6000 and produced finite 32×14 bimanual action chunks plus verified provenance artifacts. See the [operator guide](flex-pi.md). |
 | LeIsaac 0.4.0 | `npa-leisaac` | `0.4.0-20260817T231825Z` | 2026-08-19 | Browser teleoperation for the real upstream SO-101 LiftCube and PickOrange tasks, with secure agent-relay transport and immutable LeRobot episode recording. The image contains Apache-2.0 LeIsaac source and OSS dependencies only; Isaac Sim/Lab, NVIDIA's browser client, and task assets are runtime-fetched under the shared `ACCEPT_EULA` contract and are never baked into the image. Revalidate a digest before use. |
 | Cosmos 3 (`cosmos-framework` 1.2.2) | `npa-cosmos3` | current: `1.2.2-cu130-r7`; historical provenance: `1.2.2-cu130`, `1.2.2-cu130-r2`, `1.2.2-cu130-r5` | 2026-09-12 | Cosmos 3 omni-model generation: text-to-image, image-to-image, text-to-video, image-to-video, and video-to-video. Contains OpenMDW-1.1 source and a CUDA 13 venv only; checkpoints, Wan VAE, and guardrails download at runtime. The additive r7 image retains the attested SkyPilot worker bootstrap and PAIDF publication, fails closed unless prompt and generated-media safety execution is proven, and safely materializes the pinned Blocklist tokenizer data as verified regular files. |
 | Cosmos Evaluator 0.1.2 | `npa-cosmos-evaluator` | `0.1.2-skypilot-v1-20260813T164700Z-r2` | 2026-08-21 | Runs the upstream `HallucinationProcessor` quality gate on generated video using classical computer vision and no weights. The additive r2 image exposes the deterministic ranking/holdout attribute-sample policy consumed by PAIDF. Attribute verification calls an OpenAI-compatible endpoint; the LFS/EULA-gated obstacle checker is deliberately not fetched. |
@@ -603,15 +646,15 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 37 accepted release references resolved anonymously to their recorded
-digests on 2026-09-17. The chart groups the current publishing plan three ways:
+All 38 accepted release references resolved anonymously to their recorded
+digests on 2026-09-18. The chart groups the current publishing plan three ways:
 
-- **21 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **22 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
-  `npa-isaac-arena`,
-  `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
-  `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`,
+  `npa-flex-pi`, `npa-isaac-arena`, `npa-lancedb`, `npa-lerobot`,
+  `npa-lerobot-policy`, `npa-lerobot-vlm-rl`, `npa-loop-eval`, `npa-ltx2`,
+  `npa-reference-policy`, `npa-sonic-mujoco`,
   `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.

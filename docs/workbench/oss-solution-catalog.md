@@ -26,6 +26,7 @@ unique and must be tested with its own upstream-named capabilities.
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
+| flex-pi (**accepted public image**) | `geyan21/flex-pi` `20c1b2b…` | strict released-checkpoint action-only inference | `actions.json` + input/result provenance | `flex-pi-b200-inference.yaml` / `flex-pi-rtxpro-inference.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
@@ -57,6 +58,7 @@ unique and must be tested with its own upstream-named capabilities.
 | OpenPI | `pi05_droid_jointpos_polaris_cross_pod_serve` | **accepted** | Isolated single-B200 connected gate: private ClusterIP, ready digest-pinned server Deployment, and a distinct CPU client pod completed two finite `float64[15,8]` requests; exact service cleanup passed |
 | OpenPI | `pi05_droid_jointpos_polaris_lora_optimizer_smoke` | **accepted** | Same connected gate: upstream pi0.5 LoRA forward/backward/AdamW step, finite loss, changed trainable-state hash, and independently reloadable private Orbax checkpoint |
 | OpenPI | `pi05_droid_jointpos_polaris_heldout_evaluate` | **accepted** | Same connected gate: exact trained-checkpoint reload, two samples excluded from the four-sample training split, finite upstream loss and action MAE/MSE, and finite `float64[15,8]` trajectory |
+| flex-pi | `robotwin_action_only_infer` | **accepted** | Current r2 digest independently on one B200 and one RTX PRO 6000: complete checkpoint-state load, compiled four-step inference, finite `float32[32,14]` actions, and three read-back-verified JSON artifacts per target. The historical `0.1.0-cu128` B200 capacity run completed 24 independent one-GPU replicas; that scaling record does not qualify r2. |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
@@ -225,6 +227,21 @@ MuJoCo closure, but no Isaac Sim, Isaac Lab, or Omniverse Kit bytes. Isaac is
 hash-pinned and fetched into the operator's runtime cache through the shared
 acceptance/refusal bootstrap. See [OpenArm](openarm.md) and
 `workflows/testing/openarm-simulators.yaml`.
+
+### flex-pi
+
+| Capability | Status | Upstream basis / NPA evidence |
+| --- | --- | --- |
+| `robotwin_action_only_infer` | accepted (live) | Released 6B RoboTwin checkpoint; three RGB cameras, 14D state, and language input produced finite 32-step bimanual action chunks independently on B200 and RTX PRO 6000 |
+| `strict_checkpoint_state` | accepted (live) | Maintained fail-closed loader rejected missing/unexpected MoT keys and required proprio, DINO, and pointmap state before the success marker |
+| `action_artifact_provenance` | accepted (live) | Source, checkpoint, data, runtime-asset, input, action, and image identities persisted in three hash-verified JSON artifacts |
+| `blackwell_compiled_infer` | accepted (live) | Current r2 digest passed real compiled inference independently on one B200 and one RTX PRO 6000. Historical `0.1.0-cu128` paired benchmarks measured 2.645× and 2.278× median speedup; those values apply only to the old digest |
+
+> **Promoted to a first-class workbench tool.** flex-pi is available through
+> `npa workbench flex-pi`, `npa.sdk.workbench.flex_pi`, the
+> `workbench.flex_pi.infer` toolRef, and maintained B200 and RTX PRO 6000 workflows.
+> The public image contains no weights, observation media, or populated cache.
+> See `skills/tools/flex-pi/SKILL.md` and `docs/workbench/flex-pi.md`.
 
 ### OpenPI
 

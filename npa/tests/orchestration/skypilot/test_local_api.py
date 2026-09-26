@@ -1137,7 +1137,7 @@ def metadata_token_runtime(local_runtime, monkeypatch):
     return local_runtime, provider, token_file, cache
 
 
-@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])
+@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty", "null"])
 def test_metadata_token_cache_rotation_preserves_owned_api(
     metadata_token_runtime, initial_cache
 ):
@@ -1146,6 +1146,8 @@ def test_metadata_token_cache_rotation_preserves_owned_api(
         cache.unlink()
     elif initial_cache == "empty":
         cache.write_text("tokens: {}\n")
+    elif initial_cache == "null":
+        cache.write_text("tokens: null\n")
 
     api.ensure_isolated_api(**runtime)
     original = _record(runtime)
@@ -1229,7 +1231,123 @@ def test_extended_metadata_profile_preserves_cache_identity(metadata_token_runti
     assert api._identity_files(runtime["environment"]) == before
 
 
-@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty"])
+@pytest.fixture
+def native_metadata_runtime(metadata_token_runtime):
+    import yaml
+
+    runtime, provider, _, cache = metadata_token_runtime
+    config = provider / "config.yaml"
+    profile = {
+        "endpoint": "fixture.invalid:443",
+        "parent-id": "fixture-project",
+        "tenant-id": "fixture-tenant",
+        "token-endpoint": "http://metadata.nebius.internal/v1/iam/sa/token",
+    }
+    config.write_text(
+        yaml.safe_dump({"default": "metadata", "profiles": {"metadata": profile}})
+    )
+    runtime["environment"].pop("NPA_NEBIUS_CREDENTIAL_SOURCE")
+    return runtime, provider, cache
+
+
+@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty", "null"])
+def test_native_metadata_cache_pruning_preserves_owned_api(
+    native_metadata_runtime, initial_cache
+):
+    runtime, _, cache = native_metadata_runtime
+    if initial_cache == "absent":
+        cache.unlink()
+    elif initial_cache == "empty":
+        cache.write_text("tokens: {}\n")
+    elif initial_cache == "null":
+        cache.write_text("tokens: null\n")
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    for contents in (
+        "tokens: {}\n",
+        "tokens: null\n",
+        "tokens:\n  service-account/fixture-account/fixture-key:\n    token: fixture-new-token\n    expires_at: 200\n",
+    ):
+        cache.write_text(contents)
+        assert api.ensure_isolated_api(**runtime)["healthy"]
+        assert _record(runtime)["pid"] == original["pid"]
+    assert original["identity_files"][str(cache)].startswith(
+        "derived-nebius-native-metadata-cache-v1:"
+    )
+    assert "fixture-new-token" not in json.dumps(_record(runtime))
+
+
+@pytest.mark.parametrize(
+    "field", ["endpoint", "parent-id", "tenant-id", "token-endpoint"]
+)
+def test_native_metadata_profile_change_rejects_owned_api(
+    native_metadata_runtime, field
+):
+    import yaml
+
+    runtime, provider, _ = native_metadata_runtime
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    config = provider / "config.yaml"
+    data = yaml.safe_load(config.read_text())
+    data["profiles"]["metadata"][field] = "changed-fixture-value"
+    config.write_text(yaml.safe_dump(data))
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**runtime)
+    assert _record(runtime)["pid"] == original["pid"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"token-endpoint": "http://fixture.invalid/v1/iam/sa/token"},
+        {"token-endpoint": "http://metadata.nebius.internal/v1/iam/sa/token?extra=1"},
+        {"token-file": "/fixture/alternate-token"},
+        {"auth-type": "service account"},
+        {"tenant-id": ""},
+    ],
+)
+def test_unrecognized_native_metadata_profile_keeps_cache_byte_strict(
+    native_metadata_runtime, change
+):
+    import yaml
+
+    runtime, provider, cache = native_metadata_runtime
+    config = provider / "config.yaml"
+    data = yaml.safe_load(config.read_text())
+    data["profiles"]["metadata"].update(change)
+    config.write_text(yaml.safe_dump(data))
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+def test_native_metadata_unknown_cache_cannot_adopt_owned_api(native_metadata_runtime):
+    runtime, _, cache = native_metadata_runtime
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    cache.write_text(
+        "tokens: {oauth/fixture: {token: fixture-bearer, expires_at: 200}}\n"
+    )
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**runtime)
+    assert _record(runtime)["pid"] == original["pid"]
+
+
+@pytest.mark.parametrize("alias", ["AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE"])
+def test_native_metadata_explicit_credential_alias_stays_byte_strict(
+    native_metadata_runtime, alias
+):
+    runtime, _, cache = native_metadata_runtime
+    runtime["environment"][alias] = str(cache)
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty", "null"])
 @pytest.mark.parametrize(
     "service_account_runtime", [".nebius", "custom-nebius"], indirect=True
 )
@@ -1241,6 +1359,8 @@ def test_service_account_cache_refresh_creation_pruning_preserves_owned_pid(
         cache.unlink()
     elif initial_cache == "empty":
         cache.write_text("tokens: {}\n")
+    elif initial_cache == "null":
+        cache.write_text("tokens: null\n")
     api.ensure_isolated_api(**runtime)
     original = _record(runtime)
     cache.write_text(

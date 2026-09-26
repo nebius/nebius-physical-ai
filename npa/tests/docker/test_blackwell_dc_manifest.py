@@ -584,6 +584,90 @@ def test_cosmos3_validation_is_bound_to_guarded_promoted_bytes(
     assert re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"])
 
 
+def test_flex_pi_validation_binds_both_blackwell_targets_to_release_bytes(
+    manifest: dict, entries: list[dict]
+) -> None:
+    flex_pi = next(entry for entry in entries if entry["name"] == "npa-flex-pi")
+    evidence = manifest["validation_evidence"]["npa-flex-pi"]
+
+    assert flex_pi["publication_model"] == "exact-digest-promoted"
+    assert evidence["validated_tag"] == flex_pi["published_tag"]
+    assert evidence["validated_digest"] == flex_pi["published_digest"]
+    assert evidence["development_sha"] == flex_pi["development_sha"]
+    assert set(evidence["validated_gpus"]) == {"B200", "RTX PRO 6000"}
+
+    for gpu, platform, capability in (
+        ("B200", "gpu-b200-sxm", "10.0"),
+        ("RTX PRO 6000", "gpu-rtx6000", "12.0"),
+    ):
+        target = evidence["validated_gpus"][gpu]
+        assert target["platform"] == platform
+        assert target["capability"] == capability
+        assert target["result"] == "FLEX_PI_REAL_INFERENCE_PASSED"
+        assert target["observed_image_digest"] == evidence["validated_digest"]
+        # Exactly one visible device is the flex-pi runtime contract.
+        assert target["gpu_count"] == 1
+        assert target["torch_compile"] is True
+        assert target["finite_action_shape"] == [32, 14]
+        assert target["terminal_status"] == "SUCCEEDED"
+        assert target["restart_count"] == 0
+        assert target["inference_seconds"] > 0
+        assert target["peak_memory_bytes"] > 0
+        assert target["readback_verified_objects"] == 3
+        assert target["baked_module_hashes_verified"] > 0
+        assert set(target["artifact_sha256"]) == {
+            "actions.json",
+            "input.json",
+            "result.json",
+        }
+        assert all(
+            re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in target["artifact_sha256"].values()
+        )
+
+
+def test_flex_pi_historical_benchmarks_keep_their_original_image_identity(
+    manifest: dict,
+) -> None:
+    current = manifest["validation_evidence"]["npa-flex-pi"]
+    historical = current["historical_releases"]["0.1.0-cu128"]
+    assert historical["validated_tag"] == "0.1.0-cu128"
+    assert historical["validated_digest"] == (
+        "sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91"
+    )
+    assert historical["development_sha"] == "c0ed82abfa5c3692de5584efa04ac7c453b01458"
+    assert historical["validated_digest"] != current["validated_digest"]
+    assert set(historical["validated_gpus"]) == {"B200", "RTX PRO 6000"}
+
+    b200 = historical["validated_gpus"]["B200"]
+    assert isinstance(b200["replica_count"], int) and b200["replica_count"] > 0
+    assert b200["fanout_wall_seconds"] > 0
+    assert b200["throughput_replicas_per_second"] == pytest.approx(
+        b200["replica_count"] / b200["fanout_wall_seconds"], rel=1e-5
+    )
+    assert 0 < b200["wall_scaling_efficiency"] <= 1
+    for target in historical["validated_gpus"].values():
+        assert (
+            isinstance(target["paired_repeats"], int) and target["paired_repeats"] > 0
+        )
+        for mode in ("eager", "compiled"):
+            assert target[f"warm_{mode}_median_seconds"] > 0
+            assert (
+                target[f"warm_{mode}_p95_seconds"]
+                >= target[f"warm_{mode}_median_seconds"]
+            )
+            assert target[f"warm_{mode}_throughput_samples_per_second"] > 0
+        assert target["warm_compiled_speedup"] == pytest.approx(
+            target["warm_eager_median_seconds"] / target["warm_compiled_median_seconds"]
+        )
+        assert target["compiled_peak_memory_bytes"] > 0
+    tolerance = historical["compile_correctness"]
+    assert 0 <= tolerance["observed_max_absolute"] <= tolerance["atol"]
+    assert tolerance["atol"] == tolerance["rtol"] == 0.01
+    assert tolerance["max_relative_l2"] == 0.005
+    assert tolerance["max_action_l2_relative_drift"] == 0.001
+
+
 def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
     entries: list[dict],
 ) -> None:
