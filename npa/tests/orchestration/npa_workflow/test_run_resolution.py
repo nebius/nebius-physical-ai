@@ -164,6 +164,273 @@ def test_receipt_proven_run_stays_found_when_live_verification_is_unavailable(
     assert resolved.conclusively_absent is False
 
 
+def test_receipt_controller_route_binds_live_lookup(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = "isolated-controller-route"
+    controller_dir = (tmp_path / "controller").resolve()
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "18"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": True,
+                "isolated_config_dir": str(controller_dir),
+                "sky_bin": "/opt/npa/sky",
+            },
+        },
+    )
+    calls = []
+
+    def lookup(*args, **kwargs):
+        calls.append(kwargs)
+        return ManagedJobEvidence("found", job_id="18", status="PENDING")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
+    )
+
+    resolved = resolve_run(run_id, project="paidf")
+
+    assert resolved.controller_route_recorded is True
+    assert resolved.sky_bin == "/opt/npa/sky"
+    assert resolved.isolated_config_dir == controller_dir
+    assert calls == [
+        {
+            "job_id": "18",
+            "sky_bin": "/opt/npa/sky",
+            "isolated_config_dir": controller_dir,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "controller",
+    [
+        {"schema": "npa.workflow.controller-route.v1"},
+        {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": "false",
+            "isolated_config_dir": "",
+            "sky_bin": "/opt/npa/sky",
+        },
+        {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": True,
+            "isolated_config_dir": "relative/controller",
+            "sky_bin": "/opt/npa/sky",
+        },
+        {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": False,
+            "isolated_config_dir": "",
+            "sky_bin": "relative/sky",
+        },
+    ],
+)
+def test_malformed_receipt_controller_route_fails_closed(
+    resolver_env: ExactS3,
+    monkeypatch: pytest.MonkeyPatch,
+    controller: dict[str, object],
+) -> None:
+    update_submission_state(
+        "paidf",
+        "malformed-controller-route",
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "18"},
+            "controller": controller,
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("malformed route must not be queried"),
+    )
+
+    resolved = resolve_run("malformed-controller-route", project="paidf")
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert resolved.controller_route_error
+
+
+def test_explicit_controller_route_conflict_fails_closed(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    recorded = (tmp_path / "recorded").resolve()
+    update_submission_state(
+        "paidf",
+        "conflicting-controller-route",
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "18"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": True,
+                "isolated_config_dir": str(recorded),
+                "sky_bin": "/opt/npa/sky",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("conflicting route must not be queried"),
+    )
+
+    resolved = resolve_run(
+        "conflicting-controller-route",
+        project="paidf",
+        sky_bin="/different/sky",
+        isolated_config_dir=tmp_path / "different",
+    )
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert "conflicts" in resolved.controller_route_error
+
+
+def test_legacy_receipt_without_controller_route_fails_closed(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "legacy-controller-unknown"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "19"},
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("ambient controller must not be queried"),
+    )
+
+    resolved = resolve_run(run_id, project="paidf")
+
+    assert resolved.found is True
+    assert resolved.verification_unavailable is True
+    assert resolved.managed_job.outcome == "unavailable"
+    assert "no recorded controller route" in resolved.managed_job.error
+    assert resolved.controller_route_error == resolved.managed_job.error
+
+
+def test_legacy_receipt_accepts_explicit_controller_route(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = "legacy-explicit-controller"
+    controller_dir = (tmp_path / "controller").resolve()
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "20"},
+        },
+    )
+    calls = []
+
+    def lookup(*args, **kwargs):
+        calls.append(kwargs)
+        return ManagedJobEvidence("found", job_id="20", status="RUNNING")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        sky_bin="/opt/npa/sky",
+        isolated_config_dir=controller_dir,
+    )
+
+    assert resolved.managed_job.outcome == "found"
+    assert calls[0]["sky_bin"] == "/opt/npa/sky"
+    assert calls[0]["isolated_config_dir"] == controller_dir
+
+
+def test_legacy_shared_controller_accepts_explicit_sky_bin(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "legacy-explicit-shared-controller"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "21"},
+        },
+    )
+    calls = []
+
+    def lookup(*args, **kwargs):
+        calls.append(kwargs)
+        return ManagedJobEvidence("found", job_id="21", status="RUNNING")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
+    )
+
+    resolved = resolve_run(run_id, project="paidf", sky_bin="/opt/npa/sky")
+
+    assert resolved.managed_job.outcome == "found"
+    assert calls[0]["sky_bin"] == "/opt/npa/sky"
+    assert calls[0]["isolated_config_dir"] is None
+
+
+def test_recorded_shared_controller_rejects_active_ambient_isolation(
+    resolver_env: ExactS3,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id = "recorded-shared-ambient-isolated"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "21"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": False,
+                "isolated_config_dir": "",
+                "sky_bin": "/opt/npa/sky",
+            },
+        },
+    )
+    monkeypatch.setenv(
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str((tmp_path / "ambient").resolve())
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail(
+            "ambient isolated controller must not be queried"
+        ),
+    )
+
+    resolved = resolve_run(run_id, project="paidf")
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert "recorded shared controller conflicts" in resolved.controller_route_error
+
+
+def test_exact_job_without_receipt_does_not_query_ambient_controller(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("ambient controller must not be queried"),
+    )
+
+    resolved = resolve_run("exact-job-only", project="paidf", exact_job_id="22")
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert resolved.verification_unavailable is True
+    assert "no recorded controller route" in resolved.managed_job.error
+
+
 def test_legacy_partial_canonical_prefix_is_a_found_run(
     resolver_env: ExactS3,
 ) -> None:
@@ -268,7 +535,7 @@ def test_runtime_ledger_recovers_exact_active_wave_identity(
         "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
     )
 
-    resolved = resolve_run(run_id, project="paidf")
+    resolved = resolve_run(run_id, project="paidf", sky_bin="/opt/npa/sky")
 
     assert resolved.source == "canonical_paidf_s3_prefix"
     assert resolved.job_id == "41"

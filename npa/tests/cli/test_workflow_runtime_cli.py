@@ -343,7 +343,11 @@ def satisfied_preflight(mocker, monkeypatch):
         return_value=(None, {}),
     )
 
-    mocker.patch.object(skybin, "resolve_sky_bin", lambda _bin: "/usr/bin/sky")
+    mocker.patch.object(
+        skybin,
+        "resolve_sky_bin",
+        lambda value: Path(value) if value else Path("/usr/bin/sky"),
+    )
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://rt-bucket/npa-src/npa")
     monkeypatch.setattr(
         storage_validation,
@@ -372,6 +376,12 @@ def fake_runtime(mocker, satisfied_preflight):
 
         receipt = load_submission_state(kwargs["options"].project, kwargs["run_id"])
         assert receipt["launch"] == {"status": "launching", "kind": "runtime"}
+        assert receipt["controller"] == {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": kwargs["options"].isolated_config_dir is not None,
+            "isolated_config_dir": str(kwargs["options"].isolated_config_dir or ""),
+            "sky_bin": kwargs["options"].sky_bin,
+        }
         assert not submission_proves_never_launched(
             receipt,
             project=kwargs["options"].project,
@@ -984,6 +994,54 @@ def test_runtime_required_workflow_rejects_explicit_no_runtime(mocker) -> None:
     assert result.exit_code == 1
     assert "requires runtime execution" in result.output
     runtime_driver.assert_not_called()
+
+
+def test_non_runtime_submit_records_the_exact_controller_route(
+    mocker, monkeypatch, satisfied_preflight, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import load_submission_state
+
+    controller_root = (tmp_path / "controller").resolve()
+    sky_bin = Path("/opt/npa/pinned-sky")
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot._bin.resolve_sky_bin", lambda value: sky_bin
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot._bin.resolve_isolated_config_dir",
+        lambda value: controller_root,
+    )
+    submitted = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "non-runtime-controller-route",
+            "--project",
+            "unit",
+            "--no-runtime",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    receipt = load_submission_state("unit", "non-runtime-controller-route")
+    assert receipt["controller"] == {
+        "schema": "npa.workflow.controller-route.v1",
+        "isolated": True,
+        "isolated_config_dir": str(controller_root),
+        "sky_bin": str(sky_bin),
+    }
+    assert submitted.call_args.kwargs["sky_bin"] == str(sky_bin)
+    assert submitted.call_args.kwargs["isolated_config_dir"] == controller_root
 
 
 def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> None:

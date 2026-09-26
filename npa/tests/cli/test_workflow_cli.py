@@ -1217,11 +1217,28 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
 
     status_result = runner.invoke(
         app,
-        ["workbench", "workflow", "status", "s3://bucket/run-1", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            "s3://bucket/run-1",
+            "--json",
+        ],
     )
     logs_result = runner.invoke(
         app,
-        ["workbench", "workflow", "logs", "s3://bucket/run-1", "--stage", "train"],
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            "s3://bucket/run-1",
+            "--stage",
+            "train",
+        ],
     )
     live_logs_result = runner.invoke(
         app,
@@ -1229,6 +1246,8 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             "s3://bucket/run-1",
             "--stage",
             "train",
@@ -1256,6 +1275,118 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     assert live_logs["log"] == live_logs["stderr"] == ""
     assert artifacts_result.exit_code == 0
     assert "s3://bucket/run-1/artifacts/train/model.bin" in artifacts_result.output
+
+
+def test_manifest_multiwave_unknown_controller_route_blocks_all_live_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    run_id = "route-unknown-multiwave"
+    prefix = f"{run_id}/npa-workflow"
+    manifest = {
+        "schema_version": "npa.workflow.run.v1",
+        "workflow": "unit-workflow",
+        "api_version": "npa.workflow/v0.0.1",
+        "run_id": run_id,
+        "run_prefix_uri": f"s3://bucket/{run_id}",
+        "status": "RUNNING",
+        "steps": [
+            {"state": "first", "status": "SUCCEEDED"},
+            {"state": "second", "status": "RUNNING"},
+        ],
+    }
+    runtime = {
+        "schema_version": "npa.workflow.runtime.v1",
+        "run_id": run_id,
+        "status": "running",
+        "waves": [
+            {
+                "key": "first",
+                "states": ["first"],
+                "job_id": "41",
+                "status": "succeeded",
+            },
+            {
+                "key": "second",
+                "states": ["second"],
+                "job_id": "42",
+                "status": "running",
+            },
+        ],
+    }
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=f"{prefix}/manifest.json",
+        Body=json.dumps(manifest).encode(),
+    )
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=f"{prefix}/runtime.json",
+        Body=json.dumps(runtime).encode(),
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unknown controller route must not make a live call")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.assess_run_cancellation",
+        forbidden,
+    )
+    locator = f"s3://bucket/{prefix}/manifest.json"
+
+    status = runner.invoke(app, ["workbench", "workflow", "status", locator, "--json"])
+    logs = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            locator,
+            "--stage",
+            "second",
+            "--follow",
+            "--json",
+        ],
+    )
+    cancel = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "cancel",
+            run_id,
+            "--workflow-s3-uri",
+            locator,
+            "--json",
+        ],
+    )
+
+    assert status.exit_code == 2, status.output
+    assert (
+        json.loads(status.output)["verification_status"] == "VERIFICATION_UNAVAILABLE"
+    )
+    assert logs.exit_code == 1, logs.output
+    assert "no recorded controller route" in logs.output
+    assert cancel.exit_code == 2, cancel.output
+    cancelled = json.loads(cancel.output)
+    assert cancelled["cloud_calls"] is False
+    assert cancelled["verification"] == "controller_route_unavailable"
 
 
 def _unreadable_stage_response(failure: str) -> dict:
@@ -1401,7 +1532,18 @@ def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(
     fake_s3.put_object(Bucket="bucket", Key=key, Body=json.dumps(manifest).encode())
     uri = f"s3://bucket/{key}"
 
-    result = runner.invoke(app, ["workbench", "workflow", "status", uri, "--json"])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            uri,
+            "--json",
+        ],
+    )
 
     assert result.exit_code == 1, result.output
     payload = json.loads(result.output)
@@ -1546,6 +1688,8 @@ def test_workflow_logs_single_step_job_needs_no_task_selector(
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             uri,
             *stage_args,
             "--json",
@@ -1612,6 +1756,8 @@ def test_workflow_logs_after_driver_crash_without_task_timeline(
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             uri,
             "--stage",
             "rollout",
@@ -1924,6 +2070,8 @@ def _invoke_logs_with_partial_stage(
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             uri,
             "--stage",
             "rollout",
@@ -2138,7 +2286,17 @@ def test_workflow_logs_fail_closed_on_invalid_attempt_metadata(
 
     result = runner.invoke(
         app,
-        ["workbench", "workflow", "logs", uri, "--stage", "rollout", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            uri,
+            "--stage",
+            "rollout",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 2, result.output
@@ -2193,7 +2351,17 @@ def test_workflow_logs_accept_missing_and_numeric_attempt_metadata(
 
     result = runner.invoke(
         app,
-        ["workbench", "workflow", "logs", uri, "--stage", "rollout", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            uri,
+            "--stage",
+            "rollout",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -2273,6 +2441,8 @@ def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             uri,
             "--stage",
             "rollout",
@@ -2382,7 +2552,16 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
     uri = f"s3://bucket/{prefix}/manifest.json"
 
     status_result = runner.invoke(
-        app, ["workbench", "workflow", "status", uri, "--json"]
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            uri,
+            "--json",
+        ],
     )
 
     assert status_result.exit_code == 2, status_result.output
@@ -2416,6 +2595,8 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             uri,
             "--stage",
             "stage-0",
@@ -2449,6 +2630,8 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             uri,
             "--stage",
             "stage-0",
@@ -2485,6 +2668,8 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
             "workbench",
             "workflow",
             "logs",
+            "--sky-bin",
+            "/opt/pinned-sky",
             uri,
             "--stage",
             "stage-0",
@@ -2612,6 +2797,8 @@ def test_status_discovers_paidf_manifest_from_project_and_run_id(monkeypatch) ->
             "workbench",
             "workflow",
             "status",
+            "--sky-bin",
+            "/opt/pinned-sky",
             run_id,
             "--project",
             "test-rtx",
@@ -2775,7 +2962,15 @@ def test_workflow_cancel_distinguishes_terminal_launched_run(monkeypatch) -> Non
 
     result = runner.invoke(
         app,
-        ["workbench", "workflow", "cancel", "s3://bucket/ordinary-terminal", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "cancel",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            "s3://bucket/ordinary-terminal",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -2923,6 +3118,8 @@ def test_paidf_terminal_multistage_cancel_without_root_job_id_exits_zero(
             "workbench",
             "workflow",
             "cancel",
+            "--sky-bin",
+            "/opt/pinned-sky",
             run_id,
             "--project",
             "paidf",
@@ -3018,6 +3215,8 @@ def test_paidf_active_multistage_cancel_targets_each_active_wave_once(
             "workbench",
             "workflow",
             "cancel",
+            "--sky-bin",
+            "/opt/pinned-sky",
             run_id,
             "--project",
             "paidf",
@@ -3095,6 +3294,8 @@ def test_cancel_absence_conflict_exposes_only_explicit_destroy_allowance(
             "workbench",
             "workflow",
             "cancel",
+            "--sky-bin",
+            "/opt/pinned-sky",
             "paidf-stale-absence",
             "--project",
             "paidf",
@@ -3171,6 +3372,8 @@ def test_cancel_mixed_live_and_absence_conflict_requires_clean_live_cancellation
             "workbench",
             "workflow",
             "cancel",
+            "--sky-bin",
+            "/opt/pinned-sky",
             "paidf-mixed-absence",
             "--project",
             "paidf",
@@ -3666,6 +3869,12 @@ def test_workflow_logs_pending_job_returns_without_payload_log_query(
                 "steps": [{"state": "qualify", "status": "submitted"}],
             },
             "launch": {"status": "submitted", "sky_job_id": "91"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": False,
+                "isolated_config_dir": "",
+                "sky_bin": "/opt/pinned-sky",
+            },
         },
     )
     evidence = ManagedJobEvidence(
@@ -3751,6 +3960,12 @@ def test_workflow_logs_follow_still_queries_pending_job(monkeypatch) -> None:
                 "steps": [{"state": "qualify", "status": "submitted"}],
             },
             "launch": {"status": "submitted", "sky_job_id": "92"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": False,
+                "isolated_config_dir": "",
+                "sky_bin": "/opt/pinned-sky",
+            },
         },
     )
     monkeypatch.setattr(
@@ -3834,6 +4049,12 @@ def test_manifest_pending_status_reports_receipt_or_managed_job_provenance(
                     "steps": [{"state": "curate", "status": "submitted"}],
                 },
                 "launch": {"status": "submitted", "sky_job_id": "82"},
+                "controller": {
+                    "schema": "npa.workflow.controller-route.v1",
+                    "isolated": False,
+                    "isolated_config_dir": "",
+                    "sky_bin": "/opt/pinned-sky",
+                },
             },
         )
     evidence = ManagedJobEvidence(
@@ -3876,6 +4097,67 @@ def test_manifest_pending_status_reports_receipt_or_managed_job_provenance(
     )
     assert payload["active_stage_name"] == "curate"
     assert payload["stages"]["curate"]["scheduler_state"] == "RUNNING"
+
+
+def test_manifest_pending_receipt_without_route_never_requeries_ambient_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda project=None: StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/",
+            endpoint_url="https://storage.example",
+        ),
+    )
+    update_submission_state(
+        "paidf",
+        "pending-route-unknown",
+        {
+            "workflow": {
+                "name": "physical-ai-data-factory",
+                "steps": [{"state": "curate", "status": "submitted"}],
+            },
+            "launch": {"status": "submitted", "sky_job_id": "82"},
+        },
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("pending route without ownership must not query ambient Sky")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs", forbidden
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "pending-route-unknown",
+            "--project",
+            "paidf",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["verification_status"] == "VERIFICATION_UNAVAILABLE"
+    assert "no recorded controller route" in payload["live_verification"]["reason"]
 
 
 def test_status_json_reports_provider_unavailable_without_saying_not_found(

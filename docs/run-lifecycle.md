@@ -206,6 +206,14 @@ canonical workflow prefix, or the pinned managed-job identity — even while the
 final manifest is still pending. `logs` uses the same resolver. Both JSON and
 text output identify every source they checked.
 
+New submission receipts record the resolved SkyPilot executable and isolated
+controller state directory used for launch. Later `status`, `logs`, and
+`cancel` calls reuse that exact route. A legacy receipt with a managed-job ID
+but no controller route requires explicit `--sky-bin`. Runs launched with
+isolated state also require the matching `--isolated-config-dir`. NPA reports
+live verification as unavailable instead of treating absence from an ambient
+SkyPilot queue as proof that the job is absent.
+
 | State | What it means |
 | --- | --- |
 | `MANIFEST_PENDING` | Submission evidence exists (a receipt, job, or task identity) and the manifest has not landed yet |

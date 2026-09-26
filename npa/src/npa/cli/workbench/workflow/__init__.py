@@ -364,6 +364,25 @@ def _invalid_log_attempt_payload(
     return payload
 
 
+def _require_live_controller_route(resolution) -> None:
+    """Reject live queries whose durable job has no exact controller route."""
+    error = str(getattr(resolution, "controller_route_error", "") or "")
+    if error:
+        raise RuntimeError(error)
+
+
+def _controller_route_receipt(
+    sky_bin: str, isolated_config_dir: Path | None
+) -> dict[str, object]:
+    """Describe the exact Sky executable and state root used for submission."""
+    return {
+        "schema": "npa.workflow.controller-route.v1",
+        "isolated": isolated_config_dir is not None,
+        "isolated_config_dir": str(isolated_config_dir or ""),
+        "sky_bin": sky_bin,
+    }
+
+
 def _fail(
     msg: str,
     code: int = 1,
@@ -2778,6 +2797,21 @@ def submit_cmd(
                 _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
+        from npa.orchestration.skypilot._bin import (
+            resolve_isolated_config_dir,
+            resolve_sky_bin,
+        )
+
+        effective_sky_bin = (
+            str(resolve_sky_bin(sky_bin or None))
+            if prepared_npa is not None
+            else sky_bin
+        )
+        effective_isolated_config_dir = (
+            resolve_isolated_config_dir(isolated_config_dir)
+            if prepared_npa is not None
+            else isolated_config_dir
+        )
         ledger_project = project or "default"
         from npa.orchestration.skypilot.launch_transaction import (
             logical_launch_identity,
@@ -2854,9 +2888,9 @@ def submit_cmd(
                 return submit_workflow(
                     submitted_yaml_path,
                     resolved_run_id,
-                    isolated_config_dir=isolated_config_dir,
+                    isolated_config_dir=effective_isolated_config_dir,
                     config_path=config_path,
-                    sky_bin=sky_bin or None,
+                    sky_bin=effective_sky_bin,
                     controller_backend=controller_backend.value,
                     infra=infra,
                     secret_envs=secret_env,
@@ -2922,7 +2956,10 @@ def submit_cmd(
                         {
                             "workflow": _npa_submission_receipt(
                                 prepared_npa, resolved_run_id
-                            )
+                            ),
+                            "controller": _controller_route_receipt(
+                                effective_sky_bin, effective_isolated_config_dir
+                            ),
                         },
                         locked=True,
                     )
@@ -3319,6 +3356,13 @@ def _run_npa_workflow_runtime(
 
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
+    from npa.orchestration.skypilot._bin import (
+        resolve_isolated_config_dir,
+        resolve_sky_bin,
+    )
+
+    effective_sky_bin = str(resolve_sky_bin(sky_bin or None))
+    isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
     workflow_receipt = _runtime_submission_receipt(spec, run_id, assume_decision)
     if recorded_store is not None:
         workflow_receipt["run_prefix_uri"] = recorded_store.run_prefix_uri
@@ -3328,7 +3372,12 @@ def _run_npa_workflow_runtime(
     update_submission_state(
         project or "default",
         run_id,
-        {"workflow": workflow_receipt},
+        {
+            "workflow": workflow_receipt,
+            "controller": _controller_route_receipt(
+                effective_sky_bin, isolated_config_dir
+            ),
+        },
     )
 
     resolved_secret_envs = secret_env_names(secret_envs, values=secret_env_values)
@@ -3352,7 +3401,7 @@ def _run_npa_workflow_runtime(
         plan_migration_reason=plan_migration_reason,
         adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
         project=project or "default",
-        sky_bin=sky_bin,
+        sky_bin=effective_sky_bin,
         # The preflight and every wave use the same selected principal. A new
         # submit/resume invocation resolves rotated credentials again.
         credential_resolver=lambda: dict(secret_env_values),
@@ -5341,6 +5390,8 @@ def _durable_workflow_status(
         isolated_config_dir=isolated_config_dir,
         allow_local_not_submitted=True,
     )
+    sky_bin = resolution.sky_bin or sky_bin
+    isolated_config_dir = resolution.isolated_config_dir
     from npa.verification import (
         CACHED,
         VERIFIED,
@@ -5351,6 +5402,8 @@ def _durable_workflow_status(
     )
 
     attempted_at = verification_now()
+    controller_route_error = str(resolution.controller_route_error or "")
+    live_controller_queries = not cached and not controller_route_error
     retry_command = (
         f"npa workbench workflow status {_display_run_id(run_id)}"
         + (f" --project {project}" if project else "")
@@ -5549,7 +5602,9 @@ def _durable_workflow_status(
             and run_manifest.sky_job_id not in job_ids
         ):
             job_ids.append(run_manifest.sky_job_id)
-        for managed_job_id in [] if cached else job_ids:
+        if controller_route_error:
+            verification_errors.append(controller_route_error)
+        for managed_job_id in job_ids if live_controller_queries else []:
             try:
                 live = workflow_status(
                     managed_job_id,
@@ -5809,7 +5864,9 @@ def _durable_workflow_status(
 
     job_id = str(manifest.get("sky_job_id") or "")
     live_status = ""
-    if job_id and not cached:
+    if controller_route_error:
+        legacy_verification_errors.append(controller_route_error)
+    if job_id and live_controller_queries:
         try:
             live = workflow_status(
                 job_id,
@@ -6004,15 +6061,19 @@ def _manifest_pending_status(
     if preview_diagnostic:
         diagnostics.append(preview_diagnostic)
     verification_errors: list[str] = []
+    controller_route_error = str(resolution.controller_route_error or "")
+    live_controller_queries = not cached and not controller_route_error
+    if controller_route_error:
+        verification_errors.append(controller_route_error)
     if (
-        not cached
+        live_controller_queries
         and resolution.managed_job is not None
         and resolution.managed_job.outcome == "found"
         and str(resolution.job_id or "").strip() == job_id
     ):
         live_status = resolution.managed_job.status
         task_rows = [dict(item) for item in resolution.managed_job.task_rows]
-    elif job_id and not cached:
+    elif job_id and live_controller_queries:
         try:
             live = workflow_status(
                 job_id,
@@ -6084,7 +6145,7 @@ def _manifest_pending_status(
         updated_at=str(resolution.receipt.get("updated_at") or ""),
     )
     if (
-        not cached
+        live_controller_queries
         and job_id
         and str(live_status).upper()
         not in {
@@ -7154,6 +7215,8 @@ def logs_cmd(
                     isolated_config_dir=isolated_config_dir,
                 )
             )
+            sky_bin = resolution.sky_bin or sky_bin
+            isolated_config_dir = resolution.isolated_config_dir
             state = resolution.state
             from npa.orchestration.skypilot.workflow_state import (
                 read_stage_log,
@@ -7194,6 +7257,7 @@ def logs_cmd(
                     )
                     _emit_pending_logs(payload, json_output=json_output)
                     return
+                _require_live_controller_route(resolution)
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
@@ -7468,6 +7532,7 @@ def logs_cmd(
                     # The one-shot renderer emits one task per planned step.
                     # Job-level logs need neither its renamed task nor an assumed ID.
                     live_stage = ""
+                _require_live_controller_route(resolution)
                 prestart = (
                     None
                     if follow
@@ -7581,6 +7646,7 @@ def logs_cmd(
             selected_stage = _resolve_stage_name(manifest, selected_stage)
             job_id = str(manifest.get("sky_job_id") or "")
             if follow and job_id:
+                _require_live_controller_route(resolution)
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
@@ -7996,6 +8062,8 @@ def cancel_cmd(
                 exact_job_id=resolved_exact_job_id,
                 allow_local_not_submitted=True,
             )
+            sky_bin = resolution.sky_bin or sky_bin
+            isolated_config_dir = resolution.isolated_config_dir
         resolved_run_id = resolution.run_id
         if resolution.not_submitted:
             detected = (
@@ -8052,6 +8120,22 @@ def cancel_cmd(
                     "Run verification is unavailable; a malformed manifest, ambiguous "
                     "run, or provider/auth failure is not absence, so cancellation was "
                     "not attempted."
+                ),
+            }
+        elif resolution.controller_route_error:
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "verification_failed",
+                "detected_state": "VERIFICATION_UNAVAILABLE",
+                "sky_job_id": "",
+                "sky_job_ids": [],
+                "cloud_calls": False,
+                "verification": "controller_route_unavailable",
+                "resolution_checks": resolution.checks_payload(),
+                "errors": [resolution.controller_route_error],
+                "message": (
+                    "Cancellation was not attempted because the exact controller "
+                    "route for the durable managed-job identities is unavailable."
                 ),
             }
         else:
