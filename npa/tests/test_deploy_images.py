@@ -70,9 +70,13 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
 
 
 @pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
-def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
+def test_quarantined_public_release_metadata_fails_closed(tool: str) -> None:
     with pytest.raises(ValueError, match="quarantined"):
         public_release_tag_for_tool(tool)
+
+
+@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS - {"sonic"}))
+def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
     with pytest.raises(ValueError, match="quarantined|no accepted release"):
         container_image_for_tool(tool)
     configured_tag = SUPPORTED_TOOL_VERSIONS[tool]
@@ -83,6 +87,33 @@ def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> Non
     else:
         with pytest.raises(ValueError, match="quarantined|no accepted release"):
             container_image_for_tool(tool, tag=configured_tag)
+
+
+def test_sonic_public_resolution_uses_active_variant_manifest() -> None:
+    expected_tag = (
+        "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+    )
+
+    assert container_image_for_tool("sonic", gpu_target="gpu-rtx6000") == (
+        f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic:{expected_tag}"
+    )
+    assert (
+        container_image_for_tool(
+            "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
+        )
+        == f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic:{expected_tag}"
+    )
+
+
+@pytest.mark.parametrize("variant", ["sonic-l40s-baked", "sonic-mujoco-h100-mvp"])
+def test_sonic_quarantined_variants_still_fail_closed(variant: str) -> None:
+    with pytest.raises(ValueError, match="status 'quarantined'"):
+        container_image_for_tool("sonic", image_variant=variant)
+
+
+def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -> None:
+    with pytest.raises(ValueError, match="active SONIC image variant"):
+        container_image_for_tool("sonic", tag="0.1.2")
 
 
 @pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
