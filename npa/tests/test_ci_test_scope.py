@@ -286,9 +286,20 @@ def test_missing_comparison_fails_and_empty_diff_keeps_full_validation(compariso
 def _run_scope_step(
     repo: Path, base: str, head: str, event: str = "pull_request"
 ) -> list[str]:
-    workflow_path = Path(__file__).resolve().parents[2] / ".github/workflows/test.yml"
+    workflow_path = (
+        Path(__file__).resolve().parents[2]
+        / ".github/workflows/security-regression.yml"
+    )
     workflow = yaml.safe_load(workflow_path.read_text())
-    command = workflow["jobs"]["scope"]["steps"][-1]["run"]
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["gitleaks"]["steps"]
+        if step.get("id") == "scope"
+    )
+    interpreter = repo / "npa/.venv/bin/python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    if not interpreter.exists():
+        interpreter.symlink_to(sys.executable)
     output = repo / "scope-output"
     output.unlink(missing_ok=True)
     environment = dict(
