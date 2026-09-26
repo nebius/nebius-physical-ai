@@ -47,7 +47,7 @@
   "validation_states": {
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
-    "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
+    "pending-build": "No retained, accepted candidate artifact or complete current byte-scan proof exists, so no wheel arch set and no GPU result exist yet. A Dockerfile or reference-build graph alone cannot upgrade this state.",
     "not-required": "CPU-only or GPU-agnostic driver-API image; no architecture-specific wheel/SASS assertion applies. GPU scheduling and real capability checks remain required when the workload uses a GPU.",
     "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all."
   },
@@ -86,6 +86,16 @@
       "verdict": "not-applicable",
       "validation": "not-required",
       "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
+    },
+    {
+      "name": "npa-libero",
+      "dockerfile": "libero/Dockerfile",
+      "build_script": "libero/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "smoke": "Run the headless official LIBERO demonstration gate on one B200: real upstream BC-RNN Adam steps, strict checkpoint reload, trajectory-disjoint held-out loss and action predictions, and exact image and GPU evidence.",
+      "notes": "The current neutral-bootstrap candidate remains unbuilt, quarantined, and unvalidated. It contains no LIBERO source, GPU runtime, model, demonstration, task asset, cache, checkpoint, credential, or output payload. No datacenter Blackwell compatibility or public acceptance is claimed."
     },
     {
       "name": "npa-cosmos3-nano-video",
@@ -562,6 +572,17 @@
       "published_registries": [
         "public-release"
       ]
+    },
+    {
+      "name": "npa-gymnasium-robotics",
+      "dockerfile": "gymnasium-robotics/Dockerfile",
+      "build_script": "gymnasium-robotics/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-build",
+      "blocked_reason": "The genuine Shadow Dexterous Hand capability requires MuJoCo EGL rendering. B200/B300 remain unqualified and deferred: no exact image, driver, EGL path, or real Shadow workload qualification is recorded for either target. Preserve RTX-only routing until each target is separately qualified; do not infer raster-EGL compatibility from RT-core inventory.",
+      "upstream_tracking": "docs/workbench/byof-gymnasium-robotics.md#hard-gate-capability",
+      "smoke": "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1 runs 120 MuJoCo steps and 2,400 substeps with contacts, touch response, object-orientation change, and distinct EGL RGB frames on exactly one RTX PRO 6000 Blackwell",
+      "notes": "This is a neutral development candidate on an immutable full-SHA build path. An owner-only reference build supplied the scanner's exact ordered 20-DiffID anchors; product scan, SBOM, push, immutable-digest and GPU gates remain required before any supported release claim. Historical RTX PRO 6000 evidence does not qualify current candidate bytes. B200/B300 compatibility remains unqualified and deferred pending exact image, driver, EGL, and real Shadow workload evidence; never infer raster-EGL compatibility from RT-core inventory."
     },
     {
       "name": "npa-isaac-lab",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import math
 import os
@@ -320,6 +321,86 @@ def _verify_stored_table(
         )
 
 
+def _canonical_record(record: dict[str, Any]) -> str:
+    try:
+        return json.dumps(
+            record, allow_nan=False, separators=(",", ":"), sort_keys=True
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"record is not canonical JSON: {exc}"
+        ) from exc
+
+
+def _unique_index_records(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    unique_records: list[dict[str, Any]] = []
+    request_records: dict[str, str] = {}
+    reused = 0
+    for record in records:
+        record_id = record.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            raise HTTPException(
+                status_code=400, detail="each record requires a non-empty record_id"
+            )
+        canonical = _canonical_record(record)
+        previous = request_records.get(record_id)
+        if previous is None:
+            request_records[record_id] = canonical
+            unique_records.append(record)
+        elif previous == canonical:
+            reused += 1
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"record_id has conflicting content: {record_id}",
+            )
+    return unique_records, reused
+
+
+def _existing_index_records(table: Any) -> dict[str, str]:
+    existing: dict[str, str] = {}
+    for record in table.to_arrow().to_pylist():
+        record_id = record.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            raise HTTPException(
+                status_code=409, detail="existing table has an invalid record_id"
+            )
+        canonical = _canonical_record(record)
+        previous = existing.get(record_id)
+        if previous is not None and previous != canonical:
+            raise HTTPException(
+                status_code=409,
+                detail=f"existing record_id has conflicting content: {record_id}",
+            )
+        existing[record_id] = canonical
+    return existing
+
+
+def _plan_index_append(
+    table: Any, records: list[dict[str, Any]], request_reused: int
+) -> tuple[pa.Table, int]:
+    incoming = _rows_as_arrow_table(records, table.schema)
+    existing = _existing_index_records(table)
+    novel_records: list[dict[str, Any]] = []
+    reused = request_reused
+    for record in incoming.to_pylist():
+        record_id = record["record_id"]
+        canonical = _canonical_record(record)
+        stored = existing.get(record_id)
+        if stored is None:
+            novel_records.append(record)
+        elif stored == canonical:
+            reused += 1
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"record_id has conflicting content: {record_id}",
+            )
+    return pa.Table.from_pylist(novel_records, schema=table.schema), reused
+
+
 def _mutate_table(
     db: Any, table_name: str, body: CreateTableRequest
 ) -> tuple[str, int]:
@@ -454,27 +535,36 @@ def create_app(
         request: Request,
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
-        """Append dataset records, creating the table on first write."""
+        """Insert novel dataset identities and reuse exact existing records."""
 
         await require_auth(request, authorization)
         if not body.records:
             raise HTTPException(status_code=400, detail="records must not be empty")
         rows = [dict(record) for record in body.records]
+        unique_rows, reused = _unique_index_records(rows)
         if body.table in set(_list_tables(db)):
             table = db.open_table(body.table)
-            table.add(rows)
-            status = "appended"
+            novel_rows, reused = _plan_index_append(table, unique_rows, reused)
+            inserted = novel_rows.num_rows
+            if inserted:
+                table.add(novel_rows)
+                status = "appended"
+            else:
+                status = "replayed"
         else:
             # First write defines the schema, which is what makes `register` idempotent for a
             # fresh dataset id without a separate create step.
-            db.create_table(body.table, data=rows, mode="create")
+            db.create_table(body.table, data=unique_rows, mode="create")
+            inserted = len(unique_rows)
             status = "created"
         known_tables.add(body.table)
         return {
             "status": status,
             "table": body.table,
             "lance_uri": body.lance_uri,
-            "rows": len(rows),
+            "rows": inserted,
+            "inserted": inserted,
+            "reused": reused,
         }
 
     @app.post("/query")

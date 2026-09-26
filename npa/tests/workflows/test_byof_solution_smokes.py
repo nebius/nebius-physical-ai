@@ -84,6 +84,17 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "spec": "byof-wan2.1-14b.yaml",
         "must_exercise": ["wan2.1-14b_text_to_video", "decoded_mp4_validation"],
     },
+    "libero": {
+        "capability_name": "libero_spatial_bc_rnn_train_reload_heldout",
+        "smoke_artifact_name": "libero-smoke.json",
+        "spec": "byof-libero.yaml",
+        "must_exercise": [
+            "libero_official_demo_sha256",
+            "libero_upstream_bert_task_conditioning",
+            "libero_trajectory_disjoint_heldout_split",
+            "libero_spatial_bc_rnn_train_reload_heldout",
+        ],
+    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
@@ -102,6 +113,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "mjx_cartpole_step",
             "mjx_cheetah_run_step",
             "train_jax_ppo_cartpole_smoke",  # attempted; may remain deferred
+        ],
+    },
+    "gymnasium-robotics": {
+        "capability_name": "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1",
+        "smoke_artifact_name": "gymnasium-robotics-smoke.json",
+        "spec": "byof-gymnasium-robotics.yaml",
+        "must_exercise": [
+            "registered_shadow_hand_environment",
+            "mujoco_physics_steps",
+            "continuous_touch_sensor_response",
+            "mujoco_contacts",
+            "egl_rgb_rendering",
+            "rtx_pro_6000_blackwell_execution",
         ],
     },
     "robocasa": {
@@ -198,11 +222,23 @@ def _load_config(path: Path) -> dict[str, object]:
 
 
 def _smoke_contract(path: Path, config: dict[str, object]) -> str:
-    command = str(config.get("smoke_command") or "")
+    """Read an embedded smoke or the fixed neutral-bootstrap hard gate."""
+
     if path.name == "byof-robomimic.yaml":
-        assert command == "robomimic-entrypoint train-smoke"
+        assert config.get("smoke_command") == "robomimic-entrypoint train-smoke"
         return ROBOMIMIC_SMOKE_PATH.read_text(encoding="utf-8")
-    return command
+    smoke = str(config.get("smoke_command") or "")
+    if path.name == "byof-libero.yaml":
+        assert smoke == "/opt/npa/libero/smoke.sh"
+        return (ROOT / "npa/docker/workbench/libero/libero_smoke.py").read_text(
+            encoding="utf-8"
+        )
+    if path.name != "byof-gymnasium-robotics.yaml":
+        return smoke
+    expected = "/usr/local/bin/npa-gymnasium-entrypoint run-smoke"
+    assert expected in smoke
+    packaged = ROOT / "npa/docker/workbench/gymnasium-robotics/capability_smoke.py"
+    return smoke + "\n" + packaged.read_text(encoding="utf-8")
 
 
 def _load_wan_input_contract():
@@ -234,7 +270,7 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
     for path in SOLUTION_SPECS:
         config = _load_config(path)
         smoke = _smoke_contract(path, config)
-        assert ".write_text(" in smoke, path.name
+        assert ".write_text(" in smoke or ".write_bytes(" in smoke, path.name
         assert "json.dumps(" in smoke, path.name
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
         assert '"solution"' in smoke or "'solution'" in smoke, path.name

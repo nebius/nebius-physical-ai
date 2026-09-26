@@ -1,0 +1,69 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The quarantined saved workflow passed schema validation and produced a single managed workbench.byof.repo plan without executing it.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-libero.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-libero.yaml --run-id libero-phase-a-plan --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Static contract tests bind the managed scheduler ID, Pod-observed payload service account, immutable upstream task and BERT conditioning inputs, runtime-only payload boundary, independent build provenance inputs, real BC-RNN training/reload/held-out artifact contract, and headless B200 requirement. This does not establish live execution.",
+      "evidence": [
+        "npa/tests/workflows/test_byof_libero.py",
+        "npa/tests/workflows/test_byof_container_verify.py",
+        "npa/tests/docker/test_libero_runtime_bootstrap.py",
+        "sha256:51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a workflows/testing/byof-libero.yaml",
+        "sha256:ab02acb123bb991e0d016f094659aff45156a78f1de2b28b93da252e56adc1fd npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
+        "sha256:d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02 npa/docker/workbench/libero/runtime-manifest.json",
+        "sha256:8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99 npa/docker/workbench/libero/runtime-requirements.txt",
+        "sha256:cb7e4fda79a4a33af81fb67ea9ec10d6eb8417afa5540d606542c475a35beecb npa/docker/workbench/libero/runtime-bootstrap.py",
+        "sha256:35aecce5323113281606c8841d79b8ddd8e54b13e9943b702e50e274a4c98dd6 npa/docker/workbench/libero/libero_smoke.py",
+        "sha256:e7c88becfe3cdab897f8127c1cbe708b2536bca5936092e60cec7d9266437fe6 npa/src/npa/deploy/libero_image_manifest.json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in bucket is a placeholder and Phase A did not create or probe storage.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "The image contains only immutable metadata. All 135 artifact sizes and license classifications are reviewed, but runtime materialization remains disabled until the customer personally acknowledges the exact terms and directly signs exact customer/run evidence with a customer-controlled key; NPA only authenticates, transports, and validates that evidence, and no source, runtime, data, task, or model bytes were fetched during metadata review.",
+      "evidence": [
+        "npa/docker/workbench/libero/runtime-manifest.json",
+        "npa/docker/workbench/libero/REDISTRIBUTION.md"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Live use requires a mode-private direct customer-signed authorization bound to the authenticated customer and signer, run, complete workflow profile, exact terms, immutable source revision, manifest, and qualified image. Image qualification, provider targets, and customer authorization are absent, and no repository value, control-plane signature, or HF/NGC credential stands in for acceptance.",
+      "evidence": [
+        "npa/docker/workbench/libero/runtime-bootstrap.py",
+        "docs/workbench/byof-libero.md"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The neutral image is unbuilt, has no qualified OCI digest or anonymous-pull proof, and remains in publication quarantine. A future trusted build must pass the dedicated complete-byte, SBOM, provenance, security, and license gates.",
+      "evidence": [
+        "npa/src/npa/deploy/libero_image_manifest.json",
+        "npa/scripts/scan_image_libero_payload.py"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "Phase A performed no workload submission or GPU use. A future live gate must own the customer-authorized managed submission, independently read back every allowlisted artifact, verify complete UID-bound cleanup, and prove the exact Pod-observed digest on one B200 with sm_100.",
+      "evidence": [
+        "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
+        "docs/workbench/byof-libero.md"
+      ]
+    }
+  }
+}
