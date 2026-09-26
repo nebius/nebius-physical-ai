@@ -167,6 +167,33 @@ bind that journal. Real model execution still requires an
 operator-qualified checkpoint bridge and runtime; the public adapter does not
 manufacture that evidence.
 
+The `comet-trained` policy kind serves a selected BF16 export after a separate
+two-process GPU parity qualification. Its admission binds the parity terminal,
+producer-valid selection, score, precision, runtime, and milestone receipts,
+both raw action archives, every exported Orbax `params/` member, the exact
+normalization asset, the RNG contract, and the adapter serving identity to
+provider-read bytes. The operator materializes those admitted params under
+`<checkpoint>/<manager-step>/params/` and the normalization file under
+`<checkpoint>/<manager-step>/assets/<asset-id>/norm_stats.json`, then supplies the
+provider-read parity originals with `--policy-trained-input-root`. Before
+simulator startup or case claims, the worker checks the complete tree and
+frozen DEV or REPORT panel. Each case performs a discarded real checkpoint load
+before starting a fresh selected-policy process.
+
+This serving tree is a derivative inference artifact. It is not a complete
+training-manager checkpoint and does not claim optimizer state, `train_state`,
+or resumability. It cannot be passed to the `comet-native` TRAIN admission path.
+Parity admission also does not claim rollout quality: candidate identity and
+the exact panel must be frozen before any DEV case is read.
+
+The selected DP4 producer emits milestone schema v2 with a compact partition
+`state_contract`; the generic native-training milestone uses schema v1 with
+per-leaf FP32 and AdamW maps. The trained adapter reuses the shared complete
+checkpoint topology check, then validates the v2 cursor, partition totals,
+provider-member closure, and source-bound static reconstruction directly. It
+does not translate the selected receipt into the generic resumable-training
+contract.
+
 For managed workers, construct the serving artifact with
 `serving_identity.serving_artifact(args)`. It hashes the actual adapter files,
 policy kind, execution variant, per-episode process lifecycle, and optional

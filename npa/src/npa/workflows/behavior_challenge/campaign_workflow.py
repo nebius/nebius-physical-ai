@@ -36,6 +36,7 @@ _OPTIONAL_POLICY_FLAGS = {
     "policy_validation_receipt": "--policy-validation-receipt",
     "policy_stock_correlation_asset": "--policy-stock-correlation-asset",
     "policy_stock_correlation_sha256": "--policy-stock-correlation-sha256",
+    "policy_trained_input_root": "--policy-trained-input-root",
     "policy_specialist_equivalence_receipt": "--policy-specialist-equivalence-receipt",
     "policy_specialist_equivalence_sha256": "--policy-specialist-equivalence-sha256",
     "policy_specialist_report_admission": "--policy-specialist-report-admission",
@@ -222,8 +223,17 @@ def _runtime_config(runtime: dict[str, Any]) -> dict[str, Any]:
     stock = {"policy_stock_correlation_asset", "policy_stock_correlation_sha256"}
     if bool(stock & set(optional)) != stock.issubset(optional):
         raise ValueError("stock correlation artifact and SHA-256 must appear together")
+    _validate_trained_policy_config(values["policy_kind"], optional)
     _validate_specialist_report_config(optional)
     return {**values, **optional}
+
+
+def _validate_trained_policy_config(policy_kind: str, optional: dict[str, str]) -> None:
+    supplied = "policy_trained_input_root" in optional
+    if policy_kind == "comet-trained" and not supplied:
+        raise ValueError("comet-trained requires policy_trained_input_root")
+    if policy_kind != "comet-trained" and supplied:
+        raise ValueError("policy_trained_input_root requires comet-trained")
 
 
 def _validate_specialist_report_config(optional: dict[str, str]) -> None:

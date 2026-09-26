@@ -563,7 +563,9 @@ async def _connection(
     wire = EvaluatorWire(args.upstream_commit)
     wrapper.reset()
     inference_count = 0
-    await websocket.send(packer.pack({"policy": "comet-native-train"}))
+    await websocket.send(
+        packer.pack({"policy": getattr(args, "policy_label", "comet-native-train")})
+    )
     async for payload in websocket:
         observation = msgpack_numpy.unpackb(payload)
         if wire.is_reset(observation):
@@ -633,6 +635,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--asset-id", required=True)
     value.add_argument("--task-id", type=int, required=True)
     value.add_argument("--task-name", required=True)
+    value.add_argument("--policy-label", default="comet-native-train")
     value.add_argument("--port", type=int, required=True)
     value.add_argument(
         "--upstream-commit", choices=tuple(UPSTREAM_COMMITS.values()), required=True

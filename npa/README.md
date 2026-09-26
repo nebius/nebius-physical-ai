@@ -63,6 +63,16 @@ optional `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` environment variable points to
 private JSON settings for the read-only live status regression; it is unset by
 default and submits no work.
 
+Campaign workers can serve a parity-qualified selected Comet export with
+`--policy-kind comet-trained`. This kind requires the four managed policy paths,
+`--policy-task-name`, and `--policy-trained-input-root`; the input root contains
+the provider-read parity originals and selected-reader record. The checkpoint
+path contains the admitted BF16 `params/` tree and its exact normalization asset.
+The execution variant defaults to `native`, which is the only accepted value for
+this policy kind. See the
+[selected trained-Comet contract](../docs/workbench/behavior-campaign.md#prescribed-non-reporting-train-panels)
+for the admission boundary and derivative-checkpoint limitations.
+
 Fleet recovery can remove a failed CPU pool without charging unchanged reserved
 GPUs against free capacity again. The requested CPU count must be zero, every
 other rendered capacity setting must match, and fresh provider evidence must

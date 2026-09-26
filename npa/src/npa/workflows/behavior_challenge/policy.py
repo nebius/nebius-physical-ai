@@ -179,6 +179,14 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
         from .native_comet_policy import prepare_policy
 
         return prepare_policy(args, plan, output)
+    if getattr(args, "policy_kind", "official") == "comet-trained":
+        if _healthy(args.port):
+            raise ValueError(
+                "Policy port is already serving; refusing an unrelated endpoint"
+            )
+        from .trained_comet_policy import prepare_policy
+
+        return prepare_policy(args, plan, output)
     if getattr(args, "policy_kind", "official") in {
         "rlc",
         "rlc-selected",
@@ -281,20 +289,28 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         "comet12": {"native"},
         "comet50": {"native"},
         "comet-native": {"native"},
+        "comet-trained": {"native"},
     }
     policy_kind = getattr(args, "policy_kind", "official")
     task_name = getattr(args, "policy_task_name", None)
-    comet_kind = policy_kind in {"comet12", "comet50", "comet-native"}
+    comet_kind = policy_kind in {
+        "comet12",
+        "comet50",
+        "comet-native",
+        "comet-trained",
+    }
     if comet_kind and not task_name:
         label = {
             "comet12": "Comet12",
             "comet50": "Comet50",
             "comet-native": "Native Comet",
+            "comet-trained": "Trained Comet",
         }[policy_kind]
         raise ValueError(f"{label} policy requires --policy-task-name")
     if not comet_kind and task_name:
         raise ValueError(
-            "--policy-task-name requires --policy-kind comet12, comet50, or comet-native"
+            "--policy-task-name requires --policy-kind comet12, comet50, "
+            "comet-native, or comet-trained"
         )
     if execution_variant not in variants[policy_kind]:
         raise ValueError(f"Unsupported {policy_kind} execution variant")
@@ -317,6 +333,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             "comet12": "Comet12",
             "comet50": "Comet50",
             "comet-native": "Native Comet",
+            "comet-trained": "Trained Comet",
         }[policy_kind]
         raise ValueError(f"{label} policy requires all four policy paths")
     if execution_variant != "native" and not all(selected):
@@ -326,6 +343,10 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         return
     if not all(selected):
         raise ValueError("Managed policy requires all four policy paths")
+    if policy_kind == "comet-trained" and not getattr(
+        args, "policy_trained_input_root", None
+    ):
+        raise ValueError("Trained Comet requires --policy-trained-input-root")
     command = _prepare_policy(args, plan, output)
     environment = dict(os.environ, PYTHONUNBUFFERED="1")
     environment.pop("PYTHONPATH", None)
@@ -344,7 +365,10 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             yield
         finally:
             _stop_policy(process)
-            if policy_kind == "comet-native":
-                from .native_comet_policy import finalize_process
+            if policy_kind in {"comet-native", "comet-trained"}:
+                if policy_kind == "comet-native":
+                    from .native_comet_policy import finalize_process
+                else:
+                    from .trained_comet_policy import finalize_process
 
                 finalize_process(output, process.returncode)

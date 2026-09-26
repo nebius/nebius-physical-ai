@@ -81,12 +81,43 @@ def _identity(value: object, label: str) -> dict:
     return value
 
 
-def canonical_provider_row(value: object, label: str) -> dict:
+def _validate_provider_uri(value: dict, label: str) -> None:
+    parsed = urlsplit(str(value.get("uri", "")))
+    invalid = (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or bool(parsed.query or parsed.fragment)
+        or any(token in parsed.path for token in ("\\", "%", "//"))
+    )
+    path = PurePosixPath(parsed.path.removeprefix("/"))
+    noncanonical = (
+        not path.parts
+        or parsed.path != "/" + path.as_posix()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    )
+    if invalid or noncanonical:
+        raise ValueError(f"{label} provider URI differs")
+
+
+def _validate_provider_identity(value: dict, label: str, allow_empty: bool) -> None:
+    identity = {key: value[key] for key in ("bytes", "sha256")}
+    empty = {"bytes": 0, "sha256": hashlib.sha256(b"").hexdigest()}
+    if not (allow_empty and identity == empty):
+        _identity(identity, label)
+
+
+def canonical_provider_row(
+    value: object, label: str, *, allow_empty: bool = False
+) -> dict:
     """Require one canonical provider-read S3 object row.
 
     Args:
         value: Candidate object row.
         label: Name used in validation errors.
+        allow_empty: Accept an exact empty-object identity for producer log files.
     Returns:
         The unchanged validated row.
     Raises:
@@ -99,28 +130,8 @@ def canonical_provider_row(value: object, label: str) -> dict:
         "provider_readback",
     }:
         raise ValueError(f"{label} provider row differs")
-    parsed = urlsplit(str(value.get("uri", "")))
-    if (
-        parsed.scheme != "s3"
-        or not parsed.netloc
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.port is not None
-        or parsed.query
-        or parsed.fragment
-        or "\\" in parsed.path
-        or "%" in parsed.path
-        or "//" in parsed.path
-    ):
-        raise ValueError(f"{label} provider URI differs")
-    path = PurePosixPath(parsed.path.removeprefix("/"))
-    if (
-        not path.parts
-        or parsed.path != "/" + path.as_posix()
-        or any(part in {"", ".", ".."} for part in path.parts)
-    ):
-        raise ValueError(f"{label} provider URI differs")
-    _identity({key: value[key] for key in ("bytes", "sha256")}, label)
+    _validate_provider_uri(value, label)
+    _validate_provider_identity(value, label, allow_empty)
     if value.get("provider_readback") is not True:
         raise ValueError(f"{label} provider readback differs")
     return value

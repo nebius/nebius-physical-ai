@@ -126,6 +126,41 @@ def test_comet_task_name_reaches_each_campaign_worker():
         assert argv[index + 1] == "{{config.policy_task_name}}"
 
 
+def test_trained_comet_provider_inputs_reach_each_campaign_worker():
+    document = _workflow(
+        runtime=_runtime(
+            policy_kind="comet-trained",
+            policy_execution_variant="native",
+            policy_task_name="task_1",
+            policy_trained_input_root="/evidence/selected-parity",
+        )
+    )
+
+    assert document["config"]["policy_trained_input_root"] == (
+        "/evidence/selected-parity"
+    )
+    for name in document["states"]["campaign-workers"]["parallel"]:
+        argv = document["states"][name]["run"]["argv"]
+        index = argv.index("--policy-trained-input-root")
+        assert argv[index + 1] == "{{config.policy_trained_input_root}}"
+
+
+def test_trained_comet_requires_provider_input_root_during_workflow_build():
+    runtime = _runtime(
+        policy_kind="comet-trained",
+        policy_execution_variant="native",
+        policy_task_name="task_1",
+    )
+    with pytest.raises(ValueError, match="requires policy_trained_input_root"):
+        _workflow(runtime=runtime)
+
+
+def test_other_policy_kind_rejects_trained_provider_input_root():
+    runtime = _runtime(policy_trained_input_root="/evidence/selected-parity")
+    with pytest.raises(ValueError, match="requires comet-trained"):
+        _workflow(runtime=runtime)
+
+
 def test_each_partition_worker_appears_once_with_stable_receipt_and_state_prefix():
     document = _workflow()
     members = document["states"]["campaign-workers"]["parallel"]

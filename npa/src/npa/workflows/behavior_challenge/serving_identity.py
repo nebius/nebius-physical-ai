@@ -36,6 +36,11 @@ _SPECIALIST_SERVING_FILES = (
     "rlc_specialist.py",
     "rlc-specialist-checkpoint.json",
 )
+_TRAINED_COMET_SERVING_FILES = (
+    "trained_comet_checkpoint.py",
+    "trained_comet_policy.py",
+    "trained_comet_producer.py",
+)
 _INPUT_FIELDS = (
     "policy_selected_export_receipt",
     "policy_correlation_manifest",
@@ -59,6 +64,8 @@ def serving_artifact(args) -> dict:
     source_names = _SERVING_FILES
     if args.policy_kind == "rlc-specialist":
         source_names += _SPECIALIST_SERVING_FILES
+    if args.policy_kind == "comet-trained":
+        source_names += _TRAINED_COMET_SERVING_FILES
     payload = {
         "schema": "npa.behavior.serving-identity.v1",
         "kind": args.policy_kind,
@@ -79,6 +86,11 @@ def serving_artifact(args) -> dict:
             if args.policy_kind == "comet-native"
             else None
         ),
+        "trained_configuration": (
+            _trained_configuration(Path(args.policy_archive))
+            if args.policy_kind == "comet-trained"
+            else None
+        ),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded)}
@@ -91,6 +103,29 @@ def _native_configuration(path: Path) -> dict:
         "task": value.get("task"),
         "task_id": value.get("task_id"),
         "trace": value.get("trace"),
+    }
+
+
+def _trained_configuration(path: Path) -> dict:
+    value = json.loads(path.read_text())
+    return {
+        "schema": value.get("schema"),
+        "profile": value.get("profile"),
+        "selected_step": value.get("selected_step"),
+        "manager_step": value.get("manager_step"),
+        "selected_checkpoint_inventory_sha256": value.get(
+            "selected_checkpoint_inventory_sha256"
+        ),
+        "selected_precision_receipt_sha256": value.get(
+            "selected_precision_receipt_sha256"
+        ),
+        "task": value.get("task"),
+        "task_id": value.get("task_id"),
+        "parity_output": value.get("parity_output"),
+        "normalization": value.get("normalization"),
+        "rng_contract": value.get("rng_contract"),
+        "trace": value.get("trace"),
+        "serving_tree_sha256": value.get("serving_tree_sha256"),
     }
 
 

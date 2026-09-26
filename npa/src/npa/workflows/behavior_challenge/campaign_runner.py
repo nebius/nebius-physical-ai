@@ -500,6 +500,8 @@ def _execute_partition(args, panel, partition, storage, workspace):
         )
     if _is_train_panel(panel):
         _native_train_preclaim(args, panel, workspace)
+    if getattr(args, "policy_kind", None) == "comet-trained":
+        _trained_comet_preclaim(args, panel, workspace)
     try:
         _prepare_worker_startup(args, workspace)
         _specialist_preclaim(args, panel, storage, workspace)
@@ -547,6 +549,26 @@ def _native_train_preclaim(args, panel, workspace) -> None:
     args.policy_native_panel = panel
     args.policy_native_admission = admission
     atomic_json(Path(workspace) / "native-train-admission.json", admission)
+
+
+def _trained_comet_preclaim(args, panel, workspace) -> None:
+    from .native_training_checkpoint import atomic_json
+    from .serving_identity import serving_artifact
+    from .trained_comet_checkpoint import validate_trained_comet_admission
+
+    input_root = getattr(args, "policy_trained_input_root", None)
+    if input_root is None:
+        raise ValueError("Trained Comet requires its provider-read input root")
+    admission = validate_trained_comet_admission(
+        Path(args.policy_archive),
+        Path(input_root),
+        Path(args.policy_checkpoint),
+        panel,
+        expected_serving_identity=serving_artifact(args),
+    )
+    args.policy_trained_panel = panel
+    args.policy_trained_execution_admission = admission
+    atomic_json(Path(workspace) / "trained-comet-admission.json", admission)
 
 
 def _specialist_preclaim(args, panel, storage, workspace) -> None:
