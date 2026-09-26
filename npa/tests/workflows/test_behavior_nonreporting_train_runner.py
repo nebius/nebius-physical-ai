@@ -191,7 +191,7 @@ def test_train_panel_reuses_case_store_fresh_process_and_file_backed_aggregate(
     assert resumed == records
 
 
-def test_train_status_and_partition_dispatch_reject_cross_schema():
+def test_train_status_and_partition_dispatch_reject_cross_schema(tmp_path):
     panel = _panel()
     storage = MemoryStorage()
     status = panel_status(storage, panel, "s3://example-bucket/train")
@@ -209,7 +209,7 @@ def test_train_status_and_partition_dispatch_reject_cross_schema():
             legacy_partition,
             0,
             CaseStore(storage, "s3://example-bucket/train-2", panel["panel_id"]),
-            Path("/tmp/not-used"),
+            tmp_path / "not-used",
             lambda *_: None,
         )
 
