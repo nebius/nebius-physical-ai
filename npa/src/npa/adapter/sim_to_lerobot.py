@@ -183,8 +183,8 @@ def _build_data_schema(
     """Build the Arrow schema for data parquet files."""
     return pa.schema(
         [
-            ("observation.state", pa.list_(pa.float32(), n_state)),
-            ("action", pa.list_(pa.float32(), n_actions)),
+            ("observation.state", _numeric_feature_type(n_state)),
+            ("action", _numeric_feature_type(n_actions)),
             ("episode_index", pa.int64()),
             ("frame_index", pa.int64()),
             ("timestamp", pa.float32()),
@@ -192,6 +192,26 @@ def _build_data_schema(
             ("task_index", pa.int64()),
         ]
     )
+
+
+def _numeric_feature_type(width: int) -> pa.DataType:
+    """Match LeRobot's Hugging Face feature encoding for 1-D numerics.
+
+    LeRobot 0.5.x maps metadata shape ``[1]`` to ``datasets.Value`` rather
+    than a one-element ``Sequence``.  The physical feature is still described
+    as shape ``[1]`` in ``info.json``; only its Arrow storage is scalar.
+    """
+
+    return pa.float32() if width == 1 else pa.list_(pa.float32(), width)
+
+
+def _numeric_feature_values(
+    rows: list[dict[str, Any]], key: str, width: int
+) -> list[Any]:
+    values = [row[key] for row in rows]
+    if width == 1:
+        return [float(value[0]) for value in values]
+    return values
 
 
 # ── Main conversion ────────────────────────────────────────────────────
@@ -385,12 +405,12 @@ def convert(
     # ── Write data parquet ──────────────────────────────────────────
     arrays = {
         "observation.state": pa.array(
-            [r["observation.state"] for r in all_data_rows],
-            type=pa.list_(pa.float32(), n_state),
+            _numeric_feature_values(all_data_rows, "observation.state", n_state),
+            type=_numeric_feature_type(n_state),
         ),
         "action": pa.array(
-            [r["action"] for r in all_data_rows],
-            type=pa.list_(pa.float32(), n_actions),
+            _numeric_feature_values(all_data_rows, "action", n_actions),
+            type=_numeric_feature_type(n_actions),
         ),
         "episode_index": pa.array(
             [r["episode_index"] for r in all_data_rows], type=pa.int64()
@@ -562,13 +582,15 @@ def _write_episodes_parquet(
 
 def _write_tasks_parquet(task: str | list[str], output_path: Path) -> None:
     """Write the tasks.parquet metadata file."""
+    import pandas as pd
+
     tasks = [task] if isinstance(task, str) else task
-    table = pa.table(
-        {
-            "task_index": pa.array(list(range(len(tasks))), type=pa.int64()),
-            "task": pa.array(tasks, type=pa.string()),
-        }
+    frame = pd.DataFrame(
+        {"task_index": list(range(len(tasks)))},
+        index=pd.Index(tasks, name="task"),
     )
+    # Native LeRobot looks up the task text through the DataFrame index.
+    table = pa.Table.from_pandas(frame, preserve_index=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path, compression="snappy")
 

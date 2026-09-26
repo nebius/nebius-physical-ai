@@ -1,0 +1,2 @@
+torch==2.13.0+cu130
+setuptools>=83.0.0

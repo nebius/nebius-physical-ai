@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from npa.orchestration.npa_workflow.run_state import (
     PAIDF_WORKFLOW_NAME,
+    RUN_SCHEMA_VERSION,
     paidf_artifact_prefix,
     paidf_workflow_prefix,
 )
@@ -232,10 +233,34 @@ def _probe_manifest(
     return "found", manifest, f"{state.uri.rstrip('/')}/manifest.json"
 
 
-def _probe_exact_prefix(state: WorkflowS3Config) -> tuple[ResolutionOutcome, str]:
-    """Check one exact PAIDF run prefix with a bounded, paginated query."""
+def _has_unambiguous_parent_run_root(
+    state: WorkflowS3Config,
+    *,
+    run_id: str,
+) -> bool:
+    """Return whether removing the control suffix preserves exact run identity."""
 
-    run_prefix = state.prefix.rstrip("/").removesuffix("/npa-workflow") + "/"
+    parts = state.prefix.strip("/").split("/")
+    if len(parts) < 3 or parts[-1] != "npa-workflow":
+        return False
+    if parts[-3:] == [PAIDF_WORKFLOW_NAME, run_id, "npa-workflow"]:
+        return True
+    return len(parts) >= 4 and parts[-3] == run_id
+
+
+def _probe_exact_prefix(
+    state: WorkflowS3Config,
+    *,
+    run_id: str,
+) -> tuple[ResolutionOutcome, str]:
+    """Check one proven run prefix with a bounded, paginated query."""
+
+    state_prefix = state.prefix.rstrip("/")
+    run_prefix = (
+        state_prefix.removesuffix("/npa-workflow")
+        if _has_unambiguous_parent_run_root(state, run_id=run_id)
+        else state_prefix
+    ) + "/"
     try:
         paginator = state.client().get_paginator("list_objects_v2")
         pages = paginator.paginate(
@@ -360,7 +385,10 @@ def resolve_run(
             )
             outcome, manifest, detail = _probe_manifest(explicit_state, resolved_id)
             if outcome == "absent":
-                prefix_outcome, prefix_detail = _probe_exact_prefix(explicit_state)
+                prefix_outcome, prefix_detail = _probe_exact_prefix(
+                    explicit_state,
+                    run_id=resolved_id,
+                )
                 if prefix_outcome == "found":
                     outcome, detail = "found", prefix_detail
                     result.found = True
@@ -461,7 +489,10 @@ def resolve_run(
                         source="durable_submission_receipt",
                     )
                 if outcome == "absent":
-                    prefix_outcome, prefix_detail = _probe_exact_prefix(receipt_state)
+                    prefix_outcome, prefix_detail = _probe_exact_prefix(
+                        receipt_state,
+                        run_id=resolved_id,
+                    )
                     if prefix_outcome == "found":
                         _attach_runtime_state(result, receipt_state)
                         result.checks[-1] = ResolutionCheck(
@@ -534,7 +565,10 @@ def resolve_run(
                     manifest=manifest,
                     source="canonical_paidf_s3_prefix",
                 )
-            prefix_outcome, prefix_detail = _probe_exact_prefix(canonical_state)
+            prefix_outcome, prefix_detail = _probe_exact_prefix(
+                canonical_state,
+                run_id=resolved_id,
+            )
             combined: ResolutionOutcome = (
                 "found"
                 if prefix_outcome == "found"
@@ -720,17 +754,31 @@ def list_resolved_artifacts(
         raise WorkflowStateError(
             "run was found via managed-job evidence but its artifact location is unavailable"
         )
-    is_paidf = (
-        resolution.workflow_name == PAIDF_WORKFLOW_NAME
-        or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
-        or resolution.manifest_pending
+    manifest_schema = (
+        str(resolution.manifest.get("schema_version") or "")
+        if isinstance(resolution.manifest, dict)
+        else ""
     )
-    if not is_paidf:
+    # Declarative outputs may use any path below the exact run root. The
+    # historical ``artifacts/`` convention applies only to raw schema-v1 runs.
+    state_prefix = state.prefix.rstrip("/")
+    declarative_run_root = state_prefix.removesuffix("/npa-workflow")
+    has_declarative_control_prefix = (
+        manifest_schema == RUN_SCHEMA_VERSION
+        and state_prefix.endswith("/npa-workflow")
+        and str((resolution.manifest or {}).get("run_prefix_uri") or "").rstrip("/")
+        == f"s3://{state.bucket}/{declarative_run_root}"
+    )
+    uses_run_root_layout = (
+        has_declarative_control_prefix
+        or _has_unambiguous_parent_run_root(state, run_id=resolution.run_id)
+    )
+    if not uses_run_root_layout:
         from npa.orchestration.skypilot.workflow_state import list_artifacts
 
-        return list_artifacts(state, stage or None)
+        return list_artifacts(state, stage or None)[:limit]
 
-    run_prefix = state.prefix.rstrip("/").removesuffix("/npa-workflow") + "/"
+    run_prefix = declarative_run_root + "/"
     objects: list[str] = []
     try:
         paginator = state.client().get_paginator("list_objects_v2")

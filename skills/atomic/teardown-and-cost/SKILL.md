@@ -32,6 +32,21 @@ there is no reason to skip it. `cleanup-controller` refuses while managed jobs
 are in progress and retries that specific refusal after the queue drains; treat
 the refusal as correct, not as something to force.
 
+If exact queue evidence says a recorded non-terminal job is absent, standalone
+workflow cancellation stays non-terminal and exits 2; stale durable state is not
+rewritten as success. An explicit `npa destroy --all --yes` transaction may
+continue owned controller/cluster teardown only when cancel's structured result
+says `owned_teardown_allowed: true`. That allowance means every live exact job
+was cancelled cleanly and every remaining error is an exact verified-absence
+contradiction. The workflow phase remains degraded for audit. Provider
+unavailability, malformed state, missing IDs, or cleanup errors still block all
+dependent destroy phases.
+
+Managed-job terminality is closed-world during cleanup. `SUBMITTED`,
+`WINDING_DOWN`, and any unrecognized future status remain non-terminal until
+the exact queue reports a terminal state or verified absence; never infer
+terminality merely because a status is absent from a known-active list.
+
 For a unique per-run workflow API, controller cleanup does not finish local
 shutdown: only its temporary transaction API is stopped automatically. Wait for
 the submit driver and all other clients of that API to exit, preserve exact-run
