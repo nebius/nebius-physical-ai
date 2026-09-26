@@ -394,6 +394,28 @@ def test_report_measures_complete_run_and_never_claims_quality(tmp_path):
     assert report["work"]["tokens_per_second"] == 200
 
 
+def test_public_iteration_series_reproduces_aggregate_measurements(tmp_path):
+    import csv
+
+    run = _completed_run(tmp_path)
+    module = _load("report")
+    report = module._summarize(run, 52)
+    module._write_series(run, report)
+    path = run / "iteration-series.csv"
+    with path.open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [int(row["step"]) for row in rows] == [53, 54, 55]
+    seconds = sum(float(row["iteration_seconds"]) for row in rows)
+    tokens = sum(int(row["tokens"]) for row in rows)
+    assert seconds / len(rows) == report["step_mean_seconds"]
+    assert tokens == report["work"]["measured_tokens"]
+    assert tokens / seconds == report["work"]["tokens_per_second"]
+    assert (
+        report["iteration_series_sha256"]
+        == hashlib.sha256(path.read_bytes()).hexdigest()
+    )
+
+
 def test_report_rejects_background_failure_on_a_nonprimary_node(tmp_path):
     run = _completed_run(tmp_path, 2)
     (run / "node-1.log").write_text(

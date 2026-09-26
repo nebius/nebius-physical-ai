@@ -285,6 +285,13 @@ and data-preparation timers. VAE time is included in data preparation; those
 timers must not be added together. No automatic extrapolation or policy-quality
 assertion is emitted by the training report.
 
+The reporter also writes `iteration-series.csv` with the selected native step
+times, loss, processed tokens, and overlapping VAE/data-preparation timers.
+Its SHA-256 is recorded in `measurement.json`. This numeric export lets readers
+reproduce timing distributions and learning curves without publishing raw
+worker logs. It keeps checkpoint-bearing iterations in the series; distinguish
+them explicitly when discussing steady compute time.
+
 Every node's log is checked for Python failures and skipped optimizer updates,
 including nodes that emit no rank-zero timing lines. Successful process exit
 codes alone cannot qualify a run with a failed background data-loader thread.

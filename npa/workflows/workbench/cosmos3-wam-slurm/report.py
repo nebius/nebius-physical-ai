@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -205,6 +206,39 @@ def _compare(report, baseline):
     )
 
 
+def _write_series(run, report):
+    log = (run / "node-0.log").read_text()
+    losses = {int(match[1]): float(match[3]) for match in _ITERATION.finditer(log)}
+    first = max(report["warmup_steps_excluded"] + 1, 52)
+    columns = (
+        "step",
+        "iteration_seconds",
+        "loss",
+        "tokens",
+        "vae_rank_mean_seconds",
+        "vae_rank_max_seconds",
+        "prepare_rank_mean_seconds",
+        "prepare_rank_max_seconds",
+    )
+    path = run / "iteration-series.csv"
+    with path.open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(columns)
+        for match in _WORK.finditer(log):
+            step = int(match[1])
+            if step >= first:
+                writer.writerow(
+                    [
+                        step,
+                        float(match[2]),
+                        losses[step],
+                        int(match[3].replace(",", "")),
+                        *(float(match[index]) for index in range(4, 8)),
+                    ]
+                )
+    report["iteration_series_sha256"] = _digest(path)
+
+
 def _main(args):
     if args.warmup < 0:
         raise ValueError("warmup must be nonnegative")
@@ -212,6 +246,7 @@ def _main(args):
     if args.baseline:
         baseline = _summarize(args.baseline, args.warmup)
         _compare(report, baseline)
+    _write_series(args.run_dir, report)
     (args.run_dir / "measurement.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 
