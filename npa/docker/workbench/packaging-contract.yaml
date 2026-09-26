@@ -121,6 +121,10 @@ redistribution:
         runtime even if the Dockerfile never spells out pip install.
       pattern: '(?is)\bRUN\b[^\n]*render_ovrtx[^\n]*--provision-only'
   classes:
+    unvalidated:
+      description: >-
+        Redistribution eligibility is pending exact component and corresponding-source
+        closure. No public development or release publication is permitted.
     public:
       description: >
         Eligible for public redistribution under the verified terms of every
@@ -355,6 +359,58 @@ images:
       checkpoints, and populated caches are runtime-only. Built-image byte and
       layer scanning plus an eight-node RTX PRO 6000 qualification are required
       before release promotion.
+  habitat-sim:
+    dockerfile: habitat-sim/Dockerfile.bootstrap
+    tier: interactive
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption:
+      id: habitat-sim-skypilot-0.12.2-v1
+      rationale: >-
+        SkyPilot 0.12.2 Kubernetes workers require general package, SSH, rsync,
+        and service bootstrap through passwordless sudo from the non-root ubuntu
+        account; the package and service arguments are runtime-selected, so a
+        finite command allowlist cannot preserve the mechanically tested worker
+        contract. The ephemeral workflow task container, not a network service,
+        is the reviewed trust boundary.
+      sources:
+        - habitat-sim/Dockerfile
+        - habitat-sim/Dockerfile.bootstrap
+      grants:
+        - source: habitat-sim/Dockerfile
+          sudoers_entry: ubuntu ALL=(ALL) NOPASSWD:ALL
+        - source: habitat-sim/Dockerfile.bootstrap
+          sudoers_entry: ubuntu ALL=(ALL) NOPASSWD:ALL
+      compensating_controls:
+        bootstrap_contract: skypilot-0.12.2-v1
+        build_time_host_keys_deleted: true
+        capability_evidence: runtime_probe_required
+        entrypoint: command-passthrough
+        exact_digest_required: true
+        final_user: ubuntu
+        no_baked_credentials: true
+        no_default_sshd: true
+        no_exposed_ssh_port: true
+        trust_boundary: ephemeral-workflow-task-container
+      prohibited_uses:
+        - default-sshd
+        - public-ingress
+        - baked-credentials
+        - mutable-image-capability-claim
+    notes: >-
+      Neutral runtime-fetch bootstrap. The public Dockerfile.bootstrap contains
+      Ubuntu/Python/SSH prerequisites, NPA launchers and immutable upstream locks.
+      Every inherited and installed Ubuntu component has accompanying official
+      snapshot source and copyright notices. Habitat-Sim, its C++ dependencies,
+      scientific wheels, GPU libraries and the CC BY 4.0 Skokloster scene are
+      fetched only by the operator workload into an ephemeral runtime; source
+      archives, direct APT packages and wheels are verified against existing pins.
+      The real RGB-D, navigation and Bullet smoke still requires one RTX GPU.
+      build.sh selects this bootstrap by default. Its explicit --legacy-baked
+      option selects the legacy Dockerfile, separately quarantined under
+      runtime-payload.json and its unchanged full-layer/source/512 MiB guards;
+      they are not the public build target. All public full-SHA builds require
+      exact-image absence/source, security, SBOM/provenance and GPU validation.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service

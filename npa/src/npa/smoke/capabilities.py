@@ -59,6 +59,15 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
     ],
+    "habitat-sim": [
+        "neutral bootstrap with accompanying Ubuntu source; pinned MIT Habitat-Sim "
+        "and its scientific/native dependencies are fetched at runtime",
+        "official CC BY 4.0 Skokloster archive fetched only at runtime with exact hashes",
+        "real greedy-follower traversal produces distinct RGB and finite-depth frames",
+        "Bullet world time advances with nonzero agent displacement",
+        "NVIDIA EGL renders on exactly one RTX PRO 6000 Blackwell, never B200",
+        "pod digest, exit zero, artifact hashes, and storage readback all agree",
+    ],
     "mjlab": [
         "native MJLab PPO training writes a loadable RSL-RL checkpoint",
         "real complete-episode evaluation produces finite measured returns",

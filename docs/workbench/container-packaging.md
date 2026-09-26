@@ -10,6 +10,15 @@ NCore development images use the [attested OCI publication path](ncore-oci-publi
 to preserve the exact buildx index through local gates and anonymous readback.
 NCore remains quarantined pending its independent RTX acceptance.
 
+Habitat-Sim uses a neutral runtime-fetch bootstrap image with exact corresponding
+Ubuntu package sources. Its public development digest and successful one-RTX
+standard-workflow validation are recorded in the
+[image catalog](container-image-catalog.md#not-in-the-public-image-table).
+Supported release selection remains in `UNVALIDATED_PUBLICATION_TOOLS`.
+The official CC BY Skokloster scene is runtime data, never an image input.
+A rebuild must pass its own exact-image publication and capability gates;
+previous digest evidence does not automatically validate changed image bytes.
+
 ## SkyPilot worker bootstrap contract
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
@@ -68,6 +77,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
+| `npa-habitat-sim` | `habitat-sim/Dockerfile.bootstrap` | neutral runtime-fetch job; `workflow.habitat_sim.smoke`; release validation pending |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
@@ -232,7 +242,7 @@ Strongly recommended for `service` images:
 
 The workbench is open source, and images should be pullable widely — but "widely"
 has a license boundary that the contract encodes in a `redistribution` field per
-image (`public` | `restricted`), enforced by
+image (`public` | `restricted` | `unvalidated`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
 - **`public`** — Every shipped component has reviewed permission for public
@@ -271,6 +281,12 @@ image (`public` | `restricted`), enforced by
   Review the [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
   separately; an image's redistribution classification does not decide whether
   an operator's service use meets its obligations.
+
+- **`unvalidated`** — The intended packaging shape is recorded, but complete
+  corresponding-source closure, built-byte verification, or both remain
+  unproved. An `unvalidated` image is not eligible for public publication or
+  anonymous pull claims; keep it quarantined until the missing evidence passes.
+
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would

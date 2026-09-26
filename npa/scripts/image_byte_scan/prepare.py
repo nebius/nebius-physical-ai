@@ -7,6 +7,8 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 import urllib.request
 import zipfile
@@ -18,6 +20,7 @@ else:
     from . import core as W
 
 WHEEL_URL = "https://files.pythonhosted.org/packages/a1/f2/d13807476195e4ec5999a78f22db592a64da54229c9183438f3165105779/pyahocorasick-2.3.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+HABITAT_CONTRACT = "npa/docker/workbench/habitat-sim/runtime-payload.json"
 
 
 def binding(path, *, secret=True):
@@ -107,6 +110,161 @@ def tools_bindings(path):
     return W.verified_tools(binding(path))
 
 
+def _trusted_revision(root: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    W.require(result.returncode == 0, "trusted_source_revision_unreadable")
+    revision = result.stdout.strip()
+    W.require(
+        len(revision) == 40 and all(c in "0123456789abcdef" for c in revision),
+        "trusted_source_revision_invalid",
+    )
+    return revision
+
+
+def _trusted_contract(root: Path, revision: str) -> tuple[dict, dict[str, object]]:
+    """Read the Habitat contract from the committed Git blob and bind its bytes."""
+    spec = f"{revision}:{HABITAT_CONTRACT}"
+    oid = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", spec],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    W.require(oid.returncode == 0, "trusted_contract_blob_unreadable")
+    blob_oid = oid.stdout.strip()
+    W.require(
+        re.fullmatch(r"[0-9a-f]{40}", blob_oid) is not None,
+        "trusted_contract_blob_invalid",
+    )
+    blob = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "blob", spec],
+        check=False,
+        capture_output=True,
+    )
+    W.require(blob.returncode == 0, "trusted_contract_blob_unreadable")
+    committed = blob.stdout
+    path = root / HABITAT_CONTRACT
+    W.require(
+        path.is_file() and not path.is_symlink(), "trusted_contract_worktree_missing"
+    )
+    W.require(path.read_bytes() == committed, "trusted_contract_worktree_mismatch")
+    contract = json.loads(committed)
+    W.require(isinstance(contract, dict), "trusted_contract_schema")
+    return contract, {
+        "path": HABITAT_CONTRACT,
+        "revision": revision,
+        "git_blob": blob_oid,
+        "bytes": len(committed),
+        "sha256": W.sha(committed),
+    }
+
+
+def _trusted_runtime_closure(contract: dict[str, object]) -> tuple[str, str, str]:
+    """Return closure digests committed by the authenticated contract."""
+    closure = contract.get("expected_runtime_closure")
+    W.require(isinstance(closure, dict), "trusted_runtime_closure_unavailable")
+    keys = (
+        "dpkg_inventory_sha256",
+        "python_venv_inventory_sha256",
+        "native_closure_sha256",
+    )
+    values = tuple(closure.get(key) for key in keys)
+    W.require(
+        all(
+            isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in values
+        ),
+        "trusted_runtime_closure_unavailable",
+    )
+    return values  # type: ignore[return-value]
+
+
+def _habitat_verifier_module():
+    """Load the verifier without changing package/script invocation behavior."""
+    if __package__ in {None, ""}:
+        from image_byte_scan import habitat_sim_verification as verifier
+    else:
+        from . import habitat_sim_verification as verifier
+    return verifier
+
+
+def _habitat_verify_descriptor(
+    args, archive, verifier, contract, source_revision, expected
+):
+    """Verify the held descriptor and close only the descriptor-owned handle."""
+    _, fd, initial = W.open_private_fd(args.archive)
+    try:
+        W.require(
+            W.descriptor_digest(fd) == archive["sha256"], "prepared_archive_changed"
+        )
+        return verifier.verify(
+            fd,
+            initial.st_size,
+            args.expected_image_id,
+            contract,
+            archive["sha256"],
+            source_revision,
+            *expected,
+        )
+    finally:
+        os.close(fd)
+
+
+def _require_habitat_receipt(report, verified, expected):
+    """Require every reported Habitat receipt field to match trusted output."""
+    for key in (
+        "image_manifest_digest",
+        "image_config_digest",
+        "verified_layer_diff_ids",
+        "layer_count",
+        "regular_files_read",
+        "content_bytes_read",
+        "expected_dpkg_inventory_sha256",
+        "expected_python_venv_inventory_sha256",
+        "expected_native_closure_sha256",
+    ):
+        trusted = {
+            "expected_dpkg_inventory_sha256": expected[0],
+            "expected_python_venv_inventory_sha256": expected[1],
+            "expected_native_closure_sha256": expected[2],
+        }.get(key, verified.get(key))
+        W.require(
+            report.get(key) == trusted and verified.get(key) == trusted,
+            "habitat_verifier_receipt_mismatch",
+        )
+
+
+def _verify_habitat_report(args, archive, report) -> dict[str, object]:
+    """Re-run Habitat verification against the exact held archive descriptor."""
+    verifier = _habitat_verifier_module()
+
+    W.require(
+        isinstance(report.get("findings"), list) and not report["findings"],
+        "habitat_verifier_findings",
+    )
+    source_revision = _trusted_revision(args.trusted_root)
+    W.require(
+        report.get("expected_source_revision") == source_revision,
+        "habitat_source_revision_binding",
+    )
+    contract, contract_binding = _trusted_contract(args.trusted_root, source_revision)
+    expected = _trusted_runtime_closure(contract)
+    verified = _habitat_verify_descriptor(
+        args, archive, verifier, contract, source_revision, expected
+    )
+    W.require(
+        verified.get("valid") is True and not verified.get("findings"),
+        "habitat_verifier_not_accepted",
+    )
+    _require_habitat_receipt(report, verified, expected)
+    return contract_binding
+
+
 def authorize(args, directory):
     helper, config = tools_bindings(args.tools_receipt)
     engine = native_engine(args.native_receipt)
@@ -115,9 +273,16 @@ def authorize(args, directory):
     W.require(
         report.get("valid") is True
         and report.get("schema_version")
-        in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"),
+        in (
+            "npa.curobo.image-verification.v1",
+            "npa.ncore.oci-verification.v1",
+            "npa.habitat-sim.oci-verification.v1",
+        ),
         "accepted_graph_report_required",
     )
+    trusted_contract = None
+    if report["schema_version"] == "npa.habitat-sim.oci-verification.v1":
+        trusted_contract = _verify_habitat_report(args, archive, report)
     W.require(
         W.verification_archive_digest(report) == archive["sha256"]
         and report.get("expected_image_id") == args.expected_image_id,
@@ -138,6 +303,8 @@ def authorize(args, directory):
         "literal_engine": engine,
         "tools_receipt": binding(args.tools_receipt),
     }
+    if trusted_contract is not None:
+        authorization["trusted_contract"] = trusted_contract
     if args.policy_mode == "ci-regex":
         policy = {
             "customer_pattern": os.environ.get("CUSTOMER_DENYLIST"),

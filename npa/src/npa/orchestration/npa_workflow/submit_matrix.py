@@ -1293,6 +1293,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
+        "habitat-sim-smoke.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "Habitat-Sim supported image selection remains quarantined; the separately "
+            "recorded development digest is not this workflow default"
+        ),
+        notes=(
+            "One-state pinned Skokloster Castle RGB/depth traversal with Bullet "
+            "and headless NVIDIA EGL; never schedule this renderer on B200."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-libero.yaml",
         "multi",
         plan_only=True,

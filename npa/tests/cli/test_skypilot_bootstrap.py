@@ -312,6 +312,27 @@ def offline_bootstrap_wheels(tmp_path, monkeypatch):
     return wheels
 
 
+def _assert_bootstrap_distribution_metadata(venv_path: Path, marker_path: Path) -> None:
+    """Check installed package metadata and the bootstrap inspection record."""
+    state = skypilot_cli.inspect_venv(venv_path)
+    assert state.version == "0.12.2" and state.importable
+    assert state.kubernetes_version == "30.1.0" and state.kubernetes_compatible
+    installed = subprocess.run(
+        [
+            str(state.python_bin),
+            "-c",
+            "import importlib.metadata as m; "
+            "print(m.version('fake-skypilot'), m.version('click'), m.version('kubernetes'))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert installed.stdout.strip() == "0.12.2 8.1.8 30.1.0"
+    marker = json.loads(marker_path.read_text())
+    assert marker["version"] == "0.12.2" and marker["kubernetes_client"] == "30.1.0"
+
+
 def test_skypilot_bootstrap_can_install_local_tiny_package(
     tmp_path: Path,
     offline_bootstrap_wheels: dict[str, Path],
@@ -329,6 +350,8 @@ def test_skypilot_bootstrap_can_install_local_tiny_package(
     assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(
         encoding="utf-8"
     )
+    _assert_bootstrap_distribution_metadata(result.path, result.marker_path)
+
     versions = subprocess.check_output(
         [
             str(result.path / "bin/python"),
@@ -368,6 +391,28 @@ def test_skypilot_bootstrap_refuses_unavailable_offline_dependency(
     assert "Retrying" not in message
     assert "https://" not in message
     assert not target.exists()
+
+
+def test_offline_bootstrap_refuses_unavailable_package(
+    tmp_path: Path,
+    offline_bootstrap_wheels: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert offline_bootstrap_wheels["sky"].is_file()
+    monkeypatch.setenv("PIP_INDEX_URL", "https://packages.example.invalid/simple")
+    destination = tmp_path / "unavailable-venv"
+    with pytest.raises(
+        skypilot_cli.SkyPilotBootstrapError, match="No matching distribution found"
+    ) as error:
+        skypilot_cli.bootstrap_skypilot(
+            venv_path=destination,
+            python_bin=sys.executable,
+            package_spec="npa-bootstrap-unavailable-fixture==0.0.1",
+        )
+    assert "packages.example.invalid" not in str(error.value)
+    assert "Retrying" not in str(error.value)
+    assert not destination.exists()
+    assert not (destination / skypilot_cli.MARKER_FILE).exists()
 
 
 @pytest.fixture

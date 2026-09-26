@@ -110,6 +110,12 @@ MANUAL_GATES = {
         "read-only completed Wan worker verification requires operator-selected private run artifacts and generation controls"
     ),
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
+    "NPA_HABITAT_SIM_IMAGE_LIVE": (
+        "the dedicated Habitat renderer requires an operator-authorized exact image and RTX run"
+    ),
+    "NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT": (
+        "an owner-only receipt binds the exact image, pod, workflow, storage, and STRICT RTX target"
+    ),
     # Not merely operator-selected: an automated runner *must not* reach this
     # suite. It needs a token entitled to the gated Lightricks/LTX-2.5
     # repository, which Lightricks grants only after a human accepts its terms

@@ -315,7 +315,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore", "libero", "sam3"}
+        {"openpi", "curobo", "habitat-sim", "ncore", "libero", "sam3"}
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
@@ -632,6 +632,35 @@ def test_the_restriction_mechanism_still_exists() -> None:
             "classes"
         ]
     ), "the restricted class must remain enforced"
+
+
+def test_public_refusal_union_preserves_pending_and_permanent_reasons() -> None:
+    expected = (
+        images.RESTRICTED_PUBLICATION_TOOLS
+        | images.RESTRICTED_DERIVED_IMAGES
+        | images.PENDING_REDISTRIBUTION_TOOLS
+    )
+    assert restricted_image_names() == sorted(expected)
+    assert images.omniverse_restricted_image_names() == sorted(expected)
+    assert all(not is_publicly_redistributable(name) for name in expected)
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
+    assert "habitat-sim" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "habitat-sim" in images.PUBLICATION_QUARANTINE_TOOLS
+    assert "habitat-sim" not in publicly_publishable_tools()
+
+
+def test_public_refusal_union_covers_derived_members_without_policy_reclassification(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        images, "RESTRICTED_DERIVED_IMAGES", frozenset({"inert-derived"})
+    )
+    assert not is_publicly_redistributable("inert-derived")
+    assert "inert-derived" in restricted_image_names()
+    assert images.omniverse_restricted_image_names() == restricted_image_names()
+    assert is_publicly_redistributable("foxglove-embed")
+    assert "inert-derived" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "inert-derived" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 
 def test_selector_matches_packaging_contract_classification() -> None:

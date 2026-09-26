@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-09-15T00:00:00Z",
+  "as_of": "2026-09-18T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -86,6 +86,17 @@
       "verdict": "not-applicable",
       "validation": "not-required",
       "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
+    },
+    {
+      "name": "npa-habitat-sim",
+      "dockerfile": "habitat-sim/Dockerfile.bootstrap",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "smoke": "Run the genuine official Skokloster RGB/depth, Bullet, EGL, and agent-traversal gate on exactly one RTX PRO 6000 Blackwell; verify the exact image digest, artifact hashes, and exit zero.",
+      "blocked_reason": "Habitat-Sim requires a supported NVIDIA OpenGL/EGL headless rendering path; no such path is verified for the datacenter B200/B300 target, so its hard gate remains STRICT-bound to one RTX PRO 6000 Blackwell.",
+      "upstream_tracking": "https://github.com/facebookresearch/habitat-sim/tree/57ee4941dc4765240f0f91f70b2c97a919bf9038",
+      "notes": "Neutral bootstrap runtime-fetches the pinned MIT simulator and native/scientific dependencies. Accompanying exact source covers the Ubuntu bootstrap; payload and one-RTX functional proof remain required. No B200/B300 capability is claimed."
     },
     {
       "name": "npa-libero",

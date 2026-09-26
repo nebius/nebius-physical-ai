@@ -135,6 +135,7 @@ likewise predates its current coherent release.
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
+| `npa-habitat-sim` | not routed; unverified | blocked (supported NVIDIA OpenGL/EGL path unverified) | **development evidence only** [19-step exact-digest RTX result](validation/habitat-sim-development-image-manifest.json); supported release quarantined | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [78] | **verified** [77] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-flex-pi` | supported | supported | **verified** [87] | **verified** [86] | supported (same-major `sm_100` coverage; not measured) |

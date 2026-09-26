@@ -596,6 +596,11 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = habitat-sim ]; then
+            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-bootstrap-source.json"
+          fi
           if [ "$TOOL" = flex-pi ]; then
             npa/.venv/bin/python npa/scripts/scan_image_flex_pi_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
@@ -1024,6 +1029,11 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = habitat-sim ]; then
+            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-bootstrap-source.json"
+          fi
           if [ "$TOOL" = gymnasium-robotics ]; then
             # The pulled immutable image ID above equals the pre-scanned image.
             # Its config digest was authenticated through that image's manifest.

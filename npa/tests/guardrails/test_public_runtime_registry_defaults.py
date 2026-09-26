@@ -113,6 +113,12 @@ def _prepare_registry_workflow(spec_path):
         # This validation workflow documents a required per-tool override
         # until genuine exact-image acceptance permits default selection.
         image_overrides["workbench.nurec.convert_colmap"] = NCORE_VALIDATION_IMAGE
+    if spec_path.name == "habitat-sim-smoke.yaml":
+        # Habitat requires an immutable reference even in a plan-only ownership
+        # check; no image or runtime acceptance is asserted by this inert digest.
+        image_overrides["workflow.habitat_sim.smoke"] = (
+            f"{public_prefix}habitat-sim@sha256:{'0' * 64}"
+        )
     return prepare_npa_workflow_for_submit(
         spec_path,
         run_id=f"registry-guard-{spec_path.stem}",

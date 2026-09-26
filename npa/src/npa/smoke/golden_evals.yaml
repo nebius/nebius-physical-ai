@@ -34,6 +34,42 @@
 format: npa_golden_evals_v1
 
 containers:
+  habitat-sim:
+    image: npa-habitat-sim
+    dockerfile: npa/docker/workbench/habitat-sim/Dockerfile.bootstrap
+    physical_ai:
+      useful: true
+      role: >-
+        Renders a genuine Skokloster Castle RGB/depth traversal with Bullet
+        physics and headless EGL on an RTX-class renderer.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+      network: official Ubuntu, GitHub, PyPI and Meta runtime fetch; operator S3 output
+      external_fetch: [official-ubuntu-runtime, github-codeload-runtime, pypi-runtime, official-meta-habitat-test-scene-runtime, s3-runtime]
+      notes: >-
+        Neutral runtime-fetch bootstrap; supported release validation is pending.
+        Accompanying source covers inherited and installed Ubuntu components.
+        Required scans must prove Habitat, scientific/native runtime, scene,
+        cache, credential, output, CUDA, and NVIDIA driver payload absence. The CC BY 4.0 scene must be hash-verified and attributed
+        after runtime fetch. These requirements are not accepted image/live proof.
+    golden_eval:
+      kind: container-smoke
+      command: >-
+        test -n "$NPA_WORKFLOW_RUN_ID" &&
+        test -n "$NPA_RENDERED_PLAN_SHA256" &&
+        test -n "$NPA_TASK_IMAGE" &&
+        test -n "$NPA_HABITAT_GOLDEN_OUTPUT_URI" &&
+        python3 -m npa.workflows.habitat_sim_smoke
+        --output-dir /tmp/npa-habitat-sim-golden
+        --output-uri "$NPA_HABITAT_GOLDEN_OUTPUT_URI"
+        --run-id "$NPA_WORKFLOW_RUN_ID"
+        --plan-sha256 "$NPA_RENDERED_PLAN_SHA256"
+      artifact: /tmp/npa-habitat-sim-golden/habitat-sim-smoke.json
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 1800
+      status: blocked-on-upstream
   gymnasium-robotics:
     image: npa-gymnasium-robotics
     internal: true

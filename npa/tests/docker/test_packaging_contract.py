@@ -41,13 +41,26 @@ def _cmds(dockerfile_text: str) -> list[str]:
     return re.findall(r"(?im)^\s*CMD\s+(.+?)\s*$", dockerfile_text)
 
 
+def _named_provenance_source(options: str, source: str) -> str | None:
+    """Map one bound provenance-context source to its path beneath ``npa/``."""
+
+    if "--from=npa-source-provenance" not in options.split():
+        return None
+    if not source.startswith("/inputs/"):
+        return None
+    relative = source.removeprefix("/inputs/")
+    if not relative or ".." in Path(relative).parts:
+        return None
+    return relative
+
+
 def _runtime_commands(dockerfile_text: str) -> list[str]:
     """ENTRYPOINT preferred; bare CMD is accepted for service images."""
     return _entrypoints(dockerfile_text) or _cmds(dockerfile_text)
 
 
 def _build_contract_text(dockerfile: Path) -> str:
-    """Include copied common installers that materially construct the image."""
+    """Include common installers and explicitly copied runtime package locks."""
 
     text = dockerfile.read_text(encoding="utf-8")
     parts = [text]
@@ -55,7 +68,40 @@ def _build_contract_text(dockerfile: Path) -> str:
     for script in sorted(common.glob("*.sh")):
         if script.name in text:
             parts.append(script.read_text(encoding="utf-8"))
+    # A lock-driven install need not repeat package names in the Dockerfile.
+    # Only a COPY instruction counts: an adjacent lock or a comment is not
+    # evidence that its packages participate in constructing the image.
+    instructions = _normalize_dockerfile(text)
+    if re.search(
+        r"(?im)^COPY\s+(?:--\S+\s+)*\S*/apt-runtime\.lock\s+\S+\s*$",
+        instructions,
+    ):
+        parts.append(
+            (dockerfile.parent / "apt-runtime.lock").read_text(encoding="utf-8")
+        )
     return "\n".join(parts)
+
+
+@pytest.mark.parametrize("copied", [True, False])
+def test_build_contract_includes_only_copied_runtime_lock(
+    tmp_path: Path, copied: bool
+) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    copy = "COPY --from=build /opt/build/apt-runtime.lock /tmp/runtime.lock\n"
+    dockerfile.write_text("FROM ubuntu\n" + (copy if copied else "# " + copy))
+    (tmp_path / "apt-runtime.lock").write_text(
+        "packages:\n  - {binary: openssh-server, version: pinned}\n"
+    )
+    assert ("openssh-server" in _build_contract_text(dockerfile)) is copied
+
+
+def test_build_contract_refuses_missing_copied_runtime_lock(tmp_path: Path) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM ubuntu\nCOPY --from=build /opt/build/apt-runtime.lock /tmp/runtime.lock\n"
+    )
+    with pytest.raises(FileNotFoundError):
+        _build_contract_text(dockerfile)
 
 
 def _normalize_dockerfile(dockerfile_text: str) -> str:
@@ -314,12 +360,16 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         script = dockerfile.parent / Path(entrypoint_path).name
         if not script.is_file():
             copy_match = re.search(
-                rf"(?im)^COPY\s+(?:--\S+\s+)*(?P<src>\S+)\s+"
+                rf"(?im)^COPY\s+(?P<options>(?:--\S+\s+)*)(?P<src>\S+)\s+"
                 rf"{re.escape(entrypoint_path)}\s*$",
                 _normalize_dockerfile(dockerfile_text),
             )
             if copy_match:
-                source = Path(copy_match.group("src"))
+                source_value = copy_match.group("src")
+                source = Path(
+                    _named_provenance_source(copy_match.group("options"), source_value)
+                    or source_value
+                )
                 assert not source.is_absolute() and ".." not in source.parts, name
                 # Workbench images use either npa/ or docker/workbench/ as
                 # their build context. Require one unambiguous source file.
