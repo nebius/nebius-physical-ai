@@ -54,6 +54,7 @@ from npa.orchestration.npa_workflow.interpreter import (
 from npa.orchestration.npa_workflow.run_state import (
     RunStateStore,
     RuntimeRunState,
+    s3_prefix_has_nonempty_object,
     store_for_config,
     utc_now,
 )
@@ -63,7 +64,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_steps_yaml,
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
-from npa.orchestration.npa_workflow.supervisor import PreflightEvidence
+from npa.orchestration.npa_workflow.supervisor import PreflightEvidence, RecoveryAction
 from npa.orchestration.npa_workflow.waves import split_into_batches
 from npa.orchestration.skypilot.launch_transaction import logical_launch_identity
 from npa.verification import sanitize_reason
@@ -130,11 +131,10 @@ def s3_artifact_exists(uri: str) -> bool:
     key = parsed.path.lstrip("/")
     try:
         if uri.endswith("/"):
-            response = client.list_objects_v2(
-                Bucket=parsed.netloc, Prefix=key, MaxKeys=1
-            )
-            return any(
-                int(item.get("Size") or 0) > 0 for item in response.get("Contents", [])
+            return s3_prefix_has_nonempty_object(
+                client,
+                bucket=parsed.netloc,
+                prefix=key,
             )
         response = client.head_object(Bucket=parsed.netloc, Key=key)
         return int(response.get("ContentLength") or 0) > 0
@@ -278,6 +278,14 @@ class SupervisedWaveFailure(NpaWorkflowError):
     def __init__(self, message: str, *, relaunch_allowed: bool = False) -> None:
         super().__init__(message)
         self.relaunch_allowed = relaunch_allowed
+
+
+@dataclass(frozen=True)
+class _PollResult:
+    """Separate workflow completion from the factual provider terminal state."""
+
+    workflow_status: str
+    provider_status: str
 
 
 @dataclass
@@ -1116,14 +1124,14 @@ class SkyPilotWaveExecutor:
                         "checked_at": utc_now(),
                     }
                 )
-                cancel_state, cancel_error = self._cancel(
+                cancel_state, cancel_error, terminal_status = self._cancel(
                     attempt.job_id, attempt.job_name
                 )
                 attempt.cancellation_state = cancel_state
                 attempt.cancellation_error = cancel_error
                 attempt.ended_at = utc_now()
                 if cancel_state == "verified":
-                    attempt.sky_status = "CANCELLED"
+                    attempt.sky_status = terminal_status
                     attempt.recovery_decision = (
                         "phantom_record_cancelled_verified_relaunch"
                     )
@@ -1401,15 +1409,15 @@ class SkyPilotWaveExecutor:
         attempt.sky_status = status
         self.ledger.record(attempt)
         try:
-            final_status = self._poll(
+            poll_result = self._poll(
                 attempt.job_id, attempt, observe_tasks=len(steps) > 1
             )
-            attempt.sky_status = final_status
+            attempt.sky_status = poll_result.provider_status
             attempt.tasks = self._timeline(attempt.job_id)
-            if not is_terminal_ok(final_status):
+            if not is_terminal_ok(poll_result.workflow_status):
                 raise NpaWorkflowError(
                     f"wave {key} (adopted job {attempt.job_id}) reached terminal status "
-                    f"{final_status}"
+                    f"{poll_result.workflow_status}"
                 )
             self._require_outputs(attempt.outputs, key=key)
         except BaseException as exc:  # noqa: BLE001 - same abort contract as a fresh wave
@@ -1505,17 +1513,13 @@ class SkyPilotWaveExecutor:
                 f"{attempt.job_id} authoritatively in flight "
                 f"({attempt.error}); cancelling it"
             )
-            state, cancel_error = self._cancel(attempt.job_id, attempt.job_name)
+            state, cancel_error, terminal_status = self._cancel(
+                attempt.job_id, attempt.job_name
+            )
             attempt.cancellation_state = state
             attempt.cancellation_error = cancel_error
             if state == "verified":
-                attempt.sky_status = "CANCELLED"
-        elif (
-            not attempt.job_id
-            or not should_cancel
-            or attempt.supervisor_blocks_cancellation
-        ):
-            attempt.cancellation_state = "not_applicable"
+                attempt.sky_status = terminal_status
         self.ledger.record(attempt)
 
     def _submit_and_wait(
@@ -1586,18 +1590,19 @@ class SkyPilotWaveExecutor:
         self.ledger.record(attempt)
         self._log(f"wave {attempt.key}: submitted job_id={job_id} name={job_name}")
 
-        final_status = self._poll(job_id, attempt, observe_tasks=len(steps) > 1)
-        attempt.sky_status = final_status
+        poll_result = self._poll(job_id, attempt, observe_tasks=len(steps) > 1)
+        attempt.sky_status = poll_result.provider_status
         attempt.tasks = self._timeline(job_id)
-        if not is_terminal_ok(final_status):
+        if not is_terminal_ok(poll_result.workflow_status):
             raise NpaWorkflowError(
-                f"wave {attempt.key} reached terminal status {final_status} "
+                f"wave {attempt.key} reached terminal status "
+                f"{poll_result.workflow_status} "
                 f"(job_id={job_id}, name={job_name})"
             )
 
     def _poll(
         self, job_id: str, attempt: WaveAttempt, *, observe_tasks: bool = False
-    ) -> str:
+    ) -> _PollResult:
         deadline = (
             None
             if self.options.max_wait_seconds <= 0
@@ -1664,9 +1669,18 @@ class SkyPilotWaveExecutor:
             # sleep, so a driver crash cannot erase the last-known transition.
             self.ledger.record(attempt)
             if last in {"PENDING", "STARTING", "RETRYING"}:
-                self._supervise_pending(attempt, scheduler_status=last)
+                supervisor_action = self._supervise_pending(
+                    attempt, scheduler_status=last
+                )
+                if supervisor_action is RecoveryAction.REUSE_COMPLETED_WAVE:
+                    if not is_terminal(attempt.sky_status):
+                        raise NpaWorkflowError(
+                            f"wave {attempt.key}: output reuse was accepted without "
+                            "an exact terminal provider status"
+                        )
+                    return _PollResult("SUCCEEDED", attempt.sky_status)
             if is_terminal(last):
-                return last
+                return _PollResult(last, last)
             if deadline is not None and self._clock() >= deadline:
                 raise WaveWaitTimeout(
                     f"wave {attempt.key} did not reach a terminal status within "
@@ -1676,7 +1690,7 @@ class SkyPilotWaveExecutor:
 
     def _supervise_pending(
         self, attempt: WaveAttempt, *, scheduler_status: str
-    ) -> None:
+    ) -> RecoveryAction | None:
         """Reconcile a pending wave through the shared production supervisor."""
 
         if not self.options.supervise_pending or not attempt.job_id:
@@ -1685,7 +1699,6 @@ class SkyPilotWaveExecutor:
             ArtifactValidation,
             AttemptIdentity,
             CheckpointValidation,
-            RecoveryAction,
             RecoveryContext,
             SkyPilotSupervisorAdapter,
             SupervisorLedger,
@@ -1735,14 +1748,22 @@ class SkyPilotWaveExecutor:
         )
 
         def cancel_exact(current: AttemptIdentity) -> Mapping[str, Any]:
-            state, error = self._cancel(
+            state, error, terminal_status = self._cancel(
                 current.provider_job_id, current.provider_job_name
             )
+            if state == "verified" and not is_terminal(terminal_status):
+                state = "failed"
+                error = "cancellation verification omitted terminal provider status"
             attempt.cancellation_state = state
             attempt.cancellation_error = error
+            if state == "verified":
+                attempt.sky_status = terminal_status
             return {
                 "provider_job_id": current.provider_job_id,
-                "status": "cancelled" if state == "verified" else state,
+                "status": (
+                    "cancelled" if state == "verified" else f"cancellation_{state}"
+                ),
+                "provider_terminal_status": terminal_status,
                 "exact": True,
                 "error": error,
             }
@@ -1824,6 +1845,7 @@ class SkyPilotWaveExecutor:
                 f"{reason_code}. {attempt.operator_remedy}",
                 relaunch_allowed=True,
             )
+        return action
 
     def _resolve_job_id(self, job_name: str, parsed: str, attempt: WaveAttempt) -> str:
         """Trust the launched job NAME, not the id scraped from launch output.
@@ -2164,9 +2186,9 @@ class SkyPilotWaveExecutor:
             self._log(f"timeline unavailable for job {job_id}: {sanitize_reason(exc)}")
             return []
 
-    def _cancel(self, job_id: str, job_name: str) -> tuple[str, str]:
+    def _cancel(self, job_id: str, job_name: str) -> tuple[str, str, str]:
         if not str(job_id).strip():
-            return "not_applicable", ""
+            return "not_applicable", "", ""
         canceller = self._canceller
         if canceller is None:
             try:
@@ -2175,7 +2197,7 @@ class SkyPilotWaveExecutor:
                     cancel_workflow_job,
                 )
             except Exception:  # noqa: BLE001
-                return "failed", "cancellation adapter unavailable"
+                return "failed", "cancellation adapter unavailable", ""
 
             def canceller(**kwargs: Any) -> Any:  # type: ignore[misc]
                 runtime = resolve_config(
@@ -2202,7 +2224,7 @@ class SkyPilotWaveExecutor:
                         or f"exit {returncode}"
                     )
                     self._log(f"cancel failed for exact job {job_id}: {detail}")
-                    return "failed", sanitize_reason(detail)
+                    return "failed", sanitize_reason(detail), ""
             self._log(f"cancellation requested for exact job {job_id} ({job_name})")
             verification_error = ""
             for verification_attempt in range(CANCELLATION_VERIFY_ATTEMPTS):
@@ -2219,13 +2241,13 @@ class SkyPilotWaveExecutor:
                         f"cancellation verified terminal for exact job {job_id}: "
                         f"{observed}"
                     )
-                    return "verified", ""
+                    return "verified", "", observed
                 if verification_attempt + 1 < CANCELLATION_VERIFY_ATTEMPTS:
                     self._sleep(max(1, min(self.options.poll_seconds, 5)))
-            return "requested", verification_error
+            return "requested", verification_error, ""
         except Exception as exc:  # noqa: BLE001 - never mask the timeout error
             self._log(f"cancel failed for job {job_id}: {sanitize_reason(exc)}")
-            return "failed", sanitize_reason(exc)
+            return "failed", sanitize_reason(exc), ""
 
 
 def _sanitize_job_name(name: str) -> str:
@@ -2257,8 +2279,11 @@ class RuntimeLedger:
             workflow=workflow, run_id=run_id, api_version=api_version
         )
         if store is not None and resume:
-            existing = store.read_runtime_state()
-            if existing is not None and existing.run_id == run_id:
+            existing = store.read_runtime_state(
+                expected_workflow=workflow,
+                expected_run_id=run_id,
+            )
+            if existing is not None:
                 self.state = existing
                 self.state.status = "running"
 
