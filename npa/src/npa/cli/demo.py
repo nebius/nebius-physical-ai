@@ -825,6 +825,7 @@ def _copy_object(
 def _list_objects(s3, bucket: str, prefix: str, *, operation: str) -> list[dict]:
     objects: list[dict] = []
     token = None
+    seen_tokens: set[str] = set()
     while True:
         try:
             kwargs = {"Bucket": bucket, "Prefix": prefix}
@@ -840,7 +841,18 @@ def _list_objects(s3, bucket: str, prefix: str, *, operation: str) -> list[dict]
         )
         if not page.get("IsTruncated"):
             break
-        token = page.get("NextContinuationToken")
+        next_token = page.get("NextContinuationToken")
+        if not isinstance(next_token, str) or not next_token:
+            raise DemoManifestError(
+                f"{operation}: truncated listing is missing a continuation token"
+            )
+        if next_token in seen_tokens:
+            raise DemoManifestError(
+                f"{operation}: truncated listing repeated continuation token "
+                f"{next_token!r}"
+            )
+        seen_tokens.add(next_token)
+        token = next_token
     return objects
 
 

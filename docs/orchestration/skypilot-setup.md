@@ -174,9 +174,19 @@ retain the incoming CLI home configuration. For a verified RSA service-account
 profile, normal cache refresh, creation, and pruning preserve API identity;
 the effective profile file, account, key, and explicit credential sources remain
 bound. Unsupported or mixed authentication formats remain byte-strict.
+The native attached-VM profile is also supported when it contains exactly
+`endpoint`, `parent-id`, `tenant-id`, and the provider's standard metadata
+`token-endpoint`. Its unchanged profile selects the attached identity while
+the CLI refreshes or prunes its service-account cache, including an empty or
+null token map. Custom token endpoints, extra authentication settings, and
+explicit credential-file aliases retain full-byte verification.
 Existing API ownership records are never silently rebound to a new file model.
 Preserve the original environment and exact controller records when an older
 session reports a credential mismatch; do not edit its ownership record.
+After an owned idle validation API is retired, NPA recreates its verified
+client configuration before restarting discovery. A workflow that loses status
+access with `block_relaunch` remains unresolved: resuming reconciles the recorded
+managed job instead of submitting a second copy.
 
 ## Managed-Jobs Controller
 

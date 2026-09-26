@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
 
 from npa.workbench.storage_scope import StorageAuthorizationError
@@ -73,6 +74,24 @@ def _is_corrupt(raw: dict[str, Any], quality: dict[str, float]) -> bool:
     return float(quality.get("corruption", 0.0)) > 0.5
 
 
+def _normalize_quality(raw: dict[str, Any], record_index: int) -> dict[str, float]:
+    quality: dict[str, float] = {}
+    for key, value in (raw.get("quality") or {}).items():
+        quality_key = str(key)
+        try:
+            normalized_value = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DatasetIngestError(
+                f"record {record_index} quality {quality_key!r} must be a finite number"
+            ) from exc
+        if not math.isfinite(normalized_value):
+            raise DatasetIngestError(
+                f"record {record_index} quality {quality_key!r} must be a finite number"
+            )
+        quality[quality_key] = normalized_value
+    return quality
+
+
 def normalize_records(
     raw_records: list[dict[str, Any]],
     schema: SensorSchema,
@@ -98,7 +117,7 @@ def normalize_records(
         if record_id in seen:
             raise DatasetIngestError(f"duplicate record_id: {record_id}")
         seen.add(record_id)
-        quality = {str(k): float(v) for k, v in (raw.get("quality") or {}).items()}
+        quality = _normalize_quality(raw, index)
         if _is_corrupt(raw, quality):
             corrupt += 1
         normalized.append(

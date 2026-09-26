@@ -101,6 +101,7 @@ def _no_ambient_src(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
 
 
@@ -1939,6 +1940,75 @@ def test_runtime_fetch_sonic_image_requires_staged_npa_source() -> None:
             options=SkypilotRenderOptions(materialize_registry_secrets=False),
         )
         is True
+    )
+
+
+@pytest.mark.parametrize("overlay_origin", ["spec", "override", "environment"])
+def test_pinned_b300_overlay_automatically_stages_and_reaches_worker(
+    monkeypatch, mocker, overlay_origin
+) -> None:
+    """A digest override must not silently discard an explicit source overlay."""
+    import yaml
+
+    stage = mocker.patch("npa.orchestration.npa_workflow.src_staging.stage_npa_source")
+    monkeypatch.setattr(workflow_cli, "_local_source_fingerprint", lambda: "a" * 64)
+    monkeypatch.setattr(
+        workflow_cli, "_resolve_submit_src_s3_uri_with_origin", lambda _: ("", "")
+    )
+    if overlay_origin == "environment":
+        monkeypatch.setenv("NPA_SRC_OVERLAY", "1")
+    spec = SPEC.parent / "flex-pi-b300-inference.yaml"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec),
+            "--run-id",
+            "b300-overlay-plan",
+            "--plan-only",
+            "--no-deploy-if-absent",
+            "--output-format",
+            "json",
+            "--image",
+            f"cr.example.invalid/npa-flex-pi@sha256:{'b' * 64}",
+            "--var",
+            "bucket=example-bucket",
+            *(["--var", "source_overlay=true"] if overlay_origin == "override" else []),
+            *(
+                ["--var", "source_overlay=false"]
+                if overlay_origin == "environment"
+                else []
+            ),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["source"]["status"] == "planned"
+    task = [doc for doc in yaml.safe_load_all(payload["skypilot_yaml"]) if doc][-1]
+    assert task["envs"]["NPA_SRC_OVERLAY"] == "1"
+    assert task["envs"]["NPA_SRC_S3_URI"] == payload["source"]["uri"]
+    assert task["envs"]["NPA_SRC_S3_URI"].endswith(f"/{'a' * 64}/")
+    stage.assert_not_called()  # Plan-only remains read-only.
+
+
+@pytest.mark.parametrize("baked", [False, True])
+def test_pinned_b300_without_effective_overlay_needs_no_staged_source(baked) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    assert not workflow_cli._plan_requires_npa_source(
+        SPEC.parent / "flex-pi-b300-inference.yaml",
+        run_id="b300-no-overlay",
+        assume_decision="",
+        config_overrides={
+            "source_overlay": "true" if baked else "false",
+            "require_baked_npa": "true" if baked else "false",
+        },
+        options=SkypilotRenderOptions(
+            image_overrides={"*": f"cr.example.invalid/npa-flex-pi@sha256:{'b' * 64}"},
+            materialize_registry_secrets=False,
+        ),
     )
 
 

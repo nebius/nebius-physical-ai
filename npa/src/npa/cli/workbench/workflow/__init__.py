@@ -1852,7 +1852,7 @@ def submit_cmd(
             and (not existing_source_uri or persisted_source_is_stale)
         )
         stage_source_planned = stage_src is True or auto_stage_source
-        if image_pins_all_tasks:
+        if image_pins_all_tasks and not requires_npa_source:
             source_action = "image-override"
         elif stage_source_planned:
             source_action = "planned"
@@ -2429,6 +2429,8 @@ def submit_cmd(
                 run_id=resolved_run_id,
                 secret_env_values=extra_env,
                 endpoint=render_endpoint,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if runtime and not plan_only
             else None
@@ -3294,6 +3296,8 @@ def _runtime_submit_environment(
     run_id: str,
     secret_env_values: Mapping[str, str],
     endpoint: str,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> dict[str, str]:
     """Resolve the same private environment before API readiness and runtime."""
     from npa.orchestration.npa_workflow.interpreter import _make_context
@@ -3308,6 +3312,14 @@ def _runtime_submit_environment(
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
     if endpoint.strip():
         environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
+    if isolated_config_dir is not None:
+        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
     return environment
 
 
@@ -3442,6 +3454,8 @@ def _run_npa_workflow_runtime(
         run_id=run_id,
         secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
     )
     with _temporary_runtime_environment(runtime_env):
         # Record entry into the runtime before it can launch a wave. A runtime
@@ -3749,12 +3763,13 @@ def _plan_requires_npa_source(
     config_overrides: Mapping[str, str] | None = None,
     options: SkypilotRenderOptions,
 ) -> bool:
-    """Return whether any fully configured planned step lacks a container image."""
+    """Return whether the merged plan needs source, including an explicit overlay."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
+        source_overlay_requested,
         tool_requires_staged_npa_source,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
@@ -3764,6 +3779,10 @@ def _plan_requires_npa_source(
     # otherwise a fully digest-pinned workflow is incorrectly forced to stage an
     # unused source tree (and ``--no-stage-src`` cannot submit it at all).
     spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
+    # An image supplies the base runtime, but an explicit overlay must still
+    # stage the selected checkout. Otherwise the worker silently runs baked code.
+    if source_overlay_requested(spec.config):
+        return True
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
@@ -4213,7 +4232,22 @@ def _resolve_submit_accelerators(
     if not requested:
         return {}
 
-    with _temporary_runtime_environment(environment):
+    # GPU discovery calls into k8s_gpu_catalog, which resolves its isolated
+    # directory and base config from the process environment.  Bind the same
+    # explicit CLI selections used by ensure_local_api_daemon_health; otherwise
+    # a saved directory can win during catalog discovery and be rejected as a
+    # different executing identity.
+    readiness_environment = dict(environment or {})
+    if isolated_config_dir is not None:
+        readiness_environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        readiness_environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
+
+    with _temporary_runtime_environment(readiness_environment):
         try:
             ensure_local_api_daemon_health(
                 sky_bin=sky_bin or None,
