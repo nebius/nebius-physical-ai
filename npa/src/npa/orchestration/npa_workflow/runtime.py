@@ -1174,6 +1174,7 @@ class SkyPilotWaveExecutor:
                 if outputs_valid:
                     attempt.status = "succeeded"
                     attempt.sky_status = "SUCCEEDED"
+                    attempt.replayed = True
                     attempt.ended_at = utc_now()
                     attempt.recovery_decision = (
                         "operator_authorized_absent_output_adoption"
