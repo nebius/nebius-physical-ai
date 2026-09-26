@@ -17,6 +17,7 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
             "rlc-specialist",
             "comet12",
             "comet50",
+            "comet-native",
         ),
         default="official",
     )
@@ -31,6 +32,8 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--policy-stock-correlation-asset", type=Path)
     parser.add_argument("--policy-stock-correlation-sha256")
     parser.add_argument("--policy-task-name")
+    parser.add_argument("--policy-native-binding", type=Path)
+    parser.add_argument("--policy-native-input-root", type=Path)
     parser.add_argument("--policy-specialist-equivalence-receipt", type=Path)
     parser.add_argument("--policy-specialist-equivalence-sha256")
     parser.add_argument("--policy-specialist-report-admission", type=Path)

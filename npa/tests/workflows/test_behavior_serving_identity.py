@@ -10,7 +10,10 @@ from npa.workflows.behavior_challenge import serving_identity
 
 
 @pytest.mark.parametrize("kind", ["comet12", "rlc"])
-@pytest.mark.parametrize("helper", ["evaluator_versions.py", "evaluator_wire.py"])
+@pytest.mark.parametrize(
+    "helper",
+    ["evaluator_versions.py", "evaluator_wire.py", "nonreporting_train.py"],
+)
 def test_changed_wire_helper_rejects_frozen_policy(tmp_path, monkeypatch, kind, helper):
     source = Path(serving_identity.__file__).parent
     runtime = tmp_path / "runtime"

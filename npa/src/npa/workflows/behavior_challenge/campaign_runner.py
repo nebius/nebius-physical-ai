@@ -22,6 +22,14 @@ from .campaign import (
 )
 from .case_store import CaseAlreadyStarted, CaseStore
 from .execution import _run_case, _runtime_environment
+from .nonreporting_train import (
+    TRAIN_PANEL_SCHEMA,
+    aggregate_train_outputs,
+    bind_train_rollout_record,
+    train_evaluator_argv,
+    validate_train_panel,
+    validate_train_partition,
+)
 from .policy import POLICY_FIELDS, managed_policy
 from .protocol import evaluator_argv, file_digest, verify_upstream
 
@@ -30,6 +38,34 @@ def _json_bytes(value):
     return (
         json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + "\n"
     ).encode()
+
+
+def _is_train_panel(panel) -> bool:
+    return isinstance(panel, dict) and panel.get("schema") == TRAIN_PANEL_SCHEMA
+
+
+def _validate_execution_panel(panel):
+    if _is_train_panel(panel):
+        return validate_train_panel(panel)
+    return validate_panel(panel)
+
+
+def _validate_execution_partition(partition, panel):
+    if _is_train_panel(panel):
+        return validate_train_partition(partition, panel)
+    return validate_partition(partition, panel)
+
+
+def _bind_execution_rollout(panel, record):
+    if _is_train_panel(panel):
+        return bind_train_rollout_record(panel, record)
+    return bind_inspected_rollout(panel, record)
+
+
+def _upstream_commit(panel):
+    if _is_train_panel(panel):
+        return panel["protocol"]["science_lineage"]["behavior_upstream_commit"]
+    return panel["upstream_commit"]
 
 
 def _put_original(storage, payload, uri):
@@ -129,7 +165,7 @@ def _restore_originals(store, version, output, panel):
     if saved is None:
         raise CaseAlreadyStarted("Recover this claim's original worker output")
     record = json.loads(saved[0])
-    bind_inspected_rollout(panel, record)
+    _bind_execution_rollout(panel, record)
     if any(record.get(key) != value for key, value in version.record["case"].items()):
         raise ValueError("Recovery manifest differs from the prescribed case")
     _restore_case_provenance(store, version, output)
@@ -189,8 +225,8 @@ def run_partition(
         Exception: Startup failures retain a reclaimable claim; evaluator failures
             retain the started marker.
     """
-    validate_panel(panel)
-    validate_partition(partition, panel)
+    _validate_execution_panel(panel)
+    _validate_execution_partition(partition, panel)
     if store.panel_id != panel["panel_id"]:
         raise ValueError("Case store is bound to another panel")
     if (
@@ -226,7 +262,7 @@ def _run_or_recover(
             execute_case(case, output)
             (output / "evaluator-exit.json").write_bytes(_json_bytes(case))
         record = inspect_rollout(output, case)
-        bind_inspected_rollout(panel, record)
+        _bind_execution_rollout(panel, record)
         _record_originals(store, started, output, record)
     except BaseException:
         _preserve_failed_case(store, claim, output)
@@ -261,7 +297,7 @@ def _recover_persistent_case(store, version, output, panel):
         )
         if finished and all(path.is_file() for path in paths):
             record = inspect_rollout(output, case)
-            bind_inspected_rollout(panel, record)
+            _bind_execution_rollout(panel, record)
             _record_originals(store, version, output, record)
     current = store.read(version.record["case"])
     return recover_case(store, current, output, panel)
@@ -279,25 +315,34 @@ def aggregate_stored_panel(panel, store, workspace: Path) -> dict:
     Raises:
         ValueError: Any case is missing, unfinished, or fails artifact validation.
     """
-    validate_panel(panel)
+    _validate_execution_panel(panel)
     if store.panel_id != panel["panel_id"]:
         raise ValueError("Case store is bound to another panel")
     receipts = []
+    case_outputs = {}
     for case in panel["cases"]:
         version = store.read(case)
         if version is None or version.record["state"] != "complete":
             raise ValueError("Complete panel required before aggregation")
-        record = recover_case(
-            store, version, _case_directory(workspace, version), panel
-        )
-        receipts.append(bind_inspected_rollout(panel, record))
+        output = _case_directory(workspace, version)
+        record = recover_case(store, version, output, panel)
+        if _is_train_panel(panel):
+            _bind_execution_rollout(panel, record)
+            case_outputs[case["case_id"]] = output
+        else:
+            receipts.append(bind_inspected_rollout(panel, record))
+    aggregate = (
+        aggregate_train_outputs(panel, case_outputs)
+        if _is_train_panel(panel)
+        else aggregate_panel(panel, receipts)
+    )
     return {
         "schema": "npa.behavior.verified-panel.v1",
-        "aggregate": aggregate_panel(panel, receipts),
+        "aggregate": aggregate,
         "verification": {
             "all_original_bytes_downloaded_and_hashed": True,
             "all_original_videos_fully_decoded": True,
-            "case_count": len(receipts),
+            "case_count": len(panel["cases"]),
         },
     }
 
@@ -310,8 +355,10 @@ def _read_json(storage, uri, destination):
 def _worker_declarations(args, storage, workspace):
     panel = _read_json(storage, args.panel_uri, workspace / "panel.json")
     partition = _read_json(storage, args.partition_uri, workspace / "partition.json")
-    validate_panel(panel)
-    validate_partition(partition, panel)
+    _validate_execution_panel(panel)
+    _validate_execution_partition(partition, panel)
+    if _is_train_panel(panel):
+        return panel, partition
     registry_path = args.upstream_root / "docs/challenge/task_data.json"
     registry = [item["id"] for item in json.loads(registry_path.read_bytes())["tasks"]]
     if panel != declare_panel(
@@ -326,6 +373,21 @@ def _worker_declarations(args, storage, workspace):
 
 
 def _managed_plan(panel, case):
+    if _is_train_panel(panel):
+        protocol = panel["protocol"]
+        revision = _upstream_commit(panel)
+        return {
+            "upstream_commit": revision,
+            "recipe": {
+                "tasks": [protocol["task"]],
+                "split": "train",
+                "upstream_commit": revision,
+                "policy_checkpoint_sha256": panel["policy_binding"]["artifacts"][
+                    "checkpoint"
+                ]["sha256"],
+            },
+            "cases": [case],
+        }
     return {
         "upstream_commit": panel["upstream_commit"],
         "recipe": {
@@ -347,29 +409,53 @@ def _prepared_evaluator(args, panel, workspace):
     simulator = _simulator_preparation(args, workspace)
     if not all(getattr(args, field, None) for field in POLICY_FIELDS):
         raise ValueError("Campaign execution requires a verified managed policy")
-    if args.policy_kind == "rlc-specialist" and panel["split"] == "report":
+    if (
+        not _is_train_panel(panel)
+        and args.policy_kind == "rlc-specialist"
+        and panel["split"] == "report"
+    ):
         from .rlc_specialist_admission import verify_specialist_report_token
 
         verify_specialist_report_token(args, panel)
     else:
-        verify_serving_identity(args, panel["policy"])
-    task = panel["selected_tasks"]
+        identity = (
+            panel["policy_binding"] if _is_train_panel(panel) else panel["policy"]
+        )
+        verify_serving_identity(args, identity)
+    task = (
+        [panel["protocol"]["task"]]
+        if _is_train_panel(panel)
+        else panel["selected_tasks"]
+    )
     if len(task) != 1:
         raise ValueError("Managed campaign worker currently serves one task per panel")
 
     def execute(case, output):
-        verify_upstream(args.upstream_root, panel["upstream_commit"])
-        command = evaluator_argv(
-            case,
-            root=args.upstream_root,
-            python=args.evaluator_python,
-            host=args.host,
-            port=args.port,
-            output=output,
-            upstream_commit=panel["upstream_commit"],
+        revision = _upstream_commit(panel)
+        verify_upstream(args.upstream_root, revision)
+        command = (
+            train_evaluator_argv(
+                panel["protocol"],
+                case,
+                root=args.upstream_root,
+                python=args.evaluator_python,
+                host=args.host,
+                port=args.port,
+                output=output,
+            )
+            if _is_train_panel(panel)
+            else evaluator_argv(
+                case,
+                root=args.upstream_root,
+                python=args.evaluator_python,
+                host=args.host,
+                port=args.port,
+                output=output,
+                upstream_commit=revision,
+            )
         )
         _run_case(command, args, output, case, environment)
-        verify_upstream(args.upstream_root, panel["upstream_commit"])
+        verify_upstream(args.upstream_root, revision)
 
     def prepare(case, output):
         return managed_policy(args, _managed_plan(panel, case), output)
@@ -408,6 +494,12 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
 
 
 def _execute_partition(args, panel, partition, storage, workspace):
+    if _is_train_panel(panel) and getattr(args, "policy_kind", None) != "comet-native":
+        raise ValueError(
+            "TRAIN campaign execution requires the reviewed comet-native adapter"
+        )
+    if _is_train_panel(panel):
+        _native_train_preclaim(args, panel, workspace)
     try:
         _prepare_worker_startup(args, workspace)
         _specialist_preclaim(args, panel, storage, workspace)
@@ -433,6 +525,28 @@ def _execute_partition(args, panel, partition, storage, workspace):
     else:
         _publish_worker_provenance(storage, workspace, args.worker_receipt_uri)
         return records
+
+
+def _native_train_preclaim(args, panel, workspace) -> None:
+    from .native_comet_checkpoint import validate_native_train_admission
+    from .native_training_checkpoint import atomic_json
+    from .serving_identity import serving_artifact
+
+    binding = getattr(args, "policy_native_binding", None)
+    input_root = getattr(args, "policy_native_input_root", None)
+    if binding is None or input_root is None:
+        raise ValueError("Native TRAIN requires its binding and input root")
+    admission = validate_native_train_admission(
+        Path(binding),
+        Path(input_root),
+        Path(args.policy_checkpoint),
+        panel,
+        expected_verified_checkpoint=Path(args.policy_archive),
+        expected_serving_identity=serving_artifact(args),
+    )
+    args.policy_native_panel = panel
+    args.policy_native_admission = admission
+    atomic_json(Path(workspace) / "native-train-admission.json", admission)
 
 
 def _specialist_preclaim(args, panel, storage, workspace) -> None:
@@ -467,9 +581,9 @@ def evaluate_partition(args) -> dict:
     workspace.mkdir(parents=True, exist_ok=True)
     storage = StorageClient.from_environment()
     panel, partition = _worker_declarations(args, storage, workspace)
-    verify_upstream(args.upstream_root, panel["upstream_commit"])
+    verify_upstream(args.upstream_root, _upstream_commit(panel))
     records = _execute_partition(args, panel, partition, storage, workspace)
-    verify_upstream(args.upstream_root, panel["upstream_commit"])
+    verify_upstream(args.upstream_root, _upstream_commit(panel))
     result = {
         "panel_id": panel["panel_id"],
         "partition_sha256": partition["partition_sha256"],
@@ -511,7 +625,9 @@ def aggregate_campaign_worker(args) -> dict:
     args.workspace.mkdir(parents=True, exist_ok=True)
     storage = StorageClient.from_environment()
     panel = _read_json(storage, args.panel_uri, args.workspace / "panel.json")
-    store = CaseStore(storage, args.output_path, validate_panel(panel)["panel_id"])
+    store = CaseStore(
+        storage, args.output_path, _validate_execution_panel(panel)["panel_id"]
+    )
     result = aggregate_stored_panel(panel, store, args.workspace)
     _put_original(storage, _json_bytes(result), args.receipt_uri)
     return result

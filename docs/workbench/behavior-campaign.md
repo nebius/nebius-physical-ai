@@ -66,6 +66,107 @@ declaration = declare_campaign(
 The example hashes are synthetic. A real declaration must use the byte
 identities verified during packaging.
 
+## Prescribed non-reporting TRAIN panels
+
+The `nonreporting_train` module freezes small TRAIN-only panels for descriptive
+policy studies. Callers provide the task name, a typed TRAIN task-to-data
+mapping with source, split, and mapping-manifest identities, prescribed
+instances, an evaluator contract with a typed TRAIN argv identity, science
+lineage, and an existing `npa.behavior.policy-identity.v1` binding. The module
+does not derive cases from the development or reporting split tables. The
+current one-rollout evaluator writes only rollout ID 0, so the declaration
+rejects every other rollout ID until the public runner supports and tests a
+different original-artifact layout.
+
+The resulting protocol, panel, deterministic partition, case-record aggregate,
+and study each carry content-derived identities. `aggregate_train_panel()` is a
+pure declaration helper: it accepts only a complete set of inspection-shaped
+records, but it does not open their files. Its receipts therefore say
+`npa.behavior.caller-supplied-rollout-record.v1` and keep
+`artifact_bytes_verified_by_aggregator` false. `aggregate_train_outputs()` is
+the executable counterpart: it requires the exact case-ID-to-directory mapping,
+opens every original JSON, fully decodes every video through `inspect_rollout()`,
+and emits the `npa.behavior.inspect-rollout.v1` contract with the verification
+flag true. The protocol binds source and argv artifact identities; constructing
+it alone does not verify those bytes.
+
+`rank_train_study()` compares any declared number of complete, file-backed
+policy aggregates. It rejects pure caller-supplied aggregates. It uses ascending
+primary/secondary calibration loss and descending mean Q/success count, with
+shared midranks for complete-key ties. Its Kendall tau-b, Spearman midrank
+correlation, and Pareto relations are descriptive. The result cannot select or
+promote a policy.
+
+```python
+from npa.workflows.behavior_challenge.nonreporting_train import (
+    aggregate_train_outputs,
+    declare_train_panel,
+    declare_train_protocol,
+    partition_train_panel,
+)
+
+protocol = declare_train_protocol(
+    task="your_train_task",
+    task_mapping=verified_task_mapping,
+    prescribed_cases=[{"instance_id": 0, "rollout_id": 0}],
+    science_lineage=verified_science_lineage,
+    evaluator_contract=verified_evaluator_contract,
+)
+panel = declare_train_panel(protocol, complete_policy_binding)
+partition = partition_train_panel(panel, worker_count=1)
+aggregate = aggregate_train_outputs(panel, case_id_to_downloaded_output_directory)
+```
+
+This library surface is separate from existing development/report panel
+validation. The existing internal `campaign-worker`, `campaign-aggregate`, and
+`campaign-status` commands dispatch by panel schema. TRAIN panels reuse the same
+`CaseStore` claim/start/complete transitions, raw failure preservation, and
+immutable-original recovery. Each unstarted case gets a fresh managed-policy
+context. The aggregate command re-downloads, hashes, and decodes every original
+before it emits the file-backed TRAIN aggregate. Existing development and report
+panels continue through their original validators and evaluator argv unchanged.
+
+`train_evaluator_argv()` renders one declared instance with literal
+`--mode train`, one rollout, video enabled, and no max-step override. TRAIN
+execution accepts only the `comet-native` policy kind. Existing Comet and RLC
+policy kinds retain their development/report split restrictions and fail before
+simulator startup or case claims.
+
+The native adapter requires a provider-read
+`npa.behavior.comet-native-verified-checkpoint.v1`. That record comes from an
+actual restore of the complete optimizer/TrainState and serving parameters, an
+exhaustive typed architecture partition, equality of every frozen leaf with its
+parent value, and a discarded finite probe. The adapter does not assume one
+leaf count for all native checkpoints: action-expert and full-SFT receipts carry
+their own exact path, shape, dtype, byte, and value-hash inventories. The
+qualified checkpoint tree also includes the normalization assets required by
+the pinned native loader under the selected manager step. Asset identifiers are
+canonical relative paths, including upstream identifiers such as
+`behavior-1k/2025-challenge-demos`; absolute paths, traversal, escapes, and
+encoded separators are rejected. A private training
+publisher must translate its own terminal and resume records into this generic
+contract; it cannot label them as the public native milestone schema. Every
+protocol and native input is opened and hashed before simulator startup,
+`CaseStore`, or provider mutation.
+
+Each case gets a discarded checkpoint-load qualification followed by a fresh
+serving process. Its seed is derived from the frozen RNG contract and case
+identity. The server assigns the JAX key explicitly, verifies the loaded
+policy's real key, and requires exactly one key split per inference. An optional
+serving-identity-bound JSONL trace records the actual sent 23-vector, command
+indices 14 and 22, and the observed gripper proprioception values without image,
+token, prompt, hidden-state, or parameter payloads. These traces are diagnostic
+and do not affect scores, ranking, selection, or report eligibility. Finalization
+revalidates every row against the immutable process identity, contiguous action
+and inference ordinals, redundant gripper fields, and RNG
+transitions; malformed partial diagnostics remain visible and cannot become a
+successful final receipt. The server records successfully sent actions in one
+append-only, fsynced process-progress JSONL file, so a long rollout does not
+create one provider object per action. The immutable ready and final receipts
+bind that journal. Real model execution still requires an
+operator-qualified checkpoint bridge and runtime; the public adapter does not
+manufacture that evidence.
+
 For managed workers, construct the serving artifact with
 `serving_identity.serving_artifact(args)`. It hashes the actual adapter files,
 policy kind, execution variant, per-episode process lifecycle, and optional

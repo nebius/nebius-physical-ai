@@ -10,6 +10,7 @@ from .protocol import file_digest
 
 _SERVING_FILES = (
     "campaign_runner.py",
+    "nonreporting_train.py",
     "evaluator_versions.py",
     "evaluator_wire.py",
     "policy.py",
@@ -25,6 +26,9 @@ _SERVING_FILES = (
     "rlc-checkpoints.json",
     "comet_policy.py",
     "comet_server.py",
+    "native_comet_checkpoint.py",
+    "native_comet_policy.py",
+    "native_comet_server.py",
     "comet12-checkpoint.json",
     "comet50-checkpoint.json",
 )
@@ -70,9 +74,24 @@ def serving_artifact(args) -> dict:
             args, "policy_stock_correlation_sha256", None
         ),
         "task_name": getattr(args, "policy_task_name", None),
+        "native_configuration": (
+            _native_configuration(Path(args.policy_native_binding))
+            if args.policy_kind == "comet-native"
+            else None
+        ),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded)}
+
+
+def _native_configuration(path: Path) -> dict:
+    value = json.loads(path.read_text())
+    return {
+        "schema": value.get("schema"),
+        "task": value.get("task"),
+        "task_id": value.get("task_id"),
+        "trace": value.get("trace"),
+    }
 
 
 def verify_serving_identity(args, policy: dict) -> None:

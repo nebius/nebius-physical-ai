@@ -8,6 +8,13 @@ from npa.clients.storage import StorageClient
 
 from .campaign import validate_panel
 from .case_store import CaseStore
+from .nonreporting_train import TRAIN_PANEL_SCHEMA, validate_train_panel
+
+
+def _validate_status_panel(panel: object) -> dict:
+    if isinstance(panel, dict) and panel.get("schema") == TRAIN_PANEL_SCHEMA:
+        return validate_train_panel(panel)
+    return validate_panel(panel)
 
 
 def panel_status(storage: StorageClient, panel: dict, output_path: str) -> dict:
@@ -23,7 +30,7 @@ def panel_status(storage: StorageClient, panel: dict, output_path: str) -> dict:
         ValueError: Panel or stored case identity is inconsistent.
         StorageError: The state cannot be read; absence is never inferred from errors.
     """
-    validate_panel(panel)
+    panel = _validate_status_panel(panel)
     store = CaseStore(storage, output_path, panel["panel_id"])
     counts = dict.fromkeys(("unclaimed", "claimed", "started", "complete"), 0)
     cases = []
