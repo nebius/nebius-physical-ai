@@ -22,7 +22,9 @@ does not establish multi-node speedup or policy quality.
 | 3 | 13.301946 s | 13.300 / 13.436 s | 136,130,595 | 68,683.80 | 3,142.537 s | 3,174 s |
 
 Each numeric series contains all 149 regular timing records from updates
-52–200. The first 51 updates are outside that measured series; they are not
+52–200. Native iteration durations are logged to 0.01 seconds; means and
+quantiles are calculated from those recorded values. The first 51 updates
+are outside that measured series; they are not
 all model startup. The final checkpoint save occurs after the timed loop and
 is included in native process duration. Each final checkpoint contains
 177,284,648,532 bytes across 36 model, optimizer, scheduler and trainer files.

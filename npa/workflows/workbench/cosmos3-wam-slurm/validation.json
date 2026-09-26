@@ -112,5 +112,19 @@
     "sample_standard_deviation_of_run_means_seconds": 0.01359685828418573,
     "pooled_tokens_per_second": 68652.77818403105,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-timing-8/evidence.json"
+  },
+  "final_trained_policy_visual": {
+    "completed": true,
+    "checkpoint_step": 2000,
+    "training_gpus": 8,
+    "evaluation_gpus": 8,
+    "tasks": 10,
+    "trials_per_task": 1,
+    "successes": 9,
+    "failures": 1,
+    "infrastructure_errors": 0,
+    "full_500_trial_evaluation": false,
+    "model_manifest_sha256": "4f28c9ab7e4cf172a8e05606dc2a944f4c1cf07b5c61c05160655a746ab6135c",
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-final-visual/evidence.json"
   }
 }

@@ -29,6 +29,10 @@ provides a trace-linked kernel timeline, excluded from scaling comparisons.
 The [three completed timing repetitions](../../../../docs/workbench/evidence/cosmos3-wam-timing-8/README.md)
 provide the eight-GPU baseline: 13.3080 s mean step, with 0.0136 s sample
 standard deviation across run means. The two-node comparison remains pending.
+The [final-checkpoint visual pass](../../../../docs/workbench/evidence/cosmos3-wam-final-visual/README.md)
+completed ten illustrative trials with nine successes, one failure and no
+infrastructure errors. Its videos, model hashes and eight-GPU process
+attribution establish execution; full 500-trial qualification remains pending.
 
 ## Plan without cloud resources
 

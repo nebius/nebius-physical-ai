@@ -140,24 +140,30 @@ of why a visually recognizable scene is not evidence of a successful robot
 policy. The linked record includes the videos, settings, hashes and actual GPU
 telemetry; the full trained-policy benchmark remains pending.
 
-## Watch a trained checkpoint act
+## Watch the final trained checkpoint act
 
-The first saved training checkpoint now has a separate
-[closed-loop visual record](evidence/cosmos3-wam-trained-visual/README.md).
-The checkpoint came from eight-B200 training; one B200 served its predicted
-actions while CPU MuJoCo rendered the resulting motion. Native comparison
-videos show the WAM's predicted camera sequence beside the actual simulator
-sequence, with front and wrist views in both panels.
+The completed 2,000-update checkpoint has an actual
+[closed-loop visual record](evidence/cosmos3-wam-final-visual/README.md).
+Eight B200 policy servers ran one simulator environment each. Each trial used
+one server's predicted actions while CPU MuJoCo rendered the resulting motion.
+Native comparison videos place the WAM's predicted camera sequence beside the
+actual simulator sequence, with front and wrist views in both panels.
 
-![Actual successful rollout from the trained checkpoint](evidence/cosmos3-wam-trained-visual/task-000-contact.png)
+![Actual successful rollout from the final trained checkpoint](evidence/cosmos3-wam-final-visual/task-000-contact.png)
 
-At update 500, the completed visual pass succeeded on four tasks and failed on
-six, with no infrastructure errors. It used one initial state per task and is
-an execution check, not the required 500-trial quality measurement. The linked
-record includes every outcome, a successful basket task, an unsuccessful basket
-task, checkpoint hashes and actual B200 telemetry. Its 1,799-second process
-duration includes hashing, server setup, simulation and media writing; it is
-not training time. The fifty-trial-per-task benchmark remains pending.
+The completed visual pass succeeded on nine tasks and failed on one, with no
+infrastructure errors. It used one initial state per task and illustrates
+execution; it does not qualify the policy under the required 500-trial protocol.
+The linked record includes every outcome, both successful and unsuccessful
+basket-task videos, exact final-checkpoint hashes and 2,288 GPU telemetry samples.
+All eight GPU processes were attributed to the expected policy command and
+checkpoint, and the native servers completed 173 policy requests.
+
+The visual process took 428.222 seconds, including hashing, server setup,
+parallel simulation and media writing. This is evaluation time, separate from
+training duration. The [earlier update-500 videos](evidence/cosmos3-wam-trained-visual/README.md)
+remain available with all of their outcomes. The full fifty-trial-per-task
+measurements determine the quality curve; the illustrative videos do not.
 
 ## Change GPU count while preserving the experiment
 

@@ -11,6 +11,9 @@ scheduled checkpoints completed.
 The [full-run GPU activity record](../cosmos3-wam-full-gpu-activity/README.md)
 adds 225,576 device samples, the sampled memory maxima on each GPU, and a
 reproducible visualization of utilization across the complete process.
+The [final-checkpoint visual record](../cosmos3-wam-final-visual/README.md)
+executes these exact final model bytes in ten illustrative trials, with nine
+successes and one failure. It remains separate from full policy qualification.
 
 | Measurement | Observed result |
 | --- | --- |
