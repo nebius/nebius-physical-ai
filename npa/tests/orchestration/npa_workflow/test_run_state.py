@@ -175,6 +175,178 @@ def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
     assert ("bucket", "runs/demo/npa-workflow/manifest.json") not in store
 
 
+def test_block_relaunch_wave_remains_in_flight_for_exact_reconciliation() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "attempt": 2,
+        "status": "failed",
+        "sky_status": "PENDING",
+        "job_id": "job-2",
+        "job_name": "run-1-01-train-a2",
+        "recovery_decision": "block_relaunch",
+    }
+    state.record_wave(record)
+
+    assert state.in_flight_wave(record["key"]) == record
+
+
+def test_verified_terminal_block_relaunch_wave_is_not_in_flight() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "attempt": 2,
+        "status": "failed",
+        "sky_status": "CANCELLED",
+        "job_id": "job-2",
+        "job_name": "run-1-01-train-a2",
+        "recovery_decision": "block_relaunch",
+        "cancellation": {"state": "verified", "error": ""},
+    }
+    state.record_wave(record)
+
+    assert state.in_flight_wave(record["key"]) is None
+
+
+@pytest.mark.parametrize("sky_status", ["PENDING", "RUNNING", "", None])
+def test_verified_cancellation_without_terminality_remains_in_flight(
+    sky_status: str | None,
+) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "sky_status": sky_status,
+        "job_id": "job-2",
+        "recovery_decision": "block_relaunch",
+        "cancellation": {"state": "verified"},
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
+@pytest.mark.parametrize("launch_sequence", [False, 0.0, "0", None, [], {}])
+def test_malformed_launch_sequence_does_not_prove_prelaunch_absence(
+    launch_sequence: object,
+) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "job_id": "",
+        "launch_sequence": launch_sequence,
+        "recovery_decision": "future_preflight_decision",
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
+def test_missing_launch_sequence_does_not_prove_prelaunch_absence() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "job_id": "",
+        "recovery_decision": "future_preflight_decision",
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
+def test_unknown_recovery_decision_remains_in_flight() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "attempt": 2,
+        "status": "failed",
+        "sky_status": "PENDING",
+        "job_id": "job-2",
+        "job_name": "run-1-01-train-a2",
+        "recovery_decision": "block_awaiting_quota_v2",
+    }
+    state.record_wave(record)
+
+    assert state.in_flight_wave(record["key"]) == record
+
+
+@pytest.mark.parametrize("sky_status", ["SUCCEEDED", "FAILED_CONTROLLER", "STOPPED"])
+def test_unknown_recovery_decision_respects_terminal_provider_evidence(
+    sky_status: str,
+) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    state.record_wave(
+        {
+            "key": "001|serial|:train:-",
+            "attempt": 2,
+            "status": "failed",
+            "sky_status": sky_status,
+            "job_id": "job-2",
+            "job_name": "run-1-01-train-a2",
+            "recovery_decision": "future_terminal_decision",
+        }
+    )
+
+    assert state.in_flight_wave("001|serial|:train:-") is None
+
+
+def test_unknown_prelaunch_decision_without_launch_identity_is_resolved() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    state.record_wave(
+        {
+            "key": "001|serial|:train:-",
+            "attempt": 1,
+            "status": "failed",
+            "sky_status": "",
+            "job_id": "",
+            "launch_sequence": 0,
+            "recovery_decision": "future_preflight_decision",
+        }
+    )
+
+    assert state.in_flight_wave("001|serial|:train:-") is None
+
+
+@pytest.mark.parametrize(
+    "recovery", ["reuse_completed_wave", "block_output_reuse_evidence"]
+)
+@pytest.mark.parametrize("sky_status", ["PENDING", "CANCELLED"])
+def test_output_reuse_recovery_remains_in_flight(recovery, sky_status) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    state.record_wave(
+        {
+            "key": "001|serial|:train:-",
+            "attempt": 2,
+            "status": "failed",
+            "sky_status": sky_status,
+            "job_id": "job-2",
+            "job_name": "run-1-01-train-a2",
+            "recovery_decision": recovery,
+        }
+    )
+
+    record = state.in_flight_wave("001|serial|:train:-")
+    assert record is not None
+    assert record["recovery_decision"] == recovery
+
+
 def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
     written: dict[tuple[str, str], bytes] = {}
     state_store = RunStateStore(
