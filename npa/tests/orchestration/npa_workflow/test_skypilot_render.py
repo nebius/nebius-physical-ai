@@ -21,6 +21,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     assert_no_unresolved_placeholders,
     normalize_resources,
     plan_image_pull_secrets,
+    plan_images,
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
@@ -1120,6 +1121,106 @@ def test_resolve_task_image_uses_override() -> None:
         options=SkypilotRenderOptions(image_overrides={"*": "cr.example/custom:1"}),
     )
     assert image == "cr.example/custom:1"
+
+
+def test_resolve_task_image_rejects_glob_like_override_selector() -> None:
+    with pytest.raises(NpaWorkflowRenderError, match="bare '\\*'"):
+        resolve_task_image(
+            "workbench.fiftyone.curate_augmented",
+            {},
+            options=SkypilotRenderOptions(
+                image_overrides={"workbench.*": "cr.example/custom:1"}
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "selector",
+    ["workbench.vlm_eval.rnu", "workbench.vlm_eval.ru"],
+)
+@pytest.mark.parametrize("boundary", ["plan-images", "pull-secrets", "render"])
+def test_unmatched_image_override_selector_fails_before_output(
+    boundary: str,
+    selector: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="unmatched-image-override")
+    options = SkypilotRenderOptions(
+        image_overrides={selector: "cr.example/custom:1"},
+        materialize_registry_secrets=False,
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="matched no workflow toolRef"):
+        if boundary == "plan-images":
+            plan_images(
+                spec,
+                plan.steps,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+        elif boundary == "pull-secrets":
+            plan_image_pull_secrets(
+                spec,
+                plan.steps,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+        else:
+            render_skypilot_yaml(
+                spec,
+                plan,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+
+
+def _alternate_image_branch_spec(tmp_path: Path):
+    data = yaml.safe_load((NPA_SPECS / "vlm-eval-single.yaml").read_text())
+    data["initial"] = "route"
+    data["states"]["route"] = {
+        "run": {"shell": "echo route"},
+        "resources": "gpu",
+        "transitions": [
+            {"when": "promote_checkpoint", "goto": "selected"},
+            {"when": "loop_back", "goto": "score-rollouts"},
+        ],
+    }
+    data["states"]["selected"] = {
+        "run": {"shell": "echo selected"},
+        "resources": "gpu",
+        "terminal": True,
+    }
+    path = tmp_path / "alternate-image-branch.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return load_spec(path)
+
+
+@pytest.mark.parametrize("decision", ["promote_checkpoint", "loop_back"])
+def test_image_override_selector_accepts_unselected_branch(
+    tmp_path: Path, decision: str
+) -> None:
+    spec = _alternate_image_branch_spec(tmp_path)
+    run_id = "alternate-image"
+    plan = build_plan(spec, run_id=run_id, assume_decision=decision)
+    options = SkypilotRenderOptions(
+        image_overrides={
+            "*": "cr.example/default:1",
+            "workbench.vlm_eval": "cr.example/alternate:1",
+        },
+        materialize_registry_secrets=False,
+    )
+    images = plan_images(spec, plan.steps, run_id=run_id, options=options)
+    selected = any(step.tool_ref == "workbench.vlm_eval.run" for step in plan.steps)
+    assert selected is (decision == "loop_back")
+    assert ("cr.example/alternate:1" in images) is selected
+    plan_image_pull_secrets(spec, plan.steps, run_id=run_id, options=options)
+    rendered = render_skypilot_yaml(spec, plan, run_id=run_id, options=options)
+    actual = {
+        task["resources"]["image_id"].removeprefix("docker:")
+        for task in yaml.safe_load_all(rendered)
+        if task and "resources" in task
+    }
+    assert actual == set(images)
 
 
 def test_first_party_image_rejects_uid_zero_pod_override(
