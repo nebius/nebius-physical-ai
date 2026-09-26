@@ -325,6 +325,17 @@ def decide_recovery(
             code,
             "Inspect the exact attempt logs and fix the payload; infrastructure retry is disabled.",
         )
+    if (
+        observation.state is BackendState.SUCCEEDED
+        and context.outputs.all_valid
+        and not _immutable_identity_matches(identity, context)
+    ):
+        return RecoveryDecision(
+            RecoveryAction.BLOCK_RELAUNCH,
+            FailureClass.UNKNOWN,
+            "IMMUTABLE_IDENTITY_MISMATCH",
+            "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
+        )
     if observation.state is BackendState.SUCCEEDED:
         if context.outputs.all_valid:
             return RecoveryDecision(

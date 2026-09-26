@@ -225,6 +225,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "libero",
         "fiftyone",
         "groot",
+        "gymnasium-robotics",
         "isaac-lab",
         "isaac-arena",
         "openarm",
@@ -294,6 +295,14 @@ UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {"openpi", "curobo", "ncore", "libero", "sam3"}
 )
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
+# A development candidate may use the trusted full-SHA builder before it has
+# earned a supported release tag.  Keep this state separate from the canonical
+# supported-tool inventory and from unbuilt release records.
+DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robotics"})
+# Retained for compatibility with older callers.  Gymnasium-Robotics now has a
+# truthful development-build path; release promotion remains blocked by the
+# development-build quarantine above instead of a pre-registration build refusal.
+PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -2320,12 +2329,19 @@ def container_image_for_tool(
                 f"Workload-specific image selection is only defined for SONIC, "
                 f"got tool={tool!r}"
             )
-        image_name = CONTAINER_IMAGE_NAMES[tool]
-        resolved_tag = tag or (
-            public_release_tag_for_tool(tool)
-            if is_public_registry(resolved_registry)
-            else supported_tool_version(tool)
-        )
+        if tool == "gymnasium-robotics":
+            # The neutral candidate is intentionally outside the supported-tool
+            # release table.  This narrow resolver path exists only for explicit
+            # development builds and the private neutral placeholder.
+            image_name = "npa-gymnasium-robotics"
+            resolved_tag = tag or "neutral-unbuilt"
+        else:
+            image_name = CONTAINER_IMAGE_NAMES[tool]
+            resolved_tag = tag or (
+                public_release_tag_for_tool(tool)
+                if is_public_registry(resolved_registry)
+                else supported_tool_version(tool)
+            )
     if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
