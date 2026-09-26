@@ -61,6 +61,7 @@ example follows upstream LIBERO-10's training schedule.
 | `recipe.py` / `train.toml.in` | Native TOML, batch arithmetic, Slurm launch, per-node completion evidence |
 | `distributed_preflight.py` | Rank/host placement and a real NCCL all-reduce before training |
 | `report.py` | Complete-checkpoint verification, timings, GPU-hours, and comparable-run speedup |
+| `scaling_report.py` | Three-repeat scaling summary, run variability and actual token-work comparison |
 | `profile_report.py` | CUDA trace hashes, kernel categories and overlap-aware observed busy time |
 | `storage_telemetry.py` | Timestamped Linux disk counters to quantify checkpoint I/O |
 | `benchmark-protocol.json` | Full schedules, repeated timing runs, separate profiles, and the 90% quality target |
@@ -304,6 +305,38 @@ Every node's log is checked for Python failures and skipped optimizer updates,
 including nodes that emit no rank-zero timing lines. Successful process exit
 codes alone cannot qualify a run with a failed background data-loader thread.
 
+For the campaign's steady-state comparison, plan three separate 200-update
+runs per topology using fresh run names and the same settings. Run `report.py`
+on each completed job before archiving its checkpoint. Given repeat directories
+named as below, aggregate their saved reports and numeric series:
+
+```bash
+npa/.venv/bin/python npa/workflows/workbench/cosmos3-wam-slurm/scaling_report.py \
+  --run-dirs \
+  "$WAM_RUN_ROOT/b200-8-repeat-1" "$WAM_RUN_ROOT/b200-8-repeat-2" \
+  "$WAM_RUN_ROOT/b200-8-repeat-3" "$WAM_RUN_ROOT/b200-16-repeat-1" \
+  "$WAM_RUN_ROOT/b200-16-repeat-2" "$WAM_RUN_ROOT/b200-16-repeat-3" \
+  --output-path "$WAM_RUN_ROOT/repeated-scaling.json"
+```
+
+Both `--run-dirs` and `--output-path` are required. Supplying only the three
+eight-GPU repetitions produces a baseline summary with no scaling claim. The
+tool requires three reports per supplied topology, matching recorded source,
+batch, seed and hardware contracts, and every timing from update 52 to 200.
+It verifies CSV hashes and recomputes timing/token summaries before comparison;
+duplicate directories or byte-identical copied reports cannot supply repeats.
+It reads saved reports without rehashing archived checkpoint payloads or
+overwriting the original measurements.
+
+The result retains each run's mean, median and p95, then reports the mean and
+sample standard deviation of the three run means. That deviation describes
+run variability, not a confidence interval or independent step-to-step noise.
+Speedup divides the eight-GPU average run mean by the sixteen-GPU average run
+mean; efficiency divides speedup by two. Pooled token throughput and the ratio
+of observed token work show whether the nominally matched batches processed
+comparable work. The repetitions use the same seed and do not measure
+variation in policy quality across training seeds.
+
 For a completed 110-step `--profile` run, use `profile_report.py --run-dir RUN`.
 It requires actual CUDA kernels in the two active profiler steps on ranks 0,
 8 and so on, and writes `profile-summary.json`. Kernel-duration sums can exceed
@@ -325,7 +358,9 @@ use `npa soperator destroy` after the same cancellation and archival checks.
 ## Tests
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/workflows/test_cosmos3_wam_slurm.py -q
+npa/.venv/bin/python -m pytest \
+  npa/tests/workflows/test_cosmos3_wam_slurm.py \
+  npa/tests/workflows/test_cosmos3_wam_scaling_report.py -q
 ```
 
 The opt-in live test runs real one- and two-node jobs from a Slurm login. It

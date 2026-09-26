@@ -231,6 +231,15 @@ runs. An estimate `steps × steady_state_seconds` must be labeled a projection,
 with startup and checkpoint overhead added explicitly; it is not an observed
 time to a useful policy.
 
+The campaign also runs three separate 200-update repetitions per topology,
+starting from the same base checkpoint and excluding profiling, evaluation
+and archival I/O from their timing windows. The
+[repeat-analysis command](../../../npa/workflows/workbench/cosmos3-wam-slurm/README.md#measurements-and-cleanup)
+checks the saved reports and numeric series, reports variation across run
+means, and compares both step time and actual processed-token throughput.
+Its steady-state comparison is separate from the observed 2,000-update
+training-process duration.
+
 ## 5. Profile separately
 
 Create a fresh run with `--profile` and the desired explicit step count. Native
