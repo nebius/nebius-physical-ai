@@ -556,6 +556,14 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
         return_value=(None, {}),
     )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_sky_bin",
+        return_value=Path("/mock/bin/sky"),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_isolated_config_dir",
+        return_value=None,
+    )
     fake = types.SimpleNamespace(status="SUBMITTED", job_id="job-1")
     submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow", return_value=fake
@@ -575,6 +583,8 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
 
     submit_mock.assert_called_once()
     assert submit_mock.call_args.args[1] == "rj-test"
+    assert submit_mock.call_args.kwargs["sky_bin"] == "/mock/bin/sky"
+    assert submit_mock.call_args.kwargs["isolated_config_dir"] is None
     assert "NEBIUS_TOKEN_FACTORY_KEY" in submit_mock.call_args.kwargs["secret_envs"]
 
 

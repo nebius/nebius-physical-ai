@@ -50,6 +50,14 @@ RUNNER = CliRunner()
 
 def _patch_npa_submit_preflight(mocker) -> None:  # noqa: ANN001
     mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_sky_bin",
+        return_value=Path("/mock/bin/sky"),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_isolated_config_dir",
+        return_value=None,
+    )
+    mocker.patch(
         "npa.cli.workbench.workflow._execution_target_preflight",
         return_value=(None, {}),
     )
@@ -1666,17 +1674,15 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
     # This test replaces the runtime; provider boundary coverage lives in
     # test_execution_preflight and must not be bypassed by --skip-preflight.
-    mocker.patch(
-        "npa.cli.workbench.workflow._execution_target_preflight",
-        return_value=(None, {}),
-    )
-    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
+    _patch_npa_submit_preflight(mocker)
     captured: dict[str, object] = {}
 
     def fake_submit(path, run_id, **kwargs):
         captured["content"] = Path(path).read_text(encoding="utf-8")
         captured["run_id"] = run_id
         captured["path"] = str(path)
+        captured["sky_bin"] = kwargs["sky_bin"]
+        captured["isolated_config_dir"] = kwargs["isolated_config_dir"]
         return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
 
     mocker.patch(
@@ -1713,6 +1719,14 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     assert "score-rollouts" in content
     assert_no_unresolved_placeholders(content)
     receipt = load_submission_state("default", "npa-submit-1")
+    assert receipt["controller"] == {
+        "schema": "npa.workflow.controller-route.v1",
+        "sky_bin": captured["sky_bin"],
+        "isolated": False,
+        "isolated_config_dir": "",
+    }
+    assert captured["sky_bin"] == "/mock/bin/sky"
+    assert captured["isolated_config_dir"] is None
     assert receipt["launch"]["sky_job_id"] == "42"
     assert receipt["workflow"]["name"] == "vlm-eval-single"
     assert receipt["workflow"]["run_prefix_uri"] == (
@@ -1975,7 +1989,7 @@ def test_workflow_receipt_write_failure_never_reaches_provider(mocker) -> None:
     real_update = submission_state.update_submission_state
 
     def fail_workflow_update(project, run_id, updates, **kwargs):
-        if kwargs.get("locked") is True and set(updates) == {"workflow"}:
+        if kwargs.get("locked") is True and set(updates) == {"workflow", "controller"}:
             raise ValueError("synthetic workflow receipt failure")
         return real_update(project, run_id, updates, **kwargs)
 
@@ -2083,10 +2097,7 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mocker.patch(
-        "npa.cli.workbench.workflow._execution_target_preflight",
-        return_value=(None, {}),
-    )
+    _patch_npa_submit_preflight(mocker)
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 
