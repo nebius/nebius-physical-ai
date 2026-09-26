@@ -245,6 +245,10 @@ from the ordered source render paths, requires each selected identity exactly
 once, and compares JPEG bytes independently re-encoded from the source renders
 using those settings. Deliberately sampled recordings remain valid; missing or
 duplicate review frames fail readback even when every camera still has an image.
+Native validation images retain their full relative modality and camera path,
+such as `reconstruction/val/pred_rgb/cam_00`. RGB, distance and opacity therefore
+remain separate entities even when their camera and frame names match. Each
+entity preserves the native frame index and its own bounded review sample.
 
 Before marking the feature live validated, retain exact-image scan evidence,
 independently reopen the sequence, parsed NRE metrics, USDZ and RRD, decode the
