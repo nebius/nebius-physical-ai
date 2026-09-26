@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
 import os
 import re
 import subprocess
@@ -117,7 +118,7 @@ def test_automatic_triggers_build_dev_images_without_promoting() -> None:
         == "${{ needs.resolve.outputs.build_count != '0' }}"
     )
     assert "cleanup_count != '0'" in jobs["cleanup-requested"]["if"]
-    assert "build_count != '0'" in jobs["cleanup-failed-build"]["if"]
+    assert "cleanup-failed-build" not in jobs
 
     promote_step = next(
         step
@@ -384,15 +385,26 @@ def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None
 
 
 def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None:
-    text = PUBLISH.read_text(encoding="utf-8")
-    assert "cleanup-failed-build" in text
+    jobs = _spec(PUBLISH)["jobs"]
+    assert "cleanup-failed-build" not in jobs
+    step = next(
+        step
+        for step in jobs["build-development"]["steps"]
+        if step.get("name")
+        == "Remove an exact run-owned dev tag after this image fails"
+    )
+    assert step["if"] == (
+        "${{ failure() && matrix.tool != 'ncore' && "
+        "(steps.push.outcome == 'success' || steps.push.outcome == 'failure') }}"
+    )
+    text = step["run"]
     assert "metadata.container.tags" in text
     assert "Refusing cleanup: digest also carries tags" in text
     assert "versions/${version_id}" in text
     assert 'if [ "$(jq length "$versions")" = 1 ]' in text
     assert 'gh api --method DELETE "$package_api"' in text
     assert "Deletion does not revoke downloads" in text
-    assert "Requested development tag is already absent" in text
+    assert "Requested development tag is already absent" in PUBLISH.read_text()
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:
@@ -437,7 +449,7 @@ def test_additive_release_inputs_are_scoped_to_promotion() -> None:
         promote["env"]["EXPECTED_SOURCE_DIGEST"]
         == "${{ inputs.expected_source_digest }}"
     )
-    for name in ("build-development", "cleanup-requested", "cleanup-failed-build"):
+    for name in ("build-development", "cleanup-requested"):
         assert "--release-tag" not in "\n".join(
             step.get("run", "") for step in spec["jobs"][name]["steps"]
         )
@@ -594,11 +606,16 @@ def _capture_build_arguments(tmp_path: Path, tool: str) -> list[str]:
     return (tmp_path / "docker-argv").read_text().splitlines()
 
 
-@pytest.mark.parametrize("tool", ("gymnasium-robotics", "libero", "genesis"))
+@pytest.mark.parametrize(
+    "tool", ("gymnasium-robotics", "libero", "genesis", "mjlab", "curobo")
+)
 def test_development_build_preserves_each_tools_metadata_and_export(tmp_path, tool):
     argv = _capture_build_arguments(tmp_path, tool)
     assert argv[:2] == ["buildx", "build"]
-    assert argv.count("--metadata-file") == (tool != "genesis")
+    assert argv.count("--metadata-file") == (tool in {"gymnasium-robotics", "libero"})
+    assert ("SOURCE_DATE_EPOCH=1234567890" in argv) == (
+        tool in {"curobo", "libero", "mjlab"}
+    )
     assert ("--load" in argv) == (tool != "libero")
     assert ("--secret" in argv) == (tool == "gymnasium-robotics")
     if tool == "gymnasium-robotics":
@@ -619,3 +636,77 @@ def test_development_build_preserves_each_tools_metadata_and_export(tmp_path, to
             argv[argv.index("--output") + 1]
             == f"type=oci,dest={tmp_path}/libero-build.oci.tar,tar=true,rewrite-timestamp=true,oci-artifact=true"
         )
+
+
+def _cleanup_environment(tmp_path: Path, versions: list, digest: str) -> dict:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    scripts = {
+        "gh": '#!/bin/sh\nif [ "$2" = "--method" ]; then printf "%s\\n" "$@" >> "$DELETE_LOG"; else cat "$FIXTURE_VERSIONS"; fi\n',
+        "crane": '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_DIGEST"\n',
+    }
+    for name, script in scripts.items():
+        executable = bin_dir / name
+        executable.write_text(script)
+        executable.chmod(0o700)
+    fixture = tmp_path / "versions.json"
+    fixture.write_text(json.dumps([versions]))
+    return {
+        **os.environ,
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+        "FIXTURE_VERSIONS": str(fixture),
+        "FIXTURE_DIGEST": digest,
+        "DELETE_LOG": str(tmp_path / "deleted"),
+        "IMAGE": "ghcr.io/example/npa-example:dev-" + "a" * 40,
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    }
+
+
+@pytest.mark.parametrize("rejection", ["", "shared-tag", "digest-drift", "duplicate"])
+def test_failed_image_cleanup_cannot_delete_successful_sibling_versions(
+    tmp_path, rejection
+):
+    tag = "dev-" + "a" * 40
+    digest = "sha256:" + "1" * 64
+    failed = {"id": 101, "name": digest, "metadata": {"container": {"tags": [tag]}}}
+    sibling = {
+        "id": 102,
+        "name": "sha256:" + "2" * 64,
+        "metadata": {"container": {"tags": ["dev-" + "b" * 40]}},
+    }
+    versions = [failed, sibling]
+    if rejection == "shared-tag":
+        failed["metadata"]["container"]["tags"].append("release")
+    if rejection == "duplicate":
+        sibling["metadata"]["container"]["tags"].append(tag)
+    env = _cleanup_environment(
+        tmp_path,
+        versions,
+        digest if rejection != "digest-drift" else "sha256:" + "3" * 64,
+    )
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    script = next(
+        step["run"]
+        for step in steps
+        if "after this image fails" in step.get("name", "")
+    )
+    result = subprocess.run(
+        ["bash", "-c", script], env=env, capture_output=True, text=True
+    )
+    _assert_cleanup_result(tmp_path, result, rejection)
+
+
+def _assert_cleanup_result(
+    tmp_path: Path, result: subprocess.CompletedProcess, rejection: str
+) -> None:
+    if rejection:
+        assert result.returncode != 0
+        assert not (tmp_path / "deleted").exists()
+        return
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "deleted").read_text().splitlines() == [
+        "api",
+        "--method",
+        "DELETE",
+        "/orgs/example/packages/container/npa-example/versions/101",
+    ]

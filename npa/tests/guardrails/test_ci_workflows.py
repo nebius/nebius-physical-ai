@@ -280,8 +280,52 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
         ("browser-mocked", "Install the production UI renderer"),
     ):
         command = _step("test.yml", job, step)["run"]
-        assert command.index("ci_requirements.py --check") < command.index(
-            "uv pip install"
+        assert command.index("ci_requirements.py --check") < command.index(" -e ")
+
+
+def _bootstrap_stubs(tmp_path: Path) -> None:
+    scripts = {
+        "python": '#!/bin/sh\nif [ "$1" = "-m" ]; then mkdir -p npa/.venv/bin; cp "$0" npa/.venv/bin/python; elif [ "$TEST_VERSION" = "3.10" ]; then test -f tomli-installed || exit 77; fi\nprintf "python:%s\\n" "$*" >> "$CALL_LOG"\n',
+        "uv": '#!/bin/sh\ncase "$*" in *" tomli") touch tomli-installed;; esac\nprintf "uv:%s\\n" "$*" >> "$CALL_LOG"\n',
+    }
+    for name, script in scripts.items():
+        executable = tmp_path / name
+        executable.write_text(script)
+        executable.chmod(0o700)
+
+
+@pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
+def test_fresh_nightly_bootstraps_toml_without_adding_candidate_installs(
+    tmp_path, version
+):
+    _bootstrap_stubs(tmp_path)
+    step = _step("test.yml", "test", "Install npa")
+    assert step["env"]["PYTHON_VERSION"] == "${{ matrix.python-version }}"
+    script = step["run"]
+    env = {
+        **os.environ,
+        "PATH": str(tmp_path) + os.pathsep + os.environ.get("PATH", ""),
+        "TEST_VERSION": version,
+        "PYTHON_VERSION": version,
+        "CALL_LOG": str(tmp_path / "calls"),
+        "GITHUB_PATH": str(tmp_path / "github-path"),
+        "GITHUB_WORKSPACE": str(tmp_path),
+    }
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    installs = [call for call in calls if call.startswith("uv:")]
+    assert len(installs) == (2 if version == "3.10" else 1)
+    if version == "3.10":
+        assert installs[0].endswith("-c npa/ci/requirements.txt tomli")
+        assert calls.index(installs[0]) < next(
+            i for i, call in enumerate(calls) if "--check" in call
         )
 
 

@@ -475,7 +475,7 @@ jobs:
             }
             build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")
           fi
-          if [[ "$TOOL" == curobo || "$TOOL" == libero ]]; then
+          if [[ "$TOOL" == curobo || "$TOOL" == libero || "$TOOL" == mjlab ]]; then
             source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
             [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
@@ -1203,6 +1203,51 @@ jobs:
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 
+      # Failure is local to this matrix entry; successful siblings retain their tags.
+      - name: Remove an exact run-owned dev tag after this image fails
+        if: ${{ failure() && matrix.tool != 'ncore' && (steps.push.outcome == 'success' || steps.push.outcome == 'failure') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          tag="${package_and_tag##*:}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          versions="$(mktemp)"
+          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
+            echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
+          count="$(jq length <<<"$matches")"
+          if [ "$count" = 0 ]; then
+            echo "No pushed run-owned dev tag exists for cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$count" = 1
+          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
+          test "$tags" = "[\"$tag\"]" || {
+            echo "::error::Refusing cleanup: digest also carries tags $tags"
+            exit 1
+          }
+          version_id="$(jq -r '.[0].id' <<<"$matches")"
+          digest="$(jq -r '.[0].name' <<<"$matches")"
+          test "$digest" = "$(crane digest "$IMAGE")"
+          if [ "$(jq length "$versions")" = 1 ]; then
+            # Exact newly created package: GHCR refuses deletion of its last
+            # tagged version, so delete the proven one-version package.
+            gh api --method DELETE "$package_api"
+          else
+            gh api --method DELETE "${package_api}/versions/${version_id}"
+          fi
+          echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
+
   cleanup-requested:
     needs: resolve
     if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.cleanup_count != '0' }}
@@ -1262,67 +1307,6 @@ jobs:
             gh api --method DELETE "${package_api}/versions/${version_id}"
           fi
           echo "Deleted exact development tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
-          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
-
-  cleanup-failed-build:
-    needs: [resolve, build-development]
-    if: ${{ always() && needs.resolve.outputs.build_count != '0' && needs.build-development.result == 'failure' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
-
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Remove an exact run-owned dev tag after a failed build batch
-        if: matrix.tool != 'ncore'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE: ${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          path="${IMAGE#ghcr.io/}"
-          owner="${path%%/*}"
-          package_and_tag="${path#*/}"
-          package="${package_and_tag%:*}"
-          tag="${package_and_tag##*:}"
-          encoded="${package//\//%2F}"
-          package_api="/orgs/${owner}/packages/container/${encoded}"
-          versions="$(mktemp)"
-          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
-            echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
-          count="$(jq length <<<"$matches")"
-          if [ "$count" = 0 ]; then
-            echo "No pushed run-owned dev tag exists for cleanup." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          test "$count" = 1
-          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
-          test "$tags" = "[\"$tag\"]" || {
-            echo "::error::Refusing cleanup: digest also carries tags $tags"
-            exit 1
-          }
-          version_id="$(jq -r '.[0].id' <<<"$matches")"
-          digest="$(jq -r '.[0].name' <<<"$matches")"
-          test "$digest" = "$(crane digest "$IMAGE")"
-          if [ "$(jq length "$versions")" = 1 ]; then
-            # Exact newly created package: GHCR refuses deletion of its last
-            # tagged version, so delete the proven one-version package.
-            gh api --method DELETE "$package_api"
-          else
-            gh api --method DELETE "${package_api}/versions/${version_id}"
-          fi
-          echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
   promote:
