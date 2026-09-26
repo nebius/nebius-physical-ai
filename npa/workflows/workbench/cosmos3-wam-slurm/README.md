@@ -186,6 +186,35 @@ and the exact dependency inventory hash. Updating the CPU environment preserved
 all state values and rendered pixels. The recorded dependency scan is dated;
 it is not a guarantee about future vulnerability reports.
 
+The native policy server also initializes Cosmos Guardrail. Before evaluation,
+run `npa workbench health access --capability cosmos3 --json` with the operator's
+configured credential and require successful exact-payload checks. Pass the
+same credential to each evaluation host through an owner-readable token file
+outside the shared filesystem. Set `HF_TOKEN_PATH` to that file in the actual
+Slurm batch script or service environment; an interactive SSH shell's credentials
+do not automatically reach those processes. Keep the file's parent directory
+mode 0700 and the file mode 0600. Never put the token value in job arguments,
+scripts, logs or version control.
+
+Prefetch the framework's pinned guardrail before measuring server startup:
+
+```bash
+export HF_TOKEN_PATH="$WAM_PRIVATE_HF_TOKEN_FILE"
+export HF_HUB_DISABLE_XET=1
+uv run --isolated --project "$WAM_SHARED_ROOT/framework/cosmos_framework/utils/hf_cli" \
+  --locked --no-default-groups hf download --format=json \
+  nvidia/Cosmos-Guardrail1 --repo-type model \
+  --revision d6d4bfa899a71454a700907664f3e88f503950cf --include '*'
+```
+
+`WAM_PRIVATE_HF_TOKEN_FILE` is the operator-provided absolute file path on that
+host. Keep both exports in the evaluation job environment. The pinned helper's
+Xet client produced `Unable to parse string as hex hash value` in the live
+deployment; `HF_HUB_DISABLE_XET=1` selects the documented alternative download
+path without changing the pinned payload or disabling guardrails. See the
+[Hugging Face environment reference](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables).
+Record download time separately from model loading and trial execution.
+
 After training, use `evaluate.py --shared-root PATH --run-dir RUN --step 500
 --output-dir OUTPUT` inside an exclusive eight-GPU Slurm allocation. Repeat for
 steps 1000, 1500 and 2000. It defaults to eight policy servers, eight simulator
