@@ -200,16 +200,15 @@ def resolve_cosmos_reason_model_id(
 
 
 def _validated_success(
-    payload: dict[str, Any], *, score: float, threshold: float, source: str
+    payload: dict[str, Any], *, source: str, missing: bool = False
 ) -> bool:
-    """Validate an explicit verdict and enforce its score threshold."""
-
+    """Read a strict verdict while preserving the caller's missing-value policy."""
     if "success" not in payload:
-        return score >= threshold
+        return missing
     verdict = payload["success"]
     if not isinstance(verdict, bool):
         raise CosmosReasonError(f"{source} success must be a JSON boolean")
-    return verdict and score >= threshold
+    return verdict
 
 
 def merge_reason_evaluations(
@@ -222,14 +221,10 @@ def merge_reason_evaluations(
 
     score2 = float(reason2_eval.get("score", 0.0))
     score3 = float(cosmos3_eval.get("score", 0.0))
-    reason2_success = _validated_success(
-        reason2_eval, score=score2, threshold=threshold, source="Reason2 lane"
-    )
-    cosmos3_success = _validated_success(
-        cosmos3_eval, score=score3, threshold=threshold, source="Cosmos3 lane"
-    )
+    reason2_success = _validated_success(reason2_eval, source="Reason2 lane")
+    cosmos3_success = _validated_success(cosmos3_eval, source="Cosmos3 lane")
     score = round((score2 + score3) / 2.0, 6)
-    success = reason2_success and cosmos3_success and score >= threshold
+    success = reason2_success and cosmos3_success
     steps2 = {
         int(item.get("step", index)): item
         for index, item in enumerate(reason2_eval.get("per_step") or [])
@@ -1057,8 +1052,11 @@ def _parse_cosmos_reason_output(
     if "score" not in payload:
         raise CosmosReasonError(f"{family} output did not include a numeric score")
     score = max(0.0, min(1.0, float(payload["score"])))
-    success = _validated_success(
-        payload, score=score, threshold=threshold, source=f"{family} output"
+    success = (
+        _validated_success(
+            payload, source=f"{family} output", missing=score >= threshold
+        )
+        and score >= threshold
     )
     raw_steps = payload.get("per_step") or payload.get("steps") or []
     expected_actions = {
