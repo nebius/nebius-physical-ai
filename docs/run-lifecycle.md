@@ -67,10 +67,25 @@ image gets one exact, bounded capability probe in the selected context, whose po
 must be deleted successfully. Results are cached by digest plus contract version.
 First-party images cannot replace their declared user with `runAsUser: 0`.
 
+Image identity binds the render registry, GPU target, image variant, and every
+image override selector to its reference, then binds each preflight reference
+to its resolved immutable image. Mapping order does not matter; reassigning the
+same references or digest values changes identity. Direct immutable image
+overrides are included even when the preflight pin map is empty. Older
+value-only or pin-only identities cannot prove this complete selection and
+require a new run ID.
+
 Multi-tool workflows can pin distinct validated images with repeatable
 `--image-override TOOL_REF=IMAGE`. An exact tool override beats the optional
 global `--image` fallback, and the rendered task uses the digest that preflight
 verified.
+
+Reordering selector or digest-pin mappings preserves the selected images and
+permits completed-wave replay. Exact tool selectors take precedence over family
+selectors, and the longest matching family takes precedence over `*`. Moving an
+image between those selectors changes the run identity, even when the set of
+image digests stays the same. Resource-level image declarations are covered by
+the separate workflow identity.
 
 ### The controller launch is one transaction
 
@@ -154,6 +169,19 @@ launch absence; a new lookup must still prove absence. Existing outputs,
 unreadable storage, missing output declarations, or uncertain scheduler status
 continue to block a new launch. Prior attempts remain in the run history.
 
+A durable `block_relaunch` decision remains unresolved unless the same record
+already contains verified terminal cancellation. After the reported dependency
+is repaired, a record with provider identity is reconciled against that exact
+job ID: a live job is adopted and polled, unavailable queue evidence remains
+blocked, and neither case resets the attempt number or submits replacement
+work. A previously verified terminal attempt keeps the ordinary terminal retry
+path and does not become queue-dependent again.
+An unrecognized non-terminal recovery decision also defaults to exact
+reconciliation; only explicit completion/absence decisions, provider-terminal
+evidence, or durable proof that launch never started may skip that fence.
+A cancellation claim without a terminal provider status, or a malformed launch
+sequence, remains uncertain and cannot authorize replacement work.
+
 Directory-style output evidence scans every S3 list page for a non-empty
 descendant. Zero-byte directory markers do not prove completion or absence,
 and malformed/truncated pagination blocks recovery rather than authorizing
@@ -171,6 +199,24 @@ even at the allowance boundary. If the exact provider attempt is still live,
 its cancellation must reach a verified terminal state before that reuse is
 accepted.
 The workflow completion result is separate from the observed provider status.
+The verified cancellation and output-reuse decision are written as an immutable
+supervisor event before the mutable runtime attempt is terminalized. If the
+driver stops between those writes, resume binds that event to the exact attempt,
+workflow, source, and image identities, revalidates every declared output, and
+completes the same attempt without submitting replacement work. Missing,
+malformed, conflicting, mismatched, or temporarily unreadable evidence remains
+blocked and retryable under the same run ID. The provider's verified terminal
+status remains factual even while output revalidation is blocked.
+
+An unreadable supervisor history blocks reconciliation without creating a reuse
+claim. Restoring access lets the same attempt reconcile its exact provider job.
+If the driver stopped after the reuse decision but before recording verified
+cancellation, resume validates the decision's identity and output declarations,
+then reconciles that exact job. A live job is adopted; a succeeded job must still
+pass output validation. A cancelled or failed job retains its terminal failure
+and launches no replacement during that resume. A later resume can request the
+ordinary explicit workload retry. An attempt already marked for reuse still
+requires its immutable cancellation proof; missing or corrupt proof stays blocked.
 
 
 `status` resolves the exact run from the selected project's receipt, the
@@ -241,3 +287,9 @@ may remove a trailing control-directory suffix only when the requested run ID
 and path layout, or the manifest's exact run-prefix provenance, identify the
 parent as the run root. Workflow names and pending status alone never authorize
 listing a parent prefix that could contain a sibling workflow's outputs.
+
+Completed-wave replay requires nonempty, matching workflow, source, and image
+identities before checking its retained outputs. A changed or missing identity
+blocks both replay and replacement submission, even when an output is missing.
+With matching identities, missing declared outputs retain the normal recovery
+path; a replacement must publish and verify its own declared outputs.
