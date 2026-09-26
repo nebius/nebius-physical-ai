@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from npa.clients.config import SSHConfig
+from npa.clients.config import SSHConfig, StorageConfig
 from npa.clients.credentials import CredentialsConfig, load_credentials
 from npa.clients.ssh import SSHClient, SSHError
 
@@ -176,6 +176,111 @@ def workbench_storage_outputs(
     }
 
 
+def deployment_preview_outputs() -> dict[str, str]:
+    """Return non-identifying placeholders for a VM deployment preview.
+
+    Args:
+        None.
+
+    Returns:
+        Redacted connection and configured-storage placeholders.
+
+    Raises:
+        None.
+    """
+    return {
+        "vm_ip": "<redacted>",
+        "ssh_user": "<redacted>",
+        "ssh_key_path": "<redacted>",
+        "storage_bucket": "<configured>",
+        "storage_endpoint": "<configured>",
+    }
+
+
+def read_existing_workbench_outputs(
+    project: str,
+    name: str,
+    terraform_directory: str,
+    use_remote_state: bool,
+    deployment_vars: Mapping[str, str],
+) -> dict[str, Any]:
+    """Read existing VM connection outputs without selecting storage again.
+
+    Args:
+        project: Selected project alias.
+        name: Selected workbench name.
+        terraform_directory: Explicit Terraform working directory, if any.
+        use_remote_state: Whether the managed remote-state directory is active.
+        deployment_vars: Credentials used only to initialize that state backend.
+
+    Returns:
+        Existing VM connection fields, which intentionally omit storage identity.
+
+    Raises:
+        None. Unavailable Terraform outputs fall back to saved connection fields.
+    """
+    outputs = _terraform_connection_outputs(
+        project, name, terraform_directory, use_remote_state, deployment_vars
+    )
+    return outputs if outputs is not None else _saved_connection_outputs(project, name)
+
+
+def _terraform_connection_outputs(
+    project: str,
+    name: str,
+    terraform_directory: str,
+    use_remote_state: bool,
+    deployment_vars: Mapping[str, str],
+) -> dict[str, Any] | None:
+    from npa.deploy import provisioner
+    from npa.deploy.provisioner import ProvisionerError
+
+    if terraform_directory:
+        try:
+            return provisioner.outputs(tf_dir=terraform_directory)
+        except ProvisionerError:
+            return None
+    if not use_remote_state:
+        return None
+    work_dir = provisioner.working_dir_path(project, name)
+    if not work_dir.exists():
+        return None
+    try:
+        provisioner.init(
+            tf_dir=str(work_dir),
+            backend_config={
+                "access_key": deployment_vars.get("nebius_api_key", ""),
+                "secret_key": deployment_vars.get("nebius_secret_key", ""),
+            },
+        )
+        return provisioner.outputs(tf_dir=str(work_dir))
+    except ProvisionerError:
+        return None
+
+
+def _saved_connection_outputs(project: str, name: str) -> dict[str, Any]:
+    from npa.clients.config import (
+        _deep_get,
+        _load_yaml,
+        _resolve_project_section,
+        _resolve_workbench_in_project,
+    )
+
+    try:
+        config = _load_yaml()
+        selected_project = _resolve_project_section(config, project)
+        workbench = _resolve_workbench_in_project(selected_project, name, config)
+    except Exception:
+        workbench = {}
+    return {
+        "vm_ip": _deep_get(workbench, "ssh", "host", default=""),
+        "ssh_user": _deep_get(workbench, "ssh", "user", default="ubuntu"),
+        "ssh_key_path": _deep_get(
+            workbench, "ssh", "key_path", default="~/.ssh/id_ed25519"
+        ),
+    }
+
+
 def apply_storage_env_vars(
     merged_vars: dict[str, str],
     *,
@@ -194,32 +299,273 @@ def apply_storage_env_vars(
             merged_vars[key] = value
 
 
+def _storage_value(storage: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = storage.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _exact_project_storage(project_id: str) -> StorageConfig | None:
+    from npa.clients.project_credential_store import project_credential_record
+
+    record = project_credential_record(project_id, migrate_legacy=False)
+    if record.get("storage_selected") is False:
+        raise ValueError(
+            "The selected project has no selected object-storage identity."
+        )
+    saved = record.get("storage")
+    if not isinstance(saved, Mapping) or not saved:
+        return None
+    storage = StorageConfig(
+        checkpoint_bucket=_storage_value(
+            saved, "checkpoint_bucket", "bucket", "s3_bucket"
+        ),
+        endpoint_url=_storage_value(saved, "endpoint_url", "endpoint", "s3_endpoint"),
+        aws_access_key_id=_storage_value(
+            saved, "aws_access_key_id", "access_key", "nebius_api_key"
+        ),
+        aws_secret_access_key=_storage_value(
+            saved, "aws_secret_access_key", "secret_key", "nebius_secret_key"
+        ),
+    )
+    if not all(
+        (
+            storage.checkpoint_bucket,
+            storage.endpoint_url,
+            storage.aws_access_key_id,
+            storage.aws_secret_access_key,
+        )
+    ):
+        raise ValueError(
+            "The selected project has an incomplete exact-project object-storage "
+            "identity. Reconfigure storage for this exact project."
+        )
+    return storage
+
+
+def _storage_identity(source: Mapping[str, Any]) -> StorageConfig:
+    return StorageConfig(
+        checkpoint_bucket=_storage_value(
+            source, "checkpoint_bucket", "bucket", "s3_bucket"
+        ),
+        endpoint_url=_storage_value(source, "endpoint_url", "endpoint", "s3_endpoint"),
+        aws_access_key_id=_storage_value(
+            source, "aws_access_key_id", "access_key", "nebius_api_key"
+        ),
+        aws_secret_access_key=_storage_value(
+            source, "aws_secret_access_key", "secret_key", "nebius_secret_key"
+        ),
+    )
+
+
+def _complete_storage_identity(storage: StorageConfig) -> bool:
+    return all(
+        (
+            storage.checkpoint_bucket,
+            storage.endpoint_url,
+            storage.aws_access_key_id,
+            storage.aws_secret_access_key,
+        )
+    )
+
+
+def _alias_project_storage(project: str | None) -> StorageConfig:
+    from npa.clients.config import _load_yaml, _resolve_project_section
+
+    proj = _resolve_project_section(_load_yaml(), project)
+    sources = [
+        proj.get("object-storage"),
+        proj.get("object_storage"),
+        proj.get("storage"),
+        proj.get("terraform_state"),
+    ]
+    identities: list[StorageConfig] = []
+    for source in sources:
+        if source in (None, {}):
+            continue
+        if not isinstance(source, Mapping):
+            raise ValueError(
+                "The selected project has an invalid object-storage identity."
+            )
+        identity = _storage_identity(source)
+        if not _complete_storage_identity(identity):
+            raise ValueError(
+                "The selected project has an incomplete object-storage identity."
+            )
+        identities.append(identity)
+    if not identities:
+        raise ValueError(
+            "The selected project has no complete selected object-storage identity."
+        )
+    if any(identity != identities[0] for identity in identities[1:]):
+        raise ValueError(
+            "The selected project has conflicting object-storage identities."
+        )
+    return identities[0]
+
+
+_STORAGE_VAR_NAMES = (
+    "s3_bucket",
+    "s3_endpoint",
+    "nebius_api_key",
+    "nebius_secret_key",
+)
+
+
+def _storage_var_mapping(storage: StorageConfig) -> dict[str, str]:
+    return {
+        "s3_bucket": storage.checkpoint_bucket,
+        "s3_endpoint": storage.endpoint_url,
+        "nebius_api_key": storage.aws_access_key_id,
+        "nebius_secret_key": storage.aws_secret_access_key,
+    }
+
+
+def _explicit_storage_identity(explicit_vars: Mapping[str, str]) -> dict[str, str]:
+    explicit = {
+        key: explicit_vars[key] for key in _STORAGE_VAR_NAMES if key in explicit_vars
+    }
+    if not explicit:
+        return {}
+    missing = [key for key in _STORAGE_VAR_NAMES if not explicit.get(key)]
+    if missing:
+        raise ValueError(
+            "Explicit object-storage overrides must provide one complete identity "
+            f"(missing: {', '.join(missing)})."
+        )
+    return explicit
+
+
+def _strict_project_storage(
+    project: str | None,
+    *,
+    project_id: str,
+    configured_project_id: str,
+) -> StorageConfig:
+    storage = _exact_project_storage(project_id) if project_id else None
+    if storage is not None:
+        return storage
+    if project_id and configured_project_id and configured_project_id != project_id:
+        raise ValueError(
+            "The selected project has no exact storage identity, and the alias "
+            "storage belongs to a different project."
+        )
+    if project_id:
+        raise ValueError(
+            "The selected project has no exact object-storage identity. "
+            "Configure storage for this exact project before deploying."
+        )
+    return _alias_project_storage(project)
+
+
+def _apply_storage_mapping(
+    merged_vars: dict[str, str],
+    mapping: Mapping[str, str],
+    *,
+    explicit_vars: Mapping[str, str],
+    replace_existing: bool,
+) -> bool:
+    found = any(mapping.values())
+    for key, value in mapping.items():
+        if (
+            value
+            and key not in explicit_vars
+            and (replace_existing or not merged_vars.get(key))
+        ):
+            merged_vars[key] = value
+    return found
+
+
 def apply_project_storage_vars(
     merged_vars: dict[str, str],
     *,
     project: str | None,
     explicit_vars: Mapping[str, str],
     warn: Any | None = None,
+    require_complete: bool = False,
+    project_id: str = "",
+    configured_project_id: str = "",
 ) -> bool:
-    """Apply project-level storage settings to a BYOVM deploy var map."""
-    from npa.clients.config import resolve_project_storage
+    """Apply project-level storage settings to a BYOVM deploy var map.
 
-    storage = resolve_project_storage(project)
-    mapping = {
-        "s3_bucket": storage.checkpoint_bucket,
-        "s3_endpoint": storage.endpoint_url,
-        "nebius_api_key": storage.aws_access_key_id,
-        "nebius_secret_key": storage.aws_secret_access_key,
-    }
-    found = any(mapping.values())
+    Args:
+        merged_vars: Deployment variables to update.
+        project: Selected project alias.
+        explicit_vars: Variables supplied explicitly by the caller.
+        warn: Optional compatibility warning sink.
+        require_complete: Whether to require one atomic identity.
+        project_id: Exact selected provider project ID.
+        configured_project_id: Provider project ID owning alias storage.
+
+    Returns:
+        Whether the selected resolver returned any storage settings.
+
+    Raises:
+        ValueError: Strict selection did not resolve one complete identity.
+    """
+    return _apply_resolved_project_storage(
+        merged_vars,
+        project=project,
+        explicit_vars=explicit_vars,
+        warn=warn,
+        require_complete=require_complete,
+        project_id=project_id,
+        configured_project_id=configured_project_id,
+    )
+
+
+def _apply_resolved_project_storage(
+    merged_vars: dict[str, str],
+    *,
+    project: str | None,
+    explicit_vars: Mapping[str, str],
+    warn: Any | None,
+    require_complete: bool,
+    project_id: str,
+    configured_project_id: str,
+) -> bool:
+    explicit_storage = (
+        _explicit_storage_identity(explicit_vars) if require_complete else {}
+    )
+    if explicit_storage:
+        merged_vars.update(explicit_storage)
+        return True
+    if require_complete:
+        storage = _strict_project_storage(
+            project,
+            project_id=project_id,
+            configured_project_id=configured_project_id,
+        )
+    else:
+        from npa.clients.config import resolve_project_storage
+
+        storage = resolve_project_storage(
+            project,
+            include_shared_credentials=True,
+            include_environment=True,
+        )
+    mapping = _storage_var_mapping(storage)
+    missing = [key for key, value in mapping.items() if not value]
+    if require_complete and missing:
+        missing_names = ", ".join(missing)
+        raise ValueError(
+            "The selected project has no complete selected object-storage identity "
+            f"(missing: {missing_names}). Configure storage for this exact project "
+            "before deploying."
+        )
+    found = _apply_storage_mapping(
+        merged_vars,
+        mapping,
+        explicit_vars=explicit_vars,
+        replace_existing=require_complete,
+    )
     if not found and warn is not None:
         warn(
             f"Warning: Project {project} has no object-storage settings. "
             "S3 operations on this workbench will fail unless configured manually."
         )
-    for key, value in mapping.items():
-        if value and key not in explicit_vars and not merged_vars.get(key):
-            merged_vars[key] = value
     return found
 
 

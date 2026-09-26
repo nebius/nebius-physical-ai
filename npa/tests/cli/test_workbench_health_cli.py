@@ -138,6 +138,12 @@ def test_health_help_lists_preflight_not_deprecated_sim2real() -> None:
     assert "deprecat" not in sim2real_help.output.lower()
 
 
+def test_health_help_describes_encord_preflight() -> None:
+    result = runner.invoke(app, ["workbench", "health", "preflight", "--help"])
+    assert result.exit_code == 0
+    assert "encord" in result.output
+
+
 class _EmptyCreds:
     hf_token = ""
     ngc_api_key = ""
@@ -146,6 +152,7 @@ class _EmptyCreds:
     s3_secret_access_key = ""
     s3_endpoint = ""
     s3_bucket = ""
+    tokens = {}
 
 
 class _AccessCreds(_EmptyCreds):
@@ -309,6 +316,7 @@ def test_preflight_live_all_runs_nebius_and_preserves_service_checks(
         "ngc",
         "s3",
         "token_factory",
+        "encord",
         "nebius",
     ]
     assert calls == ["nebius"]

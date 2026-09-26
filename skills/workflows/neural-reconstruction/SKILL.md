@@ -211,8 +211,9 @@ ValueError
 Rig-to-world poses are currently required to determine scene extend
 ```
 
-`dataset.frame_generic_data_pose_overwrite=true` does not help either; it needs a
-`T_sensor_worlds` generic-data field these sequences do not carry.
+Some captures carry camera-to-world transforms only in the per-frame
+`T_sensor_worlds` generic-data field. NPA reads that representation when no
+dynamic camera pose edges exist; dynamic edges remain preferred.
 
 `npa workbench nurec fetch` fixes this by default. For a single-camera capture
 the rig **is** the camera, so `rig -> world` is exactly that camera's pose
@@ -227,7 +228,21 @@ data is never modified:
 - selecting a poses group **replaces** the pose set rather than merging, so the
   derived component carries a complete copy of the original edges plus the rig
   edge;
+- the frame-pose fallback validates every camera frame before writing: timestamps
+  must be strictly increasing and each `T_sensor_worlds` value must be a finite
+  4×4 transform. Missing, malformed, duplicate, inconsistent, or non-finite data
+  fails closed without publishing a partial derived sequence;
+- the sidecar records the selected camera and pose source. An explicit reference
+  camera wins; otherwise the longest trajectory wins with camera ID as a stable
+  tie-breaker;
 - `reconstruct` then passes `dataset.poses_component_group=npa_rig`.
+
+The fallback makes exactly one geometric claim: `rig` is the selected camera.
+It does not infer multi-camera extrinsics, and compatibility tests do not prove
+reconstruction quality. Local regression coverage establishes conversion
+compatibility only; recording live workflow readiness still requires a decoded
+NRE reconstruction on applicable RT-core hardware and inspected retained
+artifacts.
 
 Pass `--no-derive-rig` for AV-style sequences that already ship a rig edge (the
 derivation short-circuits with `already_present: true` anyway), and
