@@ -248,6 +248,74 @@ def test_submission_state_allows_only_names_under_image_pull_secret_references(
         )
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_submission_state_preserves_boolean_service_account_token_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    resources_profile = {
+        "kubernetes": {
+            "pod_config": {"spec": {"automountServiceAccountToken": enabled}}
+        }
+    }
+
+    payload = update_submission_state(
+        "demo",
+        f"run-service-account-token-{str(enabled).lower()}",
+        {"workflow": {"resources_profile": resources_profile}},
+    )
+
+    assert payload["workflow"]["resources_profile"] == resources_profile
+
+
+@pytest.mark.parametrize(
+    "unsafe_value",
+    [
+        pytest.param("false", id="string"),
+        pytest.param(0, id="numeric-zero"),
+        pytest.param(1, id="numeric-one"),
+        pytest.param({"value": False}, id="mapping"),
+        pytest.param({"password": "forbidden-inline-value"}, id="sensitive-mapping"),
+    ],
+)
+def test_submission_state_rejects_nonboolean_service_account_token_setting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_value: object,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        update_submission_state(
+            "demo",
+            "run-invalid-service-account-token",
+            {
+                "workflow": {
+                    "resources_profile": {
+                        "kubernetes": {
+                            "pod_config": {
+                                "spec": {"automountServiceAccountToken": unsafe_value}
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+
+def test_submission_state_rejects_boolean_token_setting_outside_pod_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        update_submission_state(
+            "demo",
+            "run-misplaced-service-account-token",
+            {"automountServiceAccountToken": False},
+        )
+
+
 def test_concurrent_updates_do_not_corrupt_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

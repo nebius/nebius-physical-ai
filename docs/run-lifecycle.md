@@ -129,6 +129,11 @@ Each submission also writes an owner-only local receipt at
 job identity **only — never credentials** — and it removes any dependency on
 `NPA_SRC_S3_URI` in a later shell.
 
+Resource profiles retain Kubernetes `automountServiceAccountToken` when its
+value is a JSON boolean, so disabling or enabling that pod behavior survives a
+restart. String, numeric, and structured lookalikes remain blocked by the
+receipt's credential filter.
+
 ## Restart safety
 
 Provisioning resumes the same secret-free operation journal under
