@@ -71,9 +71,10 @@ def test_required_gate_calls_image_security_for_every_candidate() -> None:
         "push": {"branches": ["main"]},
     }
     image_job = workflow["jobs"]["image-security"]
-    assert image_job["needs"] == ["gitleaks", "pr-precheck"]
+    assert image_job["needs"] == "gitleaks"
     assert "needs.gitleaks.result == 'success'" in image_job["if"]
     assert "needs.gitleaks.outputs.mode == 'full'" in image_job["if"]
+    assert "needs.pr-precheck" not in image_job["if"]
     assert {key: image_job[key] for key in ("uses", "permissions")} == {
         "uses": "./.github/workflows/image-security-scan.yml",
         "permissions": {
@@ -146,6 +147,8 @@ def test_base_inventory_isolates_each_image_without_dropping_failed_entries() ->
         "fail-fast": False,
         "matrix": "${{ fromJSON(needs.base-image-plan.outputs.matrix) }}",
     }
+    cleanup = _step(scan, "Reclaim unused hosted-runner SDK space")["run"]
+    assert "xargs -0 -r -n1 -P4 sudo rm -rf --" in cleanup
     command = _step(scan, "Scan the exact inventory entry")
     assert command["env"]["SCAN_ENTRY"] == "${{ matrix.entry }}"
     assert '--entry-name "$SCAN_ENTRY"' in command["run"]

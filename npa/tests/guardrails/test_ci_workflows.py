@@ -121,7 +121,7 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     shard_matrix = job["strategy"]["matrix"]["shard"]
     assert '["pull_request", "merge_group"]' in shard_matrix
     assert "[1, 2, 3, 4]" in shard_matrix
-    assert "[1, 2, 3, 4, 5, 6, 7, 8]" in shard_matrix
+    assert "[1, 2, 3, 4, 5, 6, 7]" in shard_matrix
     assert job["strategy"]["fail-fast"] == (
         "${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}"
     )
@@ -189,7 +189,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
         "NPA_E2E_PROJECT_ID": "project-test-00000000",
         "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
         "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
-        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 8 || 4 }}',
+        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 7 || 4 }}',
         "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
         "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
         "NPA_REQUIRE_FFMPEG": "1",
@@ -429,6 +429,13 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
     assert parent["jobs"]["scan"]["if"] == "github.event_name != 'push'"
     leaks = _step("security-regression.yml", "gitleaks", "Reject committed secrets")
     assert leaks["if"] == "github.event_name != 'push'"
+    dependency_check = _step(
+        "security-regression.yml",
+        "gitleaks",
+        "Reject stale or directly edited CI requirements",
+    )
+    assert dependency_check["if"] == "github.event_name != 'push'"
+    assert "ci_requirements.py --check" in dependency_check["run"]
     assert "if" not in parent["jobs"]["security-scanners"]
     for job in (
         "test-gate",
@@ -442,8 +449,49 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
             assert "needs.gitleaks.outputs.mode == 'full'" in condition
         else:
             assert "retest" in condition and "contains(fromJSON" in condition
-        assert "needs.pr-precheck.result == 'success'" in condition
-        assert parent["jobs"][job]["needs"] == ["gitleaks", "pr-precheck"]
+        assert "needs.pr-precheck" not in condition
+        assert parent["jobs"][job]["needs"] == "gitleaks"
+
+
+def test_confidentiality_always_scans_public_patterns_before_private_policy() -> None:
+    """Keep fork and Dependabot PRs on a deterministic blocking scan.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Secret-free PRs can bypass every confidentiality pattern.
+    """
+    command = _step("security-regression.yml", "scan", "Reject confidential data")[
+        "run"
+    ]
+    public_scan = command.index("--built-in-nebius-infra")
+    private_scan = command.index("--pattern-env CUSTOMER_DENYLIST")
+    assert public_scan < private_scan
+    public_command = command[:public_scan]
+    assert '--diff-range "${BASE_SHA}..HEAD"' in public_command
+    assert "--tree" not in public_command.split("npa/.venv/bin/python")[-1]
+
+
+def test_dependabot_does_not_edit_generated_ci_constraints() -> None:
+    """Keep dependency automation on source manifests, not generated pins.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Dependabot can bypass the repository pin generator.
+    """
+    configuration = yaml.safe_load((REPO_ROOT / ".github/dependabot.yml").read_text())
+    pip_updates = [
+        update
+        for update in configuration["updates"]
+        if update["package-ecosystem"] == "pip"
+    ]
+    assert len(pip_updates) == 1
+    assert "/npa/ci" not in pip_updates[0]["directories"]
 
 
 def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:

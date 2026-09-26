@@ -128,7 +128,7 @@ def _verify_jobs(repository: str, run: dict) -> None:
         "The validation attempt contains an unsuccessful job",
     )
     full_suite = {
-        *(f"test-gate / pytest-3.12-shard-{index}" for index in range(1, 9)),
+        *(f"test-gate / pytest-3.12-shard-{index}" for index in range(1, 8)),
         "test-gate / coverage",
         "test-gate / browser-and-compatibility",
     }

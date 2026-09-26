@@ -509,17 +509,21 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-Pull requests publish `pr-precheck` first: dependency-input consistency,
-lint and formatting, all guardrails, smoke tests, and full test collection. Its five-minute
+Pull requests start `pr-precheck`: dependency-input consistency, lint and
+formatting, all guardrails, smoke tests, and full test collection. Its five-minute
 execution budget provides an early signal; a pass is not permission to merge.
 Fresh source/dependency, secret and confidentiality scans also start immediately.
-A failed precheck prevents the expensive test and image jobs from starting.
+The secret-scan planner verifies the generated CI requirements before releasing
+the expensive test and image jobs. Those jobs then overlap the broader precheck,
+while its result remains required by the final gate. This retains cheap rejection
+for broken dependency updates without adding the former four-to-five-minute delay
+to every successful PR.
 The hosted precheck runs full collection alongside guardrails and smoke tests
 on the same runner with `bash npa/scripts/ci_precheck.sh`. Both must pass;
 collection errors remain blocking, and failed guardrails stop the collector.
 This saves a sequential collection pass without starting another runner.
 
-PR admission still requires eight duration-balanced Python 3.12 coverage shards,
+PR admission still requires seven duration-balanced Python 3.12 coverage shards,
 Cypress, focused Python 3.10/3.14 compatibility tests, security, documentation
 drift, and repository guardrails. Source and test changes receive the full suite,
 including other subsystems; merged coverage must meet the unchanged 60% floor.
@@ -548,8 +552,9 @@ without being rejected just for lacking a receipt. The installing PR receives
 the full gate because its base has no verifier yet. Refreshing an older branch
 and completing PR validation enables the faster evidence-reuse path.
 
-The operating targets are an early signal within five minutes and queue
-validation within ten. Hosted-runner waiting is outside these execution budgets;
+The operating targets are an early signal within five minutes, complete PR
+validation within fifteen, and queue validation within ten. Hosted-runner waiting
+is outside these execution budgets;
 GitHub does not reserve capacity for this repository. Set the queue's check
 response timeout to ten minutes only after this workflow is on main and a live
 queue candidate has verified the new path. A timeout rejects, never merges, an
@@ -614,8 +619,11 @@ whose tested tree was verified at merge, and covers 938 modules.
 Python test jobs use uv 0.12.5 with a persistent package cache and
 `npa/ci/requirements.txt` constraints. These pins cover the core, development,
 adapter, and CPU SONIC/export dependencies across Python 3.10, 3.12, and 3.14.
-The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale pins
-when these dependency inputs change. With uv 0.12.5 installed, refresh them using:
+The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale inputs
+and direct edits to the generated pin body before installing dependencies.
+Dependabot updates the source manifests but does not edit
+`npa/ci/requirements.txt`; refresh that generated file with the repository
+command. With uv 0.12.5 installed, run:
 
 ```bash
 npa/.venv/bin/python npa/scripts/ci_requirements.py --update
@@ -672,7 +680,8 @@ remains necessary to meet latency targets under sustained load.
 
 Independent validation jobs use GitHub's available runner capacity. Validation
 workflows have no job-level concurrency locks or matrix `max-parallel` caps:
-after the fast precheck all eight pytest shards and browser checks can run together, and unrelated PRs,
+after the fast dependency latch all seven pytest shards and browser checks can
+run together while leaving capacity for image validation, and unrelated PRs,
 merge candidates, and audits do not serialize through repository-wide slots.
 Scope selection, coverage aggregation, and the final required check wait only
 for their declared dependencies and an available runner.
