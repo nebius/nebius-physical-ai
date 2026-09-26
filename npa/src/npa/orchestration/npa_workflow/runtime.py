@@ -218,10 +218,28 @@ def _source_identity() -> str:
 
 
 def _image_identity(render_options: SkypilotRenderOptions) -> str:
-    """Recompute the exact digest-set identity selected for current rendering."""
+    """Recompute the exact image-selection inputs and immutable bindings."""
 
-    digest_material = "\0".join(
-        sorted(str(value) for value in render_options.image_digest_pins.values())
+    bindings = sorted(
+        (str(reference), str(resolved))
+        for reference, resolved in render_options.image_digest_pins.items()
+    )
+    overrides = sorted(
+        (str(selector), str(reference))
+        for selector, reference in render_options.image_overrides.items()
+    )
+    digest_material = json.dumps(
+        {
+            "gpu_target": str(render_options.gpu_target),
+            "image_digest_pins": bindings,
+            "image_overrides": overrides,
+            "image_variant": str(render_options.image_variant),
+            "registry": str(render_options.registry),
+            "schema": "npa.workflow.image-selection/v3",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
     )
     return hashlib.sha256(digest_material.encode("utf-8")).hexdigest()
 
