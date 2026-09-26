@@ -39,11 +39,13 @@ Two compatibility rules govern every cell:
 
 ## Measured torch stack per image
 
-The new `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2` public packaging
-candidates are pending their own builds and exact-digest GPU qualification.
-Earlier private BYOF B200 runs do not establish these new images' compatibility.
-They inherit a hash-locked runtime-fetch mechanism; no CUDA wheel is baked, and
-no B300 capability is claimed from the planned runtime or a B200 result.
+Image-specific publication and capability status is authoritative in each
+measured row and its linked exact-digest record: a verified cell requires its
+own accepted run evidence, while an unmeasured platform remains unverified.
+This LIBERO entry is unbuilt and not validated; any older private observations
+remain historical, non-qualifying evidence. It makes no claim about any other
+image's build, publication, or GPU qualification; other images retain the
+status and evidence recorded in their own rows and catalog records.
 
 `arch_list` is `torch._C._cuda_getArchFlags()` read out of the published image. It is fixed when the wheel is built — `TORCH_CUDA_ARCH_LIST` cannot change it — so it decides which GPUs the image can execute on. Reproduce any row with `npa/scripts/validate_blackwell_image.sh <image> --target b200`.
 
@@ -130,7 +132,8 @@ likewise predates its current coherent release.
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
-| `npa-habitat-sim` | not routed; unbuilt | blocked (supported NVIDIA OpenGL/EGL path unverified); unbuilt | unbuilt; exact-digest RTX gate pending | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) |
+| `npa-habitat-sim` | not routed; unverified | blocked (supported NVIDIA OpenGL/EGL path unverified) | **development evidence only** [19-step exact-digest RTX result](validation/habitat-sim-development-image-manifest.json); supported release quarantined | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) |
+| `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [78] | **verified** [77] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
 | `npa-cosmos2-transfer` | supported | supported | supported | **historical evidence** [9] | blocked (cu128 NVRTC cannot JIT `sm_103`) |
@@ -140,6 +143,7 @@ likewise predates its current coherent release.
 | `npa-reference-policy` | supported | **verified** [52] | **verified** [16] | **verified** [50] | **verified** [51] |
 | `npa-loop-eval` | supported | **verified** [58] | **verified** [18] | **verified** [56] | **verified** [57] |
 | `npa-lerobot-vlm-rl` | supported | **verified** [55] | **verified** [17] | **verified** [53] | **verified** [54] |
+| `npa-gymnasium-robotics` (development candidate; release-quarantined, no accepted image) | development-build path only; no accepted runtime image | unqualified/deferred (no exact image, driver, EGL, or workload qualification) | unverified (required target; reference-build graph is not current image evidence) | unqualified/deferred (no exact image, driver, EGL, or workload qualification) | unqualified/deferred (no exact image, driver, EGL, or workload qualification) |
 | `npa-isaac-lab` | supported | supported (headless) | **verified** [current release evidence](container-image-catalog.md#2026-09-04-coherent-sim2real-publication) | blocked | blocked |
 | `npa-isaac-arena` | unverified | unverified | **verified** [76] | **verified** [75] (state-only) | unverified |
 | `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
@@ -165,7 +169,7 @@ likewise predates its current coherent release.
 **no SASS** — measured wheel does not carry the architecture; the image cannot run there until it is ported.
 **blocked** — an upstream dependency does not support the architecture. Reason and tracking link are in the manifest's per-image fields or `known_gaps`. Whether a given blocked cell can be closed at all is evaluated in [Can the blocked images support every Nebius GPU?](blocked-image-gpu-feasibility.md) — some are physical (rendering needs RT cores), others are a stale software gate or an unspent GPU hour.
 **CPU** — CPU-only image. It runs on a host with any of these GPUs; only node-pool scheduling matters.
-**not built** — the Dockerfile is in tree but no image has been built, so no cell has any evidence behind it. Reading the Dockerfile is not evidence.
+**not built** — no retained candidate artifact or complete current byte-scan proof exists, so no cell has image evidence behind it. Reading the Dockerfile or a reference-build graph is not evidence.
 
 `npa-ncore` packages CPU-only COLMAP ingestion, not NRE or a CUDA runtime.
 Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separate,

@@ -280,9 +280,12 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
         ("browser-mocked", "Install the production UI renderer"),
     ):
         command = _step("test.yml", job, step)["run"]
-        assert command.index("ci_requirements.py --check") < command.index(
-            "uv pip install"
+        full_install = next(
+            line
+            for line in command.splitlines()
+            if "uv pip install" in line and " -e " in line
         )
+        assert command.index("ci_requirements.py --check") < command.index(full_install)
 
 
 def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
@@ -817,3 +820,71 @@ def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
     )
     assert receipt["with"]["if-no-files-found"] == "error"
     assert jobs["pr-precheck"]["timeout-minutes"] == "5"
+
+
+def _write_fingerprint_probe(tmp_path: Path) -> None:
+    interpreter = tmp_path / "npa/.venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text(
+        "#!/bin/bash\nset -eu\n"
+        '[[ "$*" == "npa/scripts/ci_requirements.py --check" ]]\n'
+        'if [[ "$PYTHON_VERSION" == 3.10 ]]; then test -e tomli-installed; fi\n'
+        'echo fingerprint >> "$BOOTSTRAP_LOG"\nexit "$FINGERPRINT_EXIT"\n'
+    )
+    interpreter.chmod(0o700)
+
+
+def _run_fresh_install_step(tmp_path: Path, version: str, fingerprint_exit: int):
+    command = _step("test.yml", "test", "Install npa")["run"]
+    command = command.replace("${{ matrix.python-version }}", version)
+    environment = dict(os.environ, GITHUB_WORKSPACE=str(tmp_path))
+    environment["GITHUB_PATH"] = str(tmp_path / "github-path")
+    environment["BOOTSTRAP_LOG"] = str(tmp_path / "commands")
+    environment["FINGERPRINT_EXIT"] = str(fingerprint_exit)
+    environment["PYTHON_VERSION"] = version
+    _write_fingerprint_probe(tmp_path)
+    functions = """
+python() { [[ "$*" == "-m venv npa/.venv" ]]; }
+uv() {
+  [[ "$*" == "pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt "* ]]
+  if [[ "${@: -1}" == tomli ]]; then
+    touch tomli-installed
+    echo bootstrap >> "$BOOTSTRAP_LOG"
+  else
+    [[ "${@: -2}" == "-e npa[dev,adapter,encord]" ]]
+    echo full-install >> "$BOOTSTRAP_LOG"
+  fi
+}
+"""
+    result = subprocess.run(
+        ["bash", "-euc", functions + command],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    return result, (tmp_path / "commands").read_text().splitlines()
+
+
+@pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
+@pytest.mark.parametrize("fingerprint_exit", [0, 42])
+def test_fresh_ci_environment_checks_fingerprint_before_full_install(
+    tmp_path: Path, version: str, fingerprint_exit: int
+) -> None:
+    """Bootstrap only the missing TOML parser and reject stale dependency pins.
+
+    Args:
+        tmp_path: Isolated shell environment without installed dependencies.
+        version: Supported CI interpreter.
+        fingerprint_exit: Result returned by the dependency fingerprint check.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Setup omits the parser or installs with stale pins.
+    """
+    result, commands = _run_fresh_install_step(tmp_path, version, fingerprint_exit)
+    expected = ["bootstrap", "fingerprint"] if version == "3.10" else ["fingerprint"]
+    if fingerprint_exit == 0:
+        expected.append("full-install")
+    assert result.returncode == fingerprint_exit, result.stderr
+    assert commands == expected

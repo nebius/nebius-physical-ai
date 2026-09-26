@@ -20,14 +20,20 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
+The Gymnasium-Robotics public candidate is a neutral development bootstrap with no
+upstream source, Shadow asset, MuJoCo/Python workload runtime, or populated
+cache in its layers. It has no accepted release build and remains release
+quarantined; it has no public image row, but now has a truthful immutable
+development-build path for byte and capability validation.
+
 The combined public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-17**. All **34 current release tags**
-matched their recorded digests; independent manifest and OCI config reads
+GHCR without credentials on **2026-09-17**. All **37 current release references**
+matched their recorded digests. Independent manifest and OCI config reads
 confirmed `linux/amd64` runtime metadata. This read-only audit includes both
-Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table references
-(33 then-current pins and 11 historical aliases); historical aliases were not
-re-audited on September 17. Capability results below remain tied to their
-original exact-digest evidence.
+Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table
+references (33 then-current pins and 11 historical aliases); historical aliases
+were not re-audited on September 17. Capability results below remain tied to
+their original exact-digest evidence.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -46,13 +52,24 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including Habitat-Sim, has **55 packaging entries**
-(46 redistribution-eligible and nine restricted) and **47 mapped tools**:
-37 public-release members, two restricted tools, and eight quarantined tools
-(`antioch`, `curobo`, `habitat-sim`, `mjlab`, `ncore`, `openpi`, `robocasa`, and `sam3`).
-These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+The current source inventory has **57 packaging entries** (48 redistribution-eligible
+and nine restricted) and **48 mapped tools**: 37 public-release members, two
+restricted tools, and nine quarantined tools (`antioch`, `curobo`, `habitat-sim`,
+`libero`, `mjlab`, `ncore`, `openpi`, `robocasa` and `sam3`). These counts come from
+`packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
+
+Gymnasium-Robotics is selected by the immutable development-build matrix but
+remains separately tracked outside the mapped release inventory. It appears in the GPU
+compatibility matrix only as a development-candidate/no-accepted-image row. An
+owner-only reference build supplied the exact config and ordered 20-DiffID
+scanner anchors, but did not complete the product scan, SBOM, push, or
+immutable-digest gates and left no accepted artifact. Its Dockerfile refuses
+before package network access until the exact neutral-bootstrap package and
+corresponding-source closure exists. Runtime fetching later changes delivery
+only, not use, derivative, output, or service rights. No accepted release,
+anonymous pull, or current GPU capability is claimed.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -624,14 +641,27 @@ historical evidence.
   CC BY Skokloster scene are fetched only at runtime. It remains in
   `UNVALIDATED_PUBLICATION_TOOLS` for supported release selection. The public
   development image at digest
-  `sha256:a2c77e0bdf2ee5c5f07db85043468150ae459680eda230e43f0096bb7dd2168c`
-  was built from `c7a04eda062664e1bd44d7ca5665a40fec79312d` and passed its
-  exact-image scans and one-RTX standard-workflow capability gate: 19 RGB frames,
+  `sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2`
+  was built from `dd49fdb6ee66a72e505b9830a29dad883df91e91` and passed its
+  exact-image scans and one-RTX managed-workflow capability gate: 19 RGB frames,
   19 depth frames, 19 Bullet steps, and 2.2466 metres of traversal. The
-  [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/35490009559)
-  does not promote a supported release. The legacy baked candidate remains
+  [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522)
+  is bound to its GPU report, artifact manifest, provenance, SBOM, and unchanged
+  image inputs in the [development evidence manifest](validation/habitat-sim-development-image-manifest.json).
+  This 19-step functional workload is not a long benchmark or policy-training
+  result and does not promote a supported release. The legacy baked candidate remains
   quarantined and is not the public build target. See
   [`byof-habitat-sim.md`](byof-habitat-sim.md).
+- **LIBERO** has a quarantined public-neutral-bootstrap development candidate,
+  with no supported release. Its neutral bytes contain only a
+  digest-pinned Python/Debian base, snapshot-locked bootstrap packages, NPA
+  code, and immutable manifests—no LIBERO, GPU runtime, model, demonstration,
+  task/render asset, cache, checkpoint, credential, or output. Trusted development
+  publication requires complete-byte, published-base-provenance and anonymous-pull
+  checks. Customer-authorized exact-digest B200 acceptance remains required before
+  any public-table row or supported release claim.
+  Historical private r15 bytes do not establish equivalence. See the
+  [LIBERO qualification contract](byof-libero.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.

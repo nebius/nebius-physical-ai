@@ -11,7 +11,9 @@ and removed after the workload.
 
 Public development publication requires actual layer-wide payload absence,
 bootstrap source-delivery, security, SBOM and provenance checks. Supported release
-promotion still requires a real exact-digest RTX RGB-D/navigation/Bullet result.
+selection remains quarantined. The retained development image has a separately
+scoped exact-digest RTX RGB-D/navigation/Bullet result; that record does not
+authorize release promotion.
 The previous baked `Dockerfile` and `verify_image.py` remain a quarantined private
 candidate; their complete source-closure and retained-byte guards are unchanged.
 
@@ -109,6 +111,17 @@ workflow and its exact-image checks. `UNVALIDATED_PUBLICATION_TOOLS` still
 excludes Habitat-Sim from supported release selection; it has no supported-release
 manifest entry or public-release table row. Development image evidence is recorded
 separately in the [image catalog](container-image-catalog.md#not-in-the-public-image-table).
+The [development image manifest](validation/habitat-sim-development-image-manifest.json)
+binds producer `dd49fdb6ee66a72e505b9830a29dad883df91e91` and digest
+`sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2`
+to the retained 2026-09-25 proof: 19 RGB/depth frame pairs, 19 Bullet steps, and
+2.2466 metres of navigation on one RTX PRO 6000 Blackwell through NVIDIA EGL.
+It records hashes of the raw capability report, artifact manifest, GPU identity,
+byte-pull, attestations and cleanup receipts. Exact infrastructure details stay
+in access-controlled evidence. Listed image inputs are unchanged from that
+producer; this is historical producer evidence, not a new GPU run for each
+later source commit. The 19-step result does not establish policy training or
+a long-run benchmark.
 
 For the legacy baked candidate only, `licenses.json` and `runtime-payload.json`
 retain pending source closure. `build.sh --legacy-baked` does not change that

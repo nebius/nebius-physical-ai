@@ -51,10 +51,11 @@ def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
         value: sum(row["redistribution"] == value for row in entries.values())
         for value in ("public", "restricted", "unvalidated")
     }
-    assert counts == {"public": 46, "restricted": 9, "unvalidated": 0}
+    assert counts == {"public": 48, "restricted": 9, "unvalidated": 0}
     catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
-    assert "55 packaging entries" in catalog
-    assert "46 redistribution-eligible and nine restricted" in catalog
+    assert "57 packaging entries" in catalog
+    assert "48 redistribution-eligible" in catalog
+    assert "and nine restricted" in catalog
     assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 
@@ -1010,3 +1011,47 @@ def test_habitat_golden_requires_real_operator_qualification_bindings() -> None:
     assert '--plan-sha256 "$NPA_RENDERED_PLAN_SHA256"' in command
     assert '--output-uri "$NPA_HABITAT_GOLDEN_OUTPUT_URI"' in command
     assert "example-bucket" not in command
+
+
+def test_habitat_development_evidence_binds_image_without_release_promotion() -> None:
+    path = (
+        ROOT / "docs/workbench/validation/habitat-sim-development-image-manifest.json"
+    )
+    manifest = json.loads(path.read_text())
+    assert manifest["status"] == "development-only"
+    assert manifest["release_authorized"] is False
+    assert manifest["supported_release_selection"] == "quarantined"
+    assert "habitat-sim" in images.UNVALIDATED_PUBLICATION_TOOLS
+    assert "habitat-sim" not in images.publicly_publishable_tools()
+    assert manifest["image"].endswith("@" + manifest["oci_digest"])
+    assert manifest["gpu_proof"]["observed_image_digest"] == manifest["oci_digest"]
+    assert re.fullmatch(r"[0-9a-f]{40}", manifest["producer_sha"])
+    assert manifest["dockerfile"] == str(
+        (PACKAGE / "Dockerfile.bootstrap").relative_to(ROOT)
+    )
+    for name in ("container-image-catalog.md", "byof-habitat-sim.md"):
+        document = (ROOT / "docs/workbench" / name).read_text()
+        assert manifest["oci_digest"] in document
+        assert manifest["producer_sha"] in document
+        assert path.name in document
+    for record in manifest["evidence"].values():
+        assert re.fullmatch(r"[0-9a-f]{64}", record["sha256"])
+        assert record["size_bytes"] > 0
+
+
+def test_habitat_development_evidence_reuse_requires_unchanged_image_inputs() -> None:
+    path = (
+        ROOT / "docs/workbench/validation/habitat-sim-development-image-manifest.json"
+    )
+    manifest = json.loads(path.read_text())
+    inputs = manifest["source_inputs"]
+    assert len(inputs) == len({entry["path"] for entry in inputs}) == 16
+    assert manifest["dockerfile"] in {entry["path"] for entry in inputs}
+    assert "npa/src/npa/workflows/habitat_sim_smoke.py" in {
+        entry["path"] for entry in inputs
+    }
+    for entry in inputs:
+        assert (
+            hashlib.sha256((ROOT / entry["path"]).read_bytes()).hexdigest()
+            == entry["sha256"]
+        )
