@@ -67,6 +67,14 @@ image gets one exact, bounded capability probe in the selected context, whose po
 must be deleted successfully. Results are cached by digest plus contract version.
 First-party images cannot replace their declared user with `runAsUser: 0`.
 
+Image identity binds the render registry, GPU target, image variant, and every
+image override selector to its reference, then binds each preflight reference
+to its resolved immutable image. Mapping order does not matter; reassigning the
+same references or digest values changes identity. Direct immutable image
+overrides are included even when the preflight pin map is empty. Older
+value-only or pin-only identities cannot prove this complete selection and
+require a new run ID.
+
 Multi-tool workflows can pin distinct validated images with repeatable
 `--image-override TOOL_REF=IMAGE`. An exact tool override beats the optional
 global `--image` fallback, and the rendered task uses the digest that preflight
