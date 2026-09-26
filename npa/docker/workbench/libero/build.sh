@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+image=${1:?usage: build.sh ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-<full-sha>}
+head_sha=$(git rev-parse HEAD)
+source_sha=${NPA_SOURCE_SHA:-$head_sha}
+[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+[[ "$source_sha" == "$head_sha" ]]
+[[ "$image" == "ghcr.io/nebius/nebius-physical-ai/npa-libero:dev-$source_sha" ]]
+image_inputs=(
+  npa/docker/workbench/libero
+)
+git diff --quiet -- "${image_inputs[@]}"
+git diff --cached --quiet -- "${image_inputs[@]}"
+source_epoch=$(git show -s --format=%ct "$source_sha")
+[[ "$source_epoch" =~ ^[1-9][0-9]*$ ]]
+
+metadata=${NPA_LIBERO_BUILD_METADATA:?NPA_LIBERO_BUILD_METADATA is required}
+oci_archive=${NPA_LIBERO_BUILD_OCI_ARCHIVE:?NPA_LIBERO_BUILD_OCI_ARCHIVE is required}
+case "$metadata" in /*) ;; *) printf '%s\n' 'build metadata path must be absolute' >&2; exit 64 ;; esac
+case "$oci_archive" in /*) ;; *) printf '%s\n' 'build OCI archive path must be absolute' >&2; exit 64 ;; esac
+umask 077
+mkdir -p "$(dirname "$metadata")"
+mkdir -p "$(dirname "$oci_archive")"
+command -v skopeo >/dev/null
+BUILDX_METADATA_PROVENANCE=max docker buildx build \
+  --output "type=oci,dest=$oci_archive,tar=true,rewrite-timestamp=true,oci-artifact=true" \
+  --provenance=mode=max \
+  --sbom=true \
+  --metadata-file "$metadata" \
+  --build-arg "NPA_SOURCE_SHA=$source_sha" \
+  --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
+  --label "org.opencontainers.image.revision=$source_sha" \
+  --file npa/docker/workbench/libero/Dockerfile \
+  --tag "$image" \
+  npa
+test -s "$metadata"
+test -s "$oci_archive"
+npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+  --verify-build-oci "$oci_archive" \
+  --build-metadata "$metadata"
+skopeo copy --override-os linux --override-arch amd64 \
+  "oci-archive:$oci_archive" "docker-archive:$oci_archive.docker.tar:$image" >/dev/null
+docker load --input "$oci_archive.docker.tar" >/dev/null
+expected_config_digest="$(npa/.venv/bin/python -c \
+  'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.config.digest"])' \
+  "$metadata")"
+docker save --output "$oci_archive.imported.docker.tar" "$image"
+observed_config_digest="$(PYTHONPATH=npa/scripts npa/.venv/bin/python -c \
+  'from pathlib import Path; import sys; from scan_image_libero_payload import _docker_save_config_digest; print(_docker_save_config_digest(Path(sys.argv[1])))' \
+  "$oci_archive.imported.docker.tar")"
+test "$observed_config_digest" = "$expected_config_digest"
+
+printf '%s\n' 'LIBERO neutral candidate built locally; publication and validation remain quarantined.'
