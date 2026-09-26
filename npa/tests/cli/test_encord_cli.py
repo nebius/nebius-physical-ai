@@ -31,7 +31,7 @@ def test_encord_group_exposes_transport_and_labeling_verbs() -> None:
     assert "seed-demo" not in result.output
 
 
-@pytest.mark.parametrize("source", ["s3://test-bucket/labels.json", "/tmp/labels.json"])
+@pytest.mark.parametrize("source", ["s3://test-bucket/labels.json", "labels.json"])
 def test_label_import_enforces_s3_contract_and_emits_json(monkeypatch, source):
     captured = {}
 
