@@ -98,7 +98,9 @@ that shape's resolved, positive contact offset. Its finite rest offset must be
 smaller than the contact offset; zero and negative rest offsets are allowed.
 Neither offset is modified. Both the source-surface distance and the absolute
 native contact separation must fit inside this radius, and the root must be
-above the selected source point.
+above the selected source point. Each native root pose is bound to the unique
+USD articulation root within its robot asset, including roots nested below the
+asset container. Missing, ambiguous or mismatched roots abort qualification.
 
 The query uses the exact world-space triangle mesh already used by the static
 range sensor, checked against its authored USD geometry. Every triangle within
