@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
 runner = CliRunner()
 
@@ -31,6 +32,12 @@ SPEC = (
 COSMOS3_SPEC = (
     Path(__file__).resolve().parents[3] / "workflows" / "main" / "paidf-cosmos3.yaml"
 )
+NVIDIA_VDA_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "workflows"
+    / "testing"
+    / "nvidia-paidf-vda-cosmos-transfer25.yaml"
+)
 SIM2REAL_SPEC = (
     Path(__file__).resolve().parents[3] / "workflows" / "main" / "sim2real.yaml"
 )
@@ -40,6 +47,32 @@ SONIC_SPEC = (
     / "testing"
     / "sonic-export-eval.yaml"
 )
+
+
+def test_nvidia_vda_conditioning_policy_is_versioned_by_the_committed_spec() -> None:
+    from npa.cli.workbench.workflow import _paidf_conditioning_policy
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+
+    assert (
+        _paidf_conditioning_policy(NVIDIA_PAIDF_VDA_WORKFLOW_NAME, {})
+        == "source-fidelity-v2"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == "source-fidelity-v3"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            "physical-ai-data-factory",
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == ""
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -90,6 +123,24 @@ def _submit_cosmos3(*args: str):
     )
 
 
+def _submit_nvidia_vda(*args: str):
+    return runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NVIDIA_VDA_SPEC),
+            "--run-id",
+            "nvidia-vda-preflight-demo",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            *args,
+        ],
+    )
+
+
 def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> None:
     output = StringIO()
     monkeypatch.setattr(
@@ -105,6 +156,37 @@ def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> Non
     assert output.getvalue() == (
         "Error: invalid target [H100:1] after closing tag [/:]\n"
     )
+
+
+def test_fail_structurally_redacts_raw_multiline_exception(monkeypatch) -> None:
+    output = StringIO()
+    monkeypatch.setattr(
+        workflow_cli,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+    message = (
+        "provider rejected HF_TOKEN=hf_synthetic_boundary_token\n"
+        "retry: npa workbench workflow status synthetic-run\n"
+        "details: https://synthetic-user:synthetic-password@api.example.invalid/"
+        "path?X-Amz-Signature=synthetic-query"
+    )
+
+    with pytest.raises(typer.Exit) as exc_info:
+        workflow_cli._fail(message)
+
+    rendered = output.getvalue()
+    assert exc_info.value.exit_code == 1
+    assert rendered.count("\n") == message.count("\n") + 1
+    assert "retry: npa workbench workflow status synthetic-run" in rendered
+    for secret in (
+        "hf_synthetic_boundary_token",
+        "synthetic-user",
+        "synthetic-password",
+        "X-Amz-Signature",
+        "synthetic-query",
+    ):
+        assert secret not in rendered
 
 
 def test_submit_lists_every_missing_prerequisite_at_once() -> None:
@@ -409,6 +491,89 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
     assert events == ["placement", f"exact:{control}", "image"]
 
 
+def test_checkpoint_access_failure_redacts_resolved_opaque_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.cosmos.checkpoint_access import CosmosCheckpointAccessError
+
+    opaque_token = "synthetic-opaque-checkpoint-credential"
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "access.json"))
+    for name, value in (
+        ("NEBIUS_TOKEN_FACTORY_KEY", "synthetic-token-factory-key"),
+        ("AWS_ACCESS_KEY_ID", "synthetic-access-key"),
+        ("AWS_SECRET_ACCESS_KEY", "synthetic-secret-key"),
+        ("HF_TOKEN", opaque_token),
+    ):
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", "/bin/true")
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._available_kube_contexts",
+        lambda: ["npa-cluster"],
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
+    )
+    monkeypatch.setattr(
+        "npa.clients.huggingface.validate_hf_access",
+        lambda *_args, **_kwargs: pytest.fail(
+            "broad repository-level Hugging Face probe must not run"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
+        lambda _context: [],
+    )
+
+    def denied(*, modality: str, token: str):
+        assert modality == "edge"
+        assert token == opaque_token
+        raise CosmosCheckpointAccessError(f"provider rejected token {token}")
+
+    monkeypatch.setattr(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access",
+        denied,
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        lambda *_args, **_kwargs: pytest.fail(
+            "image preflight reached after checkpoint access failure"
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "paidf-redacted-access-failure",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+            "--var",
+            "augment_control=edge",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--secret-env",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "--secret-env",
+            "AWS_ACCESS_KEY_ID",
+            "--secret-env",
+            "AWS_SECRET_ACCESS_KEY",
+            "--secret-env",
+            "HF_TOKEN",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "provider rejected token <redacted>" in result.output
+    assert opaque_token not in result.output
+
+
 @pytest.mark.parametrize(
     ("count_name", "count"),
     [("rollout_count", "513"), ("validation_count", "65"), ("gold_count", "65")],
@@ -597,6 +762,25 @@ def test_plan_only_without_source_uri_is_read_only(
     assert not state_root.exists()
     stage.assert_not_called()
     upload_input.assert_not_called()
+
+
+def test_nvidia_vda_plan_stages_input_beneath_its_own_run_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+
+    result = _submit_nvidia_vda(
+        "--plan-only", "--var", "bucket=real-bucket", "--output-format", "json"
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["plan"]["steps"][0]["state"] == "record-upstream"
+    serialized_plan = json.dumps(payload["plan"], sort_keys=True)
+    assert (
+        "s3://real-bucket/nvidia-paidf-vda-cosmos-transfer25/"
+        "nvidia-vda-preflight-demo/input/"
+    ) in serialized_plan
 
 
 def test_plan_only_human_output_is_compact_and_details_are_explicit() -> None:
@@ -1087,6 +1271,211 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
     assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
         digest_image: ("operator-registry",)
     }
+
+
+def test_preflight_images_deduplicates_declared_and_explicit_pull_secret(
+    mocker,
+) -> None:
+    digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=(
+            [digest_image],
+            {digest_image: ("operator-registry",)},
+        ),
+    )
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--image-pull-secret",
+            "operator-registry",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert checks.call_args.kwargs["pull_secrets_by_image"] == {
+        digest_image: ("operator-registry",)
+    }
+
+
+def test_preflight_images_covers_every_decision_branch(mocker) -> None:
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--image-pull-secret",
+            "operator-registry",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    checked_images = checks.call_args.args[0]
+    assert len(checked_images) == 5
+    assert any("npa-cosmos-curate:" in image for image in checked_images)
+    assert any("npa-fiftyone:" in image for image in checked_images)
+    assert checks.call_args.kwargs["pull_secrets_by_image"] == {
+        image: ("operator-registry",) for image in checked_images
+    }
+
+
+def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([], {}),
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output == "images: none pinned by this spec\n"
+    pulls.assert_not_called()
+    contracts.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [ValueError, NpaWorkflowError])
+def test_preflight_images_reports_planning_failure_before_pull_checks(
+    mocker,
+    error_type,
+) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        side_effect=error_type("synthetic complete-path planner failure"),
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.output == (
+        "Error: image preflight planning failed: "
+        "synthetic complete-path planner failure\n"
+    )
+    assert "images: none" not in result.output
+    pulls.assert_not_called()
+    contracts.assert_not_called()
+
+
+def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
+    mocker,
+) -> None:
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--infra",
+            "k8s/unit-context",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert checks.call_args.kwargs["context"] == "unit-context"
+    assert contracts.call_args.kwargs["context"] == "unit-context"
+
+
+def test_preflight_images_fails_on_branch_only_image(mocker) -> None:
+    from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+
+    def branch_failure(images, **_kwargs):
+        return [
+            ImagePullCheck(
+                image=image,
+                status=("denied" if "npa-cosmos-curate:" in image else "ok"),
+                detail=(
+                    "synthetic branch-only pull failure"
+                    if "npa-cosmos-curate:" in image
+                    else ""
+                ),
+            )
+            for image in images
+        ]
+
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        side_effect=branch_failure,
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "npa-cosmos-curate:" in result.output
+    assert "synthetic branch-only pull failure" in result.output
+    assert any("npa-cosmos-curate:" in image for image in checks.call_args.args[0])
+    contracts.assert_not_called()
 
 
 def test_image_none_automatically_plans_npa_source_staging() -> None:

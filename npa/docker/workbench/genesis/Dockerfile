@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2
 
 ARG GENESIS_VERSION=0.4.6
 ARG LEROBOT_VERSION=0.4.4
-ARG RSL_RL_VERSION=2.2.4
+ARG RSL_RL_VERSION=5.5.1
 ARG TORCH_VERSION=2.6.0
 ARG TORCHVISION_VERSION=0.21.0
 
@@ -75,6 +75,8 @@ RUN python3 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/pip install \
       "genesis-world==${GENESIS_VERSION}" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
+      "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
+      "pillow>=12.3.0,<13.0" \
       "tensorboard==2.20.0" \
       "lerobot==${LEROBOT_VERSION}" \
       "typer==0.24.1" \
@@ -85,7 +87,7 @@ RUN python3 -m venv /opt/genesis/venv \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
       "pyarrow==24.0.0" \
-    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.2.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.3.0,<13.0" \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
     && /opt/genesis/venv/bin/pip uninstall -y wandb
 

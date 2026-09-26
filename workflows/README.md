@@ -15,6 +15,8 @@ artifacts. Start with a runbook that matches the result you want.
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
+| Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |
 | Fine-tune XR1 on Antioch robot demonstrations | [Antioch pipeline](partners/antioch/README.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
 | Package your own repository | [BYOF](../docs/workbench/cookbooks/byof-isaac-lab/README.md) |
 
@@ -84,6 +86,12 @@ The CLI, agent, and live-submit matrix discover main, testing, and partner specs
 SkyPilot tasks are separate tool-specific examples; see the
 [reference-assets index](../npa/workflows/workbench/README.md).
 
+The established Cosmos Transfer VDA, the separately named direct NVIDIA VDA,
+and the direct DIG, IAA, and EVG translations are testing-tier PAIDF specs. The
+direct translations record `reports/upstream.json` and all execute through
+SkyPilot rather than OSMO or Airflow. The established Transfer and Cosmos 3
+workflow YAMLs remain unchanged from `main`.
+
 ## Spec catalog
 
 ### Main workflows
@@ -96,8 +104,10 @@ SkyPilot tasks are separate tool-specific examples; see the
 
 ### Partner workflows
 
-| Spec | Notes |
+| Entry | Notes |
 | --- | --- |
+| [OpenPI live pickup runbook](partners/antioch/openpi-live-pickup.md) | Operator-managed Antioch simulation ↔ pretrained π0.5 inference on Nebius, with finite physical checks and native recording. Uses the live deployment commands. |
+| [`antioch-offline-policy-train.yaml`](partners/antioch/antioch-offline-policy-train.yaml) | Antioch trajectory collection → completed LeRobotDataset v3 → ACT training. Defaults exercise the cartpole data/checkpoint path with one optimizer step. |
 | [`xr1-antioch-finetune.yaml`](partners/antioch/xr1-antioch-finetune.yaml) | [Antioch pipeline](partners/antioch/README.md): robot demonstrations → Nebius S3 → native XR1 fine-tuning on eight RTX PRO 6000 GPUs → Antioch held-out evaluation → results and recordings in S3. |
 
 ### Testing and reference workflows
@@ -120,8 +130,13 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos3-super-b200-benchmark.yaml`](testing/cosmos3-super-b200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU B200 node |
 | [`cosmos3-super-h200-benchmark.yaml`](testing/cosmos3-super-h200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU H200 node |
 | [`cosmos3-super-h200-single-gpu.yaml`](testing/cosmos3-super-h200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one H200; distinct from node-throughput benchmarks |
+| [`cosmos3-super-b200-single-gpu.yaml`](testing/cosmos3-super-b200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one B200; distinct from node-throughput benchmarks |
 | [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
+| [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
+| [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
+| [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
+| [`nvidia-paidf-vda-cosmos-transfer25.yaml`](testing/nvidia-paidf-vda-cosmos-transfer25.yaml) | Separately named NVIDIA-derived VDA semantic translation → pinned upstream contract → real Cosmos Transfer 2.5/Evaluator/Curator/FiftyOne → Rerun ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
 | [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
 
 #### Robot learning and simulation
@@ -135,7 +150,9 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
 | [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
 | [`lerobot-subtask-proof.yaml`](testing/lerobot-subtask-proof.yaml) | CPU post-review gate: complete LeRobot v3 `subtask_index` coverage → catalog resolution → row-level proof bound to the source Parquet digest ([guide](../docs/workbench/guides/lerobot-subtask-labeling.md)) |
-| [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | MJLab locomotion eval |
+| [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | Measured native MJLab checkpoint evaluation |
+| [`mjlab-train-eval.yaml`](testing/mjlab-train-eval.yaml) | Native MJLab training, measured evaluation, ONNX export and independent-seed evaluation |
+| [`mjlab-render.yaml`](testing/mjlab-render.yaml) | Trained MJLab checkpoint to measured evaluation, rendered MP4 and self-contained HTML on RTX PRO 6000 |
 | [`openpi-pi05-four-mode.yaml`](testing/openpi-pi05-four-mode.yaml) | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`openpi-pi05-full-droid-finetune.yaml`](testing/openpi-pi05-full-droid-finetune.yaml) | Complete upstream pi0.5 full-DROID recipe: checksum-synced RLDS 1.0.1 and preparation RRD, ten-million-frame normalization, fixed 100-update distributed qualification RRD, global batch 256, 100,000 updates on eight one-RTX-PRO-6000 nodes, durable resume, immutable checkpoint lineage, and verified progress RRD snapshots at 1k/10k/25k/50k/75k/100k ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
@@ -147,7 +164,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
 | [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |
 | [`sonic-export.yaml`](testing/sonic-export.yaml) | SONIC export |
-| [`sonic-locomotion-finetuning.yaml`](testing/sonic-locomotion-finetuning.yaml) | Retarget → train → mjlab |
+| [`sonic-locomotion-finetuning.yaml`](testing/sonic-locomotion-finetuning.yaml) | Retarget → train → export → native SONIC eval |
 | [`sonic-train.yaml`](testing/sonic-train.yaml) | SONIC train |
 
 #### Data, perception, and scenario analysis
@@ -158,8 +175,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`alpamayo2-ray-hardcases.yaml`](testing/alpamayo2-ray-hardcases.yaml) | Ray baseline → mean-error selection → refinement with matched scenarios and seeds; reports measured error changes ([guide](../docs/workbench/alpamayo2-super.md#ray-experiments)) |
 | [`alpamayo2-super-inference.yaml`](testing/alpamayo2-super-inference.yaml) | Real Alpamayo 2 Super 34B trajectory inference on `B200:1`; runtime-only OpenMDW weights and separately gated PhysicalAI-AV sample data ([guide](../docs/workbench/alpamayo2-super.md)) |
 | [`adversarial-scenario-hardening.yaml`](testing/adversarial-scenario-hardening.yaml) | Adversarial scenario generation and ranking → policy hardening loop → promotion gate |
-| [`av-night-scene-hardening.yaml`](testing/av-night-scene-hardening.yaml) | AV night-scene hardening from diagram |
-| [`bdd100k-pipeline.yaml`](testing/bdd100k-pipeline.yaml) | 11-stage AV pipeline |
+| [`av-night-scene-hardening.yaml`](testing/av-night-scene-hardening.yaml) | 8-stage AV night-scene pipeline ending when both detector metrics artifacts are written; human/FiftyOne inspection is post-run |
+| [`bdd100k-pipeline.yaml`](testing/bdd100k-pipeline.yaml) | 10-stage AV pipeline ending when all three detector metrics artifacts are written; human/FiftyOne inspection is post-run ([cookbook](../docs/workbench/cookbooks/bdd100k-pipeline.md)) |
 | [`dataset-ingest-curate.yaml`](testing/dataset-ingest-curate.yaml) | Sensor-data ingest → validation gate → slice curation → queryable version registration |
 | [`dataset-of-record-smoke.yaml`](testing/dataset-of-record-smoke.yaml) | CPU dataset-of-record smoke using the manifest-backed query fallback |
 | [`hardening-with-insights.yaml`](testing/hardening-with-insights.yaml) | Adversarial hardening loop → policy publication → insights metrics, lineage, and dashboard |
@@ -251,3 +268,5 @@ timelines and control hashes, and checks every downstream component report.
 - [Workflow runbooks](guides/README.md) and [robot guides](../docs/workbench/guides/README.md).
 - [Tool catalog](../docs/workbench/npa-workflow-tool-catalog.md) and [authoring reference](../docs/workbench/npa-workflow-guide.md).
 - Agent skills: [author a workflow](../skills/workflows/author-npa-workflow/SKILL.md) or [design a pipeline](../skills/workflows/generate-npa-workflow/SKILL.md).
+
+MJLab workflows require an explicitly built MJLab image while its public release is quarantined; see the [MJLab guide](../docs/workbench/mjlab.md).

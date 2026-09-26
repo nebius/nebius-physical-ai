@@ -314,29 +314,78 @@ def test_real_listener_owned_and_same_process_adopted_on_retry(local_runtime):
     ).stat().st_mode & 0o777 == 0o600
 
 
-def test_listener_owned_treats_exit_between_proc_reads_as_absent(monkeypatch):
+@pytest.fixture
+def listener_procfs(monkeypatch):
     pid = 731
     process_netns = Path(f"/proc/{pid}/ns/net")
     self_netns = Path("/proc/self/ns/net")
     process_tcp = Path(f"/proc/{pid}/net/tcp")
     original_readlink = Path.readlink
-    original_read_text = Path.read_text
 
     def readlink(path: Path) -> Path:
         if path in {process_netns, self_netns}:
             return Path("net:[4026531840]")
         return original_readlink(path)
 
-    def read_text(path: Path, *args, **kwargs) -> str:
-        if path == process_tcp:
-            raise FileNotFoundError(process_tcp)
-        return original_read_text(path, *args, **kwargs)
-
     monkeypatch.setattr(api.sys, "platform", "linux")
     monkeypatch.setattr(Path, "readlink", readlink)
+    return pid, process_netns, process_tcp
+
+
+@pytest.mark.parametrize("exit_error", [FileNotFoundError, ProcessLookupError])
+def test_listener_owned_treats_exit_between_proc_reads_as_absent(
+    monkeypatch, listener_procfs, exit_error
+):
+    pid, _process_netns, process_tcp = listener_procfs
+    original_read_text = Path.read_text
+
+    def read_text(path: Path, *args, **kwargs) -> str:
+        if path == process_tcp:
+            raise exit_error(process_tcp)
+        return original_read_text(path, *args, **kwargs)
+
     monkeypatch.setattr(Path, "read_text", read_text)
 
     assert not api._listener_owned({"port": 43127}, {"pid": pid})
+
+
+@pytest.mark.parametrize("boundary", ["namespace", "listener-table"])
+def test_listener_owned_preserves_permission_failure(
+    monkeypatch, listener_procfs, boundary
+):
+    pid, process_netns, process_tcp = listener_procfs
+    method = "readlink" if boundary == "namespace" else "read_text"
+    denied_path = process_netns if boundary == "namespace" else process_tcp
+    original = getattr(Path, method)
+
+    def denied(path: Path, *args, **kwargs):
+        if path == denied_path:
+            raise PermissionError("fixture procfs access denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, denied)
+
+    with pytest.raises(PermissionError, match="fixture procfs access denied"):
+        api._listener_owned({"port": 43127}, {"pid": pid})
+
+
+def test_listener_owned_rejects_foreign_network_namespace(monkeypatch, listener_procfs):
+    pid, process_netns, _process_tcp = listener_procfs
+    original = Path.readlink
+
+    def foreign_namespace(path: Path) -> Path:
+        if path == process_netns:
+            return Path("net:[4026531841]")
+        return original(path)
+
+    def unexpected_listener_read(*args, **kwargs):
+        pytest.fail("foreign namespace must fail before inspecting listeners")
+
+    monkeypatch.setattr(Path, "readlink", foreign_namespace)
+    monkeypatch.setattr(Path, "read_text", unexpected_listener_read)
+
+    with pytest.raises(api.IsolatedApiError, match="another network namespace"):
+        api._listener_owned({"port": 43127}, {"pid": pid})
 
 
 @pytest.mark.parametrize("missed_scans", [1, 3])
@@ -363,6 +412,37 @@ def test_live_new_server_waits_for_process_discovery(
     record = _record(local_runtime)
     assert api._listener_owned(record, inspect_process(record))
     assert api.ensure_isolated_api(**local_runtime) == result
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux procfs ownership probe")
+def test_listener_exit_after_namespace_read_returns_not_ready(monkeypatch):
+    """An actual owned child exits between the two procfs observations."""
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+        stdin=subprocess.PIPE,
+    )
+    original = Path.readlink
+    observed = []
+    namespace = Path(f"/proc/{child.pid}/ns/net")
+
+    def exit_after_namespace(path):
+        value = original(path)
+        if path == namespace:
+            observed.append(value)
+            assert child.stdin is not None
+            child.stdin.close()
+            assert child.wait() == 0
+        return value
+
+    try:
+        monkeypatch.setattr(Path, "readlink", exit_after_namespace)
+        assert api._listener_owned({"port": 49152}, {"pid": child.pid}) is False
+        assert len(observed) == 1
+        assert not Path(f"/proc/{child.pid}").exists()
+    finally:
+        if child.stdin is not None and not child.stdin.closed:
+            child.stdin.close()
+        child.wait()
 
 
 def test_new_server_exit_still_fails_readiness(local_runtime):

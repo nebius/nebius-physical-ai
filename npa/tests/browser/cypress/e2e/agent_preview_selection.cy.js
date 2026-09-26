@@ -14,7 +14,13 @@ describe("Operator artifact preview during status refresh", () => {
       // real periodic refresh. Network promises and viewer timers stay native.
       cy.clock(Date.now(), ["setInterval", "clearInterval"]);
       cy.get("#tabRerun").click();
-      cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+      cy.selectRunSource("#runIdSelect", {
+        runId: NON_STOCK_RUN_ID,
+        projectId: "project-a",
+        bucket: "project-artifacts",
+        resolvedPrefix: "",
+        sourceType: "artifact_storage",
+      });
       cy.wait("@nonStockArtifactList");
       cy.wait("@loadArtifact");
       cy.get(`#artifactList button[data-action="preview-artifact"][data-key="${NON_STOCK_RUN_ID}/${key}"]`).click();

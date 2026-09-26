@@ -38,7 +38,9 @@ def test_byof_registered_in_workbench_help() -> None:
 
 
 def test_byof_run_help() -> None:
-    result = runner.invoke(app, ["workbench", "byof", "run", "--help"])
+    result = runner.invoke(
+        app, ["workbench", "byof", "run", "--help"], terminal_width=200
+    )
     assert result.exit_code == 0
     assert "--repo-url" in result.output
     assert "--workload" in result.output
@@ -60,6 +62,8 @@ def test_byof_run_dry_run_json() -> None:
             "main",
             "--workload",
             "container-verify",
+            "--source-prune-path",
+            "assets/render-only",
             "--dry-run",
             "--output",
             "json",
@@ -70,6 +74,9 @@ def test_byof_run_dry_run_json() -> None:
     assert payload["script"] == "npa/scripts/run_byof_repo.py"
     assert "--repo-url" in payload["argv"]
     assert "https://github.com/example/repo.git" in payload["argv"]
+    assert payload["argv"][payload["argv"].index("--source-prune-path") + 1] == (
+        "assets/render-only"
+    )
     assert payload["ladder"] == "docs/architecture/oss-onboarding-ladder.md"
 
 
@@ -92,14 +99,17 @@ def test_build_byof_argv_and_sdk_plan() -> None:
         repo_url="https://github.com/example/repo.git",
         repo_ref="main",
         workload="container-verify",
+        source_prune_path="assets/render-only",
         skip_run=True,
     )
     assert "--skip-run" in argv
+    assert argv[argv.index("--source-prune-path") + 1] == "assets/render-only"
     assert (
         byof_sdk.plan_argv(
             repo_url="https://github.com/example/repo.git",
             repo_ref="main",
             workload="container-verify",
+            source_prune_path="assets/render-only",
             skip_run=True,
         )
         == argv

@@ -88,7 +88,7 @@ def test_overlay_uses_matching_source_frames_and_times(
     duration: float | None,
     source_indices: list[int],
 ) -> None:
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     dataset, states = _synthetic_dataset(tmp_path, frames)
     predictions = _predictions(tmp_path, states[:horizon])
