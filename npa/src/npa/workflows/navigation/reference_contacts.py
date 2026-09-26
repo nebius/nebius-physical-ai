@@ -24,6 +24,21 @@ def _scene_filters(stage, root):
     return sorted(paths)
 
 
+def _contact_indices(data):
+    import torch
+
+    counts = _tensor(data[4]).long().flatten()
+    starts = _tensor(data[5]).long().flatten()
+    pairs = torch.repeat_interleave(
+        torch.arange(len(counts), device=counts.device), counts
+    )
+    offsets = torch.cumsum(counts, 0) - counts
+    local = torch.arange(len(pairs), device=counts.device) - torch.repeat_interleave(
+        offsets, counts
+    )
+    return pairs, torch.repeat_interleave(starts, counts) + local
+
+
 class ContactMeasurements:
     """Accumulate physical contact evidence over each high-level control interval.
 
@@ -62,6 +77,9 @@ class ContactMeasurements:
             raise RuntimeError(
                 "reference contact view does not cover every robot and scene"
             )
+        from npa.workflows.navigation.contact_surface import FootSupport
+
+        self.surface = FootSupport(env, self)
 
     def reset(self, env_ids=None):
         """Clear accumulated physical measurements for the requested robots.
@@ -107,27 +125,32 @@ class ContactMeasurements:
 
         view = self.view
         data = view.get_contact_data(dt=self.env.physics_dt)
-        force, _, normals, _, counts, starts = data
-        counts = _tensor(counts).long().flatten()
-        starts = _tensor(starts).long().flatten()
-        pairs = torch.repeat_interleave(
-            torch.arange(len(counts), device=counts.device), counts
-        )
-        offsets = torch.cumsum(counts, 0) - counts
-        local = torch.arange(
-            len(pairs), device=counts.device
-        ) - torch.repeat_interleave(offsets, counts)
-        indices = torch.repeat_interleave(starts, counts) + local
-        magnitudes = _tensor(force).flatten()[indices].abs()
+        pairs, indices = _contact_indices(data)
+        magnitudes = _tensor(data[0]).flatten()[indices].abs()
         body_ids = (pairs // view.filter_count) % self.body_count
-        obstacle = (_tensor(normals)[indices, 2].abs() < 0.7) | (
+        original = (_tensor(data[2])[indices, 2].abs() < 0.7) | (
             body_ids == self.base_index
         )
-        magnitudes = magnitudes * obstacle
+        support, fields = self.surface.recognize(
+            data, pairs, indices, original, retain=self.evidence is not None
+        )
+        obstacle = original & ~support
         result = torch.zeros_like(self.obstacle)
         result.scatter_add_(
-            0, pairs // (view.filter_count * self.body_count), magnitudes
+            0, pairs // (view.filter_count * self.body_count), magnitudes * obstacle
         )
         if self.evidence is not None:
-            self.evidence.sample(data, pairs, indices, obstacle, result)
+            original_result = torch.zeros_like(result)
+            original_result.scatter_add_(
+                0, pairs // (view.filter_count * self.body_count), magnitudes * original
+            )
+            self.evidence.sample(
+                data,
+                pairs,
+                indices,
+                original,
+                result,
+                surface=fields,
+                original_aggregate=original_result,
+            )
         return torch.where(result > 0.02, result, 0.0)

@@ -59,6 +59,13 @@ def native(tmp_path, monkeypatch):
     measurements.obstacle = torch.zeros(2)
     measurements.peer = torch.zeros(2)
     measurements.evidence = None
+    measurements.surface = SimpleNamespace(
+        metadata={"test_surface": True},
+        recognize=lambda data, pairs, indices, original, retain: (
+            torch.zeros_like(original),
+            None,
+        ),
+    )
     monkeypatch.setattr(
         contact_evidence, "_native_handles", lambda *_: (body_view, root_view, clock)
     )
@@ -116,11 +123,13 @@ def test_small_individual_contacts_and_distinct_aggregate_peak_are_retained(nati
         second = _tick(n)
     with np.load(n.evidence.output / "000001.npz", allow_pickle=False) as saved:
         assert saved["force_n"][0] == pytest.approx(-0.015)
-        assert saved["sample_tick_classified_sum_n"][0] == pytest.approx(0.027)
-        assert saved["control_interval_peak_classified_sum_n"][0] == pytest.approx(
-            0.042
+        assert saved["sample_tick_original_classified_sum_n"][0] == pytest.approx(0.027)
+        assert saved["sample_tick_effective_classified_sum_n"][0] == pytest.approx(
+            0.027
         )
-        assert saved["sample_tick_contributing_contacts"][0] == 2
+        assert saved["control_interval_peak_effective_sum_n"][0] == pytest.approx(0.042)
+        assert saved["sample_tick_original_contributing_contacts"][0] == 2
+        assert saved["sample_tick_effective_contributing_contacts"][0] == 2
         assert (
             saved["physics_substeps_observed"] == 2
             and saved["physics_event_count"][0] == 100
@@ -158,7 +167,7 @@ def test_empty_interval_retains_zero_population_aggregate(native):
     with np.load(native.evidence.output / "000001.npz", allow_pickle=False) as saved:
         assert saved["physics_substeps_observed"] == 1
         np.testing.assert_array_equal(
-            saved["control_interval_peak_classified_sum_n"], [0, 0]
+            saved["control_interval_peak_effective_sum_n"], [0, 0]
         )
 
 
@@ -191,3 +200,32 @@ def test_body_mapping_rejects_ambiguous_native_paths(native):
         contact_evidence._mapping(
             native.view, ["base", "foot"], native.body_view, native.root_view
         )
+
+
+def test_recognized_original_contact_is_retained_with_effective_counts_and_geometry(
+    native,
+):
+    n = native
+    n.counts[0, 0] = 2
+    n.forces[0:2] = n.torch.tensor([[100.0], [10.0]])
+    fields = {
+        "support_reason": n.torch.tensor([1, 8]),
+        "support_radius_m": n.torch.tensor([0.02, 0.02]),
+        "source_face_index": n.torch.tensor([15, 16]),
+        "source_distance_m": n.torch.tensor([0.01, 0.01]),
+    }
+    n.measurements.surface.recognize = lambda *args, **kwargs: (
+        n.torch.tensor([True, False]),
+        fields,
+    )
+    with n.evidence.interval():
+        result = _tick(n)
+        fields["source_face_index"][:] = 999
+    row = n.evidence.rows[0]
+    assert row["force_magnitude_n"] == 100.0 and result[0] == 10.0
+    assert row["original_candidate"] and not row["effective_candidate"]
+    assert row["source_face_index"] == 15
+    assert row["sample_tick_original_contributing_contacts"] == 2
+    assert row["sample_tick_effective_contributing_contacts"] == 1
+    assert row["sample_tick_original_classified_sum_n"] == 110.0
+    assert row["sample_tick_effective_classified_sum_n"] == 10.0

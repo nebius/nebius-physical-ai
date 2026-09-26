@@ -1,4 +1,4 @@
-"""Retain probe-only native contact samples without changing contact classification."""
+"""Observe original and geometry-corrected probe contacts without altering physics."""
 
 from contextlib import contextmanager
 import re
@@ -94,11 +94,11 @@ def _native_handles(env, measurements):
 
 
 class ContactEvidence:
-    """Keep each classified robot's strongest contact in each probe control interval.
+    """Keep each robot's strongest original contact and its corrected metric decision.
 
     Args:
         env: Native reference environment.
-        measurements: Existing contact measurements, with unchanged classification.
+        measurements: Native contact measurements with source-aware foot support.
         output: Private native artifact directory.
         name: Current physical probe name.
     Returns:
@@ -132,21 +132,23 @@ class ContactEvidence:
         write_json(
             self.output / "index.json",
             {
-                "schema": "npa.navigation.probe-contact-samples.v1",
-                "selection": "strongest classified individual contact per classified robot per control interval; ties retain the first sampled contact",
+                "schema": "npa.navigation.probe-contact-samples.v2",
+                "selection": "strongest ORIGINAL normal/base-rule individual contact per robot per control interval, including recognized floor; ties retain the first sampled contact",
                 "scope": "Probe steps only; no initial-reset sampling; not a complete contact history",
                 "pose_format": "world xyz and quaternion xyzw; native PhysxManager subspace root is /",
                 "sensor_mapping": self.mapping,
                 "native_filter_paths": self.filters,
                 "configured_filter_paths": self.measurements.filter_paths,
-                "classification": "abs(normal.z) < 0.7 or classified_body_index == base_index",
+                "original_classification": "abs(normal.z) < 0.7 or classified_body_index == base_index",
+                "effective_classification": "original classification excluding geometrically recognized FOOT support",
+                "support_query": self.measurements.surface.metadata,
                 "base_index": self.measurements.base_index,
                 "sensor_count": self.view.sensor_count,
                 "filter_count": self.view.filter_count,
                 "population": self.env.num_envs,
                 "physics_dt": self.env.physics_dt,
                 "native_clock_source": "isaacsim.core.simulation_manager.native_step_events",
-                "aggregate_scope": "sample_tick_sum is distinct from control_interval_peak_sum; current 0.02N threshold and classification remain unchanged",
+                "aggregate_scope": "sample_tick original/effective sums are distinct from control_interval_peak_effective_sum; force threshold remains 0.02N; selected sample is not a complete contact history",
             },
         )
 
@@ -173,15 +175,27 @@ class ContactEvidence:
             self.active = False
             self._save(complete)
 
-    def sample(self, data, pairs, indices, classified, aggregate):
+    def sample(
+        self,
+        data,
+        pairs,
+        indices,
+        classified,
+        aggregate,
+        *,
+        surface,
+        original_aggregate,
+    ):
         """Copy selected native contact values before the next physics update.
 
         Args:
             data: Original six-array native contact tuple, never modified.
             pairs: Existing sensor/filter pair indices.
             indices: Existing starts/counts-derived contact buffer indices.
-            classified: Existing obstacle-classification mask.
-            aggregate: Existing per-robot sum before the original force threshold.
+            classified: Original normal/base-rule classification mask.
+            aggregate: Effective per-robot sum before the original force threshold.
+            surface: Geometry decision arrays aligned with the original contacts.
+            original_aggregate: Original per-robot sum before support recognition.
         Returns:
             None.
         Raises:
@@ -192,6 +206,15 @@ class ContactEvidence:
         self.substep += 1
         if not len(indices):
             return
+        selected = self._selection(data, pairs, indices, classified)
+        if not selected:
+            return
+        classification = self._classification(
+            data, pairs, indices, classified, aggregate, original_aggregate, surface
+        )
+        self._copy_samples(data, pairs, indices, classification, selected, surface)
+
+    def _selection(self, data, pairs, indices, classified):
         magnitudes = _tensor(data[0]).flatten()[indices].abs()
         chosen, maxima = _strongest(
             pairs,
@@ -202,10 +225,30 @@ class ContactEvidence:
             self.view.filter_count,
             self.measurements.body_count,
         )
-        selected = self._improved(chosen, maxima, len(indices))
-        if not selected:
-            return
-        self._copy_samples(data, pairs, indices, classified, aggregate, selected)
+        return self._improved(chosen, maxima, len(indices))
+
+    def _classification(
+        self, data, pairs, indices, original, effective_sum, original_sum, surface
+    ):
+        effective = (
+            original if surface is None else original & (surface["support_reason"] != 1)
+        )
+        return {
+            "sample_tick_original_contributing_contacts": self._contribution_counts(
+                data, pairs, indices, original
+            ),
+            "sample_tick_effective_contributing_contacts": self._contribution_counts(
+                data, pairs, indices, effective
+            ),
+            "sample_tick_original_classified_sum_n": original_sum.detach()
+            .cpu()
+            .numpy()
+            .copy(),
+            "sample_tick_effective_classified_sum_n": effective_sum.detach()
+            .cpu()
+            .numpy()
+            .copy(),
+        }
 
     def _improved(self, chosen, maxima, sentinel):
         chosen = chosen.detach().cpu().numpy()
@@ -218,19 +261,17 @@ class ContactEvidence:
             > self.rows.get(robot, {"force_magnitude_n": 0.0})["force_magnitude_n"]
         ]
 
-    def _copy_samples(self, data, pairs, indices, classified, aggregate, selected):
+    def _copy_samples(self, data, pairs, indices, classification, selected, surface):
         import torch
 
         tick = int(self.clock.get_num_physics_steps())
         seconds = float(self.clock.get_simulation_time())
-        contributions = self._contribution_counts(data, pairs, indices, classified)
         positions = torch.tensor([item[1] for item in selected], device=indices.device)
         contacts = indices[positions]
         pair_ids = pairs[positions].detach().cpu().numpy()
         arrays = [
             _tensor(value)[contacts].detach().cpu().numpy().copy() for value in data[:4]
         ]
-        sums = aggregate.detach().cpu().numpy().copy()
         counts = _tensor(data[4]).detach().cpu().numpy().copy()
         starts = _tensor(data[5]).detach().cpu().numpy().copy()
         poses = self._poses(pair_ids)
@@ -242,15 +283,15 @@ class ContactEvidence:
             row.update(
                 physics_event_count=tick,
                 physics_substep=self.substep,
-                sample_tick_contributing_contacts=int(contributions[robot]),
                 physics_seconds=seconds,
                 contact_buffer_index=int(contacts[offset]),
                 pair_contact_count=int(counts[sensor, filter_index]),
                 pair_contact_start=int(starts[sensor, filter_index]),
-                sample_tick_classified_sum_n=float(sums[robot]),
                 body_pose_world_xyzw=poses[0][offset],
                 root_pose_world_xyzw=poses[1][offset],
             )
+            row.update({key: value[robot] for key, value in classification.items()})
+            row.update(_surface_row(surface, int(positions[offset])))
             self.rows[robot] = row
 
     def _contribution_counts(self, data, pairs, indices, classified):
@@ -304,7 +345,7 @@ class ContactEvidence:
             key: np.asarray([row[key] for row in self.rows.values()])
             for key in next(iter(self.rows.values()), {})
         }
-        arrays["control_interval_peak_classified_sum_n"] = (
+        arrays["control_interval_peak_effective_sum_n"] = (
             _tensor(self.measurements.obstacle).detach().cpu().numpy().copy()
         )
         arrays["control_step"] = np.asarray(self.step)
@@ -314,3 +355,26 @@ class ContactEvidence:
             if array.dtype.kind in "fc" and not np.isfinite(array).all():
                 raise ValueError("Native contact evidence contains nonfinite values")
         np.savez_compressed(self.output / f"{self.step:06d}.npz", **arrays)
+
+
+def _surface_row(fields, index):
+    if fields is None:
+        return {
+            "support_reason": 2,
+            "source_face_index": -1,
+            "source_point_world_m": np.full(3, -1.0),
+            "source_distance_m": -1.0,
+            "support_radius_m": -1.0,
+            "native_separation_m": -1.0,
+            "support_rest_offset_m": -1.0,
+            "original_candidate": True,
+            "effective_candidate": True,
+        }
+    result = {
+        key: values[index].detach().cpu().numpy().copy()
+        for key, values in fields.items()
+    }
+    result.update(
+        original_candidate=True, effective_candidate=bool(result["support_reason"] != 1)
+    )
+    return result
