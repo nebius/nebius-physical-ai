@@ -27,6 +27,22 @@ def _write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def _install_rng_double(monkeypatch):
+    """Exercise RNG-call chronology without requiring the model's JAX runtime."""
+
+    def key(seed):
+        return np.array([0, seed], dtype=np.uint32)
+
+    def split(value):
+        return value + key(1), value + key(2)
+
+    module = SimpleNamespace(
+        random=SimpleNamespace(key=key, split=split, key_data=np.asarray)
+    )
+    monkeypatch.setitem(sys.modules, "jax", module)
+    return module
+
+
 def _provider(name: str, identity: dict) -> dict:
     return {
         "uri": f"s3://fixture-bucket/native-run/originals/{name}",
@@ -797,7 +813,7 @@ def test_native_trace_configuration_changes_serving_identity(tmp_path):
 def test_native_connection_checks_one_rng_split_and_traces_sent_23_vector(
     tmp_path, monkeypatch
 ):
-    import jax
+    jax = _install_rng_double(monkeypatch)
 
     class FakePacker:
         def pack(self, value):
@@ -932,10 +948,8 @@ def test_native_connection_checks_one_rng_split_and_traces_sent_23_vector(
 
 
 def test_disabled_native_trace_keeps_one_contiguous_progress_journal(tmp_path):
-    import jax
-
-    initial = native_comet_server._key_identity(jax.random.key(42))
-    current = native_comet_server._key_identity(jax.random.key(43))
+    initial = "c" * 64
+    current = "d" * 64
     args = SimpleNamespace(
         case_id="case-a",
         case_seed=42,
@@ -981,7 +995,7 @@ def test_disabled_native_trace_keeps_one_contiguous_progress_journal(tmp_path):
 
 
 def test_native_connection_records_sent_action_only_after_send(tmp_path, monkeypatch):
-    import jax
+    jax = _install_rng_double(monkeypatch)
 
     class FakePacker:
         def pack(self, value):
