@@ -23,11 +23,11 @@ _UNRESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
         "resume_block_output_indeterminate",
         "verified_absent_no_retry",
         "reuse_completed_wave",
+        "block_output_reuse_evidence",
     }
 )
 _RESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
     {
-        "block_relaunch",
         "readiness_blocked",
         "cancel_and_terminalize",
         "terminalize",
@@ -80,7 +80,7 @@ def _wave_cancellation_is_verified(record: Mapping[str, Any]) -> bool:
 
 
 def _wave_was_never_launched(record: Mapping[str, Any]) -> bool:
-    launch_sequence = record.get("launch_sequence", 0)
+    launch_sequence = record.get("launch_sequence")
     return (
         not str(record.get("job_id") or "")
         and type(launch_sequence) is int
