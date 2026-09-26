@@ -5,11 +5,14 @@ built-in public reference or an operator's registered Isaac Lab navigation task:
 prepare inputs → native RSL-RL train → reload checkpoint and evaluate held-out
 goals. It requires a self-contained collision USDZ and explicit reset/probe cases.
 The public bundle builder supplies a cluttered warehouse and reviewed native task;
-custom robots retain the BYOF adapter boundary. **Native 4000-robot physical controls,
-1500 PPO training iterations and an independently reloaded, rendered comparison
-have completed. Goal success remains below the 80% qualification threshold; the
-arrival-reward correction described below awaits a new native training result.**
+custom robots retain the BYOF adapter boundary. **The public static-range task
+passed its unchanged 80% success requirement: 3997 of 4000 fresh test cases
+(99.925%) reached within 0.5 m of their goals after 1500 initial PPO iterations
+and a further 500 iterations with a corrected arrival reward. Independently
+reloaded policies, physical controls and native rendered evidence were verified.**
 Proprietary robot and scene integration remains operator input.
+The 4000-robot measurements use static-scene range observations; camera-conditioned
+policy training at that population remains unqualified.
 
 The reference extends the pinned public
 [Isaac Lab navigation configuration](https://github.com/isaac-sim/IsaacLab/blob/v3.0.0-beta2.patch1/source/isaaclab_tasks/isaaclab_tasks/manager_based/navigation/config/anymal_c/navigation_env_cfg.py).
@@ -122,8 +125,48 @@ is disabled for probes and evaluation, which do not automatically reset on goal
 arrival. This removes the position-reward incentive to delay success; it does
 not guarantee learning. Other reward terms, the
 goal radius and the qualification threshold are unchanged. A new sealed native
-training experiment must establish the correction's effect; the earlier
-checkpoint, comparison and videos remain evidence of the original objective.
+training experiment completed 500 continuation iterations and 16 million new
+control transitions in 4027.57 seconds of learning. Independent checkpoint
+decoding verified that all 52 saved tensors (274,978 elements), optimizer state
+and iteration state exactly matched the original checkpoint before updates.
+The resulting policy changed by a finite parameter norm of 1.92235; all 12,000
+exported scalar observations were finite. Goal success was measured separately
+by reloading the resulting checkpoint.
+
+The earlier comparison informed the objective correction, so its cases are now
+development data. A fresh set of 4000 start/goal cases was sealed before the
+continuation, with no overlap in seeds, identifiers or actual start/goal tuples
+with training and development cases. Independent comparison of the original
+1500-iteration policy and corrected continuation on this same fresh cohort
+produced these results:
+
+| Fresh test outcome | Original 1500-iteration policy | After 500 continuation iterations |
+| --- | ---: | ---: |
+| Goal success within 0.5 m | 14 / 4000 (0.350%) | 3997 / 4000 (99.925%) |
+| Episodes with obstacle contact | 5 | 3 |
+| Episodes with peer contact | 0 | 0 |
+| Episodes with physical failure | 0 | 0 |
+| Episodes ending at the time limit | 3981 | 0 |
+| Median final goal distance | 0.634 m | 0.322 m |
+
+The baseline's 14 successes differ from its earlier 11 because this is a fresh
+cohort, evaluated using the same original checkpoint. The continuation passes
+the unchanged 80% requirement. Both arms used identical inputs and evaluator
+source, a 0.5 m radius and a maximum 300 control steps (60 simulated seconds).
+Independent readback recomputed all 8000 episode records from raw trajectories
+and verified native clock, camera and frozen-state evidence for every frame.
+The baseline produced 301 frames; the candidate produced 41 because every
+candidate episode had ended by step 40, without shortening the declared horizon.
+Focal robot 0 timed out at 0.637 m for the baseline and succeeded at step 27
+(5.4 simulated seconds), 0.244 m from its goal, for the candidate. The candidate
+video's remaining 13 frames are outside that robot's scored episode.
+
+The earlier checkpoint, comparison and videos remain evidence of the original
+objective. These results qualify the public procedural warehouse and static-range
+task; reconstructed-scene learning, private task parity and 4000 camera-conditioned
+policies still require their own native qualification. Training wall time measures
+aggregate control transitions; the simulated clock is not a per-robot real-time
+throughput measurement.
 
 Native training retains `reference_checkpoint.pt` before the first update,
 `policy.pt` after learning, TensorBoard logs and exported `learning-curves.json`.
@@ -132,8 +175,11 @@ throughput and peak PyTorch CUDA memory; runtime evidence includes the actual
 GPU model, physical device memory, robot population and static collider count.
 `comparison.compare_reference(training_prefix, output_prefix)` reloads both
 checkpoints on the identical held-out inputs and publishes the measured gain.
-The initial reference is an untrained high-level navigation policy above the
-public pretrained low-level controller; it is not a customer's existing policy.
+For a newly initialized run, the reference is an untrained high-level navigation
+policy above the public pretrained low-level controller. A resumed run instead
+retains the loaded checkpoint as its pre-update reference. The public
+qualification uses public task checkpoints; it does not establish parity with a
+customer's existing policy.
 
 Raw training curves retain upstream metric names. `Metrics/success_rate` is
 updated after automatic goal resets in this reference and is not held-out success.
@@ -162,8 +208,9 @@ velocities, joint state, native and Lab step counts, and clocks must remain
 unchanged across rendering. The native
 time origin follows the preceding controls; it is distinct from the video's
 relative rollout time. Native qualification passed all 301 frames in the complete
-initial-checkpoint diagnostic and all 602 frames of the paired comparison. This
-validates the renderer and checkpoint reload separately from goal-success quality.
+initial-checkpoint diagnostic, all 602 frames of the original comparison and all
+342 frames of the fresh comparison. This validates the renderer and checkpoint
+reload separately from goal-success quality.
 Artifacts include `rendered-rollout/*.png`, frame measurements,
 and `rollout.mp4` when the runtime supplies FFmpeg. The PNG sequence can be encoded
 later without rerunning or reconstructing the simulation. Custom BYOF tasks
