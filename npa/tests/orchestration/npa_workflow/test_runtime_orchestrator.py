@@ -607,6 +607,7 @@ def _executor(
     output_checker: Any | None = None,
     use_default_output_checker: bool = False,
     reconcile_fn: Any | None = None,
+    render_options: SkypilotRenderOptions | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
     ledger = RuntimeLedger(
@@ -632,7 +633,8 @@ def _executor(
     return SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
-        render_options=SkypilotRenderOptions(
+        render_options=render_options
+        or SkypilotRenderOptions(
             image_overrides={"*": "cr.example/x@sha256:" + "c" * 64}
         ),
         options=opts,
@@ -1603,8 +1605,13 @@ def test_resume_rejects_corrupt_ledger_before_executor_creation(
     assert "s3://unit-bucket" not in str(error.value)
 
 
-def _completed_replay_case(tmp_path: Path) -> tuple[Any, MemoryStore]:
-    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+def _completed_replay_case(
+    tmp_path: Path,
+    *,
+    render_options: SkypilotRenderOptions | None = None,
+    spec_text: str = COMPLETED_REPLAY_SPEC,
+) -> tuple[Any, MemoryStore]:
+    spec = load_spec(_write_spec(tmp_path, spec_text))
     store = MemoryStore()
     first = _executor(
         spec,
@@ -1613,6 +1620,7 @@ def _completed_replay_case(tmp_path: Path) -> tuple[Any, MemoryStore]:
         status_fn=FakeStatus(["SUCCEEDED"]),
         output_checker=lambda _uri: True,
         store=store,
+        render_options=render_options,
     )
     first_report = run_workflow_runtime(
         spec,
@@ -1664,7 +1672,7 @@ def test_completed_replay_requires_current_immutable_identity(
     assert submitter.calls == []
 
 
-def _resume_completed_case(spec, store, outputs_exist: bool):
+def _resume_completed_case(spec, store, outputs_exist: bool, *, render_options=None):
     submitter = FakeSubmitter()
     options = RuntimeOptions(poll_seconds=0, resume=True)
     resumed = _executor(
@@ -1675,6 +1683,7 @@ def _resume_completed_case(spec, store, outputs_exist: bool):
         options=options,
         output_checker=lambda _uri: outputs_exist,
         store=store,
+        render_options=render_options,
     )
     report = run_workflow_runtime(
         spec,
