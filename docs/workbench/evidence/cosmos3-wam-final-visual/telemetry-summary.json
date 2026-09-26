@@ -1,0 +1,75 @@
+{
+  "window_start_utc": "2026-09-26T18:31:36+00:00",
+  "window_end_utc": "2026-09-26T18:36:22+00:00",
+  "nominal_sample_interval_seconds": 1,
+  "scope": "Across all eight GPUs from the earliest native policy request to one second after the latest completed response; includes simulator, media writing and idle gaps. Sampled maxima are not subsecond or allocator peaks.",
+  "source_selected_rows_sha256": "4bc3ae711dc8a43a0e97adce9e27cdc255eac90de3940f57de6cc0940f1332b5",
+  "csv_sha256": "0f796628fd78b16f28fac2da06780a360825bd8cb3963d837d8abfb034a81a26",
+  "samples": 2288,
+  "gpus": [
+    {
+      "gpu_index": 0,
+      "samples": 286,
+      "max_utilization_pct": 46.0,
+      "max_memory_mib": 34224.0,
+      "max_power_w": 355.48,
+      "max_sampling_gap_seconds": 1.118
+    },
+    {
+      "gpu_index": 1,
+      "samples": 286,
+      "max_utilization_pct": 44.0,
+      "max_memory_mib": 34236.0,
+      "max_power_w": 350.71,
+      "max_sampling_gap_seconds": 1.119
+    },
+    {
+      "gpu_index": 2,
+      "samples": 286,
+      "max_utilization_pct": 39.0,
+      "max_memory_mib": 34258.0,
+      "max_power_w": 364.12,
+      "max_sampling_gap_seconds": 1.119
+    },
+    {
+      "gpu_index": 3,
+      "samples": 286,
+      "max_utilization_pct": 46.0,
+      "max_memory_mib": 34258.0,
+      "max_power_w": 352.21,
+      "max_sampling_gap_seconds": 1.119
+    },
+    {
+      "gpu_index": 4,
+      "samples": 286,
+      "max_utilization_pct": 37.0,
+      "max_memory_mib": 34236.0,
+      "max_power_w": 351.98,
+      "max_sampling_gap_seconds": 1.119
+    },
+    {
+      "gpu_index": 5,
+      "samples": 286,
+      "max_utilization_pct": 37.0,
+      "max_memory_mib": 34278.0,
+      "max_power_w": 347.1,
+      "max_sampling_gap_seconds": 1.119
+    },
+    {
+      "gpu_index": 6,
+      "samples": 286,
+      "max_utilization_pct": 37.0,
+      "max_memory_mib": 34236.0,
+      "max_power_w": 348.15,
+      "max_sampling_gap_seconds": 1.119
+    },
+    {
+      "gpu_index": 7,
+      "samples": 286,
+      "max_utilization_pct": 57.0,
+      "max_memory_mib": 34196.0,
+      "max_power_w": 346.17,
+      "max_sampling_gap_seconds": 1.119
+    }
+  ]
+}

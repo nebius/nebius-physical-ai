@@ -1,0 +1,153 @@
+{
+  "schema": "npa.cosmos3.wam-trained-visual.v1",
+  "date": "2026-09-26",
+  "scope": "Completed ten-task visual execution check at an intermediate checkpoint; not the full 500-trial benchmark or time-to-quality result.",
+  "recipe_commit": "c866cc693aaba96e5e4d9c94d6062363a15971b2",
+  "sources": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "checkpoint_step": 500,
+  "training_gpus": 8,
+  "training_nodes": 1,
+  "model_manifest_sha256": "09c01c29bfa163cd6795a6cacc89cd31bd0c44f9b5aeb6d1f1e827bf2f43a7c9",
+  "model_component_bytes": 121408256743,
+  "evaluation": {
+    "workers": 1,
+    "envs_per_worker": 1,
+    "trials_per_task": 1,
+    "seed": 42,
+    "num_denoising_steps": 30,
+    "guidance": 1.0,
+    "fps": 20,
+    "action_chunk_size": 16,
+    "http_timeout_seconds": 300,
+    "record_rollouts": true,
+    "successes": 4,
+    "trials": 10,
+    "full_500_trial_evaluation": false,
+    "process_seconds": 1799.104053614,
+    "task_seconds_total": 1590.636,
+    "interpretation": "Process time includes checkpoint hashing, server setup, simulation and media writing. Video duration is simulation playback, not measured inference latency."
+  },
+  "selection": "Task 0 is the first successful trial and task 1 the first unsuccessful trial in this completed visual pass. All ten task outcomes are retained in quality.json.",
+  "gpu_proof": {
+    "telemetry_file": "policy-gpu-telemetry.csv",
+    "telemetry_sha256": "a3c15ed28a88b0d1fd1f8f5313dd67b0ea300094b3be9e48aa41fcfd094e13a7",
+    "samples": 1580,
+    "nominal_sample_interval_seconds": 1,
+    "window_start_utc": "2026-09-26T07:37:32+00:00",
+    "window_end_utc": "2026-09-26T08:03:52+00:00",
+    "scope": "From the first native policy request through the last completed policy response, including simulator and media-writing gaps between requests. One-second sampling can miss shorter peaks.",
+    "max_utilization_pct": 47.0,
+    "max_memory_mib": 34236.0,
+    "max_power_w": 379.97,
+    "policy_requests_completed": 278,
+    "first_policy_request_ms": 17184.4
+  },
+  "source_hashes": {
+    "model-hashes.json": "f5e985b39cf96c63c1e5457bc285bea79434e2d8fb61ccb93194ad90b3ccaedf",
+    "quality.json": "e444d51d0e544804172538ac5ee8e8f4c2cc8e2012c8f38231f66ecfce92fe99",
+    "settings.json": "9416ee8e97a959fe808ba139654cbac455e8a2a0225d624c4f2e0f2797c3ba51",
+    "worker-0/commands.json": "bdb947faa6bc241ba1f057d664a117f1ec5ba649e8213c971a109bbbd958ffe8",
+    "worker-0/completion.json": "ea78dab2aaf721db2e108f706160417552a0c3ac98c261413db0e67afdd06c52",
+    "worker-0/evaluation.log": "81f0dffcf8ab829ca4d42f32796c676e6a4b91e22ab2a347a593b3b9a92fbc43",
+    "worker-0/rollouts/summary.json": "1bf0a260bce1cfbd80f715df00f5977c697ae4a3d98f967f6fefbea52e47a38e",
+    "worker-0/server-info.json": "ad6c07b2a980e2f17d96d11bbddeb6e64a2c2956b50ae1361a57d3811754e493",
+    "worker-0/server.log": "aa18213a61db429dc96fa7a70e43abab5867e253a73ef5755f4c1f93d18a6f19"
+  },
+  "samples": [
+    {
+      "task_id": 0,
+      "task_description": "put both the alphabet soup and the tomato sauce in the basket",
+      "trial": 0,
+      "episode": 0,
+      "success": true,
+      "steps": 294,
+      "error": null,
+      "elapsed_s": 132.707,
+      "video": "task-000.mp4",
+      "comparison_video": "task-000-comparison.mp4",
+      "poster": "task-000-contact.png",
+      "contact_frame_indices": [
+        0,
+        60,
+        120,
+        180,
+        240,
+        294
+      ],
+      "video_sha256": "195032e43f6983d063e38ff716a164b72c862372ce5ad961d44b3ca03f20c398",
+      "video_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "14.750000",
+        "nb_read_frames": "295"
+      },
+      "video_source_gif_sha256": "44ac6adfedbfb409fdaca65b84d313a6881189ac3fe2a3bb7f91259c9e0181b0",
+      "comparison_video_sha256": "3d9756be94e21d504e75ee3bca57a4de0ab93f52b789bf8a51db05adf54b72ca",
+      "comparison_video_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "14.250000",
+        "nb_read_frames": "285"
+      },
+      "comparison_video_source_gif_sha256": "932c2d7f748d35966833ea19eb04cb002b9f7e3068ac3aa34b90391fb5a88030",
+      "dimensions": [
+        256,
+        256
+      ],
+      "fps": 20
+    },
+    {
+      "task_id": 1,
+      "task_description": "put both the cream cheese box and the butter in the basket",
+      "trial": 0,
+      "episode": 0,
+      "success": false,
+      "steps": 520,
+      "error": null,
+      "elapsed_s": 207.273,
+      "video": "task-001.mp4",
+      "comparison_video": "task-001-comparison.mp4",
+      "poster": "task-001-contact.png",
+      "contact_frame_indices": [
+        0,
+        100,
+        200,
+        300,
+        400,
+        520
+      ],
+      "video_sha256": "2d0134168032ab590a8d7522180c44c32398c4f068a4f15a0f577e2e7cedea51",
+      "video_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "26.050000",
+        "nb_read_frames": "521"
+      },
+      "video_source_gif_sha256": "c35548c7860ae34d273fea2971cb5dd246e7d8ac42e983a563611477367725e0",
+      "comparison_video_sha256": "327f5c5111c929c6fdcdbc8e930fa5d2a9d3ff258c01b97ee4ae2c8b75040459",
+      "comparison_video_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "25.550000",
+        "nb_read_frames": "511"
+      },
+      "comparison_video_source_gif_sha256": "686b90fcc3667c6b91eda97c5a4b14566eb3a50c76934f08324a73842d0aa419",
+      "dimensions": [
+        256,
+        256
+      ],
+      "fps": 20
+    }
+  ]
+}

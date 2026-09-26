@@ -1,0 +1,249 @@
+{
+  "schema": "npa.cosmos3.wam-simulation-readiness.v1",
+  "scope": "CPU simulator inputs and rendering; no model policy executed",
+  "sources": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "runtime": {
+    "torch": "2.14.0+cpu",
+    "numpy": "1.22.4",
+    "mujoco": "2.3.7",
+    "robosuite": "1.4.1",
+    "pillow": "12.3.0",
+    "opencv-python": "4.11.0.86",
+    "requests": "2.33.0"
+  },
+  "requirements_sha256": "6908ebdc17399a011826b2a034eb53edb4443dca6287416933bd1a505e4baae0",
+  "seed": 42,
+  "warmup_steps": 10,
+  "max_simulation_steps": 520,
+  "mujoco_gl": "osmesa",
+  "tasks": [
+    {
+      "task_id": 0,
+      "task_description": "put both the alphabet soup and the tomato sauce in the basket",
+      "shape": [
+        50,
+        123
+      ],
+      "dtype": "float64",
+      "states_sha256": "0a3fec5f02eebb70c1c38b7fa1eebbb74bdc9499d9664dac239552dab6b908da",
+      "camera_frames": {
+        "front": {
+          "sha256": "49de52474326bceb6dd46faf9d7c209e1cb7554353e87bb2cff88c75da127e1d",
+          "pixels_sha256": "2c376b5041684c0356f1da40889183b2c9826f6910a4bdd073f7de0e0472ce3b"
+        },
+        "wrist": {
+          "sha256": "22e18814cf7abc282e1a4cff7e4ee70cead3883ccdce38e5f6906b78b1bb3f7d",
+          "pixels_sha256": "1257ef523922ef7c3334c623cd2766ca7d59aae8041e7b6b4c51c13f438a1a07"
+        }
+      }
+    },
+    {
+      "task_id": 1,
+      "task_description": "put both the cream cheese box and the butter in the basket",
+      "shape": [
+        50,
+        123
+      ],
+      "dtype": "float64",
+      "states_sha256": "b1052d497a7e006f561f2db76cee1f06d827d9f945e0e5422299f541f18c00db",
+      "camera_frames": {
+        "front": {
+          "sha256": "1082b3e76ad9d2393af604d935a5e3ce1546e21867acb84a7ceb0a31bb3536e9",
+          "pixels_sha256": "254e0686d0d443647af8290d8ae6be4cc58a702738894d6e94f252e482441f0e"
+        },
+        "wrist": {
+          "sha256": "a704c26459747b577275b4c2d394ea9fc33387b28772cdfc600e500c82019bde",
+          "pixels_sha256": "959c59791c06eca3f2414bb58fc1b77dcd24be4568940a5bb47035fae1cda8fc"
+        }
+      }
+    },
+    {
+      "task_id": 2,
+      "task_description": "turn on the stove and put the moka pot on it",
+      "shape": [
+        50,
+        47
+      ],
+      "dtype": "float64",
+      "states_sha256": "9631343c40bbe5ded2f59bca5f63e725f428a762d4b8c4b8fa1b487546291425",
+      "camera_frames": {
+        "front": {
+          "sha256": "7ab5db57d53e8574ff0c6a39be5a2a729eef9300271eae6e6f1f27b0fa5c8aa8",
+          "pixels_sha256": "70a3bded70e49e95c7c0b8af8c04a46442f3f1b55908ac41cc9339af09a738db"
+        },
+        "wrist": {
+          "sha256": "6e364f3fb9798d2c4cac497e9cda96682cc55b2470e2924bf0ca3ee2bc45e0af",
+          "pixels_sha256": "71dbc3effaff1e429c480f8df30f4b7a0548cabbdee35881dbdc692c689f7b0f"
+        }
+      }
+    },
+    {
+      "task_id": 3,
+      "task_description": "put the black bowl in the bottom drawer of the cabinet and close it",
+      "shape": [
+        50,
+        51
+      ],
+      "dtype": "float64",
+      "states_sha256": "9b5e7c410fc673763dae35df688c2e463d5e404a4c990c6a9dc2bcafd5436a83",
+      "camera_frames": {
+        "front": {
+          "sha256": "96eef0a9c26ecff7c91ef5c4a4fe50f5b20a31b3f9b51531cfc405411b709893",
+          "pixels_sha256": "33e20621d6baf60ebb2b25393109407cbf56ea4aff279af697d234ffffa34b69"
+        },
+        "wrist": {
+          "sha256": "eaf9674da206bf9d35f94dfe1e18bcb04a1f5ad6957fe0f7a35b0d8813f68a73",
+          "pixels_sha256": "14f4829bd0294cb32a582619f73deda33f37bc469331222346cb4b57f395c0b7"
+        }
+      }
+    },
+    {
+      "task_id": 4,
+      "task_description": "put the white mug on the left plate and put the yellow and white mug on the right plate",
+      "shape": [
+        50,
+        84
+      ],
+      "dtype": "float64",
+      "states_sha256": "a7356fbcba37b1fde6684c0d839e64205181404a2505d5ffc38fa34009d3aa5e",
+      "camera_frames": {
+        "front": {
+          "sha256": "5bff8c97f80ca342b0edf5b42154f9ded4aef70213675ddfd097f524dc9b3020",
+          "pixels_sha256": "1f8bbe1287f70fe2437f704392bee102366b37bfb9551bd913f283e82091f51c"
+        },
+        "wrist": {
+          "sha256": "3eacc2832ac8acd7d5e777dbf3cdfd53a0c4a5207fb43810f6953bb5a8feadb9",
+          "pixels_sha256": "c21eb1bd3c234c606dce6465990b840fd1aaa4fcc0ba221a349095d774ddd2cb"
+        }
+      }
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the book and place it in the back compartment of the caddy",
+      "shape": [
+        50,
+        45
+      ],
+      "dtype": "float64",
+      "states_sha256": "adc7c3fd13bfd80ef2c53b6acec553592cbb54fe4b43df83f9e7611c29a4cd0a",
+      "camera_frames": {
+        "front": {
+          "sha256": "0de570adc4fc36466ba1c02ef534e9e7bff2c157ff65ea95399f7749df54d217",
+          "pixels_sha256": "48660de02150b4528c8890bf21a1f7ec38a1a1d1852ddb10b548ece81995f26a"
+        },
+        "wrist": {
+          "sha256": "d0afb28b8380ef0d6d632ffd29eff0573d884ecce3eace368c255fd8f1775215",
+          "pixels_sha256": "d5fdf4565861ca398a49ce538f9c104ab5932eff876be3edf4355b692801243b"
+        }
+      }
+    },
+    {
+      "task_id": 6,
+      "task_description": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "shape": [
+        50,
+        71
+      ],
+      "dtype": "float64",
+      "states_sha256": "646804b35c86e6195ea6206482011b6aaf8c000ca5610279034a22b399b1c11f",
+      "camera_frames": {
+        "front": {
+          "sha256": "553f444c12fa30d551dd76a9f3b4179177d47163f85eec97cab80cbad2792076",
+          "pixels_sha256": "797693de869a0e3e7d96cf27cf487477c552f3f9cf34c98db0d9fe0bcbfda2fc"
+        },
+        "wrist": {
+          "sha256": "d52889211b76657c802ae3d60dc1de35203325f7f50a955e5af0b8cd08ae8b36",
+          "pixels_sha256": "15f4bf66d48e9cd33133c52a86508cb36e313edcab81966ca7030d49f8f0e282"
+        }
+      }
+    },
+    {
+      "task_id": 7,
+      "task_description": "put both the alphabet soup and the cream cheese box in the basket",
+      "shape": [
+        50,
+        84
+      ],
+      "dtype": "float64",
+      "states_sha256": "fec6c3312d8d73c4de89fe3f6c54094664ab303b38ab10708ecc0f0fbff74c50",
+      "camera_frames": {
+        "front": {
+          "sha256": "89fa216bec5127905ab0aca948ca884e10bb2fe92349f343bef5c40c9c7657fa",
+          "pixels_sha256": "8487477f08d7bec7173c5bc16087e1c02c19397c6da01aa6f574c76cb7587fc2"
+        },
+        "wrist": {
+          "sha256": "33f92a9f2eddee8f9ebab9f8204ef405e807ae03d5e356cb56008d7ee27b9a15",
+          "pixels_sha256": "6fe5fecc406e96c3aba2883dd22f62dcae92582e9c7801e893a83126bed22730"
+        }
+      }
+    },
+    {
+      "task_id": 8,
+      "task_description": "put both moka pots on the stove",
+      "shape": [
+        50,
+        47
+      ],
+      "dtype": "float64",
+      "states_sha256": "dcd0faf3d4c1e13a7596a4c46103d7881b11750de5ba32a64010c1290c09481e",
+      "camera_frames": {
+        "front": {
+          "sha256": "e68b06325e8c2a069881eb1c5d1f44c48c9d5ebb9d18b2d97b8555c5a41fedda",
+          "pixels_sha256": "7367f48af885ecc235f360b090363a11f5ff348d66c32441aede664eb2d01a81"
+        },
+        "wrist": {
+          "sha256": "1255e511f26d0d95a56e865676b3f1d54b0cffc53a8d9db1468ee9d62a81c26a",
+          "pixels_sha256": "8a35c0d385cdb6810d6a4739c53d9f3a2505da2f0a2a2629534a9e9c259bf01e"
+        }
+      }
+    },
+    {
+      "task_id": 9,
+      "task_description": "put the yellow and white mug in the microwave and close it",
+      "shape": [
+        50,
+        47
+      ],
+      "dtype": "float64",
+      "states_sha256": "a5cdea6ddd43f45924947d85feedc2e69de7c6ba9430307d174e67d849629a8d",
+      "camera_frames": {
+        "front": {
+          "sha256": "73b17b6c5c1b2fe58f105ad94eb5fb0f30f75cd0184babe679f5e63326c8dabb",
+          "pixels_sha256": "4f88a011fc95a4e8be143ab0caf5106d7d42239f7ef475b24fdacf173f798f8a"
+        },
+        "wrist": {
+          "sha256": "56a5b749925394ea741937532d19e7dc2328aa9b575502e03922f0b99db80e6b",
+          "pixels_sha256": "f1c91490021108f3bb502ae7fc2514c33e8d5e063a8d93b8bdef50335088ad62"
+        }
+      }
+    }
+  ],
+  "date_utc": "2026-09-26",
+  "fresh_public_bootstrap_reproduced": true,
+  "initial_states_verified": 500,
+  "camera_images_rendered": 20,
+  "numeric_states_unchanged_from_prior_runtime": true,
+  "rendered_pixels_unchanged_from_prior_runtime": true,
+  "weights_only_probe": {
+    "weights_only_forced": true,
+    "unsafe_override_removed": true,
+    "unapproved_global_rejected": true
+  },
+  "dependency_scan": {
+    "tool": "Trivy",
+    "version": "0.74.0",
+    "packages": 66,
+    "vulnerabilities": 0,
+    "all_severities": true,
+    "unfixed_included": true,
+    "database_updated_at": "2026-09-26T01:14:39.225767867Z",
+    "requirements_sha256": "6908ebdc17399a011826b2a034eb53edb4443dca6287416933bd1a505e4baae0"
+  }
+}

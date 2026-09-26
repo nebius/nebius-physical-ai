@@ -14,6 +14,7 @@ when you want to compose and run a pipeline with `npa workbench workflow`.
 | Run the 14-stage robot pipeline | [Sim2Real runbook](../../../docs/workbench/guides/sim2real-workflow.md) | Per-stage evidence, evaluation, and Rerun/MCAP outputs |
 | Edit a GPU application and resubmit Python | [Ray CLIP](ray-clip-development/README.md) | Image embeddings, retrieval results, and source-change evidence |
 | Train a small distributed model | [Ray Train](ray-train-synthetic/README.md) | Synthetic-regression checkpoints and rank metrics on two B200 hosts |
+| Measure WAM post-training on Slurm | [Cosmos 3 Nano WAM](cosmos3-wam-slurm/README.md) | Experimental reserved-B200 recipe, data checks, scaling reports and profiling; GPU measurements pending |
 | Try hyperparameter search and checkpoint recovery | [Ray Tune](ray-tune-synthetic/README.md) | Three CPU trials, the selected optimum, and verified JSON results |
 
 ## Preview a workflow locally

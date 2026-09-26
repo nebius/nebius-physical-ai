@@ -1,0 +1,103 @@
+{
+  "schema": "npa.cosmos3.wam-b200-runtime-evidence.v1",
+  "status": "runtime-qualified-training-unqualified",
+  "sources": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "cuda_probe": {
+    "schema": "npa.cosmos3.wam-runtime-probe.v1",
+    "observed_at": "2026-09-25T03:45:30.997668+00:00",
+    "status": "passed",
+    "gpu_name": "NVIDIA B200",
+    "visible_gpu_count": 1,
+    "tested_device": 0,
+    "gpu_memory_bytes": 191503007744,
+    "compute_capability": [
+      10,
+      0
+    ],
+    "driver_versions": [
+      "580.173.02"
+    ],
+    "torch_version": "2.10.0+cu130",
+    "torch_cuda_version": "13.0",
+    "nccl_version": [
+      2,
+      28,
+      9
+    ],
+    "bf16_attention_forward_matches_fp32_reference": true,
+    "bf16_attention_backward_finite_nonzero": true,
+    "native_fused_adam_fp32_parameter_update": true,
+    "forward_max_absolute_error": 0.003830432891845703,
+    "scope": "one-device CUDA kernel qualification; no WAM training or multi-node claim"
+  },
+  "probe_script_sha256": "72c434dd897bf2bacf973ef316888166a0c67d3e0b39665fdbd324087042fd22",
+  "runtime_freeze_sha256": "30803a093277c11ac1de9465ca8a64fcb5b314369cf9ef264de4a69351596cf9",
+  "preparation": {
+    "completed": true,
+    "data": {
+      "frames": 101469,
+      "episodes": 379,
+      "tasks": 10,
+      "video_files_sample_decoded": 4,
+      "fps": 20
+    },
+    "successful_attempt_seconds": 149.00170328700005,
+    "timing_scope": "successful retry with model and dataset already downloaded; excludes runtime installation and previous failed attempts",
+    "base_dcp_bytes": 31502249153,
+    "base_dcp_manifest_sha256": "cf895bb83cff64e3768a2d8623d79c96523f904adc77aa6e6761e00644492fa0"
+  },
+  "native_train_dryruns": [
+    {
+      "gpus": 8,
+      "exit_code": 0,
+      "resolved_config_sha256": "86f7d9a3d84befac0f9914d28973c52bebbaefb488414235ee5e5a64c41c4670",
+      "training_executed": false
+    },
+    {
+      "gpus": 16,
+      "exit_code": 0,
+      "resolved_config_sha256": "cfc22c6db1463d1c9e1e480b3218d73548e4a4746ac221d869c33c5f9de222c9",
+      "training_executed": false
+    },
+    {
+      "gpus": 32,
+      "exit_code": 0,
+      "resolved_config_sha256": "d73f73d84451f5ba1ceb8eaa5baaf7ba1cadb9341801bf5b60de66870b144b11",
+      "training_executed": false
+    }
+  ],
+  "single_gpu_wam_execution": {
+    "status": "failed",
+    "exit_code": 1,
+    "failed_process_seconds": 95.95979729200008,
+    "requested_steps": 2,
+    "completed_optimizer_steps": 0,
+    "samples_per_rank": 1,
+    "gradient_accumulation": 1,
+    "data_parallel_shard_degree": 1,
+    "data_parallel_replicate_degree": 1,
+    "compute_dtype": "bfloat16",
+    "parameter_dtype": "float32",
+    "ema_enabled": true,
+    "failure": "CUDA out of memory at first FusedAdam optimizer-state allocation",
+    "capacity_gib": 178.35,
+    "process_memory_gib": 178.31,
+    "free_mib": 29.75,
+    "requested_allocation_mib": 64,
+    "log_sha256": "24a713569d5adbce451c3ef113c4bfbc1f43551acb15825cb4cace0847118ffd",
+    "resolved_config_sha256": "8b0c31be9d17ff4400a3c78c6ccb7a143066313ac8ab7e51f5c0f93f376bfbe1"
+  },
+  "slurm_training_executed": false,
+  "cross_node_nccl_executed": false,
+  "scaling_measured": false,
+  "policy_quality_measured": false,
+  "capacity_mode": "strict-reserved",
+  "ownership_scope": "dedicated project and preparation VM"
+}

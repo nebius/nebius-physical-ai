@@ -1,0 +1,34 @@
+# Native experiment owns the WAM action/data/optimizer contract.
+[job]
+task = "vfm"
+experiment = "action_policy_libero_nano"
+project = "cosmos3_wam"
+group = "libero_10"
+name = "@NAME@"
+wandb_mode = "disabled"
+[model]
+precision = "bfloat16"
+max_num_tokens_after_packing = 74000
+[model.parallelism]
+data_parallel_shard_degree = 8
+data_parallel_replicate_degree = @NODES@
+context_parallel_shard_degree = 1
+[model.activation_checkpointing]
+mode = "selective"
+save_ops_regex = ["fmha"]
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH}"
+[optimizer]
+lr = 5.0e-05
+[scheduler]
+cycle_lengths = [16000]
+warm_up_steps = [500]
+[trainer]
+max_iter = @STEPS@
+grad_accum_iter = @GRADIENT_ACCUMULATION@
+logging_iter = 1
+[checkpoint]
+load_path = "${oc.env:BASE_CHECKPOINT_PATH}"
+save_iter = 500
+[dataloader_train]
+max_samples_per_batch = @SAMPLES_PER_RANK@

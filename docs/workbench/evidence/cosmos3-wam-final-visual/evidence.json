@@ -1,0 +1,252 @@
+{
+  "schema": "npa.cosmos3.wam-trained-visual.v1",
+  "date": "2026-09-26",
+  "scope": "Completed ten-task visual pass from the final eight-GPU training checkpoint; not a 500-trial policy qualification.",
+  "recipe_commit": "1e1230bb3bd32ec37656b0124ccb9c6d1dd5b73a",
+  "sources": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "checkpoint_step": 2000,
+  "training_gpus": 8,
+  "training_nodes": 1,
+  "model_manifest_sha256": "4f28c9ab7e4cf172a8e05606dc2a944f4c1cf07b5c61c05160655a746ab6135c",
+  "model_component_bytes": 121408256743,
+  "evaluation": {
+    "workers": 8,
+    "envs_per_worker": 1,
+    "trials_per_task": 1,
+    "seed": 42,
+    "num_denoising_steps": 30,
+    "guidance": 1.0,
+    "fps": 20,
+    "action_chunk_size": 16,
+    "http_timeout_seconds": 300,
+    "record_rollouts": true,
+    "successes": 9,
+    "trials": 10,
+    "full_500_trial_evaluation": false,
+    "process_seconds": 428.2215409700002,
+    "slurm_allocation_seconds": 429,
+    "task_seconds_total": 1134.53,
+    "interpretation": "Process includes checkpoint hashing, server setup, parallel simulation and media writing. Trial times overlap across workers. Video playback is not policy inference latency or training duration."
+  },
+  "selection": "Task 0 is the first successful trial and task 1 the first unsuccessful trial. All ten outcomes are retained; each selected MP4 covers the complete native recording.",
+  "gpu_proof": {
+    "telemetry_file": "policy-gpu-telemetry.csv",
+    "telemetry_sha256": "0f796628fd78b16f28fac2da06780a360825bd8cb3963d837d8abfb034a81a26",
+    "samples": 2288,
+    "scope": "Across all eight GPUs from the earliest native policy request to one second after the latest completed response; includes simulator, media writing and idle gaps. Sampled maxima are not subsecond or allocator peaks.",
+    "policy_requests_completed": 173,
+    "requests_by_worker": [
+      {
+        "worker": 0,
+        "completed_policy_requests": 41
+      },
+      {
+        "worker": 1,
+        "completed_policy_requests": 48
+      },
+      {
+        "worker": 2,
+        "completed_policy_requests": 16
+      },
+      {
+        "worker": 3,
+        "completed_policy_requests": 15
+      },
+      {
+        "worker": 4,
+        "completed_policy_requests": 14
+      },
+      {
+        "worker": 5,
+        "completed_policy_requests": 11
+      },
+      {
+        "worker": 6,
+        "completed_policy_requests": 13
+      },
+      {
+        "worker": 7,
+        "completed_policy_requests": 15
+      }
+    ],
+    "attributed_policy_processes": 8,
+    "live_snapshot_sha256": "c13344e5407b70f272d94e8bf08e92fb42f72154a7280476785a0752b8179eef"
+  },
+  "source_hashes": {
+    "model-hashes.json": "1a1eb03ad4a16dfe4ebe59f224e1ffa22081fce6236692d266803365399c2dd7",
+    "quality.json": "8f6d59174cedad5fab6cd1249102b1b5bf962c74591f3bd6b26ca1e33b2b5f5c",
+    "settings.json": "eb235f416f481aa13256fa5b4081e3bea450411148dd88e073cbd628e2eafa0a",
+    "worker-0/commands.json": "7ddc5adaaf790ab49e9b781879b50c565bad463d3b94d179aaf2904cdd595fcd",
+    "worker-0/completion.json": "f4cc9c0824474b0644b284c00cc41868d8855842d02f77d50325edc53d2c2016",
+    "worker-0/evaluation.log": "9f0b4e0c885bbf2e2c6e01a1177842470de3ad09bac834b2cb4c0c67d83ae862",
+    "worker-0/rollouts/comparisons/task_000/episode_000.gif": "62a8c414029ff7c3c7b74546eab8d7a304873d44497720879abfe8d23fc43031",
+    "worker-0/rollouts/gifs/task_000/episode_000.gif": "8e1a80ea8ea44119db80fac95303132d936394220afd17313397686da6adff87",
+    "worker-0/rollouts/summary.json": "92054ace17c136fd65f54f921f58b0232f8f82c034728f47f446304187de529f",
+    "worker-0/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-0/server.log": "61e6fc25bed68a251e39ce7bd6d2c397d381eab32e19275f5b0813ddd7ebb34a",
+    "worker-1/commands.json": "0776cba42ef97d319cf4cc6cbdd522b52e7734b3716dfe51a7c3a13c0eb70100",
+    "worker-1/completion.json": "3a51e55bc4f3c7761ff9018a3f778cd310473f06e2ff44919737df4d425f4917",
+    "worker-1/evaluation.log": "519c135e1a078ea9e3b602a8a5aac4bb71558bd52b9268014533777a291c816c",
+    "worker-1/rollouts/comparisons/task_001/episode_000.gif": "d8586d1061bf65adc32bfcb029845242004353294b0be3a7b0b77a0d82992097",
+    "worker-1/rollouts/gifs/task_001/episode_000.gif": "277330a90d8f511c295ec0939489ac755533b60a139d92d82c4db4ea4803c841",
+    "worker-1/rollouts/summary.json": "83c407715b2924d8099932568817a94d07ade4dbf0a37d2325a6b743c2ccfb40",
+    "worker-1/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-1/server.log": "1352d108e6e36189b79f93301c96c4c283d3ddad1795dfda5e401e31e891d025",
+    "worker-2/commands.json": "1f3dbc4605716e68c877bbc06f9ad1a46d7e9e203a56c6f56e88b4f8855c99de",
+    "worker-2/completion.json": "3de3a626f5ad8137f12012bdf11c53626f42b6b2f068404a41088e748607a400",
+    "worker-2/evaluation.log": "6e8c097f127c1191d0ebe405f7ff11c4f6891e0405241c227e2d1a14beda49fb",
+    "worker-2/rollouts/summary.json": "e618401f496de19252f7b32e88193ea1547fc587ed18c425817af148b0b1d78c",
+    "worker-2/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-2/server.log": "dc4505d14f9fbf8f34c5fcc9ee443763e0e16feeb67ee6e2a8667e248827089c",
+    "worker-3/commands.json": "6ac8f282f65719e8c4a45d33c6b3c85bd2ca51f2b61d9e79bd6088f868f58e94",
+    "worker-3/completion.json": "d866e4a43d97ccbdb4d7f57827509e73ba68aefc10054eaea6ad3764b2621a6d",
+    "worker-3/evaluation.log": "5eb341a6bfcd64df801a133464ecec89bf22dd8fad16acb6d6e683817bf12a44",
+    "worker-3/rollouts/summary.json": "bfd3500992f491bb0f2cd1993f4dde7238bc5a40ff427e2abcdf7ab6a1978ce1",
+    "worker-3/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-3/server.log": "676e3414f8df845b6c62cf925a86aa0b9b2e666fa507c3d9ca76fea9f91633c3",
+    "worker-4/commands.json": "742a66868ee9c2843b7118a4a90aabd81bcc183a3e2ba25b9f7ec5cfb8638bb1",
+    "worker-4/completion.json": "b8437e71abb6d5810ee670708be68a35ffaf6e563b7fa984779ebf3f173478cc",
+    "worker-4/evaluation.log": "e4f66407be65054be398c5d8b2d44e42bd3cf43f36437789cd56574d38adc414",
+    "worker-4/rollouts/summary.json": "734840b3aca485549d03b89347d2395eb9ac334685007759528372387de4ce63",
+    "worker-4/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-4/server.log": "286d65ed5dce471d7b457533b2108e9bcc9a04a5cd6e15433bc0fe36645f0a7c",
+    "worker-5/commands.json": "37548dd262df29a4b76a768fd9ecfce433edf30d71e4ebab0f228dac4fa14638",
+    "worker-5/completion.json": "d99bdb4bc2b3fb7bed4f69cdb4cd1e37c024962f1d3f871544a055290b25f982",
+    "worker-5/evaluation.log": "6925b1f43eb9b39182412c073ff8e1b07efc662b636383a4cfce610f6699ec19",
+    "worker-5/rollouts/summary.json": "35394e84030f560370b8184f3016bd8ffc86d7199d9bfdf855c3337c728a6f86",
+    "worker-5/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-5/server.log": "0815c61568c7496d8e7d40d783413e16c2eec8bccc088bf0cbbac7b43393ce83",
+    "worker-6/commands.json": "100e5006f820efad62386785cefbf737bd2df9e5eb244afc27f538d3c3a34a51",
+    "worker-6/completion.json": "7d49cba1fb7589dcd073a0667fb5cdef3100e22ff6d893ea40223f52c6c3a555",
+    "worker-6/evaluation.log": "7b092272c243ac8aac9fbf76886966ab9a5deab0850f2fb9b6baa21fc9dff136",
+    "worker-6/rollouts/summary.json": "4b71a1221ed586fa15a40692fe928c21f371c20964249799d168e4f8f1b5bd2e",
+    "worker-6/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-6/server.log": "b561b856ad90d3008cc4f765180af3cbea8635e1cb50c236d39e1b7989d556a7",
+    "worker-7/commands.json": "00af7922adce38042adb48899043c44f8571bb6e96f4ca10f9d51c8ab4b75706",
+    "worker-7/completion.json": "e1a660a104ae032d8cb5b1c7bd90f8ad37fcbebc1b4ca130c929ffb2ec7c0d9b",
+    "worker-7/evaluation.log": "01df1dc7d6df2250b250b902eca8a6ab3d60491c3fcc681cf0dac4dea5a10a59",
+    "worker-7/rollouts/summary.json": "97a432de445fdf43ea72876f39aea700b9053d5ab5dd33aa10aef50d94d2da9c",
+    "worker-7/server-info.json": "24f2a3f21dc3309a695583f9fcb6c2660a7665f11203bb1ceeb73eb2e92ce3df",
+    "worker-7/server.log": "85c31868419155637e1aedd67de79a2ac25bd122b96c4ee32b1e02c428a134f1"
+  },
+  "public_files_sha256": {
+    "runtime.json": "14413990a061d09bc1064f507aef15d6eee0779a6242ea312d293518295c6dd5",
+    "model-hashes.json": "1a1eb03ad4a16dfe4ebe59f224e1ffa22081fce6236692d266803365399c2dd7",
+    "quality.json": "8f6d59174cedad5fab6cd1249102b1b5bf962c74591f3bd6b26ca1e33b2b5f5c",
+    "task-001.mp4": "69a4453d7ee06737aa0aa612c983102ad97587575b81d0089005d2b5c31ea2a9",
+    "task-000.mp4": "e033b9b456b629cebdeacbac33d34edf876dee73435a932877d5b44e903bad72",
+    "telemetry-summary.json": "995bc84cfd35862e351f8cff64a9a244884d5da4b459e891b549f18c301c42e6",
+    "task-001-comparison.mp4": "e8fd8b4720bf81aa07514f1e0cda29525505affa424faa255a0b791a1d0b2b30",
+    "policy-gpu-telemetry.csv": "0f796628fd78b16f28fac2da06780a360825bd8cb3963d837d8abfb034a81a26",
+    "task-000-comparison.mp4": "c635572b5079238bb6c4cb432196f07b145f81b1aecd1eb358cf6d90fbbc657c",
+    "live-policy-snapshot.json": "c13344e5407b70f272d94e8bf08e92fb42f72154a7280476785a0752b8179eef"
+  },
+  "plotter_sha256": "b6f75d53e8f24401a7cb6f56f4744530eb25b2840dc871bd43c14744f0517852",
+  "samples": [
+    {
+      "task_id": 0,
+      "task_description": "put both the alphabet soup and the tomato sauce in the basket",
+      "trial": 0,
+      "episode": 0,
+      "success": true,
+      "steps": 270,
+      "error": null,
+      "elapsed_s": 123.642,
+      "poster": "task-000-contact.png",
+      "contact_frame_indices": [
+        0,
+        54,
+        108,
+        162,
+        216,
+        270
+      ],
+      "video": "task-000.mp4",
+      "video_sha256": "e033b9b456b629cebdeacbac33d34edf876dee73435a932877d5b44e903bad72",
+      "video_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "13.550000",
+        "nb_read_frames": "271"
+      },
+      "video_source_gif_sha256": "8e1a80ea8ea44119db80fac95303132d936394220afd17313397686da6adff87",
+      "comparison_video": "task-000-comparison.mp4",
+      "comparison_video_sha256": "c635572b5079238bb6c4cb432196f07b145f81b1aecd1eb358cf6d90fbbc657c",
+      "comparison_video_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "13.050000",
+        "nb_read_frames": "261"
+      },
+      "comparison_video_source_gif_sha256": "62a8c414029ff7c3c7b74546eab8d7a304873d44497720879abfe8d23fc43031",
+      "dimensions": [
+        256,
+        256
+      ],
+      "fps": 20
+    },
+    {
+      "task_id": 1,
+      "task_description": "put both the cream cheese box and the butter in the basket",
+      "trial": 0,
+      "episode": 0,
+      "success": false,
+      "steps": 520,
+      "error": null,
+      "elapsed_s": 218.027,
+      "poster": "task-001-contact.png",
+      "contact_frame_indices": [
+        0,
+        104,
+        208,
+        312,
+        416,
+        520
+      ],
+      "video": "task-001.mp4",
+      "video_sha256": "69a4453d7ee06737aa0aa612c983102ad97587575b81d0089005d2b5c31ea2a9",
+      "video_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "26.050000",
+        "nb_read_frames": "521"
+      },
+      "video_source_gif_sha256": "277330a90d8f511c295ec0939489ac755533b60a139d92d82c4db4ea4803c841",
+      "comparison_video": "task-001-comparison.mp4",
+      "comparison_video_sha256": "e8fd8b4720bf81aa07514f1e0cda29525505affa424faa255a0b791a1d0b2b30",
+      "comparison_video_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "25.550000",
+        "nb_read_frames": "511"
+      },
+      "comparison_video_source_gif_sha256": "d8586d1061bf65adc32bfcb029845242004353294b0be3a7b0b77a0d82992097",
+      "dimensions": [
+        256,
+        256
+      ],
+      "fps": 20
+    }
+  ],
+  "scheduler": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 429,
+    "accounting_sha256": "dbaa8b565d3ae917c543274a55597a9479a9779482b42d65c54bba8607228904"
+  },
+  "media_tools": {
+    "ffmpeg": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1 Copyright (c) 2007-2026 the FFmpeg developers"
+  }
+}

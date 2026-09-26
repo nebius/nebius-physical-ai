@@ -1,0 +1,86 @@
+{
+  "schema": "npa.cosmos3.wam-repeated-scaling.v1",
+  "status": "baseline_measured",
+  "comparison_contract": {
+    "sources": {
+      "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+      "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+      "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+      "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+      "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+    },
+    "steps": 200,
+    "samples_per_rank": 64,
+    "global_batch": 2048,
+    "seed": 42,
+    "profile": false
+  },
+  "hardware": {
+    "gpu_names": [
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200"
+    ],
+    "torch": "2.10.0+cu130",
+    "cuda": "13.0"
+  },
+  "groups": {
+    "8": {
+      "repetitions": [
+        {
+          "measurement_sha256": "c4d4fb91a95fb8786218aa57f14c45ff9b98bc2245f414d014eb21f721f7af99",
+          "iteration_series_sha256": "f50991d73851f6502d27d891c66e0d8a8833c425a146305acd036b7a35f723db",
+          "measured_steps": 149,
+          "step_mean_seconds": 13.323557046979866,
+          "step_p50_seconds": 13.33,
+          "step_p95_seconds": 13.44,
+          "measured_tokens": 136131011,
+          "tokens_per_second": 68572.59987608364
+        },
+        {
+          "measurement_sha256": "e8c647015d1b13603cadd60db8c3cc1d717cf5ad01f452728e5fbf44f6056996",
+          "iteration_series_sha256": "4eb2c878123a01cc03cf10c749bca95a085054e59026142ce7f23890cd5f295b",
+          "measured_steps": 149,
+          "step_mean_seconds": 13.298456375838926,
+          "step_p50_seconds": 13.3,
+          "step_p95_seconds": 13.41,
+          "measured_tokens": 136131116,
+          "tokens_per_second": 68702.08279711528
+        },
+        {
+          "measurement_sha256": "f2602ec5a77cae6510d0dd397674efcc5517207a5da37b9f238c9e9fa1c90674",
+          "iteration_series_sha256": "0913b2242836d34d1f0c5e2e187885bde4f27cef7913d0896282361d55b66cf2",
+          "measured_steps": 149,
+          "step_mean_seconds": 13.301946308724832,
+          "step_p50_seconds": 13.3,
+          "step_p95_seconds": 13.436,
+          "measured_tokens": 136130595,
+          "tokens_per_second": 68683.79507464719
+        }
+      ],
+      "replicate_step_means_seconds": {
+        "mean": 13.307986577181207,
+        "sample_standard_deviation": 0.01359685828418573,
+        "minimum": 13.298456375838926,
+        "maximum": 13.323557046979866
+      },
+      "replicate_token_throughputs": {
+        "mean": 68652.8259159487,
+        "sample_standard_deviation": 70.0769099104016,
+        "minimum": 68572.59987608364,
+        "maximum": 68702.08279711528
+      },
+      "measured_steps": 447,
+      "measured_tokens": 408392722,
+      "pooled_tokens_per_second": 68652.77818403105
+    }
+  },
+  "comparison": null,
+  "interpretation": "Variability is the sample standard deviation of three run means, not a confidence interval or a distribution over independent optimizer steps. Repetitions use the same training seed; they do not estimate policy-quality variation across seeds. Final checkpoint writing is outside these timed iterations. Full-schedule duration, allocation time and quality are separate."
+}

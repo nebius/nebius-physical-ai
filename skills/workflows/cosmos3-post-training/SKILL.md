@@ -55,6 +55,36 @@ tests explicitly support it.
 
 ## Upstream Post-Training Map
 
+For reserved B200 Slurm scaling, use the standalone application recipe at
+`npa/workflows/workbench/cosmos3-wam-slurm/` and
+`docs/workbench/cookbooks/cosmos3-wam-slurm.md`. It plans native LIBERO WAM runs
+with eight ranks per node, a fixed nominal batch and explicit HSDP topology.
+Its `validation.json` distinguishes the completed eight-GPU 2,000-update run
+and full quality curve from the pending two-node measurement. The
+eight-GPU report includes observed process duration and checkpoint hashes;
+preserve its warm-cache and shared-storage conditions when quoting it. Scaling
+efficiency requires the matched timing repetitions, and time to quality
+requires the full checkpoint-linked evaluation. A successful training run
+alone cannot qualify the policy. Four complete 500-trial evaluations scored
+45.4%, 85.6%, 92.8% and 95.0% at updates 500, 1,000, 1,500 and 2,000. The first
+passing scheduled checkpoint was available after about 5 h 53 m of training;
+quality was verified afterward, and an exact earlier crossing is not inferred.
+The linked blog remains an editorial draft while the multi-node comparison
+is pending. Current upstream
+LIBERO already describes two-node training; avoid the outdated blanket claim
+that all public Cosmos3 recipes stop at one node.
+
+The separate eight-GPU profiling run has completed with a real CUDA timeline.
+The completed full training run also has sampled GPU telemetry. Kernel groups
+use linked CPU operators where available; host step markers exclude repeated GPU
+annotations. Overlapping kernel durations are not a wall-time breakdown or
+exposed communication stalls. Use a fresh `profile_report.py --output-path`
+when reanalyzing archived traces, preserving the original report and trace hash.
+
+The Slurm recipe pins a newer framework than the experimental Workbench policy
+workflow. Keep each run's source/model/data/evaluation revisions coherent;
+do not use one path's successful execution as proof for the other.
+
 In a clone of `https://github.com/NVIDIA/cosmos-framework.git`, inspect:
 
 | Need | Upstream path |

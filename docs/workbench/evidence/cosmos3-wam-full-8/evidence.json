@@ -1,0 +1,35 @@
+{
+  "schema": "npa.cosmos3.wam-completed-full-run-evidence.v1",
+  "native_return_code": 0,
+  "native_ended_unix": 1790424768.1558497,
+  "native_completion_receipt_sha256": "59b09dd961be71899ae3cd4438d77024192df02ebfd6f117cc8c51ea427bafc7",
+  "run_settings_sha256": "00d53894b2f1dcc2173fe014d108d1fdf3d12ae0855e4be992fb20c370420004",
+  "launch_script_sha256": "901f8ce93333871f5b20840bc9b3dceb52916f9830a4c7ff03750d72e658afdc",
+  "training_toml_sha256": "6c159ebf19c8ef0c717cd12045ad970f71d970266349e7441dfe011fd13757f4",
+  "gradient_accumulation": 4,
+  "scheduler": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 28266,
+    "allocated_gpus": 8,
+    "allocated_cpus": 160,
+    "allocated_memory": "1789779M",
+    "started_utc": "2026-09-26T04:21:43Z",
+    "ended_utc": "2026-09-26T12:12:49Z",
+    "allocated_gpu_hours": 62.81333333333333,
+    "accounting_receipt_sha256": "ac5bbe507afba2970b4e3e52b7838ca4bdd2c5de3d63e67ed47e52d5c9f207e2"
+  },
+  "files_sha256": {
+    "measurement.json": "f31c6db8d006285e6d54c4329617c0450e699d4b289aaccc260b6c6c865fa6a7",
+    "iteration-series.csv": "45bc61bf6c537898dc8b7ef06c47dc70db7d6da6e391baf9af3ed80ba480df81",
+    "checkpoint-hashes.json": "1da079bfcec15255bc9cf54e3f0171b3cc307c6a0e8a24bdda34ba1fee319d88",
+    "distributed-preflight.json": "de0f497c0716665476578761fc657ca57b6228fe911f7be8ff3cc0bf072bb5fd",
+    "checkpoint-times.json": "e3d9f80dda99975a4f5d7a8570aeae67fbde13700a327fd4698e56bfee76e517"
+  },
+  "conditions": {
+    "caches_primed_by_preparation_and_excluded_partial_run": true,
+    "early_visualization_accessed_shared_storage_during_training": true,
+    "primary_scaling_comparison": "Separate unprofiled 200-update repetitions; results pending"
+  },
+  "scope": "Completed eight-GPU native training and checkpoint integrity; policy quality and multi-node scaling pending"
+}

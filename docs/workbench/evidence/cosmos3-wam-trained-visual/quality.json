@@ -1,0 +1,178 @@
+{
+  "schema": "npa.cosmos3.wam-quality.v1",
+  "model_manifest_sha256": "09c01c29bfa163cd6795a6cacc89cd31bd0c44f9b5aeb6d1f1e827bf2f43a7c9",
+  "step": 500,
+  "trials": 10,
+  "successes": 4,
+  "success_rate": 0.4,
+  "wilson_95_interval": [
+    0.16818032970623614,
+    0.6873262302663417
+  ],
+  "full_500_trial_evaluation": false,
+  "threshold": 0.9,
+  "threshold_met": false,
+  "elapsed_seconds": 1799.104053614,
+  "task_results": [
+    {
+      "task_id": 0,
+      "task_description": "put both the alphabet soup and the tomato sauce in the basket",
+      "episodes": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 294,
+          "error": null,
+          "elapsed_s": 132.707
+        }
+      ]
+    },
+    {
+      "task_id": 1,
+      "task_description": "put both the cream cheese box and the butter in the basket",
+      "episodes": 1,
+      "successes": 0,
+      "success_rate": 0.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 207.273
+        }
+      ]
+    },
+    {
+      "task_id": 2,
+      "task_description": "turn on the stove and put the moka pot on it",
+      "episodes": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 325,
+          "error": null,
+          "elapsed_s": 131.954
+        }
+      ]
+    },
+    {
+      "task_id": 3,
+      "task_description": "put the black bowl in the bottom drawer of the cabinet and close it",
+      "episodes": 1,
+      "successes": 0,
+      "success_rate": 0.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 179.859
+        }
+      ]
+    },
+    {
+      "task_id": 4,
+      "task_description": "put the white mug on the left plate and put the yellow and white mug on the right plate",
+      "episodes": 1,
+      "successes": 0,
+      "success_rate": 0.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 155.363
+        }
+      ]
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the book and place it in the back compartment of the caddy",
+      "episodes": 1,
+      "successes": 0,
+      "success_rate": 0.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 161.798
+        }
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "episodes": 1,
+      "successes": 0,
+      "success_rate": 0.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 162.612
+        }
+      ]
+    },
+    {
+      "task_id": 7,
+      "task_description": "put both the alphabet soup and the cream cheese box in the basket",
+      "episodes": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 330,
+          "error": null,
+          "elapsed_s": 115.127
+        }
+      ]
+    },
+    {
+      "task_id": 8,
+      "task_description": "put both moka pots on the stove",
+      "episodes": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 452,
+          "error": null,
+          "elapsed_s": 181.651
+        }
+      ]
+    },
+    {
+      "task_id": 9,
+      "task_description": "put the yellow and white mug in the microwave and close it",
+      "episodes": 1,
+      "successes": 0,
+      "success_rate": 0.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 162.292
+        }
+      ]
+    }
+  ]
+}
