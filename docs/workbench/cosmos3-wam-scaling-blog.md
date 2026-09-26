@@ -201,6 +201,19 @@ startup and preparation can matter to a partner even when kernel throughput
 looks strong. A projection from a short timing window must be labeled as an
 estimate; it cannot substitute for an observed complete training run.
 
+The [pinned native trainer](https://github.com/NVIDIA/cosmos-framework/blob/cf5d68c00d97ccd2480a2320ed652b92dec63102/cosmos_framework/trainer/__init__.py#L391)
+places its periodic checkpoint writes inside the iteration timing window. The
+full schedule therefore includes four checkpoint-bearing iterations. For the
+200-update repetitions, the final save happens after the timed loop; the
+report contains 149 steady iterations, from update 52 through 200. These
+separate repetitions provide the primary scaling comparison.
+
+The full eight-GPU run reused runtime and filesystem caches from preparation.
+Its temporary visualization worker also accessed shared storage during part of
+training. Its complete process duration describes those recorded campaign
+conditions. The timing repetitions and profiling runs are scheduled separately
+from evaluation and archival I/O. Each run starts from the same base checkpoint.
+
 ## Profile the bottleneck before increasing the allocation
 
 More GPUs help only if the work can use them. A separate profiling run captures

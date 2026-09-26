@@ -292,6 +292,14 @@ reproduce timing distributions and learning curves without publishing raw
 worker logs. It keeps checkpoint-bearing iterations in the series; distinguish
 them explicitly when discussing steady compute time.
 
+The pinned trainer saves periodic checkpoints before the iteration timer runs.
+Consequently, the 2,000-update series includes the writes at updates 500, 1,000,
+1,500 and 2,000. A 200-update repeat saves its final checkpoint after the timed
+loop: its 149 reported iterations, 52 through 200, measure steady training,
+while its process duration includes the final save. The CSV's loss is the
+native rank-zero callback value for the last microbatch; it is not a measured
+global loss average. Token counts cover every rank and accumulation microbatch.
+
 Every node's log is checked for Python failures and skipped optimizer updates,
 including nodes that emit no rank-zero timing lines. Successful process exit
 codes alone cannot qualify a run with a failed background data-loader thread.

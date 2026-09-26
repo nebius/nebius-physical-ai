@@ -82,9 +82,15 @@ def _server_command(args, checkpoint, worker, output):
     ]
 
 
+def _recording_options(enabled):
+    if enabled:
+        return ["--save_gifs", "--save_comparison"]
+    return []
+
+
 def _client_command(args, worker, tasks, output):
     root = args.shared_root
-    command = [
+    return [
         str(root / "simulation/libenv/bin/python"),
         str(Path(__file__).with_name("simulation_client.py")),
         "--shared-root",
@@ -119,10 +125,8 @@ def _client_command(args, worker, tasks, output):
         "300",
         "--output_dir",
         str(output / "rollouts"),
+        *_recording_options(args.record_rollouts),
     ]
-    if args.record_rollouts:
-        command.extend(["--save_gifs", "--save_comparison"])
-    return command
 
 
 def _server_info(worker):

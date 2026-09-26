@@ -329,11 +329,7 @@ def test_profile_busy_time_does_not_double_count_overlapping_collectives():
     assert result["observed_kernel_busy_seconds_by_device"] == {"0": 12}
 
 
-def _completed_run(tmp_path, nodes=1):
-    recipe = _load("recipe")
-    args = _args(tmp_path, nodes)
-    recipe._plan(args)
-    run = args.run_dir
+def _completed_nodes(run, nodes):
     for rank in range(nodes):
         (run / f"node-{rank}.log").write_text("Worker log\n")
         (run / f"node-{rank}.finished.json").write_text(
@@ -363,6 +359,14 @@ def _completed_run(tmp_path, nodes=1):
             }
         )
     )
+
+
+def _completed_run(tmp_path, nodes=1):
+    recipe = _load("recipe")
+    args = _args(tmp_path, nodes)
+    recipe._plan(args)
+    run = args.run_dir
+    _completed_nodes(run, nodes)
     (run / "node-0.log").write_text(
         "\n".join(
             f"{step} : iter_speed {seconds} seconds per iteration | Loss: 0.2"
