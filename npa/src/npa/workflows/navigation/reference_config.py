@@ -77,11 +77,16 @@ def _physics(config, num_envs):
     # Coincident clones enter broadphase before peer collision filtering. Native
     # 4,000-robot startup required 8,002,000 pairs; once that buffer was sized,
     # the complete broadphase required 168,010,000 found/lost aggregate pairs.
+    # A measured triangle scene also required 278,600,488 collision-stack bytes
+    # and 349,082 rigid patches. Reserve the next power of two for both buffers;
+    # native overflow diagnostics still invalidate a run on more demanding data.
     pairs = num_envs * (num_envs + 1) // 2
     requirements = {
         "gpu_found_lost_pairs_capacity": 2 * pairs,
         "gpu_found_lost_aggregate_pairs_capacity": 64 * pairs,
         "gpu_total_aggregate_pairs_capacity": 2 * pairs,
+        "gpu_collision_stack_size": 2**29,
+        "gpu_max_rigid_patch_count": 2**19,
     }
     for name, required in requirements.items():
         capacity = 1 << (max(1, required) - 1).bit_length()

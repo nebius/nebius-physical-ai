@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from npa.workflows.navigation import reference
 
 
@@ -56,12 +58,15 @@ def test_task_configuration_defers_all_mdp_implementation_imports(monkeypatch):
     assert sys.modules[name] is None
 
 
-def test_physics_buffers_cover_observed_coincident_population(monkeypatch):
+@pytest.mark.parametrize("large_presets", [False, True])
+def test_physics_buffers_cover_observed_coincident_population(monkeypatch, large_presets):
     _stub_configuration_types(monkeypatch)
     physics = SimpleNamespace(
         gpu_found_lost_pairs_capacity=2**21,
         gpu_found_lost_aggregate_pairs_capacity=2**25,
         gpu_total_aggregate_pairs_capacity=2**21,
+        gpu_collision_stack_size=2**30 if large_presets else 2**26,
+        gpu_max_rigid_patch_count=2**20 if large_presets else 5 * 2**15,
     )
     preset = object()
     resolved = []
@@ -86,4 +91,9 @@ def test_physics_buffers_cover_observed_coincident_population(monkeypatch):
     assert physics.gpu_found_lost_pairs_capacity > 8_002_000
     assert physics.gpu_found_lost_aggregate_pairs_capacity > 168_010_000
     assert physics.gpu_total_aggregate_pairs_capacity > 8_002_000
+    assert physics.gpu_collision_stack_size > 278_600_488
+    assert physics.gpu_max_rigid_patch_count > 349_082
+    if large_presets:
+        assert physics.gpu_collision_stack_size == 2**30
+        assert physics.gpu_max_rigid_patch_count == 2**20
     assert cfg.sim.render_interval == 40
