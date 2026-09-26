@@ -1,0 +1,37 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: flex-pi-b300-inference
+  description: Run real compiled Flex-Pi inference on one B300 with a hash-pinned
+    runtime-fetched PyTorch/CUDA/Triton stack; requires the NPA source overlay.
+config:
+  bucket: example-bucket
+  prefix: runs/{{run.id}}/flex-pi-b300
+  input_uri: /opt/flex-pi/npa/public_robotwin_sample.json
+  output_uri: s3://{{config.bucket}}/{{config.prefix}}/inference/
+  checkpoint_id: flex-pi/flexpi-robotwin
+  checkpoint_revision: 87d3833ea3bd89c4922945631db81b346e780785
+  num_inference_steps: '4'
+  seed: '42'
+  expected_gpu: B300
+  source_overlay: true
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B300:1
+    cpus: 16
+    memory: 128Gi
+initial: infer
+states:
+  infer:
+    description: Predict and semantically validate a 32x14 bimanual action chunk.
+    toolRef: workbench.flex_pi.infer
+    resources: gpu
+    outputs:
+    - uri: '{{config.output_uri}}result.json'
+      schema: npa.workbench.flex_pi.inference.v1
+    - uri: '{{config.output_uri}}actions.json'
+      schema: npa.flex_pi.actions.v1
+    - uri: '{{config.output_uri}}input.json'
+      schema: npa.flex_pi.public_observation.v1
+    terminal: true

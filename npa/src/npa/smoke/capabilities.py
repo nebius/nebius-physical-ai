@@ -38,6 +38,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "raw predicted masks and a fully decoded overlay MP4 are retained",
         "unchanged source pixels are checked after video encoding",
     ],
+    "gymnasium-robotics": [
+        "future exact candidate runs the registered Shadow Dexterous Hand environment",
+        "120 MuJoCo steps and 2,400 substeps prove contact, touch, and orientation change",
+        "EGL produces distinct RGB frames on one RTX PRO 6000 Blackwell",
+        "neutral bootstrap is unbuilt and none of these checks are current-image evidence",
+    ],
     "libero": [
         "quarantined neutral bootstrap requires an explicit immutable "
         "acceptance-candidate digest",
@@ -91,6 +97,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "gated PhysicalAI-AV surround-camera sample loads under the operator HF token",
         "real ego-trajectory inference produces projected trajectory JSON",
         "calibrated-camera trajectory PNG and immutable result provenance are written",
+    ],
+    "flex-pi": [
+        "pinned upstream 6B flex-pi checkpoint and required encoders load on CUDA",
+        "three-camera public RoboTwin observation and 14D state are hash-verified",
+        "real four-step action-only inference produces a finite 32x14 action chunk",
+        "latency, peak GPU memory, model/input hashes, and RTX PRO 6000 identity are recorded",
     ],
     "lerobot": [
         "LeRobot package version pin",

@@ -607,6 +607,269 @@ def workflow_output_uris(
     )
 
 
+def _gymnasium_configuration_error(reason: str) -> None:
+    raise ExecutionPreflightError("gymnasium_credential_isolation", reason)
+
+
+def _is_gymnasium_task(document: Mapping[str, Any]) -> bool:
+    env = document.get("envs") or {}
+    markers = (document.get("name"), document.get("run"), document.get("setup"))
+    if isinstance(env, Mapping):
+        markers += (env.get("BYOF_SOLUTION_NAME"), env.get("BYOF_CAPABILITY_NAME"))
+    return any(
+        isinstance(value, str)
+        and any(
+            marker in value
+            for marker in (
+                "gymnasium-robotics",
+                "npa-gymnasium-entrypoint",
+                "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1",
+            )
+        )
+        for value in markers
+    )
+
+
+def _gymnasium_mapping(value: Any) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        _gymnasium_configuration_error("pod configuration must be a mapping")
+    return value
+
+
+def _gymnasium_pod_config(config: Any) -> Mapping[str, Any]:
+    current = _gymnasium_mapping(config)
+    for key in ("kubernetes", "pod_config", "spec"):
+        current = _gymnasium_mapping(current.get(key, {}))
+    return current
+
+
+def _gymnasium_entries(value: Any) -> list[Mapping[str, Any]]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, Mapping) for item in value
+    ):
+        _gymnasium_configuration_error("pod configuration lists must contain mappings")
+    return value
+
+
+def _gymnasium_credential_name(name: Any) -> bool:
+    if not isinstance(name, str):
+        _gymnasium_configuration_error("environment names must be strings")
+    normalized = name.upper()
+    return normalized in {
+        "KUBECONFIG",
+        "AWS_PROFILE",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+    } or any(
+        marker in normalized
+        for marker in (
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+            "API_KEY",
+            "ACCESS_KEY",
+            "PRIVATE_KEY",
+        )
+    )
+
+
+def _validate_gymnasium_environment(env: Mapping[str, Any], *, storage: bool) -> None:
+    storage_names = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
+    for name in env:
+        if _gymnasium_credential_name(name) and not (storage and name in storage_names):
+            _gymnasium_configuration_error(
+                "unnecessary credential environment is forbidden"
+            )
+
+
+def _validate_gymnasium_pod_environment(container: Mapping[str, Any]) -> None:
+    if container.get("envFrom"):
+        _gymnasium_configuration_error("pod envFrom is forbidden")
+    for entry in _gymnasium_entries(container.get("env", [])):
+        _validate_gymnasium_environment({entry.get("name"): None}, storage=False)
+        if "valueFrom" in entry:
+            reference = _gymnasium_mapping(entry["valueFrom"])
+            if len(reference) != 1 or not set(reference) <= {
+                "fieldRef",
+                "resourceFieldRef",
+            }:
+                _gymnasium_configuration_error(
+                    "pod credential references are forbidden"
+                )
+
+
+def _validate_gymnasium_security_context(
+    context: Any, *, required: bool = False, container: bool = False
+) -> None:
+    value = _gymnasium_mapping(context)
+    # The neutral image's packaging contract permits trusted SkyPilot sudo/SSH
+    # bootstrap. Fetched code independently enters runtime-bootstrap's NNP,
+    # seccomp and credential sandbox. Only this exact bootstrap envelope passes.
+    bootstrap_context = {
+        "runAsNonRoot": True,
+        "runAsUser": 1000,
+        "runAsGroup": 1000,
+        "privileged": False,
+        "allowPrivilegeEscalation": True,
+        "capabilities": {
+            "drop": ["ALL"],
+            "add": [
+                "CHOWN",
+                "DAC_OVERRIDE",
+                "FOWNER",
+                "SETUID",
+                "SETGID",
+                "SYS_CHROOT",
+                "NET_BIND_SERVICE",
+            ],
+        },
+    }
+    if container and json.dumps(value, sort_keys=True) == json.dumps(
+        bootstrap_context, sort_keys=True
+    ):
+        return
+    if ("privileged" in value and value["privileged"] is not False) or value.get(
+        "runAsUser"
+    ) == 0:
+        _gymnasium_configuration_error(
+            "privileged or UID-zero pod overrides are forbidden"
+        )
+    if required or "runAsNonRoot" in value:
+        if value.get("runAsNonRoot") is not True:
+            _gymnasium_configuration_error(
+                "task must explicitly require non-root execution"
+            )
+    if (required and not container) or "seccompProfile" in value:
+        if value.get("seccompProfile") != {"type": "RuntimeDefault"}:
+            _gymnasium_configuration_error(
+                "only the RuntimeDefault seccomp profile is permitted"
+            )
+    if (required and container) or "allowPrivilegeEscalation" in value:
+        if value.get("allowPrivilegeEscalation") is not False:
+            _gymnasium_configuration_error(
+                "task must explicitly disable privilege escalation"
+            )
+    if value.get("procMount", "Default") != "Default" or value.get("sysctls"):
+        _gymnasium_configuration_error("proc mount or sysctl overrides are forbidden")
+    capabilities = _gymnasium_mapping(value.get("capabilities", {}))
+    if capabilities.get("add") or set(capabilities) - {"add", "drop"}:
+        _gymnasium_configuration_error(
+            "additional or unknown container capabilities are forbidden"
+        )
+    if (required and container) or "drop" in capabilities:
+        if capabilities.get("drop") != ["ALL"]:
+            _gymnasium_configuration_error(
+                "task must explicitly drop ALL container capabilities"
+            )
+
+
+_GYMNASIUM_VOLUME_KINDS = frozenset(("emptyDir", "downwardAPI"))
+
+
+def _validate_gymnasium_volumes(pod: Mapping[str, Any]) -> None:
+    names = set()
+    for volume in _gymnasium_entries(pod.get("volumes", [])):
+        name = volume.get("name")
+        if not isinstance(name, str) or not name or name in names:
+            _gymnasium_configuration_error("volume identities must be unique names")
+        names.add(name)
+        kinds = set(volume) - {"name"}
+        if len(kinds) != 1 or not kinds <= _GYMNASIUM_VOLUME_KINDS:
+            _gymnasium_configuration_error(
+                "only emptyDir and downwardAPI pod volumes are permitted"
+            )
+        _gymnasium_mapping(volume[next(iter(kinds))])
+
+
+def _validate_gymnasium_pod(pod: Mapping[str, Any], *, require_automount: bool) -> None:
+    if require_automount or "automountServiceAccountToken" in pod:
+        if pod.get("automountServiceAccountToken") is not False:
+            _gymnasium_configuration_error(
+                "task must explicitly disable service-account automount"
+            )
+    for key in ("hostPID", "hostIPC", "hostNetwork", "shareProcessNamespace"):
+        if key in pod and pod[key] is not False:
+            _gymnasium_configuration_error(
+                "host/shared process namespace overrides are forbidden"
+            )
+    if pod.get("initContainers") or pod.get("ephemeralContainers"):
+        _gymnasium_configuration_error(
+            "additional initialization or ephemeral containers are forbidden"
+        )
+    _validate_gymnasium_security_context(
+        pod.get("securityContext", {}), required=require_automount
+    )
+    _validate_gymnasium_volumes(pod)
+    containers = _gymnasium_entries(pod.get("containers", []))
+    if (require_automount or containers) and [
+        entry.get("name") for entry in containers
+    ] != ["ray-node"]:
+        _gymnasium_configuration_error(
+            "only the explicit ray-node workload container is permitted"
+        )
+    for container in containers:
+        _validate_gymnasium_pod_environment(container)
+        _validate_gymnasium_security_context(
+            container.get("securityContext", {}),
+            required=require_automount,
+            container=True,
+        )
+        if container.get("volumeDevices"):
+            _gymnasium_configuration_error("raw volume devices are forbidden")
+        for mount in _gymnasium_entries(container.get("volumeMounts", [])):
+            if mount.get("mountPropagation") not in (None, "None"):
+                _gymnasium_configuration_error("mount propagation is forbidden")
+
+
+def validate_gymnasium_task_configuration(
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    global_config: Mapping[str, Any] | None = None,
+    solution_name: str = "",
+    secret_envs: Sequence[str] = (),
+) -> bool:
+    """Reject unsafe Gymnasium pod configuration without resolving any secret.
+
+    Args:
+        documents: Raw or rendered task documents, not live Pod objects.
+        global_config: Explicit SkyPilot configuration merged into those tasks.
+        solution_name: Direct BYOF request identity, when available.
+        secret_envs: Names forwarded through the existing task secret channel.
+    Returns:
+        Whether the Gymnasium-only contract applied; other tasks are unchanged.
+    Raises:
+        ExecutionPreflightError: Missing or unsafe credential-isolation structure.
+    """
+    tasks = skypilot_task_documents(documents)
+    selected = [
+        task
+        for task in tasks
+        if solution_name == "gymnasium-robotics" or _is_gymnasium_task(task)
+    ]
+    if not selected:
+        return False
+    if not set(secret_envs) <= {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    }:
+        _gymnasium_configuration_error("only storage task-secret names are permitted")
+    global_values = {} if global_config is None else _gymnasium_mapping(global_config)
+    _validate_gymnasium_pod(
+        _gymnasium_pod_config(global_values), require_automount=False
+    )
+    for task in selected:
+        if task.get("file_mounts") or task.get("workdir"):
+            _gymnasium_configuration_error(
+                "operator file mounts and workdir uploads are forbidden"
+            )
+        _validate_gymnasium_environment(
+            _gymnasium_mapping(task.get("envs", {})), storage=True
+        )
+        _validate_gymnasium_pod(_task_kubernetes_pod_spec(task), require_automount=True)
+    return True
+
+
 def verify_worker_environment(
     target: ExecutionTarget, documents: Sequence[Mapping[str, Any]]
 ) -> None:
@@ -1251,6 +1514,7 @@ def preflight_skypilot_submission(
     Mutates only the in-memory documents to pin resolved env values. Callers
     persist those documents owner-only before passing them to SkyPilot.
     """
+    validate_gymnasium_task_configuration(documents, global_config=global_config)
     process_env = dict(os.environ)
     process_env.update(extra_env or {})
     if process_env.get("SKYPILOT_CONFIG"):

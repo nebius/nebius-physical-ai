@@ -25,6 +25,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_task_run_script,
     render_skypilot_yaml,
     resolve_task_image,
+    secret_env_hints_for_plan,
     tool_image_key,
     tool_vendor_interpreters,
     tool_requires_staged_npa_source,
@@ -87,6 +88,82 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
 
 
 @pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_recommends_hub_token_without_rendering_its_value(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    plan = build_plan(spec, run_id="flex-pi-secret-hint")
+
+    assert secret_env_hints_for_plan(plan.steps) == ("HF_TOKEN",)
+
+
+def test_flex_pi_b200_reference_renders_one_b200_and_the_tool_image() -> None:
+    spec = load_spec(NPA_SPECS / "flex-pi-b200-inference.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-b200"),
+        run_id="flex-pi-b200",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["resources"]["accelerators"] == "B200:1"
+    assert task["resources"]["image_id"].startswith(
+        "docker:registry.example/npa-flex-pi:"
+    )
+    assert "--expected-gpu B200" in task["run"]
+    assert task["run"].count("--torch-compile") == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "nodes", "accelerators"),
+    [
+        ("flex-pi-b200-public-training.yaml", 1, "B200:4"),
+        ("flex-pi-b300-multinode-public-training.yaml", 4, "B300:1"),
+    ],
+)
+def test_flex_pi_training_renders_authoritative_node_count(name, nodes, accelerators):
+    spec = load_spec(NPA_SPECS / name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="four-rank-training"),
+        run_id="four-rank-training",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task.get("num_nodes", 1) == nodes
+    assert task["resources"]["accelerators"] == accelerators
+    assert task["envs"]["NPA_FLEX_PI_NODE_COUNT"] == str(nodes)
+    assert task["run"].count("workbench flex-pi train") == 1
+
+
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_reference_workflows_compile_the_denoising_step(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-compiled"),
+        run_id="flex-pi-compiled",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["run"].count("--torch-compile") == 1
+
+
+@pytest.mark.parametrize(
     ("name", "expected_image"),
     [
         (
@@ -138,7 +215,7 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
 
     # Pinned so a new BYOF spec cannot skip the per-profile image assertion
     # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 17
+    assert len(paths) == 18
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")

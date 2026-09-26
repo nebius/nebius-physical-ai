@@ -1451,6 +1451,42 @@ def test_runtime_readiness_uses_resolved_environment(
     assert {name: os.environ.get(name) for name in names} == before
 
 
+def test_runtime_readiness_uses_explicit_isolated_state_and_config(
+    runtime_api_environment,
+    tmp_path,
+):
+    snapshots, driver, _ = runtime_api_environment
+    isolated = tmp_path / "isolated"
+    config = tmp_path / "sky.yaml"
+    config.write_text("kubernetes: {}\n", encoding="utf-8")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "isolated-environment-test",
+            "--var",
+            "bucket=selected-bucket",
+            "--isolated-config-dir",
+            str(isolated),
+            "--config-path",
+            str(config),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert driver.call_count == 1
+    assert len(snapshots) == 5
+    assert snapshots[0]["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] == str(isolated.resolve())
+    assert snapshots[0]["SKYPILOT_GLOBAL_CONFIG"] == str(config.resolve())
+    assert all(snapshot == snapshots[0] for snapshot in snapshots)
+
+
 @pytest.mark.parametrize("boundary", ["readiness", "runtime"])
 def test_runtime_environment_is_restored_after_failure(
     runtime_api_environment, mocker, boundary

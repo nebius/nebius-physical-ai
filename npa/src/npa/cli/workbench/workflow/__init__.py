@@ -304,6 +304,66 @@ def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
         )
 
 
+def _workflow_log_attempt(record: Mapping[str, object]) -> int:
+    """Read a positive whole-number attempt, preserving missing legacy values.
+
+    Historical ledgers may encode integral numbers as strings or floats. Reject
+    booleans and fractional numbers instead of silently attributing another attempt.
+    """
+
+    raw_attempt = record.get("attempt")
+    if raw_attempt is None:
+        return 1
+    try:
+        attempt = int(raw_attempt)
+        if (
+            isinstance(raw_attempt, bool)
+            or (isinstance(raw_attempt, float) and raw_attempt != attempt)
+            or attempt < 1
+        ):
+            raise ValueError("attempt must be a positive whole number")
+        return attempt
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("persisted workflow attempt metadata is invalid") from exc
+
+
+def _invalid_log_attempt_payload(
+    *, run_id: str, stage: str, available: list[str], manifest: Mapping[str, object]
+) -> dict[str, object]:
+    """Build a sanitized failure when durable log attribution is malformed."""
+
+    from npa.verification import VERIFICATION_UNAVAILABLE, apply_verification
+
+    reason = (
+        "persisted attempt metadata is invalid; live logs cannot be attributed safely"
+    )
+    payload = apply_verification(
+        {
+            "run_id": run_id,
+            "stage": stage,
+            "manifest_state": "available",
+            "persisted_stages": available,
+            "stage_ledger_state": "invalid",
+            "live_log_state": "unavailable",
+            "cached_log_state": "unknown",
+            "error_code": "STAGE_ATTEMPT_INVALID",
+            "reason": reason,
+        },
+        status=VERIFICATION_UNAVAILABLE,
+        target=run_id,
+        last_known_state=str(manifest.get("status") or "UNKNOWN"),
+        last_known_at=str(manifest.get("updated_at") or ""),
+        last_known_source="stage_ledger_or_manifest",
+        reason=reason,
+        retry_command=f"npa workbench workflow status {run_id}",
+    )
+    live_verification = payload["live_verification"]
+    assert isinstance(live_verification, dict)
+    live_verification["error_code"] = "STAGE_ATTEMPT_INVALID"
+    live_verification["category"] = "ATTRIBUTION"
+    return payload
+
+
 def _fail(
     msg: str,
     code: int = 1,
@@ -1682,7 +1742,7 @@ def submit_cmd(
             and (not existing_source_uri or persisted_source_is_stale)
         )
         stage_source_planned = stage_src is True or auto_stage_source
-        if image_pins_all_tasks:
+        if image_pins_all_tasks and not requires_npa_source:
             source_action = "image-override"
         elif stage_source_planned:
             source_action = "planned"
@@ -2249,6 +2309,8 @@ def submit_cmd(
                 run_id=resolved_run_id,
                 secret_env_values=extra_env,
                 endpoint=render_endpoint,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if runtime and not plan_only
             else None
@@ -3150,6 +3212,8 @@ def _runtime_submit_environment(
     run_id: str,
     secret_env_values: Mapping[str, str],
     endpoint: str,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> dict[str, str]:
     """Resolve the same private environment before API readiness and runtime."""
     from npa.orchestration.npa_workflow.interpreter import _make_context
@@ -3164,6 +3228,14 @@ def _runtime_submit_environment(
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
     if endpoint.strip():
         environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
+    if isolated_config_dir is not None:
+        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
     return environment
 
 
@@ -3293,6 +3365,8 @@ def _run_npa_workflow_runtime(
         run_id=run_id,
         secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
     )
     with _temporary_runtime_environment(runtime_env):
         # Record entry into the runtime before it can launch a wave. A runtime
@@ -3601,12 +3675,13 @@ def _plan_requires_npa_source(
     config_overrides: Mapping[str, str] | None = None,
     options: SkypilotRenderOptions,
 ) -> bool:
-    """Return whether planned steps need staged source or an explicit overlay."""
+    """Return whether the merged plan needs source, including an explicit overlay."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
+        source_overlay_requested,
         tool_requires_staged_npa_source,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
@@ -3616,12 +3691,11 @@ def _plan_requires_npa_source(
     # otherwise a fully digest-pinned workflow is incorrectly forced to stage an
     # unused source tree (and ``--no-stage-src`` cannot submit it at all).
     spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
-    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
-    overlay = (
-        os.environ.get("NPA_SRC_OVERLAY") or spec.config.get("source_overlay") or ""
-    )
-    if plan.steps and str(overlay).strip().lower() in {"1", "true"}:
+    # An image supplies the base runtime, but an explicit overlay must still
+    # stage the selected checkout. Otherwise the worker silently runs baked code.
+    if source_overlay_requested(spec.config):
         return True
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
         if tool_requires_staged_npa_source(str(task.get("tool_ref") or "")):
@@ -4073,7 +4147,22 @@ def _resolve_submit_accelerators(
     if not requested:
         return {}
 
-    with _temporary_runtime_environment(environment):
+    # GPU discovery calls into k8s_gpu_catalog, which resolves its isolated
+    # directory and base config from the process environment.  Bind the same
+    # explicit CLI selections used by ensure_local_api_daemon_health; otherwise
+    # a saved directory can win during catalog discovery and be rejected as a
+    # different executing identity.
+    readiness_environment = dict(environment or {})
+    if isolated_config_dir is not None:
+        readiness_environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        readiness_environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
+
+    with _temporary_runtime_environment(readiness_environment):
         try:
             ensure_local_api_daemon_health(
                 sky_bin=sky_bin or None,
@@ -6864,7 +6953,7 @@ def _matching_stage_log_waves(
 
     job_id = str(stage_attempt.get("managed_job_id") or "")
     stage_key = str(stage_attempt.get("wave_key") or "")
-    attempt = int(stage_attempt.get("attempt") or 1)
+    attempt = _workflow_log_attempt(stage_attempt)
     if not stage_key and not job_id:
         return []
     matches: list[dict[str, object]] = []
@@ -6873,15 +6962,11 @@ def _matching_stage_log_waves(
             continue
         if stage not in list(raw_wave.get("states") or []):
             continue
-        try:
-            wave_attempt = int(raw_wave.get("attempt") or 1)
-        except (TypeError, ValueError):
-            continue
-        if wave_attempt != attempt:
-            continue
         if stage_key and str(raw_wave.get("key") or "") != stage_key:
             continue
         if job_id and str(raw_wave.get("job_id") or "") != job_id:
+            continue
+        if _workflow_log_attempt(raw_wave) != attempt:
             continue
         matches.append(raw_wave)
     return matches
@@ -7176,7 +7261,7 @@ def logs_cmd(
                         for index, state_name in enumerate(wave_states):
                             reconstructed = {
                                 "stage": str(state_name),
-                                "attempt": int(wave.get("attempt") or 1),
+                                "attempt": wave.get("attempt"),
                                 "managed_job_id": str(wave.get("job_id") or ""),
                                 "logical_state": str(wave.get("status") or "unknown"),
                                 "provenance": "legacy_runtime_wave_reconstruction",
@@ -7214,19 +7299,39 @@ def logs_cmd(
                     for item in runtime_stages
                     if str(item.get("stage") or "") == selected_stage
                 ]
-                stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
-                selected_attempt = stage_attempts[-1] if stage_attempts else {}
-                attribution_error = ""
-                if cached:
-                    job_id = str(selected_attempt.get("managed_job_id") or "")
-                else:
-                    selected_attempt, job_id, attribution_error = (
-                        _recover_stage_log_wave_attribution(
-                            resolution.runtime_state,
-                            selected_attempt,
-                            selected_stage,
+                try:
+                    stage_attempts.sort(key=_workflow_log_attempt)
+                    selected_attempt = stage_attempts[-1] if stage_attempts else {}
+                    selected_attempt_number = _workflow_log_attempt(selected_attempt)
+                    attribution_error = ""
+                    if cached:
+                        job_id = str(selected_attempt.get("managed_job_id") or "")
+                    else:
+                        selected_attempt, job_id, attribution_error = (
+                            _recover_stage_log_wave_attribution(
+                                resolution.runtime_state,
+                                selected_attempt,
+                                selected_stage,
+                            )
                         )
+                except ValueError:
+                    source_payload = _invalid_log_attempt_payload(
+                        run_id=resolution.run_id,
+                        stage=selected_stage,
+                        available=available,
+                        manifest=manifest,
                     )
+                    if json_output:
+                        typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
+                    else:
+                        typer.echo("VERIFICATION_UNAVAILABLE")
+                        typer.echo("manifest_state: available")
+                        typer.echo(f"persisted stages: {', '.join(available)}")
+                        typer.echo(f"cause: {source_payload['reason']}")
+                        live_verification = source_payload["live_verification"]
+                        assert isinstance(live_verification, dict)
+                        typer.echo(f"retry: {live_verification['retry_command']}")
+                    raise typer.Exit(code=2)
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
@@ -7234,7 +7339,7 @@ def logs_cmd(
                 source_payload: dict[str, object] = {
                     "run_id": resolution.run_id,
                     "stage": selected_stage,
-                    "attempt": int(selected_attempt.get("attempt") or 1),
+                    "attempt": selected_attempt_number,
                     "managed_job_id": job_id,
                     "manifest_state": "available",
                     "persisted_stages": available,

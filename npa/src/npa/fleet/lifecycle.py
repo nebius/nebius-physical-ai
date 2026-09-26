@@ -1844,7 +1844,7 @@ def _deploy_mk8s_fleet(
                     _log(
                         on_status,
                         f"capacity/quota preflight: {project.key()}/{cluster.name} "
-                        "is provider-verified and unchanged; incremental demand is zero",
+                        "reuses provider-verified capacity; incremental demand is zero",
                     )
                     continue
                 scoped.setdefault(region, []).append(cluster)

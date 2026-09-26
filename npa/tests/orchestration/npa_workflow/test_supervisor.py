@@ -1161,3 +1161,59 @@ def test_capacity_wait_cannot_hide_another_pods_fatal_error(
     assert recorder.cancelled == (
         ["job-1"] if action == "cancel_and_terminalize" else []
     )
+
+
+@pytest.mark.parametrize("field", ["workflow_sha256", "source_sha256", "image_digest"])
+@pytest.mark.parametrize("recorded", ["changed", ""])
+def test_succeeded_valid_outputs_require_matching_immutable_identity(
+    field: str,
+    recorded: str,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/result",),
+        valid=("s3://unit-bucket/result",),
+    )
+
+    decision = decide_recovery(
+        identity(**{field: recorded}),
+        BackendObservation(BackendState.SUCCEEDED),
+        context(outputs=outputs),
+    )
+
+    assert decision.action is RecoveryAction.BLOCK_RELAUNCH
+    assert decision.reason_code == "IMMUTABLE_IDENTITY_MISMATCH"
+
+
+@pytest.mark.parametrize("field", ["workflow_sha256", "source_sha256", "image_digest"])
+def test_succeeded_valid_outputs_reject_two_sided_missing_identity(
+    field: str,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/result",),
+        valid=("s3://unit-bucket/result",),
+    )
+
+    decision = decide_recovery(
+        identity(**{field: ""}),
+        BackendObservation(BackendState.SUCCEEDED),
+        replace(context(outputs=outputs), **{f"expected_{field}": ""}),
+    )
+
+    assert decision.action is RecoveryAction.BLOCK_RELAUNCH
+    assert decision.reason_code == "IMMUTABLE_IDENTITY_MISMATCH"
+
+
+@pytest.mark.parametrize("reason_code", ["", "NODE_NOT_READY"])
+def test_succeeded_missing_outputs_retain_output_integrity_failure(
+    reason_code: str,
+) -> None:
+    decision = decide_recovery(
+        identity(workflow_sha256="changed"),
+        BackendObservation(BackendState.SUCCEEDED, reason_code=reason_code),
+        context(),
+    )
+
+    assert decision.action is RecoveryAction.TERMINALIZE
+    assert decision.reason_code == "DECLARED_OUTPUT_MISSING"

@@ -12,6 +12,7 @@ __all__ = [
     "detection_training",
     "encord",
     "fiftyone",
+    "flex_pi",
     "genesis",
     "groot",
     "insights",

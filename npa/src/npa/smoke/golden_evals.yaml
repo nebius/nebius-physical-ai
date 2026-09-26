@@ -34,6 +34,38 @@
 format: npa_golden_evals_v1
 
 containers:
+  gymnasium-robotics:
+    image: npa-gymnasium-robotics
+    internal: true
+    default_tag: neutral-unbuilt
+    dockerfile: npa/docker/workbench/gymnasium-robotics/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Neutral development-candidate bootstrap for a runtime-cached genuine Shadow
+        Dexterous Hand manipulation, touch, contacts, and EGL hard gate.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61
+      network: runtime fetch only after a complete immutable lock
+      external_fetch:
+        - exact Gymnasium-Robotics source and hashed Python wheels into an operator-owned cache
+      notes: >-
+        An owner-only reference build supplied the exact config and ordered
+        20-DiffID scanner anchors, but did not complete the product scan, SBOM,
+        push, or immutable-digest gates and left no accepted artifact. Intended
+        candidate layers contain only neutral bootstrap bytes; upstream source,
+        Shadow assets, MuJoCo/Python workload, populated cache, model, dataset,
+        vendor runtime, credential, checkpoint, and output bytes are excluded.
+        Fetching later is delivery, not rights acceptance.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/npa-gymnasium-entrypoint run-smoke
+      gpu: required
+      timeout_seconds: 1800
+      status: needs-image-update
+      artifact: ${NPA_SMOKE_OUTPUT_DIR}/gymnasium-robotics-smoke.json
+
   libero:
     image: npa-libero
     dockerfile: npa/docker/workbench/libero/Dockerfile
@@ -1240,6 +1272,32 @@ containers:
       gpu: required
       timeout_seconds: 3600
       status: gpu-gated
+
+  flex-pi:
+    image: npa-flex-pi
+    dockerfile: npa/docker/workbench/flex-pi/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Flex-pi 6B multi-stream world-action policy predicts a 32-step bimanual
+        action chunk from three cameras, robot state, and language instruction.
+    safety:
+      runs_as: ubuntu
+      base_image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel (digest pinned)
+      network: runtime-only Hugging Face/ModelScope fetch and S3 artifact upload
+      external_fetch: [huggingface-public-model, huggingface-authorized-public-input, modelscope, s3]
+      notes: >-
+        Ships pinned MIT source/runtime, but no weights, observation media,
+        credentials, or populated cache. The input dataset card has no declared
+        license and is fetched only for the operator's authorized run.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_flex_pi_functional
+      command: python -m npa.smoke.test_flex_pi_functional
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: unlimited
+      status: ready
 
   sim2real-control:
     image: npa-sim2real-control

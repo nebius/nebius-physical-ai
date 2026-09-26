@@ -2358,6 +2358,53 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert report.waves[0]["cancellation"]["state"] == "requested"
 
 
+@pytest.mark.parametrize("recovered_status", ["RUNNING", "SUCCEEDED", "UNAVAILABLE"])
+def test_resume_after_status_outage_reconciles_original_job_without_resubmission(
+    tmp_path: Path, recovered_status: str
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    first = _executor(spec, store=store, status_fn=BoomStatus(failures=99))
+    failed = run_workflow_runtime(
+        spec, run_id="rt-1", executor=first, options=first.options
+    )
+    original = failed.waves[0]
+    assert failed.status == "failed"
+    assert original["job_id"] == "1"
+    assert original["recovery_decision"] == "block_relaunch"
+    reconciled = []
+
+    def reconcile(name: str, *, job_id: str = ""):
+        reconciled.append((name, job_id))
+        return SimpleNamespace(
+            outcome="unavailable" if recovered_status == "UNAVAILABLE" else "found",
+            job_id=job_id,
+            status=recovered_status,
+            workload_observable=True,
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        store=store,
+        submitter=submitter,
+        reconcile_fn=reconcile,
+        options=RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True),
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-1", executor=resumed, options=resumed.options
+    )
+    assert reconciled[0] == (original["job_name"], original["job_id"])
+    assert report.waves[0]["job_id"] == original["job_id"]
+    assert all(call["job_name"] != original["job_name"] for call in submitter.calls)
+    if recovered_status == "UNAVAILABLE":
+        assert report.status == "failed"
+        assert submitter.calls == []
+    else:
+        assert report.status == "succeeded"
+        assert report.waves[0]["adopted"] is True
+
+
 def test_unknown_status_result_is_counted_as_a_failed_query(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
@@ -4515,8 +4562,17 @@ def test_runtime_supervisor_recovers_transient_once_without_duplicate(
 
 
 @pytest.mark.parametrize("drift", ["workflow", "source", "image"])
+@pytest.mark.parametrize(
+    ("scheduler_status", "outputs_present"),
+    [("PENDING", False), ("SUCCEEDED", True)],
+)
 def test_runtime_restart_blocks_each_immutable_identity_drift(
-    tmp_path: Path, mocker, monkeypatch: pytest.MonkeyPatch, drift: str
+    tmp_path: Path,
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    scheduler_status: str,
+    outputs_present: bool,
 ) -> None:
     from npa.orchestration.npa_workflow.runtime import (
         _image_identity,
@@ -4572,7 +4628,7 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
             preflight_evidence=_supervisor_preflight(),
         ),
         cancels=cancels,
-        output_checker=lambda _uri: False,
+        output_checker=lambda _uri: outputs_present,
     )
     record = restarted.ledger.latest_wave(prior.key)
     assert record is not None
@@ -4581,7 +4637,7 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
     )
 
     with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
-        restarted._supervise_pending(resumed, scheduler_status="PENDING")
+        restarted._supervise_pending(resumed, scheduler_status=scheduler_status)
 
     assert cancels == []
     assert resumed.recovery_decision == "block_relaunch"

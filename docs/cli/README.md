@@ -28,6 +28,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench encord](encord.md)
 - [npa workbench fiftyone](fiftyone.md)
 - [npa fleet](fleet.md)
+- [npa workbench flex-pi](flex-pi.md)
 - [npa workbench foxglove](foxglove.md)
 - [npa workbench gc-artifacts](gc-artifacts.md)
 - [npa workbench genesis](genesis.md)
