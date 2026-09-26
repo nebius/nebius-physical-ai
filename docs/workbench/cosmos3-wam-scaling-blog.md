@@ -41,12 +41,19 @@ LeRobot v3 conversion. The inspected dataset contains 379 episodes and 101,469
 frames spanning ten manipulation tasks at 20 Hz.
 
 Each sample joins task language, timestamps, robot trajectories and two camera
-views. The native loader combines the third-person and wrist images, converts
-the trajectories into 16-step chunks of relative position, 6D rotation and
-gripper commands, and applies the matching quantile normalization. The raw
-dataset action vector has seven values; the transformed training action has
-ten. Confusing the two is enough to produce an apparently healthy training
-run with the wrong policy semantics.
+views. The stored actions already contain per-frame translation and rotation
+deltas. The native loader combines the third-person and wrist images,
+re-encodes the rotation into six values, and applies the matching quantile
+normalization. Each window contains sixteen actions and seventeen paired video
+frames. The raw action has seven values; the transformed action has ten.
+Confusing the two can produce a training run with incorrect policy semantics.
+
+![Actual LIBERO camera views and native action transformation](evidence/cosmos3-wam-data/data-pipeline.png)
+
+The [reproducible figure](evidence/cosmos3-wam-data/README.md) uses actual native
+loader output. Its deterministic split retains 375 episodes and 94,250 training
+windows. LIBERO-10 closed-loop evaluation later measures behavior on the same
+ten task types; it does not establish generalization to unseen tasks.
 
 The recipe validates real Parquet contents and both camera streams before
 training. Model weights, data, tokenizer and framework source are pinned to

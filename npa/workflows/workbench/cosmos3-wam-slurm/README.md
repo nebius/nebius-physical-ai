@@ -57,6 +57,7 @@ example follows upstream LIBERO-10's training schedule.
 | `probe.py` | Actual BF16 CUDA attention forward/backward and native FP32 fused Adam update |
 | `cluster.py` | Private reserved-capacity Soperator spec; 2 TiB shared jail, explicit node count |
 | `prepare.py` | Pinned HF downloads, actual Parquet/camera checks, dataset hashes, DCP conversion |
+| `export_data_sample.py` | Native decoded camera/action window for the reproducible data-pipeline figure |
 | `recipe.py` / `train.toml.in` | Native TOML, batch arithmetic, Slurm launch, per-node completion evidence |
 | `distributed_preflight.py` | Rank/host placement and a real NCCL all-reduce before training |
 | `report.py` | Complete-checkpoint verification, timings, GPU-hours, and comparable-run speedup |
@@ -88,6 +89,11 @@ the caller's HF configuration; `HF_TOKEN` is optional for these public payloads.
 Conversion overrides the native moving processor reference with the staged
 model's processor and uses the staged VAE. Training uses a separately pinned
 Qwen tokenizer. Child processes receive the native virtualenv's executable path.
+
+`export_data_sample.py --shared-root PATH --output-path FRESH_DIRECTORY` runs
+the native LIBERO loader on CPU and exports its first training window. The
+[data figure](../../../../docs/workbench/evidence/cosmos3-wam-data/README.md)
+includes the recorded images, action arrays and regeneration instructions.
 
 For a runtime check on an allocated B200, run in that Linux training environment:
 

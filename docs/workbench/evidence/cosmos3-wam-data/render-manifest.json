@@ -1,0 +1,44 @@
+{
+  "schema": "npa.cosmos3.wam-data-figure.v1",
+  "renderer": {
+    "python": "3.12.12",
+    "matplotlib": "3.11.2",
+    "numpy": "2.5.3",
+    "pillow": "12.3.0"
+  },
+  "native_exporter_sha256": "2892a0ea978bdce5d6a7ae884668e68e26b0c69e4ed988fcde0a62f73c5f65fe",
+  "files": {
+    "NOTICE.md": {
+      "bytes": 1001,
+      "sha256": "c3091e5d7c4789bcad90083a61a011f82efebe1b2fbf8218238abfb329016a88"
+    },
+    "README.md": {
+      "bytes": 2115,
+      "sha256": "4d48a98e809c61e2a61e41404045e3633600bdd4ee32fbe74e54199f31708183"
+    },
+    "data-pipeline.png": {
+      "bytes": 465692,
+      "sha256": "28ed0e361905ec63f0ce51db20595d69f58860c6ff1126ee11f769b1b30f7bf5"
+    },
+    "data-pipeline.svg": {
+      "bytes": 452741,
+      "sha256": "ed1a3f171da1583670c62bbd3c7846b2ecd959a52aa27dbb8557723e4660a4b0"
+    },
+    "front.png": {
+      "bytes": 43694,
+      "sha256": "59d8b7b58467e6837cffbbcc6f82947b404bc5a5118f306cc2331f364aca49c4"
+    },
+    "plot.py": {
+      "bytes": 5027,
+      "sha256": "3fe23f9231c699ce1771edc80b70a56e2fc05b43632503a4a555bb0689f7beb7"
+    },
+    "sample.json": {
+      "bytes": 10529,
+      "sha256": "0d2a8d3c0ed12ebef3ea4ac543613e99ce5bb692608daa7541fdd61bf49a7687"
+    },
+    "wrist.png": {
+      "bytes": 46430,
+      "sha256": "a1d68503b21a584b2fc65a4327244a9c59e20cdcb1eba9d38e7ba50ba4b49d79"
+    }
+  }
+}

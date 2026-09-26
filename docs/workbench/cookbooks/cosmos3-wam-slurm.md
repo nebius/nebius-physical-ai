@@ -160,11 +160,14 @@ of four camera video files; this is data evidence, not training evidence.
 | LeRobot v3 `meta/info.json`, task and episode Parquet | Episode/task boundaries and timestamps |
 | `data/chunk-*/file-*.parquet` | Raw 7D actions, 8D state, timestamp and indices |
 | Third-person and wrist MP4s, each 256×256 | Concatenated 256×512, snapped to 192×320 model canvas |
-| Native action/state trajectories | 16-step chunks, frame-wise-relative position + rot6d + gripper, 10D |
+| Stored per-frame action deltas | 16 actions per window; re-encode axis-angle to rot6d, yielding 10D |
 | Bundled LIBERO quantile statistics | `quantile_rot` normalization, native coordinate frame |
 
-The native loader uses a 1% validation split and seed 42 for episode shuffling;
-the training experiment disables automatic validation. Keep those semantics
+The native loader uses a 1% episode validation split with seed 0, and seed 42
+for episode shuffling. Actual loading retains 375 episodes and 94,250 valid
+training windows. The training experiment disables automatic validation.
+The [data-pipeline figure](../evidence/cosmos3-wam-data/README.md) includes a
+native decoded sample and the commands to reproduce it. Keep those semantics
 paired with the matching simulator/server. Never replace real action labels
 with captions or generated videos. Source and payload terms are linked in the
 [upstream recipe](https://github.com/NVIDIA/cosmos-framework/blob/cf5d68c00d97ccd2480a2320ed652b92dec63102/docs/action_policy_libero_posttrain.md)
