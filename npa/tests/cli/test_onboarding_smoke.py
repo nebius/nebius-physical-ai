@@ -17,6 +17,7 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.clients.nebius import ProfileMutationResult
 from npa.workbench.vlm_eval import DEFAULT_MODEL, DEFAULT_SAMPLE_BENCHMARK_PATH
 
 
@@ -81,7 +82,10 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
         }
     )
     monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
-    monkeypatch.setattr("npa.clients.nebius.set_profile_project", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "npa.clients.nebius.set_profile_project",
+        lambda *a, **k: ProfileMutationResult.UPDATED,
+    )
     monkeypatch.setattr(
         "npa.clients.storage_validation.probe_storage_write",
         lambda **kwargs: StorageProbeResult(
@@ -170,7 +174,10 @@ def test_known_project_configure_forwards_new_bucket_class_and_size(
         credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
     )
     monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
-    monkeypatch.setattr("npa.clients.nebius.set_profile_project", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "npa.clients.nebius.set_profile_project",
+        lambda *a, **k: ProfileMutationResult.UPDATED,
+    )
     captured: dict[str, object] = {}
 
     def fake_provision(*_args, **kwargs):

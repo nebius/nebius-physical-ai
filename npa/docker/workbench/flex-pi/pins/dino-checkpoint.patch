@@ -1,0 +1,14 @@
+diff --git a/src/flexpi/models/dino_encoder.py b/src/flexpi/models/dino_encoder.py
+--- a/src/flexpi/models/dino_encoder.py
++++ b/src/flexpi/models/dino_encoder.py
+@@ -6,0 +7 @@ from __future__ import annotations
++import os
+@@ -61 +62,7 @@ class DinoEncoder(nn.Module):
+-        self.model = timm.create_model(model_name, pretrained=True, num_classes=0)
++        checkpoint_path = os.environ.get("FLEX_PI_DINO_CHECKPOINT")
++        if not checkpoint_path or not checkpoint_path.strip():
++            raise RuntimeError("FLEX_PI_DINO_CHECKPOINT must name the pinned, verified checkpoint")
++        self.model = timm.create_model(
++            model_name, pretrained=False, num_classes=0,
++            checkpoint_path=checkpoint_path,
++        )
