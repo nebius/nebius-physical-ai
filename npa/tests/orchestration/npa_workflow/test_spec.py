@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
+import yaml
 
 from npa.orchestration.npa_workflow import (
     NpaWorkflowError,
     build_plan,
     load_spec,
+    run_workflow,
     validate_spec,
 )
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
@@ -17,6 +21,43 @@ from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SPECS = REPO_ROOT / "workflows" / "testing"
+SCHEMA = (
+    REPO_ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "orchestration"
+    / "npa_workflow"
+    / "schema"
+    / "npa.workflow.v0.0.1.schema.json"
+)
+
+
+def _write_state_boolean_spec(
+    tmp_path: Path, field: str | None = None, value: str | None = None
+) -> Path:
+    state_field = "" if field is None else f"    {field}: {value}\n"
+    path = tmp_path / "state-boolean.yaml"
+    path.write_text(
+        f"""\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: state-boolean
+initial: work
+states:
+  work:
+    run:
+      shell: echo work
+{state_field}    next: done
+  done:
+    run:
+      shell: echo done
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.mark.parametrize(
@@ -266,6 +307,152 @@ def test_invalid_api_version() -> None:
             load_spec(broken)
     finally:
         broken.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("field", ["terminal", "writesDecision", "writes_decision"])
+@pytest.mark.parametrize("value", ['"false"', "0", "null"])
+def test_state_booleans_reject_non_boolean_values(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    path = _write_state_boolean_spec(tmp_path, field, value)
+
+    with pytest.raises(
+        NpaWorkflowError, match=rf"state work: {field} must be a boolean"
+    ):
+        load_spec(path)
+
+
+@pytest.mark.parametrize("field", ["terminal", "writesDecision", "writes_decision"])
+@pytest.mark.parametrize("value, expected", [("true", True), ("false", False)])
+def test_state_booleans_preserve_literal_values(
+    tmp_path: Path, field: str, value: str, expected: bool
+) -> None:
+    spec = load_spec(_write_state_boolean_spec(tmp_path, field, value))
+
+    attribute = "writes_decision" if field != "terminal" else "terminal"
+    assert getattr(spec.states["work"], attribute) is expected
+
+
+def test_omitted_state_booleans_default_to_false(tmp_path: Path) -> None:
+    spec = load_spec(_write_state_boolean_spec(tmp_path))
+
+    assert spec.states["work"].terminal is False
+    assert spec.states["work"].writes_decision is False
+
+
+@pytest.mark.parametrize("field", ["terminal", "writesDecision", "writes_decision"])
+@pytest.mark.parametrize("value", ['"false"', "0", "null"])
+def test_state_boolean_schema_rejects_malformed_values(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    document = yaml.safe_load(
+        _write_state_boolean_spec(tmp_path, field, value).read_text()
+    )
+    errors = list(Draft202012Validator(schema).iter_errors(document))
+
+    assert len(errors) == 1
+    assert list(errors[0].path) == ["states", "work", field]
+    assert errors[0].validator == "type"
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_matching_decision_aliases_preserve_their_value(
+    tmp_path: Path, value: bool
+) -> None:
+    path = _write_state_boolean_spec(tmp_path)
+    _set_work_state_fields(path, writesDecision=value, writes_decision=value)
+
+    assert load_spec(path).states["work"].writes_decision is value
+    schema = json.loads(SCHEMA.read_text())
+    Draft202012Validator(schema).validate(yaml.safe_load(path.read_text()))
+
+
+@pytest.mark.parametrize("canonical, legacy", [(True, False), (False, True)])
+def test_conflicting_decision_aliases_fail_before_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canonical: bool, legacy: bool
+) -> None:
+    from typer.testing import CliRunner
+    from npa.cli.main import app
+
+    path = _write_state_boolean_spec(tmp_path)
+    _set_work_state_fields(path, writesDecision=canonical, writes_decision=legacy)
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_workflow",
+        lambda *args, **kwargs: pytest.fail("ambiguous workflow must not execute"),
+    )
+    result = CliRunner().invoke(
+        app, ["workbench", "workflow", "run-spec", str(path), "--execute", "--json"]
+    )
+
+    assert result.exit_code != 0, result.output
+    assert "state work: writesDecision and writes_decision must agree" in result.output
+
+
+def _set_work_state_fields(path: Path, **fields: object) -> None:
+    document = yaml.safe_load(path.read_text())
+    document["states"]["work"].update(fields)
+    path.write_text(json.dumps(document))
+
+
+@pytest.mark.parametrize(
+    "value, expected", [("true", ["work"]), ("false", ["work", "done"])]
+)
+def test_terminal_boolean_controls_plan_and_execution(
+    tmp_path: Path, value: str, expected: list[str]
+) -> None:
+    spec = load_spec(_write_state_boolean_spec(tmp_path, "terminal", value))
+    plan = build_plan(spec, run_id="boolean-plan")
+    report = run_workflow(spec, run_id="boolean-execution", execute=True)
+
+    assert [step.state for step in plan.steps] == expected
+    assert [step["state"] for step in report["steps"]] == expected
+    assert report["status"] == "completed"
+
+
+@pytest.mark.parametrize("field", ["writesDecision", "writes_decision"])
+def test_decision_boolean_reads_artifact_and_stops_loop(
+    tmp_path: Path, field: str
+) -> None:
+    path = _write_decision_boolean_spec(tmp_path, field)
+    reads: list[tuple[str, str]] = []
+
+    def read_decision(bucket: str, key: str) -> str:
+        reads.append((bucket, key))
+        return json.dumps({"decision": "promote_checkpoint"})
+
+    report = run_workflow(
+        load_spec(path),
+        run_id="boolean-decision",
+        execute=True,
+        decision_reader=read_decision,
+    )
+
+    assert reads == [("example-bucket", "decision.json")]
+    assert [step["state"] for step in report["steps"]] == ["decision", "done"]
+    assert report["status"] == "completed"
+
+
+def _write_decision_boolean_spec(tmp_path: Path, field: str) -> Path:
+    document = {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "decision-boolean"},
+        "config": {"decision_uri": "s3://example-bucket/decision.json"},
+        "initial": "cycle",
+        "states": {
+            "cycle": {
+                "sequence": ["decision"],
+                "loop": {"max": 2, "until": "promote_checkpoint"},
+                "next": "done",
+            },
+            "decision": {"run": {"argv": ["echo", "decision"]}, field: True},
+            "done": {"run": {"argv": ["echo", "done"]}, "terminal": True},
+        },
+    }
+    path = tmp_path / "decision-boolean.yaml"
+    path.write_text(json.dumps(document))
+    return path
 
 
 def test_predicate_promote() -> None:

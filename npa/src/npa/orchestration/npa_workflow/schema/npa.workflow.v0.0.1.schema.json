@@ -84,7 +84,9 @@
         "outputs": { "$ref": "#/$defs/artifacts" },
         "resources": { "type": "string" },
         "multiNodeMode": { "enum": ["sharded"] },
-        "terminal": { "type": "boolean" }
+        "terminal": { "type": "boolean" },
+        "writesDecision": { "type": "boolean" },
+        "writes_decision": { "type": "boolean" }
       }
     },
     "artifacts": {
