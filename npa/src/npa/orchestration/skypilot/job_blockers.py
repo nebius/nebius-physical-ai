@@ -197,6 +197,7 @@ def inspect_job_blockers(
     expected_task_names: Iterable[str] = (),
     controller_user_id: str = "",
     claim_names: Sequence[str] = (),
+    controller_output: str = "",
     event_not_before: str = "",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     runner: Runner | None = None,
@@ -223,6 +224,8 @@ def inspect_job_blockers(
         controller_user_id: Isolated controller owner appended to the pod's
             cluster label.
         claim_names: Exact PVC names declared by the rendered wave resources.
+        controller_output: Bounded log text from this exact managed job's
+            controller. It can explain a historical rejection before pod creation.
         event_not_before: When nonempty, accept PVC events only when their
             timestamp is at or after this exact attempt start time.
         timeout: Kubectl timeout in seconds.
@@ -338,6 +341,11 @@ def inspect_job_blockers(
             )
             if report.blockers:
                 return report
+            report.blockers = _controller_volume_blockers(
+                controller_output, claim_names
+            )
+            if report.blockers:
+                return report
             report.error = (
                 f"no pods found for managed job {job_id}; it is between tasks, or "
                 "nothing has been scheduled yet"
@@ -398,6 +406,41 @@ def inspect_job_blockers(
             assigned_nodes=assigned_nodes,
         )
     return report
+
+
+def _controller_volume_blockers(
+    controller_output: str, claim_names: Sequence[str]
+) -> list[PodBlocker]:
+    """Explain exact rendered claims rejected before SkyPilot created a pod."""
+    names = {
+        name for name in claim_names if is_valid_persistent_volume_claim_name(name)
+    }
+    pod_name = rf"(?:'{_DNS_LABEL}'|\"{_DNS_LABEL}\")"
+    pattern = re.compile(
+        rf"\bVolume (?P<claim>{_DNS_LABEL}(?:\.{_DNS_LABEL})*) "
+        rf"with access mode ReadWriteOnce is already in use by Pods "
+        rf"\[{pod_name}(?:, {pod_name})*\]\."
+    )
+    blockers = {}
+    for match in pattern.finditer(controller_output[-4000:]):
+        claim = match.group("claim")
+        if claim not in names:
+            continue
+        blockers[claim] = PodBlocker(
+            pod=f"persistentvolumeclaim/{claim}",
+            phase="Pending",
+            reason="ReadWriteOnceVolumeInUse",
+            reason_code="STORAGE_VOLUME_IN_USE",
+            message=(
+                "This job's controller observed: "
+                + match.group()
+                + " Current claim ownership has not been verified."
+            ),
+            source="skypilot_controller_log",
+            live=False,
+            temporally_bound=False,
+        )
+    return list(blockers.values())
 
 
 def _unready_nodes(

@@ -246,6 +246,91 @@ def test_status_probes_only_claims_attributed_to_each_managed_job(
     }
 
 
+def _volume_conflict_logs(mocker, returncode=0):
+    message = (
+        "Volume train-workspace with access mode ReadWriteOnce is already in use "
+        "by Pods ['previous-worker-head']."
+    )
+    logs = mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        side_effect=lambda job_id, **kwargs: SimpleNamespace(
+            returncode=returncode,
+            stdout=(message + "\n" + "setup output\n" * 1000 + message)
+            if job_id == "12"
+            else "Preparing a different job.",
+            stderr="",
+        ),
+    )
+    return message, logs
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_pending_controller_logs_stay_with_their_job_without_mutating_state(
+    observed_status, mocker, returncode
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [
+        _wave("prepare", "11", "pending"),
+        _wave("train", "12", "pending"),
+    ]
+    message, controller_logs = _volume_conflict_logs(mocker, returncode)
+    stalled = mocker.patch(
+        "npa.cli.workbench.workflow._stalled_job_blockers", return_value=[]
+    )
+    original_manifest = json.dumps(resolution.manifest, sort_keys=True)
+    original_runtime = json.dumps(resolution.runtime_state, sort_keys=True)
+
+    for _ in range(2):
+        payload = _durable_workflow_status("run-test")
+        outputs = {
+            call.args[0]: call.kwargs["controller_output"]
+            for call in stalled.call_args_list
+        }
+        assert (message in outputs["12"]) is (returncode == 0)
+        assert message not in outputs["11"]
+        assert max(map(len, outputs.values())) <= 4000
+        assert payload["status"] == "PENDING"
+        assert json.dumps(resolution.manifest, sort_keys=True) == original_manifest
+        assert json.dumps(resolution.runtime_state, sort_keys=True) == original_runtime
+
+    assert [call.args[0] for call in controller_logs.call_args_list] == [
+        "11",
+        "12",
+        "11",
+        "12",
+    ]
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_receipt_pending_status_requires_successful_controller_log_transport(
+    observed_status, mocker, returncode
+):
+    from npa.cli.workbench.workflow import _manifest_pending_status
+
+    resolution, _jobs = observed_status
+    resolution.job_id = "12"
+    resolution.runtime_state["waves"] = [_wave("train", "12", "pending")]
+    message, logs = _volume_conflict_logs(mocker, returncode)
+    stalled = mocker.patch(
+        "npa.cli.workbench.workflow._stalled_job_blockers", return_value=[]
+    )
+
+    payload = _manifest_pending_status(
+        resolution, project="test", sky_bin="", startup_failure_threshold=2
+    )
+
+    output = stalled.call_args.kwargs["controller_output"]
+    assert (message in output) is (returncode == 0)
+    assert len(output) <= 4000
+    assert payload["status"] == "RETRYING"
+    assert payload["live_status"] == "PENDING"
+    if returncode:
+        assert any(
+            "controller logs are unavailable" in row for row in payload["diagnostics"]
+        )
+    logs.assert_called_once()
+
+
 def test_claim_attribution_preserves_collisions_with_emitted_stage_keys():
     from types import SimpleNamespace
 

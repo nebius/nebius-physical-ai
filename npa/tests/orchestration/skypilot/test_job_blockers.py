@@ -197,6 +197,66 @@ def test_a_job_with_no_pods_yet_says_so() -> None:
     assert "nothing has been scheduled yet" in report.error
 
 
+def test_controller_explains_exact_volume_conflict_before_pod_creation() -> None:
+    message = (
+        "Volume run-workspace with access mode ReadWriteOnce is already in use "
+        "by Pods ['previous-worker-head']."
+    )
+    report = inspect_job_blockers(
+        job_id="2",
+        claim_names=("run-workspace",),
+        controller_output="old log\n" * 1000 + message + "\n" + message,
+        runner=_pvc_runner(claims=[], events=[]),
+    )
+
+    assert report.error == ""
+    assert len(report.blockers) == 1
+    blocker = report.blockers[0]
+    assert blocker.pod == "persistentvolumeclaim/run-workspace"
+    assert blocker.reason_code == "STORAGE_VOLUME_IN_USE"
+    assert blocker.source == "skypilot_controller_log"
+    assert blocker.live is False
+    assert blocker.temporally_bound is False
+    assert "controller observed" in blocker.message
+    assert "not been verified" in blocker.message
+
+
+@pytest.mark.parametrize(
+    "claim_names,message",
+    [
+        (
+            (),
+            "Volume run-workspace with access mode ReadWriteOnce is already in use by Pods ['worker'].",
+        ),
+        (
+            ("other-claim",),
+            "Volume run-workspace with access mode ReadWriteOnce is already in use by Pods ['worker'].",
+        ),
+        (
+            ("run-workspace",),
+            "Volume run-workspace with access mode ReadWriteMany is already in use by Pods ['worker'].",
+        ),
+        (
+            ("run-workspace",),
+            "Volume run-workspace with access mode ReadWriteOnce is already in use by Pods [].",
+        ),
+        (("run-workspace",), ""),
+    ],
+)
+def test_unbound_controller_volume_text_preserves_no_pod_fallback(
+    claim_names, message
+) -> None:
+    report = inspect_job_blockers(
+        job_id="2",
+        claim_names=claim_names,
+        controller_output=message,
+        runner=_pvc_runner(claims=[], events=[]),
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+
+
 def _pvc_runner(*, claims: list[dict], events: list[dict]):
     calls: list[list[str]] = []
 

@@ -5659,7 +5659,12 @@ def _durable_workflow_status(
                             for item in (controller_logs.stdout, controller_logs.stderr)
                             if item
                         ).splitlines()
-                    )[:4000]
+                    )
+                    if controller_logs.returncode == 0:
+                        job_observations[managed_job_id]["controller_output"] = output[
+                            -4000:
+                        ]
+                    output = output[:4000]
                     if output:
                         controller_output += (
                             "\n" if controller_output else ""
@@ -5783,6 +5788,7 @@ def _durable_workflow_status(
                 sky_bin=sky_bin,
                 isolated_config_dir=isolated_config_dir,
                 claim_names=claims_by_job.get(managed_job_id, ()),
+                controller_output=str(observation.get("controller_output") or ""),
             )
         ]
         if blockers:
@@ -6056,6 +6062,7 @@ def _manifest_pending_status(
     live_status = ""
     task_rows: list[dict[str, object]] = []
     controller_output = ""
+    blocker_controller_output = ""
     diagnostics = resolution_diagnostics(resolution)
     preview_diagnostic = _preview_failure_diagnostic(workflow_record)
     if preview_diagnostic:
@@ -6167,7 +6174,10 @@ def _manifest_pending_status(
                     for item in (controller_logs.stdout, controller_logs.stderr)
                     if item
                 ).splitlines()
-            )[:4000]
+            )
+            if controller_logs.returncode == 0:
+                blocker_controller_output = controller_output[-4000:]
+            controller_output = controller_output[:4000]
             if controller_logs.returncode != 0:
                 diagnostics.append(
                     "SkyPilot controller logs are unavailable; startup failure "
@@ -6262,6 +6272,7 @@ def _manifest_pending_status(
                 pending_manifest, runtime_waves=runtime_waves
             ),
         ).get(job_id, ()),
+        controller_output=blocker_controller_output,
     )
     if blockers:
         payload["blockers"] = blockers
@@ -6370,6 +6381,7 @@ def _stalled_job_blockers(
     sky_bin: str = "",
     isolated_config_dir: Path | None = None,
     claim_names: tuple[str, ...] = (),
+    controller_output: str = "",
 ) -> list[dict[str, object]]:
     """Explain a managed job that is not progressing, from its own pods.
 
@@ -6421,6 +6433,7 @@ def _stalled_job_blockers(
                 expected_task_names=task_names,
                 controller_user_id=diagnostic_user_id,
                 claim_names=claim_names,
+                controller_output=controller_output,
             )
             for cluster in clusters
         ]
@@ -6433,6 +6446,7 @@ def _stalled_job_blockers(
                 expected_task_names=task_names,
                 controller_user_id=diagnostic_user_id,
                 claim_names=claim_names,
+                controller_output=controller_output,
             )
         ]
     )
