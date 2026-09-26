@@ -69,6 +69,7 @@ example follows upstream LIBERO-10's training schedule.
 | `add_worker.py` / `bootstrap-worker.sh` / `slurm_worker.py` | Private second-worker bundle, shared storage, and native Slurm join |
 | `prepare_simulation.py` / `simulation-requirements.txt` | Separate pinned Python 3.10.21 CPU LIBERO environment |
 | `evaluate.py` | Native policy servers and all ten tasks, with per-trial evidence and strict result checks |
+| `quality_curve.py` | Checkpoint-linked success curve and observed training time to the first passing checkpoint |
 
 `recipe.py plan` requires `--shared-root`, `--run-dir`, `--name`, `--nodes`, and
 `--steps`. Optional `--samples-per-rank=64`, `--global-batch=2048`, `--seed=42`,
@@ -118,7 +119,7 @@ spec, never in Git. `WAM_SHARED_ROOT`, `WAM_RUN_ROOT`, `WAM_RECIPE`, and
 At runtime, Slurm supplies `SLURM_NODEID`, `SLURM_NNODES`, and
 `SLURM_JOB_NODELIST`. The batch script derives `MASTER_ADDR` from the allocation;
 `MASTER_PORT` defaults to 29500 and may be overridden. It sets
-`COSMOS_TRAINING=1`, `OMP_NUM_THREADS=4`, disables W&B, and supplies native
+`COSMOS_TRAINING=1`, `OMP_NUM_THREADS=4`, `TZ=UTC`, disables W&B, and supplies native
 `LIBERO_ROOT`, `BASE_CHECKPOINT_PATH`, `WAN_VAE_PATH`, and
 `IMAGINAIRE_OUTPUT_ROOT`. `NPA_WAM_RUN_DIR` is an internal preflight output path.
 CUDA, NCCL, network-interface and InfiniBand settings otherwise come from the
@@ -176,6 +177,25 @@ modifications to either pinned source checkout fail the evaluation preflight.
 GIFs. Upstream vectorized evaluation does not save those videos, so the script
 rejects video recording with multiple environments. Keep separately recorded
 illustrative rollouts distinct from the full benchmark's trial results.
+
+After the full schedule and all four 500-trial evaluations finish, run:
+
+```bash
+"$WAM_SHARED_ROOT/framework/.venv/bin/python" "$WAM_RECIPE/quality_curve.py" \
+  --run-dir "$WAM_RUN_ROOT/b200-8" \
+  --evaluations "$WAM_EVAL_500" "$WAM_EVAL_1000" "$WAM_EVAL_1500" "$WAM_EVAL_2000" \
+  --output-path "$WAM_RUN_ROOT/b200-8/quality-curve.json"
+```
+
+Each `WAM_EVAL_*` value selects an `evaluate.py` output directory. The tool
+requires all four scheduled checkpoints and rejects mismatched runs, seeds,
+model hashes or trial counts. It uses the native UTC checkpoint-completion
+events and verified process duration to report training time with one-second
+log resolution. It identifies the first evaluated checkpoint reaching 90%
+success without estimating an unobserved crossing. Evaluation duration and
+process GPU-hours are separate from training time. Pooled Wilson intervals
+describe the recorded trial counts; they do not measure variation across
+training seeds or tasks. This reducer awaits the full live campaign results.
 
 ## Measurements and cleanup
 

@@ -128,6 +128,7 @@ def _environment(settings, run):
         + os.pathsep
         + os.environ.get("PATH", ""),
         WANDB_MODE="disabled",
+        TZ="UTC",
         NPA_WAM_RUN_DIR=str(run),
         LIBERO_ROOT=str(root / "data/libero_10"),
         BASE_CHECKPOINT_PATH=str(root / "base-dcp"),

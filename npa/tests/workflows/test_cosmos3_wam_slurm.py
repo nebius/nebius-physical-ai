@@ -1,6 +1,7 @@
 """Exercise native WAM launch topology, malformed measurements, and Slurm propagation."""
 
 import importlib.util
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -146,6 +147,103 @@ def test_quality_counts_full_trials_and_rejects_server_errors():
     tasks[0]["episode_results"][0]["error"] = "server error: connection reset"
     with pytest.raises(ValueError, match="infrastructure or inference errors"):
         evaluation._task_results(summaries, 50)
+
+
+def _quality_curve(monkeypatch):
+    monkeypatch.syspath_prepend(str(RECIPE))
+    return _load("quality_curve")
+
+
+def test_checkpoint_timestamps_handle_year_rollover_and_require_complete_set(
+    monkeypatch,
+):
+    curve = _quality_curve(monkeypatch)
+    started = datetime(2026, 12, 31, 23, 59, 30, tzinfo=timezone.utc).timestamp()
+    node = {"ended_unix": started + 90, "train_process_seconds": 90}
+    rows = [
+        f"[01-01 00:00:{second:02d}|INFO|dcp.py:1201:save_state_dict_worker] "
+        f"Saved checkpoint to /fixture/checkpoints/iter_{step:09d}\n"
+        for second, step in zip((1, 11, 21, 31), (500, 1000, 1500, 2000))
+    ]
+    timings = curve._checkpoint_times("".join(rows), node)
+    assert timings[500] == [31, 32]
+    assert timings[2000] == [61, 62]
+    with pytest.raises(ValueError, match="all four"):
+        curve._checkpoint_times("".join(rows[:-1]), node)
+    with pytest.raises(ValueError, match="duplicate"):
+        curve._checkpoint_times("".join(rows + rows[:1]), node)
+
+
+def _quality_receipt(step):
+    return {
+        **_evaluation_summaries()[0],
+        "schema": "npa.cosmos3.wam-quality.v1",
+        "step": step,
+        "full_500_trial_evaluation": True,
+        "successes": 450,
+        "success_rate": 0.9,
+        "trials": 500,
+        "threshold": 0.9,
+        "threshold_met": True,
+        "elapsed_seconds": 100,
+        "model_manifest_sha256": "incorrect-checkpoint-digest",
+    }
+
+
+def test_quality_curve_rejects_wrong_checkpoint_even_with_complete_trials(
+    tmp_path, monkeypatch
+):
+    curve = _quality_curve(monkeypatch)
+    run = _completed_run(tmp_path)
+    settings = json.loads((run / "run.json").read_text())
+    evaluation = tmp_path / "evaluation"
+    evaluation.mkdir()
+    observed = {
+        "run_dir": str(run),
+        "seed": settings["seed"],
+        "trials": 50,
+        "record_rollouts": False,
+        "workers": 8,
+        "step": 55,
+    }
+    (evaluation / "settings.json").write_text(json.dumps(observed))
+    (evaluation / "quality.json").write_text(json.dumps(_quality_receipt(55)))
+    with pytest.raises(ValueError, match="model hash"):
+        curve._point(evaluation, run, settings, {55: [60, 61]})
+    observed["run_dir"] = str(tmp_path / "different-run")
+    (evaluation / "settings.json").write_text(json.dumps(observed))
+    with pytest.raises(ValueError, match="different training run"):
+        curve._point(evaluation, run, settings, {55: [60, 61]})
+
+
+def test_quality_curve_rejects_inconsistent_threshold_claim(monkeypatch):
+    curve = _quality_curve(monkeypatch)
+    quality = _quality_receipt(500)
+    assert curve._quality_counts(quality, {"step": 500})[1] == 450
+    quality["threshold_met"] = False
+    with pytest.raises(ValueError, match="individual trials"):
+        curve._quality_counts(quality, {"step": 500})
+
+
+def test_time_to_quality_reports_first_observed_checkpoint_and_no_crossing(monkeypatch):
+    curve = _quality_curve(monkeypatch)
+    points = [
+        {
+            "step": step,
+            "threshold_met": step >= 1500,
+            "checkpoint_ready_train_seconds_interval": [step * 10, step * 10 + 1],
+        }
+        for step in (500, 1000, 1500, 2000)
+    ]
+    assert curve._first_passing(points) == {
+        "status": "observed_at_scheduled_checkpoint",
+        "step": 1500,
+        "train_seconds_interval": [15000, 15001],
+        "preceding_evaluated_step": 1000,
+    }
+    for point in points:
+        point["threshold_met"] = False
+    assert curve._first_passing(points)["step"] is None
 
 
 @pytest.mark.parametrize("missing", ["task", "trial", "duplicate", "aggregate"])
