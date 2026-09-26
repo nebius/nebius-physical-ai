@@ -196,6 +196,100 @@ def _rollout(world):
     return arrays
 
 
+TRACE_FEATURE_WIDTHS = {
+    "state": len(JOINT_NAMES),
+    "next_state": len(JOINT_NAMES),
+    "actions": len(ACTION_NAMES),
+    "object_position": 3,
+    "next_object_position": 3,
+    "next_gripper_position": 3,
+}
+
+REQUIRED_TRACE_KEYS = frozenset(TRACE_FEATURE_WIDTHS) | {
+    "goal",
+    "finger_contacts",
+    "environment_success",
+}
+
+SETTLING_WINDOW = 11
+
+
+def _validate_trace(arrays):
+    """Reject malformed or time-misaligned traces before physics judging.
+
+    Args:
+        arrays: Recorded trace mapping of per-frame arrays plus a 3-D goal.
+    Raises:
+        ValueError: Array lengths, feature widths, or goal shape are invalid,
+            or the trace is too short to establish settling.
+    """
+    missing = REQUIRED_TRACE_KEYS - arrays.keys()
+    if missing:
+        raise ValueError(
+            f"trace is missing required physics evidence: {sorted(missing)}"
+        )
+    lengths = {
+        key: len(value)
+        for key, value in arrays.items()
+        if key != "goal" and np.ndim(value) >= 1
+    }
+    if len(set(lengths.values())) > 1 or not lengths:
+        raise ValueError(f"trace arrays are not time-aligned: {lengths}")
+    count = next(iter(lengths.values()))
+    if count < SETTLING_WINDOW:
+        raise ValueError(f"trace has {count} frames; settling needs {SETTLING_WINDOW}")
+    _validate_trace_features(arrays)
+
+
+def _validate_trace_features(arrays):
+    """Require correctly shaped real measurements for every physics feature."""
+    for key, width in TRACE_FEATURE_WIDTHS.items():
+        array = np.asarray(arrays[key])
+        if not _is_real_numeric(array.dtype):
+            raise ValueError(
+                f"{key} must hold real numeric values, got dtype {array.dtype}"
+            )
+        if array.shape[1:] != (width,):
+            raise ValueError(f"{key} must have feature width {width}")
+    for key in ("finger_contacts", "environment_success"):
+        if np.ndim(arrays[key]) != 1:
+            raise ValueError(f"{key} must be one value per timestep")
+    if np.shape(arrays["goal"]) != (3,):
+        raise ValueError("goal must be a 3-vector")
+
+
+def _is_real_numeric(dtype):
+    """Return True for dtypes that can represent physical measurements."""
+    return np.issubdtype(dtype, np.number) and not np.issubdtype(
+        dtype, np.complexfloating
+    )
+
+
+def _all_finite(arrays):
+    """Return True only when every recorded numeric array is finite.
+
+    Object-dtype arrays are converted so NaN evidence cannot hide behind
+    Python objects. Integer and boolean recordings (including uint8 camera
+    frames) cannot encode NaN and are skipped without float64 copies.
+    Non-numeric metadata arrays (e.g. string phase labels) are not physical
+    evidence and are skipped.
+    """
+    for key, value in arrays.items():
+        if np.ndim(value) < 1:
+            continue
+        array = np.asarray(value)
+        if array.dtype == object:
+            try:
+                array = array.astype(float)
+            except (TypeError, ValueError):
+                return False
+        elif not np.issubdtype(array.dtype, np.floating):
+            continue
+        if not np.isfinite(array).all():
+            return False
+    return True
+
+
 def physics_checks(arrays):
     """Judge grasp, lift, placement, release, and settling from recorded simulator state.
 
@@ -204,8 +298,9 @@ def physics_checks(arrays):
     Returns:
         Numeric measurements and independent boolean checks; all must pass.
     Raises:
-        ValueError: Required trace arrays have invalid shapes.
+        ValueError: Required trace arrays have invalid shapes or misaligned lengths.
     """
+    _validate_trace(arrays)
     positions = arrays["next_object_position"]
     final_distance = float(np.linalg.norm(positions[-1] - arrays["goal"]))
     lift_height = float(positions[:, 2].max() - arrays["object_position"][0, 2])
@@ -213,10 +308,7 @@ def physics_checks(arrays):
         np.linalg.norm(np.diff(positions[-11:], axis=0), axis=1).max() * FPS
     )
     checks = {
-        "finite": all(
-            np.isfinite(arrays[key]).all()
-            for key in ("state", "actions", "next_state", "next_object_position")
-        ),
+        "finite": _all_finite(arrays),
         "bilateral_grasp_contact": bool(np.any(arrays["finger_contacts"] >= 2)),
         "lifted": lift_height >= 0.08,
         "placed": final_distance <= 0.025,

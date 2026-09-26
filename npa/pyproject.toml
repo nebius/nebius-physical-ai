@@ -92,6 +92,11 @@ full = []
 # Compatibility alias: the adversarial eval uses repository-owned validators.
 # The former optional package was imported only to report its presence.
 agent-eval = []
+agent-specialists = [
+    "langgraph==1.2.11",
+    "langgraph-checkpoint-sqlite==3.1.1",
+    "uvicorn>=0.52.4",
+]
 # Blueprint Phase I: self-hostable OSS tracing adapters behind an injected
 # tracer (NullTracer is the default; these back build_langfuse_tracer /
 # build_otel_tracer in npa/src/npa/agent_backend/trace.py).
@@ -121,7 +126,10 @@ adapter = [
 ]
 robot-sdg = [
     "gymnasium-robotics==1.4.2",
-    "mujoco==3.13.0",
+    # Robotics 1.4.2 compares NumPy joint types through enum tuple membership;
+    # MuJoCo 3.13 rejects these comparisons and Fetch cannot initialize.
+    # Keep the tested engine until a Robotics release includes the int casts.
+    "mujoco==3.3.7",
 ]
 groot = [
     "nvidia-gr00t-sdk==0.1.0",
@@ -140,6 +148,8 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    "langgraph==1.2.11",
+    "langgraph-checkpoint-sqlite==3.1.1",
     # Actual loopback HTTP regression coverage for deployed service boundaries.
     "uvicorn>=0.52.4",
     # The served agent audit explicitly selects Uvicorn's websockets protocol.
@@ -168,6 +178,8 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "langgraph==1.2.11",
+    "langgraph-checkpoint-sqlite==3.1.1",
     "uvicorn>=0.52.4",
     "websockets>=10,<18",
     "google-cloud-storage==3.14.1",

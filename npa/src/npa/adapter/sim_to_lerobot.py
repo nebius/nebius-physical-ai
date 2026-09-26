@@ -227,6 +227,152 @@ def discover_episodes(input_dir: Path) -> list[Path]:
     return episodes
 
 
+def _load_episode_array(ep_dir: Path, ep_idx: int, name: str) -> np.ndarray:
+    """Load one episode array, mapping unreadable files onto AdapterError."""
+    try:
+        return np.load(ep_dir / f"{name}.npy")
+    except FileNotFoundError:
+        raise
+    except OSError as error:
+        raise AdapterError(f"Episode {ep_idx}: cannot read {name}: {error}") from error
+
+
+def _validate_numeric_stream(
+    name: str, array: np.ndarray, ep_len: int, ep_idx: int
+) -> None:
+    """Require a finite, nonempty (T, width) state or action stream."""
+    if array.ndim == 2 and array.shape[0] != ep_len:
+        raise AdapterError(
+            f"Episode {ep_idx}: {name} has {array.shape[0]} frames "
+            f"but state has {ep_len}"
+        )
+    if array.ndim != 2 or not all(array.shape):
+        raise AdapterError(
+            f"Episode {ep_idx}: {name} requires nonempty (T, width), got {array.shape}"
+        )
+    if not np.issubdtype(array.dtype, np.number) or np.issubdtype(
+        array.dtype, np.complexfloating
+    ):
+        raise AdapterError(f"Episode {ep_idx}: {name} requires real numeric values")
+    if not np.isfinite(array).all():
+        raise AdapterError(f"Episode {ep_idx}: {name} contains non-finite values")
+
+
+def _validate_camera_stream(
+    name: str, array: np.ndarray, ep_len: int, ep_idx: int
+) -> None:
+    """Require uint8 RGB frames of shape (T, H, W, 3) covering every timestep."""
+    if array.ndim == 4 and array.shape[0] != ep_len:
+        raise AdapterError(
+            f"Episode {ep_idx}: {name} has {array.shape[0]} frames "
+            f"but state has {ep_len}"
+        )
+    if array.ndim != 4 or not all(array.shape) or array.shape[3] != 3:
+        raise AdapterError(
+            f"Episode {ep_idx}: {name} requires nonempty (T, H, W, 3), got {array.shape}"
+        )
+    if array.dtype != np.uint8:
+        raise AdapterError(
+            f"Episode {ep_idx}: {name} has dtype {array.dtype}, expected uint8"
+        )
+
+
+def _load_episode_arrays(ep_dir: Path, ep_idx: int) -> dict[str, np.ndarray]:
+    """Load the four required episode arrays and validate their streams."""
+    arrays = {
+        name: _load_episode_array(ep_dir, ep_idx, name)
+        for name in ("obs_workspace", "obs_wrist", "state", "actions")
+    }
+    ep_len = int(arrays["state"].shape[0]) if arrays["state"].ndim == 2 else -1
+    _validate_numeric_stream("state", arrays["state"], ep_len, ep_idx)
+    _validate_numeric_stream("actions", arrays["actions"], ep_len, ep_idx)
+    for name in ("obs_workspace", "obs_wrist"):
+        _validate_camera_stream(name, arrays[name], ep_len, ep_idx)
+    return arrays
+
+
+def _episode_shape_reference(arrays: dict[str, np.ndarray]) -> dict[str, int]:
+    """Derive the dataset-wide shape contract from one episode."""
+    return {
+        "n_state": arrays["state"].shape[1],
+        "n_actions": arrays["actions"].shape[1],
+        "img_h": arrays["obs_workspace"].shape[1],
+        "img_w": arrays["obs_workspace"].shape[2],
+    }
+
+
+def _check_cameras_agree(arrays: dict[str, np.ndarray], ep_idx: int) -> None:
+    """Require both cameras of one episode to share resolution."""
+    workspace = arrays["obs_workspace"].shape[1:3]
+    wrist = arrays["obs_wrist"].shape[1:3]
+    if wrist != workspace:
+        raise AdapterError(
+            f"Episode {ep_idx}: obs_wrist resolution {wrist} differs from "
+            f"obs_workspace resolution {workspace}"
+        )
+
+
+def _check_episode_matches_reference(
+    arrays: dict[str, np.ndarray], ep_idx: int, reference: dict[str, int]
+) -> None:
+    """Reject episodes whose widths or camera resolutions drift from episode 0."""
+    for name, key in (
+        ("obs_workspace", "img_h"),
+        ("obs_wrist", "img_h"),
+        ("state", "n_state"),
+        ("actions", "n_actions"),
+    ):
+        expected = (
+            (reference[key], reference["img_w"]) if key == "img_h" else reference[key]
+        )
+        observed = arrays[name].shape[1:3] if key == "img_h" else arrays[name].shape[1]
+        if observed != expected:
+            raise AdapterError(
+                f"Episode {ep_idx}: {name} has {observed}, expected {expected} "
+                f"from episode 0"
+            )
+
+
+def _load_and_validate_episode(
+    ep_dir: Path, ep_idx: int, reference: dict[str, int] | None
+) -> tuple[dict[str, np.ndarray], dict[str, int]]:
+    """Load and fully validate one episode against the dataset-wide contract.
+
+    Args:
+        ep_dir: Episode directory holding the four numpy arrays.
+        ep_idx: Zero-based episode position used in error messages.
+        reference: Shapes of the first episode, or None to become the reference.
+    Returns:
+        The loaded arrays and the dataset-wide shape reference.
+    Raises:
+        AdapterError: Lengths, dtypes, dimensions or finiteness violate the contract.
+    """
+    arrays = _load_episode_arrays(ep_dir, ep_idx)
+    _check_cameras_agree(arrays, ep_idx)
+    shapes = _episode_shape_reference(arrays)
+    if reference is None:
+        return arrays, shapes
+    _check_episode_matches_reference(arrays, ep_idx, reference)
+    return arrays, reference
+
+
+def _validate_fps(fps: Any) -> float:
+    """Reject boolean, non-numeric, non-finite and non-positive frame rates.
+
+    Returns the validated rate as a float. Called before any output directory
+    is created or video is encoded so invalid rates can never produce partial
+    datasets.
+    """
+    if isinstance(fps, bool) or not isinstance(
+        fps, (int, float, np.integer, np.floating)
+    ):
+        raise AdapterError(f"fps must be a positive finite number, got {fps!r}")
+    rate = float(fps)
+    if not np.isfinite(rate) or rate <= 0:
+        raise AdapterError(f"fps must be a positive finite number, got {fps!r}")
+    return rate
+
+
 def convert(
     input_dir: Path,
     output_dir: Path,
@@ -244,10 +390,16 @@ def convert(
         fps: Frame rate for video encoding and timestamps.
         robot_type: Robot identifier for metadata.
         task: Task description string.
+        task_from_metadata: Read a task for every episode from metadata.json.
 
     Returns:
         Path to the output directory.
+    Raises:
+        AdapterError: Frame rate, episode streams, metadata or encoding is invalid.
+        FileNotFoundError: A required input array is missing.
+        OSError: Dataset output cannot be written.
     """
+    fps = _validate_fps(fps)
     episodes = discover_episodes(input_dir)
     n_episodes = len(episodes)
     episode_tasks = [task] * n_episodes
@@ -270,25 +422,24 @@ def convert(
     tasks = list(dict.fromkeys(episode_tasks))
     task_indices = {name: index for index, name in enumerate(tasks)}
 
-    # Peek at first episode to determine shapes
-    first_state = np.load(episodes[0] / "state.npy")
-    first_actions = np.load(episodes[0] / "actions.npy")
-    n_state = first_state.shape[1]
-    n_actions = first_actions.shape[1]
-
-    first_workspace = np.load(episodes[0] / "obs_workspace.npy", mmap_mode="r")
-    img_h, img_w = first_workspace.shape[1], first_workspace.shape[2]
+    # Validate every episode fully before creating any output or encoding video.
+    loaded: list[dict[str, np.ndarray]] = []
+    reference: dict[str, int] | None = None
+    for ep_idx, ep_dir in enumerate(episodes):
+        arrays, reference = _load_and_validate_episode(ep_dir, ep_idx, reference)
+        loaded.append(arrays)
+    n_state = reference["n_state"]
+    n_actions = reference["n_actions"]
+    img_h, img_w = reference["img_h"], reference["img_w"]
 
     video_keys = {"observation.images.workspace", "observation.images.wrist"}
 
-    # Prepare output dirs
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "meta" / "episodes" / "chunk-000").mkdir(parents=True, exist_ok=True)
     (output_dir / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
 
     data_schema = _build_data_schema(n_state, n_actions)
 
-    # Accumulators
     all_data_rows: list[dict[str, Any]] = []
     episode_meta_rows: list[dict[str, Any]] = []
     global_stats: dict[str, list[np.ndarray]] = {
@@ -308,24 +459,12 @@ def convert(
     for ep_idx, ep_dir in enumerate(episodes):
         _print_progress(f"Processing episode {ep_idx}/{n_episodes}")
 
-        # Load numpy arrays
-        obs_workspace = np.load(ep_dir / "obs_workspace.npy")
-        obs_wrist = np.load(ep_dir / "obs_wrist.npy")
-        state = np.load(ep_dir / "state.npy")
-        actions = np.load(ep_dir / "actions.npy")
+        obs_workspace = loaded[ep_idx]["obs_workspace"]
+        obs_wrist = loaded[ep_idx]["obs_wrist"]
+        state = loaded[ep_idx]["state"]
+        actions = loaded[ep_idx]["actions"]
 
         ep_len = state.shape[0]
-        for stream_name, stream in [
-            ("obs_workspace", obs_workspace),
-            ("obs_wrist", obs_wrist),
-            ("actions", actions),
-        ]:
-            if stream.shape[0] != ep_len:
-                raise AdapterError(
-                    f"Episode {ep_idx}: {stream_name} has {stream.shape[0]} "
-                    f"frames but state has {ep_len}"
-                )
-
         # ── Encode videos ───────────────────────────────────────────
         for cam_key, cam_frames in [
             ("observation.images.workspace", obs_workspace),
@@ -371,7 +510,6 @@ def convert(
         }
         ep_stats = _compute_episode_stats(ep_arrays, video_keys)
 
-        # Accumulate for global stats
         for key in global_stats:
             global_stats[key].append(ep_arrays[key])
 
@@ -393,7 +531,6 @@ def convert(
             ep_meta[f"videos/{cam_key}/from_timestamp"] = 0.0
             ep_meta[f"videos/{cam_key}/to_timestamp"] = ep_len / fps
 
-        # Flatten per-episode stats into columns
         for feat_key, feat_stats in ep_stats.items():
             for stat_name, stat_val in feat_stats.items():
                 ep_meta[f"stats/{feat_key}/{stat_name}"] = stat_val

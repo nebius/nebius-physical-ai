@@ -793,7 +793,11 @@ def render_cmd(
     )
     payload = result.as_dict()
     if result.ok and not dry_run and output_uri:
-        payload["output_uri"] = _publish(target_dir, output_uri)
+        # Publish exactly the generation the API returned: a reused output
+        # location renders into a fresh generation directory, and publishing
+        # the caller's original target would upload stale media from earlier
+        # renders alongside (or instead of) this invocation's frames.
+        payload["output_uri"] = _publish(Path(result.output_dir), output_uri)
     _finish_nurec_result(payload, output)
 
 

@@ -10,6 +10,7 @@ Physical AI workbench tools.
 Options
 --help  Show this message and exit.
 Commands
+specialists  Self-hosted specialist agents and durable task monitoring.
 antioch  Run Antioch simulations and collect policy-compatible data.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
@@ -65,6 +66,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 | Command | Description |
 | --- | --- |
+| `specialists` | Self-hosted specialist agents and durable task monitoring. |
 | `antioch` | Run Antioch simulations and collect policy-compatible data. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
@@ -111,7 +113,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 ```bash
 npa workbench --help
-npa workbench antioch --help
+npa workbench specialists --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workbench`.

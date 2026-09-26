@@ -1,0 +1,2 @@
+# Optional dependency for the matched-tool Codex baseline adapter.
+mcp==2.2.0

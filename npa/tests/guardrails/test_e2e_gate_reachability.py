@@ -16,6 +16,10 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_SPECIALISTS_LIVE": (
+        "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
+        "run the restart and workflow-repair proof in docs/workbench/specialists.md"
+    ),
     "NPA_NAMESPACE_LIVE_E2E": (
         "requires an explicitly selected disposable cluster with administrator access; "
         "creates namespaces, temporary client contexts, and CPU pods"

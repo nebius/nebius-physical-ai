@@ -956,6 +956,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # to npa.workflows.sim2real_envgen rather than exposing a service SDK;
         # CLI/toolRef coherence and manifest behavior are covered separately.
         "sim2real-envgen",
+        # Persistent agent coordinator: CLI/SDK/HTTP share SpecialistTeam and
+        # are tested in agent_eval/test_specialists.py. It is not a finite stage.
+        "specialists",
         "token-factory",
         "workflow",
     }

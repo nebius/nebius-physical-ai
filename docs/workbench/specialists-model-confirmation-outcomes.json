@@ -1,0 +1,628 @@
+{
+  "schema": "npa.specialists.robot_confirmation_outcomes.v1",
+  "phase": "confirmation",
+  "pair": "pair6",
+  "order": [
+    "astra-only",
+    "astra-tofa"
+  ],
+  "arms": [
+    {
+      "arm": "pair6/astra-only",
+      "verified_tasks": 2,
+      "agent_tool_seconds": 157.8022019949858,
+      "full_elapsed_seconds": 157.80220246315002,
+      "coordinator_seconds": 157.80142961803358,
+      "exit_code": 0,
+      "operator_assisted": false,
+      "autonomous_winner_eligible": true,
+      "coordinator_invocation_phases": [
+        "work"
+      ],
+      "configured_specialists": {
+        "export": {
+          "primary": "zai-org/GLM-5.3-Flash",
+          "primary_options": {
+            "chat_template_kwargs": {
+              "reasoning_effort": "low"
+            }
+          },
+          "fallbacks": [
+            {
+              "model": "nvidia/Nemotron-3_5-Lightning",
+              "options": {
+                "chat_template_kwargs": {
+                  "enable_thinking": false
+                }
+              }
+            }
+          ]
+        },
+        "simulation": {
+          "primary": "zai-org/GLM-5.3-Flash",
+          "primary_options": {
+            "chat_template_kwargs": {
+              "reasoning_effort": "low"
+            }
+          },
+          "fallbacks": [
+            {
+              "model": "nvidia/Nemotron-3_5-Lightning",
+              "options": {
+                "chat_template_kwargs": {
+                  "enable_thinking": false
+                }
+              }
+            }
+          ]
+        }
+      },
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -161,9 +161,9 @@\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n-    next_observation, reward, _, _, info = env.step(action)\n     workspace, wrist = _frames(env, renderer, camera)\n     state = _robot_state(env)\n+    next_observation, reward, _, _, info = env.step(action)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "cadff371481ee53d3a5230a808e59be013fbe4a956bf63c3e4a538e4d4659cce",
+          "artifact_manifest_sha256": "1ee8c13235146ae8ed7d555242b15e71cf8f98bd45c64fcf691d53064bdda11e",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          },
+          "initial_fault_bound_to_original_journal": true,
+          "edit_attempts": [
+            {
+              "author": "astra coordinator",
+              "origin": "coordinator",
+              "ok": true,
+              "resulting_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232"
+            }
+          ],
+          "native_attempts": [
+            {
+              "source_sha256": {
+                "robot_sim.py": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+                "robot_artifacts.py": "52e0be834505e23c9339fee3ca56140f5d234af473636aeb11d3055c0a797ce6"
+              },
+              "status": "completed",
+              "seconds": 35.2288031578064,
+              "verification_statuses": [
+                "passed"
+              ]
+            }
+          ],
+          "model_outcomes": {},
+          "operation_attempt_counts": {
+            "diagnose": {
+              "completed": 2,
+              "failed": 1
+            },
+            "logs": {
+              "completed": 2,
+              "failed": 0
+            },
+            "status": {
+              "completed": 1,
+              "failed": 0
+            },
+            "submit": {
+              "completed": 1,
+              "failed": 0
+            },
+            "validate": {
+              "completed": 1,
+              "failed": 0
+            },
+            "verify": {
+              "completed": 1,
+              "failed": 0
+            },
+            "wait": {
+              "completed": 1,
+              "failed": 0
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "cd43486d45c29e3cfac9fff2e5c3074eb9fec9e9bd5186e1962b51996df724a9",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 2,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,9 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [\n+        record for record in records if record[\"status\"] == \"accepted\"\n+    ]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "82d9a4a1bfae163cc04310fffa375eec008986161f268b225442757b99894adf",
+          "artifact_manifest_sha256": "4c09b033dccebbbcef0aefa89f7f3df13263bd93b9a1b44af7c021ccd3541604",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          },
+          "initial_fault_bound_to_original_journal": true,
+          "edit_attempts": [
+            {
+              "author": "astra coordinator",
+              "origin": "coordinator",
+              "ok": true,
+              "resulting_source_sha256": "c6db86dbffd9f5533cb2247cc8addcfad3e27a30e7cb8bfabdbf13eb7af92545"
+            },
+            {
+              "author": "astra coordinator",
+              "origin": "coordinator",
+              "ok": true,
+              "resulting_source_sha256": "cd43486d45c29e3cfac9fff2e5c3074eb9fec9e9bd5186e1962b51996df724a9"
+            }
+          ],
+          "native_attempts": [
+            {
+              "source_sha256": {
+                "robot_sim.py": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+                "robot_artifacts.py": "cd43486d45c29e3cfac9fff2e5c3074eb9fec9e9bd5186e1962b51996df724a9"
+              },
+              "status": "completed",
+              "seconds": 35.046393156051636,
+              "verification_statuses": [
+                "passed"
+              ]
+            }
+          ],
+          "model_outcomes": {},
+          "operation_attempt_counts": {
+            "diagnose": {
+              "completed": 3,
+              "failed": 2
+            },
+            "logs": {
+              "completed": 2,
+              "failed": 0
+            },
+            "status": {
+              "completed": 1,
+              "failed": 0
+            },
+            "submit": {
+              "completed": 1,
+              "failed": 0
+            },
+            "validate": {
+              "completed": 2,
+              "failed": 0
+            },
+            "verify": {
+              "completed": 1,
+              "failed": 0
+            },
+            "wait": {
+              "completed": 1,
+              "failed": 0
+            }
+          }
+        }
+      },
+      "coordinator_recovery": false,
+      "freeze_sha256": "830bae9c833c27ae2fefc6a5f88703eac83b8a97950d060c5c2b0e557e122973",
+      "frozen_bindings_passed": true
+    },
+    {
+      "arm": "pair6/astra-tofa",
+      "verified_tasks": 2,
+      "agent_tool_seconds": 129.25377292197663,
+      "full_elapsed_seconds": 129.25377440452576,
+      "coordinator_seconds": 129.1160504510044,
+      "exit_code": 0,
+      "operator_assisted": false,
+      "autonomous_winner_eligible": true,
+      "coordinator_invocation_phases": [
+        "delegate"
+      ],
+      "configured_specialists": {
+        "export": {
+          "primary": "zai-org/GLM-5.3-Flash",
+          "primary_options": {
+            "chat_template_kwargs": {
+              "reasoning_effort": "low"
+            }
+          },
+          "fallbacks": [
+            {
+              "model": "nvidia/Nemotron-3_5-Lightning",
+              "options": {
+                "chat_template_kwargs": {
+                  "enable_thinking": false
+                }
+              }
+            }
+          ]
+        },
+        "simulation": {
+          "primary": "zai-org/GLM-5.3-Flash",
+          "primary_options": {
+            "chat_template_kwargs": {
+              "reasoning_effort": "low"
+            }
+          },
+          "fallbacks": [
+            {
+              "model": "nvidia/Nemotron-3_5-Lightning",
+              "options": {
+                "chat_template_kwargs": {
+                  "enable_thinking": false
+                }
+              }
+            }
+          ]
+        }
+      },
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "ecc887017253e3bf8f3feb14c01076b8d80eb6766da0fcf27711832ff2743941",
+          "final_edit_author": "zai-org/GLM-5.3-Flash",
+          "verification_origin": "worker",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -158,12 +158,12 @@\n \n def _sample_step(world, observation, target, gripper):\n     env, renderer, camera = world\n+    workspace, wrist = _frames(env, renderer, camera)\n+    state = _robot_state(env)\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n     next_observation, reward, _, _, info = env.step(action)\n-    workspace, wrist = _frames(env, renderer, camera)\n-    state = _robot_state(env)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "c74841160e9162d37ce1b7df34814fca161d8e4c13889604635ef61a642af118",
+          "artifact_manifest_sha256": "5049617f635da56853fffc15459adba058a158987c9c1164d766b21da6abd0d3",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          },
+          "initial_fault_bound_to_original_journal": true,
+          "edit_attempts": [
+            {
+              "author": "zai-org/GLM-5.3-Flash",
+              "origin": "worker",
+              "ok": true,
+              "resulting_source_sha256": "ecc887017253e3bf8f3feb14c01076b8d80eb6766da0fcf27711832ff2743941"
+            }
+          ],
+          "native_attempts": [
+            {
+              "source_sha256": {
+                "robot_sim.py": "ecc887017253e3bf8f3feb14c01076b8d80eb6766da0fcf27711832ff2743941",
+                "robot_artifacts.py": "52e0be834505e23c9339fee3ca56140f5d234af473636aeb11d3055c0a797ce6"
+              },
+              "status": "completed",
+              "seconds": 35.85475778579712,
+              "verification_statuses": [
+                "passed"
+              ]
+            }
+          ],
+          "model_outcomes": {
+            "zai-org/GLM-5.3-Flash": {
+              "accepted_responses": 9,
+              "rejected_responses": 0,
+              "rejected_finish_reasons": []
+            }
+          },
+          "operation_attempt_counts": {
+            "diagnose": {
+              "completed": 1,
+              "failed": 1
+            },
+            "submit": {
+              "completed": 1,
+              "failed": 0
+            },
+            "validate": {
+              "completed": 1,
+              "failed": 0
+            },
+            "verify": {
+              "completed": 1,
+              "failed": 0
+            },
+            "wait": {
+              "completed": 1,
+              "failed": 0
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "8b19ad132cd4353b2bac4fe4e9d505529acd4aeee7c2531a9682886728980fd9",
+          "final_edit_author": "zai-org/GLM-5.3-Flash",
+          "verification_origin": "worker",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,7 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [record for record in records if record.get(\"status\") == \"accepted\"]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "a1168e593a513fc5d4babd8559f548d78e4a19ff6fd743456378ba0d770590dd",
+          "artifact_manifest_sha256": "1a9e0e5ad56f0eb1974136fe7e2dc0a2cc067aa0e67a739fb353b80bd32d7602",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          },
+          "initial_fault_bound_to_original_journal": true,
+          "edit_attempts": [
+            {
+              "author": "zai-org/GLM-5.3-Flash",
+              "origin": "worker",
+              "ok": true,
+              "resulting_source_sha256": "8b19ad132cd4353b2bac4fe4e9d505529acd4aeee7c2531a9682886728980fd9"
+            }
+          ],
+          "native_attempts": [
+            {
+              "source_sha256": {
+                "robot_sim.py": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+                "robot_artifacts.py": "8b19ad132cd4353b2bac4fe4e9d505529acd4aeee7c2531a9682886728980fd9"
+              },
+              "status": "completed",
+              "seconds": 35.473798990249634,
+              "verification_statuses": [
+                "passed"
+              ]
+            }
+          ],
+          "model_outcomes": {
+            "zai-org/GLM-5.3-Flash": {
+              "accepted_responses": 10,
+              "rejected_responses": 0,
+              "rejected_finish_reasons": []
+            }
+          },
+          "operation_attempt_counts": {
+            "diagnose": {
+              "completed": 1,
+              "failed": 1
+            },
+            "status": {
+              "completed": 1,
+              "failed": 0
+            },
+            "submit": {
+              "completed": 1,
+              "failed": 0
+            },
+            "validate": {
+              "completed": 1,
+              "failed": 0
+            },
+            "verify": {
+              "completed": 1,
+              "failed": 0
+            },
+            "wait": {
+              "completed": 1,
+              "failed": 0
+            }
+          }
+        }
+      },
+      "coordinator_recovery": false,
+      "freeze_sha256": "830bae9c833c27ae2fefc6a5f88703eac83b8a97950d060c5c2b0e557e122973",
+      "frozen_bindings_passed": true,
+      "host_completion": {
+        "receipt_sha256": "4ee2d473978d4c5232f4aa3eade55ea24bfe35692a8238d8a4336d4c17e70a3a",
+        "all_bindings_passed": true,
+        "acceptance_scope": "configured_required_operations"
+      }
+    }
+  ],
+  "selected_from": "pair5 GLM-5.3-Flash screening result",
+  "same_runtime_as_selection": true,
+  "same_model_recipe_and_grants_as_selection": true,
+  "same_original_faults_prompt_and_native_acceptance": true,
+  "timing": {
+    "metric": "agent_tool_seconds",
+    "seconds_saved": 28.548429073009174,
+    "percent_shorter": 18.09127421042978
+  },
+  "audit_method": "Read-only inspection of sealed journals, all edit/native/verification attempts, original fault bytes, actual model authorship, current source hashes, independent native receipts and host completion. No replay or model calls performed by this audit.",
+  "patch_note": "Actual patch differences are retained: GLM moved camera/state capture before pure action construction and environment stepping; Astra moved capture before stepping. Both passed independent native replay and frame alignment checks.",
+  "limitations": [
+    "This confirmation supports the narrow selected seeded-repair workload, not a general model ranking.",
+    "The task uses scripted MuJoCo control and native LeRobot dataset acceptance, not learned-policy training or physical robot transfer.",
+    "One Astra delegation turn remains; the coordinator performs no redundant success review.",
+    "Costs and provider request accounting are reported separately.",
+    "Earlier screening results, including the operator-stopped Lightning failure, remain unchanged and separate."
+  ]
+}

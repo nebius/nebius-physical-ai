@@ -60,6 +60,7 @@ Python and HTTP access follow each tool's documented contract.
 | View and share artifacts | [Rerun](rerun-sharing.md) · [Foxglove / MCAP](foxglove-export.md) · [browser workbench](../agent.md) |
 | Autonomous-driving inference | [Alpamayo 2 Super](alpamayo2-super.md) |
 | Native Ray jobs, training, and serving | [Ray](ray.md) |
+| Independent GLM/DeepSeek agents with durable tasks | [Self-hosted specialists](specialists.md) |
 
 ## Access, images, and operations
 

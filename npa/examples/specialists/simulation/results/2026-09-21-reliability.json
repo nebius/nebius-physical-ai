@@ -1,0 +1,1581 @@
+{
+  "schema": "npa.specialists.reliability_comparison.v1",
+  "date": "2026-09-21",
+  "earlier_six_pair_matrix": {
+    "schema": "npa.specialists.simulation_score.v1",
+    "prices": {
+      "retrieved_at": "2026-09-21T20:16:24.415831+00:00",
+      "token_factory_source": "https://tokenfactory.nebius.com/api/public/models_info",
+      "models": {
+        "zai-org/GLM-5.3": {
+          "input_price_per_million_tokens": 1.4,
+          "output_price_per_million_tokens": 4.4
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "input_price_per_million_tokens": 1.32,
+          "output_price_per_million_tokens": 3.96
+        },
+        "gpt-6-astra": {
+          "input_price_per_million_tokens": 10.0,
+          "cached_input_price_per_million_tokens": 1.0,
+          "cache_write_price_per_million_tokens": 12.5,
+          "output_price_per_million_tokens": 50.0,
+          "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+        }
+      }
+    },
+    "runs": [
+      {
+        "round": "round-1",
+        "arm": "astra-medium",
+        "seed": 11,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 92.09617033298127,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 210867,
+            "cached_input_tokens": 183680,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 988,
+            "reasoning_output_tokens": 36
+          }
+        },
+        "recorded_cost_usd": 0.50495,
+        "estimated_cost_usd": 0.50495,
+        "estimated_cost_per_accepted_episode_usd": 0.014026388888888889,
+        "verification_seconds": 5.537749957991764,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-1",
+        "arm": "specialists",
+        "seed": 11,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 78.04670408298261,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 36545,
+            "completion_tokens": 1402,
+            "total_tokens": 37947,
+            "prompt_cache_hit_tokens": 28928,
+            "prompt_cache_miss_tokens": 7617,
+            "cached_tokens": 28928
+          },
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 59505,
+            "completion_tokens": 3174,
+            "total_tokens": 62679,
+            "prompt_cache_hit_tokens": 30464,
+            "prompt_cache_miss_tokens": 29041,
+            "cached_tokens": 30464
+          }
+        },
+        "recorded_cost_usd": 0.14844743999999999,
+        "estimated_cost_usd": 0.14844743999999999,
+        "estimated_cost_per_accepted_episode_usd": 0.004123539999999999,
+        "verification_seconds": 5.207518208073452,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-2",
+        "arm": "astra-medium",
+        "seed": 23,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 84.89824395801406,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 194038,
+            "cached_input_tokens": 167168,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1013,
+            "reasoning_output_tokens": 29
+          }
+        },
+        "recorded_cost_usd": 0.486518,
+        "estimated_cost_usd": 0.486518,
+        "estimated_cost_per_accepted_episode_usd": 0.013514388888888888,
+        "verification_seconds": 5.299511541961692,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-2",
+        "arm": "specialists",
+        "seed": 23,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 32.77281845908146,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 60083,
+            "completion_tokens": 3275,
+            "total_tokens": 63358,
+            "prompt_cache_hit_tokens": 25344,
+            "prompt_cache_miss_tokens": 34739,
+            "cached_tokens": 25344
+          },
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 44461,
+            "completion_tokens": 1477,
+            "total_tokens": 45938,
+            "prompt_cache_hit_tokens": 37632,
+            "prompt_cache_miss_tokens": 6829,
+            "cached_tokens": 37632
+          }
+        },
+        "recorded_cost_usd": 0.16102276,
+        "estimated_cost_usd": 0.16102276,
+        "estimated_cost_per_accepted_episode_usd": 0.004472854444444444,
+        "verification_seconds": 5.220780125004239,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-3",
+        "arm": "astra-medium",
+        "seed": 37,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 68.67383891704958,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 210097,
+            "cached_input_tokens": 182912,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 993,
+            "reasoning_output_tokens": 38
+          }
+        },
+        "recorded_cost_usd": 0.504412,
+        "estimated_cost_usd": 0.504412,
+        "estimated_cost_per_accepted_episode_usd": 0.014011444444444444,
+        "verification_seconds": 5.249855083995499,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-3",
+        "arm": "specialists",
+        "seed": 37,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 28.77419812500011,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 36536,
+            "completion_tokens": 1406,
+            "total_tokens": 37942,
+            "prompt_cache_hit_tokens": 32448,
+            "prompt_cache_miss_tokens": 4088,
+            "cached_tokens": 32448
+          },
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 72646,
+            "completion_tokens": 3654,
+            "total_tokens": 76300,
+            "prompt_cache_hit_tokens": 45824,
+            "prompt_cache_miss_tokens": 26822,
+            "cached_tokens": 45824
+          }
+        },
+        "recorded_cost_usd": 0.16769936,
+        "estimated_cost_usd": 0.16769936,
+        "estimated_cost_per_accepted_episode_usd": 0.004658315555555555,
+        "verification_seconds": 5.213657333049923,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-4",
+        "arm": "astra-medium",
+        "seed": 53,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 61.521110542002134,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 192465,
+            "cached_input_tokens": 176768,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 985,
+            "reasoning_output_tokens": 34
+          }
+        },
+        "recorded_cost_usd": 0.382988,
+        "estimated_cost_usd": 0.382988,
+        "estimated_cost_per_accepted_episode_usd": 0.010638555555555556,
+        "verification_seconds": 5.263492666999809,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-4",
+        "arm": "specialists",
+        "seed": 53,
+        "infrastructure_failure": "Host exhausted disk space; worker SQLite disk I/O errors and experiment evidence write failed; no timer survived. Frozen receipts recovered without resuming any task.",
+        "agent_tool_seconds": null,
+        "accepted": 18,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 0,
+            "total": 6,
+            "replay_verified": false,
+            "validation_error": "ValueError"
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 0,
+            "total": 6,
+            "replay_verified": false,
+            "validation_error": "ValueError"
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 0,
+            "total": 6,
+            "replay_verified": false,
+            "validation_error": "ValueError"
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": false,
+        "usage": {
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 49397,
+            "completion_tokens": 2449,
+            "total_tokens": 51846,
+            "prompt_cache_hit_tokens": 22016,
+            "prompt_cache_miss_tokens": 27381,
+            "cached_tokens": 22016
+          },
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 38172,
+            "completion_tokens": 1410,
+            "total_tokens": 39582,
+            "prompt_cache_hit_tokens": 35520,
+            "prompt_cache_miss_tokens": 2652,
+            "cached_tokens": 35520
+          }
+        },
+        "recorded_cost_usd": 0.13454687999999998,
+        "estimated_cost_usd": null,
+        "estimated_cost_per_accepted_episode_usd": null,
+        "verification_seconds": 2.6000429169507697,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "0068d10f4844e76c592716bea344484bcef939e156cb507afe7732516f5b5fe7"
+      },
+      {
+        "round": "round-5",
+        "arm": "astra-medium",
+        "seed": 71,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 71.59982116601896,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 175361,
+            "cached_input_tokens": 149248,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 897,
+            "reasoning_output_tokens": 32
+          }
+        },
+        "recorded_cost_usd": 0.455228,
+        "estimated_cost_usd": 0.455228,
+        "estimated_cost_per_accepted_episode_usd": 0.012645222222222223,
+        "verification_seconds": 5.300798124982975,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-5",
+        "arm": "specialists",
+        "seed": 71,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 25.935246833018027,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 38226,
+            "completion_tokens": 1384,
+            "total_tokens": 39610,
+            "prompt_cache_hit_tokens": 36416,
+            "prompt_cache_miss_tokens": 1810,
+            "cached_tokens": 36416
+          },
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 68192,
+            "completion_tokens": 3540,
+            "total_tokens": 71732,
+            "prompt_cache_hit_tokens": 42752,
+            "prompt_cache_miss_tokens": 25440,
+            "cached_tokens": 42752
+          }
+        },
+        "recorded_cost_usd": 0.16363783999999998,
+        "estimated_cost_usd": 0.16363783999999998,
+        "estimated_cost_per_accepted_episode_usd": 0.004545495555555555,
+        "verification_seconds": 5.176879707956687,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-6",
+        "arm": "astra-medium",
+        "seed": 89,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 74.37593437498435,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 192495,
+            "cached_input_tokens": 144512,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 944,
+            "reasoning_output_tokens": 18
+          }
+        },
+        "recorded_cost_usd": 0.671542,
+        "estimated_cost_usd": 0.671542,
+        "estimated_cost_per_accepted_episode_usd": 0.018653944444444445,
+        "verification_seconds": 5.20166508294642,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-6",
+        "arm": "specialists",
+        "seed": 89,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 22.7787911669584,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 59629,
+            "completion_tokens": 3299,
+            "total_tokens": 62928,
+            "prompt_cache_hit_tokens": 37376,
+            "prompt_cache_miss_tokens": 22253,
+            "cached_tokens": 37376
+          },
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 44672,
+            "completion_tokens": 1594,
+            "total_tokens": 46266,
+            "prompt_cache_hit_tokens": 42432,
+            "prompt_cache_miss_tokens": 2240,
+            "cached_tokens": 42432
+          }
+        },
+        "recorded_cost_usd": 0.16132871999999998,
+        "estimated_cost_usd": 0.16132871999999998,
+        "estimated_cost_per_accepted_episode_usd": 0.004481353333333333,
+        "verification_seconds": 5.165772082982585,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      }
+    ],
+    "cost_basis": "Standard API-equivalent token estimates; not invoices. Token Factory cache discount assumed zero.",
+    "excluded_costs": [
+      "setup and coding",
+      "host compute",
+      "human intervention"
+    ],
+    "verification_outside_agent_timer": true,
+    "protocol": {
+      "schema": "npa.specialists.simulation.reliability.v2",
+      "frozen_at": "2026-09-22T02:29:12.798278+00:00",
+      "seeds": [
+        11,
+        23,
+        37,
+        53,
+        71,
+        89
+      ],
+      "arms": [
+        "specialists",
+        "astra-medium"
+      ],
+      "order": "specialists first in odd rounds; Astra first in even rounds",
+      "tasks": [
+        "translate",
+        "mirror",
+        "diagonal",
+        "reverse",
+        "cross",
+        "offset"
+      ],
+      "cases_per_task": 6,
+      "max_concurrent_simulators_per_arm": 6,
+      "primary_specialists": {
+        "GLM-5.3": 3,
+        "DeepSeek-V4-Pro-0813": 3
+      },
+      "rotation": "round index minus one; primary assignments alternate",
+      "fallback": "one explicitly configured reciprocal endpoint per task; sticky after handoff",
+      "completion_gate": [
+        "validate",
+        "simulate"
+      ],
+      "deepseek_sampling": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "reasoning_effort": "none"
+      },
+      "glm_options": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "low"
+        }
+      },
+      "shared_prompt_change": "coordinate bound is relative to table origin, not object-to-goal displacement",
+      "baseline": "one actual Astra medium Codex agent; same scoped tools plus concurrent batch operation",
+      "timer": "worker startup, all model calls including rejected outputs and fallbacks, all tools; excludes preparation and independent scoring",
+      "retention": "retain every predeclared trial; no human intervention, reruns, or substitutions",
+      "generalization": "repeat trials on six known tasks, not held-out task families",
+      "source_sha256": {
+        "npa/src/npa/agent_backend/specialists/__init__.py": "c6719938f16f41e7ba8ece07e2137c9383ab9c4b0882e2ff07602a875bf998bb",
+        "npa/src/npa/agent_backend/specialists/config.py": "b011ea4350763b437724d6f4926a57038995e5ec2837267909638370a5cab6a7",
+        "npa/src/npa/agent_backend/specialists/graph.py": "732d0383b326762f201f977dee01c63e9dc0e5f3239e9e207a9c039b6b1654a9",
+        "npa/src/npa/agent_backend/specialists/recovery.py": "2ec395c52f5e35e3b9f8be79eb851f49a8f8d0e50c054d68edf4408a856787e5",
+        "npa/src/npa/agent_backend/specialists/service.py": "1d007d63f4b5c002c2f38565878a57149c7490b61a98c1ae9a546417b68d9aeb",
+        "npa/src/npa/agent_backend/specialists/store.py": "549e19d0310e2f17b7bc835b70e7c1b4dd7869bd4f5ab9d7e555b8ce19ded100",
+        "npa/src/npa/agent_backend/specialists/team.py": "b81a8d30df221b036b820b37859c6fb0ec175ce7fc7017f2c1ee9026eb1ca186",
+        "npa/src/npa/agent_backend/specialists/tools.py": "4742470396e4941f1cb4ee5271c8eb7619e2358e0a8b6538fa16983339946f29",
+        "npa/src/npa/agent_backend/specialists/worker.py": "d950f4118cd7bcffdae2b216dab3fd979332716d78e126ccfd3441eb373e0f92",
+        "npa/examples/specialists/simulation/experiment.py": "7a48699564b2e4cf2e1d784fcbb8be2dfad6b9fcc145229c1078ffeab3c63361",
+        "npa/examples/specialists/simulation/mcp_bridge.py": "cefdabf705f0f9677154b707bd707bafe04f9cfb266a6458c1337efe977d1314",
+        "npa/examples/specialists/simulation/operation.py": "f9512ba16ade5056ac7e10ec8970ff3f8cb40150da431dfd6b2a40a6bd8dd6e2",
+        "npa/examples/specialists/simulation/physics.py": "d2696279523e0b27778692f7237d6995b7fb5c291845bdee3b715a4819142267",
+        "npa/examples/specialists/simulation/score.py": "b5aabd68e6823aee6184a0fe5f73baf64373a8bca15513aa2bb433ecb110ba83",
+        "npa/examples/specialists/simulation/workload.py": "cda33a3417d189f88e4b26241a73491cc73606a8bbca03dc36eceab22ae93dcb"
+      }
+    },
+    "environment": {
+      "packages": {
+        "langgraph": "1.2.11",
+        "langgraph-checkpoint-sqlite": "3.1.1",
+        "langchain-core": "1.6.4",
+        "langgraph-sdk": "0.4.5",
+        "mujoco": "3.3.7",
+        "gymnasium-robotics": "1.4.1",
+        "numpy": "2.5.3",
+        "mcp": "2.2.0",
+        "pydantic": "2.13.5",
+        "httpx": "0.28.1"
+      },
+      "python": "3.12.12",
+      "codex": "0.154.0",
+      "host": {
+        "cpu": "Apple M4 Pro",
+        "cores": 12,
+        "memory_gib": 48,
+        "os": "macOS"
+      }
+    },
+    "video_validation": {
+      "episodes": 414,
+      "decoded_frames": 76590,
+      "frames_per_episode": 185,
+      "fps": 25
+    }
+  },
+  "confirmation_three_pair_matrix": {
+    "schema": "npa.specialists.simulation_score.v1",
+    "prices": {
+      "retrieved_at": "2026-09-21T20:16:24.415831+00:00",
+      "token_factory_source": "https://tokenfactory.nebius.com/api/public/models_info",
+      "models": {
+        "zai-org/GLM-5.3": {
+          "input_price_per_million_tokens": 1.4,
+          "output_price_per_million_tokens": 4.4
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "input_price_per_million_tokens": 1.32,
+          "output_price_per_million_tokens": 3.96
+        },
+        "gpt-6-astra": {
+          "input_price_per_million_tokens": 10.0,
+          "cached_input_price_per_million_tokens": 1.0,
+          "cache_write_price_per_million_tokens": 12.5,
+          "output_price_per_million_tokens": 50.0,
+          "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+        }
+      }
+    },
+    "runs": [
+      {
+        "round": "round-1",
+        "arm": "astra-medium",
+        "seed": 11,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 61.22079229191877,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 192142,
+            "cached_input_tokens": 165504,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 974,
+            "reasoning_output_tokens": 42
+          }
+        },
+        "recorded_cost_usd": 0.480584,
+        "estimated_cost_usd": 0.480584,
+        "estimated_cost_per_accepted_episode_usd": 0.013349555555555555,
+        "verification_seconds": 5.923055083025247,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-1",
+        "arm": "specialists",
+        "seed": 11,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 23.66073295904789,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 36589,
+            "completion_tokens": 1378,
+            "total_tokens": 37967,
+            "prompt_cache_hit_tokens": 34240,
+            "prompt_cache_miss_tokens": 2349,
+            "cached_tokens": 34240
+          },
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 57003,
+            "completion_tokens": 3325,
+            "total_tokens": 60328,
+            "prompt_cache_hit_tokens": 39680,
+            "prompt_cache_miss_tokens": 17323,
+            "cached_tokens": 39680
+          }
+        },
+        "recorded_cost_usd": 0.14569876,
+        "estimated_cost_usd": 0.14569876,
+        "estimated_cost_per_accepted_episode_usd": 0.004047187777777778,
+        "verification_seconds": 5.482241249992512,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-2",
+        "arm": "astra-medium",
+        "seed": 23,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 65.10769341699779,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 194465,
+            "cached_input_tokens": 167680,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 891,
+            "reasoning_output_tokens": 37
+          }
+        },
+        "recorded_cost_usd": 0.48008,
+        "estimated_cost_usd": 0.48008,
+        "estimated_cost_per_accepted_episode_usd": 0.013335555555555555,
+        "verification_seconds": 5.435488792019896,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-2",
+        "arm": "specialists",
+        "seed": 23,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 22.831877875025384,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 63244,
+            "completion_tokens": 3187,
+            "total_tokens": 66431,
+            "prompt_cache_hit_tokens": 43520,
+            "prompt_cache_miss_tokens": 19724,
+            "cached_tokens": 43520
+          },
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 38204,
+            "completion_tokens": 1418,
+            "total_tokens": 39622,
+            "prompt_cache_hit_tokens": 35520,
+            "prompt_cache_miss_tokens": 2684,
+            "cached_tokens": 35520
+          }
+        },
+        "recorded_cost_usd": 0.1558274,
+        "estimated_cost_usd": 0.1558274,
+        "estimated_cost_per_accepted_episode_usd": 0.004328538888888889,
+        "verification_seconds": 5.382689791964367,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-3",
+        "arm": "astra-medium",
+        "seed": 37,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 67.37581662496086,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "gpt-6-astra": {
+            "input_tokens": 192527,
+            "cached_input_tokens": 166016,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 959,
+            "reasoning_output_tokens": 42
+          }
+        },
+        "recorded_cost_usd": 0.479076,
+        "estimated_cost_usd": 0.479076,
+        "estimated_cost_per_accepted_episode_usd": 0.013307666666666667,
+        "verification_seconds": 5.304741542087868,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      },
+      {
+        "round": "round-3",
+        "arm": "specialists",
+        "seed": 37,
+        "infrastructure_failure": null,
+        "agent_tool_seconds": 22.84248470806051,
+        "accepted": 36,
+        "total": 36,
+        "tasks": [
+          {
+            "task": "translate",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "mirror",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "diagonal",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "reverse",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "cross",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          },
+          {
+            "task": "offset",
+            "accepted": 6,
+            "total": 6,
+            "replay_verified": true
+          }
+        ],
+        "usage_complete": true,
+        "usage": {
+          "zai-org/GLM-5.3": {
+            "prompt_tokens": 38238,
+            "completion_tokens": 1406,
+            "total_tokens": 39644,
+            "prompt_cache_hit_tokens": 37120,
+            "prompt_cache_miss_tokens": 1118,
+            "cached_tokens": 37120
+          },
+          "deepseek-ai/DeepSeek-V4-Pro-0813": {
+            "prompt_tokens": 59287,
+            "completion_tokens": 3163,
+            "total_tokens": 62450,
+            "prompt_cache_hit_tokens": 40960,
+            "prompt_cache_miss_tokens": 18327,
+            "cached_tokens": 40960
+          }
+        },
+        "recorded_cost_usd": 0.15050391999999999,
+        "estimated_cost_usd": 0.15050391999999999,
+        "estimated_cost_per_accepted_episode_usd": 0.004180664444444444,
+        "verification_seconds": 5.376276458031498,
+        "model_fallbacks": 0,
+        "rejected_generations": 0,
+        "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+      }
+    ],
+    "cost_basis": "Standard API-equivalent token estimates; not invoices. Token Factory cache discount assumed zero.",
+    "excluded_costs": [
+      "setup and coding",
+      "host compute",
+      "human intervention"
+    ],
+    "verification_outside_agent_timer": true,
+    "protocol": {
+      "schema": "npa.specialists.simulation.reliability.v2",
+      "phase": "confirmation after rebase, compatible robot-sdg pin and cached-receipt completion fix; original six-pair matrix retained separately",
+      "frozen_at": "2026-09-22T02:48:51.104981+00:00",
+      "seeds": [
+        11,
+        23,
+        37
+      ],
+      "arms": [
+        "specialists",
+        "astra-medium"
+      ],
+      "order": "specialists first in odd rounds; Astra first in even rounds",
+      "tasks": [
+        "translate",
+        "mirror",
+        "diagonal",
+        "reverse",
+        "cross",
+        "offset"
+      ],
+      "cases_per_task": 6,
+      "max_concurrent_simulators_per_arm": 6,
+      "primary_specialists": {
+        "GLM-5.3": 3,
+        "DeepSeek-V4-Pro-0813": 3
+      },
+      "rotation": "round index minus one; primary assignments alternate",
+      "fallback": "one explicitly configured reciprocal endpoint per task; sticky after handoff",
+      "completion_gate": [
+        "validate",
+        "simulate"
+      ],
+      "deepseek_sampling": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "reasoning_effort": "none"
+      },
+      "glm_options": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "low"
+        }
+      },
+      "shared_prompt_change": "coordinate bound is relative to table origin, not object-to-goal displacement",
+      "baseline": "one actual Astra medium Codex agent; same scoped tools plus concurrent batch operation",
+      "timer": "worker startup, all model calls including rejected outputs and fallbacks, all tools; excludes preparation and independent scoring",
+      "retention": "retain every predeclared trial; no human intervention, reruns, or substitutions",
+      "generalization": "repeat trials on six known tasks, not held-out task families",
+      "source_sha256": {
+        "npa/src/npa/agent_backend/specialists/__init__.py": "c6719938f16f41e7ba8ece07e2137c9383ab9c4b0882e2ff07602a875bf998bb",
+        "npa/src/npa/agent_backend/specialists/config.py": "b011ea4350763b437724d6f4926a57038995e5ec2837267909638370a5cab6a7",
+        "npa/src/npa/agent_backend/specialists/graph.py": "732d0383b326762f201f977dee01c63e9dc0e5f3239e9e207a9c039b6b1654a9",
+        "npa/src/npa/agent_backend/specialists/recovery.py": "70770086b2af71ef49bb25e655863886a40b4f7f1f2578d4ff95e472105037f8",
+        "npa/src/npa/agent_backend/specialists/service.py": "1d007d63f4b5c002c2f38565878a57149c7490b61a98c1ae9a546417b68d9aeb",
+        "npa/src/npa/agent_backend/specialists/store.py": "549e19d0310e2f17b7bc835b70e7c1b4dd7869bd4f5ab9d7e555b8ce19ded100",
+        "npa/src/npa/agent_backend/specialists/team.py": "b81a8d30df221b036b820b37859c6fb0ec175ce7fc7017f2c1ee9026eb1ca186",
+        "npa/src/npa/agent_backend/specialists/tools.py": "4742470396e4941f1cb4ee5271c8eb7619e2358e0a8b6538fa16983339946f29",
+        "npa/src/npa/agent_backend/specialists/worker.py": "d950f4118cd7bcffdae2b216dab3fd979332716d78e126ccfd3441eb373e0f92",
+        "npa/examples/specialists/simulation/experiment.py": "7a48699564b2e4cf2e1d784fcbb8be2dfad6b9fcc145229c1078ffeab3c63361",
+        "npa/examples/specialists/simulation/mcp_bridge.py": "cefdabf705f0f9677154b707bd707bafe04f9cfb266a6458c1337efe977d1314",
+        "npa/examples/specialists/simulation/operation.py": "f9512ba16ade5056ac7e10ec8970ff3f8cb40150da431dfd6b2a40a6bd8dd6e2",
+        "npa/examples/specialists/simulation/physics.py": "d2696279523e0b27778692f7237d6995b7fb5c291845bdee3b715a4819142267",
+        "npa/examples/specialists/simulation/score.py": "68327bd5cb47168db01c5ca562f62df5c2ca804fd6d4fa5daed908f56cfa1aa9",
+        "npa/examples/specialists/simulation/workload.py": "cda33a3417d189f88e4b26241a73491cc73606a8bbca03dc36eceab22ae93dcb"
+      }
+    },
+    "environment": {
+      "packages": {
+        "langgraph": "1.2.11",
+        "langgraph-checkpoint-sqlite": "3.1.1",
+        "langchain-core": "1.6.4",
+        "langgraph-sdk": "0.4.5",
+        "mujoco": "3.3.7",
+        "gymnasium-robotics": "1.4.2",
+        "numpy": "2.5.3",
+        "mcp": "2.2.0",
+        "pydantic": "2.13.5",
+        "httpx": "0.28.1"
+      }
+    },
+    "video_validation": {
+      "episodes": 216,
+      "decoded_frames": 39960,
+      "frames_per_episode": 185,
+      "fps": 25
+    }
+  },
+  "confirmation_aggregate": {
+    "specialist_episodes": 108,
+    "astra_episodes": 108,
+    "specialist_seconds": 69.33509554213379,
+    "astra_seconds": 193.70430233387742,
+    "specialist_estimated_usd": 0.45203008,
+    "astra_estimated_usd": 1.43974,
+    "speedup_ratio_of_summed_times": 2.793741045848369,
+    "token_cost_reduction_percent": 68.60335338324975
+  },
+  "separate_automatic_recovery": {
+    "included_in_primary_trials": false,
+    "protocol": "resume the exact original eight-message failing offset prompt on a fresh task; use original greedy DeepSeek settings, no caller token cap; authorize GLM backup; no human intervention after start",
+    "imported_history": "three retained tool receipts before the failed generation; no old successful edits or simulation receipts",
+    "status": "completed",
+    "agent_tool_seconds": 49.956628875108436,
+    "physics": {
+      "task": "offset",
+      "accepted": 6,
+      "total": 6,
+      "replay_verified": true
+    },
+    "usage_complete": true,
+    "usage": {
+      "deepseek-ai/DeepSeek-V4-Pro-0813": {
+        "prompt_tokens": 2185,
+        "completion_tokens": 8192,
+        "total_tokens": 10377,
+        "prompt_cache_hit_tokens": 2048,
+        "prompt_cache_miss_tokens": 137,
+        "cached_tokens": 2048
+      },
+      "zai-org/GLM-5.3": {
+        "prompt_tokens": 11748,
+        "completion_tokens": 561,
+        "total_tokens": 12309,
+        "prompt_cache_hit_tokens": 9728,
+        "prompt_cache_miss_tokens": 2020,
+        "cached_tokens": 9728
+      }
+    },
+    "recorded_cost_usd": 0.05424012,
+    "rejected_responses": [
+      {
+        "model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+        "accepted": false,
+        "finish_reason": "length",
+        "usage": {
+          "prompt_tokens": 2185,
+          "completion_tokens": 8192,
+          "total_tokens": 10377,
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 137,
+          "cached_tokens": 2048
+        }
+      }
+    ],
+    "handoffs": [
+      {
+        "from_model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+        "to_model": "zai-org/GLM-5.3",
+        "reason": "model output was truncated"
+      }
+    ]
+  },
+  "post_matrix_gate_audit": {
+    "histories": 36,
+    "all_tool_receipt_ids_unique": true,
+    "all_33_completed_tasks_passed_final_gate": true
+  },
+  "simulator_pin_regression": {
+    "rejected_pair": {
+      "mujoco": "3.13.0",
+      "gymnasium-robotics": "1.4.2"
+    },
+    "observed_failure": "Fetch initialization asserts because enum tuple membership rejects NumPy joint scalars",
+    "confirmed_pair": {
+      "mujoco": "3.3.7",
+      "gymnasium-robotics": "1.4.2"
+    },
+    "negative_control_tests_passed": 2
+  },
+  "limitations": [
+    "Three confirmation pairs on six previously known tasks; not general model parity or statistical non-inferiority.",
+    "Earlier six-pair matrix includes one disk-exhaustion interruption: specialists 198/216 versus Astra 216/216. Its full time and token cost are unknown.",
+    "All original and interrupted trials remain visible; confirmation trials do not replace them.",
+    "Astra had matched Workbench tools and a concurrent batch operation; unrestricted Codex teams were not compared.",
+    "Fixed scripted controller; agents interpret instructions, repair plans and orchestrate simulation, not learn control.",
+    "Estimated Standard API-equivalent token costs are not invoices; host and development costs excluded; no Token Factory cache discount assumed.",
+    "Sampling, task clarity and completion policy changed together; no ablation isolates each contribution."
+  ]
+}

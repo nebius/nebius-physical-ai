@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import numpy as np
 import pytest
 
 from npa.sdk.workbench.token_factory import RobotSdgRequest, robot_sdg
-from npa.workbench.token_factory import robot_sim
+from npa.workbench.token_factory import robot_artifacts, robot_sim
 from npa.workbench.token_factory.sdg_protocol import FAST_MODEL, REASONING_MODEL
 
 pytestmark = pytest.mark.token_factory_e2e
@@ -123,3 +124,78 @@ def test_live_open_gripper_control_is_rejected(tmp_path, monkeypatch):
     assert not result["accepted"]
     assert not result["checks"]["bilateral_grasp_contact"]
     assert not result["checks"]["lifted"]
+
+
+def _recorded_export_episode(root):
+    scene = {
+        "object_x": -0.1,
+        "object_y": -0.08,
+        "goal_x": 0.1,
+        "goal_y": 0.08,
+        "object_color": "red",
+        "target_color": "green",
+        "lighting": 1.0,
+    }
+    relative = "episodes/episode_0000"
+    result = robot_sim.simulate_robot_episode(scene, seed=42, output=root / relative)
+    assert result["accepted"]
+    return [
+        {
+            "id": "retry-proof",
+            "status": "accepted",
+            "scene": scene,
+            "episode_path": relative,
+            "simulation_seed": 42,
+            "simulation": result,
+        }
+    ]
+
+
+def _verify_export_with_native_reader(root, records, native_python):
+    repository = Path(__file__).resolve().parents[3]
+    expected = root / "expected-episodes.json"
+    expected.write_text(json.dumps(records))
+    receipt = root / "native-export-retry.json"
+    subprocess.run(
+        [
+            native_python,
+            str(
+                repository / "npa/examples/specialists/robot_workflow/native_dataset.py"
+            ),
+            "--input",
+            str(root),
+            "--expected",
+            str(expected),
+            "--output",
+            str(receipt),
+        ],
+        check=True,
+    )
+    result = json.loads(receipt.read_text())
+    assert result["status"] == "passed"
+    assert result["native_episodes"] == 1 and result["native_frames"] == 185
+
+
+def test_live_native_export_rolls_back_and_retries(tmp_path, monkeypatch):
+    _gate()
+    native_python = os.environ.get("NPA_LEROBOT_PROOF_PYTHON")
+    assert native_python and Path(native_python).is_file()
+    records = _recorded_export_episode(tmp_path)
+    original = copy.deepcopy(records)
+    raw_hashes = robot_artifacts.robot_artifact_hashes(tmp_path)
+    convert = robot_artifacts.convert
+
+    def fail_after_native_conversion(*args, **kwargs):
+        convert(*args, **kwargs)
+        raise OSError(
+            "Injected publication failure after real video and Parquet conversion"
+        )
+
+    monkeypatch.setattr(robot_artifacts, "convert", fail_after_native_conversion)
+    with pytest.raises(OSError, match="Injected publication failure"):
+        robot_artifacts.export_robot_dataset(tmp_path, records)
+    assert records == original and not (tmp_path / "dataset").exists()
+    assert robot_artifacts.robot_artifact_hashes(tmp_path) == raw_hashes
+    monkeypatch.setattr(robot_artifacts, "convert", convert)
+    assert robot_artifacts.export_robot_dataset(tmp_path, records) == 1
+    _verify_export_with_native_reader(tmp_path, records, native_python)

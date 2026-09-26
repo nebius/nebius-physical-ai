@@ -137,6 +137,14 @@ service with live Token Factory and an intentionally absent Jev key. The full
 suite also requires real accepted Jev choices through that service. It starts an
 isolated loopback backend with synthetic state and does not deploy a VM.
 
+Use `-k jev_langgraph_token_factory_repairs_workflow` for the specialist stack
+check. It requires an accepted Jev choice, then runs a LangGraph specialist
+against that actual Token Factory endpoint to repair a copied PAIDF Cosmos3
+workflow and pass Workbench's native validation and planning. It records the
+route and generation usage separately. It does not submit a GPU workload.
+Missing Jev credentials fail before any provider call. See the
+[required stack configuration](specialists-jev-stack.md).
+
 ## Recorded Token Factory proof
 
 The [sanitized JSON evidence](../architecture/evidence/jev-token-factory-cache.json)

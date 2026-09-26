@@ -100,13 +100,7 @@ def _initialization_evidence(
 ) -> dict[str, Any]:
     report_path = Path(ncore_json).parent / "conversion.json"
     report = json.loads(report_path.read_text()) if report_path.is_file() else {}
-    count = report.get("counts", {}).get("points")
-    if not report:
-        count = sum(
-            len(points.get_pc_xyz(index))
-            for points in _point_readers(ncore_json).values()
-            for index in range(points.pcs_count)
-        )
+    count, source, legacy_sources = _point_inventory(ncore_json, report)
     if type(count) is not int or count <= 0:
         raise NurecError("initialization requires a nonempty NCore point inventory")
     return {
@@ -118,11 +112,30 @@ def _initialization_evidence(
         "point_cloud_path": str(target),
         "point_count": count,
         "reference_frame": "world",
-        "source": "NCore PointCloudsComponent SfM XYZ and rgb",
+        "source": source,
+        **({"legacy_sources": legacy_sources} if legacy_sources else {}),
         "ncore_meta_sha256": _sha256(Path(ncore_json)),
         "conversion_report_sha256": _sha256(report_path) if report else "",
         "sampling": "all source points; no optional random near/far points",
     }
+
+
+def _point_inventory(
+    ncore_json: str, report: dict[str, Any]
+) -> tuple[Any, str, dict[str, str]]:
+    source = "NCore PointCloudsComponent SfM XYZ and rgb"
+    if report:
+        return report.get("counts", {}).get("points"), source, {}
+    readers = _point_readers(ncore_json)
+    count = sum(
+        len(points.get_pc_xyz(index))
+        for points in readers.values()
+        for index in range(points.pcs_count)
+    )
+    legacy_sources = _legacy_sources(readers)
+    if legacy_sources:
+        source = readers["virtual_lidar"].source_description
+    return count, source, legacy_sources
 
 
 def _native_overrides(target: Path, count: int) -> tuple[str, ...]:
@@ -144,7 +157,20 @@ def _point_readers(ncore_json: str) -> dict[str, Any]:
             "multi-camera initialization requires the public NVIDIA NCore V4 reader"
         ) from exc
     reader = SequenceComponentGroupsReader([UPath(ncore_json)])
-    return reader.open_component_readers(PointCloudsComponent.Reader)
+    points = reader.open_component_readers(PointCloudsComponent.Reader)
+    if points:
+        return points
+    from npa.workbench.nurec.ncore_legacy_sfm import legacy_sfm_readers
+
+    return legacy_sfm_readers(reader)
+
+
+def _legacy_sources(readers: dict[str, Any]) -> dict[str, str]:
+    return {
+        name: points.source_sha256
+        for name, points in readers.items()
+        if getattr(points, "source_sha256", "")
+    }
 
 
 def export_initialization(ncore_json: str, plan: dict[str, Any]) -> dict[str, Any]:
@@ -162,7 +188,7 @@ def export_initialization(ncore_json: str, plan: dict[str, Any]) -> dict[str, An
     if not plan:
         return {}
     _verify_source(ncore_json, plan)
-    clouds, components = _read_clouds(ncore_json)
+    clouds, components = _read_clouds(ncore_json, plan.get("legacy_sources", {}))
     count = sum(len(xyz) for xyz, _ in clouds)
     if not count or count != plan["point_count"]:
         raise NurecError(
@@ -191,14 +217,26 @@ def _verify_source(ncore_json: str, plan: dict[str, Any]) -> None:
     expected = plan["conversion_report_sha256"]
     if expected and _sha256(Path(ncore_json).parent / "conversion.json") != expected:
         raise NurecError("conversion inventory changed during initialization export")
+    if plan.get("legacy_sources"):
+        _verify_legacy_sources(_point_readers(ncore_json), plan["legacy_sources"])
+
+
+def _verify_legacy_sources(readers: dict[str, Any], expected: dict[str, str]) -> None:
+    if _legacy_sources(readers) != expected:
+        raise NurecError(
+            "legacy SfM source points changed since initialization planning"
+        )
 
 
 def _read_clouds(
     ncore_json: str,
+    expected_legacy_sources: dict[str, str],
 ) -> tuple[list[tuple[np.ndarray, np.ndarray]], list[dict]]:
     clouds = []
     components = []
-    for name, points in _point_readers(ncore_json).items():
+    readers = _point_readers(ncore_json)
+    _verify_legacy_sources(readers, expected_legacy_sources)
+    for name, points in readers.items():
         for index in range(points.pcs_count):
             xyz, rgb = _read_cloud(points, index)
             clouds.append((xyz, rgb))

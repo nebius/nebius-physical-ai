@@ -1492,12 +1492,14 @@ def _assert_nurec_novel_media(local: Path) -> dict[str, set[int]]:
     import av
     from PIL import Image
 
-    from npa.workflows.data_factory_viz import _frame_index, _grouped_images
-
-    groups = _grouped_images(local / "novel_views")
+    sources = _nurec_source_image_paths(local)
+    groups: dict[str, dict[int, Path]] = {}
+    for (entity, index), path in sources.items():
+        if entity.startswith("/novel_view/"):
+            groups.setdefault(entity.removeprefix("/novel_view/"), {})[index] = path
     assert groups, "NuRec published no novel-view image frames"
     for paths in groups.values():
-        for path in paths:
+        for path in paths.values():
             with Image.open(path) as image:
                 image.load()
                 assert min(image.size) > 0, "empty novel-view image"
@@ -1510,10 +1512,7 @@ def _assert_nurec_novel_media(local: Path) -> dict[str, set[int]]:
                 assert pixels.size > 0, "empty novel-view video frame"
                 count += 1
         assert count > 0, "novel-view MP4 has no decoded frames"
-    return {
-        name: {_frame_index(path.stem) for path in paths}
-        for name, paths in groups.items()
-    }
+    return {name: set(paths) for name, paths in groups.items()}
 
 
 def _nurec_rrd_document(chunks: list, entity: str) -> dict:
@@ -1581,17 +1580,47 @@ def _nurec_rrd_review_settings(chunks: list) -> dict:
     return settings
 
 
-def _nurec_selected_frame_identities(
-    local: Path, settings: dict
-) -> set[tuple[str, int]]:
-    """Derive the intended review identities from ordered source render paths."""
-    from npa.workflows.data_factory_viz import _frame_index, _grouped_images, _subsample
+def _nurec_source_image_paths(local: Path) -> dict[tuple[str, int], Path]:
+    """Enumerate source modalities and numeric identities without writer helpers."""
+    images = {}
+    for directory, prefix in (
+        ("novel_views", "/novel_view"),
+        ("reconstruction", "/reconstruction"),
+    ):
+        root = local / directory
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+            }:
+                continue
+            match = re.search(r"(\d+)\D*$", path.stem)
+            assert match, "source review image lacks a numeric frame identity"
+            parent = path.parent.relative_to(root).as_posix()
+            entity = f"{prefix}/{parent if parent != '.' else 'frames'}"
+            identity = (entity, int(match.group(1)))
+            assert identity not in images, "duplicate source entity/frame identity"
+            images[identity] = path
+    return images
 
-    selected = set()
-    for camera, paths in _grouped_images(local / "novel_views").items():
-        for path in _subsample(paths, settings["max_frames_per_entity"]):
-            selected.add((camera, _frame_index(path.stem)))
-    return selected
+
+def _assert_nurec_rrd_selection(source: set, observed: set, cap: int) -> None:
+    """Require complete entities, exact counts and endpoints, not one interpolation."""
+    entities = {entity for entity, _ in source}
+    assert {entity for entity, _ in observed} == entities, "RRD identities differ"
+    for entity in entities:
+        available = {index for name, index in source if name == entity}
+        selected = {index for name, index in observed if name == entity}
+        count = len(available) if cap <= 0 else min(len(available), cap)
+        assert len(selected) == count, "RRD identities differ: frame count"
+        endpoints = {min(available)}
+        if count > 1:
+            endpoints.add(max(available))
+        assert endpoints <= selected, "RRD identities differ: missing endpoint"
+        if cap <= 0 or len(available) <= cap:
+            assert selected == available, "RRD identities differ: uncapped frames"
 
 
 def _nurec_review_image_bytes(
@@ -1602,21 +1631,16 @@ def _nurec_review_image_bytes(
 
     from PIL import Image
 
-    from npa.workflows.data_factory_viz import _frame_index, _grouped_images
-
     images = {}
     max_dim = settings["max_frame_dim"]
-    for camera, paths in _grouped_images(local / "novel_views").items():
-        for path in paths:
-            key = (camera, _frame_index(path.stem))
-            assert key not in images, "duplicate rendered camera/frame identity"
-            with Image.open(path) as source:
-                rgb = source.convert("RGB")
-                if max_dim > 0 and max(rgb.size) > max_dim:
-                    rgb.thumbnail((max_dim, max_dim))
-                encoded = io.BytesIO()
-                rgb.save(encoded, format="JPEG", quality=settings["jpeg_quality"])
-            images[key] = encoded.getvalue()
+    for key, path in _nurec_source_image_paths(local).items():
+        with Image.open(path) as source:
+            rgb = source.convert("RGB")
+            if max_dim > 0 and max(rgb.size) > max_dim:
+                rgb.thumbnail((max_dim, max_dim))
+            encoded = io.BytesIO()
+            rgb.save(encoded, format="JPEG", quality=settings["jpeg_quality"])
+        images[key] = encoded.getvalue()
     return images
 
 
@@ -1624,9 +1648,8 @@ def _nurec_rrd_frame_rows(chunks: list) -> Iterable[tuple[str, int, bytes]]:
     """Decode each image row without collapsing repeated camera/frame identities."""
     for chunk in chunks:
         entity = str(chunk.entity_path)
-        if not entity.startswith("/novel_view/"):
+        if not entity.startswith(("/novel_view/", "/reconstruction/")):
             continue
-        camera = entity.removeprefix("/novel_view/")
         batch = chunk.to_record_batch()
         assert "EncodedImage:blob" in batch.schema.names, (
             "RRD novel view has no image data"
@@ -1638,7 +1661,7 @@ def _nurec_rrd_frame_rows(chunks: list) -> Iterable[tuple[str, int, bytes]]:
             strict=True,
         ):
             assert row and len(row) == 1, "RRD frame requires exactly one image"
-            yield camera, index, bytes(row[0])
+            yield entity, index, bytes(row[0])
 
 
 def _assert_nurec_rrd_frames(
@@ -1650,12 +1673,19 @@ def _assert_nurec_rrd_frames(
     from PIL import Image
 
     settings = _nurec_rrd_review_settings(chunks)
-    selected = _nurec_selected_frame_identities(local, settings)
     source_images = _nurec_review_image_bytes(local, settings)
+    novel_source = {
+        (entity.removeprefix("/novel_view/"), index)
+        for entity, index in source_images
+        if entity.startswith("/novel_view/")
+    }
+    assert novel_source == {
+        (camera, index) for camera, indices in expected.items() for index in indices
+    }, "novel-view media inventory differs from review sources"
     observed = set()
-    for camera, index, encoded in _nurec_rrd_frame_rows(chunks):
-        identity = (camera, index)
-        assert index in expected.get(camera, set()), "RRD frame absent from source"
+    for entity, index, encoded in _nurec_rrd_frame_rows(chunks):
+        identity = (entity, index)
+        assert identity in source_images, "RRD frame absent from source"
         assert identity not in observed, "duplicate RRD camera/frame identity"
         assert encoded == source_images[identity], (
             "RRD image bytes differ from this run's rendered frame"
@@ -1664,8 +1694,8 @@ def _assert_nurec_rrd_frames(
             image.load()
             assert min(image.size) > 0
         observed.add(identity)
-    assert observed == selected, (
-        "RRD camera/frame identities differ from the selected rendered frames"
+    _assert_nurec_rrd_selection(
+        set(source_images), observed, settings["max_frames_per_entity"]
     )
 
 

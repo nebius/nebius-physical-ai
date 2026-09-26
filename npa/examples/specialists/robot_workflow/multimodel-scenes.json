@@ -1,0 +1,101 @@
+{
+  "schema": "npa.robot-workflow.v1",
+  "cases": [
+    {
+      "id": "red-transfer",
+      "seed": 42,
+      "controller": "pick_place",
+      "expected_accepted": true,
+      "scene": {
+        "object_x": -0.1,
+        "object_y": -0.08,
+        "goal_x": 0.1,
+        "goal_y": 0.08,
+        "object_color": "red",
+        "target_color": "green",
+        "lighting": 1.0,
+        "reason": "Prepared diagonal transfer"
+      }
+    },
+    {
+      "id": "open-gripper-control",
+      "seed": 42,
+      "controller": "open_gripper",
+      "expected_accepted": false,
+      "scene": {
+        "object_x": -0.1,
+        "object_y": -0.08,
+        "goal_x": 0.1,
+        "goal_y": 0.08,
+        "object_color": "red",
+        "target_color": "green",
+        "lighting": 1.0,
+        "reason": "Prepared physical failed-grasp control"
+      }
+    },
+    {
+      "id": "blue-transfer",
+      "seed": 44,
+      "controller": "pick_place",
+      "expected_accepted": true,
+      "scene": {
+        "object_x": -0.08,
+        "object_y": 0.1,
+        "goal_x": 0.09,
+        "goal_y": -0.1,
+        "object_color": "blue",
+        "target_color": "red",
+        "lighting": 1.0,
+        "reason": "Prepared opposite diagonal transfer"
+      }
+    },
+    {
+      "id": "red-transfer-lighting-shift",
+      "seed": 142,
+      "controller": "pick_place",
+      "expected_accepted": true,
+      "scene": {
+        "object_x": -0.1,
+        "object_y": -0.08,
+        "goal_x": 0.1,
+        "goal_y": 0.08,
+        "object_color": "orange",
+        "target_color": "blue",
+        "lighting": 0.7,
+        "reason": "Prepared diagonal transfer"
+      }
+    },
+    {
+      "id": "open-gripper-control-lighting-shift",
+      "seed": 142,
+      "controller": "open_gripper",
+      "expected_accepted": false,
+      "scene": {
+        "object_x": -0.1,
+        "object_y": -0.08,
+        "goal_x": 0.1,
+        "goal_y": 0.08,
+        "object_color": "orange",
+        "target_color": "blue",
+        "lighting": 1.2,
+        "reason": "Prepared physical failed-grasp control"
+      }
+    },
+    {
+      "id": "blue-transfer-lighting-shift",
+      "seed": 144,
+      "controller": "pick_place",
+      "expected_accepted": true,
+      "scene": {
+        "object_x": -0.08,
+        "object_y": 0.1,
+        "goal_x": 0.09,
+        "goal_y": -0.1,
+        "object_color": "green",
+        "target_color": "orange",
+        "lighting": 1.2,
+        "reason": "Prepared opposite diagonal transfer"
+      }
+    }
+  ]
+}
