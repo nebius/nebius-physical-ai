@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,8 @@ def plan_initialization(
     cameras, lidars = ncore_sensor_ids(ncore_json)
     config = replace(
         config,
-        camera_ids=config.camera_ids or cameras,
+        camera_ids=config.camera_ids
+        or _default_cameras(config, ncore_json, cameras, lidars),
         lidar_ids=config.lidar_ids or lidars or (NO_LIDAR_SENTINEL,),
     )
     if not _needs_accumulated_points(config, ncore_json):
@@ -61,6 +63,40 @@ def plan_initialization(
     return replace(
         config, extra_overrides=(*overrides, *config.extra_overrides)
     ), evidence
+
+
+def _default_cameras(config, ncore_json, cameras, lidars):
+    explicit = any(
+        value.partition("=")[0].lstrip("+") == "dataset.camera_ids"
+        for value in config.extra_overrides
+    )
+    if explicit or len(cameras) < 2 or not lidars:
+        return cameras
+    if config.lidar_ids and not set(config.lidar_ids).intersection(lidars):
+        return cameras
+    if any(
+        value.partition("=")[0].lstrip("+~") == "dataset.lidar_ids"
+        for value in config.extra_overrides
+    ):
+        return cameras
+    if not _needs_accumulated_points(config, ncore_json):
+        return cameras
+    if (Path(ncore_json).parent / "conversion.json").exists():
+        return cameras
+    if _point_readers(ncore_json):
+        return cameras
+    reference = read_rig_sidecar(ncore_json)["reference_camera"]
+    if reference not in cameras:
+        raise NurecError("derived rig reference camera is absent from the capture")
+    warnings.warn(
+        f"Native LiDAR SfM initialization uses only rig reference camera {reference!r}; "
+        f"other capture cameras {sorted(set(cameras) - {reference})} are excluded. "
+        "Use --camera-id to select one camera explicitly. Converted NCore captures "
+        "with PointCloudsComponent data retain all cameras.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return (reference,)
 
 
 def _selected_cameras(config: NurecConfig) -> tuple[str, ...]:
@@ -108,7 +144,11 @@ def _initialization_evidence(
             for index in range(points.pcs_count)
         )
     if type(count) is not int or count <= 0:
-        raise NurecError("initialization requires a nonempty NCore point inventory")
+        raise NurecError(
+            "initialization requires a nonempty NCore point inventory for multiple "
+            "cameras. Provide PointCloudsComponent data, or select one camera with "
+            "--camera-id when using native LiDAR SfM initialization."
+        )
     return {
         "status": "planned",
         "recipe": config.config_name,
