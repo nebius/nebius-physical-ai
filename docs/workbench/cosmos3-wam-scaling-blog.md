@@ -85,6 +85,15 @@ eight-GPU worker now passes the Slurm/NCCL preflight and is executing the full
 2,000-step schedule. The two-node comparison awaits sufficient free reserved
 capacity. Completed performance answers remain pending.
 
+![Eight B200s executing the actual WAM training job](evidence/cosmos3-wam-live-training/training-snapshot.png)
+
+This [live snapshot](evidence/cosmos3-wam-live-training/README.md), taken shortly
+after update 1,200, attributes all eight GPU processes to the native training
+command and its Slurm job. Reported utilization was 88–100% and device memory
+use was 55.85–58.55 GiB per GPU. A single utilization sample establishes live
+execution; the completed timing runs and evaluations answer performance and
+quality questions.
+
 The live preparation test also found an operational issue: the native converter
 could resolve a moving processor revision. The recipe now selects the staged
 processor and VAE explicitly and pins the training tokenizer separately.
