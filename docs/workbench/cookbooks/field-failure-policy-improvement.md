@@ -9,8 +9,11 @@ held-out scenarios, and writes an evidence-backed promotion recommendation.
 The YAML owns all six stages and runs through the standard SkyPilot runtime.
 There is no deployment stage or additional orchestration service.
 
-**Native loop GPU acceptance is pending.** Public reference inputs and a learned
-baseline are prepared; no completed fine-tuning or paired comparison is claimed.
+**Full native loop GPU acceptance remains incomplete.** A public reference run
+completed all six runtime stages, native fine-tuning and paired comparison.
+Strict artifact collection and serialized-checkpoint verification passed, but
+the required held-out candidate after-load vendor observation was not retained.
+Independent raw-outcome review passed; the original observer gate failed.
 Proprietary robot/scan integration remains
 operator input. The repository supplies executable validation, adapter invocation,
 durable handoffs, comparison, and native reference adapters described below.
@@ -18,6 +21,55 @@ The reference requires the metric RGB-D reconstruction and shared-scene Isaac
 navigation components in the same reviewed source distribution. It does not
 establish compatibility with a proprietary robot or trainer. Missing components,
 adapters or invalid evidence fail the stage. Schema validity does not establish readiness.
+
+## Measured public-reference result and remaining proof gap
+
+A complete six-stage run used RTX PRO 6000 GPUs for native fine-tuning and
+paired evaluation. All six runtime stages succeeded; strict artifact collection
+and a separate serialized-checkpoint review passed. Fine-tuning continued the
+exact baseline for 500 PPO updates and 16 million configured control transitions
+across 4,000 robots. All 24 native scalar series contain 500 rows. The original
+and pre-update serialized policy, optimizer and iteration states match; this
+does not claim restoration of unsaved simulator or RNG state.
+
+| Measured cohort | Baseline successes | Candidate successes | Role |
+| --- | ---: | ---: | --- |
+| Reconstructed scan, training-exposed replay | 759 / 4,000 (18.975%) | 3,456 / 4,000 (86.4%) | Diagnostic replay only |
+| Untouched held-out cohort | 131 / 4,000 (3.275%) | 0 / 4,000 (0%) | Promotion decision |
+
+These figures were independently recomputed from all four 4,000-case native
+trajectories and agree with strict collection. The candidate passed the 80%
+standalone success threshold on the training-exposed scan; both held-out arms
+failed that threshold. The sealed comparison says
+**retain the baseline** and reports 8,683 case/metric regression rows; these are
+not 8,683 distinct episodes. Training-scene improvement did not generalize to
+the held-out cohort. No deployment is authorized.
+
+**Full GPU acceptance remains incomplete.** The original observer check failed
+because the held-out candidate evaluation has no retained after-load
+vendor observation. Its four control-start records and final-process bytes were
+retained, but do not satisfy that separate requirement. Any later confirmation
+must retain its own execution and provenance; it cannot rewrite this original
+gap or turn the original observer check into a pass.
+
+This reference uses public calibrated RGB-D input, CPU TSDF reconstruction,
+collider-bearing USDZ geometry, and a public quadruped with static range
+observations in a shared scene. Auxiliary rendered views are evidence for the
+observed focal rollout, not camera-conditioned policy input or visual isolation
+of 4,000 camera-observing robots. Private robot, camera architecture, calibration
+and recorded physical-failure integration remain unqualified. The audited
+training objective also adds an arrival bonus, so a measured change cannot be
+attributed solely to reconstruction. A neural Gaussian USDZ alone does not
+establish navigation collision geometry or a trained policy.
+
+The measured reference requires the reviewed combined distribution of
+[#802](https://github.com/nebius/nebius-physical-ai/pull/802),
+[#805](https://github.com/nebius/nebius-physical-ai/pull/805) and
+[#806](https://github.com/nebius/nebius-physical-ai/pull/806). Its 57 changed domain
+implementation files match the executed source byte-for-byte; #802 alone lacks
+its cross-PR imports. This is component identity, not whole-checkout equality
+or GPU qualification of later revisions. The original execution retains its
+own immutable source and image identities.
 
 ## Native metric-capture and Isaac reference
 

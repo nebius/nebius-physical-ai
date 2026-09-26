@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The graph invokes reconstruction, fine-tuning and paired navigation adapters. Native reference implementations join the metric RGB-D and shared-scene Isaac components, with separate training-exposed replay. Contract tests pass; full native GPU acceptance remains pending.",
+      "reason": "The graph invokes reconstruction, fine-tuning and paired navigation adapters. The combined public reference completed all six runtime stages, strict artifact collection, independent raw-outcome verification and serialized-learning checks. The required held-out candidate after-load vendor observation was not retained; the original observer gate failed. Full native GPU acceptance remains incomplete.",
       "evidence": [
         "npa/tests/workflows/field_failure/test_field_failure_workflow.py",
         "npa/tests/workflows/field_failure/test_evidence.py",
@@ -28,7 +28,7 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "The default spec needs an operator capture, checkpoint, sealed held-out cohort, protocol and adapter bundle. Public reference inputs and a learned baseline are prepared for native acceptance, which remains pending. No recorded physical robot failure or private policy integration is claimed.",
+      "reason": "The default spec needs operator-provided captures, checkpoint, sealed held-out cohort, protocol and adapter bundle. A public reference completed fine-tuning and comparison; this does not supply these defaults or qualify recorded physical robot failures, private policies or camera-conditioned navigation.",
       "evidence": []
     },
     "credentials": {
@@ -38,12 +38,12 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "Select immutable compatible runtimes and verified adapter/source inventories. The native reference also requires metric reconstruction and shared-scene navigation in one reviewed source distribution; default images remain unresolved placeholders.",
+      "reason": "Select immutable compatible runtimes and verified adapter/source inventories. The measured native reference requires the reviewed combined metric-reconstruction, shared-scene-navigation and field-loop source distribution; this contribution alone lacks its cross-PR imports. Default images remain unresolved placeholders.",
       "evidence": []
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Full native acceptance of this reconstruction, fine-tuning and paired-comparison workflow remains pending. Separate component training does not qualify the complete loop. Use committed opt-in live coverage.",
+      "reason": "All six runtime stages, strict collection, independent raw-outcome verification and serialized-learning checks completed on the public reference. Complete native GPU acceptance remains pending because the held-out candidate after-load vendor observation is absent; preserve the failed original observer gate. The measured decision retains the baseline. The selected deployment target still requires its own readiness checks.",
       "evidence": []
     }
   }
