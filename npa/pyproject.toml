@@ -121,7 +121,7 @@ adapter = [
 ]
 robot-sdg = [
     "gymnasium-robotics==1.4.2",
-    "mujoco==3.13.0",
+    "mujoco==3.14.0",
 ]
 groot = [
     "nvidia-gr00t-sdk==0.1.0",
