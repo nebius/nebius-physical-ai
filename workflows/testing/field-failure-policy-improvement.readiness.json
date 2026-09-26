@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "cb2f6534eb64010a0d6b76e0646879c3a418635c6a064d23c0c9258a329f4ab3",
+  "workflow_sha256": "bdba563d57abf8038841ec243cba0fcc551b9c4f6e0ed1b4da5e3886007ba5fa",
   "planning": {
     "validation": {
       "status": "verified",
@@ -28,7 +28,7 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "No field captures, existing navigation checkpoint, sealed held-out cohort, protocol, or adapter bundle was supplied.",
+      "reason": "The default spec needs an operator capture, checkpoint, sealed held-out cohort, protocol and adapter bundle. Public reference inputs and a learned baseline are prepared for native acceptance, which remains pending. No recorded physical robot failure or private policy integration is claimed.",
       "evidence": []
     },
     "credentials": {
@@ -43,7 +43,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Declared RTX Kubernetes runtime, native simulator compatibility, and GPU acceptance have not been tested. Use committed opt-in live coverage.",
+      "reason": "Full native acceptance of this reconstruction, fine-tuning and paired-comparison workflow remains pending. Separate component training does not qualify the complete loop. Use committed opt-in live coverage.",
       "evidence": []
     }
   }

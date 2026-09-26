@@ -54,7 +54,7 @@ def _train_scene(request, protocol, scene, checkpoint, root, index):
     )
     _initialize(source, protocol, checkpoint)
     output = root / f"trained-{index}"
-    report = _execute("train", source, output, protocol)
+    report = _execute(request, "train", source, output, protocol)
     candidate_replay = _diagnostic_replay(
         request, source, protocol, output / "policy.pt", root, f"candidate-{index}"
     )
@@ -112,7 +112,8 @@ def _initialize(source, protocol, checkpoint):
     read_recipe(source)
 
 
-def _execute(stage, source, output, protocol):
+def _execute(request, stage, source, output, protocol):
+    from npa.workflows.field_failure.native_failure import retain_failure
     from npa.workflows.navigation.stages import prepare, run_stage
 
     image = protocol["navigation_image"]
@@ -120,7 +121,13 @@ def _execute(stage, source, output, protocol):
         raise ValueError("executing native image differs from the sealed protocol")
     prepared = source.parent / (output.name + "-prepared")
     prepare(str(source), str(prepared), image)
-    return run_stage(stage, str(prepared), str(output))
+    try:
+        return run_stage(stage, str(prepared), str(output))
+    except Exception:
+        # The outer adapter owns a temporary directory; preserve the inner
+        # stage's failure publication before that directory is removed.
+        retain_failure(request, stage, output)
+        raise
 
 
 def _diagnostic_replay(request, source, protocol, checkpoint, root, name):
@@ -137,7 +144,7 @@ def _diagnostic_replay(request, source, protocol, checkpoint, root, name):
     (replay / "recipe.json").write_text(json.dumps(recipe, allow_nan=False))
     _initialize(replay, protocol, checkpoint)
     output = root / (name + "-replay-output")
-    report = _execute("evaluate-checkpoint", replay, output, protocol)
+    report = _execute(request, "evaluate-checkpoint", replay, output, protocol)
     from npa.workflows.navigation.artifacts import file_sha256
 
     if report.get("checkpoint_sha256") != file_sha256(checkpoint):
@@ -193,7 +200,7 @@ def _evaluate_scene(request, protocol, scene, checkpoint, root, index):
     if sorted(c.seed for c in recipe.eval_cases) != sorted(scene["seeds"]):
         raise ValueError("native held-out reset seeds differ from sealed cohort")
     output = root / f"evaluation-{index}"
-    report = _execute("evaluate-checkpoint", source, output, protocol)
+    report = _execute(request, "evaluate-checkpoint", source, output, protocol)
     if report.get("checkpoint_sha256") != request["policy"]["checkpoint"]["sha256"]:
         raise ValueError("native evaluation loaded a different checkpoint")
     trajectories = json.loads((output / "trajectory.json").read_text())

@@ -9,7 +9,9 @@ held-out scenarios, and writes an evidence-backed promotion recommendation.
 The YAML owns all six stages and runs through the standard SkyPilot runtime.
 There is no deployment stage or additional orchestration service.
 
-**GPU acceptance has not been run.** Proprietary robot/scan integration remains
+**Native loop GPU acceptance is pending.** Public reference inputs and a learned
+baseline are prepared; no completed fine-tuning or paired comparison is claimed.
+Proprietary robot/scan integration remains
 operator input. The repository supplies executable validation, adapter invocation,
 durable handoffs, comparison, and native reference adapters described below.
 The reference requires the metric RGB-D reconstruction and shared-scene Isaac
@@ -30,8 +32,10 @@ being included together. Their absence is an import failure, never a fallback.
 
 Reconstruction needs Open3D 0.19, Pillow, NumPy and OpenUSD in its selected
 Python runtime. This TSDF stage runs on CPU. The training and evaluation image
-must provide the pinned Isaac Sim 6.0.1 / Isaac Lab 3 beta runtime at
-`/isaac-sim/python.sh`, with an RTX GPU for native simulation and rendering.
+must provide the pinned Isaac Sim 6.0.1 / Isaac Lab 3 beta runtime through
+`ISAAC_LAB_PYTHON` (default `/isaac-sim/python.sh`), with an RTX GPU for native
+simulation and rendering. The measured NPA Isaac image uses
+`/opt/npa/sim/venv/bin/python`.
 Use a reviewed content-addressed NPA source overlay containing all three
 components, or bake that exact source into an immutable operator image.
 Source overlay bytes are separate from the base-image digest. The protocol
@@ -57,10 +61,15 @@ physical controls and reset cases; paired arms consume identical held-out bytes.
 
 Training loads the supplied baseline checkpoint before native PPO. With multiple
 training scenes, each subsequent scene continues from the previous result. Each
-scene also receives a baseline and candidate diagnostic replay of its declared
-training cases, with complete native artifacts retained. These replays are
-explicitly **training-exposed** and never contribute to promotion. Supply one
-training case per robot so the original scenarios can be replayed exactly.
+scene receives diagnostic replays of its declared training cases before and
+after that scene's training stage, with complete native artifacts retained.
+For a single scene, these compare the original baseline and final candidate.
+For multiple scenes, they compare intermediate checkpoints; they do not prove
+the final candidate improves every earlier capture. That claim requires an
+additional replay of the original baseline and final candidate on every capture.
+These replays are explicitly **training-exposed** and never contribute to
+promotion. Supply one training case per robot so the original scenarios can be
+replayed exactly.
 
 Held-out evaluation reloads each exact checkpoint and recomputes outcomes from
 the measured native trajectories. Supported metric names are `success`,
@@ -79,11 +88,22 @@ Each native held-out evaluation also retains its complete simulator output in
 scenario and measured report. Native rendered frames/video and full trajectories
 therefore remain available after the worker's temporary directory is removed.
 
+When native stage execution raises after publishing local output,
+the adapter uploads that output as `<native-output-name>-failure.tar` and a
+hash-bound `npa.field-failure.native-failure.v1` record under its private attempt
+prefix before temporary-directory cleanup. These archives retain `runtime.log`
+and any native failure or incomplete artifacts. The original exception still
+fails the stage; a failure archive is never accepted evaluation evidence.
+Keep these raw logs access-controlled. If archiving or upload also fails, that
+error retains the original native exception in its traceback chain.
+
 ## Required runtime and adapters
 
-Use an existing authorized RTX PRO 6000 Kubernetes target for the declared
-reconstruction, training, and evaluation profiles. NuRec and Isaac rendering need
-RT cores; do not substitute H100/H200. Configure credentials and vendor access
+Use an authorized RTX PRO 6000 Kubernetes target for native Isaac training and
+evaluation. The metric RGB-D reference reconstruction runs on CPU; select a CPU
+resource profile with its Open3D and OpenUSD dependencies. A separate NuRec adapter
+may require its own RTX reconstruction profile. NuRec and Isaac rendering need
+RT cores. Configure credentials and vendor access
 through the normal [workflow preflight](../npa-workflow-guide.md), outside the
 spec. This change builds no images and provisions no infrastructure.
 

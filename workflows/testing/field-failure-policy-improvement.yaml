@@ -4,11 +4,12 @@ metadata:
   name: field-failure-policy-improvement
   executionMode: runtime
   description: >-
-    Validate field navigation failures, reconstruct training scenarios through an
-    operator adapter, fine-tune the existing policy, evaluate both checkpoints on
+    Validate field navigation failures, reconstruct training scenarios through a
+    configured adapter, fine-tune the existing policy, evaluate both checkpoints on
     sealed held-out scenes and seeds, and recommend promotion only from complete
-    verified evidence. Requires real operator navigation adapters and data; no
-    built-in navigation policy, fabricated metrics, or production deployment.
+    verified evidence. Supply operator adapters or the native metric RGB-D and
+    shared-scene Isaac reference components, together with sealed input data and
+    immutable runtimes. The workflow does not deploy policies.
 config:
   bucket: example-bucket
   prefix: "field-failure/{{run.id}}"
