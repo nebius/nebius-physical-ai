@@ -17,7 +17,7 @@ from npa.guardrails.confidentiality import (
     scan_diff_text,
     scan_paths,
     scan_text,
-    should_skip_unconfigured_fork_pull_request,
+    should_skip_unconfigured_untrusted_pull_request,
     tracked_text_files,
 )
 
@@ -293,7 +293,7 @@ def test_should_skip_unconfigured_fork_pull_request(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    assert should_skip_unconfigured_fork_pull_request(
+    assert should_skip_unconfigured_untrusted_pull_request(
         "CUSTOMER_DENYLIST",
         environ={
             "GITHUB_EVENT_NAME": "pull_request",
@@ -317,7 +317,41 @@ def test_should_not_skip_same_repo_pull_request(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    assert not should_skip_unconfigured_fork_pull_request(
+    assert not should_skip_unconfigured_untrusted_pull_request(
+        "CUSTOMER_DENYLIST",
+        environ={
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_EVENT_PATH": str(event_file),
+            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
+        },
+    )
+
+
+def test_should_skip_unconfigured_dependabot_pull_request(tmp_path) -> None:
+    """Treat Dependabot as untrusted when Actions secrets are unavailable.
+
+    Args:
+        tmp_path: Per-test event directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Dependabot reaches a required private denylist load.
+    """
+    event_file = tmp_path / "event.json"
+    event_file.write_text(
+        json.dumps(
+            {
+                "repository": {"full_name": "nebius/nebius-physical-ai"},
+                "sender": {"login": "dependabot[bot]"},
+                "pull_request": {
+                    "head": {"repo": {"full_name": "nebius/nebius-physical-ai"}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert should_skip_unconfigured_untrusted_pull_request(
         "CUSTOMER_DENYLIST",
         environ={
             "GITHUB_EVENT_NAME": "pull_request",
