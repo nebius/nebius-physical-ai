@@ -187,6 +187,11 @@ descendant. Zero-byte directory markers do not prove completion or absence,
 and malformed/truncated pagination blocks recovery rather than authorizing
 duplicate work.
 
+Image override selectors must be an exact toolRef, a boundary-safe family
+prefix such as `workbench.fiftyone`, or the bare `*`. Glob-like and unmatched
+selectors fail before run preparation, provisioning, or source staging, even
+when image preflight is disabled. Validation considers every workflow branch.
+
 ## Reading status
 
 ```bash
