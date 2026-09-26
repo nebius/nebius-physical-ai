@@ -134,6 +134,11 @@ def evaluate_cmd(
     embodiment: str = typer.Option("", "--embodiment"),
     object_name: str = typer.Option("", "--object"),
     record_video: bool = typer.Option(False, "--record-video/--no-record-video"),
+    video_profile: str = typer.Option(
+        "standard",
+        "--video-profile",
+        help="Native capture profile: standard or film (4K).",
+    ),
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -153,6 +158,7 @@ def evaluate_cmd(
         embodiment: Optional registered robot override.
         object_name: Optional task-compatible object override.
         record_video: Require viewport video and its visual qualification.
+        video_profile: Standard capture or native 4K film capture.
         run_id: Optional identifier binding the resulting evidence.
         runtime_image: Optional exact image identity recorded in the manifest.
         dry_run: Build the request without executing the simulator.
@@ -176,6 +182,7 @@ def evaluate_cmd(
         embodiment=embodiment,
         object_name=object_name,
         record_video=record_video,
+        video_profile=video_profile,
         run_id=run_id,
         runtime_image=runtime_image,
         dry_run=dry_run,

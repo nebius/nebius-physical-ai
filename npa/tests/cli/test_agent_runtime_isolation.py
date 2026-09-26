@@ -6,6 +6,7 @@ import ast
 import json
 import os
 import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -107,7 +108,7 @@ def test_deploy_does_not_activate_profile_before_project_resolution(monkeypatch)
 
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "scoped")
     monkeypatch.setattr(agent, "_resolve_project_alias", lambda _project: "owned")
-    monkeypatch.setattr(agent.shutil, "which", lambda _name: "/usr/bin/nebius")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/nebius")
 
     def resolve(*_args, **_kwargs):
         raise ReachedProjectResolution

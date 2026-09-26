@@ -34,8 +34,8 @@ npa workbench health preflight --checks all --offline  # presence only; Nebius i
 ```
 
 Valid `--checks` values are `all`, `hf`, `ngc`, `s3`, `token_factory`,
-`nebius`. The default remains `hf,ngc,s3,token_factory`, so hosted-inference
-work does not require a Nebius Cloud profile. Explicit `all` includes `nebius`.
+`encord`, `nebius`. The default remains `hf,ngc,s3,token_factory`, so hosted-inference
+work does not require a Nebius Cloud profile. Explicit `all` includes `encord` and `nebius`.
 Empty selections and unknown check names are errors, including unknown names
 combined with `all`. Repeated names run once.
 
@@ -74,8 +74,9 @@ resource still depends on the selected identity's access to that project.
 
 Online `hf` authenticates against Hugging Face `whoami-v2`; public repository
 metadata is not sufficient. Online `ngc` performs a registry token exchange;
-that proves the key, not entitlement to every NGC artifact. `access` performs
-the capability-specific repository/artifact probe.
+that proves the key, not entitlement to every NGC artifact. Online `encord`
+authenticates and performs the cheapest read-only storage-folder listing.
+`access` performs the capability-specific repository/artifact probe.
 
 `access` answers the different and more specific question *"is my token actually
 entitled to fetch bytes from the gated assets this capability pulls?"* It probes
@@ -94,7 +95,7 @@ Capabilities: `all`, `cosmos`, `cosmos3`, `cosmos3-serving`, `groot`, `lerobot`,
 
 For anything still gated, `access` prints the exact "Agree and access
 repository" URL. **Hugging Face gated licenses must be accepted interactively on
-the model page** — there is no API that accepts them for you, so no amount of
+the model page.** There is no API that accepts them for you, so no amount of
 retrying or re-tokenizing will clear a gate. Open the printed URL, accept, then
 re-run. `scripts/accept-model-access.sh` collects the URLs for a batch.
 
@@ -103,7 +104,7 @@ re-run. `scripts/accept-model-access.sh` collects the URLs for a batch.
 The recurring cold-start failure this prevents is a mid-run stop after you have
 already paid for a cluster. Run the checks in this order:
 
-1. `npa configure --show` — confirm the project stanza, bucket, and endpoint you
+1. `npa configure --show`: confirm the project stanza, bucket, and endpoint you
    think you are using are the ones on disk.
 2. `npa workbench health preflight` — credentials exist and authenticate.
 3. `npa workbench health preflight --checks nebius`: the selected Nebius CLI
@@ -195,12 +196,12 @@ with `npa workbench workflow gpus --cluster <name>`.
   you have not verified anything about NGC.
 - **`preflight` does not check Kubernetes or SkyPilot.** Cluster readiness is
   `npa skypilot verify --cluster <exact-context>` and `npa cluster status`;
-  registry pullability is `workflow preflight-images`. Three separate gates,
-  three separate commands.
+  registry pullability is `workflow preflight-images`, so run each command to
+  verify its separate dependency.
 - **Stale `NEBIUS_IAM_TOKEN` defeats provider calls even when health is green.**
-  The Nebius provider prefers an ambient (often expired) token over the fresh CLI
-  token. `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` before provisioning or
-  submitting.
+  The Nebius provider prefers an ambient, often expired token over the fresh CLI
+  token, so `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` before provisioning
+  or submitting.
 
 ## Verify
 

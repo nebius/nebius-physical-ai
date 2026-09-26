@@ -20,7 +20,26 @@ def _fake_kubectl(monkeypatch: pytest.MonkeyPatch, *, phase: str, returncode: in
 
     monkeypatch.setattr(preflight.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(preflight.subprocess, "run", fake_run)
+    monkeypatch.setattr(preflight, "context_namespace", lambda **kwargs: "default")
     return calls
+
+
+def test_cache_lookup_follows_selected_context(monkeypatch):
+    calls = _fake_kubectl(monkeypatch, phase="Bound")
+    monkeypatch.setattr(preflight, "context_namespace", lambda **kwargs: "team-a")
+    assert preflight.find_model_cache_claim(context="ctx") == "npa-model-cache"
+    assert calls[0][calls[0].index("-n") + 1] == "team-a"
+
+
+def test_unreadable_namespace_does_not_adopt_default_cache(monkeypatch):
+    calls = _fake_kubectl(monkeypatch, phase="Bound")
+
+    def unreadable(**kwargs):
+        raise ValueError("unreadable context")
+
+    monkeypatch.setattr(preflight, "context_namespace", unreadable)
+    assert preflight.find_model_cache_claim(context="ctx") == ""
+    assert not calls
 
 
 def test_a_bound_claim_is_adopted_without_being_named(
