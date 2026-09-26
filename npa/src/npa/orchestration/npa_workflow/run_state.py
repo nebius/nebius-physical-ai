@@ -12,6 +12,31 @@ from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
+_UNRESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
+    {
+        "block_indeterminate",
+        "block_after_uncertain_success",
+        "recovery_deadline_exhausted_verified_absent",
+        "interrupted_verified_absent",
+        "resume_block_terminal_or_legacy_absence",
+        "resume_block_output_present",
+        "resume_block_output_indeterminate",
+        "verified_absent_no_retry",
+        "reuse_completed_wave",
+        "block_output_reuse_evidence",
+    }
+)
+_RESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
+    {
+        "readiness_blocked",
+        "cancel_and_terminalize",
+        "terminalize",
+        "operator_authorized_absent_output_adoption",
+        "adopted_terminal_success_after_driver_failure",
+        "operator_authorized_verified_absent_relaunch",
+        "phantom_record_cancelled_verified_relaunch",
+    }
+)
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
 PAIDF_COSMOS3_WORKFLOW_NAME = "paidf-cosmos3"
 NVIDIA_PAIDF_VDA_WORKFLOW_NAME = "nvidia-paidf-vda-cosmos-transfer25"
@@ -28,6 +53,59 @@ def is_paidf_input_workflow_name(name: object) -> bool:
     """Whether submit owns real-video/LeRobot preparation for this workflow."""
 
     return str(name or "").strip() in PAIDF_INPUT_WORKFLOW_NAMES
+
+
+def _provider_job_status_is_terminal(value: object) -> bool:
+    state = str(value or "").strip().upper().replace("-", "_")
+    return state in {
+        "SUCCEEDED",
+        "SUCCESS",
+        "COMPLETED",
+        "DONE",
+        "FAILED",
+        "FAIL",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+    } or state.startswith("FAILED")
+
+
+def _wave_cancellation_is_verified(record: Mapping[str, Any]) -> bool:
+    cancellation = record.get("cancellation")
+    return (
+        isinstance(cancellation, Mapping)
+        and str(cancellation.get("state") or "").lower() == "verified"
+        and _provider_job_status_is_terminal(record.get("sky_status"))
+    )
+
+
+def _wave_was_never_launched(record: Mapping[str, Any]) -> bool:
+    launch_sequence = record.get("launch_sequence")
+    return (
+        not str(record.get("job_id") or "")
+        and type(launch_sequence) is int
+        and launch_sequence == 0
+        and not record.get("partial_launch")
+        and not record.get("recovery_reservation")
+    )
+
+
+def _wave_recovery_is_unresolved(record: Mapping[str, Any]) -> bool:
+    recovery = str(record.get("recovery_decision") or "")
+    cancellation_verified = _wave_cancellation_is_verified(record)
+    if recovery == "block_relaunch":
+        return not cancellation_verified
+    if recovery in _UNRESOLVED_WAVE_RECOVERY_DECISIONS:
+        return True
+    if recovery in _RESOLVED_WAVE_RECOVERY_DECISIONS:
+        return False
+    # An unknown persisted decision cannot prove that a provider job ended.
+    # Preserve exact reconciliation unless independent evidence resolves it.
+    return not (
+        cancellation_verified
+        or _wave_was_never_launched(record)
+        or _provider_job_status_is_terminal(record.get("sky_status"))
+    )
 
 
 def paidf_artifact_prefix(run_id: str) -> str:
@@ -228,6 +306,15 @@ class RuntimeRunState:
         watching it (crash, kill, lost connection). The managed job may still be
         alive, so a resumed run must reconcile it instead of submitting a second
         copy of the same work.
+
+        Args:
+            key: Exact durable wave key to reconcile.
+
+        Returns:
+            The unresolved wave record, or None when no reconciliation is needed.
+
+        Raises:
+            None.
         """
 
         for record in reversed(self.waves):
@@ -236,17 +323,7 @@ class RuntimeRunState:
             status = str(record.get("status") or "")
             if status == "succeeded":
                 return None
-            recovery = str(record.get("recovery_decision") or "")
-            unresolved = recovery in {
-                "block_indeterminate",
-                "block_after_uncertain_success",
-                "recovery_deadline_exhausted_verified_absent",
-                "interrupted_verified_absent",
-                "resume_block_terminal_or_legacy_absence",
-                "resume_block_output_present",
-                "resume_block_output_indeterminate",
-                "verified_absent_no_retry",
-            }
+            unresolved = _wave_recovery_is_unresolved(record)
             return dict(record) if status == "running" or unresolved else None
         return None
 
