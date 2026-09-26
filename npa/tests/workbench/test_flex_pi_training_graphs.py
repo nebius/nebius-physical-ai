@@ -584,3 +584,76 @@ def test_native_static_gradients_do_not_overwrite_accumulation(monkeypatch):
         expected_parameter -= 0.1 * sum(scales)
         assert parameter.item() == pytest.approx(expected_parameter)
     assert counts == {"forward": 4, "backward": 4}
+
+
+def _independent_native_capture(torch, graph_class):
+    fwd_graph, bwd_graph = graph_class(), graph_class()
+    static_gradient = torch.zeros(())
+
+    class Graphed(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, parameter):
+            fwd_graph.replay()
+            return parameter.clone()
+
+        @staticmethod
+        @torch.autograd.function.once_differentiable
+        def backward(ctx, gradient):
+            bwd_graph.replay()
+            static_gradient.copy_(gradient)
+            return (static_gradient.detach(),)
+
+    def graphed(*inputs):
+        return Graphed.apply(*inputs)
+
+    def forward(*inputs):
+        return graphed(*inputs)
+
+    return SimpleNamespace(forward=forward, autograd=Graphed)
+
+
+def test_observing_one_capture_leaves_other_captures_and_global_autograd_unchanged(
+    monkeypatch,
+):
+    torch = pytest.importorskip("torch")
+    native_backward = torch.autograd.backward
+    function_backward = torch.autograd.Function.backward
+    graph_class = type("NativeGraph", (), {"replay": lambda self: None})
+    monkeypatch.setattr(torch.cuda, "CUDAGraph", graph_class)
+    first = _independent_native_capture(torch, graph_class)
+    second = _independent_native_capture(torch, graph_class)
+    original_second = second.autograd.backward
+    counts = {"forward": 0, "backward": 0}
+    other_counts = dict(counts)
+    graphs._observe_native_replays(first, counts)
+    assert second.autograd.backward is original_second
+    graphs._observe_native_replays(second, other_counts)
+    first_parameter = torch.nn.Parameter(torch.tensor(2.0))
+    second_parameter = torch.nn.Parameter(torch.tensor(3.0))
+    for scale in (2.0, 5.0):
+        (first.forward(first_parameter) * scale).backward()
+        (second.forward(second_parameter) * (scale + 1)).backward()
+    assert first_parameter.grad.item() == 7.0
+    assert second_parameter.grad.item() == 9.0
+    assert counts == other_counts == {"forward": 2, "backward": 2}
+    assert torch.autograd.backward is native_backward
+    assert torch.autograd.Function.backward is function_backward
+
+
+def test_duplicate_native_observation_fails_without_stacking_wrappers(monkeypatch):
+    torch = pytest.importorskip("torch")
+    graph_class = type("NativeGraph", (), {"replay": lambda self: None})
+    monkeypatch.setattr(torch.cuda, "CUDAGraph", graph_class)
+    wrapper = _independent_native_capture(torch, graph_class)
+    counts = {"forward": 0, "backward": 0}
+    graphs._observe_native_replays(wrapper, counts)
+    backward = wrapper.autograd.backward
+    rejected_counts = dict(counts)
+    with pytest.raises(FlexPiError, match="already configured"):
+        graphs._observe_native_replays(wrapper, rejected_counts)
+    assert wrapper.autograd.backward is backward
+    parameter = torch.nn.Parameter(torch.tensor(3.0))
+    (wrapper.forward(parameter) * 5).backward()
+    assert parameter.grad.item() == 5
+    assert counts == {"forward": 1, "backward": 1}
+    assert rejected_counts == {"forward": 0, "backward": 0}

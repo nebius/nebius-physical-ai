@@ -21,6 +21,10 @@ inference with an import check, random action fixture, or manifest-only smoke.
 - DINOv3 uses its separate model license. The pinned converted Wan VAE/T5 and
   tokenizer repositories are Apache-2.0. They are operator runtime fetches;
   immutable revisions and heavyweight-file hashes are enforced before loading.
+- Before GPU allocation, run the HF credential preflight and the exact pinned
+  DINOv3 weight HEAD probe in `docs/workbench/flex-pi.md#packaging-and-terms`.
+  Flex-Pi is not in the generic health access catalog; an identity check or
+  repository listing does not prove payload access.
 - The public image must contain none of those weights, media, credentials, or
   populated caches. Run `npa/scripts/scan_image_flex_pi_payload.py` against the
   built image before any registry write.
@@ -40,7 +44,10 @@ epoch, use `--mode profile-resume` to prove the exact next 96 anchors and full
 fresh-process state/update parity after the real 30-update profile. This early
 diagnostic does not satisfy full-epoch, validation or final-resume acceptance.
 The final 36-sample update must preserve every anchor and use its actual
-denominator. Microbatch one and eager execution are fixed in this adapter.
+denominator. Microbatch one and eager execution are the defaults. Microbatch
+three and native MoT CUDA graphs are separate opt-in candidates; qualify each
+against its matched control. The recorded faster microbatch-three full run
+failed the unchanged held-out quality ceiling and must not be recommended.
 Freeze the baseline's `dataset_stats.json` and provide its exact S3 object with
 `--normalization-path` and `--normalization-sha256` for every independent
 comparison run. Checkpoints include these bytes and fresh resume must reload

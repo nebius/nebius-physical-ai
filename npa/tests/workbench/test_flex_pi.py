@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 from fastapi.testclient import TestClient
 import pytest
@@ -21,6 +22,29 @@ from npa.workbench.flex_pi.runtime import (
     run_inference,
 )
 from npa.workbench.flex_pi.service import create_app
+
+
+def test_workbench_resolves_flex_pi_lazily_in_a_fresh_interpreter():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+import npa.workbench
+assert 'npa.workbench.flex_pi' not in sys.modules
+assert 'flex_pi' in dir(npa.workbench)
+module = npa.workbench.flex_pi
+assert module is sys.modules['npa.workbench.flex_pi']
+assert npa.workbench.flex_pi is module
+assert callable(module.run_inference)
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _manifest(path: Path) -> Path:

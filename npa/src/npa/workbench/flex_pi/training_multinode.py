@@ -223,6 +223,13 @@ class _PeerWatch:
                 self.stop.wait(1)
         except Exception as error:
             self.error = error
+            # Keep backend messages (which may contain private endpoints) out of
+            # diagnostics; the original exception remains the coordinator cause.
+            print(
+                f"training node {self.rank} heartbeat monitor failed: "
+                f"{type(error).__name__}",
+                file=sys.stderr,
+            )
 
     def _check_peers(self):
         for peer, (previous, changed_at) in self.last_seen.items():

@@ -59,6 +59,40 @@ Cold workers use ModelScope's supported 16-way range downloader for the roughly
 11 GB converted UMT5 object. Set `MODELSCOPE_DOWNLOAD_PARALLELS` explicitly to
 reduce that concurrency when an operator-controlled network requires it.
 
+Before allocating GPUs, authenticate the operator's Hugging Face credential with
+`npa workbench health preflight --checks hf --json`, then probe the exact DINOv3
+weight object below. The generic health access catalog does not yet include
+Flex-Pi; an HF identity check or repository listing alone does not prove weight
+access. This HEAD request downloads no weights and never prints credentials or
+the signed download location:
+
+```bash
+npa/.venv/bin/python - <<'PY'
+from huggingface_hub import get_hf_file_metadata, get_token, hf_hub_url
+
+token = get_token()
+if not token:
+    raise SystemExit("HF credential is required for this access probe")
+url = hf_hub_url(
+    "timm/vit_base_patch16_dinov3.lvd1689m",
+    "model.safetensors",
+    revision="c6a5fb7d12bbd3cf3b0079253141c3332aaed7da",
+)
+try:
+    metadata = get_hf_file_metadata(url, token=token)
+except Exception as error:
+    raise SystemExit(f"DINOv3 payload access failed: {type(error).__name__}") from None
+if metadata.size != 342579728:
+    raise SystemExit("DINOv3 payload metadata differs from the pinned object")
+print("DINOv3 pinned payload access: ready")
+PY
+```
+
+If access is denied, resolve entitlement on the model repository and rerun the
+probe before submission. A successful probe establishes technical access only;
+the operator must still have the rights required for the intended use. Runtime
+fetch retains its full SHA-256 verification.
+
 ## CLI and SDK
 
 Inference emits exactly one JSON document on stdout, including real execution.
@@ -729,3 +763,29 @@ upstream weight files, qualification/resume diagnostics, shared downloaded asset
 and failed runs remain available for operator-managed retention. A cleanup failure
 warns on stderr and preserves the successful published result. Profile-only and
 dry-run calls do not perform this cleanup.
+
+## Regression and live evidence boundaries
+
+The CPU tests cover workflow argv, heartbeat failures, checkpoint state, capture
+isolation and accumulated-gradient ownership. The backward wrapper changes only
+the capture-local `Graphed` class created by
+[pinned PyTorch 2.7.1](https://github.com/pytorch/pytorch/blob/v2.7.1/torch/cuda/graphs.py#L366-L410),
+and rejects duplicate installation before changing replay callbacks. It does not
+replace `torch.autograd.backward` or another capture's class.
+
+The native CUDA regression test uses real capture/replay without mocking the CUDA
+API. Run it inside the pinned Torch 2.7.1 GPU runtime with this source available:
+
+```bash
+NPA_FLEX_PI_CUDA_REGRESSION=1 PYTHONPATH="$PWD/npa/src" npa/.venv/bin/python -m pytest \
+  npa/tests/workbench/test_flex_pi_training_graphs_cuda.py -m gpu -q
+```
+
+It runs only with the explicit `NPA_FLEX_PI_CUDA_REGRESSION=1` opt-in. Once
+requested, missing CUDA or an incompatible runtime fails the test. Its small model checks
+replay and accumulation mechanics; it does not replace full Flex-Pi inference,
+four-rank NCCL, hardware identity, or full-epoch validation. CPU CI cannot
+establish those properties or reproduce throughput measurements. The historical
+results above remain tied to their recorded source, image and runtime identities;
+they are not performance claims for every later revision or the customer's
+unavailable historical dataset.

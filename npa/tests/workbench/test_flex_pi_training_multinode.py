@@ -105,6 +105,50 @@ def test_dead_peer_is_detected_without_limiting_training_duration(monkeypatch):
     assert store.get("failure") == b"training node 3 lost its heartbeat"
 
 
+@pytest.mark.parametrize("operation", ["set", "check", "get"])
+def test_heartbeat_thread_failure_is_logged_and_chained(monkeypatch, capsys, operation):
+    store = _Store()
+    store.set("heartbeat/0", "ready")
+    failure = RuntimeError("private backend connection details")
+
+    def fail(*args):
+        raise failure
+
+    monkeypatch.setattr(store, operation, fail)
+    watch = multinode._PeerWatch(store, 0)
+    monkeypatch.setattr(multinode, "ACTIVE", SimpleNamespace(watch=watch))
+    watch.thread.start()
+    watch.thread.join(timeout=5)
+    assert not watch.thread.is_alive()
+    watch.close()
+    assert watch.error is failure
+    assert capsys.readouterr().err == (
+        "training node 0 heartbeat monitor failed: RuntimeError\n"
+    )
+    with pytest.raises(FlexPiError, match="control connection failed") as caught:
+        multinode._check_failure(store)
+    assert caught.value.__cause__ is failure
+
+
+def test_heartbeat_failure_stops_wait_and_terminates_active_worker(monkeypatch):
+    store = _Store()
+    failure = RuntimeError("connection lost")
+    monkeypatch.setattr(
+        multinode, "ACTIVE", SimpleNamespace(watch=SimpleNamespace(error=failure))
+    )
+    with pytest.raises(FlexPiError, match="control connection failed") as caught:
+        multinode._wait_keys(store, ["command/2"])
+    assert caught.value.__cause__ is failure
+    process = SimpleNamespace(poll=lambda: None)
+    terminated = []
+    monkeypatch.setattr(multinode.subprocess, "Popen", lambda *a, **kw: process)
+    monkeypatch.setattr(multinode, "_terminate_group", terminated.append)
+    with pytest.raises(FlexPiError, match="control connection failed") as caught:
+        multinode._run_worker(["worker"], {}, store)
+    assert caught.value.__cause__ is failure
+    assert terminated == [process]
+
+
 def test_normalization_transport_preserves_original_bytes(tmp_path):
     original = b'{\r\n"statistics": [1, 2]}\r\n'
     path = tmp_path / "node/dataset_stats.json"

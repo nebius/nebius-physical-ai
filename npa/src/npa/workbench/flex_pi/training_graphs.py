@@ -105,8 +105,7 @@ def _input_signature(leaves):
     return signature
 
 
-def _observe_native_replays(wrapper, counts):
-    from functools import wraps
+def _native_graphs(wrapper):
     import inspect
     import torch
 
@@ -125,6 +124,17 @@ def _observe_native_replays(wrapper, counts):
         isinstance(g, torch.cuda.CUDAGraph) for g in (forward, backward)
     ):
         raise FlexPiError("native capture lacks distinct forward/backward CUDA graphs")
+    # Torch 2.7.1 defines Graphed inside make_graphed_autograd_function: this
+    # class belongs to one capture, not torch.autograd or unrelated models.
+    if getattr(autograd, "_npa_replays_observed", False):
+        raise FlexPiError("native CUDA graph replays were already configured")
+    return autograd, forward, backward
+
+
+def _observe_native_replays(wrapper, counts):
+    from functools import wraps
+
+    autograd, forward, backward = _native_graphs(wrapper)
     for mode, graph in (("forward", forward), ("backward", backward)):
         replay = graph.replay
 
@@ -145,6 +155,7 @@ def _observe_native_replays(wrapper, counts):
         return tuple(grad.clone() if grad is not None else None for grad in gradients)
 
     autograd.backward = staticmethod(independent_backward)
+    autograd._npa_replays_observed = True
 
 
 def _capture_native(state, leaves, tree_spec):
