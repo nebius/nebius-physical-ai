@@ -23,6 +23,7 @@ import yaml
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.run_state import (
+    RunManifest,
     RunStateStore,
     RuntimeRunState,
     runtime_key,
@@ -603,12 +604,17 @@ class FakeStatus:
 class MemoryStore(RunStateStore):
     """RunStateStore backed by a dict (mirrors the injected reader/writer seam)."""
 
-    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+    def __init__(
+        self,
+        objects: dict[str, bytes] | None = None,
+        *,
+        prefix: str = "unit-prefix",
+    ) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
         self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
-            prefix="unit-prefix",
+            prefix=prefix,
             reader=self._read_obj,
             writer=self._write_obj,
             artifact_lister=self._list_obj,
@@ -1067,6 +1073,164 @@ def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
 
     assert report.status == "succeeded"
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
+
+
+def _completed_runtime_prefix(tmp_path: Path):
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    objects: dict[str, bytes] = {}
+    first_store = MemoryStore(objects)
+    first_executor = _executor(spec, run_id="cpu-run", store=first_store)
+    first_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    first = run_workflow_runtime(
+        spec,
+        run_id="cpu-run",
+        executor=first_executor,
+        state_store=first_store,
+        options=first_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=first_yaml,
+    )
+    assert first.status == "succeeded"
+    return spec, objects
+
+
+def test_runtime_rejects_foreign_run_on_shared_prefix_before_any_write(
+    tmp_path: Path,
+) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+
+    second_store = MemoryStore(objects)
+    second_submitter = FakeSubmitter()
+    second_executor = _executor(
+        spec,
+        run_id="gpu-run",
+        store=second_store,
+        submitter=second_submitter,
+    )
+    with pytest.raises(NpaWorkflowError, match="already belongs.*cpu-run"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=second_executor,
+            state_store=second_store,
+            options=second_executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert second_submitter.calls == []
+    assert second_store.write_calls == []
+    assert objects == snapshot
+
+
+def test_runtime_allows_a_new_run_with_a_distinct_prefix(tmp_path: Path) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+    other_store = MemoryStore(objects, prefix="gpu-prefix")
+    other_executor = _executor(spec, run_id="gpu-run", store=other_store)
+    other = run_workflow_runtime(
+        spec,
+        run_id="gpu-run",
+        executor=other_executor,
+        state_store=other_store,
+        options=other_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=b"different workflow source",
+    )
+    assert other.status == "succeeded"
+    assert objects["gpu-prefix/workflow.yaml"] == b"different workflow source"
+    assert {key: objects[key] for key in snapshot} == snapshot
+
+
+def test_runtime_rejects_foreign_manifest_owner_when_runtime_is_absent(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    store.write_manifest(
+        RunManifest(
+            workflow=spec.name,
+            run_id="cpu-run",
+            api_version=spec.api_version,
+        )
+    )
+    snapshot = dict(store.objects)
+    store.write_calls.clear()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="run manifest.*unique config.prefix"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+@pytest.mark.parametrize(
+    "manifest_bytes",
+    [b"[1]", b'{"workflow":"example"}', b'{"run_id":"cpu-run"}'],
+)
+def test_runtime_rejects_corrupt_manifest_before_any_write(
+    tmp_path: Path,
+    manifest_bytes: bytes,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    key = "unit-prefix/npa-workflow/manifest.json"
+    store = MemoryStore({key: manifest_bytes})
+    snapshot = dict(store.objects)
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="durable run manifest is corrupt"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+def test_runtime_prefix_guard_propagates_storage_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    def fail_read() -> RuntimeRunState | None:
+        raise PermissionError("state read denied")
+
+    monkeypatch.setattr(store, "read_runtime_state", fail_read)
+    with pytest.raises(PermissionError, match="state read denied"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == {}
 
 
 def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(

@@ -350,6 +350,12 @@ default/ledger prefix and does not restrict explicitly declared artifact locatio
 With `config.bucket` set, the ledger accepts either a relative `config.prefix`
 or an absolute `s3://bucket/key` prefix naming that same bucket. Submission
 receipts, ledger storage, and storage preflight resolve the same location.
+Each runtime run must resolve to a unique bucket and prefix. A different
+`--run-id` does not make a literal `config.prefix` unique; NPA rejects a prefix
+whose runtime ledger or run manifest belongs to another workflow run before it
+rewrites source or state. Resume the exact recorded run to continue that prefix,
+or choose a different prefix for a new run. The runtime remains a single-writer
+design and does not coordinate simultaneous drivers for one empty prefix.
 Artifact templates still expand their configured values literally: use a
 relative prefix when a template constructs `s3://{{config.bucket}}/{{config.prefix}}`.
 On runtime resume, NPA retains the exact ledger location recorded in the prior

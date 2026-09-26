@@ -2505,9 +2505,10 @@ class RuntimeLedger:
     """Durable wave ledger (``npa.workflow.runtime.v1``) with in-memory fallback.
 
     **Single writer by design.** ``flush`` rewrites the whole document, so two drivers
-    on the same ``run_id`` would clobber each other's records, and ``--resume``
-    reconciliation assumes exactly one prior driver. Run one driver per run id; use a
-    fresh run id (or a different ``config.prefix``) for a concurrent run.
+    on the same durable prefix would clobber each other's records, and ``--resume``
+    reconciliation assumes exactly one prior driver. Run one driver per resolved
+    bucket/prefix. A fresh run id is separate only when its resolved prefix is also
+    different.
     """
 
     def __init__(
@@ -2827,6 +2828,51 @@ class RuntimeReport:
         }
 
 
+def _run_manifest_identity(store: RunStateStore) -> tuple[str, str] | None:
+    """Read the prefix owner's manifest identity without accepting corruption."""
+
+    try:
+        body = store.read_artifact("npa-workflow/manifest.json")
+    except FileNotFoundError:
+        return None
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise NpaWorkflowError("durable run manifest is corrupt") from exc
+    if not isinstance(payload, Mapping):
+        raise NpaWorkflowError("durable run manifest is corrupt: expected an object")
+    workflow = payload.get("workflow")
+    run_id = payload.get("run_id")
+    if not isinstance(workflow, str) or not workflow:
+        raise NpaWorkflowError("durable run manifest is corrupt: workflow is missing")
+    if not isinstance(run_id, str) or not run_id:
+        raise NpaWorkflowError("durable run manifest is corrupt: run_id is missing")
+    return workflow, run_id
+
+
+def _assert_run_prefix_identity(
+    store: RunStateStore, *, workflow: str, run_id: str
+) -> None:
+    """Reject a durable prefix already owned by another workflow run."""
+
+    runtime_state = store.read_runtime_state()
+    manifest_identity = _run_manifest_identity(store)
+    owners: list[tuple[str, str, str]] = []
+    if runtime_state is not None:
+        owners.append(("runtime ledger", runtime_state.workflow, runtime_state.run_id))
+    if manifest_identity is not None:
+        owners.append(("run manifest", *manifest_identity))
+    for source, existing_workflow, existing_run_id in owners:
+        if existing_workflow == workflow and existing_run_id == run_id:
+            continue
+        raise NpaWorkflowError(
+            f"refusing run {run_id!r}: durable prefix {store.run_prefix_uri} "
+            f"already belongs to workflow {existing_workflow!r}, run "
+            f"{existing_run_id!r} according to its {source}; use a unique "
+            "config.prefix, or resume the exact recorded run"
+        )
+
+
 def run_workflow_runtime(
     spec: NpaWorkflowSpec,
     *,
@@ -2886,6 +2932,8 @@ def run_workflow_runtime(
             api_version=spec.api_version,
             resume=opts.resume,
         )
+    if store is not None:
+        _assert_run_prefix_identity(store, workflow=spec.name, run_id=run_id)
     if workflow_yaml and store is None:
         raise NpaWorkflowError(
             "workflow_yaml requires a durable state_store or an executor with a "
