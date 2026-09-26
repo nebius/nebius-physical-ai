@@ -42,9 +42,13 @@ PARSER_FACTORIES = {
     "npa.workflows.groot_learning": "build_parser",
     "npa.workflows.groot_task_performance": "build_parser",
     "npa.workflows.byof.openpi_pipeline": "build_parser",
+    "npa.workflows.byof.molmoact_pipeline": "build_parser",
+    "npa.workflows.byof.openvla_pipeline": "build_parser",
+    "npa.workflows.byof.newton_pipeline": "build_parser",
     "npa.workflows.byof.openpi_full_droid": "build_parser",
     "npa.workflows.byof.openpi_service": "build_parser",
     "npa.workflows.content_agents": "build_parser",
+    "npa.workflows.paidf_native": "build_parser",
 }
 
 
@@ -75,8 +79,9 @@ def _dummy(value: str, *, action: argparse.Action | None) -> str:
 
     if not PLACEHOLDER.search(value):
         return value
-    if action is not None and action.choices:
-        return str(next(iter(action.choices)))
+    choices = tuple(getattr(action, "choices", ()) or ()) if action is not None else ()
+    if choices:
+        return str(choices[0])
     caster = getattr(action, "type", None) if action is not None else None
     if caster is None:
         return "dummy"

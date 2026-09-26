@@ -1,0 +1,43 @@
+{
+  "accepted": false,
+  "checks": {
+    "finite": true,
+    "bilateral_grasp_contact": false,
+    "lifted": false,
+    "placed": false,
+    "released": true,
+    "retreated": true,
+    "settled": true,
+    "environment_success": false
+  },
+  "final_distance_m": 0.25612498351563184,
+  "lift_height_m": 8.239872931020686e-05,
+  "settled_max_speed_m_s": 0.0,
+  "bilateral_contact_frames": 0,
+  "judge": "mujoco_state_and_contacts",
+  "frames": 185,
+  "fps": 25,
+  "environment": "FetchPickAndPlace-v4",
+  "robot_type": "fetch",
+  "task": "Pick up the red cube and place it on the green target, then release it.",
+  "state_names": [
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "upperarm_roll_joint",
+    "elbow_flex_joint",
+    "forearm_roll_joint",
+    "wrist_flex_joint",
+    "wrist_roll_joint",
+    "r_gripper_finger_joint",
+    "l_gripper_finger_joint"
+  ],
+  "action_names": [
+    "cartesian_dx",
+    "cartesian_dy",
+    "cartesian_dz",
+    "gripper"
+  ],
+  "action_contract": "normalized Cartesian delta xyz (scale 0.05 m) and gripper command in [-1, 1]",
+  "alignment": "observation_t and state_t precede action_t; physics.npz also records state_t+1",
+  "controller": "scripted_privileged_state_pick_place_v1"
+}

@@ -160,6 +160,54 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
     ),
     SubmitLiveCase(
+        "newton-train-teacher.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "Newton workbench pipeline stages are stubs in this release: "
+            "train-teacher raises NewtonPipelineError (not implemented), so the "
+            "spec exercises config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the newton/train_teacher three-tier contract "
+            "(CLI <-> SDK <-> spec); real Newton simulation lands with "
+            "nebius/nebius-physical-ai#499."
+        ),
+    ),
+    SubmitLiveCase(
+        "openvla-train.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "OpenVLA workbench pipeline stages are stubs in this release: "
+            "train prints an upstream argv plan (not implemented), so the "
+            "spec exercises config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the openvla/train three-tier contract "
+            "(CLI <-> SDK <-> spec); real OpenVLA-OFT fine-tuning lands with "
+            "nebius/nebius-physical-ai#500. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
+        "molmoact-finetune.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "MolmoAct workbench pipeline stages are stubs in this release: "
+            "finetune validates the config and returns a plan-only manifest "
+            "(training not implemented), so the spec exercises config "
+            "validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the molmoact/finetune three-tier contract "
+            "(CLI <-> SDK <-> spec); real MolmoAct fine-tuning lands with "
+            "nebius/nebius-physical-ai#502. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-super-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -168,6 +216,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Real single-B200 Alpamayo 2 Super VLM + diffusion-expert inference; "
             "publishes calibrated trajectory JSON/PNG and provenance. Requires "
             "operator-side PhysicalAI-AV dataset acceptance."
+        ),
+    ),
+    SubmitLiveCase(
+        "antioch-offline-policy-train.yaml",
+        "gpu",
+        secret_envs=(
+            "ANTIOCH_WORKBENCH_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        image_overrides=(("workbench.lerobot.policy_train", "lerobot"),),
+        notes=(
+            "Requires the operator's separately deployed Antioch adapter and a synthetic "
+            "immutable project; trains an offline ACT checkpoint from the collected dataset."
         ),
     ),
     SubmitLiveCase(
@@ -206,6 +268,48 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
+        "encord-push.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-selected Encord integration, folder, and source "
+            "prefix; keep it available for an explicitly configured live run."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-pull.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-selected existing Encord source; the shared "
+            "rotation must not guess or mutate third-party state."
+        ),
+    ),
+    SubmitLiveCase(
+        "encord-roundtrip-smoke.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Creates run-scoped Encord folder and dataset state whose exact cleanup "
+            "contract is not yet automated; run only with explicit live approval."
+        ),
+    ),
+    SubmitLiveCase(
         "token-factory-caption.yaml",
         "cpu",
         secret_envs=(
@@ -225,6 +329,28 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "AWS_SECRET_ACCESS_KEY",
         ),
         requires_token_factory=True,
+    ),
+    SubmitLiveCase(
+        "token-factory-robot-sdg.yaml",
+        "cpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        notes="Runs real MuJoCo pick-and-place with two cameras and LeRobot export; requires current staged source and OSMesa setup.",
+    ),
+    SubmitLiveCase(
+        "token-factory-sdg.yaml",
+        "cpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        notes="Exercises hosted routing, generation, review and real dataset publication; requires current staged NPA source.",
     ),
     SubmitLiveCase(
         "token-factory-batch-generate.yaml",
@@ -412,7 +538,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -427,7 +552,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
@@ -442,12 +566,25 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=(
             "HF_TOKEN",
-            "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
             "Real isolated one-H200 TP-1 validation in the immutable vLLM-Omni "
+            "image: one strict warmup followed by 24 sequential validated requests. "
+            "This is not the paper's eight-replica 8x1 node cell."
+        ),
+    ),
+    SubmitLiveCase(
+        "cosmos3-super-b200-single-gpu.yaml",
+        "gpu",
+        secret_envs=(
+            "HF_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "Real isolated one-B200 TP-1 validation in the immutable vLLM-Omni "
             "image: one strict warmup followed by 24 sequential validated requests. "
             "This is not the paper's eight-replica 8x1 node cell."
         ),
@@ -663,7 +800,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "mjlab-eval.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="Requires an operator-provided native MJLab checkpoint and a built MJLab image.",
+    ),
+    SubmitLiveCase(
+        "mjlab-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="mjlab",
+        rotation_skip=True,
+        skip_reason="Requires a trained native checkpoint and an explicit built MJLab image override.",
+        notes="Rendering GPU evaluation publishes measured episodes, MP4 and self-contained HTML.",
     ),
     SubmitLiveCase(
         "sonic-train.yaml",
@@ -808,6 +956,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "status; it is not closed-loop or physical-robot task evidence."
         ),
     ),
+    SubmitLiveCase(
+        "mjlab-train-eval.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="MJLab image awaits the complete public release gates after private GPU qualification.",
+        notes="Native train -> eval -> export -> independent-seed eval; requires an explicit built image override.",
+    ),
     # --- Multi-stage GPU ---
     SubmitLiveCase(
         "sonic-export-eval.yaml",
@@ -829,7 +985,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NGC_API_KEY",
         ),
         notes=(
-            "retarget → train → mjlab. Retargeting consumes the SOMA/G1 motion "
+            "retarget → train → export → native SONIC eval. Retargeting consumes the SOMA/G1 motion "
             "clips staged in the run bucket (see SONIC_MOTION_FIXTURE_PREFIX in "
             "the live helpers, overridable with NPA_E2E_SONIC_MOTION_SRC); train "
             "uses the in-job runtime."
@@ -860,17 +1016,15 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         rotation_skip=True,
         skip_reason=(
-            "Two reasons, both structural. (1) Every stage talks to a workbench "
-            "SERVICE deployed in-cluster (npa-lancedb:8686, "
-            "npa-detection-training:8790); a standalone submit cannot bring "
-            "those up, and it also wants the raw-bdd100k demo dataset in the run "
-            "bucket. (2) 11 sequential stages, each its own cluster: measured "
-            "~2.2 min per stage of provisioning alone on RTXPRO-6000 (from the "
-            "3-stage SONIC chain), so ~25 min before any real work — over the "
-            "rotation's bounded window once CLIP backfill, three trainings and "
-            "three evals are added. Run it manually against a live workbench."
+            "The standalone submit rotation does not deploy the required in-cluster "
+            "LanceDB and detection-training services or stage the BDD100K subset. "
+            "Run it manually after those prerequisites are reachable."
         ),
-        notes="11-stage AV pipeline over in-cluster services; longest wall-clock.",
+        notes=(
+            "Ten-stage AV pipeline over in-cluster services; completion means all "
+            "three detector metrics artifacts were written. FiftyOne inspection is "
+            "a post-run operator activity."
+        ),
     ),
     SubmitLiveCase(
         "tokenfactory-cosmos-gate.yaml",
@@ -964,6 +1118,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "nvidia-paidf-vda-cosmos-transfer25.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        runtime=True,
+        config_vars=(("n_augmentations", "1"),),
+        image_overrides=(
+            ("workbench.cosmos2.transfer_execute", "cosmos2-transfer"),
+            ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
+            ("workbench.cosmos_curate.curate", "cosmos-curate"),
+            ("workbench.fiftyone.curate_augmented", "fiftyone"),
+        ),
+        notes=(
+            "Authorized GPU-daily acceptance for the separately named, direct "
+            "NVIDIA-derived VDA translation. Proves the pinned upstream contract, "
+            "conditioned Cosmos Transfer 2.5, Evaluator, Curator, FiftyOne and Rerun "
+            "artifacts without changing the established PAIDF workflows."
+        ),
+    ),
+    SubmitLiveCase(
         "paidf-cosmos3.yaml",
         "multi",
         secret_envs=(
@@ -987,6 +1166,55 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Real dynamic PAIDF Cosmos 3 acceptance using only the repository-owned "
             "synthetic MP4 fixture. Proves source-video-conditioned framework output, "
             "Cosmos Evaluator, Cosmos Curator, FiftyOne Brain, and Rerun evidence."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-defect-image-generation.yaml",
+        "gpu",
+        runtime=True,
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        notes=(
+            "Direct DIG Day-1 manual-ROI acceptance in the restricted, "
+            "operator-built AnomalyGen compatibility image; requires "
+            "operator-authorized upstream sample data."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-image-attribute-augmentation.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Direct IAA DAG acceptance with Qwen Image Edit, the real PAIDF "
+            "augmentation verifier, and the real Person Attribute Search service."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-event-video-generation.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Direct EVG DAG acceptance with Cosmos3 Super and the published "
+            "detection, captioning, dual Visual-QA, and PAS service chain."
         ),
     ),
     # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
@@ -1024,6 +1252,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
+        "byof-libero.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "LIBERO's public-neutral candidate remains quarantined and unbuilt; a "
+            "separately authorized exact-digest one-B200 gate owns qualification"
+        ),
+        notes=(
+            "Managed prebuilt LIBERO-Spatial BC-RNN train/reload/heldout path with "
+            "manifest-bound runtime fetch; this matrix neither builds nor submits it, "
+            "and the report validator never proves infrastructure execution by itself."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,
@@ -1036,6 +1278,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-gymnasium-robotics.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated exact-digest RTX PRO live onboarding tier",
+        notes=(
+            "Gymnasium-Robotics Shadow Hand BYOF hard gate: one strictly reserved "
+            "RTX PRO 6000 Blackwell, real MuJoCo touch/contact physics and EGL RGB; "
+            "covered by test_byof_onboarding_live_e2e.py."
+        ),
     ),
     SubmitLiveCase(
         "byof-robocasa.yaml",
@@ -1199,11 +1452,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "av-night-scene-hardening.yaml",
         "multi",
-        plan_only=True,
-        plan_only_justification="terminal FiftyOne launch state remains a stub",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "The standalone submit rotation does not deploy the required in-cluster "
+            "LanceDB and detection-training services or stage the BDD100K night subset. "
+            "Run it manually after those prerequisites are reachable."
+        ),
         notes=(
-            "The terminal workbench.fiftyone.launch_app state is a stub; retain a full "
-            "render preflight until the review toolRef becomes executable."
+            "Eight-stage AV night-scene pipeline over in-cluster services; completion "
+            "means both detector metrics artifacts were written. FiftyOne inspection "
+            "is a post-run operator activity."
         ),
     ),
     SubmitLiveCase(

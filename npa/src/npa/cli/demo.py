@@ -182,24 +182,20 @@ def verify_artifacts(
                 )
             continue
 
-        head = _head_or_none(s3, bucket, key)
-        if head is None:
+        digest = _object_digest_or_none(s3, bucket, key, side="target")
+        if digest is None:
             issues.append(f"{artifact.name}: missing target object s3://{bucket}/{key}")
             continue
-        metadata = head.get("Metadata", {}) or {}
-        actual_sha = _get_metadata_value(metadata, "sha256") or ""
+        actual_sha, actual_size = digest
         if actual_sha != artifact.sha256:
             issues.append(
-                f"{artifact.name}: sha256 metadata mismatch "
-                f"(expected {artifact.sha256}, found {actual_sha or 'missing'})"
+                f"{artifact.name}: sha256 mismatch "
+                f"(expected {artifact.sha256}, found {actual_sha})"
             )
-        if (
-            artifact.size_bytes is not None
-            and int(head.get("ContentLength", -1)) != artifact.size_bytes
-        ):
+        if artifact.size_bytes is not None and actual_size != artifact.size_bytes:
             issues.append(
                 f"{artifact.name}: size mismatch "
-                f"(expected {artifact.size_bytes}, found {head.get('ContentLength')})"
+                f"(expected {artifact.size_bytes}, found {actual_size})"
             )
     return issues
 
@@ -278,7 +274,7 @@ def verify_cmd(
         help="Use --allow-host-creds to fall back to host credentials for target S3 operations.",
     ),
 ) -> None:
-    """Verify staged demo artifacts without downloading object contents."""
+    """Verify staged demo artifacts against their manifest requirements."""
     try:
         issues = verify_artifacts(
             target_bucket=target_bucket,
@@ -309,8 +305,8 @@ def verify_cmd(
 def _stage_file(s3, artifact: DemoArtifact, target_bucket: str) -> str:
     source_bucket, source_key = _parse_s3_uri(artifact.source_uri)
     dest_bucket, dest_key = _target_bucket_key(target_bucket, artifact.target_path)
-    head = _head_or_none(s3, dest_bucket, dest_key)
-    if _head_matches_artifact(head, artifact):
+    existing = _existing_target_digest_or_none(s3, dest_bucket, dest_key)
+    if _digest_matches_artifact(existing, artifact):
         return "skip"
 
     data = _read_object(
@@ -335,8 +331,8 @@ def _stage_file(s3, artifact: DemoArtifact, target_bucket: str) -> str:
         metadata={"sha256": sha},
         operation=f"upload {artifact.name}",
     )
-    verified = _head_or_none(s3, dest_bucket, dest_key)
-    if not _head_matches_artifact(verified, artifact):
+    verified = _object_digest_or_none(s3, dest_bucket, dest_key, side="target")
+    if not _digest_matches_artifact(verified, artifact):
         raise DemoManifestError(f"{artifact.name}: upload verification failed")
     return "upload"
 
@@ -499,9 +495,22 @@ class _ProjectBoundaryS3:
         )
 
     def get_object(self, *, Bucket: str, Key: str):
+        return self.get_source_object(Bucket=Bucket, Key=Key)
+
+    def get_source_object(self, *, Bucket: str, Key: str):
         scoped, host = self._clients("source")
         return self._run(
             "source",
+            lambda: scoped.get_object(Bucket=Bucket, Key=Key),
+            lambda: host.get_object(Bucket=Bucket, Key=Key),
+            bucket=Bucket,
+            operation=f"read s3://{Bucket}/{Key}",
+        )
+
+    def get_target_object(self, *, Bucket: str, Key: str):
+        scoped, host = self._clients("target")
+        return self._run(
+            "target",
             lambda: scoped.get_object(Bucket=Bucket, Key=Key),
             lambda: host.get_object(Bucket=Bucket, Key=Key),
             bucket=Bucket,
@@ -534,7 +543,7 @@ class _ProjectBoundaryS3:
     ):
         source_bucket = CopySource["Bucket"]
         source_key = CopySource["Key"]
-        obj = self.get_object(Bucket=source_bucket, Key=source_key)
+        obj = self.get_source_object(Bucket=source_bucket, Key=source_key)
         metadata = obj.get("Metadata", {}) or {}
         self.put_object(
             Bucket=Bucket,
@@ -609,6 +618,12 @@ class _HostFallbackS3:
             bucket=Bucket,
             operation=f"read s3://{Bucket}/{Key}",
         )
+
+    def get_source_object(self, *, Bucket: str, Key: str):
+        return self.get_object(Bucket=Bucket, Key=Key)
+
+    def get_target_object(self, *, Bucket: str, Key: str):
+        return self.get_object(Bucket=Bucket, Key=Key)
 
     def put_object(
         self, *, Bucket: str, Key: str, Body: bytes, Metadata: dict[str, str]
@@ -707,37 +722,55 @@ def _ensure_prefix(key: str) -> str:
     return key if key.endswith("/") else key + "/"
 
 
-def _get_metadata_value(metadata: dict | None, key: str) -> str | None:
-    """Look up an S3 user metadata value case-insensitively."""
-    if not metadata:
-        return None
-    lowered_target = key.lower()
-    for metadata_key, value in metadata.items():
-        if str(metadata_key).lower() == lowered_target:
-            return str(value)
-    return None
-
-
-def _head_matches_artifact(head, artifact: DemoArtifact) -> bool:
-    if head is None:
+def _digest_matches_artifact(
+    digest: tuple[str, int] | None, artifact: DemoArtifact
+) -> bool:
+    if digest is None:
         return False
-    metadata = head.get("Metadata", {}) or {}
-    if _get_metadata_value(metadata, "sha256") != artifact.sha256:
+    actual_sha, actual_size = digest
+    if actual_sha != artifact.sha256:
         return False
-    if (
-        artifact.size_bytes is not None
-        and int(head.get("ContentLength", -1)) != artifact.size_bytes
-    ):
+    if artifact.size_bytes is not None and actual_size != artifact.size_bytes:
         return False
     return True
+
+
+def _object_digest_or_none(
+    s3, bucket: str, key: str, *, side: str
+) -> tuple[str, int] | None:
+    try:
+        getter = getattr(s3, f"get_{side}_object", None) or s3.get_object
+        body = getter(Bucket=bucket, Key=key)["Body"]
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            while chunk := body.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        finally:
+            body.close()
+        return digest.hexdigest(), size
+    except ClientError as exc:
+        if client_error_code(exc) in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        _raise_scoped(exc, bucket, f"read s3://{bucket}/{key}")
+    except NoCredentialsError as exc:
+        _raise_scoped(exc, bucket, f"read s3://{bucket}/{key}")
+
+
+def _existing_target_digest_or_none(
+    s3, bucket: str, key: str
+) -> tuple[str, int] | None:
+    if _head_or_none(s3, bucket, key) is None:
+        return None
+    return _object_digest_or_none(s3, bucket, key, side="target")
 
 
 def _head_or_none(s3, bucket: str, key: str):
     try:
         return s3.head_object(Bucket=bucket, Key=key)
     except ClientError as exc:
-        code = client_error_code(exc)
-        if code in {"404", "NoSuchKey", "NotFound"}:
+        if client_error_code(exc) in {"404", "NoSuchKey", "NotFound"}:
             return None
         _raise_scoped(exc, bucket, f"head s3://{bucket}/{key}")
     except NoCredentialsError as exc:
@@ -746,7 +779,8 @@ def _head_or_none(s3, bucket: str, key: str):
 
 def _read_object(s3, bucket: str, key: str, *, operation: str) -> bytes:
     try:
-        obj = s3.get_object(Bucket=bucket, Key=key)
+        getter = getattr(s3, "get_source_object", None) or s3.get_object
+        obj = getter(Bucket=bucket, Key=key)
         return obj["Body"].read()
     except (ClientError, NoCredentialsError) as exc:
         _raise_scoped(exc, bucket, operation)

@@ -985,8 +985,16 @@ def test_lance_logical_v2_footer_aliases_are_readable(
     modules, source, physical_version
 ):
     import lancedb
+    import pyarrow.parquet as pq
     from archive_lance import validate_local_lance
 
+    # The aliases describe V2_0 payloads, not the new default V2_2 encoding.
+    shutil.rmtree(source / "lance")
+    lancedb.connect(str(source / "lance")).create_table(
+        "embeddings",
+        pq.read_table(source / "embeddings.parquet"),
+        storage_options={"new_table_data_storage_version": "2.0"},
+    )
     data = next((source / "lance/embeddings.lance/data").glob("*.lance"))
     data.write_bytes(
         data.read_bytes()[:-8] + struct.pack("<HH4s", *physical_version, b"LANC")
@@ -1097,6 +1105,7 @@ def test_transaction_comparison_preserves_every_other_fragment_field(modules, mu
         "base_paths",
         "index",
         "reader_flags",
+        "writer_flags",
         "schema_metadata",
         "branch",
         "duplicate_version",
@@ -1108,6 +1117,7 @@ def test_transaction_comparison_preserves_every_other_fragment_field(modules, mu
         "overflow_integer",
         "footer",
         "data_footer",
+        "data_version_mismatch",
         "trailing",
         "transaction",
         "extra_version",
@@ -1129,6 +1139,7 @@ def test_lance_metadata_rejected_before_reader(
         "base_paths": b"\x92\x01\x00",
         "index": b"\x30\x00",
         "reader_flags": b"\x48\x01",
+        "writer_flags": b"\x50\x04",
         "schema_metadata": b"\x2a\x00",
         "branch": b"\xa2\x01\x00",
         "duplicate_version": b"\x18\x01",
@@ -1148,7 +1159,13 @@ def test_lance_metadata_rejected_before_reader(
         path.write_bytes(content[:-8] + b"\x01" + content[-7:])
     elif mutation == "data_footer":
         data = next((lance_root / "data").glob("*.lance"))
-        data.write_bytes(data.read_bytes()[:-8] + struct.pack("<HH4s", 2, 2, b"LANC"))
+        data.write_bytes(data.read_bytes()[:-8] + struct.pack("<HH4s", 2, 99, b"LANC"))
+    elif mutation == "data_version_mismatch":
+        data = next((lance_root / "data").glob("*.lance"))
+        raw = data.read_bytes()
+        _, minor, _ = struct.unpack("<HH4s", raw[-8:])
+        other = 0 if minor == 2 else 2
+        data.write_bytes(raw[:-8] + struct.pack("<HH4s", 2, other, b"LANC"))
     elif mutation == "trailing":
         path.write_bytes(content[:-16] + b"unexpected" + content[-16:])
     elif mutation == "transaction":
@@ -1161,5 +1178,30 @@ def test_lance_metadata_rejected_before_reader(
     else:
         (lance_root / "_indices").mkdir()
         (lance_root / "_indices/unknown.idx").write_bytes(b"index")
+    _checksums(source)
+    _reject_before_lance_open(archive, source, store, tmp_path, operation, monkeypatch)
+
+
+@pytest.mark.parametrize("operation", ["archive", "restore"])
+@pytest.mark.parametrize(
+    "content",
+    [
+        b'{"version":2}',
+        b'{"version":0}',
+        b'{"version":true}',
+        b'{"version":1,"version":2}',
+        b'{"version":1,"path":"../outside"}',
+        b'{"version":1.0}',
+        b'{"version":"1"}',
+        b'{"version":1\v}',
+        b"{",
+    ],
+)
+def test_lance_version_hint_rejected_before_reader(
+    modules, source, store, tmp_path, operation, content, monkeypatch
+):
+    archive, _ = modules
+    hint = source / "lance/embeddings.lance/_versions/latest_version_hint.json"
+    hint.write_bytes(content)
     _checksums(source)
     _reject_before_lance_open(archive, source, store, tmp_path, operation, monkeypatch)

@@ -38,6 +38,7 @@ import os
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -83,6 +84,8 @@ TERMINAL_FAIL = frozenset(
         "STOPPED",
     }
 )
+SCHEDULER_OBSERVATION_SCHEMA = "npa.skypilot.managed-job-observation.v1"
+SCHEDULER_OBSERVATION_SOURCE = "exact_managed_job_status"
 _SUPERVISOR_EVENT_PHASES = frozenset(
     {"decision", "cancellation", "recovery_reserved", "launch", "attempt_terminal"}
 )
@@ -464,6 +467,63 @@ def wave_key(steps: Sequence[PlanStep], *, group: str, sequence_number: int) -> 
     return f"{sequence_number:03d}|{group or 'serial'}|" + ",".join(parts)
 
 
+def _record_reached_running(record: Mapping[str, Any]) -> bool:
+    """Return whether independent, typed scheduler evidence proves execution.
+
+    Submission acknowledgements, queue text, task summaries, and legacy free-form
+    observations are not adoption authority. The persisted observation must come
+    from a successful exact managed-job status query and bind every launch/fence
+    identity field to the wave record being considered.
+    """
+
+    expected_strings = {
+        "wave_key": str(record.get("key") or ""),
+        "job_id": str(record.get("job_id") or ""),
+        "job_name": str(record.get("job_name") or ""),
+        "logical_launch_id": str(record.get("logical_launch_id") or ""),
+    }
+    try:
+        expected_numbers = {
+            "attempt": int(record.get("attempt") or 0),
+            "scheduler_fence_sequence": int(
+                record.get("scheduler_fence_sequence") or 0
+            ),
+            "launch_sequence": int(record.get("launch_sequence") or 0),
+        }
+    except (TypeError, ValueError):
+        return False
+    if (
+        not all(expected_strings.values())
+        or expected_numbers["attempt"] < 1
+        or expected_numbers["scheduler_fence_sequence"] < 1
+        or expected_numbers["launch_sequence"] < 0
+    ):
+        return False
+    for item in record.get("observations") or []:
+        if not isinstance(item, Mapping):
+            continue
+        if (
+            item.get("schema") != SCHEDULER_OBSERVATION_SCHEMA
+            or item.get("source") != SCHEDULER_OBSERVATION_SOURCE
+            or str(item.get("scheduler_state") or "").upper() != "RUNNING"
+        ):
+            continue
+        if any(
+            str(item.get(key) or "") != value for key, value in expected_strings.items()
+        ):
+            continue
+        try:
+            observed_numbers = {key: int(item.get(key)) for key in expected_numbers}
+            observed_at = str(item.get("observed_at") or "")
+            timestamp = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if timestamp.tzinfo is None or observed_numbers != expected_numbers:
+            continue
+        return True
+    return False
+
+
 class SkyPilotWaveExecutor:
     """Execute planned steps as SkyPilot managed jobs, one wave at a time.
 
@@ -623,6 +683,13 @@ class SkyPilotWaveExecutor:
                 return adopted
 
         replayed = self.ledger.completed(key) if self.options.resume else None
+        if replayed is not None and not self._completed_replay_identity_matches(
+            replayed
+        ):
+            raise NpaWorkflowError(
+                f"wave {key}: completed ledger replay blocked: "
+                "IMMUTABLE_IDENTITY_MISMATCH"
+            )
         if replayed is not None:
             outputs = list(replayed.get("outputs") or [])
             if not self._outputs_exist(outputs):
@@ -631,13 +698,6 @@ class SkyPilotWaveExecutor:
                     "missing; resubmitting"
                 )
                 replayed = None
-        if replayed is not None and not self._completed_replay_identity_matches(
-            replayed
-        ):
-            raise NpaWorkflowError(
-                f"wave {key}: completed ledger replay blocked: "
-                "IMMUTABLE_IDENTITY_MISMATCH"
-            )
         if replayed is not None:
             attempt = WaveAttempt(
                 key=key,
@@ -675,19 +735,7 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
-                observations = latest.get("observations") or []
-                reached_running = any(
-                    isinstance(item, Mapping)
-                    and (
-                        str(item.get("scheduler_state") or "").upper() == "RUNNING"
-                        or "RUNNING"
-                        in {
-                            str(value or "").upper()
-                            for value in (item.get("statuses") or {}).values()
-                        }
-                    )
-                    for item in observations
-                )
+                reached_running = _record_reached_running(latest)
                 if (
                     self.options.adopt_absent_in_flight_outputs
                     and reached_running
@@ -1034,97 +1082,116 @@ class SkyPilotWaveExecutor:
         )
 
     def _resume_durable_output_reuse(self, attempt: WaveAttempt) -> bool:
-        """Finish an output-complete attempt across the supervisor/runtime seam.
-
-        The supervisor cancellation event is immutable and is written before the
-        mutable runtime ledger can terminalize the attempt. A process loss between
-        those writes must not turn verified completion into replacement work.
-        """
-
+        """Finish a verified reuse decision across the supervisor/runtime seam."""
         from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
 
-        store = self.ledger.store
-        if store is None or not attempt.logical_launch_id:
+        if self.ledger.store is None or not attempt.logical_launch_id:
+            if attempt.recovery_decision == "reuse_completed_wave":
+                return self._block_output_reuse(
+                    attempt, "missing durable attempt identity"
+                )
             return False
-        claimed_reuse = attempt.recovery_decision == "reuse_completed_wave"
-
-        def block(reason: str) -> bool:
-            attempt.status = "failed"
-            attempt.error_category = "controller"
-            attempt.error = reason
-            attempt.reconciliation_error = reason
-            # Keep this decision explicitly in-flight so every later resume
-            # rechecks the immutable event instead of applying terminal retry.
-            attempt.recovery_decision = "reuse_completed_wave"
-            attempt.operator_remedy = (
-                "Restore authoritative supervisor and object-store evidence, then "
-                "resume the same run ID; do not launch replacement work."
-            )
-            attempt.supervisor_blocks_cancellation = True
-            self.ledger.record(attempt)
-            return True
-
         try:
-            events = SupervisorLedger(store).events(attempt.logical_launch_id)
+            events = SupervisorLedger(self.ledger.store).events(
+                attempt.logical_launch_id
+            )
+            event = self._output_reuse_event(attempt, events)
+            if event is None:
+                return False
+            self._validate_output_reuse_identity(attempt, event)
+            terminal_status = self._output_reuse_terminal_status(attempt, event)
         except Exception as exc:  # noqa: BLE001 - history uncertainty fails closed
-            return block(
-                f"wave {attempt.key}: immutable output-reuse history is "
-                f"unavailable: {sanitize_reason(exc)}"
-            )
-        event: Mapping[str, Any] | None = None
-        for candidate in reversed(events):
-            identity = candidate.get("attempt_identity")
-            recovery = candidate.get("recovery")
-            cancellation = candidate.get("cancellation")
-            identity_matches = isinstance(identity, Mapping) and (
-                identity.get("logical_attempt_id") == attempt.logical_launch_id
-            )
-            provider_matches = isinstance(cancellation, Mapping) and (
-                cancellation.get("provider_job_id") == attempt.job_id
-            )
-            if not identity_matches and not provider_matches:
-                continue
-            phase = str(candidate.get("phase") or "")
-            if phase not in _SUPERVISOR_EVENT_PHASES:
-                event = candidate
-                break
-            if phase != "cancellation":
-                continue
-            if not isinstance(recovery, Mapping):
-                event = candidate
-                break
-            action = recovery.get("action")
-            if (
-                action == "reuse_completed_wave"
-                or action not in _SUPERVISOR_RECOVERY_ACTIONS
-            ):
-                event = candidate
-                break
-        if event is None and not claimed_reuse:
-            return False
+            return self._block_output_reuse(attempt, sanitize_reason(exc))
 
-        if event is None:
-            return block(
-                f"wave {attempt.key}: durable output-reuse decision has no matching "
-                "immutable supervisor cancellation event"
+        # Exact provider terminality remains factual when object access fails.
+        attempt.sky_status = terminal_status
+        attempt.cancellation_state = "verified"
+        attempt.cancellation_error = ""
+        try:
+            self._validate_output_reuse_artifacts(attempt, event)
+        except Exception as exc:  # noqa: BLE001 - storage uncertainty fails closed
+            return self._block_output_reuse(
+                attempt, f"declared output revalidation failed: {sanitize_reason(exc)}"
             )
+        self._complete_output_reuse(attempt)
+        return True
 
-        identity = event.get("attempt_identity")
-        cancellation = event.get("cancellation")
-        recovery = event.get("recovery")
-        outputs = event.get("outputs")
-        if not all(
-            isinstance(item, Mapping)
-            for item in (identity, cancellation, recovery, outputs)
+    def _block_output_reuse(self, attempt: WaveAttempt, reason: str) -> bool:
+        reason = f"wave {attempt.key}: durable output-reuse blocked: {reason}"
+        attempt.status = "failed"
+        attempt.error_category = "controller"
+        attempt.error = reason
+        attempt.reconciliation_error = reason
+        # Keep this decision unresolved so a later resume rechecks its evidence.
+        attempt.recovery_decision = "reuse_completed_wave"
+        attempt.operator_remedy = (
+            "Restore authoritative supervisor and object-store evidence, then "
+            "resume the same run ID; do not launch replacement work."
+        )
+        attempt.supervisor_blocks_cancellation = True
+        self.ledger.record(attempt)
+        return True
+
+    def _output_reuse_event(
+        self, attempt: WaveAttempt, events: Sequence[Mapping[str, Any]]
+    ) -> Mapping[str, Any] | None:
+        cancellations, reuse_decided = self._output_reuse_cancellations(events)
+        reuse_claimed = attempt.recovery_decision == "reuse_completed_wave" or any(
+            event["recovery"]["action"] == "reuse_completed_wave"
+            for event in cancellations
+        )
+        if not reuse_claimed and (cancellations or not reuse_decided):
+            return None
+        if not cancellations:
+            raise ValueError(
+                "output-reuse decision has no immutable cancellation event"
+            )
+        for event in cancellations:
+            self._validate_output_reuse_identity(attempt, event)
+            self._output_reuse_terminal_status(attempt, event)
+        proof_fields = ("cancellation", "outputs", "recovery")
+        first = cancellations[0]
+        if any(
+            event.get(field) != first.get(field)
+            for event in cancellations[1:]
+            for field in proof_fields
         ):
-            return block(
-                f"wave {attempt.key}: immutable output-reuse event is incomplete"
-            )
-        assert isinstance(identity, Mapping)
-        assert isinstance(cancellation, Mapping)
-        assert isinstance(recovery, Mapping)
-        assert isinstance(outputs, Mapping)
+            raise ValueError("immutable output-reuse cancellation history is ambiguous")
+        return first
 
+    def _output_reuse_cancellations(
+        self, events: Sequence[Mapping[str, Any]]
+    ) -> tuple[list[Mapping[str, Any]], bool]:
+        cancellations = []
+        reuse_decided = False
+        for event in events:
+            phase = event.get("phase")
+            if phase not in _SUPERVISOR_EVENT_PHASES:
+                raise ValueError("immutable output-reuse event has an unknown phase")
+            if phase not in {"decision", "cancellation"}:
+                continue
+            recovery = event.get("recovery")
+            if not isinstance(recovery, Mapping) or (
+                recovery.get("action") not in _SUPERVISOR_RECOVERY_ACTIONS
+            ):
+                raise ValueError("immutable output-reuse recovery is malformed")
+            if (
+                recovery.get("reason_code") == "DECLARED_OUTPUTS_VALID"
+                and recovery.get("action") != "reuse_completed_wave"
+            ):
+                raise ValueError(
+                    "immutable output-reuse decision contradicts its reason"
+                )
+            if phase == "decision":
+                reuse_decided |= recovery.get("action") == "reuse_completed_wave"
+            else:
+                cancellations.append(event)
+        return cancellations, reuse_decided
+
+    def _validate_output_reuse_identity(
+        self, attempt: WaveAttempt, event: Mapping[str, Any]
+    ) -> None:
+        identity = event.get("attempt_identity")
         expected_identity = {
             "runtime": "skypilot",
             "run_id": self.run_id,
@@ -1136,23 +1203,28 @@ class SkyPilotWaveExecutor:
             "source_sha256": _source_identity(),
             "image_digest": _image_identity(self.render_options),
         }
-        if any(
+        if not isinstance(identity, Mapping) or any(
             not expected or identity.get(name) != expected
             for name, expected in expected_identity.items()
         ):
-            return block(
-                f"wave {attempt.key}: immutable output-reuse identity does not "
-                "match the current attempt"
+            raise ValueError(
+                "immutable output-reuse identity does not match the attempt"
             )
         if any(
             getattr(attempt, name) != expected_identity[name]
             for name in ("workflow_sha256", "source_sha256", "image_digest")
         ):
-            return block(
-                f"wave {attempt.key}: runtime output-reuse identity does not "
-                "match the current workflow, source, and image"
+            raise ValueError(
+                "runtime output-reuse identity does not match current inputs"
             )
 
+    def _output_reuse_terminal_status(
+        self, attempt: WaveAttempt, event: Mapping[str, Any]
+    ) -> str:
+        cancellation = event.get("cancellation")
+        recovery = event.get("recovery")
+        if not isinstance(cancellation, Mapping) or not isinstance(recovery, Mapping):
+            raise ValueError("immutable output-reuse event is incomplete")
         terminal_status = str(
             cancellation.get("provider_terminal_status") or ""
         ).upper()
@@ -1163,65 +1235,57 @@ class SkyPilotWaveExecutor:
             or str(cancellation.get("status") or "").lower()
             not in {"cancelled", "canceled"}
             or not is_terminal(terminal_status)
+            or cancellation.get("error")
             or recovery.get("action") != "reuse_completed_wave"
             or recovery.get("reason_code") != "DECLARED_OUTPUTS_VALID"
         ):
-            return block(
-                f"wave {attempt.key}: immutable output-reuse cancellation is not "
-                "exactly verified terminal"
+            raise ValueError(
+                "output-reuse cancellation is not exactly verified terminal"
             )
-        # Provider terminality is factual once the exact cancellation event is
-        # validated, even if current object-store evidence blocks completion.
-        attempt.sky_status = terminal_status
-        attempt.cancellation_state = "verified"
-        attempt.cancellation_error = ""
+        return terminal_status
 
-        expected_outputs = sorted(
+    def _validate_output_reuse_artifacts(
+        self, attempt: WaveAttempt, event: Mapping[str, Any]
+    ) -> None:
+        outputs = event.get("outputs")
+        expected = sorted(
             uri for output in attempt.outputs if (uri := _declared_output_uri(output))
         )
-        event_declared = sorted(str(uri) for uri in outputs.get("declared") or [])
-        event_valid = sorted(str(uri) for uri in outputs.get("valid") or [])
-        if (
-            len(expected_outputs) != len(attempt.outputs)
-            or not expected_outputs
+        if not isinstance(outputs, Mapping) or (
+            len(expected) != len(attempt.outputs)
+            or not expected
             or outputs.get("status") != "valid"
-            or outputs.get("missing")
-            or event_declared != expected_outputs
-            or event_valid != expected_outputs
+            or outputs.get("missing") != []
+            or not isinstance(outputs.get("declared"), list)
+            or not isinstance(outputs.get("valid"), list)
+            or sorted(outputs["declared"]) != expected
+            or sorted(outputs["valid"]) != expected
         ):
-            return block(
-                f"wave {attempt.key}: immutable output-reuse artifact evidence "
-                "does not match current declared outputs"
+            raise ValueError(
+                "output-reuse artifact evidence differs from declared outputs"
             )
-        try:
-            outputs_valid = self._outputs_exist(attempt.outputs)
-        except Exception as exc:  # noqa: BLE001 - storage uncertainty fails closed
-            return block(
-                f"wave {attempt.key}: declared output revalidation is unavailable: "
-                f"{sanitize_reason(exc)}"
-            )
-        if not outputs_valid:
-            return block(
-                f"wave {attempt.key}: declared outputs no longer validate for "
-                "durable output reuse"
+        if not self._outputs_exist(attempt.outputs):
+            raise ValueError(
+                "declared outputs no longer validate for durable output reuse"
             )
 
+    def _complete_output_reuse(self, attempt: WaveAttempt) -> None:
         attempt.status = "succeeded"
-        attempt.sky_status = terminal_status
-        attempt.cancellation_state = "verified"
-        attempt.cancellation_error = ""
         attempt.recovery_decision = "reuse_completed_wave"
         attempt.replayed = True
         attempt.adopted = True
         attempt.ended_at = utc_now()
         attempt.error = ""
+        attempt.error_category = ""
         attempt.primary_error = ""
         attempt.reconciliation_error = ""
+        attempt.operator_remedy = ""
+        attempt.supervisor_blocks_cancellation = False
         attempt.reconciliation.append(
             {
                 "outcome": "completed",
                 "source": "immutable_supervisor_output_reuse",
-                "provider_terminal_status": terminal_status,
+                "provider_terminal_status": attempt.sky_status,
                 "declared_outputs_valid": True,
                 "checked_at": utc_now(),
             }
@@ -1231,7 +1295,6 @@ class SkyPilotWaveExecutor:
             f"wave {attempt.key}: resumed immutable output-reuse completion for "
             f"exact job {attempt.job_id}; no replacement attempt submitted"
         )
-        return True
 
     def _reconcile_in_flight(
         self,
@@ -1321,19 +1384,7 @@ class SkyPilotWaveExecutor:
                 self.ledger.record(attempt)
                 return attempt
         elif outcome == "absent":
-            observations = record.get("observations") or []
-            reached_running = any(
-                isinstance(item, Mapping)
-                and (
-                    str(item.get("scheduler_state") or "").upper() == "RUNNING"
-                    or "RUNNING"
-                    in {
-                        str(value or "").upper()
-                        for value in (item.get("statuses") or {}).values()
-                    }
-                )
-                for item in observations
-            )
+            reached_running = _record_reached_running(record)
             explicit_output_adoption = (
                 self.options.adopt_absent_in_flight_outputs
                 and reached_running
@@ -2140,7 +2191,16 @@ class SkyPilotWaveExecutor:
             if str(task.get("status") or "").upper() in {"RUNNING", "RECOVERING"}
         ]
         observation = {
+            "schema": SCHEDULER_OBSERVATION_SCHEMA,
+            "source": SCHEDULER_OBSERVATION_SOURCE,
             "observed_at": utc_now(),
+            "wave_key": attempt.key,
+            "job_id": attempt.job_id or job_id,
+            "job_name": attempt.job_name,
+            "logical_launch_id": attempt.logical_launch_id,
+            "attempt": attempt.attempt,
+            "scheduler_fence_sequence": attempt.scheduler_fence_sequence,
+            "launch_sequence": attempt.launch_sequence,
             "scheduler_state": scheduler_state or "UNKNOWN",
             "running": sorted(running),
             "running_count": len(running),
@@ -2463,8 +2523,11 @@ class RuntimeLedger:
             workflow=workflow, run_id=run_id, api_version=api_version
         )
         if store is not None and resume:
-            existing = store.read_runtime_state()
-            if existing is not None and existing.run_id == run_id:
+            existing = store.read_runtime_state(
+                expected_workflow=workflow,
+                expected_run_id=run_id,
+            )
+            if existing is not None:
                 self.state = existing
                 self.state.status = "running"
 

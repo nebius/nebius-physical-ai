@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import math
 import os
-from typing import Any
+from typing import Any, Literal
 
 import lancedb
+import pyarrow as pa
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -76,7 +78,7 @@ class CreateTableRequest(BaseModel):
     schema: dict[str, Any] | None = None
     input_path: str = ""
     rows: list[dict[str, Any]] = Field(default_factory=list)
-    mode: str = "create"
+    mode: Literal["create", "overwrite", "append"] = "create"
     vector_column: str = "vector"
     id_column: str = "id"
     source_format: str = ""
@@ -179,10 +181,14 @@ def _equality_predicate(filter_spec: dict[str, Any]) -> str:
 
 
 def _list_tables(db: Any) -> list[str]:
+    list_tables = getattr(db, "list_tables", None)
+    if callable(list_tables):
+        values = list_tables()
+        return _normalize_table_names(getattr(values, "tables", values))
     table_names = getattr(db, "table_names", None)
     if callable(table_names):
         return _normalize_table_names(table_names())
-    return _normalize_table_names(db.list_tables())
+    return []
 
 
 def _normalize_table_names(values: Any) -> list[str]:
@@ -197,6 +203,238 @@ def _normalize_table_names(values: Any) -> list[str]:
         else:
             names.append(str(value))
     return names
+
+
+def _parse_arrow_type(type_spec: Any) -> pa.DataType:
+    if isinstance(type_spec, str):
+        try:
+            return pa.type_for_alias(type_spec)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"unsupported Arrow type: {type_spec}"
+            ) from exc
+    if not isinstance(type_spec, dict):
+        raise HTTPException(
+            status_code=400, detail="field type must be a string or object"
+        )
+    if set(type_spec) - {"name", "item_type", "list_size"}:
+        raise HTTPException(status_code=400, detail="unsupported keys in field type")
+    item_type = _parse_arrow_type(type_spec.get("item_type"))
+    if type_spec.get("name") == "list":
+        if "list_size" in type_spec:
+            raise HTTPException(
+                status_code=400, detail="list type cannot set list_size"
+            )
+        return pa.list_(item_type)
+    if type_spec.get("name") == "fixed_size_list":
+        list_size = type_spec.get("list_size")
+        if (
+            not isinstance(list_size, int)
+            or isinstance(list_size, bool)
+            or list_size < 1
+        ):
+            raise HTTPException(
+                status_code=400, detail="fixed_size_list requires a positive list_size"
+            )
+        return pa.list_(item_type, list_size)
+    raise HTTPException(status_code=400, detail="unsupported nested Arrow type")
+
+
+def _parse_arrow_schema(schema_spec: dict[str, Any] | None) -> pa.Schema | None:
+    if schema_spec is None:
+        return None
+    if set(schema_spec) != {"fields"} or not isinstance(schema_spec["fields"], list):
+        raise HTTPException(
+            status_code=400, detail="schema must contain only a fields list"
+        )
+    fields: list[pa.Field] = []
+    for field_spec in schema_spec["fields"]:
+        if not isinstance(field_spec, dict) or set(field_spec) - {
+            "name",
+            "type",
+            "nullable",
+        }:
+            raise HTTPException(status_code=400, detail="invalid schema field")
+        name = field_spec.get("name")
+        nullable = field_spec.get("nullable", True)
+        if not isinstance(name, str) or not name or not isinstance(nullable, bool):
+            raise HTTPException(status_code=400, detail="invalid schema field")
+        fields.append(
+            pa.field(name, _parse_arrow_type(field_spec.get("type")), nullable)
+        )
+    if not fields or len({field.name for field in fields}) != len(fields):
+        raise HTTPException(
+            status_code=400, detail="schema fields must be non-empty and uniquely named"
+        )
+    return pa.schema(fields)
+
+
+def _rows_as_arrow_table(
+    rows: list[dict[str, Any]], requested_schema: pa.Schema | None
+) -> pa.Table:
+    if requested_schema is not None:
+        field_names = set(requested_schema.names)
+        for row in rows:
+            extra_fields = set(row) - field_names
+            if extra_fields:
+                names = ", ".join(sorted(extra_fields))
+                raise HTTPException(
+                    status_code=400, detail=f"row has undeclared fields: {names}"
+                )
+            for field in requested_schema:
+                if not field.nullable and row.get(field.name) is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"row is missing non-nullable field: {field.name}",
+                    )
+    normalized_rows = rows
+    if requested_schema is None:
+        field_names = list(dict.fromkeys(key for row in rows for key in row))
+        normalized_rows = [
+            {field_name: row.get(field_name) for field_name in field_names}
+            for row in rows
+        ]
+    try:
+        return pa.Table.from_pylist(normalized_rows, schema=requested_schema)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"rows are incompatible with the table schema: {exc}",
+        ) from exc
+
+
+def _schemas_equal(actual: pa.Schema, expected: pa.Schema) -> bool:
+    return actual.equals(expected, check_metadata=False)
+
+
+def _verify_stored_table(
+    db: Any, table_name: str, *, expected_rows: int, expected_schema: pa.Schema
+) -> None:
+    stored = db.open_table(table_name)
+    if stored.count_rows() != expected_rows:
+        raise HTTPException(
+            status_code=500, detail="stored table row count verification failed"
+        )
+    if not _schemas_equal(stored.schema, expected_schema):
+        raise HTTPException(
+            status_code=500, detail="stored table schema verification failed"
+        )
+
+
+def _canonical_record(record: dict[str, Any]) -> str:
+    try:
+        return json.dumps(
+            record, allow_nan=False, separators=(",", ":"), sort_keys=True
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"record is not canonical JSON: {exc}"
+        ) from exc
+
+
+def _unique_index_records(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    unique_records: list[dict[str, Any]] = []
+    request_records: dict[str, str] = {}
+    reused = 0
+    for record in records:
+        record_id = record.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            raise HTTPException(
+                status_code=400, detail="each record requires a non-empty record_id"
+            )
+        canonical = _canonical_record(record)
+        previous = request_records.get(record_id)
+        if previous is None:
+            request_records[record_id] = canonical
+            unique_records.append(record)
+        elif previous == canonical:
+            reused += 1
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"record_id has conflicting content: {record_id}",
+            )
+    return unique_records, reused
+
+
+def _existing_index_records(table: Any) -> dict[str, str]:
+    existing: dict[str, str] = {}
+    for record in table.to_arrow().to_pylist():
+        record_id = record.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            raise HTTPException(
+                status_code=409, detail="existing table has an invalid record_id"
+            )
+        canonical = _canonical_record(record)
+        previous = existing.get(record_id)
+        if previous is not None and previous != canonical:
+            raise HTTPException(
+                status_code=409,
+                detail=f"existing record_id has conflicting content: {record_id}",
+            )
+        existing[record_id] = canonical
+    return existing
+
+
+def _plan_index_append(
+    table: Any, records: list[dict[str, Any]], request_reused: int
+) -> tuple[pa.Table, int]:
+    incoming = _rows_as_arrow_table(records, table.schema)
+    existing = _existing_index_records(table)
+    novel_records: list[dict[str, Any]] = []
+    reused = request_reused
+    for record in incoming.to_pylist():
+        record_id = record["record_id"]
+        canonical = _canonical_record(record)
+        stored = existing.get(record_id)
+        if stored is None:
+            novel_records.append(record)
+        elif stored == canonical:
+            reused += 1
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"record_id has conflicting content: {record_id}",
+            )
+    return pa.Table.from_pylist(novel_records, schema=table.schema), reused
+
+
+def _mutate_table(
+    db: Any, table_name: str, body: CreateTableRequest
+) -> tuple[str, int]:
+    if body.input_path.startswith("s3://"):
+        raise HTTPException(
+            status_code=400,
+            detail="server-side S3 import is not implemented in the OSS wrapper",
+        )
+    requested_schema = _parse_arrow_schema(body.schema)
+    if not body.rows and requested_schema is None:
+        raise HTTPException(
+            status_code=400, detail="rows or a usable schema are required"
+        )
+    if body.mode == "append":
+        table = db.open_table(table_name)
+        incoming = _rows_as_arrow_table(body.rows, requested_schema or table.schema)
+        if not _schemas_equal(table.schema, incoming.schema):
+            raise HTTPException(
+                status_code=400, detail="append schema does not match table"
+            )
+        expected_rows = table.count_rows() + len(body.rows)
+        if body.rows:
+            table.add(incoming)
+        status = "appended"
+    else:
+        incoming = _rows_as_arrow_table(body.rows, requested_schema)
+        mode = "overwrite" if body.mode == "overwrite" else "create"
+        db.create_table(table_name, data=incoming, mode=mode)
+        expected_rows = len(body.rows)
+        status = "overwritten" if mode == "overwrite" else "created"
+    _verify_stored_table(
+        db, table_name, expected_rows=expected_rows, expected_schema=incoming.schema
+    )
+    return status, len(body.rows)
 
 
 def create_app(
@@ -260,24 +498,9 @@ def create_app(
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
         await require_auth(request, authorization)
-        rows = body.rows
-        if not rows and body.input_path.startswith("s3://"):
-            raise HTTPException(
-                status_code=400,
-                detail="server-side S3 import is not implemented in the OSS wrapper",
-            )
-        if not rows:
-            rows = [{body.id_column: "empty", body.vector_column: [0.0]}]
-        if body.mode == "append":
-            table = db.open_table(table_name)
-            table.add(rows)
-            status = "appended"
-        else:
-            mode = "overwrite" if body.mode == "overwrite" else "create"
-            table = db.create_table(table_name, data=rows, mode=mode)
-            status = "created" if mode == "create" else "overwritten"
+        status, stored_rows = _mutate_table(db, table_name, body)
         known_tables.add(table_name)
-        return {"status": status, "table": table_name, "rows": len(rows)}
+        return {"status": status, "table": table_name, "rows": stored_rows}
 
     @app.post("/tables/{table_name}/query")
     async def query_table(
@@ -312,27 +535,36 @@ def create_app(
         request: Request,
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
-        """Append dataset records, creating the table on first write."""
+        """Insert novel dataset identities and reuse exact existing records."""
 
         await require_auth(request, authorization)
         if not body.records:
             raise HTTPException(status_code=400, detail="records must not be empty")
         rows = [dict(record) for record in body.records]
+        unique_rows, reused = _unique_index_records(rows)
         if body.table in set(_list_tables(db)):
             table = db.open_table(body.table)
-            table.add(rows)
-            status = "appended"
+            novel_rows, reused = _plan_index_append(table, unique_rows, reused)
+            inserted = novel_rows.num_rows
+            if inserted:
+                table.add(novel_rows)
+                status = "appended"
+            else:
+                status = "replayed"
         else:
             # First write defines the schema, which is what makes `register` idempotent for a
             # fresh dataset id without a separate create step.
-            db.create_table(body.table, data=rows, mode="create")
+            db.create_table(body.table, data=unique_rows, mode="create")
+            inserted = len(unique_rows)
             status = "created"
         known_tables.add(body.table)
         return {
             "status": status,
             "table": body.table,
             "lance_uri": body.lance_uri,
-            "rows": len(rows),
+            "rows": inserted,
+            "inserted": inserted,
+            "reused": reused,
         }
 
     @app.post("/query")
