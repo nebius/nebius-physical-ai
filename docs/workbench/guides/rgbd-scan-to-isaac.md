@@ -5,8 +5,9 @@
 The [RGB-D scan workflow](../../../workflows/testing/rgbd-scan-to-isaac.yaml)
 turns calibrated depth, color, and measured camera poses into a colored surface
 with matching static collision geometry. Open3D integrates observed surfaces;
-OpenUSD packages them; Isaac Sim checks native PhysX intersections on an RTX
-PRO 6000 GPU. It does not require a separately authored collision mesh.
+OpenUSD packages them; Isaac Sim checks intersections using CPU PhysX queries
+inside the RTX PRO 6000 runtime. It does not require a separately authored
+collision mesh.
 
 The geometry stages run on CPU using the existing SONIC image's
 `/opt/npa/venv/bin/python`, without starting SONIC or downloading Isaac. The first
@@ -97,8 +98,9 @@ travels with the output.
 The stage calls real
 [Open3D ScalableTSDFVolume](https://www.open3d.org/docs/release/python_api/open3d.pipelines.integration.ScalableTSDFVolume.html)
 and extracts its measured triangle surface. It raycasts that surface against a
-regular pixel grid in every excluded depth frame. Coverage is hits/valid depth
-observations, and inlier fraction is depth-matching hits/all valid observations;
+regular pixel grid in every held-out validation depth frame. Coverage is
+hits/valid depth observations, and inlier fraction is depth-matching hits/all
+valid observations;
 misses cannot disappear from the denominator. Mean and 95th-percentile errors
 are measured over hits. Failing the configured coverage, inlier fraction, or mean
 error prevents publication. One representative inlier per held-out frame becomes
