@@ -9,6 +9,7 @@ import numpy as np
 from npa.workflows.navigation.artifacts import write_json
 from npa.workflows.navigation.render_evidence import (
     capture_settings,
+    configure_camera_sensor,
     frozen_physics,
     renderer_evidence,
 )
@@ -60,6 +61,7 @@ class _Capture:
             self.hidden.append((attribute, attribute.Get()))
             imageable.MakeInvisible()
         self.camera = UsdGeom.Camera.Define(self.env.sim.stage, "/World/NpaProofCamera")
+        configure_camera_sensor(self.camera)
         self.camera.CreateFocalLengthAttr(18.0)
         self.camera.CreateClippingRangeAttr((0.1, 100.0))
         self.transform = UsdGeom.Xformable(self.camera).AddTransformOp()

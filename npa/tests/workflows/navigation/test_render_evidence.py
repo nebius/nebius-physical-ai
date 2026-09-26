@@ -145,7 +145,13 @@ def test_capture_enables_actual_pinned_scheduler_and_restores(monkeypatch):
 
     enabled = "/exts/omni.replicator.core/Orchestrator/enabled"
     capture = "/omni/replicator/captureOnPlay"
-    settings = Settings({enabled: False, capture: True})
+    original = {
+        enabled: False,
+        capture: True,
+        "/rtx/hydra/supportMultiTickRate": True,
+        "/rtx/rendering/perSensorTickTlas": True,
+    }
+    settings = Settings(original)
     module = SimpleNamespace(get_settings=lambda: settings)
     monkeypatch.setitem(sys.modules, "carb", SimpleNamespace(settings=module))
     monkeypatch.setitem(sys.modules, "carb.settings", module)
@@ -156,7 +162,57 @@ def test_capture_enables_actual_pinned_scheduler_and_restores(monkeypatch):
             "/rtx/hydra/supportMultiTickRate": True,
             "/rtx/rendering/perSensorTickTlas": True,
         }
-    assert settings == {enabled: False, capture: True}
+    assert settings == original
+
+
+def test_capture_refuses_late_only_multitick_enable(monkeypatch):
+    import sys
+
+    settings = Settings({"/rtx/hydra/supportMultiTickRate": False})
+    module = SimpleNamespace(get_settings=lambda: settings)
+    monkeypatch.setitem(sys.modules, "carb", SimpleNamespace(settings=module))
+    monkeypatch.setitem(sys.modules, "carb.settings", module)
+    with pytest.raises(RuntimeError, match="before Kit startup"):
+        with evidence.capture_settings():
+            pytest.fail("late-enabled renderer must not enter capture")
+    assert settings == {"/rtx/hydra/supportMultiTickRate": False}
+
+
+def test_capture_startup_preserves_other_args_and_is_idempotent():
+    args = SimpleNamespace(kit_args="--/app/custom=true")
+    evidence.configure_capture_startup(args)
+    expected = args.kit_args
+    evidence.configure_capture_startup(args)
+    assert args.kit_args == expected
+    assert args.kit_args.split()[0] == "--/app/custom=true"
+
+
+@pytest.mark.parametrize(
+    "name", ["hydra/supportMultiTickRate", "rendering/perSensorTickTlas"]
+)
+def test_capture_startup_rejects_conflicting_modes(name):
+    args = SimpleNamespace(kit_args=f"--/rtx/{name}=false")
+    with pytest.raises(ValueError, match="requires startup setting"):
+        evidence.configure_capture_startup(args)
+
+
+def test_camera_sensor_rejects_missing_native_schema():
+    camera = SimpleNamespace(
+        GetPrim=lambda: SimpleNamespace(ApplyAPI=lambda name: False)
+    )
+    with pytest.raises(RuntimeError, match="OmniSensorAPI is unavailable"):
+        evidence.configure_camera_sensor(camera)
+
+
+@pytest.mark.parametrize("schema,rate", [(False, 0.0), (True, 30.0), (True, None)])
+def test_camera_sensor_rejects_lost_schema_or_changed_schedule(schema, rate):
+    attribute = SimpleNamespace(Get=lambda: rate)
+    prim = SimpleNamespace(
+        HasAPI=lambda name: schema, GetAttribute=lambda name: attribute
+    )
+    camera = SimpleNamespace(GetPrim=lambda: prim)
+    with pytest.raises(RuntimeError, match="retain OmniSensorAPI"):
+        evidence._camera_sensor_identity(camera)
 
 
 def test_native_snapshot_copies_actual_physx_buffers(monkeypatch):

@@ -7,6 +7,53 @@ import json
 import numpy as np
 
 
+def configure_capture_startup(args):
+    """Select native sensor scheduling before AppLauncher constructs Kit.
+
+    Args:
+        args: Built-in evaluation launcher arguments, including optional kit_args.
+    Returns:
+        None; preserves other Kit arguments and sets required sensor flags.
+    Raises:
+        ValueError: Existing Kit arguments explicitly conflict with capture mode.
+    """
+    tokens = getattr(args, "kit_args", "").split()
+    for name in ("/rtx/hydra/supportMultiTickRate", "/rtx/rendering/perSensorTickTlas"):
+        flag = f"--{name}=true"
+        if any(token.startswith(f"--{name}=") and token != flag for token in tokens):
+            raise ValueError(f"native capture requires startup setting {flag}")
+        if flag not in tokens:
+            tokens.append(flag)
+    args.kit_args = " ".join(tokens)
+
+
+def configure_camera_sensor(camera):
+    """Apply the pinned Isaac camera sensor schema before render-product creation.
+
+    Args:
+        camera: Native UsdGeom.Camera created after Kit starts.
+    Returns:
+        None; authors the native autotrigger sensor configuration.
+    Raises:
+        RuntimeError: The runtime cannot apply or retain OmniSensorAPI.
+    """
+    prim = camera.GetPrim()
+    if not prim.ApplyAPI("OmniSensorAPI"):
+        raise RuntimeError("native camera OmniSensorAPI is unavailable")
+    tick_rate = prim.GetAttribute("omni:sensor:tickRate")
+    if not tick_rate or not tick_rate.Set(0.0):
+        raise RuntimeError("native camera sensor tick rate is unavailable")
+    _camera_sensor_identity(camera)
+
+
+def _camera_sensor_identity(camera):
+    prim = camera.GetPrim()
+    tick_rate = prim.GetAttribute("omni:sensor:tickRate")
+    if not prim.HasAPI("OmniSensorAPI") or not tick_rate or tick_rate.Get() != 0.0:
+        raise RuntimeError("native camera must retain OmniSensorAPI autotrigger mode")
+    return {"api": "OmniSensorAPI", "tick_rate_hz": 0.0}
+
+
 @contextmanager
 def capture_settings():
     """Enable the pinned Lab preset's disabled scheduler only for capture.
@@ -29,6 +76,9 @@ def capture_settings():
         "/rtx/rendering/perSensorTickTlas": True,
     }
     original = {key: settings.get(key) for key in changes}
+    for key in ("/rtx/hydra/supportMultiTickRate", "/rtx/rendering/perSensorTickTlas"):
+        if original[key] is not True:
+            raise RuntimeError(f"native capture requires {key} before Kit startup")
     print(
         json.dumps(
             {"capture_settings_before": original, "capture_settings_requested": changes}
@@ -230,6 +280,7 @@ def renderer_evidence(annotators, camera, transform, native):
         "native_physics_unchanged": True,
         "frozen_render_passes": 2,
         "render_settings": settings,
+        "camera_sensor": _camera_sensor_identity(camera),
     }
 
 

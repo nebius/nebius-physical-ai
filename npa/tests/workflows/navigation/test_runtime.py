@@ -13,10 +13,15 @@ from npa.workflows.navigation.artifacts import file_sha256
 from npa.workflows.navigation.contract import finite_array
 
 
-@pytest.mark.parametrize("stage", ["train", "evaluate-checkpoint"])
+@pytest.mark.parametrize("stage", ["train", "evaluate", "evaluate-checkpoint"])
+@pytest.mark.parametrize("builtin", [False, True])
 def test_launcher_receives_resolved_backends_and_sealed_seed(
-    stage, recipe, tmp_path, monkeypatch
+    stage, builtin, recipe, tmp_path, monkeypatch
 ):
+    if builtin:
+        recipe = recipe.model_copy(
+            update={"adapter_module": "npa.workflows.navigation.reference"}
+        )
     source, output = tmp_path / "input", tmp_path / "output"
     source.mkdir()
     (source / "recipe.json").write_text(recipe.model_dump_json())
@@ -34,6 +39,11 @@ def test_launcher_receives_resolved_backends_and_sealed_seed(
     def launch(config, args):
         assert config is resolved and config.seed == cases[0].seed
         assert events == [cases[0].seed, "resolved"]
+        if builtin and stage != "train":
+            assert "--/rtx/hydra/supportMultiTickRate=true" in args.kit_args.split()
+            assert "--/rtx/rendering/perSensorTickTlas=true" in args.kit_args.split()
+        else:
+            assert args.kit_args == "--/app/custom=true  --/app/other=7"
         events.append("Kit")
         yield
 
@@ -53,7 +63,12 @@ def test_launcher_receives_resolved_backends_and_sealed_seed(
     monkeypatch.setattr(
         runtime,
         "_arguments",
-        lambda _: SimpleNamespace(stage=stage, input_path=source, output_path=output),
+        lambda _: SimpleNamespace(
+            stage=stage,
+            input_path=source,
+            output_path=output,
+            kit_args="--/app/custom=true  --/app/other=7",
+        ),
     )
     monkeypatch.setattr(
         runtime,

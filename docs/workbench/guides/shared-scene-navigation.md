@@ -113,10 +113,13 @@ Public reference evaluation captures the actual Isaac Replicator RGB renderer
 while the focal robot follows its native policy. The video overlays measured
 goal distance, contact forces and simulated time. Peer visuals are hidden only
 for this recording; their physics remain active, and render steps use zero
-simulation delta. Capture temporarily enables the scheduler disabled by the pinned
-Lab headless rendering preset and enables the native multi-tick and per-sensor
-acceleration-structure modes that Isaac's base app supplies but Lab omits. It
-restores these settings afterward. Two frozen render
+simulation delta. Built-in evaluation enables native multi-tick and per-sensor
+acceleration-structure modes through the pinned AppLauncher's `kit_args` before
+Kit initializes. Training and external BYOF launch arguments are unchanged.
+The camera explicitly applies Isaac's `OmniSensorAPI` with its native zero-Hz
+autotrigger mode before render-product creation. Capture checks the startup modes,
+temporarily enables the scheduler disabled by Lab, and restores that setting afterward.
+Two frozen render
 passes flush annotations. Each accepted frame must match its authored camera
 pose, intrinsics and resolution, and its rational renderer time must match actual
 native simulation-manager time backed by physics step events, with the same time

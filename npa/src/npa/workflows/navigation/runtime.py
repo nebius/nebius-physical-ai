@@ -286,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
     args.enable_cameras = recipe.sensor_mode == "rgbd" or (
         not training and recipe.adapter_module == "npa.workflows.navigation.reference"
     )
+    if not training and recipe.adapter_module == "npa.workflows.navigation.reference":
+        from npa.workflows.navigation.render_evidence import configure_capture_startup
+
+        configure_capture_startup(args)
     args.output_path.mkdir(parents=True, exist_ok=True)
     shutil.copy2(args.input_path / "recipe.json", args.output_path / "recipe.json")
     with launch_simulation(config, args):
