@@ -884,6 +884,147 @@ def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
 # ------------------------------------------------------------------- early exit
 
 
+def _image_pin_bindings() -> dict[str, str]:
+    return {
+        "cr.example/tool-a:latest": "cr.example/tool-a@sha256:" + "a" * 64,
+        "cr.example/tool-b:latest": "cr.example/tool-b@sha256:" + "b" * 64,
+    }
+
+
+def _image_pin_options(bindings: dict[str, str]) -> SkypilotRenderOptions:
+    return SkypilotRenderOptions(
+        image_overrides={"*": "cr.example/x@sha256:" + "c" * 64},
+        image_digest_pins=bindings,
+    )
+
+
+@pytest.mark.parametrize("change", ["swap", "rename", "add", "remove"])
+def test_image_identity_binds_digest_pins_to_reference_keys(change: str) -> None:
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+
+    bindings = _image_pin_bindings()
+    if change == "swap":
+        changed = {
+            "cr.example/tool-a:latest": bindings["cr.example/tool-b:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-a:latest"],
+        }
+    elif change == "rename":
+        changed = {
+            "cr.example/tool-a-renamed:latest": bindings["cr.example/tool-a:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-b:latest"],
+        }
+    elif change == "add":
+        changed = {
+            **bindings,
+            "cr.example/tool-c:latest": "cr.example/tool-c@sha256:" + "c" * 64,
+        }
+    else:
+        changed = {"cr.example/tool-a:latest": bindings["cr.example/tool-a:latest"]}
+
+    expected = _image_identity(_image_pin_options(bindings))
+    reordered = _image_identity(
+        _image_pin_options(dict(reversed(list(bindings.items()))))
+    )
+    actual = _image_identity(_image_pin_options(changed))
+
+    assert reordered == expected
+    assert actual != expected
+
+
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_swapped_image_pin_bindings(tmp_path, outputs_exist):
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=_image_pin_options(bindings)
+    )
+    swapped = dict(zip(bindings, reversed(list(bindings.values()))))
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=_image_pin_options(swapped)
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_accepts_reordered_image_pin_bindings(tmp_path):
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=_image_pin_options(bindings)
+    )
+    reordered = dict(reversed(list(bindings.items())))
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=_image_pin_options(reordered)
+    )
+    assert report.status == "succeeded"
+    assert report.waves[0]["replayed"] is True
+    assert submitter.calls == []
+
+
+def _image_selection_replay_spec() -> str:
+    document = yaml.safe_load(COMPLETED_REPLAY_SPEC)
+    document["config"].update(
+        images_uri="s3://example-bucket/images/",
+        captions_uri="s3://example-bucket/captions/",
+        caption_model="fixture-model",
+        max_images=1,
+        max_tokens=8,
+    )
+    document["initial"] = "caption"
+    document["states"]["caption"] = {
+        "toolRef": "workbench.token_factory.caption",
+        "resources": "cpu",
+        "outputs": [{"uri": "s3://example-bucket/captions/result.json"}],
+        "next": "export",
+    }
+    return yaml.safe_dump(document)
+
+
+def _image_selection_options(
+    overrides, *, pins=None, registry="", gpu_target="", image_variant=""
+):
+    return SkypilotRenderOptions(
+        registry=registry,
+        image_overrides=overrides,
+        image_digest_pins=pins or {},
+        gpu_target=gpu_target,
+        image_variant=image_variant,
+    )
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_reassigned_image_selection(
+    tmp_path,
+    pinned,
+    outputs_exist,
+):
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    bindings = _image_pin_bindings()
+    references = list(bindings) if pinned else list(bindings.values())
+    pins = bindings if pinned else {}
+    initial = _image_selection_options(
+        {"*": references[0], "workbench.token_factory.caption": references[1]},
+        pins=pins,
+    )
+    changed = _image_selection_options(
+        {"*": references[1], "workbench.token_factory.caption": references[0]},
+        pins=pins,
+    )
+    assert resolve_task_image("", {}, options=initial) != resolve_task_image(
+        "", {}, options=changed
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_image_selection_replay_spec()
+    )
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
 def test_runtime_early_exits_when_gate_promotes_on_first_iteration(
     tmp_path: Path,
 ) -> None:
