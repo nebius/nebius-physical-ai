@@ -93,13 +93,17 @@ def test_slurm_script_preserves_argv_and_worker_failure(tmp_path, monkeypatch):
     binary.chmod(0o700)
     for name, body in {
         "scontrol": 'printf "rank-zero\\nrank-one\\n"',
-        "srun": 'while [ "${1#--}" != "$1" ]; do shift; done\nexec "$@"',
+        "srun": (
+            'test -z "${SLURM_TRES_PER_TASK:-}" || exit 91\n'
+            'while [ "${1#--}" != "$1" ]; do shift; done\nexec "$@"'
+        ),
     }.items():
         executable = tmp_path / name
         executable.write_text(f"#!/bin/sh\n{body}\n")
         executable.chmod(0o700)
     monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
     monkeypatch.setenv("SLURM_JOB_NODELIST", "workers")
+    monkeypatch.setenv("SLURM_TRES_PER_TASK", "cpu:128")
     monkeypatch.setenv("ARGS_FILE", str(tmp_path / "argv"))
     result = subprocess.run(["bash", str(args.run_dir / "train.sbatch")])
     assert result.returncode == 19
@@ -111,6 +115,106 @@ def test_slurm_script_preserves_argv_and_worker_failure(tmp_path, monkeypatch):
     ]
     with pytest.raises(FileExistsError):
         recipe._plan(args)
+
+
+def _evaluation_summaries():
+    return [
+        {
+            "task_results": [
+                {
+                    "task_id": task,
+                    "episodes": 50,
+                    "successes": 45,
+                    "episode_results": [
+                        {"episode": episode, "success": episode < 45, "error": None}
+                        for episode in range(50)
+                    ],
+                }
+                for task in range(10)
+            ]
+        }
+    ]
+
+
+def test_quality_counts_full_trials_and_rejects_server_errors():
+    evaluation = _load("evaluate")
+    summaries = _evaluation_summaries()
+    tasks = evaluation._task_results(summaries, 50)
+    assert sum(task["successes"] for task in tasks) == 450
+    low, high = evaluation._wilson(450, 500)
+    assert 0.86 < low < 0.9 < high < 0.93
+    tasks[0]["episode_results"][0]["error"] = "server error: connection reset"
+    with pytest.raises(ValueError, match="infrastructure or inference errors"):
+        evaluation._task_results(summaries, 50)
+
+
+@pytest.mark.parametrize("missing", ["task", "trial", "duplicate", "aggregate"])
+def test_quality_rejects_incomplete_or_inconsistent_results(missing):
+    evaluation = _load("evaluate")
+    summaries = _evaluation_summaries()
+    tasks = summaries[0]["task_results"]
+    if missing == "task":
+        tasks.pop()
+    elif missing == "trial":
+        tasks[0]["episode_results"].pop()
+    elif missing == "duplicate":
+        tasks[0]["episode_results"][0]["episode"] = 1
+    else:
+        tasks[0]["successes"] = 50
+    with pytest.raises(ValueError):
+        evaluation._task_results(summaries, 50)
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "169.254.169.254", "8.8.8.8", "::1"])
+def test_worker_join_rejects_nonprivate_peer_routes(address):
+    with pytest.raises(ValueError, match="RFC1918"):
+        _load("add_worker")._private_address(address)
+
+
+def test_generated_slurm_config_remains_readable_by_job_users(tmp_path, monkeypatch):
+    controller = _load("slurm_controller")
+    original_path = Path
+
+    def local_config_path(*parts):
+        path = original_path(*parts)
+        if str(path).startswith("/etc/slurm/"):
+            return tmp_path / path.name
+        return path
+
+    monkeypatch.setattr(controller, "Path", local_config_path)
+    monkeypatch.setattr(
+        controller,
+        "_node_settings",
+        lambda: {
+            "NODE": "synthetic-worker",
+            "ADDRESS": "private-worker-address",
+            "SHAPE": "CPUs=160",
+            "MEMORY": "1700000",
+        },
+    )
+    controller._configure("synthetic-cluster")
+    for name in ("slurm.conf", "gres.conf", "cgroup.conf"):
+        assert (tmp_path / name).stat().st_mode & 0o777 == 0o644
+    assert "gres/gpu" in (tmp_path / "slurm.conf").read_text()
+
+
+def test_profile_busy_time_does_not_double_count_overlapping_collectives():
+    profiler = _load("profile_report")
+    kernels = [
+        {"name": "gemm", "ts": 0, "dur": 10_000_000, "args": {"device": 0}},
+        {
+            "name": "ncclAllReduce",
+            "ts": 5_000_000,
+            "dur": 10_000_000,
+            "args": {"device": 0},
+        },
+    ]
+    result = profiler._kernel_metrics(kernels, 0, 12_000_000)
+    assert result["kernel_duration_seconds_by_category"] == {
+        "matrix_multiply": 10,
+        "collectives": 7,
+    }
+    assert result["observed_kernel_busy_seconds_by_device"] == {"0": 12}
 
 
 def _completed_run(tmp_path, nodes=1):
@@ -149,6 +253,9 @@ def _completed_run(tmp_path, nodes=1):
     (run / "node-0.log").write_text(
         "\n".join(
             f"{step} : iter_speed {seconds} seconds per iteration | Loss: 0.2"
+            " | 1,000 tokens per iteration (200 tokens/s)"
+            " | vae_encode 0.2s/iter avg (4.0%), max 0.3s (6.0%)"
+            " | prepare_data 0.4s/iter avg (8.0%), max 0.5s (10.0%)"
             for step, seconds in zip(range(52, 56), [2, 4, 6, 8], strict=True)
         )
     )
@@ -170,6 +277,8 @@ def test_report_measures_complete_run_and_never_claims_quality(tmp_path):
     assert report["step_p95_seconds"] == pytest.approx(7.7)
     assert report["training_gpu_hours"] == pytest.approx(8 * 200 / 3600)
     assert report["quality_measured"] is False
+    assert report["work"]["measured_tokens"] == 4000
+    assert report["work"]["tokens_per_second"] == 200
 
 
 @pytest.mark.parametrize(

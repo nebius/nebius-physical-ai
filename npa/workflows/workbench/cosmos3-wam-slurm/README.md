@@ -4,7 +4,7 @@
 
 This native Slurm recipe runs NVIDIA's **LIBERO-10 world action model (WAM)**
 post-training experiment. It trains the action and generation pathways together.
-It is a standalone application recipe for `npa soperator`, alongside the existing
+It is a standalone Slurm application recipe, alongside the existing
 [single-node policy workflow](../../../../docs/workbench/cosmos3-policy-model-factory.md).
 It does not add a new `npa.workflow` toolRef or claim that the inference image is
 a training image.
@@ -13,7 +13,11 @@ a training image.
 and native fused-optimizer checks. Native checkpoint conversion and trainer
 configuration checks passed. A one-GPU WAM attempt exhausted memory at its first
 optimizer update with FP32 parameters and EMA, even with one sample per step.
-B200 Slurm execution, scaling and policy quality remain unmeasured. See
+Actual eight-GPU Slurm execution and the eight-rank NCCL preflight have now
+passed. The full training run is in progress; completed duration, scaling and
+policy quality remain unmeasured. The running deployment uses native Slurm
+23.11.4 on dedicated GPU VMs, with controller and accounting on the first
+worker. The Soperator path remains an unvalidated deployment alternative. See
 [validation.json](validation.json) and the [GPU evidence](../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json).
 
 ## Plan without cloud resources
@@ -56,6 +60,12 @@ example follows upstream LIBERO-10's training schedule.
 | `recipe.py` / `train.toml.in` | Native TOML, batch arithmetic, Slurm launch, per-node completion evidence |
 | `distributed_preflight.py` | Rank/host placement and a real NCCL all-reduce before training |
 | `report.py` | Complete-checkpoint verification, timings, GPU-hours, and comparable-run speedup |
+| `profile_report.py` | CUDA trace hashes, kernel categories and overlap-aware observed busy time |
+| `benchmark-protocol.json` | Full schedules, repeated timing runs, separate profiles, and the 90% quality target |
+| `bootstrap-controller.sh` / `slurm_controller.py` / `slurm.conf.in` | Fresh dedicated Ubuntu Slurm controller and first worker |
+| `add_worker.py` / `bootstrap-worker.sh` / `slurm_worker.py` | Private second-worker bundle, shared storage, and native Slurm join |
+| `prepare_simulation.py` / `simulation-requirements.txt` | Separate pinned Python 3.10.21 CPU LIBERO environment |
+| `evaluate.py` | Native policy servers and all ten tasks, with per-trial evidence and strict result checks |
 
 `recipe.py plan` requires `--shared-root`, `--run-dir`, `--name`, `--nodes`, and
 `--steps`. Optional `--samples-per-rank=64`, `--global-batch=2048`, `--seed=42`,
@@ -105,6 +115,48 @@ At runtime, Slurm supplies `SLURM_NODEID`, `SLURM_NNODES`, and
 `IMAGINAIRE_OUTPUT_ROOT`. `NPA_WAM_RUN_DIR` is an internal preflight output path.
 CUDA, NCCL, network-interface and InfiniBand settings otherwise come from the
 qualified cluster environment; the recipe does not force TCP or disable IB.
+The launcher clears the inherited `SLURM_TRES_PER_TASK` and explicitly supplies
+128 CPUs and eight GPUs to `srun`. Slurm 23.11 otherwise rejects the inherited
+CPU-only TRES together with `--gpus-per-task` before starting a worker.
+
+## Native VM and evaluation additions
+
+Follow [native-cluster.md](native-cluster.md) for the deployment used in the
+campaign, including second-worker joining, accounting and cleanup.
+
+On a **fresh dedicated Ubuntu 24.04 B200 VM**, with the qualified NVIDIA driver
+and fabric manager already installed, `bootstrap-controller.sh` installs Slurm
+23.11.4 and configures the first worker, controller and MariaDB accounting.
+It refuses to replace an existing Slurm configuration. Set private
+`NPA_SLURM_CLUSTER_NAME` and `NPA_SLURM_ACCOUNT` values before running it as the
+operator user with sudo. Accounting credentials are generated on the VM and
+written with mode 0600. The dedicated IPv4 firewall permits SSH, established
+connections, loopback and the worker's own address; `persist-firewall.sh` saves
+those rules for reboot. Multi-node joining additionally requires private peer
+addresses, shared Munge credentials and a common filesystem. This research
+deployment colocates the controller on a worker; it has no controller failover.
+
+`prepare_simulation.py --shared-root PATH` creates a fresh `PATH/simulation`
+with Python 3.10.21, CPU PyTorch 2.5.1, the pinned LIBERO source and the exact
+packages in `simulation-requirements.txt`. It needs `uv`, git, `libosmesa6`,
+`cmake` and `build-essential`. It preserves the separate CUDA training venv.
+The simulator's `LIBERO_CONFIG_PATH` and source `PYTHONPATH` are set explicitly.
+
+After training, use `evaluate.py --shared-root PATH --run-dir RUN --step 500
+--output-dir OUTPUT` inside an exclusive eight-GPU Slurm allocation. Repeat for
+steps 1000, 1500 and 2000. It defaults to eight policy servers, eight simulator
+environments per server, all ten tasks, fifty trials per task and seed 42.
+`--workers` selects one to eight visible GPUs; `--trials`, `--envs` and `--seed`
+are explicit experimental controls. The 500-trial qualification flag is emitted
+only for fifty trials per task. Server or simulator errors fail evaluation;
+they do not become policy failures. The script checks revisions and the actual
+checkpoint loaded by each loopback-bound server. Native evaluation loads EMA
+weights, uses thirty UniPC denoising steps and guidance 1.0.
+
+`--record-rollouts --envs 1` preserves native rollout and prediction-comparison
+GIFs. Upstream vectorized evaluation does not save those videos, so the script
+rejects video recording with multiple environments. Keep separately recorded
+illustrative rollouts distinct from the full benchmark's trial results.
 
 ## Measurements and cleanup
 
@@ -120,7 +172,18 @@ starts emitting regular measurements at step 52; shorter execution checks
 cannot produce a steady-state report. Missing node receipts, failed jobs,
 missing NCCL evidence, gaps/duplicates/non-finite timings and incomplete final
 checkpoints fail reporting. Profiling runs cannot be compared as throughput
-results. No automatic extrapolation or policy-quality assertion is emitted.
+results. Reports also retain actual processed-token throughput and native VAE
+and data-preparation timers. VAE time is included in data preparation; those
+timers must not be added together. No automatic extrapolation or policy-quality
+assertion is emitted by the training report.
+
+For a completed 110-step `--profile` run, use `profile_report.py --run-dir RUN`.
+It requires actual CUDA kernels in the two active profiler steps on ranks 0,
+8 and so on, and writes `profile-summary.json`. Kernel-duration sums can exceed
+wall time because streams overlap; the report computes interval unions for
+observed kernel busy time and never labels collective duration as exposed
+communication stalls. Memory and utilization come from the separate GPU
+telemetry. Keep the compressed native traces for timeline inspection.
 
 Retain private `node-*.log`, node receipts, Slurm accounting, native resolved
 config, DCP state, profiler traces, `checkpoint-hashes.json`, and

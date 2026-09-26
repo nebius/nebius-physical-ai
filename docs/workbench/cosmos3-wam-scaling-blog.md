@@ -15,7 +15,8 @@ profiling, and the evidence needed to connect training time to policy quality.
 The current implementation has passed local launch and reporting tests, real
 dataset inspection, native checkpoint conversion and B200 runtime checks. An
 actual one-GPU WAM attempt exposed a memory limit described below. Completed
-Slurm training and policy measurements remain pending.
+Slurm training is now running on eight B200s; completed training duration,
+multi-node scaling and policy measurements remain pending.
 
 ## The question public launch recipes leave open
 
@@ -72,9 +73,10 @@ specific configuration does not fit on one B200, even at that small batch;
 it does not determine the minimum GPU count under other memory settings.
 
 The failed process lasted about 96 seconds. That is diagnostic startup and
-failure time, **not training duration or time to quality**. Full eight-GPU
-Slurm workers remain unavailable in the selected reservation, so the 8/16-GPU
-comparison and performance answers are still pending.
+failure time, **not training duration or time to quality**. A dedicated
+eight-GPU worker now passes the Slurm/NCCL preflight and is executing the full
+2,000-step schedule. The two-node comparison awaits sufficient free reserved
+capacity. Completed performance answers remain pending.
 
 The live preparation test also found an operational issue: the native converter
 could resolve a moving processor revision. The recipe now selects the staged

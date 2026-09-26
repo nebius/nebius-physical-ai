@@ -81,8 +81,10 @@ set -euo pipefail
 umask 077
 export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
 export MASTER_PORT="${{MASTER_PORT:-29500}}"
+# Slurm 23.11 exports CPU-only TRES that conflicts with --gpus-per-task.
+unset SLURM_TRES_PER_TASK
 exec srun --ntasks={settings["nodes"]} --ntasks-per-node=1 \\
-    --gpus-per-task=8 --gpu-bind=none --kill-on-bad-exit=1 {command}
+    --cpus-per-task=128 --gpus-per-task=8 --gpu-bind=none --kill-on-bad-exit=1 {command}
 """
 
 

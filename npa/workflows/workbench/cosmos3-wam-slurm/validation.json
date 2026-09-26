@@ -1,12 +1,20 @@
 {
   "schema": "npa.cosmos3.wam-recipe-validation.v1",
-  "status": "experimental-awaiting-slurm-training-validation",
+  "status": "experimental-slurm-training-in-progress",
   "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
   "upstream_toml_schema": {
     "checked": true,
-    "nodes": [1, 2, 4],
+    "nodes": [
+      1,
+      2,
+      4
+    ],
     "nominal_global_batch": 2048,
-    "gradient_accumulation": [4, 2, 1]
+    "gradient_accumulation": [
+      4,
+      2,
+      1
+    ]
   },
   "real_data_preflight": {
     "dataset_revision": "e5907374380b8f96511957e6ba5582be52a1e179",
@@ -17,7 +25,7 @@
     "video_files_sample_decoded": 4,
     "all_action_state_rows_finite": true
   },
-  "slurm_training_executed": false,
+  "slurm_training_executed": true,
   "upstream_train_dryrun_executed": true,
   "b200_cuda_runtime_qualified": true,
   "native_checkpoint_conversion_completed": true,
@@ -27,11 +35,19 @@
   "gpu_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json",
   "b200_scaling_measured": false,
   "policy_quality_measured": false,
-  "blocker": "Insufficient available reserved B200 capacity for an eight-GPU fabric worker and two-node comparison.",
+  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; the eight-GPU full run is executing.",
   "remaining_evidence": [
-    "B200 Slurm execution with distributed NCCL preflight",
     "Complete comparable 8/16-GPU runs; 32 GPUs when available",
     "Repeated timing measurements, accounting and profiling traces",
     "Checkpoint-linked complete LIBERO-10 closed-loop evaluations"
-  ]
+  ],
+  "complete_training_run_measured": false,
+  "slurm_runtime": {
+    "version": "23.11.4",
+    "deployment": "Native Slurm on dedicated reserved B200 GPU VMs",
+    "nodes": 1,
+    "gpus": 8,
+    "nccl_preflight": "passed",
+    "soperator_execution_validated": false
+  }
 }

@@ -12,8 +12,10 @@ dataloader. Captioned-video generator SFT does not exercise this action pathway.
 native fused Adam checks, completed native checkpoint conversion, native trainer
 dryruns for 8/16/32 GPUs, and decoded public data. A separate one-GPU WAM attempt
 failed at its first optimizer update with FP32 parameters and EMA, even at one
-sample per step. No B200 Slurm training duration, scaling efficiency, or policy
-success result has been measured for this recipe. The [GPU evidence record](../evidence/cosmos3-wam-b200-runtime.json)
+sample per step. Actual eight-GPU Slurm training and its eight-rank NCCL check
+are now running successfully. The full schedule is in progress; completed
+training duration, scaling efficiency and policy success remain unmeasured.
+The [GPU evidence record](../evidence/cosmos3-wam-b200-runtime.json)
 includes runtime versions, hashes, and the memory failure.
 Consult the [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json).
 
@@ -50,6 +52,11 @@ calling the result equivalent-work strong scaling. Comparing equal optimizer
 steps alone cannot demonstrate equivalent policy quality.
 
 ## 1. Prepare a dedicated reserved-capacity cluster
+
+The ongoing campaign uses [native Slurm on dedicated GPU VMs](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md),
+with controller, accounting and NFS on the first worker. Follow that deployment
+guide to reproduce the measured setup. The Soperator commands below are an
+alternative deployment path and have not been validated by this campaign.
 
 Use a separate project in the selected tenant and region. Complete credential
 and exact model access checks before provisioning:
@@ -106,12 +113,14 @@ git -C "$WAM_SHARED_ROOT/framework" remote add origin https://github.com/NVIDIA/
 git -C "$WAM_SHARED_ROOT/framework" fetch --depth=1 origin cf5d68c00d97ccd2480a2320ed652b92dec63102
 git -C "$WAM_SHARED_ROOT/framework" checkout --detach FETCH_HEAD
 cd "$WAM_SHARED_ROOT/framework"
-uv sync --frozen --extra train --group cu130-train
+uv sync --frozen --all-extras --group cu130-train
 ```
 
 Use NVIDIA's [pinned installation prerequisites](https://github.com/NVIDIA/cosmos-framework/blob/cf5d68c00d97ccd2480a2320ed652b92dec63102/docs/setup.md),
 including a compatible Linux CUDA toolchain/driver and the required system
 libraries. The baked Workbench Cosmos inference environment is insufficient.
+The campaign includes the frozen guardrail/inference dependencies required by
+the native policy server, in addition to training dependencies.
 All workers need the same Linux userland and access to the shared environment.
 Preserve the upstream lockfile and capture `uv pip freeze` plus `nvidia-smi`
 privately. No new public container or bundled vendor payload is published here.

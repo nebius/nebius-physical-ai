@@ -13,6 +13,45 @@ import statistics
 _ITERATION = re.compile(
     r"(\d+) : iter_speed (\S+) seconds per iteration \| Loss: (\S+)"
 )
+_WORK = re.compile(
+    r"(\d+) : iter_speed (\S+) seconds per iteration \| Loss: \S+"
+    r" \| ([\d,]+) tokens per iteration \([\d,]+ tokens/s\)"
+    r" \| vae_encode ([\d.]+)s/iter avg \([\d.]+%\), max ([\d.]+)s"
+    r" \([\d.]+%\) \| prepare_data ([\d.]+)s/iter avg \([\d.]+%\), max ([\d.]+)s"
+)
+_COMPARISON_KEYS = (
+    "sources",
+    "steps",
+    "samples_per_rank",
+    "global_batch",
+    "seed",
+    "profile",
+)
+
+
+def _work_metrics(log, warmup, steps):
+    records = {int(match[1]): match for match in _WORK.finditer(log)}
+    expected = set(range(max(warmup + 1, 52), steps + 1))
+    if not expected.issubset(records):
+        raise ValueError("missing native token/VAE/data-preparation measurements")
+    selected = [records[step] for step in sorted(expected)]
+    tokens = [int(match[3].replace(",", "")) for match in selected]
+    if not tokens or min(tokens) <= 0:
+        raise ValueError("native processed-token counts must be positive")
+    seconds = [float(match[2]) for match in selected]
+    result = {
+        "measured_tokens": sum(tokens),
+        "mean_tokens_per_optimizer_step": statistics.mean(tokens),
+        "tokens_per_second": sum(tokens) / sum(seconds),
+        "timers_overlap": "VAE encoding is included in prepare_data; do not sum them",
+    }
+    names = ("vae_rank_mean", "vae_rank_max", "prepare_rank_mean", "prepare_rank_max")
+    for group, name in enumerate(names, start=4):
+        values = [float(match[group]) for match in selected]
+        if any(not math.isfinite(value) or value < 0 for value in values):
+            raise ValueError("invalid native component timer")
+        result[name + "_seconds"] = statistics.mean(values)
+    return result
 
 
 def _timings(log, warmup, steps):
@@ -107,20 +146,11 @@ def _nodes(run, settings):
 def _summarize(run, warmup):
     settings = json.loads((run / "run.json").read_text())
     nodes = _nodes(run, settings)
-    values = _timings((run / "node-0.log").read_text(), warmup, settings["steps"])
+    log = (run / "node-0.log").read_text()
+    values = _timings(log, warmup, settings["steps"])
     digest, checkpoint = _checkpoint(run, settings)
     elapsed = max(node["train_process_seconds"] for node in nodes)
-    comparable = {
-        key: settings[key]
-        for key in (
-            "sources",
-            "steps",
-            "samples_per_rank",
-            "global_batch",
-            "seed",
-            "profile",
-        )
-    }
+    comparable = {key: settings[key] for key in _COMPARISON_KEYS}
     report = {
         "schema": "npa.cosmos3.wam-measurement.v1",
         "status": "measured",
@@ -138,6 +168,7 @@ def _summarize(run, warmup):
         / 3600,
         "checkpoint_manifest_sha256": digest,
         "quality_measured": False,
+        "work": _work_metrics(log, warmup, settings["steps"]),
         "timing_scope": "optimizer iterations include checkpoint stalls; process includes model load and final save",
     }
     (run / "checkpoint-hashes.json").write_text(json.dumps(checkpoint, indent=2) + "\n")
@@ -158,6 +189,10 @@ def _compare(report, baseline):
     report.update(
         speedup_vs_8_gpus=speedup,
         scaling_efficiency=speedup / (report["gpus"] / baseline["gpus"]),
+        token_throughput_speedup=report["work"]["tokens_per_second"]
+        / baseline["work"]["tokens_per_second"],
+        token_work_ratio=report["work"]["measured_tokens"]
+        / baseline["work"]["measured_tokens"],
     )
 
 
