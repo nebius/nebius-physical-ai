@@ -48,7 +48,20 @@ The default `--label-export none` avoids label initialization. Use
 confirms that remote Encord label-state mutation. Retain the resulting manifest
 as evidence.
 
-## Verify
+## Labeling demo
+
+Partner workflows and their runbook live in `workflows/partners/encord/`.
+`encord-labeling-demo.yaml` runs push → import-labels → project pull with label
+initialization → media verification → render-labels. Import creates a new
+ontology and project from a SHA-256-bound video bounding-box plan. It refuses
+existing project titles and output receipts. Rendering compares the actual
+exported row/object identities, frames, classes, and coordinates, then produces
+annotated MP4s from those exported labels. These are unreviewed programmatic
+prelabels, not human-approved annotations. Keep that distinction in demos.
+Select the new project and S3 targets before execution. Keep exact remote
+identities and signed label-export media URLs in private evidence.
+
+## Verify transport
 
 Claim a roundtrip only when `verify-roundtrip` consumes both final artifacts
 and passes exact identity, destination existence, size, and compatible checksum.

@@ -124,14 +124,24 @@ opaque version identifiers; they are never treated as content hashes. This path
 requires permission to read the destination object and transfers its full size.
 Read failures and changed or mismatched bytes produce a failed durable report.
 
-Three reference specs are available under
-`workflows/testing/`: `encord-push.yaml`,
+Three transport reference specs are available under
+`workflows/partners/encord/`: `encord-push.yaml`,
 `encord-pull.yaml`, and `encord-roundtrip-smoke.yaml`. Each spec writes artifacts
 to S3. Push and roundtrip may also create or update Encord media records. Select
 the operation explicitly and confirm the target integration, folder, dataset or
 source, and S3 prefixes before submission. Pull with `--label-export none`
 leaves Encord label state unchanged; `--label-export initialize` explicitly
 initializes remote label state.
+
+## Label videos and render exported annotations
+
+The [Encord partner runbook](../../workflows/partners/encord/README.md) describes
+`encord-labeling-demo.yaml`: upload → import labels → pull project labels and
+media → verify → render. `npa workbench encord import-labels` creates a new
+ontology and project from a content-bound bounding-box plan. The matching
+`render-labels` command checks actual exported labels against that plan before
+rendering annotated MP4s. Both are exposed through `npa.sdk.workbench.encord`.
+Imported labels remain programmatic prelabels awaiting human review.
 
 ## Run the workflow locally and retain an MP4 demo
 

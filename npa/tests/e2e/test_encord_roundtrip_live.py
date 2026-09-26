@@ -76,7 +76,7 @@ def _configured_spec():
         raise ValueError(
             "Live Encord config must explicitly select all storage targets"
         )
-    spec = load_spec(ROOT / "workflows/testing/encord-roundtrip-smoke.yaml")
+    spec = load_spec(ROOT / "workflows/partners/encord/encord-roundtrip-smoke.yaml")
     return merge_config_overrides(spec, overrides)
 
 

@@ -1,0 +1,64 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9681212367d48be7a7369ae4706f51992cc885aa90e006addf77c905b3215c65",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and plan construction passed for this exact spec.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved stages match push -> pull -> verify. Operator overrides and artifact handoffs are tested.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Live S3 writes and conditional evidence checkpoints passed under private operator overrides.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Live source MP4 bytes were staged in S3 and fully decoded; labeling inputs matched their source SHA-256 where applicable.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Online Encord and S3 preflight passed; real SDK and storage operations succeeded.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Local CPU execution used the installed checkout with the encord extra. No container build or remote image execution is claimed.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Local workflow execution against real Encord and S3 passed. The standalone push/pull specs share the exercised roundtrip stage commands. Cloud pod execution was not tested.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    }
+  }
+}

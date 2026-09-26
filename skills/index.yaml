@@ -549,7 +549,7 @@ skills:
         path: npa/src/npa/cli/agent_foxglove.py
   - name: encord
     category: tools
-    when_to_use: "Register S3 media with Encord SaaS, pull curated media with exact lineage, or verify a fail-closed roundtrip."
+    when_to_use: "Transport S3 media through Encord, import video prelabels into a new project, export and verify labels, or render annotated MP4s."
     path: skills/tools/encord/SKILL.md
     smoke:
       - type: cli_help
@@ -561,11 +561,18 @@ skills:
       - type: cli_help
         args: ["workbench", "encord", "verify-roundtrip", "--help"]
         contains: "receipt-uri"
+      - type: cli_help
+        args: ["workbench", "encord", "import-labels", "--help"]
+        contains: "project-title"
+      - type: cli_help
+        args: ["workbench", "encord", "render-labels", "--help"]
+        contains: "label-receipt-uri"
       - type: npa_workflow_yaml
         paths:
-          - workflows/testing/encord-push.yaml
-          - workflows/testing/encord-pull.yaml
-          - workflows/testing/encord-roundtrip-smoke.yaml
+          - workflows/partners/encord/encord-push.yaml
+          - workflows/partners/encord/encord-pull.yaml
+          - workflows/partners/encord/encord-roundtrip-smoke.yaml
+          - workflows/partners/encord/encord-labeling-demo.yaml
   - name: insights
     category: tools
     when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."
