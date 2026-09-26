@@ -363,8 +363,12 @@ def test_runtime_keeps_configured_project_selection(
     assert fake_runtime["options"].project == (selected or "research")
 
 
-def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
-    image = "cr.example.invalid/reg/npa-fiftyone:fixed"
+def test_submit_runtime_passes_per_tool_image_override(fake_runtime, mocker) -> None:
+    image = "cr.example.invalid/reg/npa-token-factory:fixed"
+    pins = {image: "cr.example.invalid/reg/npa-token-factory@sha256:" + "a" * 64}
+    preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images", return_value=pins
+    )
     result = RUNNER.invoke(
         app,
         [
@@ -376,7 +380,7 @@ def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
             "rt-tool-image",
             "--runtime",
             "--tool-image",
-            f"workbench.fiftyone.curate_augmented={image}",
+            f"workbench.token_factory.caption={image}",
             "--var",
             "bucket=rt-bucket",
         ],
@@ -385,8 +389,11 @@ def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
     assert result.exit_code == 0, result.output
     options = fake_runtime["render_options"]
     assert options.image_overrides == {
-        "workbench.fiftyone.curate_augmented": image,
+        "workbench.token_factory.caption": image,
     }
+    assert options.image_digest_pins == pins
+    checked = preflight.call_args.kwargs["options"]
+    assert checked.image_overrides == options.image_overrides
 
 
 def test_submit_rejects_malformed_per_tool_image_override() -> None:
