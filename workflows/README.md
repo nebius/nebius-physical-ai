@@ -150,7 +150,9 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
 | [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
 | [`lerobot-subtask-proof.yaml`](testing/lerobot-subtask-proof.yaml) | CPU post-review gate: complete LeRobot v3 `subtask_index` coverage → catalog resolution → row-level proof bound to the source Parquet digest ([guide](../docs/workbench/guides/lerobot-subtask-labeling.md)) |
-| [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | MJLab locomotion eval |
+| [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | Measured native MJLab checkpoint evaluation |
+| [`mjlab-train-eval.yaml`](testing/mjlab-train-eval.yaml) | Native MJLab training, measured evaluation, ONNX export and independent-seed evaluation |
+| [`mjlab-render.yaml`](testing/mjlab-render.yaml) | Trained MJLab checkpoint to measured evaluation, rendered MP4 and self-contained HTML on RTX PRO 6000 |
 | [`openpi-pi05-four-mode.yaml`](testing/openpi-pi05-four-mode.yaml) | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`openpi-pi05-full-droid-finetune.yaml`](testing/openpi-pi05-full-droid-finetune.yaml) | Complete upstream pi0.5 full-DROID recipe: checksum-synced RLDS 1.0.1 and preparation RRD, ten-million-frame normalization, fixed 100-update distributed qualification RRD, global batch 256, 100,000 updates on eight one-RTX-PRO-6000 nodes, durable resume, immutable checkpoint lineage, and verified progress RRD snapshots at 1k/10k/25k/50k/75k/100k ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
@@ -162,7 +164,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
 | [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |
 | [`sonic-export.yaml`](testing/sonic-export.yaml) | SONIC export |
-| [`sonic-locomotion-finetuning.yaml`](testing/sonic-locomotion-finetuning.yaml) | Retarget → train → mjlab |
+| [`sonic-locomotion-finetuning.yaml`](testing/sonic-locomotion-finetuning.yaml) | Retarget → train → export → native SONIC eval |
 | [`sonic-train.yaml`](testing/sonic-train.yaml) | SONIC train |
 
 #### Data, perception, and scenario analysis
@@ -173,8 +175,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`alpamayo2-ray-hardcases.yaml`](testing/alpamayo2-ray-hardcases.yaml) | Ray baseline → mean-error selection → refinement with matched scenarios and seeds; reports measured error changes ([guide](../docs/workbench/alpamayo2-super.md#ray-experiments)) |
 | [`alpamayo2-super-inference.yaml`](testing/alpamayo2-super-inference.yaml) | Real Alpamayo 2 Super 34B trajectory inference on `B200:1`; runtime-only OpenMDW weights and separately gated PhysicalAI-AV sample data ([guide](../docs/workbench/alpamayo2-super.md)) |
 | [`adversarial-scenario-hardening.yaml`](testing/adversarial-scenario-hardening.yaml) | Adversarial scenario generation and ranking → policy hardening loop → promotion gate |
-| [`av-night-scene-hardening.yaml`](testing/av-night-scene-hardening.yaml) | AV night-scene hardening from diagram |
-| [`bdd100k-pipeline.yaml`](testing/bdd100k-pipeline.yaml) | 11-stage AV pipeline |
+| [`av-night-scene-hardening.yaml`](testing/av-night-scene-hardening.yaml) | 8-stage AV night-scene pipeline ending when both detector metrics artifacts are written; human/FiftyOne inspection is post-run |
+| [`bdd100k-pipeline.yaml`](testing/bdd100k-pipeline.yaml) | 10-stage AV pipeline ending when all three detector metrics artifacts are written; human/FiftyOne inspection is post-run ([cookbook](../docs/workbench/cookbooks/bdd100k-pipeline.md)) |
 | [`dataset-ingest-curate.yaml`](testing/dataset-ingest-curate.yaml) | Sensor-data ingest → validation gate → slice curation → queryable version registration |
 | [`dataset-of-record-smoke.yaml`](testing/dataset-of-record-smoke.yaml) | CPU dataset-of-record smoke using the manifest-backed query fallback |
 | [`hardening-with-insights.yaml`](testing/hardening-with-insights.yaml) | Adversarial hardening loop → policy publication → insights metrics, lineage, and dashboard |
@@ -266,3 +268,5 @@ timelines and control hashes, and checks every downstream component report.
 - [Workflow runbooks](guides/README.md) and [robot guides](../docs/workbench/guides/README.md).
 - [Tool catalog](../docs/workbench/npa-workflow-tool-catalog.md) and [authoring reference](../docs/workbench/npa-workflow-guide.md).
 - Agent skills: [author a workflow](../skills/workflows/author-npa-workflow/SKILL.md) or [design a pipeline](../skills/workflows/generate-npa-workflow/SKILL.md).
+
+MJLab workflows require an explicitly built MJLab image while its public release is quarantined; see the [MJLab guide](../docs/workbench/mjlab.md).

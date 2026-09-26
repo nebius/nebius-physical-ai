@@ -188,7 +188,10 @@ is therefore only for adopting an already-live cluster outside that flow. It run
 the same provider identity checks and rejects missing, destroyed, rolled-back, or
 replaced clusters. Cross-project use is refused. `--rebind` is allowed only after
 the managed-job queue is proven terminal; changing an alias for the same
-project/cluster ids is not a rebind.
+project/cluster ids is not a rebind. Only `SUCCEEDED`, `CANCELLED`, and the
+pinned `FAILED`, `FAILED_SETUP`, `FAILED_PRECHECKS`, `FAILED_NO_RESOURCE`, and
+`FAILED_CONTROLLER` states prove terminality; missing, `UNKNOWN`, or future
+status values block both rebind and global SkyPilot-state cleanup.
 
 ### Owned local workflow API
 
