@@ -72,6 +72,18 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "field-failure-policy-improvement.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires sealed field captures, navigation policy code, and immutable operator adapter images.",
+        notes=(
+            "Real navigation adapter path; no GPU acceptance yet. Execute with "
+            "test_field_failure_policy_live_e2e.py and the explicit operator configuration."
+        ),
+    ),
+    SubmitLiveCase(
         "xr1-antioch-finetune.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

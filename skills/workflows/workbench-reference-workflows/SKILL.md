@@ -39,6 +39,18 @@ artifact contracts, and customer-adaptable pipeline implementations.
 6. Run `validate-spec`, then `plan-spec --run-id preview`, before live submit.
    Register every shipped spec in `SUBMIT_LIVE_MATRIX`.
 
+For `field-failure-policy-improvement.yaml`, the native reference adapters join
+metric RGB-D reconstruction and shared-scene Isaac navigation. Follow the
+[native adapter contract](../../../docs/workbench/cookbooks/field-failure-policy-improvement.md#native-metric-capture-and-isaac-reference).
+Include both components in the reviewed source distribution, pin the navigation
+module inventory separately from the immutable image, and preserve source-overlay
+provenance. TSDF reconstruction is CPU work; native renderer/learner execution on
+RTX supplies the GPU evidence. Retain before/after replays of training-exposed
+failures separately from the untouched paired cohort. Only the latter may drive
+promotion; valid losing baseline episodes must not be discarded by a standalone
+success threshold. Public reference results do not establish compatibility with
+an undisclosed proprietary policy or calibration.
+
 ## Current Reference YAMLs
 
 The retired catalog path is machine-checked by

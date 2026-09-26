@@ -37,6 +37,25 @@ iteration without customer-specific names or infrastructure baked into source.
   `sim-to-real-pipeline.yaml` and `sim-to-real-trigger.yaml` are retired — the first ran
   `npa.workflows.sim_to_real real-loop`, which raises a DeprecationWarning pointing here.
 
+## Field failure navigation improvement
+
+Use `workflows/testing/field-failure-policy-improvement.yaml` for the standard
+six-stage capture validation, reconstruction, policy fine-tuning, paired
+held-out evaluation, and recommendation flow. Follow
+`docs/workbench/cookbooks/field-failure-policy-improvement.md` for the sealed
+bundle and adapter contracts. Operators supply real navigation adapters in
+immutable BYOF images, captures, baseline checkpoint, and a disjoint held-out
+cohort; missing inputs fail closed. GPU qualification remains unverified.
+
+Preserve the same evaluator callable, source digest, image, scenarios, seeds,
+and protocol for both policies. Conditional S3 claims isolate attempts;
+completed stages revalidate retained evidence before reuse. A failed attempt
+requires a fresh run ID. Raw trajectory hashes must be unique within and across
+policy arms, including byte-identical deterministic rollouts. Promotion requires
+positive primary improvement and no regression beyond the sealed per-episode
+thresholds. The result is a recommendation and never authorizes deployment.
+Hashes verify identity and consistency, not physical measurement truth.
+
 ## Gotchas
 
 - Do not hardcode customer names, event names, personal names, tenant IDs,
