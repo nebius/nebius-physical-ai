@@ -3,10 +3,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
+import boto3
 import pyarrow as pa
 import pytest
+from botocore.stub import Stubber
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -181,7 +184,7 @@ def test_bdd100k_nested_occlusion_precedes_top_level_fallback(
     assert rows[0]["ann_occluded"] == [nested]
 
 
-@pytest.mark.parametrize("malformed", ["false", 1, [], {}])
+@pytest.mark.parametrize("malformed", ["false", "true", 0, 1, None, 0.5, [], {}])
 def test_bdd100k_rejects_malformed_occlusion_before_writing_rows(
     tmp_path: Path, malformed: object
 ) -> None:
@@ -212,6 +215,151 @@ def test_bdd100k_rejects_malformed_occlusion_before_writing_rows(
         "bdd_malformed_occlusion"
         not in lancedb.connect(str(database_path)).table_names()
     )
+
+
+@pytest.mark.parametrize("source_kind", ["local", "s3"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_occlusion_in_later_split_cannot_partially_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str, existing: bool
+) -> None:
+    import lancedb
+
+    source = tmp_path / "input"
+    _write_invalid_last_split(source)
+    database = tmp_path / "db"
+    before = None
+    if existing:
+        before = import_bdd100k(synthetic=1, lance_uri=str(database)).table_version
+    context = nullcontext()
+    location = str(source)
+    if source_kind == "s3":
+        context = _stub_s3_source(
+            source, monkeypatch, ["det_train.json", "det_val.json"]
+        )
+        location = "s3://test-bucket/bundle"
+
+    with context, pytest.raises(BDD100KValidationError, match="val-000.jpg"):
+        import_bdd100k(source=location, lance_uri=str(database), batch_size=1)
+
+    connection = lancedb.connect(str(database))
+    if existing:
+        table = connection.open_table("bdd100k")
+        assert table.version == before
+        assert table.count_rows() == 1
+    else:
+        assert "bdd100k" not in connection.table_names()
+
+
+def test_local_import_uses_the_validated_label_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_occlusion_fixture(tmp_path, [[{"occluded": False}], [{"occluded": True}]])
+    labels = tmp_path / "det_train.json"
+    original_read = Path.read_bytes
+    reads = []
+
+    def read_then_replace(path):
+        raw = original_read(path)
+        if path == labels:
+            reads.append(path)
+            changed = json.loads(raw)
+            changed[1]["labels"][0]["occluded"] = "false"
+            labels.write_text(json.dumps(changed), encoding="utf-8")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", read_then_replace)
+    rows = _imported_fixture_rows(tmp_path, table="bdd_snapshot", batch_size=1)
+
+    assert [row["ann_occluded"] for row in rows] == [[False], [True]]
+    assert reads == [labels]
+
+
+def test_s3_import_writes_the_validated_labels_without_refetching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import lancedb
+
+    source = tmp_path / "input"
+    _write_occlusion_fixture(source, [[{"occluded": False}], [{"occluded": True}]])
+    objects = [
+        "det_train.json",
+        "images/100k/train/train-000.jpg",
+        "images/100k/train/train-001.jpg",
+    ]
+    with _stub_s3_source(source, monkeypatch, objects):
+        result = import_bdd100k(
+            source="s3://test-bucket/bundle",
+            splits=["train"],
+            lance_uri=str(tmp_path / "db"),
+            batch_size=1,
+        )
+
+    rows = (
+        lancedb.connect(str(tmp_path / "db"))
+        .open_table("bdd100k")
+        .to_arrow()
+        .to_pylist()
+    )
+    assert result.total_rows == 2
+    assert [row["ann_occluded"] for row in rows] == [[False], [True]]
+
+
+def test_import_limit_excludes_unselected_malformed_occlusion(tmp_path: Path) -> None:
+    _write_occlusion_fixture(tmp_path, [[{"occluded": False}], [{"occluded": "false"}]])
+
+    result = import_bdd100k(
+        source=str(tmp_path),
+        splits=["train"],
+        limit=1,
+        lance_uri=str(tmp_path / "db"),
+        batch_size=1,
+    )
+
+    assert result.total_rows == 1
+
+
+def _write_invalid_last_split(source: Path) -> None:
+    _write_fixture_split(source, "train", "det_train.json", "train-000.jpg")
+    _write_fixture_split(source, "val", "det_val.json", "val-000.jpg")
+    labels = source / "det_val.json"
+    entries = json.loads(labels.read_text())
+    entries[0]["labels"][0]["attributes"]["occluded"] = "false"
+    labels.write_text(json.dumps(entries), encoding="utf-8")
+
+
+@contextmanager
+def _stub_s3_source(
+    source: Path, monkeypatch: pytest.MonkeyPatch, downloads: list[str]
+):
+    from npa.workbench.lancedb import bdd100k_import
+
+    client = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        endpoint_url="https://s3.example.invalid",
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+    )
+    monkeypatch.setattr(bdd100k_import, "_s3_client", lambda: client)
+    objects = [
+        {"Key": "bundle/" + path.relative_to(source).as_posix()}
+        for path in sorted(source.rglob("*"))
+        if path.is_file()
+    ]
+    with Stubber(client) as stubber:
+        stubber.add_response(
+            "list_objects_v2",
+            {"Contents": objects, "IsTruncated": False},
+            {"Bucket": "test-bucket", "Prefix": "bundle/"},
+        )
+        for name in downloads:
+            stubber.add_response(
+                "get_object",
+                {"Body": io.BytesIO((source / name).read_bytes())},
+                {"Bucket": "test-bucket", "Key": "bundle/" + name},
+            )
+        yield
+        stubber.assert_no_pending_responses()
 
 
 def test_bdd100k_sdk_function_returns_typed_result(tmp_path: Path) -> None:
@@ -413,13 +561,16 @@ def _write_occlusion_fixture(
     (root / "det_train.json").write_text(json.dumps(entries), encoding="utf-8")
 
 
-def _imported_fixture_rows(root: Path, *, table: str) -> list[dict[str, object]]:
+def _imported_fixture_rows(
+    root: Path, *, table: str, batch_size: int = 200
+) -> list[dict[str, object]]:
     database_path = root / "db"
     import_bdd100k(
         source=str(root),
         splits=["train"],
         lance_uri=str(database_path),
         table=table,
+        batch_size=batch_size,
     )
 
     import lancedb

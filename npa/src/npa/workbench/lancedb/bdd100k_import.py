@@ -435,27 +435,15 @@ def _local_source_batches(
         raise BDD100KSourceError(f"source must be a BDD100K directory: {source}")
     image_index = _local_image_index(root)
     label_paths = {split: _find_local_label_file(root, split) for split in splits}
-    _validate_occlusion_values(
-        _limited_labels(_load_json_array(path.read_bytes(), str(path)), limit)
-        for path in label_paths.values()
+    label_groups = {
+        split: _limited_labels(_load_json_array(path.read_bytes(), str(path)), limit)
+        for split, path in label_paths.items()
+    }
+    yield from _label_batches(
+        label_groups,
+        image_lookup=lambda image_id: _read_local_image_bytes(image_index, image_id),
+        batch_size=batch_size,
     )
-    rows: list[dict[str, Any]] = []
-    for split, path in label_paths.items():
-        labels = _limited_labels(_load_json_array(path.read_bytes(), str(path)), limit)
-        for entry in labels:
-            row = _row_from_label_entry(
-                entry,
-                split=split,
-                image_lookup=lambda image_id, index=image_index: (
-                    _read_local_image_bytes(index, image_id)
-                ),
-            )
-            rows.append(row)
-            if len(rows) >= batch_size:
-                yield _batch_from_rows(rows)
-                rows = []
-    if rows:
-        yield _batch_from_rows(rows)
 
 
 def _load_s3_labels(
@@ -483,22 +471,33 @@ def _s3_source_batches(
         Path(key).name: key for key in keys if key.lower().endswith((".jpg", ".jpeg"))
     }
     label_keys = {split: _find_s3_label_key(keys, split) for split in splits}
-    _validate_occlusion_values(
-        _load_s3_labels(client, location, label_key, limit)
-        for label_key in label_keys.values()
+    label_groups = {
+        split: _load_s3_labels(client, location, label_key, limit)
+        for split, label_key in label_keys.items()
+    }
+    yield from _label_batches(
+        label_groups,
+        image_lookup=lambda image_id: _read_s3_bytes(
+            client, location.bucket, _require_image_key(image_index, image_id)
+        ),
+        batch_size=batch_size,
     )
+
+
+def _label_batches(
+    label_groups: dict[str, list[Any]],
+    *,
+    image_lookup,
+    batch_size: int,
+) -> Iterable[_BatchPayload]:
+    _validate_occlusion_values(label_groups.values())
     rows: list[dict[str, Any]] = []
-    for split, label_key in label_keys.items():
-        labels = _load_s3_labels(client, location, label_key, limit)
+    for split, labels in label_groups.items():
         for entry in labels:
             row = _row_from_label_entry(
                 entry,
                 split=split,
-                image_lookup=lambda image_id, index=image_index: _read_s3_bytes(
-                    client,
-                    location.bucket,
-                    _require_image_key(index, image_id),
-                ),
+                image_lookup=image_lookup,
             )
             rows.append(row)
             if len(rows) >= batch_size:
@@ -603,19 +602,23 @@ def _validate_occlusion_values(
 ) -> None:
     for labels in label_groups:
         for entry in labels:
-            if not isinstance(entry, dict):
-                continue
-            image_id = _entry_identifier(entry)
-            annotations = entry.get("labels") or entry.get("annotations") or []
-            if not isinstance(annotations, list):
-                continue
-            for annotation_index, label in enumerate(annotations):
-                if isinstance(label, dict):
-                    _occluded_from_label(
-                        label,
-                        image_id=image_id,
-                        annotation_index=annotation_index,
-                    )
+            _validate_entry_occlusion(entry)
+
+
+def _validate_entry_occlusion(entry: Any) -> None:
+    if not isinstance(entry, dict):
+        return
+    annotations = entry.get("labels") or entry.get("annotations") or []
+    if not isinstance(annotations, list):
+        return
+    image_id = _entry_identifier(entry)
+    for annotation_index, label in enumerate(annotations):
+        if isinstance(label, dict):
+            _occluded_from_label(
+                label,
+                image_id=image_id,
+                annotation_index=annotation_index,
+            )
 
 
 def _entry_identifier(entry: dict[str, Any]) -> str:
