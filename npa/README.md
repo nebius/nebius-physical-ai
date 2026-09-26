@@ -182,6 +182,11 @@ chosen specification, prepare its data and resources, submit it, then inspect
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
 
+Custom workflow stages receive `NPA_CONTROL_PYTHON`, the executable interpreter
+recorded by setup, or an empty value when none is available. Use it for NPA
+storage operations alongside a separate policy environment; see
+[Python environments in custom stages](../docs/workbench/npa-workflow-guide.md#python-environments-in-custom-stages).
+
 The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
 retains invalid hosted visual judgments as failed audit evidence. Its
 `npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts

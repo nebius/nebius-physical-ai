@@ -1105,11 +1105,10 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
         'export PATH="$HOME/.local/bin:$PATH"\n'
         # Interpreter-independent import path for npa. `pip install -e` binds npa to
-        # whichever python ran pip, and the command below runs through `bash -lc`,
-        # whose login profile can resolve a DIFFERENT python3 (observed on SkyPilot's
-        # GPU default image: the outer shell imports npa fine, the login shell does
-        # not). Prepending the staged source tree unconditionally fixes every shell;
-        # it is the same package, so it is a no-op where the install already works.
+        # whichever python ran pip. Stage commands inherit this environment through
+        # a non-login `bash -c`; otherwise a login profile could select a different
+        # python3, as observed on SkyPilot's GPU default image. Explicit source
+        # precedence also keeps a baked package from shadowing the staged code.
         # Images activate their toolchain either through docker ENV (inherited) or
         # through profile scripts; source the latter best-effort so dropping the login
         # shell (see scheduler.build_scheduler_task) changes nothing for them.
@@ -1166,6 +1165,9 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         '    npa_python=""\n'
         "  fi\n"
         "fi\n"
+        # Custom stages may activate a policy environment or reset PATH in a child
+        # shell. Preserve the prepared control interpreter for artifact operations.
+        'export NPA_CONTROL_PYTHON="$npa_python"\n'
         # A vendor image can bake a STALE npa source tree on PYTHONPATH, which shadows every
         # install — editable or not, in any interpreter. Live job 285: the cosmos2-transfer image
         # ships `PYTHONPATH=/opt/npa/src`, whose npa predates the `cosmos2` subcommand, so the

@@ -601,7 +601,28 @@ They are optional and additive, so every pre-v0.0.1 spec is unaffected.
 - Prefer `toolRef`; use `run.shell` only when no catalog entry exists.
 - Decision states that write threshold JSON must set `writesDecision: true`.
 
-`run.shell` resolves `config.*` tokens into `/bin/bash -lc` commands; treat spec files as trusted authored input.
+`run.shell` resolves `config.*` tokens into `bash -c` commands. The non-login
+shell inherits the prepared stage environment; treat spec files as trusted
+authored input.
+
+### Python environments in custom stages
+
+Workbench sets `NPA_CONTROL_PYTHON` to the executable Python path recorded by
+stage setup. Use it for NPA artifact and storage operations when a custom stage
+also runs a simulator or policy with its own Python environment. The exported
+path is inherited by child processes and remains usable after a change to `PATH`:
+
+```bash
+test -n "$NPA_CONTROL_PYTHON"
+"$NPA_CONTROL_PYTHON" -c 'from npa.clients.storage import StorageClient'
+```
+
+The value is empty when setup recorded no executable interpreter; a stage that
+requires it must fail before starting its workload. Workbench replaces inherited
+values with the current setup result. Keep the policy's pinned interpreter and
+dependencies separate, and retain the prepared NPA source path when calling NPA.
+If a stage explicitly starts a login shell, its profiles may change the inherited
+environment; verify the interpreter and source path inside that shell.
 
 Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
 `params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.
