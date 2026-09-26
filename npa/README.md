@@ -355,7 +355,10 @@ is ten minutes; hosted runner waiting can add delay.
 
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
-on all three supported versions. Every full Python 3.12 run publishes module
+on all three supported versions. Their fresh Python 3.10 environments install
+the constrained `tomli` dependency before validating the CI dependency pins;
+Python 3.12 merge candidates use the standard-library TOML reader.
+Every full Python 3.12 run publishes module
 timings, with merged profiles from successful runs for reviewed rebalancing.
 The focused compatibility check runs before CPU tensor dependencies are
 installed, so async cancellation and isolated SkyPilot fixture regressions
