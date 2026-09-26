@@ -28,6 +28,9 @@ dependencies = [
     "click>=8.3.3",
     "httpx>=0.27,<0.29",
     "paramiko>=5.0,<6.0",
+    # Directly verifies customer/control-plane-signed LIBERO authorizations;
+    # keep the operator verifier version aligned with CI.
+    "cryptography==50.0.1",
     "bcrypt>=5.0,<6.0",
     "pyyaml>=6.0,<7.0",
     "rich>=13.0,<16.0",
@@ -65,11 +68,13 @@ dependencies = [
     "fastapi>=0.136.1,<0.142.0",
     # Antioch's supported declared-port bridge uses bounded, authenticated WSS
     # on both legs. Keep the operator transport matched to the sim dependency.
-    "websockets==15.0.1",
+    "websockets==16.1.1",
     "python-multipart>=0.0.31",
 ]
 
 [project.optional-dependencies]
+mjlab = ["mjlab==1.6.0", "torch>=2.13.0", "uvicorn>=0.52.4"]
+encord = ["encord>=0.1.202,<0.2"]
 studio = ["edge-tts==7.2.8"]
 # SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
 orchestration = []
@@ -241,10 +246,14 @@ sam2 = "2.1-rtfetch-20260916"
 sam3 = "3.1-unbuilt"
 ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128-r3"
+flex-pi = "0.1.0-cu128-r2"
 curobo = "0.8.0-cuda13-b300-unbuilt"
+mjlab = "dev-0202f396fb23f7d066fd452b469578e67151d382"
 content-agents = "0.5.2-npa2"
 # Source inventory only: use an explicit validated image until release acceptance.
 ncore = "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt"
+# Neutral-bootstrap inventory only; publication and live validation remain quarantined.
+libero = "public-neutral-bootstrap-unbuilt"
 nebius-cli = "0.12.254"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"
@@ -288,6 +297,7 @@ path = "src/npa/workflow_build.py"
 "src/npa/deploy/ltx2_image_manifest.json" = "npa/deploy/ltx2_image_manifest.json"
 "src/npa/deploy/public_release_manifest.json" = "npa/deploy/public_release_manifest.json"
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
+"src/npa/deploy/libero_image_manifest.json" = "npa/deploy/libero_image_manifest.json"
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "npa/deploy/terraform/.terraform.lock.hcl"
 "src/npa/deploy/terraform/.terraform.lock.npa.json" = "npa/deploy/terraform/.terraform.lock.npa.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"

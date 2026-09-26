@@ -21,6 +21,17 @@ STORAGE_ENDPOINT_ENV_NAMES = (
     "S3_ENDPOINT_URL",
 )
 
+PROCESS_ENVIRONMENT_CREDENTIAL_NAMES = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    }
+)
+PROCESS_ENVIRONMENT_REQUEST_NAMES = PROCESS_ENVIRONMENT_CREDENTIAL_NAMES | frozenset(
+    STORAGE_ENDPOINT_ENV_NAMES
+)
+
 
 def storage_endpoint_from_environment(environ: Mapping[str, str]) -> str:
     """Honor the service-specific boto endpoint before generic aliases."""
@@ -40,6 +51,7 @@ class SubmitCredentialContext:
     bucket: str = ""
     access_key_id: str = field(default="", repr=False)
     secret_access_key: str = field(default="", repr=False)
+    session_token: str = field(default="", repr=False)
     secret_values: Mapping[str, str] = field(default_factory=dict, repr=False)
     missing: tuple[str, ...] = ()
     provenance: Mapping[str, str] = field(default_factory=dict)
@@ -52,6 +64,7 @@ def resolve_submit_credentials(
     requested: Sequence[str] = (),
     environ: Mapping[str, str] | None = None,
     workflow_env: Mapping[str, str] | None = None,
+    require_process_environment_triplet: bool = False,
 ) -> SubmitCredentialContext:
     """Resolve endpoint and explicitly requested secret envs.
 
@@ -62,7 +75,87 @@ def resolve_submit_credentials(
     from this object's repr.
     """
 
-    process_env = environ if environ is not None else os.environ
+    # A process-authorized triplet must come from the actual process environment;
+    # a caller-supplied mapping is only an input to ordinary resolution.
+    process_env = (
+        os.environ
+        if require_process_environment_triplet
+        else (environ if environ is not None else os.environ)
+    )
+    if require_process_environment_triplet:
+        credential_names = (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        )
+        values = tuple(str(process_env.get(name) or "") for name in credential_names)
+        if not all(values):
+            raise ValueError(
+                "Control-plane-authorized storage credentials require one complete "
+                "process-environment access/secret/session triplet"
+            )
+        environment_endpoint = storage_endpoint_from_environment(process_env)
+        if not environment_endpoint:
+            raise ValueError(
+                "Control-plane-authorized storage credentials require a process-environment endpoint"
+            )
+        if explicit_endpoint and storage_endpoint_url(
+            explicit_endpoint
+        ) != storage_endpoint_url(environment_endpoint):
+            raise ValueError(
+                "Explicit storage endpoint differs from control-plane-authorized environment"
+            )
+        requested_names = tuple(
+            dict.fromkeys(
+                str(name or "").strip() for name in requested if str(name or "").strip()
+            )
+        )
+        unauthorized = set(requested_names) - PROCESS_ENVIRONMENT_REQUEST_NAMES
+        if unauthorized:
+            raise ValueError(
+                "Control-plane-authorized storage credentials may expose only the "
+                "process-environment storage credential triplet"
+            )
+        requested_values = {
+            name: str(process_env.get(name) or "")
+            for name in requested_names
+            if str(process_env.get(name) or "")
+        }
+        missing = tuple(
+            name for name in requested_names if not str(process_env.get(name) or "")
+        )
+        if environment_endpoint:
+            normalized_endpoint = storage_endpoint_url(environment_endpoint)
+            requested_values.update(
+                {
+                    name: normalized_endpoint
+                    for name in requested_names
+                    if name in STORAGE_ENDPOINT_ENV_NAMES
+                }
+            )
+            missing = tuple(
+                name for name in missing if name not in STORAGE_ENDPOINT_ENV_NAMES
+            )
+        bucket = str(
+            process_env.get("NPA_S3_BUCKET")
+            or process_env.get("NPA_CHECKPOINT_BUCKET")
+            or process_env.get("NEBIUS_S3_BUCKET")
+            or ""
+        ).strip()
+        return SubmitCredentialContext(
+            endpoint_url=storage_endpoint_url(environment_endpoint),
+            bucket=bucket,
+            access_key_id=values[0],
+            secret_access_key=values[1],
+            session_token=values[2],
+            secret_values=requested_values,
+            missing=missing,
+            provenance={
+                "credentials": "control-plane-authorized.environment",
+                "endpoint": "control-plane-authorized.environment",
+                "bucket": "environment" if bucket else "missing",
+            },
+        )
     env = dict(workflow_env or {})
     env.update({key: value for key, value in process_env.items() if value})
     project_storage = resolve_project_storage(project or None)
@@ -89,28 +182,41 @@ def resolve_submit_credentials(
             "environment",
             process_env.get("AWS_ACCESS_KEY_ID", ""),
             process_env.get("AWS_SECRET_ACCESS_KEY", ""),
+            process_env.get("AWS_SESSION_TOKEN", ""),
         ),
         (
             "workflow.env",
             (workflow_env or {}).get("AWS_ACCESS_KEY_ID", ""),
             (workflow_env or {}).get("AWS_SECRET_ACCESS_KEY", ""),
+            (workflow_env or {}).get("AWS_SESSION_TOKEN", ""),
         ),
         (
             "project.storage",
             project_storage.aws_access_key_id,
             project_storage.aws_secret_access_key,
+            getattr(project_storage, "aws_session_token", "")
+            or getattr(project_storage, "session_token", ""),
         ),
-        ("credentials", configured.s3_access_key_id, configured.s3_secret_access_key),
+        (
+            "credentials",
+            configured.s3_access_key_id,
+            configured.s3_secret_access_key,
+            getattr(configured, "s3_session_token", "")
+            or getattr(configured, "session_token", ""),
+        ),
     )
-    access_key = secret_key = ""
+    access_key = secret_key = session_token = ""
     credential_source = "missing"
-    for source, access, secret in sources:
+    for source, access, secret, token in sources:
         if access or secret:
             if not access or not secret:
                 raise ValueError(
                     f"Incomplete S3 credential pair in {source}; set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in that source"
                 )
-            access_key, secret_key, credential_source = str(access), str(secret), source
+            access_key = str(access)
+            secret_key = str(secret)
+            session_token = str(token or "")
+            credential_source = source
             break
     available["AWS_ACCESS_KEY_ID"] = access_key
     available["AWS_SECRET_ACCESS_KEY"] = secret_key
@@ -127,11 +233,17 @@ def resolve_submit_credentials(
         name = str(raw_name or "").strip()
         if not name or name in resolved or name in missing:
             continue
-        value = str(
-            available.get(name)
-            if name in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
-            else env.get(name) or available.get(name) or ""
-        )
+        if name == "AWS_SESSION_TOKEN" and access_key and secret_key:
+            # Keep the optional token bound to the same source as the selected
+            # access/secret pair; never mix principals across environment,
+            # workflow, project, or configured credentials.
+            value = session_token
+        else:
+            value = str(
+                available.get(name)
+                if name in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+                else env.get(name) or available.get(name) or ""
+            )
         if value:
             resolved[name] = value
         else:
@@ -163,6 +275,7 @@ def resolve_submit_credentials(
         bucket=bucket,
         access_key_id=access_key,
         secret_access_key=secret_key,
+        session_token=session_token,
         secret_values=resolved,
         missing=tuple(missing),
         provenance={

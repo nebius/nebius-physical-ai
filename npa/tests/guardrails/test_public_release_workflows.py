@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
 import re
+import subprocess
 
+import pytest
 import yaml
 
 
@@ -192,6 +195,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_wan_payload.py",
         "scan_image_alpamayo2_payload.py",
         "scan_image_cosmos3_ray_serve_payload.py",
+        "scan_image_flex_pi_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
         "--scanners vuln,secret,license",
@@ -239,13 +243,51 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     push = text.index("Push only after every pre-publication gate passes")
     assert prepare < scan < sbom < push
     assert "docker buildx prune --all --force" in text[prepare:scan]
-    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 2
-    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 2
-    assert text[scan:push].count("--timeout 2562047h47m16s") == 2
-    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 2
+    # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
+    # the all-severity secret scan, and the SBOM. Every one of them must reuse
+    # the large volume, the shared cache and the unbounded timeout.
+    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 3
+    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 3
+    assert text[scan:push].count("--timeout 2562047h47m16s") == 3
+    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 3
     trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
-    assert text[scan:push].count(trivy) == 2
+    assert text[scan:push].count(trivy) == 3
     assert "docker image prune" not in text[scan:push]
+
+
+def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
+    """Trivy's --severity applies to every scanner, so secrets need their own scan.
+
+    The combined policy scan asks for CRITICAL, which silently drops the HIGH
+    private-key findings it is named for. A separate all-severity secret scan
+    must reach the push, and it must not inherit the vulnerability ignorefile.
+    """
+
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    names = [str(step.get("name") or "") for step in steps]
+    secret = next(
+        step
+        for step in steps
+        if step.get("name") == "Pre-publication all-severity secret scan"
+    )
+    script = secret["run"]
+    assert (
+        secret["env"]["DOCKER_SOCKET"]
+        == "${{ steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
+    )
+    assert 'docker_socket_path="${DOCKER_SOCKET#unix://}"' in script
+    assert '-v "$docker_socket_path:/var/run/docker.sock"' in script
+    assert "--scanners secret" in script
+    assert "--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL" in script
+    assert "--exit-code 1" in script
+    # An ignorefile suppresses matching secret findings by rule ID whatever the
+    # severity filter says, so inheriting it here would reopen the hole.
+    assert "--ignorefile" not in script
+    assert "--ignore-unfixed" not in script
+    assert names.index("Pre-publication all-severity secret scan") < names.index(
+        "Push only after every pre-publication gate passes"
+    )
 
 
 def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
@@ -315,9 +357,9 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     post_push = text[text.index("Verify pushed bytes") :]
 
     assert 'docker pull "$exact"' in post_push
-    # Two calls bind the pulled digest to the local image; the third binds the
-    # independent cuRobo archive verifier to that same inspected remote image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
+    # The remote config digest, pulled image, local image, and independent
+    # cuRobo archive verifier are each bound to the exact inspected image.
+    assert post_push.count("docker image inspect --format '{{.Id}}'") == 4
     assert (
         'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
         '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
@@ -484,3 +526,96 @@ def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expa
         )
         assert result.returncode != 0
     assert len(recorder.read_text().splitlines()) == 3
+
+
+def test_every_prepublication_trivy_scan_uses_the_selected_image_store() -> None:
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    scans = [step for step in steps if "aquasec/trivy:" in step.get("run", "")]
+    assert len(scans) == 3
+    for step in scans:
+        assert step["env"]["DOCKER_SOCKET"] == (
+            "${{ steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
+        )
+        assert '-v "$docker_socket_path:/var/run/docker.sock"' in step["run"]
+        assert 'docker_socket_path="${DOCKER_SOCKET#unix://}"' in step["run"]
+
+
+LIBERO_DOC = ROOT / "docs/workbench/byof-libero.md"
+
+
+def test_libero_namespace_claim_requires_continuous_isolation_evidence() -> None:
+    """Sampled inventories must never be presented as run-long isolation proof."""
+
+    text = LIBERO_DOC.read_text(encoding="utf-8")
+    start = text.index("Before a future run,\n")
+    end = text.index("The execution and payload-proof kubeconfig contexts", start)
+    contract = text[start:end]
+    for required in (
+        "not a run-long isolation proof",
+        "admission-enforced exclusive-writer policy",
+        "gap-free Kubernetes watch or audit-log interval",
+        "Every unexpected\ncreate, update, or delete event fails qualification",
+        "must not claim run-long isolation",
+    ):
+        assert required in contract
+
+
+def _capture_build_arguments(tmp_path: Path, tool: str) -> list[str]:
+    """Stop the real workflow shell at Docker and capture its selected arguments."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, script in {
+        "git": "#!/bin/sh\nprintf '1234567890\\n'\n",
+        "docker": '#!/bin/sh\nprintf "%s\\n" "$@" > "$DOCKER_ARGV"\nexit 77\n',
+    }.items():
+        executable = bin_dir / name
+        executable.write_text(script)
+        executable.chmod(0o700)
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    step = next(
+        s for s in steps if s.get("name") == "Build immutable development image locally"
+    )
+    env = {
+        **os.environ,
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+        "TOOL": tool,
+        "DEVELOPMENT_SHA": "a" * 40,
+        "LEROBOT_VERSION": "",
+        "RUNNER_TEMP": str(tmp_path),
+        "DOCKER_ARGV": str(tmp_path / "docker-argv"),
+        "DOCKERFILE": "Dockerfile",
+        "IMAGE": "example/image:dev",
+        "GITHUB_REPOSITORY": "example/repository",
+    }
+    result = subprocess.run(
+        ["bash", "-c", step["run"]], env=env, capture_output=True, text=True
+    )
+    assert result.returncode == 77, result.stderr
+    return (tmp_path / "docker-argv").read_text().splitlines()
+
+
+@pytest.mark.parametrize("tool", ("gymnasium-robotics", "libero", "genesis"))
+def test_development_build_preserves_each_tools_metadata_and_export(tmp_path, tool):
+    argv = _capture_build_arguments(tmp_path, tool)
+    assert argv[:2] == ["buildx", "build"]
+    assert argv.count("--metadata-file") == (tool != "genesis")
+    assert ("--load" in argv) == (tool != "libero")
+    assert ("--secret" in argv) == (tool == "gymnasium-robotics")
+    if tool == "gymnasium-robotics":
+        assert argv[argv.index("--metadata-file") + 1] == str(
+            tmp_path / f"{tool}-build-metadata.json"
+        )
+        assert (
+            argv[argv.index("--secret") + 1]
+            == "id=npa_host_ca_bundle,src=/etc/ssl/certs/ca-certificates.crt"
+        )
+    if tool == "libero":
+        assert "--provenance=mode=max" in argv
+        assert "--sbom=true" in argv
+        assert argv[argv.index("--metadata-file") + 1] == str(
+            tmp_path / "libero-build-metadata.json"
+        )
+        assert (
+            argv[argv.index("--output") + 1]
+            == f"type=oci,dest={tmp_path}/libero-build.oci.tar,tar=true,rewrite-timestamp=true,oci-artifact=true"
+        )

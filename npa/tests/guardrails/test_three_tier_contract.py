@@ -61,6 +61,11 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "flex-pi/train": {"dry_run": "boolean"},
+    "flex-pi/infer": {
+        "runtime_image": "infra",
+        "dry_run": "boolean",
+    },
     "cosmos3/super-benchmark": {
         "dry_run": "boolean",
     },
@@ -181,6 +186,54 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="flex-pi/train",
+        cli_module="npa.cli.workbench.flex_pi",
+        cli_callback="train_cmd",
+        sdk_module="npa.sdk.workbench.flex_pi",
+        sdk_attr="train",
+        spec_path=SPECS / "flex-pi-b200-public-training.yaml",
+        tool_ref="workbench.flex_pi.train",
+        spec_gap=("dry_run",),
+        params=tuple(
+            _p(name, name, "--" + name.replace("_", "-"))
+            for name in (
+                "output_path",
+                "mode",
+                "num_workers",
+                "prefetch_factor",
+                "optimizer",
+                "activation_checkpointing",
+                "cuda_graphs",
+                "run_id",
+                "runtime_image",
+                "dry_run",
+            )
+        ),
+    ),
+    CapabilityContract(
+        name="flex-pi/infer",
+        cli_module="npa.cli.workbench.flex_pi",
+        cli_callback="infer_cmd",
+        sdk_module="npa.sdk.workbench.flex_pi",
+        sdk_attr="infer",
+        spec_path=SPECS / "flex-pi-rtxpro-inference.yaml",
+        tool_ref="workbench.flex_pi.infer",
+        spec_gap=("runtime_image", "dry_run"),
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("checkpoint_id", "checkpoint_id", "--checkpoint-id"),
+            _p("checkpoint_revision", "checkpoint_revision", "--checkpoint-revision"),
+            _p("num_inference_steps", "num_inference_steps", "--num-inference-steps"),
+            _p("seed", "seed", "--seed"),
+            _p("torch_compile", "torch_compile", "--torch-compile"),
+            _p("expected_gpu", "expected_gpu", "--expected-gpu"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("runtime_image", "runtime_image", "--runtime-image"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
     CapabilityContract(
         name="newton/train_teacher",
         cli_module="npa.cli.workbench.newton",
@@ -849,6 +902,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "cosmos-evaluator",
         "data",
         "dataset",
+        # CLI, SDK, and workflow call one shared implementation; Encord remains remote SaaS.
+        "encord",
         "fiftyone",
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).
@@ -877,7 +932,12 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Generation runs through the BYOF tier (`base_image: tool://ltx2`), so
         # this verb has no service or YAML env tier to stay coherent with.
         "ltx2",
+        # Typed shared requests are exercised through HTTP, CLI, SDK and toolRefs
+        # in test_mjlab.py and test_mjlab_workflow.py.
         "mjlab",
+        # Namespace selection is host-side platform configuration.
+        # CLI and SDK share namespaces.py; no payload service or toolRef applies.
+        "namespace",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.
         # CLI <-> SDK <-> YAML coherence is enforced instead by

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
+    secret_env_hints_for_plan,
     tool_image_key,
     tool_vendor_interpreters,
     tool_requires_staged_npa_source,
@@ -31,7 +33,10 @@ from npa.orchestration.npa_workflow.submit import (
     merge_config_overrides,
     prepare_npa_workflow_for_submit,
 )
-from npa.orchestration.npa_workflow.submission_state import load_submission_state
+from npa.orchestration.npa_workflow.submission_state import (
+    load_submission_state,
+    submission_state_path,
+)
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -39,6 +44,33 @@ NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 PAIDF = NPA_SPECS / "physical-ai-data-factory.yaml"
 SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
+
+
+def _patch_npa_submit_preflight(mocker) -> None:  # noqa: ANN001
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
+
+
+def _invoke_npa_submit(run_id: str, *, json_output: bool = False):
+    args = [
+        "workbench",
+        "workflow",
+        "submit",
+        str(NPA_SPECS / "vlm-eval-single.yaml"),
+        "--run-id",
+        run_id,
+        "--registry",
+        "cr.example.invalid/reg",
+        "--skip-preflight",
+        "--no-preflight-images",
+        "--no-resolve-accelerators",
+    ]
+    if json_output:
+        args.extend(["--output-format", "json"])
+    return RUNNER.invoke(app, args)
 
 
 def test_is_npa_workflow_spec_true_for_golden() -> None:
@@ -51,6 +83,82 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     assert not is_npa_workflow_spec(path)
     assert detect_submit_format(path) == "skypilot"
+
+
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_recommends_hub_token_without_rendering_its_value(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    plan = build_plan(spec, run_id="flex-pi-secret-hint")
+
+    assert secret_env_hints_for_plan(plan.steps) == ("HF_TOKEN",)
+
+
+def test_flex_pi_b200_reference_renders_one_b200_and_the_tool_image() -> None:
+    spec = load_spec(NPA_SPECS / "flex-pi-b200-inference.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-b200"),
+        run_id="flex-pi-b200",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["resources"]["accelerators"] == "B200:1"
+    assert task["resources"]["image_id"].startswith(
+        "docker:registry.example/npa-flex-pi:"
+    )
+    assert "--expected-gpu B200" in task["run"]
+    assert task["run"].count("--torch-compile") == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "nodes", "accelerators"),
+    [
+        ("flex-pi-b200-public-training.yaml", 1, "B200:4"),
+        ("flex-pi-b300-multinode-public-training.yaml", 4, "B300:1"),
+    ],
+)
+def test_flex_pi_training_renders_authoritative_node_count(name, nodes, accelerators):
+    spec = load_spec(NPA_SPECS / name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="four-rank-training"),
+        run_id="four-rank-training",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task.get("num_nodes", 1) == nodes
+    assert task["resources"]["accelerators"] == accelerators
+    assert task["envs"]["NPA_FLEX_PI_NODE_COUNT"] == str(nodes)
+    assert task["run"].count("workbench flex-pi train") == 1
+
+
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_reference_workflows_compile_the_denoising_step(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-compiled"),
+        run_id="flex-pi-compiled",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["run"].count("--torch-compile") == 1
 
 
 @pytest.mark.parametrize(
@@ -105,7 +213,7 @@ def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
 
     # Pinned so a new BYOF spec cannot skip the per-profile image assertion
     # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 16
+    assert len(paths) == 18
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
@@ -1231,6 +1339,277 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     )
     assert receipt["workflow"]["manifest_uri"].endswith("/npa-workflow/manifest.json")
     assert receipt["workflow"]["steps"][0]["state"] == "score-rollouts"
+
+
+@pytest.mark.parametrize(
+    ("state", "run_id"),
+    [
+        ("submitted", "npa-submit-corrupt"),
+        ("adopted", "npa-adopt-corrupt"),
+    ],
+)
+def test_post_launch_corrupt_receipt_does_not_hide_exact_job_identity(
+    mocker,
+    state: str,
+    run_id: str,
+) -> None:
+    _patch_npa_submit_preflight(mocker)
+    secret = "synthetic-corrupt-receipt-secret"
+    receipt_path = submission_state_path("default", run_id)
+    corrupt_body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+
+    def fake_submit(_path, _run_id, **kwargs):
+        receipt_path.write_bytes(corrupt_body)
+        kwargs["transaction_recorder"]({"state": state, "job_id": "42"})
+        return WorkflowResult(
+            status=state.upper(),
+            job_id="42",
+            returncode=0,
+            launch_transaction={"state": state, "job_id": "42"},
+        )
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = _invoke_npa_submit(run_id, json_output=True)
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == state.upper()
+    assert payload["job_id"] == "42"
+    assert payload["submission_warnings"]
+    assert "receipt is unavailable" in payload["submission_warnings"][0]
+    assert secret not in f"{result.stdout}\n{result.stderr}"
+    assert receipt_path.read_bytes() == corrupt_body
+
+
+def test_post_launch_receipt_warning_redacts_plain_resolved_secret(mocker) -> None:
+    from dataclasses import replace
+
+    from npa.orchestration.npa_workflow import submission_state, submit_credentials
+
+    _patch_npa_submit_preflight(mocker)
+    plain_secret = "hunter2"
+    real_update = submission_state.update_submission_state
+    real_resolve = submit_credentials.resolve_submit_credentials
+
+    def resolve_with_plain_secret(**kwargs):
+        resolved = real_resolve(**kwargs)
+        return replace(
+            resolved,
+            secret_values={
+                **resolved.secret_values,
+                "SYNTHETIC_PLAIN_SECRET": plain_secret,
+            },
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        side_effect=resolve_with_plain_secret,
+    )
+
+    def fail_accepted_launch(project, run_id, updates, **kwargs):
+        launch = updates.get("launch")
+        if isinstance(launch, dict) and launch.get("state") == "submitted":
+            raise ValueError(f"login failed for password {plain_secret}")
+        return real_update(project, run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_accepted_launch,
+    )
+
+    def fake_submit(_path, _run_id, **kwargs):
+        kwargs["transaction_recorder"]({"state": "submitted", "job_id": "42"})
+        return WorkflowResult(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            launch_transaction={"state": "submitted", "job_id": "42"},
+        )
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = _invoke_npa_submit(
+        "npa-submit-plain-secret-warning",
+        json_output=True,
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "SUBMITTED"
+    assert payload["job_id"] == "42"
+    assert payload["submission_warnings"]
+    assert plain_secret not in f"{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.parametrize(
+    ("state", "job_id", "run_id"),
+    [
+        ("indeterminate", "42", "npa-submit-nonaccepted-state"),
+        ("submitted", " ", "npa-submit-blank-job-id"),
+    ],
+)
+def test_post_launch_receipt_failure_requires_exact_accepted_identity(
+    mocker,
+    state: str,
+    job_id: str,
+    run_id: str,
+) -> None:
+    _patch_npa_submit_preflight(mocker)
+    receipt_path = submission_state_path("default", run_id)
+    corrupt_body = b'{"truncated":'
+
+    def fake_submit(_path, _run_id, **kwargs):
+        receipt_path.write_bytes(corrupt_body)
+        kwargs["transaction_recorder"]({"state": state, "job_id": job_id})
+        return WorkflowResult(
+            status=state.upper(),
+            job_id=job_id,
+            returncode=0,
+            launch_transaction={"state": state, "job_id": job_id},
+        )
+
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = _invoke_npa_submit(run_id, json_output=True)
+
+    assert result.exit_code != 0
+    submit.assert_called_once()
+    assert "submission_warnings" not in result.output
+    assert receipt_path.read_bytes() == corrupt_body
+
+
+@pytest.mark.parametrize(
+    ("status", "job_id", "launch_transaction", "run_id"),
+    [
+        ("INDETERMINATE", "42", {}, "npa-final-receipt-indeterminate"),
+        ("SUBMITTED", " ", {}, "npa-final-receipt-blank-job"),
+        (
+            "SUBMITTED",
+            "42",
+            {"state": "indeterminate", "job_id": "42"},
+            "npa-final-receipt-transaction-state-conflict",
+        ),
+        (
+            "SUBMITTED",
+            "42",
+            {"state": "submitted", "job_id": "99"},
+            "npa-final-receipt-transaction-id-conflict",
+        ),
+    ],
+)
+def test_final_post_launch_receipt_failure_requires_accepted_result_identity(
+    mocker,
+    status: str,
+    job_id: str,
+    launch_transaction: dict[str, str],
+    run_id: str,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    _patch_npa_submit_preflight(mocker)
+    real_update = submission_state.update_submission_state
+
+    def fail_final_launch_update(project, exact_run_id, updates, **kwargs):
+        launch = updates.get("launch")
+        if (
+            kwargs.get("locked") is True
+            and set(updates) == {"launch"}
+            and isinstance(launch, dict)
+            and "status" in launch
+        ):
+            raise ValueError("synthetic final receipt failure")
+        return real_update(project, exact_run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_final_launch_update,
+    )
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(
+            status=status,
+            job_id=job_id,
+            returncode=1,
+            launch_transaction=launch_transaction,
+        ),
+    )
+
+    result = _invoke_npa_submit(run_id, json_output=True)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "could not persist post-launch submission receipt" in result.output
+    assert "submission_warnings" not in result.output
+    submit.assert_called_once()
+
+
+def test_prelaunch_corrupt_receipt_still_prevents_provider_submit(mocker) -> None:
+    _patch_npa_submit_preflight(mocker)
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    secret = "synthetic-prelaunch-receipt-secret"
+    receipt_path = submission_state_path("default", "npa-submit-prelaunch-corrupt")
+    receipt_path.parent.mkdir(parents=True)
+    corrupt_body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+    receipt_path.write_bytes(corrupt_body)
+
+    result = _invoke_npa_submit("npa-submit-prelaunch-corrupt")
+
+    assert result.exit_code == 1
+    assert "could not persist pre-mutation submission ledger" in result.output
+    assert secret not in f"{result.stdout}\n{result.stderr}"
+    assert receipt_path.read_bytes() == corrupt_body
+    submit.assert_not_called()
+
+
+def test_planning_receipt_write_failure_never_reaches_provider(mocker) -> None:
+    _patch_npa_submit_preflight(mocker)
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=ValueError("synthetic pre-launch receipt failure"),
+    )
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = _invoke_npa_submit("npa-submit-prelaunch-write-failure")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "synthetic pre-launch receipt failure" in result.output
+    submit.assert_not_called()
+
+
+def test_workflow_receipt_write_failure_never_reaches_provider(mocker) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    _patch_npa_submit_preflight(mocker)
+    real_update = submission_state.update_submission_state
+
+    def fail_workflow_update(project, run_id, updates, **kwargs):
+        if kwargs.get("locked") is True and set(updates) == {"workflow"}:
+            raise ValueError("synthetic workflow receipt failure")
+        return real_update(project, run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_workflow_update,
+    )
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = _invoke_npa_submit("npa-submit-workflow-write-failure")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "could not persist pre-launch workflow receipt" in result.output
+    submit.assert_not_called()
 
 
 def test_workbench_workflow_submit_npa_plan_only(

@@ -5,15 +5,19 @@
 ```text
 Usage: npa workbench mjlab [OPTIONS] COMMAND [ARGS]...
 
-MJLab locomotion policy evaluation for SONIC workflows.
+MJLab GPU robot learning, evaluation and ONNX export.
 
 Options
 --help  Show this message and exit.
 Commands
-eval  Evaluate a SONIC locomotion checkpoint against MJLab metrics.
-workflow  Show the npa.workflow spec for MJLab evaluation.
-status  Show MJLab tool status.
-list  List supported MJLab evaluation suites.
+train  Train or resume a native MJLab policy on the current GPU node.
+eval  Measure complete episodes from a native MJLab/RSL-RL checkpoint.
+export  Export a policy to checked ONNX with robot metadata.
+status  Report installation or remote status.
+system-info  Inspect dependency versions.
+list  List tasks from the installed MJLab registry.
+workflow  Locate the MJLab workflow templates.
+deploy  Deploy a private service on an existing GPU cluster using existing Secrets.
 ```
 
 ## Options
@@ -26,16 +30,20 @@ list  List supported MJLab evaluation suites.
 
 | Command | Description |
 | --- | --- |
-| `eval` | Evaluate a SONIC locomotion checkpoint against MJLab metrics. |
-| `workflow` | Show the npa.workflow spec for MJLab evaluation. |
-| `status` | Show MJLab tool status. |
-| `list` | List supported MJLab evaluation suites. |
+| `train` | Train or resume a native MJLab policy on the current GPU node. |
+| `eval` | Measure complete episodes from a native MJLab/RSL-RL checkpoint. |
+| `export` | Export a policy to checked ONNX with robot metadata. |
+| `status` | Report installation or remote status. |
+| `system-info` | Inspect dependency versions. |
+| `list` | List tasks from the installed MJLab registry. |
+| `workflow` | Locate the MJLab workflow templates. |
+| `deploy` | Deploy a private service on an existing GPU cluster using existing Secrets. |
 
 ## Examples
 
 ```bash
 npa workbench mjlab --help
-npa workbench mjlab eval --help
+npa workbench mjlab train --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `mjlab`.

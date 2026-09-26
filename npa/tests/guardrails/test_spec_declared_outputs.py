@@ -50,6 +50,18 @@ def _checked_specs() -> tuple[Path, ...]:
 
 #: toolRef prefix -> (argv flag naming the output prefix, dotted `result_uri_for`).
 RESULT_URI_TOOLS: dict[str, tuple[str, str]] = {
+    "workbench.encord.push": (
+        "--output-path",
+        "npa.workbench.encord:push_receipt_uri_for",
+    ),
+    "workbench.encord.pull": (
+        "--output-path",
+        "npa.workbench.encord:pull_manifest_uri_for",
+    ),
+    "workbench.encord.verify_roundtrip": (
+        "--output-path",
+        "npa.workbench.encord:roundtrip_report_uri_for",
+    ),
     "workbench.vlm_eval.run": (
         "--output-path",
         "npa.workbench.vlm_eval:result_uri_for",
@@ -225,6 +237,32 @@ def test_live_job_339_cosmos_output_regressions_remain_guarded() -> None:
     assert len(JOB_339_COSMOS_OUTPUT_LOCATIONS) == 4
     assert len({spec for spec, _ in JOB_339_COSMOS_OUTPUT_LOCATIONS}) == 3
     assert JOB_339_COSMOS_OUTPUT_LOCATIONS <= guarded
+
+
+def test_cosmos_synth_fanout_producers_have_distinct_canonical_manifests() -> None:
+    path = ROOT / "workflows" / "testing" / "cosmos-synth-fanout-curation.yaml"
+    plan = build_plan(load_spec(path), run_id="collision-check")
+    producers = [
+        step for step in plan.steps if step.state in {"synth-shard-a", "synth-shard-b"}
+    ]
+
+    assert len(producers) == 2
+    output_prefixes = {
+        step.argv[step.argv.index("--output-uri") + 1] for step in producers
+    }
+    declared_manifests = {
+        output["uri"]
+        for step in producers
+        for output in step.outputs
+        if output["schema"] == "npa.cosmos2.transfer.v1"
+    }
+    canonical_manifests = {
+        _resolve("npa.workbench.cosmos.transfer:transfer_manifest_uri_for")(prefix)
+        for prefix in output_prefixes
+    }
+
+    assert len(output_prefixes) == 2
+    assert declared_manifests == canonical_manifests
 
 
 @pytest.mark.parametrize(

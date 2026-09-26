@@ -47,11 +47,28 @@
   "validation_states": {
     "validated": "get_device_capability() confirmed on a real B200/B300 node with the image's real capability smoke passing.",
     "pending-hardware": "Wheel arch set confirmed on the built image, but not yet run on a real datacenter Blackwell node.",
-    "pending-build": "The Dockerfile is in tree but the image has not been built, so no wheel arch set and no GPU result exist yet. Never upgrade this from a reading of the Dockerfile.",
+    "pending-build": "No retained, accepted candidate artifact or complete current byte-scan proof exists, so no wheel arch set and no GPU result exist yet. A Dockerfile or reference-build graph alone cannot upgrade this state.",
     "not-required": "CPU-only or GPU-agnostic driver-API image; no architecture-specific wheel/SASS assertion applies. GPU scheduling and real capability checks remain required when the workload uses a GPU.",
     "pending-gpu": "The image has been built and its bytes checked (payload scan, layer history), but it has never run on a real datacenter Blackwell node, so no wheel arch set and no GPU result exist. Distinct from pending-build, which means no artifact exists at all."
   },
   "images": [
+    {
+      "name": "npa-mjlab",
+      "dockerfile": "mjlab/Dockerfile",
+      "build_script": "mjlab/build.sh",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "smoke": "npa.smoke.test_mjlab_functional: native CUDA Cartpole PPO update, checkpoint-backed complete episodes and checked ONNX policy export.",
+      "notes": "Current CUDA 13.0 operator image dev-0202f396fb23f7d066fd452b469578e67151d382 has run G1 checkpoint resume, independent-seed evaluation, MP4/HTML rendering and ONNX export on RTX PRO 6000. Torch 2.13.0+cu130 reports sm_100 and sm_120, but these current bytes have not run on B200/B300. The older CUDA 12.8 image has separate B200 one/eight-GPU and RTX acceptance in docs/workbench/validation/mjlab-gpu-20260924.json. Current trained rollout: docs/workbench/validation/mjlab-trained-g1-20260925.json. Public publication remains quarantined.",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
     {
       "name": "npa-sam3",
       "dockerfile": "sam3/Dockerfile",
@@ -69,6 +86,16 @@
       "verdict": "not-applicable",
       "validation": "not-required",
       "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
+    },
+    {
+      "name": "npa-libero",
+      "dockerfile": "libero/Dockerfile",
+      "build_script": "libero/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "smoke": "Run the headless official LIBERO demonstration gate on one B200: real upstream BC-RNN Adam steps, strict checkpoint reload, trajectory-disjoint held-out loss and action predictions, and exact image and GPU evidence.",
+      "notes": "The current neutral-bootstrap candidate remains unbuilt, quarantined, and unvalidated. It contains no LIBERO source, GPU runtime, model, demonstration, task asset, cache, checkpoint, credential, or output payload. No datacenter Blackwell compatibility or public acceptance is claimed."
     },
     {
       "name": "npa-cosmos3-nano-video",
@@ -342,6 +369,36 @@
       "validated_registry_scope": "public"
     },
     {
+      "name": "npa-flex-pi",
+      "dockerfile": "flex-pi/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "redistribution": "public",
+      "source_compiled_extensions": [],
+      "smoke": "Real four-step action-only inference produces a finite 32x14 bimanual action chunk from a hash-pinned public RoboTwin observation.",
+      "notes": "The public image contains pinned MIT source/runtime only. Checkpoint, Wan/T5/DINOv3 assets, observation media, credentials, and populated caches are runtime fetches. The r2 digest contains the JSON stdout and fail-closed DINO fixes and passed the complete publication gates plus real compiled four-step action-only inference independently on one B200 and one RTX PRO 6000. Earlier fan-out and paired benchmark results remain under historical_releases and apply only to their original digest.",
+      "measured_torch": "2.7.1+cu128",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_tag": "0.1.0-cu128-r2",
+      "validated_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+      "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46",
+      "validated_registry_scope": "public",
+      "published_tag": "0.1.0-cu128-r2",
+      "published_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ]
+    },
+    {
       "name": "npa-cosmos3-reason",
       "dockerfile": "cosmos3-reason/Dockerfile",
       "verdict": "ready",
@@ -545,6 +602,17 @@
       "published_registries": [
         "public-release"
       ]
+    },
+    {
+      "name": "npa-gymnasium-robotics",
+      "dockerfile": "gymnasium-robotics/Dockerfile",
+      "build_script": "gymnasium-robotics/build.sh",
+      "verdict": "blocked",
+      "validation": "pending-build",
+      "blocked_reason": "The genuine Shadow Dexterous Hand capability requires MuJoCo EGL rendering. B200/B300 remain unqualified and deferred: no exact image, driver, EGL path, or real Shadow workload qualification is recorded for either target. Preserve RTX-only routing until each target is separately qualified; do not infer raster-EGL compatibility from RT-core inventory.",
+      "upstream_tracking": "docs/workbench/byof-gymnasium-robotics.md#hard-gate-capability",
+      "smoke": "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1 runs 120 MuJoCo steps and 2,400 substeps with contacts, touch response, object-orientation change, and distinct EGL RGB frames on exactly one RTX PRO 6000 Blackwell",
+      "notes": "This is a neutral development candidate on an immutable full-SHA build path. An owner-only reference build supplied the scanner's exact ordered 20-DiffID anchors; product scan, SBOM, push, immutable-digest and GPU gates remain required before any supported release claim. Historical RTX PRO 6000 evidence does not qualify current candidate bytes. B200/B300 compatibility remains unqualified and deferred pending exact image, driver, EGL, and real Shadow workload evidence; never infer raster-EGL compatibility from RT-core inventory."
     },
     {
       "name": "npa-isaac-lab",
@@ -1137,6 +1205,123 @@
       "validated_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
       "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
       "validated_registry_scope": "public"
+    },
+    "npa-flex-pi": {
+      "built": true,
+      "payload_scan": "Passed source/licensing, full-layer payload and history checks, the configured vulnerability/secret/license policy, SBOM/provenance attestations, and anonymous full-layer pull validation. No checkpoint, observation media, populated model cache, token, or credential payload was found.",
+      "hardware_run": "On 2026-09-17 the exact r2 digest completed strict checkpoint loading and real compiled four-step action-only inference independently on one B200 and one RTX PRO 6000. Both workflows terminated successfully with zero restarts, finite 32x14 actions, and three independently read-back-verified objects each. Native GPU architecture and baked source hashes were verified on each exact-image worker. This is observation-level inference and artifact-integrity evidence, not a new fan-out benchmark, paired speedup measurement, or closed-loop task-success claim.",
+      "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+          "observed_image_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+          "gpu_count": 1,
+          "torch_compile": true,
+          "finite_action_shape": [
+            32,
+            14
+          ],
+          "inference_seconds": 0.09418044400013059,
+          "peak_memory_bytes": 25270528512,
+          "readback_verified_objects": 3,
+          "artifact_sha256": {
+            "actions.json": "14cdf795d0d392cc028510c990d7bed196af4466be19f944de272022bd9e26ab",
+            "input.json": "e2ff5ada3d69a8619865750c3b2ae83ccecf07da15b05355d872e579e46c3164",
+            "result.json": "e16cfef2da128da61788d2f27c0084daf5adab904dbd32418db723c173169fdf"
+          },
+          "terminal_status": "SUCCEEDED",
+          "restart_count": 0,
+          "baked_module_hashes_verified": 3
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+          "observed_image_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+          "gpu_count": 1,
+          "torch_compile": true,
+          "finite_action_shape": [
+            32,
+            14
+          ],
+          "inference_seconds": 0.15105402399990453,
+          "peak_memory_bytes": 25270528512,
+          "readback_verified_objects": 3,
+          "artifact_sha256": {
+            "actions.json": "7e34a752fe87cdadbbd0ae087b164a9c710c15f00cb1aabc6b596e7e9fa4c931",
+            "input.json": "e2ff5ada3d69a8619865750c3b2ae83ccecf07da15b05355d872e579e46c3164",
+            "result.json": "ac880a618d122788020ebe3a7bd74ce9c4d4278b6ccdcbdb9685ab9a9ed289d2"
+          },
+          "terminal_status": "SUCCEEDED",
+          "restart_count": 0,
+          "baked_module_hashes_verified": 3
+        }
+      },
+      "validated_tag": "0.1.0-cu128-r2",
+      "validated_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+      "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46",
+      "validated_registry_scope": "public",
+      "historical_releases": {
+        "0.1.0-cu128": {
+          "built": true,
+          "payload_scan": "passed source, licensing, full-layer payload, history, vulnerability, secret, SBOM, provenance, and anonymous-pull gates; no checkpoint, observation media, model cache, token, or credential payload was found",
+          "hardware_run": "The exact accepted image completed real four-step action-only inference independently on physical RTX PRO 6000 and B200 on 2026-09-16. Strict state loading rejected missing or unexpected checkpoint keys. The maximum-capacity B200 run used 24 independent one-GPU replicas, not model parallelism: all 24 produced finite 32x14 actions and 72 read-back-verified objects in 132.0 seconds. On 2026-09-17 the unchanged digest passed five-sample paired eager-versus-compiled warm benchmarks and the standard compiled artifact path on both targets: 2.645x median speedup on RTX PRO 6000 and 2.278x on B200, with five durable objects per final target, zero restarts, and bounded BF16 numerical drift. This observation-level result does not claim closed-loop task success.",
+          "compile_correctness": {
+            "atol": 0.01,
+            "rtol": 0.01,
+            "max_relative_l2": 0.005,
+            "max_action_l2_relative_drift": 0.001,
+            "observed_max_absolute": 0.00800064206123352
+          },
+          "validated_gpus": {
+            "B200": {
+              "platform": "gpu-b200-sxm",
+              "capability": "10.0",
+              "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+              "peak_memory_bytes": 25268430336,
+              "baseline_inference_seconds": 0.577788796,
+              "replica_count": 24,
+              "fanout_wall_seconds": 132.0,
+              "throughput_replicas_per_second": 0.181818,
+              "wall_scaling_efficiency": 0.695627,
+              "warm_eager_median_seconds": 0.1990382052026689,
+              "warm_eager_p95_seconds": 0.20746170124039054,
+              "warm_compiled_median_seconds": 0.08738366886973381,
+              "warm_compiled_p95_seconds": 0.08759428886696696,
+              "warm_compiled_speedup": 2.277750611494498,
+              "warm_eager_throughput_samples_per_second": 4.992263232577875,
+              "warm_compiled_throughput_samples_per_second": 11.449643619011335,
+              "compiled_peak_memory_bytes": 25270528512,
+              "cold_asset_seconds": 451.77155646309257,
+              "compiled_setup_seconds": 121.50725780287758,
+              "paired_repeats": 5
+            },
+            "RTX PRO 6000": {
+              "platform": "gpu-rtx6000",
+              "capability": "12.0",
+              "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+              "peak_memory_bytes": 25268430336,
+              "inference_seconds": 0.6778233840013854,
+              "warm_eager_median_seconds": 0.27005410566926,
+              "warm_eager_p95_seconds": 0.29886764381080866,
+              "warm_compiled_median_seconds": 0.10210401099175215,
+              "warm_compiled_p95_seconds": 0.12783511634916067,
+              "warm_compiled_speedup": 2.644892233382239,
+              "warm_eager_throughput_samples_per_second": 3.6881252237560536,
+              "warm_compiled_throughput_samples_per_second": 9.331415115232462,
+              "compiled_peak_memory_bytes": 25270528512,
+              "cold_asset_seconds": 686.5896260133013,
+              "compiled_setup_seconds": 121.02701552398503,
+              "paired_repeats": 5
+            }
+          },
+          "validated_tag": "0.1.0-cu128",
+          "validated_digest": "sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91",
+          "development_sha": "c0ed82abfa5c3692de5584efa04ac7c453b01458",
+          "validated_registry_scope": "public"
+        }
+      }
     },
     "npa-base": {
       "built": true,

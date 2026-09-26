@@ -22,8 +22,13 @@ import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
+from npa.orchestration.npa_workflow.run_state import (
+    RunStateStore,
+    RuntimeRunState,
+    runtime_key,
+)
 from npa.orchestration.npa_workflow.runtime import (
+    CANCELLATION_VERIFY_ATTEMPTS,
     MAX_TERMINAL_PLAN_MIGRATIONS,
     SCHEDULER_OBSERVATION_SCHEMA,
     SCHEDULER_OBSERVATION_SOURCE,
@@ -34,6 +39,7 @@ from npa.orchestration.npa_workflow.runtime import (
     _record_reached_running,
     plan_fingerprint,
     run_workflow_runtime,
+    s3_artifact_exists,
     s3_trigger_waiter,
     wave_key,
 )
@@ -432,6 +438,7 @@ class MemoryStore(RunStateStore):
 
     def __init__(self, objects: dict[str, bytes] | None = None) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
+        self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
             prefix="unit-prefix",
@@ -446,6 +453,7 @@ class MemoryStore(RunStateStore):
         return self.objects[key].decode("utf-8")
 
     def _write_obj(self, bucket: str, key: str, body: bytes) -> None:
+        self.write_calls.append(key)
         self.objects[key] = body
 
     def _list_obj(self, _bucket: str, prefix: str) -> list[str]:
@@ -772,6 +780,80 @@ def test_declared_output_checker_receives_uri_and_ledger_keeps_schema(
             "schema": "npa.sim2real.threshold_decision.v1",
         }
     ]
+
+
+def test_prefix_marker_does_not_authorize_absent_output_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class PagedS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "IsTruncated": True,
+                "NextContinuationToken": "page-2",
+            }
+
+    client = PagedS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._outputs_exist([output])
+    assert executor._declared_outputs_absent([output]) == (False, "present")
+
+
+def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class MissingTruncationFlagS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "NextContinuationToken": "page-2",
+            }
+
+    client = MissingTruncationFlagS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._declared_outputs_absent([output]) == (False, "indeterminate")
+    assert calls == [
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "gate-loop/run/output/",
+            "MaxKeys": 1000,
+        }
+    ]
+    with pytest.raises(RuntimeError, match="malformed pagination"):
+        s3_artifact_exists(output)
 
 
 # ------------------------------------------------------------------- early exit
@@ -1400,6 +1482,104 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
 
 
+SEMANTIC_RESUME_CORRUPTION_CASES = (
+    "truncated_json",
+    "empty_object",
+    "missing_run_id",
+    "missing_workflow",
+    "mismatched_run_id",
+    "mismatched_workflow",
+    "missing_schema_version",
+    "unsupported_schema_version",
+    "waves_string",
+    "waves_non_object_entry",
+    "stages_string",
+    "decisions_object",
+    "plan_migrations_string",
+    "watermarks_array",
+    "api_version_array",
+)
+
+
+def _semantic_resume_payload(
+    case: str,
+    *,
+    workflow: str,
+    run_id: str,
+) -> dict[str, object]:
+    payload = RuntimeRunState(workflow=workflow, run_id=run_id).to_dict()
+    if case == "empty_object":
+        return {}
+    if case.startswith("missing_"):
+        payload.pop(case.removeprefix("missing_"))
+    elif case == "mismatched_run_id":
+        payload["run_id"] = "other-run"
+    elif case == "mismatched_workflow":
+        payload["workflow"] = "other-workflow"
+    elif case == "unsupported_schema_version":
+        payload["schema_version"] = "npa.workflow.runtime.v999"
+    elif case == "waves_string":
+        payload["waves"] = "corrupt-but-valid-json"
+    elif case == "waves_non_object_entry":
+        payload["waves"] = [
+            {"key": "done", "status": "succeeded"},
+            "corrupt-entry",
+        ]
+    elif case == "stages_string":
+        payload["stages"] = "corrupt-but-valid-json"
+    elif case == "decisions_object":
+        payload["decisions"] = {"decision": "promote"}
+    elif case == "plan_migrations_string":
+        payload["plan_migrations"] = "corrupt-but-valid-json"
+    elif case == "watermarks_array":
+        payload["watermarks"] = []
+    elif case == "api_version_array":
+        payload["api_version"] = ["wrong-type"]
+    return payload
+
+
+@pytest.mark.parametrize("case", SEMANTIC_RESUME_CORRUPTION_CASES)
+def test_resume_rejects_corrupt_ledger_before_executor_creation(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    run_id = "rt-corrupt-ledger"
+    corrupt_bytes = (
+        b'{"schema_version":'
+        if case == "truncated_json"
+        else (
+            json.dumps(
+                _semantic_resume_payload(case, workflow=spec.name, run_id=run_id),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+    )
+    key = runtime_key("unit-prefix")
+    store = MemoryStore({key: corrupt_bytes})
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(resume=True)
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ) as error:
+        _executor(
+            spec,
+            run_id=run_id,
+            submitter=submitter,
+            options=options,
+            store=store,
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects[key] == corrupt_bytes
+    assert key in str(error.value)
+    assert "s3://unit-bucket" not in str(error.value)
+
+
 @pytest.mark.parametrize(
     "cancelled_record,outcome,status,observable,outputs_valid,adopt",
     [
@@ -1931,6 +2111,53 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert cancels and cancels[0]["job_id"] == "1"
     assert report.waves[0]["sky_status"] == "SUBMITTED"
     assert report.waves[0]["cancellation"]["state"] == "requested"
+
+
+@pytest.mark.parametrize("recovered_status", ["RUNNING", "SUCCEEDED", "UNAVAILABLE"])
+def test_resume_after_status_outage_reconciles_original_job_without_resubmission(
+    tmp_path: Path, recovered_status: str
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    first = _executor(spec, store=store, status_fn=BoomStatus(failures=99))
+    failed = run_workflow_runtime(
+        spec, run_id="rt-1", executor=first, options=first.options
+    )
+    original = failed.waves[0]
+    assert failed.status == "failed"
+    assert original["job_id"] == "1"
+    assert original["recovery_decision"] == "block_relaunch"
+    reconciled = []
+
+    def reconcile(name: str, *, job_id: str = ""):
+        reconciled.append((name, job_id))
+        return SimpleNamespace(
+            outcome="unavailable" if recovered_status == "UNAVAILABLE" else "found",
+            job_id=job_id,
+            status=recovered_status,
+            workload_observable=True,
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        store=store,
+        submitter=submitter,
+        reconcile_fn=reconcile,
+        options=RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True),
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-1", executor=resumed, options=resumed.options
+    )
+    assert reconciled[0] == (original["job_name"], original["job_id"])
+    assert report.waves[0]["job_id"] == original["job_id"]
+    assert all(call["job_name"] != original["job_name"] for call in submitter.calls)
+    if recovered_status == "UNAVAILABLE":
+        assert report.status == "failed"
+        assert submitter.calls == []
+    else:
+        assert report.status == "succeeded"
+        assert report.waves[0]["adopted"] is True
 
 
 def test_unknown_status_result_is_counted_as_a_failed_query(tmp_path: Path) -> None:
@@ -4013,8 +4240,17 @@ def test_runtime_supervisor_recovers_transient_once_without_duplicate(
 
 
 @pytest.mark.parametrize("drift", ["workflow", "source", "image"])
+@pytest.mark.parametrize(
+    ("scheduler_status", "outputs_present"),
+    [("PENDING", False), ("SUCCEEDED", True)],
+)
 def test_runtime_restart_blocks_each_immutable_identity_drift(
-    tmp_path: Path, mocker, monkeypatch: pytest.MonkeyPatch, drift: str
+    tmp_path: Path,
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    scheduler_status: str,
+    outputs_present: bool,
 ) -> None:
     from npa.orchestration.npa_workflow.runtime import (
         _image_identity,
@@ -4070,7 +4306,7 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
             preflight_evidence=_supervisor_preflight(),
         ),
         cancels=cancels,
-        output_checker=lambda _uri: False,
+        output_checker=lambda _uri: outputs_present,
     )
     record = restarted.ledger.latest_wave(prior.key)
     assert record is not None
@@ -4079,7 +4315,7 @@ def test_runtime_restart_blocks_each_immutable_identity_drift(
     )
 
     with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
-        restarted._supervise_pending(resumed, scheduler_status="PENDING")
+        restarted._supervise_pending(resumed, scheduler_status=scheduler_status)
 
     assert cancels == []
     assert resumed.recovery_decision == "block_relaunch"
@@ -4138,6 +4374,201 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
     ]
     assert executor.attempts[-1].infrastructure_recovery_exhausted
     assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
+
+
+@pytest.mark.parametrize(
+    "terminal_provider_status",
+    ["CANCELLED", "FAILED", "FAILED_SETUP", "SUCCEEDED", "COMPLETED"],
+)
+def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+    terminal_provider_status: str,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-valid-output-limit", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    status = FakeStatus(["PENDING", "CANCELLED", "PENDING", terminal_provider_status])
+    store = MemoryStore()
+    executor = _executor(
+        spec,
+        run_id="rt-valid-output-limit",
+        submitter=FakeSubmitter(),
+        status_fn=status,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=store,
+    )
+    executor._submitter = None
+
+    result = executor.execute(gate)
+    attempt = executor.attempts[-1]
+
+    assert result["status"] == "ok"
+    assert attempt.status == "succeeded"
+    assert attempt.sky_status == terminal_provider_status
+    assert attempt.recovery_decision == "reuse_completed_wave"
+    assert attempt.infrastructure_recovery_count == 1
+    assert attempt.cancellation_state == "verified"
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
+    assert len(executor.attempts) == 2
+    assert len(status.calls) == 4
+    reuse_event = next(
+        event
+        for event in reversed(SupervisorLedger(store).events())
+        if event["phase"] == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+    )
+    assert (
+        reuse_event["cancellation"]["provider_terminal_status"]
+        == terminal_provider_status
+    )
+
+
+def test_runtime_preserves_unverified_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-unverified",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-unverified",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(
+            [
+                "PENDING",
+                "CANCELLED",
+                "PENDING",
+                *(["PENDING"] * CANCELLATION_VERIFY_ATTEMPTS),
+            ]
+        ),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "requested"
+    assert attempt.cancellation_error == ""
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
+
+
+def test_runtime_rejects_failed_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-cancel-failed",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancellation_calls: list[dict[str, Any]] = []
+
+    def cancel(**kwargs: Any) -> dict[str, Any]:
+        cancellation_calls.append(kwargs)
+        if len(cancellation_calls) == 1:
+            return {"cancel_returncode": 0}
+        return {
+            "cancel_returncode": 1,
+            "cancel_stderr": "controller unavailable",
+        }
+
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-cancel-failed",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING"]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._canceller = cancel
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "failed"
+    assert attempt.cancellation_error == "controller unavailable"
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancellation_calls) == 2
 
 
 @pytest.mark.parametrize(

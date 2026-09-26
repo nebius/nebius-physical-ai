@@ -55,6 +55,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.alpamayo2_super": "alpamayo2-super",
+    "workbench.flex_pi": "flex-pi",
     "workbench.curobo": "curobo",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
@@ -63,7 +64,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.openarm": "openarm",
     "workbench.lerobot": "lerobot",
     "workbench.sonic": "sonic",
-    "workbench.mjlab": "sonic",
+    "workbench.mjlab": "mjlab",
     "workbench.retargeting": "retargeting",
     "workbench.sim2real": "lerobot-vlm-rl",
     "workbench.sim2real_envgen": "envgen",
@@ -85,6 +86,7 @@ IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
     "workflow.paidf.run_evg_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -94,6 +96,10 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
+    # The released flex-pi checkpoint is public, but its multi-shard runtime
+    # fetch can exceed the anonymous Hub rate limit. Forward an operator token
+    # only through the workflow secret channel when one is available.
+    "workbench.flex_pi": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
@@ -136,6 +142,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.encord": "encord",
     "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
@@ -237,6 +244,7 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workbench.mjlab": ("/usr/local/bin/python",),
     # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
     # creates a separate vendor venv before installing XR1's pinned packages.
     "workflow.xr1": ("/opt/conda/bin/python",),
@@ -680,6 +688,22 @@ def tool_image_key(tool_ref: str) -> str | None:
             if len(prefix) > len(best):
                 best = prefix
     return TOOL_REF_IMAGE_TOOL.get(best)
+
+
+def source_overlay_requested(config: Mapping[str, Any]) -> bool:
+    """Resolve the overlay opt-in consistently for staging and rendering."""
+    import os
+
+    if str(config.get("require_baked_npa") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    return str(
+        os.environ.get("NPA_SRC_OVERLAY") or config.get("source_overlay") or ""
+    ).strip().lower() in {"1", "true"}
 
 
 def tool_requires_staged_npa_source(tool_ref: str) -> bool:
@@ -1761,6 +1785,13 @@ def render_setup_for_tool(
             "  exit 1\n"
             "fi\n"
         )
+    if tool_ref.startswith("workbench.encord"):
+        parts.append(
+            'if [[ -z "$ENCORD_SSH_KEY" && -z "$ENCORD_SSH_KEY_B64" ]]; then\n'
+            "  echo 'ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required for Encord stages' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+        )
     if tool_ref.startswith("workbench.nurec"):
         # These stages run inside NVIDIA's NRE container -- a VENDOR image, so it
         # carries none of the tool's runtime dependencies: no Hugging Face CLI
@@ -2127,6 +2158,8 @@ def build_skypilot_task_doc(
     # and exports SKYPILOT_NODE_RANK / SKYPILOT_NODE_IPS into each. Emitted only when the
     # profile asks for more than one node, so every existing rendered doc is unchanged.
     num_nodes = int(scheduler_task.get("num_nodes") or 1)
+    if str(scheduler_task.get("tool_ref") or "") == "workbench.flex_pi.train":
+        envs["NPA_FLEX_PI_NODE_COUNT"] = str(num_nodes)
     if (
         str(scheduler_task.get("tool_ref") or "")
         == "workbench.cosmos2.transfer_execute"
@@ -2190,8 +2223,6 @@ def build_skypilot_task_doc(
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
     # it once with `npa configure --src-s3-uri` so the next shell still finds it.
-    import os
-
     src_uri = resolve_src_s3_uri()
     if require_baked:
         # Exact images must contain the full runtime and pinned dependencies. Never
@@ -2221,17 +2252,7 @@ def build_skypilot_task_doc(
             doc["envs"] = envs
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
-        if (
-            str(
-                os.environ.get("NPA_SRC_OVERLAY")
-                or spec.config.get("source_overlay")
-                or ""
-            )
-            .strip()
-            .lower()
-            in {"1", "true"}
-            and src_uri
-        ):
+        if source_overlay_requested(spec.config) and src_uri:
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
     _inject_operator_registry_docker_secrets(

@@ -1,0 +1,63 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "19425116cde912354db573b444a3d01d4373fdce279a4fb73abe2c28168545f1",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec both completed successfully.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/flex-pi-b300-inference.yaml",
+        "npa workbench workflow submit workflows/testing/flex-pi-b300-inference.yaml --plan-only"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The stage invokes the pinned upstream checkpoint and policy adapter, then requires a finite 32x14 action chunk.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#artifacts-and-acceptance"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected project's object-storage credential preflight passed before allocation.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius,s3 --json (sanitized private record)"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The public input manifest pins every source object and SHA-256 digest.",
+      "evidence": [
+        "npa/docker/workbench/flex-pi/public_robotwin_sample.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Exact pinned checkpoint, observation, tokenizer, DINOv3, and converted Wan asset endpoints were reachable before allocation.",
+      "evidence": [
+        "sanitized private access-preflight record; no credential values retained"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Uses the released r2 base image, the submitted NPA source overlay, and a separately hash-pinned private PyTorch 2.8.0/CUDA 12.9/Triton 3.4.0 runtime with CUDA 12.9.86 assembler.",
+      "evidence": [
+        "npa/src/npa/deploy/public_release_manifest.json",
+        "npa/src/npa/workbench/flex_pi/compiler.py",
+        "npa/src/npa/workbench/flex_pi/b300-runtime-requirements.txt"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "On 2026-09-23, one preemptible B300 passed native compiled-kernel preflight and full compiled policy inference with PyTorch 2.8.0+cu129/Triton 3.4.0. NPA live-verified SUCCEEDED; three artifacts were read back and validated. This qualifies the pinned overlay/runtime combination, not the unchanged r2 image or training.",
+      "evidence": [
+        "docs/workbench/flex-pi.md",
+        "sanitized private terminal audit and artifact readback",
+        "NPA source fingerprint feec30a5483ae7ceb193eb65d37da2eae7a76cc8cf0b0747aa49d114b93b0978",
+        "runtime lock SHA-256 e6de5c8518344b0cdeaf4655ce283f5a24c91f9baf8b6678a015cd294e2c577f"
+      ]
+    }
+  }
+}

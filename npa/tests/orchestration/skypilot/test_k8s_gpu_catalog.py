@@ -1263,6 +1263,7 @@ def test_validation_environment_recovers_stale_identity_raised_before_api_ensure
 
     def fake_recover(scope: Path, **kwargs: object) -> bool:
         recovered.append({"scope": str(scope), "user_id": str(kwargs["user_id"])})
+        (scope / "client-config.yaml").rename(scope / "retired-client-config.yaml")
         return True
 
     monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
