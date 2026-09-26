@@ -57,6 +57,12 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For resumable contest evaluations, see the [BEHAVIOR campaign guide](../docs/workbench/behavior-campaign.md).
+It documents case ownership, verified results, and workflow task activity. The
+optional `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` environment variable points to
+private JSON settings for the read-only live status regression; it is unset by
+default and submits no work.
+
 Fleet recovery can remove a failed CPU pool without charging unchanged reserved
 GPUs against free capacity again. The requested CPU count must be zero, every
 other rendered capacity setting must match, and fresh provider evidence must
@@ -175,6 +181,11 @@ chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
+
+Custom workflow stages receive `NPA_CONTROL_PYTHON`, the executable interpreter
+recorded by setup, or an empty value when none is available. Use it for NPA
+storage operations alongside a separate policy environment; see
+[Python environments in custom stages](../docs/workbench/npa-workflow-guide.md#python-environments-in-custom-stages).
 
 The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
 retains invalid hosted visual judgments as failed audit evidence. Its
@@ -484,6 +495,15 @@ to an operator-owned S3 prefix; it has no default. The check requires an existin
 authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
+
+The negative BEHAVIOR specialist-report admission check uses
+`NPA_BEHAVIOR_SPECIALIST_ADMISSION_LIVE_CONFIG` to select an owner-only JSON
+file containing real panel and partition URIs, a fresh empty output prefix, and
+the pinned BEHAVIOR source root. It downloads only those declarations and proves
+missing or malformed authorization exits before runtime identity, case claims,
+or policy startup. See the
+[campaign evidence instructions](../docs/workbench/behavior-campaign.md) for the
+config schema and focused command.
 
 For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
 plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and

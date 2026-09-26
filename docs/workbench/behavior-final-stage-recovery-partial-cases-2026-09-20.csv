@@ -1,0 +1,2 @@
+task_id,task,instance_id,q,success,simulator_steps,metric_sha256,collection_receipt_sha256
+1,picking_up_trash,311,1.0,true,5945,a72f191704dfe60fcbc550b73ec15952eca93142bd544ce0ef13d61d7e68162e,17298809385586fd76c2de90ca734f598ebc00b8f23b424f52a5fc94a97afca4

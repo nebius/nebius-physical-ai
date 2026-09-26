@@ -112,6 +112,14 @@ single-GPU-node cluster, not a parallel workflow.
 
 ### Concurrent consumers
 
+SkyPilot can reject a second job's `ReadWriteOnce` claim before it creates a
+worker pod, including when both jobs request read-only mounts. Workbench status
+reports `STORAGE_VOLUME_IN_USE` when that job's controller log names an exact
+claim from its rendered resources. This is a recorded observation: status does
+not verify that the named consumer is still running and does not cancel either
+job. Let the owning job release the claim before starting another consumer, or
+use storage that supports the required concurrent jobs.
+
 `huggingface_hub` serialises concurrent downloads with `filelock`, taking an
 advisory lock per blob under `<cache>/.locks`, so sharing one cache between stages
 that start together depends on locking working on the volume. Measured with four

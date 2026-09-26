@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import tempfile
 import time
 import sys
@@ -30,7 +31,12 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
+    from npa.orchestration.npa_workflow.interpreter import ExecutionPlan
+    from npa.orchestration.npa_workflow.run_state import RunStateStore
     from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        SubmitCredentialContext,
+    )
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 
 app = typer.Typer(
@@ -111,6 +117,183 @@ def _bounded_log_streams(
     return bounded_stdout, bounded_stderr, metadata
 
 
+def _live_log_contract(stdout: str, stderr: str) -> dict[str, str]:
+    """Describe byte availability separately from live-query verification."""
+
+    return {
+        "live_log_state": "available" if stdout or stderr else "empty",
+        "live_verification_scope": "query_transport_only",
+        "live_verification_note": (
+            "A successful live log query verifies transport only; live_log_state "
+            "records whether the query returned log bytes."
+        ),
+    }
+
+
+def _pending_log_contract(
+    pending: Mapping[str, object],
+    *,
+    run_id: str,
+    stage: str,
+    job_id: str,
+    cached: bool,
+    max_output_chars: int,
+) -> dict[str, object]:
+    """Describe a stage whose payload has not produced queryable logs."""
+
+    last_known = pending.get("last_known")
+    last_known_state = (
+        str(last_known.get("state") or "") if isinstance(last_known, Mapping) else ""
+    )
+    managed_job_state = str(
+        last_known_state if cached else pending.get("status") or "UNKNOWN"
+    ).upper()
+    reason = (
+        "live controller logs intentionally skipped (--cached)"
+        if cached
+        else (
+            f"managed job is {managed_job_state}; its payload has not started, "
+            "so no live log query was attempted"
+        )
+    )
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "stage": stage,
+        "managed_job_id": job_id,
+        "managed_job_state": managed_job_state,
+        "manifest_state": "pending",
+        "payload_execution_state": "not_observed" if cached else "not_started",
+        "live_log_state": "not_attempted" if cached else "not_started",
+        "cached_log_state": "unavailable" if cached else "not_requested",
+        "log": "",
+        "stderr": "",
+        "reason": reason,
+        "diagnostics": list(pending.get("diagnostics") or []),
+        "blockers": list(pending.get("blockers") or []),
+        "resolution_source": str(pending.get("resolution_source") or ""),
+        "resolution_checks": list(pending.get("resolution_checks") or []),
+        "verification_status": str(pending.get("verification_status") or ""),
+        "live_verified": bool(pending.get("live_verified")),
+        "last_known": last_known,
+        "live_verification": pending.get("live_verification"),
+    }
+    bounded_log, log_metadata = _bounded_log_text("", max_output_chars)
+    payload["log"] = bounded_log
+    payload.update(log_metadata)
+    return payload
+
+
+def _emit_pending_logs(payload: Mapping[str, object], *, json_output: bool) -> None:
+    """Emit the explicit no-payload-logs contract."""
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    typer.echo(str(payload.get("managed_job_state") or "PENDING"))
+    typer.echo(f"payload logs: {payload.get('live_log_state')}")
+    typer.echo(f"cause: {payload.get('reason')}")
+    blockers = payload.get("blockers")
+    if isinstance(blockers, list):
+        for blocker in blockers:
+            if not isinstance(blocker, Mapping):
+                continue
+            detail = str(blocker.get("reason") or "Pending")
+            if blocker.get("message"):
+                detail = f"{detail} - {blocker['message']}"
+            typer.echo(f"diagnostic: {detail}")
+
+
+def _verified_prestart_log_status(
+    job_id: str,
+    *,
+    project: str,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+) -> dict[str, object] | None:
+    """Return verified pre-start evidence without asking SkyPilot for logs."""
+
+    from npa.orchestration.skypilot.workflow import workflow_status
+
+    try:
+        live = workflow_status(
+            job_id,
+            sky_bin=sky_bin or None,
+            isolated_config_dir=isolated_config_dir,
+        )
+    except Exception:  # noqa: BLE001 - ordinary log retrieval remains the fallback
+        return None
+    state = str(live.status or "").upper()
+    if not live.ok or state not in {"PENDING", "STARTING"}:
+        return None
+    return _prestart_status_payload(
+        job_id,
+        state=state,
+        project=project,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+    )
+
+
+def _prestart_status_payload(
+    job_id: str,
+    *,
+    state: str,
+    project: str,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+) -> dict[str, object]:
+    """Build the verified provenance for one pre-start managed job."""
+
+    from npa.verification import VERIFIED, apply_verification, utc_now
+
+    observed_at = utc_now()
+    retry_command = (
+        f"npa workbench workflow status {job_id}"
+        + (f" --project {project}" if project else "")
+        + _isolated_controller_option(isolated_config_dir)
+    )
+    payload: dict[str, object] = {
+        "status": state,
+        "resolution_source": "live_scheduler",
+        "resolution_checks": [
+            {
+                "source": "managed_job_status",
+                "outcome": "found",
+                "detail": f"exact managed job {job_id} is {state}",
+            }
+        ],
+        "diagnostics": [
+            f"Exact managed job {job_id} is {state}; payload logs are not available yet."
+        ],
+    }
+    blockers = _stalled_job_blockers(
+        job_id,
+        state,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+    )
+    if blockers:
+        payload["blockers"] = blockers
+    return apply_verification(
+        payload,
+        status=VERIFIED,
+        target=job_id,
+        last_known_state=state,
+        last_known_at=observed_at,
+        last_known_source="live_scheduler",
+        retry_command=retry_command,
+        attempted_at=observed_at,
+    )
+
+
+def _isolated_controller_option(path: Path | None) -> str:
+    """Render the controller binding for a machine-actionable retry command."""
+
+    if path is None:
+        return ""
+    return f" --isolated-config-dir {shlex.quote(str(path))}"
+
+
 def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
     if metadata.get("log_truncated"):
         typer.echo(
@@ -179,6 +362,25 @@ def _invalid_log_attempt_payload(
     live_verification["error_code"] = "STAGE_ATTEMPT_INVALID"
     live_verification["category"] = "ATTRIBUTION"
     return payload
+
+
+def _require_live_controller_route(resolution) -> None:
+    """Reject live queries whose durable job has no exact controller route."""
+    error = str(getattr(resolution, "controller_route_error", "") or "")
+    if error:
+        raise RuntimeError(error)
+
+
+def _controller_route_receipt(
+    sky_bin: str, isolated_config_dir: Path | None
+) -> dict[str, object]:
+    """Describe the exact Sky executable and state root used for submission."""
+    return {
+        "schema": "npa.workflow.controller-route.v1",
+        "isolated": isolated_config_dir is not None,
+        "isolated_config_dir": str(isolated_config_dir or ""),
+        "sky_bin": sky_bin,
+    }
 
 
 def _fail(
@@ -1057,6 +1259,7 @@ def submit_cmd(
         write_manifest,
     )
 
+    explicitly_isolated = isolated_config_dir is not None
     recovery_yaml_path = yaml_path.resolve()
     requested_secret_env = tuple(secret_env)
     if submit_timeout <= 0:
@@ -1688,6 +1891,19 @@ def submit_cmd(
                 return
             paidf_placement_prechecked = True
 
+        recorded_store = None
+        if runtime and not plan_only:
+            try:
+                recorded_store = _recorded_runtime_store(
+                    project,
+                    resolved_run_id,
+                    resume=resume,
+                    credentials=submit_credentials,
+                )
+            except ValueError as exc:
+                _fail(str(exc))
+                return
+
         if not plan_only:
             # Scope and denied output-prefix access must fail before image
             # bootstrap or deployIfAbsent creates compute. This identity gate
@@ -1702,6 +1918,7 @@ def submit_cmd(
                         run_id=resolved_run_id,
                         assume_decision=assume_decision,
                         credentials=submit_credentials,
+                        recorded_store=recorded_store,
                         source_uri=planned_source_uri if stage_source_planned else "",
                         verify_cluster=not deploy_if_absent,
                         gpu_check=(
@@ -2082,7 +2299,7 @@ def submit_cmd(
                 project=project,
                 run_id=resolved_run_id,
                 force=stage_src is True,
-                persist=not runtime,
+                persist=not runtime and not explicitly_isolated,
             )
             if not staged_uri:
                 return
@@ -2266,6 +2483,7 @@ def submit_cmd(
                 auto_load=auto_load,
                 agent_name=agent_name,
                 s3_endpoint=s3_endpoint,
+                recorded_store=recorded_store,
             )
             return
 
@@ -2579,6 +2797,21 @@ def submit_cmd(
                 _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
+        from npa.orchestration.skypilot._bin import (
+            resolve_isolated_config_dir,
+            resolve_sky_bin,
+        )
+
+        effective_sky_bin = (
+            str(resolve_sky_bin(sky_bin or None))
+            if prepared_npa is not None
+            else sky_bin
+        )
+        effective_isolated_config_dir = (
+            resolve_isolated_config_dir(isolated_config_dir)
+            if prepared_npa is not None
+            else isolated_config_dir
+        )
         ledger_project = project or "default"
         from npa.orchestration.skypilot.launch_transaction import (
             logical_launch_identity,
@@ -2655,9 +2888,9 @@ def submit_cmd(
                 return submit_workflow(
                     submitted_yaml_path,
                     resolved_run_id,
-                    isolated_config_dir=isolated_config_dir,
+                    isolated_config_dir=effective_isolated_config_dir,
                     config_path=config_path,
-                    sky_bin=sky_bin or None,
+                    sky_bin=effective_sky_bin,
                     controller_backend=controller_backend.value,
                     infra=infra,
                     secret_envs=secret_env,
@@ -2723,7 +2956,10 @@ def submit_cmd(
                         {
                             "workflow": _npa_submission_receipt(
                                 prepared_npa, resolved_run_id
-                            )
+                            ),
+                            "controller": _controller_route_receipt(
+                                effective_sky_bin, effective_isolated_config_dir
+                            ),
                         },
                         locked=True,
                     )
@@ -2912,19 +3148,22 @@ def _npa_submission_receipt(prepared, run_id: str) -> dict[str, object]:
     )
 
 
-def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
+def _workflow_submission_receipt(
+    spec, steps, run_id: str, *, plan_preview_error: str = ""
+) -> dict[str, object]:
     """Build the shared non-secret receipt for runtime and single-job submits."""
 
     from npa.orchestration.npa_workflow.run_state import (
         PAIDF_WORKFLOW_NAME,
         paidf_artifact_prefix,
         plan_step_records,
+        resolve_run_storage_location,
     )
     from npa.orchestration.npa_workflow.runtime import _resolved_config
 
     config = _resolved_config(spec, run_id)
-    bucket = str(config.get("bucket") or "").strip()
-    prefix = str(config.get("prefix") or run_id).strip("/")
+    location = resolve_run_storage_location(config, run_id=run_id)
+    prefix = location.prefix if location is not None else ""
     if spec.name == PAIDF_WORKFLOW_NAME:
         canonical = paidf_artifact_prefix(run_id)
         if prefix != canonical:
@@ -2932,8 +3171,8 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
                 "PAIDF run prefix must use the canonical contract "
                 f"{canonical!r}, got {prefix!r}"
             )
-    run_prefix_uri = f"s3://{bucket}/{prefix}" if bucket and prefix else ""
-    return {
+    run_prefix_uri = location.uri if location is not None else ""
+    receipt = {
         "name": spec.name,
         "api_version": spec.api_version,
         "run_prefix_uri": run_prefix_uri,
@@ -2942,6 +3181,66 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
         ),
         "steps": plan_step_records(steps),
     }
+    if plan_preview_error:
+        receipt["plan_preview"] = {"status": "failed", "error": plan_preview_error}
+    return receipt
+
+
+def _recorded_runtime_store(
+    project: str,
+    run_id: str,
+    *,
+    resume: bool,
+    credentials: SubmitCredentialContext,
+) -> RunStateStore | None:
+    """Return the receipt's exact store so legacy resumes do not move ledgers."""
+
+    if not resume:
+        return None
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+    from npa.orchestration.npa_workflow.submission_state import (
+        inspect_submission_state,
+    )
+
+    recorded = inspect_submission_state(project or "default", run_id)
+    if recorded.outcome == "absent":
+        return None
+    if recorded.outcome == "unavailable":
+        detail = recorded.error or "submission receipt could not be verified"
+        raise ValueError(f"cannot resume from an unavailable receipt: {detail}")
+    if recorded.outcome != "found":
+        raise ValueError(f"unsupported submission receipt outcome: {recorded.outcome}")
+    workflow = recorded.payload.get("workflow")
+    if not isinstance(workflow, Mapping):
+        raise ValueError("resume receipt has no valid workflow record")
+    run_prefix_uri = str(workflow.get("run_prefix_uri") or "").strip()
+    if not run_prefix_uri:
+        raise ValueError("resume receipt workflow has no recorded run_prefix_uri")
+    return store_for_recorded_run_prefix(
+        run_prefix_uri,
+        endpoint_url=credentials.endpoint_url,
+        aws_access_key_id=credentials.access_key_id,
+        aws_secret_access_key=credentials.secret_access_key,
+    )
+
+
+def _runtime_submission_receipt(
+    spec: Any, run_id: str, assume_decision: str
+) -> dict[str, object]:
+    """Build a runtime receipt while retaining a safe preview failure detail."""
+    from npa.orchestration.npa_workflow.runtime import plan_preview
+    from npa.orchestration.skypilot.workflow_state import redact_text
+    from npa.verification import sanitize_reason
+
+    decision = assume_decision or str(spec.config.get("plan_assume_decision") or "")
+    try:
+        steps = plan_preview(spec, run_id=run_id, assume_decision=decision).steps
+        return _workflow_submission_receipt(spec, steps, run_id)
+    except Exception as exc:  # noqa: BLE001 - runtime is authoritative
+        detail = sanitize_reason(redact_text(f"{type(exc).__name__}: {exc}"))
+        return _workflow_submission_receipt(spec, [], run_id, plan_preview_error=detail)
 
 
 def _runtime_submit_environment(
@@ -3026,6 +3325,7 @@ def _run_npa_workflow_runtime(
     agent_name: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    recorded_store: RunStateStore | None = None,
 ) -> None:
     """Drive an npa.workflow spec through the runtime orchestrator tier."""
 
@@ -3054,24 +3354,30 @@ def _run_npa_workflow_runtime(
         source["config"].update(config_overrides)
         submitted_yaml = yaml.safe_dump(source, sort_keys=False).encode("utf-8")
 
-    from npa.orchestration.npa_workflow.runtime import plan_preview
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
-    try:
-        receipt_plan = plan_preview(
-            spec,
-            run_id=run_id,
-            assume_decision=(
-                assume_decision or str(spec.config.get("plan_assume_decision") or "")
-            ),
+    from npa.orchestration.skypilot._bin import (
+        resolve_isolated_config_dir,
+        resolve_sky_bin,
+    )
+
+    effective_sky_bin = str(resolve_sky_bin(sky_bin or None))
+    isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
+    workflow_receipt = _runtime_submission_receipt(spec, run_id, assume_decision)
+    if recorded_store is not None:
+        workflow_receipt["run_prefix_uri"] = recorded_store.run_prefix_uri
+        workflow_receipt["manifest_uri"] = (
+            f"{recorded_store.run_prefix_uri}/npa-workflow/manifest.json"
         )
-        receipt_steps = receipt_plan.steps
-    except Exception:  # noqa: BLE001 - runtime remains the authoritative planner
-        receipt_steps = []
     update_submission_state(
         project or "default",
         run_id,
-        {"workflow": _workflow_submission_receipt(spec, receipt_steps, run_id)},
+        {
+            "workflow": workflow_receipt,
+            "controller": _controller_route_receipt(
+                effective_sky_bin, isolated_config_dir
+            ),
+        },
     )
 
     resolved_secret_envs = secret_env_names(secret_envs, values=secret_env_values)
@@ -3095,7 +3401,7 @@ def _run_npa_workflow_runtime(
         plan_migration_reason=plan_migration_reason,
         adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
         project=project or "default",
-        sky_bin=sky_bin,
+        sky_bin=effective_sky_bin,
         # The preflight and every wave use the same selected principal. A new
         # submit/resume invocation resolves rotated credentials again.
         credential_resolver=lambda: dict(secret_env_values),
@@ -3126,6 +3432,7 @@ def _run_npa_workflow_runtime(
                 render_options=render_options,
                 options=options,
                 assume_decision=assume_decision,
+                state_store=recorded_store,
                 workflow_yaml=submitted_yaml,
                 logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
             )
@@ -3883,6 +4190,9 @@ def _resolve_submit_accelerators(
         )
     except NpaWorkflowError:
         return {}
+    except ValueError as exc:
+        _fail(f"accelerator readiness failed: {exc}")
+        return {}
     if not requested:
         return {}
 
@@ -3991,6 +4301,7 @@ def _preflight_submit_gang_capacity(
     )
     from npa.orchestration.npa_workflow.skypilot_render import normalize_resources
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        accelerator_spec,
         discover_kubernetes_gpu_inventory,
         preflight_kubernetes_gpu_gang,
     )
@@ -4012,7 +4323,7 @@ def _preflight_submit_gang_capacity(
             run={"id": "capacity-preflight"},
         )
         nodes = profile_num_nodes(resolved, name=state.resources)
-        accelerator = str(resolved.get("accelerators") or "").strip()
+        accelerator = accelerator_spec(resolved.get("accelerators"))
         if not accelerator:
             continue
         if not context:
@@ -4365,8 +4676,8 @@ def _stage_npa_src_for_submit(
 ) -> str:
     """Upload source, optionally updating the project-level source setting.
 
-    Runtime submissions bind the returned URI into their durable run record.
-    They must not rewrite the configuration used to identify an active daemon.
+    Runtime and explicitly isolated submissions bind the returned URI to the
+    current submission. They must not rewrite shared controller configuration.
     """
     from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
     from npa.orchestration.npa_workflow.src_staging import (
@@ -4392,9 +4703,9 @@ def _stage_npa_src_for_submit(
             on_status=lambda message: typer.echo(f"  {message}", err=True),
             force=force,
         )
-        # The isolated daemon verifies configuration bytes as part of its
-        # credential identity. Runtime source refreshes are run-scoped; changing
-        # this setting would invalidate an otherwise healthy owned controller.
+        # An isolated daemon verifies shared configuration bytes as part of its
+        # credential identity. Run-scoped refreshes must not invalidate another
+        # healthy owned controller by changing the project default.
         if persist:
             persist_workflow_src_s3_uri(uri, project or None)
         return uri
@@ -4681,6 +4992,7 @@ def _execution_target_preflight(
     run_id: str,
     assume_decision: str,
     credentials,
+    recorded_store: RunStateStore | None = None,
     source_uri: str = "",
     verify_cluster: bool = True,
     gpu_check: Callable[[], Any] | None = None,
@@ -4689,14 +5001,11 @@ def _execution_target_preflight(
     from npa.execution_preflight import (
         resolve_execution_target,
         verify_execution_target,
-        workflow_output_destinations,
     )
 
-    destinations = workflow_output_destinations(
-        spec, run_id=run_id, assume_decision=assume_decision
+    destinations = _runtime_output_destinations(
+        spec, run_id, assume_decision, recorded_store, source_uri
     )
-    if source_uri:
-        destinations[source_uri.rstrip("/") + "/"] = "directory"
     target = resolve_execution_target(
         project=project,
         context=context,
@@ -4709,6 +5018,22 @@ def _execution_target_preflight(
         target, verify_cluster=verify_cluster, gpu_check=gpu_check
     )
     return target, report
+
+
+def _runtime_output_destinations(
+    spec, run_id, assume_decision, recorded_store, source_uri
+):
+    """Add the exact resume ledger and staged source to declared outputs."""
+    from npa.execution_preflight import workflow_output_destinations
+
+    destinations = workflow_output_destinations(
+        spec, run_id=run_id, assume_decision=assume_decision
+    )
+    if recorded_store is not None:
+        destinations[recorded_store.run_prefix_uri.rstrip("/") + "/"] = "directory"
+    if source_uri:
+        destinations[source_uri.rstrip("/") + "/"] = "directory"
+    return destinations
 
 
 def _raw_workflow_environment(yaml_path: Path, substitutions: Mapping[str, str]):
@@ -4996,6 +5321,37 @@ def _reconcile_runtime_completion(
     return ""
 
 
+def _supervisor_status_view(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Project older terminal records without rewriting their durable evidence."""
+    from npa.orchestration.npa_workflow.runtime import terminal_recovery_guidance
+
+    view = {
+        **snapshot,
+        "observation_scope": "durable_supervisor_snapshot",
+        "current_artifact_state_verified": False,
+    }
+    attempt = snapshot.get("attempt")
+    recovery = snapshot.get("recovery")
+    if (
+        snapshot.get("phase") != "attempt_terminal"
+        or not isinstance(attempt, dict)
+        or not isinstance(recovery, dict)
+        or recovery.get("action") != "adopt_exact_attempt"
+    ):
+        return view
+    correction = terminal_recovery_guidance(attempt)
+    if correction:
+        view["attempt"] = {**attempt, **correction}
+        view["classification"] = correction["error_category"]
+        view["recovery"] = {
+            **recovery,
+            "action": correction["recovery_decision"],
+            "remediation": correction["operator_remedy"],
+        }
+        view["recovery_guidance_basis"] = "recorded_terminal_attempt"
+    return view
+
+
 def _durable_workflow_status(
     run_id: str,
     *,
@@ -5005,6 +5361,7 @@ def _durable_workflow_status(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    isolated_config_dir: Path | None = None,
     startup_failure_threshold: int = 3,
     cached: bool = False,
 ) -> dict[str, object]:
@@ -5030,8 +5387,11 @@ def _durable_workflow_status(
         s3_bucket=s3_bucket,
         s3_endpoint=s3_endpoint,
         sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
         allow_local_not_submitted=True,
     )
+    sky_bin = resolution.sky_bin or sky_bin
+    isolated_config_dir = resolution.isolated_config_dir
     from npa.verification import (
         CACHED,
         VERIFIED,
@@ -5042,8 +5402,12 @@ def _durable_workflow_status(
     )
 
     attempted_at = verification_now()
-    retry_command = f"npa workbench workflow status {_display_run_id(run_id)}" + (
-        f" --project {project}" if project else ""
+    controller_route_error = str(resolution.controller_route_error or "")
+    live_controller_queries = not cached and not controller_route_error
+    retry_command = (
+        f"npa workbench workflow status {_display_run_id(run_id)}"
+        + (f" --project {project}" if project else "")
+        + _isolated_controller_option(isolated_config_dir)
     )
     if resolution.not_submitted:
         payload = {
@@ -5163,6 +5527,7 @@ def _durable_workflow_status(
             resolution,
             project=project,
             sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
             startup_failure_threshold=startup_failure_threshold,
             cached=cached,
         )
@@ -5190,6 +5555,7 @@ def _durable_workflow_status(
             if isinstance(item, dict)
         ]
         run_manifest = runtime_manifest_view(run_manifest, runtime_waves)
+        _merge_runtime_resource_profiles(run_manifest.steps, runtime_waves)
         recorded_manifest_status = str(run_manifest.status or "").upper()
         for step in run_manifest.steps:
             name = str(step.get("state") or "")
@@ -5221,6 +5587,7 @@ def _durable_workflow_status(
         attribution = reconstruct_stage_job_attribution(
             run_manifest, runtime_waves=runtime_waves
         )
+        claims_by_job = _rendered_claims_by_managed_job(run_manifest, attribution)
         job_ids = sorted(
             {
                 str(item.get("managed_job_id") or "")
@@ -5235,9 +5602,15 @@ def _durable_workflow_status(
             and run_manifest.sky_job_id not in job_ids
         ):
             job_ids.append(run_manifest.sky_job_id)
-        for managed_job_id in [] if cached else job_ids:
+        if controller_route_error:
+            verification_errors.append(controller_route_error)
+        for managed_job_id in job_ids if live_controller_queries else []:
             try:
-                live = workflow_status(managed_job_id, sky_bin=sky_bin or None)
+                live = workflow_status(
+                    managed_job_id,
+                    sky_bin=sky_bin or None,
+                    isolated_config_dir=isolated_config_dir,
+                )
                 if live.error:
                     safe_error = sanitize_reason(live.error)
                     diagnostics.append(
@@ -5254,7 +5627,10 @@ def _durable_workflow_status(
                 else:
                     observed_status = live.status
                 observed_rows = workflow_task_statuses(
-                    managed_job_id, sky_bin=sky_bin or None, raise_on_error=True
+                    managed_job_id,
+                    sky_bin=sky_bin or None,
+                    isolated_config_dir=isolated_config_dir,
+                    raise_on_error=True,
                 )
                 job_observations[managed_job_id] = {
                     "status": observed_status,
@@ -5274,6 +5650,7 @@ def _durable_workflow_status(
                     controller_logs = workflow_controller_logs(
                         managed_job_id,
                         sky_bin=sky_bin or None,
+                        isolated_config_dir=isolated_config_dir,
                     )
                     output = "\n".join(
                         sanitize_reason(line)
@@ -5282,7 +5659,12 @@ def _durable_workflow_status(
                             for item in (controller_logs.stdout, controller_logs.stderr)
                             if item
                         ).splitlines()
-                    )[:4000]
+                    )
+                    if controller_logs.returncode == 0:
+                        job_observations[managed_job_id]["controller_output"] = output[
+                            -4000:
+                        ]
+                    output = output[:4000]
                     if output:
                         controller_output += (
                             "\n" if controller_output else ""
@@ -5332,6 +5714,7 @@ def _durable_workflow_status(
             job_observations=job_observations,
             controller_output=controller_output,
             project=project or state.project,
+            isolated_config_dir=str(isolated_config_dir or ""),
             failure_threshold=startup_failure_threshold,
         )
         if runtime_waves and run_payload.get("status") == "SUCCEEDED":
@@ -5384,9 +5767,11 @@ def _durable_workflow_status(
                 aws_access_key_id=state.aws_access_key_id,
                 aws_secret_access_key=state.aws_secret_access_key,
             )
-            latest_supervision = SupervisorLedger(supervisor_store).latest()
+            latest_supervision = SupervisorLedger(supervisor_store).latest(
+                run_id=run_manifest.run_id or _display_run_id(run_id)
+            )
             if latest_supervision is not None:
-                run_payload["supervisor"] = latest_supervision
+                run_payload["supervisor"] = _supervisor_status_view(latest_supervision)
         except Exception as exc:  # noqa: BLE001 - status remains useful without enrichment
             run_payload["supervisor"] = {
                 "state": "evidence_unavailable",
@@ -5401,6 +5786,9 @@ def _durable_workflow_status(
                 managed_job_id,
                 str(observation.get("status") or ""),
                 sky_bin=sky_bin,
+                isolated_config_dir=isolated_config_dir,
+                claim_names=claims_by_job.get(managed_job_id, ()),
+                controller_output=str(observation.get("controller_output") or ""),
             )
         ]
         if blockers:
@@ -5482,9 +5870,15 @@ def _durable_workflow_status(
 
     job_id = str(manifest.get("sky_job_id") or "")
     live_status = ""
-    if job_id and not cached:
+    if controller_route_error:
+        legacy_verification_errors.append(controller_route_error)
+    if job_id and live_controller_queries:
         try:
-            live = workflow_status(job_id, sky_bin=sky_bin or None)
+            live = workflow_status(
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+            )
             if live.error:
                 legacy_verification_errors.append(str(live.error))
             elif str(live.status or "").upper() in {"", "UNKNOWN"}:
@@ -5512,7 +5906,12 @@ def _durable_workflow_status(
         "verification": "found",
         "stages": stages,
     }
-    blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
+    blockers = _stalled_job_blockers(
+        job_id,
+        live_status,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+    )
     if blockers:
         legacy_payload["blockers"] = blockers
     manifest_status = str(manifest.get("status") or manifest.get("state") or "")
@@ -5539,12 +5938,52 @@ def _durable_workflow_status(
     )
 
 
+def _runtime_resource_profiles(
+    runtime_waves: Sequence[Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Return the latest persisted resource profile for each runtime state."""
+    profiles: dict[str, dict[str, object]] = {}
+    for wave in runtime_waves:
+        raw = wave.get("resource_profiles")
+        if not isinstance(raw, Mapping):
+            continue
+        for state, profile in raw.items():
+            if isinstance(state, str) and isinstance(profile, Mapping):
+                profiles[state] = dict(profile)
+    return profiles
+
+
+def _merge_runtime_resource_profiles(
+    steps: Sequence[dict[str, object]],
+    runtime_waves: Sequence[Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Fill missing step resources from the latest durable wave snapshot."""
+    profiles = _runtime_resource_profiles(runtime_waves)
+    for step in steps:
+        state = str(step.get("state") or "")
+        if not step.get("resources_profile") and state in profiles:
+            step["resources_profile"] = dict(profiles[state])
+    return profiles
+
+
+def _preview_failure_diagnostic(workflow_record: Mapping[str, object]) -> str:
+    """Return a safe diagnostic for a recorded submission-preview failure."""
+    from npa.verification import sanitize_reason
+
+    preview = workflow_record.get("plan_preview")
+    if not isinstance(preview, Mapping) or preview.get("status") != "failed":
+        return ""
+    detail = sanitize_reason(str(preview.get("error") or "unknown preview error"))
+    return f"Submission plan preview failed before runtime planning: {detail}"
+
+
 def _manifest_pending_status(
     resolution,
     *,
     project: str,
     sky_bin: str,
     startup_failure_threshold: int,
+    isolated_config_dir: Path | None = None,
     cached: bool = False,
 ) -> dict[str, object]:
     """Project receipt/S3/Sky evidence through the shared actionable model."""
@@ -5554,6 +5993,7 @@ def _manifest_pending_status(
         RunManifest,
         build_actionable_run_status,
         reconcile_submitted_manifest,
+        reconstruct_stage_job_attribution,
     )
     from npa.orchestration.skypilot.workflow import (
         workflow_controller_logs,
@@ -5574,6 +6014,7 @@ def _manifest_pending_status(
         for item in resolution.runtime_state.get("waves") or []
         if isinstance(item, dict)
     ]
+    runtime_profiles = _merge_runtime_resource_profiles(steps, runtime_waves)
     active_wave = next(
         (
             item
@@ -5601,7 +6042,9 @@ def _manifest_pending_status(
                         "attempt": int(wave.get("attempt") or 1),
                         "wave_key": str(wave.get("key") or ""),
                         "sky_status": str(wave.get("sky_status") or ""),
-                        "resources_profile": {},
+                        "resources_profile": dict(
+                            runtime_profiles.get(str(state_name), {})
+                        ),
                     }
                 )
     runtime_job_ids = {
@@ -5619,19 +6062,31 @@ def _manifest_pending_status(
     live_status = ""
     task_rows: list[dict[str, object]] = []
     controller_output = ""
+    blocker_controller_output = ""
     diagnostics = resolution_diagnostics(resolution)
+    preview_diagnostic = _preview_failure_diagnostic(workflow_record)
+    if preview_diagnostic:
+        diagnostics.append(preview_diagnostic)
     verification_errors: list[str] = []
+    controller_route_error = str(resolution.controller_route_error or "")
+    live_controller_queries = not cached and not controller_route_error
+    if controller_route_error:
+        verification_errors.append(controller_route_error)
     if (
-        not cached
+        live_controller_queries
         and resolution.managed_job is not None
         and resolution.managed_job.outcome == "found"
         and str(resolution.job_id or "").strip() == job_id
     ):
         live_status = resolution.managed_job.status
         task_rows = [dict(item) for item in resolution.managed_job.task_rows]
-    elif job_id and not cached:
+    elif job_id and live_controller_queries:
         try:
-            live = workflow_status(job_id, sky_bin=sky_bin or None)
+            live = workflow_status(
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+            )
             if live.error:
                 safe_error = sanitize_reason(live.error)
                 diagnostics.append(
@@ -5646,7 +6101,10 @@ def _manifest_pending_status(
             else:
                 live_status = live.status
             task_rows = workflow_task_statuses(
-                job_id, sky_bin=sky_bin or None, raise_on_error=True
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+                raise_on_error=True,
             )
         except Exception as exc:  # noqa: BLE001 - durable evidence still proves the run
             safe_error = sanitize_reason(f"{type(exc).__name__}: {exc}")
@@ -5667,7 +6125,11 @@ def _manifest_pending_status(
             {
                 "state": str(row.get("task_name") or f"step-{index}"),
                 "status": "submitted",
-                "resources_profile": {},
+                "resources_profile": dict(
+                    runtime_profiles.get(
+                        str(row.get("task_name") or f"step-{index}"), {}
+                    )
+                ),
             }
             for index, row in enumerate(rows)
         ]
@@ -5690,7 +6152,7 @@ def _manifest_pending_status(
         updated_at=str(resolution.receipt.get("updated_at") or ""),
     )
     if (
-        not cached
+        live_controller_queries
         and job_id
         and str(live_status).upper()
         not in {
@@ -5700,7 +6162,11 @@ def _manifest_pending_status(
         and not str(live_status).upper().startswith("FAILED")
     ):
         try:
-            controller_logs = workflow_controller_logs(job_id, sky_bin=sky_bin or None)
+            controller_logs = workflow_controller_logs(
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+            )
             controller_output = "\n".join(
                 sanitize_reason(line)
                 for line in "\n".join(
@@ -5708,7 +6174,10 @@ def _manifest_pending_status(
                     for item in (controller_logs.stdout, controller_logs.stderr)
                     if item
                 ).splitlines()
-            )[:4000]
+            )
+            if controller_logs.returncode == 0:
+                blocker_controller_output = controller_output[-4000:]
+            controller_output = controller_output[:4000]
             if controller_logs.returncode != 0:
                 diagnostics.append(
                     "SkyPilot controller logs are unavailable; startup failure "
@@ -5740,6 +6209,7 @@ def _manifest_pending_status(
         ),
         controller_output=controller_output,
         project=project,
+        isolated_config_dir=str(isolated_config_dir or ""),
         failure_threshold=startup_failure_threshold,
     )
     launch_raw = resolution.receipt.get("launch")
@@ -5791,7 +6261,19 @@ def _manifest_pending_status(
             ],
         }
     )
-    blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
+    blockers = _stalled_job_blockers(
+        job_id,
+        live_status,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+        claim_names=_rendered_claims_by_managed_job(
+            pending_manifest,
+            reconstruct_stage_job_attribution(
+                pending_manifest, runtime_waves=runtime_waves
+            ),
+        ).get(job_id, ()),
+        controller_output=blocker_controller_output,
+    )
     if blockers:
         payload["blockers"] = blockers
     from npa.verification import (
@@ -5802,8 +6284,10 @@ def _manifest_pending_status(
         utc_now as verification_now,
     )
 
-    retry_command = f"npa workbench workflow status {resolution.run_id}" + (
-        f" --project {project}" if project else ""
+    retry_command = (
+        f"npa workbench workflow status {resolution.run_id}"
+        + (f" --project {project}" if project else "")
+        + _isolated_controller_option(isolated_config_dir)
     )
     if cached:
         verification_status = CACHED
@@ -5840,8 +6324,64 @@ def _manifest_pending_status(
     return result
 
 
+def _rendered_claims_by_managed_job(
+    manifest: object,
+    attribution: Mapping[str, Mapping[str, object]],
+) -> dict[str, tuple[str, ...]]:
+    """Join rendered PVC names only to their exact latest managed-job identity."""
+
+    from npa.orchestration.skypilot.job_blockers import (
+        persistent_volume_claim_names,
+    )
+
+    claims: dict[str, set[str]] = {}
+    seen_keys: set[str] = set()
+    for index, step in enumerate(getattr(manifest, "steps", ())):
+        if not isinstance(step, Mapping):
+            continue
+        key = _emitted_stage_key(step, index=index, seen=seen_keys)
+        managed_job_id = str(
+            (attribution.get(key) or {}).get("managed_job_id") or ""
+        ).strip()
+        if not managed_job_id:
+            continue
+        profile = step.get("resources_profile")
+        resource_profile = profile if isinstance(profile, Mapping) else {}
+        claims.setdefault(managed_job_id, set()).update(
+            persistent_volume_claim_names(resource_profile)
+        )
+    return {
+        managed_job_id: tuple(sorted(names))
+        for managed_job_id, names in claims.items()
+        if names
+    }
+
+
+def _emitted_stage_key(
+    step: Mapping[str, object], *, index: int, seen: set[str]
+) -> str:
+    """Reproduce the runtime's collision-safe key for one emitted stage."""
+
+    name = str(step.get("state") or f"step-{index}")
+    raw_iteration = step.get("iteration")
+    try:
+        iteration = int(raw_iteration) if raw_iteration is not None else None
+    except (TypeError, ValueError):
+        iteration = None
+    base = f"{name}#{iteration}" if iteration is not None else name
+    key = f"{base}@{index}" if base in seen else base
+    seen.add(key)
+    return key
+
+
 def _stalled_job_blockers(
-    job_id: str, live_status: str, *, sky_bin: str = ""
+    job_id: str,
+    live_status: str,
+    *,
+    sky_bin: str = "",
+    isolated_config_dir: Path | None = None,
+    claim_names: tuple[str, ...] = (),
+    controller_output: str = "",
 ) -> list[dict[str, object]]:
     """Explain a managed job that is not progressing, from its own pods.
 
@@ -5855,22 +6395,60 @@ def _stalled_job_blockers(
     from npa.orchestration.skypilot.job_blockers import inspect_job_blockers
     from npa.orchestration.skypilot.workflow import workflow_task_statuses
 
+    diagnostic_environment = None
+    diagnostic_kubeconfig = None
+    diagnostic_user_id = ""
+    if isolated_config_dir is not None:
+        controller_root = Path(isolated_config_dir).expanduser().resolve()
+        diagnostic_kubeconfig = controller_root / "home" / ".kube" / "config"
+        diagnostic_environment, diagnostic_user_id = (
+            _isolated_controller_diagnostic_environment(
+                controller_root, diagnostic_kubeconfig
+            )
+        )
+
     try:
-        rows = workflow_task_statuses(job_id, sky_bin=_resolve_sky_bin(sky_bin))
+        rows = workflow_task_statuses(
+            job_id,
+            sky_bin=_resolve_sky_bin(sky_bin),
+            isolated_config_dir=isolated_config_dir,
+        )
     except Exception:
         rows = []
     clusters = sorted(
         {str(row.get("cluster_name") or "").strip() for row in rows} - {""}
     )
+    task_names = sorted(
+        {str(row.get("task_name") or "").strip() for row in rows} - {""}
+    )
     # `sky jobs queue` reports a null cluster for a job that never provisioned --
     # exactly the case worth diagnosing -- so fall back to the job id.
     reports = (
         [
-            inspect_job_blockers(job_id=job_id, cluster_name=cluster)
+            inspect_job_blockers(
+                job_id=job_id,
+                cluster_name=cluster,
+                kubeconfig=diagnostic_kubeconfig,
+                environment=diagnostic_environment,
+                expected_task_names=task_names,
+                controller_user_id=diagnostic_user_id,
+                claim_names=claim_names,
+                controller_output=controller_output,
+            )
             for cluster in clusters
         ]
         if clusters
-        else [inspect_job_blockers(job_id=job_id)]
+        else [
+            inspect_job_blockers(
+                job_id=job_id,
+                kubeconfig=diagnostic_kubeconfig,
+                environment=diagnostic_environment,
+                expected_task_names=task_names,
+                controller_user_id=diagnostic_user_id,
+                claim_names=claim_names,
+                controller_output=controller_output,
+            )
+        ]
     )
     reported: list[dict[str, object]] = []
     for report in reports:
@@ -5886,8 +6464,10 @@ def _stalled_job_blockers(
                     "observed_at": report.observed_at,
                     "live": False,
                     "remedy": (
-                        f"npa workbench workflow status {job_id}; then retry "
-                        f"npa workbench workflow logs {job_id} --cached"
+                        f"npa workbench workflow status {job_id}"
+                        f"{_isolated_controller_option(isolated_config_dir)}; "
+                        f"then retry npa workbench workflow logs {job_id} --cached"
+                        f"{_isolated_controller_option(isolated_config_dir)}"
                     ),
                 }
             )
@@ -5901,6 +6481,10 @@ def _stalled_job_blockers(
                     "source": blocker.source,
                     "observed_at": blocker.observed_at,
                     "live": blocker.live,
+                    "namespace": blocker.namespace,
+                    "resource_uid": blocker.resource_uid,
+                    "event_timestamp": blocker.event_timestamp,
+                    "temporally_bound": blocker.temporally_bound,
                     "remedy": report.remedy(),
                 }
             )
@@ -5919,6 +6503,31 @@ def _stalled_job_blockers(
                 }
             )
     return reported
+
+
+def _isolated_controller_diagnostic_environment(
+    controller_root: Path, kubeconfig: Path
+) -> tuple[dict[str, str], str]:
+    """Build diagnostics environment with the controller's persisted owner."""
+
+    environment = dict(os.environ)
+    environment["HOME"] = str(controller_root / "home")
+    environment["KUBECONFIG"] = str(kubeconfig)
+    user_hash_file = controller_root / "home" / ".sky" / "user_hash"
+    recorded_user_id = ""
+    try:
+        if user_hash_file.is_file() and not user_hash_file.is_symlink():
+            recorded_user_id = user_hash_file.read_text().strip()
+    except OSError:
+        recorded_user_id = ""
+    controller_digest = hashlib.sha256(str(controller_root).encode()).hexdigest()
+    user_id = str(
+        recorded_user_id
+        or environment.get("SKYPILOT_USER_ID")
+        or f"npa-{controller_digest[:12]}"
+    )
+    environment["SKYPILOT_USER_ID"] = user_id
+    return environment, user_id
 
 
 def _aggregate_stage_status(
@@ -6240,6 +6849,11 @@ def status_cmd(
         "--sky-bin",
         help="SkyPilot executable path for live status.",
     ),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
+    ),
     watch: bool = typer.Option(
         False,
         "--watch/--no-watch",
@@ -6330,6 +6944,7 @@ def status_cmd(
                     s3_bucket=s3_bucket,
                     s3_endpoint=s3_endpoint,
                     sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
                     startup_failure_threshold=startup_failure_threshold,
                     cached=cached,
                 )
@@ -6549,6 +7164,11 @@ def logs_cmd(
         "--sky-bin",
         help="SkyPilot executable path for live --follow logs.",
     ),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
+    ),
     follow: bool = typer.Option(
         False,
         "--follow/--no-follow",
@@ -6606,8 +7226,11 @@ def logs_cmd(
                     s3_bucket=s3_bucket,
                     s3_endpoint=s3_endpoint,
                     sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
                 )
             )
+            sky_bin = resolution.sky_bin or sky_bin
+            isolated_config_dir = resolution.isolated_config_dir
             state = resolution.state
             from npa.orchestration.skypilot.workflow_state import (
                 read_stage_log,
@@ -6622,6 +7245,8 @@ def logs_cmd(
                     project=project,
                     sky_bin=sky_bin,
                     startup_failure_threshold=3,
+                    isolated_config_dir=isolated_config_dir,
+                    cached=cached,
                 )
                 if not selected_stage:
                     selected_stage = str(pending.get("active_stage_name") or "")
@@ -6632,12 +7257,28 @@ def logs_cmd(
                         "but its manifest is pending and no exact managed-job identity "
                         "is available for logs"
                     )
+                managed_job_state = str(pending.get("status") or "").upper()
+                if cached or (
+                    not follow and managed_job_state in {"PENDING", "STARTING"}
+                ):
+                    payload = _pending_log_contract(
+                        pending,
+                        run_id=resolution.run_id,
+                        stage=selected_stage,
+                        job_id=job_id,
+                        cached=cached,
+                        max_output_chars=max_output_chars,
+                    )
+                    _emit_pending_logs(payload, json_output=json_output)
+                    return
+                _require_live_controller_route(resolution)
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
                     stage=selected_stage,
                     follow=follow,
                     timeout=86400 if follow else 300,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
@@ -6661,7 +7302,7 @@ def logs_cmd(
                                 "run_id": resolution.run_id,
                                 "stage": selected_stage,
                                 "manifest_state": "pending",
-                                "live_log_state": "available",
+                                **_live_log_contract(safe_stdout, safe_stderr),
                                 "log": safe_stdout,
                                 "stderr": safe_stderr,
                                 **log_metadata,
@@ -6814,6 +7455,7 @@ def logs_cmd(
                     f"npa workbench workflow logs {resolution.run_id} "
                     f"--stage {selected_stage}"
                     + (f" --project {project}" if project else "")
+                    + _isolated_controller_option(isolated_config_dir)
                 )
                 if cached:
                     cached_text = ""
@@ -6872,7 +7514,8 @@ def logs_cmd(
                         last_known_source="stage_ledger_or_manifest",
                         reason=reason,
                         retry_command=f"npa workbench workflow status {resolution.run_id}"
-                        + (f" --project {project}" if project else ""),
+                        + (f" --project {project}" if project else "")
+                        + _isolated_controller_option(isolated_config_dir),
                     )
                     source_payload["live_log_state"] = "unavailable"
                     source_payload["error_code"] = error_code
@@ -6903,12 +7546,44 @@ def logs_cmd(
                     # The one-shot renderer emits one task per planned step.
                     # Job-level logs need neither its renamed task nor an assumed ID.
                     live_stage = ""
+                _require_live_controller_route(resolution)
+                prestart = (
+                    None
+                    if follow
+                    else _verified_prestart_log_status(
+                        job_id,
+                        project=project,
+                        sky_bin=sky_bin,
+                        isolated_config_dir=isolated_config_dir,
+                    )
+                )
+                if prestart is not None:
+                    payload = _pending_log_contract(
+                        prestart,
+                        run_id=resolution.run_id,
+                        stage=selected_stage,
+                        job_id=job_id,
+                        cached=False,
+                        max_output_chars=max_output_chars,
+                    )
+                    payload.update(
+                        {
+                            "attempt": source_payload["attempt"],
+                            "manifest_state": "available",
+                            "persisted_stages": available,
+                            "stage_ledger_state": source_payload["stage_ledger_state"],
+                            "provenance": source_payload["provenance"],
+                        }
+                    )
+                    _emit_pending_logs(payload, json_output=json_output)
+                    return
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
                     stage=live_stage,
                     follow=follow,
                     timeout=86400 if follow else 300,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
@@ -6971,7 +7646,7 @@ def logs_cmd(
                     )
                     source_payload.update(
                         {
-                            "live_log_state": "available",
+                            **_live_log_contract(safe_stdout, safe_stderr),
                             "log": safe_stdout,
                             "stderr": safe_stderr,
                             **log_metadata,
@@ -6985,24 +7660,43 @@ def logs_cmd(
             selected_stage = _resolve_stage_name(manifest, selected_stage)
             job_id = str(manifest.get("sky_job_id") or "")
             if follow and job_id:
+                _require_live_controller_route(resolution)
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
                     stage=selected_stage,
                     follow=True,
                     timeout=86400,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
                 safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
                     safe_stdout, safe_stderr, max_output_chars
                 )
-                if safe_stdout:
+                if safe_stdout and not json_output:
                     typer.echo(safe_stdout, nl=False)
-                if safe_stderr:
+                if safe_stderr and not json_output:
                     typer.echo(safe_stderr, err=True, nl=False)
-                _emit_log_truncation(log_metadata)
+                if not json_output:
+                    _emit_log_truncation(log_metadata)
                 if live.returncode == 0:
+                    if json_output:
+                        typer.echo(
+                            json.dumps(
+                                {
+                                    "run_id": resolution.run_id,
+                                    "stage": selected_stage,
+                                    "manifest_state": "available",
+                                    **_live_log_contract(safe_stdout, safe_stderr),
+                                    "log": safe_stdout,
+                                    "stderr": safe_stderr,
+                                    **log_metadata,
+                                },
+                                indent=2,
+                                sort_keys=True,
+                            )
+                        )
                     return
             cached_text, log_metadata = _bounded_log_text(
                 redact_text(read_stage_log(state, selected_stage)), max_output_chars
@@ -7314,6 +8008,11 @@ def cancel_cmd(
         "", "--s3-endpoint", help="S3-compatible endpoint."
     ),
     sky_bin: str = typer.Option("", "--sky-bin", help="SkyPilot executable path."),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
+    ),
     cluster: str = typer.Option(
         "", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."
     ),
@@ -7371,11 +8070,14 @@ def cancel_cmd(
                 s3_bucket=s3_bucket,
                 s3_endpoint=s3_endpoint,
                 sky_bin=sky_bin,
+                isolated_config_dir=isolated_config_dir,
                 # An explicit exact ID is a live operator observation and must
                 # outrank a stale receipt after controller database recovery.
                 exact_job_id=resolved_exact_job_id,
                 allow_local_not_submitted=True,
             )
+            sky_bin = resolution.sky_bin or sky_bin
+            isolated_config_dir = resolution.isolated_config_dir
         resolved_run_id = resolution.run_id
         if resolution.not_submitted:
             detected = (
@@ -7434,11 +8136,28 @@ def cancel_cmd(
                     "not attempted."
                 ),
             }
+        elif resolution.controller_route_error:
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "verification_failed",
+                "detected_state": "VERIFICATION_UNAVAILABLE",
+                "sky_job_id": "",
+                "sky_job_ids": [],
+                "cloud_calls": False,
+                "verification": "controller_route_unavailable",
+                "resolution_checks": resolution.checks_payload(),
+                "errors": [resolution.controller_route_error],
+                "message": (
+                    "Cancellation was not attempted because the exact controller "
+                    "route for the durable managed-job identities is unavailable."
+                ),
+            }
         else:
             assessment = assess_run_cancellation(
                 resolution,
                 sky_bin=sky_bin,
                 exact_job_id=str(job_id or identity.get("sky_job_id") or ""),
+                isolated_config_dir=isolated_config_dir,
             )
             jobs_payload = [item.to_dict() for item in assessment.jobs]
             job_ids = [item.job_id for item in assessment.jobs]
@@ -7500,7 +8219,9 @@ def cancel_cmd(
                 )
 
                 reverify_errors = reverify_active_cancellation(
-                    assessment, sky_bin=sky_bin
+                    assessment,
+                    sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 if reverify_errors:
                     result = {
@@ -7531,6 +8252,7 @@ def cancel_cmd(
                         resolved_run_id,
                         cluster=cluster,
                         sky_bin=sky_bin or None,
+                        isolated_config_dir=isolated_config_dir,
                     )
                     errors = [*assessment.errors, *cleanup.errors]
                     owned_teardown_allowed = (
@@ -8014,6 +8736,49 @@ def validate_spec_cmd(
         typer.echo(f"states: {', '.join(sorted(spec.states))}")
 
 
+def _check_static_plan_render(
+    spec: NpaWorkflowSpec,
+    plan: ExecutionPlan,
+    *,
+    run_id: str,
+) -> dict[str, object]:
+    """Render a static plan locally and return a secret-free proof."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        assert_no_unresolved_placeholders,
+        render_skypilot_yaml,
+    )
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id=run_id,
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    assert_no_unresolved_placeholders(rendered)
+    task_count = sum(
+        1
+        for document in yaml.safe_load_all(rendered)
+        if isinstance(document, dict) and "resources" in document
+    )
+    return {
+        "status": "valid",
+        "tasks": task_count,
+        "sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+        "provider_actions": False,
+        "registry_secrets_materialized": False,
+    }
+
+
+def _emit_render_check(render_check: Mapping[str, object]) -> None:
+    """Print one compact human-readable production-render result."""
+
+    typer.echo(
+        f"render: valid (tasks={render_check['tasks']} sha256={render_check['sha256']})"
+    )
+
+
 @app.command("plan-spec")
 def plan_spec_cmd(
     yaml_path: Path = typer.Argument(help="NPA workflow spec path."),
@@ -8043,6 +8808,14 @@ def plan_spec_cmd(
             "with their concurrency batches) instead of the flat step list."
         ),
     ),
+    check_render: bool = typer.Option(
+        False,
+        "--check-render/--no-check-render",
+        help=(
+            "Run the resolved static plan through the production SkyPilot renderer "
+            "without contacting a provider or materializing registry secrets."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON plan."),
 ) -> None:
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
@@ -8069,6 +8842,11 @@ def plan_spec_cmd(
     resolved_run_id = run_id or f"{spec.name}-plan"
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
+        render_check = (
+            _check_static_plan_render(spec, plan, run_id=resolved_run_id)
+            if check_render is True
+            else None
+        )
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
@@ -8080,10 +8858,14 @@ def plan_spec_cmd(
         if json_output:
             payload = wave_plan.to_dict()
             payload["access_requirements"] = _workflow_access_requirement_payload(spec)
+            if render_check is not None:
+                payload["render_check"] = render_check
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
         typer.echo(f"waves: {len(wave_plan.waves)}")
+        if render_check is not None:
+            _emit_render_check(render_check)
         for wave in wave_plan.waves:
             states = ", ".join(step.state for step in wave.steps)
             suffix = (
@@ -8099,6 +8881,8 @@ def plan_spec_cmd(
     if json_output:
         payload = plan.to_dict()
         payload["access_requirements"] = _workflow_access_requirement_payload(spec)
+        if render_check is not None:
+            payload["render_check"] = render_check
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
@@ -8106,6 +8890,8 @@ def plan_spec_cmd(
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     typer.echo(f"workflow: {plan.workflow}")
+    if render_check is not None:
+        _emit_render_check(render_check)
     access = _workflow_access_requirement_payload(spec)
     if access["hf"] or access["ngc"]:
         typer.echo(

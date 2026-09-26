@@ -122,7 +122,12 @@ noncanonical state root, incomplete teardown, or unreadable ownership record
 fails closed.
 
 `npa fleet status` asks each adapter for native status and merges it with durable
-inventory; mk8s status retains the last verified health and MIG evidence when a
+inventory. Its summary reports `provisioning` and `reconciling` targets as
+`unresolved`, rather than failed; those transitional states still make deploy
+and destroy commands exit nonzero. Unknown or explicit error states remain
+failures. A `running` Soperator target and a `deployed` mk8s target count as
+deployed. A transitional status is not evidence that the cluster is ready or
+healthy. mk8s status retains the last verified health and MIG evidence when a
 live probe is not requested. Use `npa fleet verify-mig --wait --reconcile` for an explicit
 MIG recheck. Destroying a one-entry or mixed fleet uses each target's recorded
 backend and never infers ownership from cluster names.

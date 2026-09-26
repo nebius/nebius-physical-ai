@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -660,6 +661,164 @@ def test_status_explains_a_pending_job_whose_pod_cannot_start(
 
     assert blockers[0]["reason"] == "ImagePullBackOff"
     assert "retries this forever" in blockers[0]["remedy"]
+
+
+def test_status_blocker_probe_uses_exact_isolated_controller_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_resolve_sky_bin",
+        lambda sky_bin="": str(tmp_path / "sky"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        lambda job_id, **kwargs: [{"cluster_name": "sky-abc"}],
+    )
+    captured: dict[str, object] = {}
+
+    def inspect(**kwargs):  # noqa: ANN003, ANN202 - focused test double
+        captured.update(kwargs)
+        return JobBlockerReport(
+            job_id="2", cluster_name="sky-abc", error="synthetic unavailable"
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers", inspect
+    )
+    controller = tmp_path / "controller"
+    user_hash = controller / "home" / ".sky" / "user_hash"
+    user_hash.parent.mkdir(parents=True)
+    user_hash.write_text("npa-recorded-owner\n")
+
+    blockers = workflow_cli._stalled_job_blockers(
+        "2", "PENDING", isolated_config_dir=controller
+    )
+
+    expected = controller.resolve() / "home" / ".kube" / "config"
+    assert captured["kubeconfig"] == expected
+    assert captured["environment"]["HOME"] == str(controller.resolve() / "home")
+    assert captured["environment"]["KUBECONFIG"] == str(expected)
+    assert blockers[0]["remedy"].count("--isolated-config-dir") == 2
+    assert str(controller) in blockers[0]["remedy"]
+
+
+def test_status_blocker_probe_binds_workflow_task_and_controller_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    task = "focused-tokenizer-discovery-cpu-r1-01-discover"
+    monkeypatch.setattr(workflow_cli, "_resolve_sky_bin", lambda sky_bin="": "sky")
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        lambda job_id, **kwargs: [{"cluster_name": "", "task_name": task}],
+    )
+    captured: dict[str, object] = {}
+
+    def inspect(**kwargs):  # noqa: ANN003, ANN202 - focused test double
+        captured.update(kwargs)
+        return JobBlockerReport(job_id="1")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers", inspect
+    )
+    controller = tmp_path / "controller"
+    user_hash = controller / "home" / ".sky" / "user_hash"
+    user_hash.parent.mkdir(parents=True)
+    user_hash.write_text("npa-fixture001\n")
+
+    workflow_cli._stalled_job_blockers(
+        "1",
+        "STARTING",
+        isolated_config_dir=controller,
+        claim_names=("run-workspace",),
+    )
+
+    expected_owner = "npa-fixture001"
+    assert captured["expected_task_names"] == [task]
+    assert captured["controller_user_id"] == expected_owner
+    assert captured["environment"]["SKYPILOT_USER_ID"] == expected_owner
+    assert captured["claim_names"] == ("run-workspace",)
+
+
+def test_status_claims_are_joined_only_to_the_exact_managed_job() -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    manifest = SimpleNamespace(
+        steps=[
+            {
+                "state": "prepare",
+                "resources_profile": {
+                    "kubernetes": {
+                        "pod_config": {
+                            "spec": {
+                                "volumes": [
+                                    {
+                                        "persistentVolumeClaim": {
+                                            "claimName": "prepare-workspace"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+            },
+            {
+                "state": "train",
+                "resources_profile": {
+                    "kubernetes": {
+                        "pod_config": {
+                            "spec": {
+                                "volumes": [
+                                    {
+                                        "persistentVolumeClaim": {
+                                            "claimName": "train-workspace"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+            },
+            {
+                "state": "unattributed",
+                "resources_profile": {
+                    "kubernetes": {
+                        "pod_config": {
+                            "spec": {
+                                "volumes": [
+                                    {
+                                        "persistentVolumeClaim": {
+                                            "claimName": "unrelated-workspace"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+            },
+        ]
+    )
+    attribution = {
+        "prepare": {"managed_job_id": "101"},
+        "train": {"managed_job_id": "202"},
+        "unattributed": {"managed_job_id": ""},
+    }
+
+    result = workflow_cli._rendered_claims_by_managed_job(manifest, attribution)
+
+    assert result == {
+        "101": ("prepare-workspace",),
+        "202": ("train-workspace",),
+    }
 
 
 def test_a_running_job_is_not_probed(monkeypatch: pytest.MonkeyPatch) -> None:

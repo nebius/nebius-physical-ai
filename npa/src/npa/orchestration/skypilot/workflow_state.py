@@ -739,6 +739,7 @@ def tail_live_job_logs(
     stage: str = "",
     follow: bool = False,
     timeout: int = 300,
+    isolated_config_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Read managed-job logs through the selected, verified SkyPilot runtime.
 
@@ -748,6 +749,7 @@ def tail_live_job_logs(
         stage: Optional task ID or stage name.
         follow: Whether to follow the live log stream.
         timeout: Subprocess timeout in seconds.
+        isolated_config_dir: Exact SkyPilot state root that owns the job identity.
     Returns:
         Captured SkyPilot log process result.
     Raises:
@@ -759,7 +761,7 @@ def tail_live_job_logs(
     from npa.orchestration.skypilot._bin import ensure_skypilot_version, resolve_config
     from npa.orchestration.skypilot.cleanup import sky_environment
 
-    runtime = resolve_config(sky_bin=sky_bin)
+    runtime = resolve_config(sky_bin=sky_bin, isolated_config_dir=isolated_config_dir)
     env = sky_environment(runtime.isolated_config_dir)
     if runtime.global_config_path is not None:
         env["SKYPILOT_GLOBAL_CONFIG"] = str(runtime.global_config_path)

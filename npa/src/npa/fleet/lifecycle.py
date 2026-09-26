@@ -2087,8 +2087,11 @@ def _deploy_mk8s_fleet(
     result = {**base_meta, "clusters": results, **_recount(results)}
     # Persist a merged view so a targeted deploy doesn't clobber untouched clusters.
     _upsert_fleet_state(fleet_root, base_meta, results)
-    if not continue_on_error and result["failed"]:
-        raise RuntimeError(f"{result['failed']} cluster(s) failed")
+    if not continue_on_error and (result["failed"] or result["unresolved"]):
+        raise RuntimeError(
+            f"{result['failed']} cluster(s) failed and "
+            f"{result['unresolved']} remain unresolved"
+        )
     return result
 
 
@@ -2151,14 +2154,24 @@ def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
         ) from exc
 
 
+_DEPLOYED_CLUSTER_STATUSES = {"deployed", "running"}
+_UNRESOLVED_CLUSTER_STATUSES = {"provisioning", "reconciling"}
+_IGNORED_CLUSTER_STATUSES = {"destroyed", "absent"}
+
+
 def _recount(clusters: list[dict[str, Any]]) -> dict[str, int]:
+    statuses = [cluster.get("status") for cluster in clusters]
+    known = (
+        _DEPLOYED_CLUSTER_STATUSES
+        | _UNRESOLVED_CLUSTER_STATUSES
+        | _IGNORED_CLUSTER_STATUSES
+    )
     return {
-        "deployed": sum(1 for c in clusters if c.get("status") == "deployed"),
-        "failed": sum(
-            1
-            for c in clusters
-            if c.get("status") not in {"deployed", "destroyed", "absent"}
+        "deployed": sum(status in _DEPLOYED_CLUSTER_STATUSES for status in statuses),
+        "unresolved": sum(
+            status in _UNRESOLVED_CLUSTER_STATUSES for status in statuses
         ),
+        "failed": sum(status not in known for status in statuses),
     }
 
 

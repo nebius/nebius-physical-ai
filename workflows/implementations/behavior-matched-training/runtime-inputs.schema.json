@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "adapter_manifest": {"type": "string"},
+    "adapter_root": {"type": "string"},
+    "checkpoint_archive": {"type": "string"},
+    "checkpoint_root": {"type": "string"},
+    "dataset_root": {"type": "string"},
+    "dataset_validation": {"type": "string"},
+    "episode_split": {"type": "string"},
+    "source_manifest": {"type": "string"},
+    "source_root": {"type": "string"}
+  },
+  "required": [
+    "adapter_manifest",
+    "adapter_root",
+    "checkpoint_archive",
+    "checkpoint_root",
+    "dataset_root",
+    "dataset_validation",
+    "episode_split",
+    "source_manifest",
+    "source_root"
+  ],
+  "title": "BEHAVIOR matched-stage runtime inputs",
+  "type": "object"
+}

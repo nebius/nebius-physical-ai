@@ -147,6 +147,12 @@ rejected for these workflows because a one-shot plan cannot honor their real
 data-dependent control flow. These workflows also reject `--assume-decision`
 for execution; use it only for offline planning previews.
 
+The runtime derives each managed-job name from the complete run ID, wave sequence,
+stage or group, and loop iteration. Names that exceed the provider limit retain a
+readable prefix plus a deterministic hash to distinguish runs or waves whose
+readable prefixes match. Resume continues to use the exact provider name already
+stored in durable run state, including names written by older NPA versions.
+
 | Field | Purpose |
 | --- | --- |
 | `toolRef` | Cataloged workbench tool (preferred) |
@@ -165,6 +171,20 @@ for execution; use it only for offline planning previews.
 | `writesDecision` | State writes `config.decision_uri`; engine reads S3 after this state |
 | `inputs` / `outputs` | Artifact URIs + optional schema labels |
 | `terminal: true` | End state |
+
+Declare `inputs` and `outputs` beside `run` in the state mapping. A `run` block
+accepts only `shell` or `argv`; validation rejects nested artifact declarations
+before planning so they cannot disappear from the rendered task.
+
+Every declared `output` is required when a runtime state succeeds. If a state
+publishes `result.json` on success and `failure.json` on failure, declare only
+`result.json` as its output. Preserve `failure.json` in the failure handler and
+return a nonzero exit code. Declaring both makes a successful job fail the
+durable-output check because `failure.json` is absent.
+
+Check this contract with the artifacts each execution path actually produces.
+`validate-spec` and `plan-spec --check-render` cannot prove that a command will
+write its declared outputs.
 
 ## Tokens (no Jinja)
 
@@ -249,10 +269,25 @@ Before any initial or recovered launch, submit reuses the normal exact-image,
 credential/access, accelerator-resolution, per-node GPU-shape, and gang-capacity
 preflights. A recovered attempt is permitted only after all of those checks pass
 again, the prior attempt's recorded workflow/source/image identity matches values
-independently recomputed from the current spec, source selection, and digest pins,
+independently recomputed from the current spec, source selection, and recorded
+image-identity version,
 declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
+
+New runtime attempts record a versioned identity for the canonical set of image
+references resolved after overrides and digest pins. The record states whether
+every reference is content-addressed with `@sha256:`. A hash over a mutable tag
+identifies that reference string; it is not evidence of the image bytes. Older,
+unversioned attempts retain their legacy digest-pin-set comparison alongside the
+exact workflow and source identities.
+
+Each wave also records its resolved per-state resource profiles before launch.
+Status uses those snapshots when the initial submission preview is unavailable,
+so requested accelerators, CPU, and memory remain visible. Legacy ledgers without
+the snapshots continue to report those fields as unknown. A safely redacted plan
+preview failure is retained as a status diagnostic while runtime planning remains
+authoritative.
 
 For runtime workflows, GPU capacity is checked against each rendered wave at the
 shared SDK submit boundary. Resuming an existing job does not require spare GPU
@@ -260,6 +295,13 @@ capacity or record a new capacity check. Supervisor evidence retains the wave,
 attempt and observation time of a successful submission; adopting a job without
 that local evidence leaves capacity unknown. Every new or retried submission
 must pass the SDK checks again.
+
+Kubernetes accelerator requests accept either `accelerators: RTXPRO6000:2` or
+the single-entry mapping `accelerators: {RTXPRO6000: 2}`. Submit resolves the
+cluster's GPU product name and preserves the requested count in both forms.
+Mappings with multiple accelerator names describe SkyPilot alternatives;
+select one concrete request before Kubernetes submission so NPA can check its
+capacity. Other cloud targets retain SkyPilot's alternatives syntax.
 
 Submission binds those checks to one effective execution target. The selected
 NPA project must have saved project, tenant and region identities. The provider's
@@ -305,6 +347,23 @@ resource targets require clarification in the YAML before submission.
 Explicit artifact declarations may use a sibling prefix or another bucket in
 the same project; each destination is checked separately. `config.prefix` is the
 default/ledger prefix and does not restrict explicitly declared artifact locations.
+With `config.bucket` set, the ledger accepts either a relative `config.prefix`
+or an absolute `s3://bucket/key` prefix naming that same bucket. Submission
+receipts, ledger storage, and storage preflight resolve the same location.
+Each runtime run must resolve to a unique bucket and prefix. A different
+`--run-id` does not make a literal `config.prefix` unique; NPA rejects a prefix
+whose runtime ledger or run manifest belongs to another workflow run before it
+rewrites source or state. Resume the exact recorded run to continue that prefix,
+or choose a different prefix for a new run. The runtime remains a single-writer
+design and does not coordinate simultaneous drivers for one empty prefix.
+Artifact templates still expand their configured values literally: use a
+relative prefix when a template constructs `s3://{{config.bucket}}/{{config.prefix}}`.
+On runtime resume, NPA retains the exact ledger location recorded in the prior
+submission receipt, including historical doubled prefixes. It checks access to
+that recorded location as well as the current declared outputs using the
+selected project's endpoint and credentials. An unavailable or malformed receipt
+blocks resume before submission state changes or a workload launches.
+
 Nebius storage mounts, including raw `--durable-s3` tasks, also verify the
 executing SkyPilot home's static `nebius` AWS profile against the selected
 storage credentials and endpoint. SkyPilot copies `~/.aws/credentials` and
@@ -431,9 +490,14 @@ retains its raw status, original update time, and authoritative source. The runt
 ledger continues to use `succeeded`. Conflicting terminal outcomes and failed
 latest attempts still prevent a successful status.
 
-`npa workbench workflow status <run-id> --json` includes the latest supervisor
-classification, recovery action, exact attempt identity, output/checkpoint
-validation, preflight evidence, and remediation. Evidence is credential-redacted.
+`npa workbench workflow status <run-id> --json` includes the latest durable
+supervisor snapshot: classification, recovery action, exact attempt identity,
+output/checkpoint validation, preflight evidence, and remediation. Its
+`recorded_at` timestamp bounds those historical observations. Status marks this
+object with `observation_scope: durable_supervisor_snapshot` and
+`current_artifact_state_verified: false`; live lifecycle verification does not
+refresh its artifact checks. See [Reading status](../run-lifecycle.md#reading-status).
+Evidence is credential-redacted.
 The shared Python contract also drives the existing production
 `npa workbench genesis train-teacher --runtime serverless` Jobs path. That command
 uses exact provider observation/cancellation, digest-resolved image identity,
@@ -537,7 +601,28 @@ They are optional and additive, so every pre-v0.0.1 spec is unaffected.
 - Prefer `toolRef`; use `run.shell` only when no catalog entry exists.
 - Decision states that write threshold JSON must set `writesDecision: true`.
 
-`run.shell` resolves `config.*` tokens into `/bin/bash -lc` commands; treat spec files as trusted authored input.
+`run.shell` resolves `config.*` tokens into `bash -c` commands. The non-login
+shell inherits the prepared stage environment; treat spec files as trusted
+authored input.
+
+### Python environments in custom stages
+
+Workbench sets `NPA_CONTROL_PYTHON` to the executable Python path recorded by
+stage setup. Use it for NPA artifact and storage operations when a custom stage
+also runs a simulator or policy with its own Python environment. The exported
+path is inherited by child processes and remains usable after a change to `PATH`:
+
+```bash
+test -n "$NPA_CONTROL_PYTHON"
+"$NPA_CONTROL_PYTHON" -c 'from npa.clients.storage import StorageClient'
+```
+
+The value is empty when setup recorded no executable interpreter; a stage that
+requires it must fail before starting its workload. Workbench replaces inherited
+values with the current setup result. Keep the policy's pinned interpreter and
+dependencies separate, and retain the prepared NPA source path when calling NPA.
+If a stage explicitly starts a login shell, its profiles may change the inherited
+environment; verify the interpreter and source path inside that shell.
 
 Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
 `params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.

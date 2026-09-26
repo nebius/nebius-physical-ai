@@ -15,9 +15,14 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.cli.workbench.workflow import (
+    _execution_target_preflight as REAL_EXECUTION_TARGET_PREFLIGHT,
+)
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
+from npa.orchestration.npa_workflow.run_state import RunManifest
 from npa.orchestration.skypilot.workflow import SkyPilotSubmitError, WorkflowResult
+from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS = REPO_ROOT / "workflows" / "testing"
@@ -25,6 +30,18 @@ FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 RUNNER = CliRunner()
+
+
+def _selected_storage_credentials():
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        SubmitCredentialContext,
+    )
+
+    return SubmitCredentialContext(
+        endpoint_url="https://storage.us-central1.nebius.cloud",
+        access_key_id="selected-access",
+        secret_access_key="selected-secret",
+    )
 
 
 def test_terminal_ten_wave_runtime_without_active_jobs_stays_succeeded() -> None:
@@ -65,6 +82,149 @@ def test_terminal_ten_wave_runtime_without_active_jobs_stays_succeeded() -> None
     assert payload["status"] != "NOT_SUBMITTED"
     assert payload["verification_status"] == "VERIFIED"
     assert payload["manifest_state"] == "pending"
+
+
+def test_pending_status_projects_runtime_resource_snapshot_and_preview_error() -> None:
+    from npa.cli.workbench.workflow import _manifest_pending_status
+
+    resolution = RunResolution(
+        run_id="resource-snapshot",
+        project="live",
+        found=True,
+        source="durable_runtime_ledger",
+        workflow_name="training",
+        run_prefix_uri="s3://bucket/training/resource-snapshot",
+        manifest_uri="s3://bucket/training/resource-snapshot/manifest.json",
+        receipt={
+            "workflow": {
+                "api_version": "npa.workflow/v0.0.1",
+                "steps": [],
+                "plan_preview": {
+                    "status": "failed",
+                    "error": "ValueError: decision unavailable",
+                },
+            }
+        },
+        runtime_state={
+            "schema_version": "npa.workflow.runtime.v1",
+            "status": "running",
+            "waves": [
+                {
+                    "key": "wave-train",
+                    "states": ["train"],
+                    "status": "running",
+                    "attempt": 1,
+                    "resource_profiles": {
+                        "train": {"accelerators": "B200:1", "cpus": 16}
+                    },
+                }
+            ],
+        },
+    )
+
+    payload = _manifest_pending_status(
+        resolution,
+        project="live",
+        sky_bin="",
+        startup_failure_threshold=3,
+        cached=True,
+    )
+
+    stage = next(iter(payload["stages"].values()))
+    assert stage["requested_accelerators"] == "B200:1"
+    assert stage["resources_profile"] == {"accelerators": "B200:1", "cpus": 16}
+    assert any("decision unavailable" in item for item in payload["diagnostics"])
+
+
+def test_available_manifest_projects_runtime_resource_snapshot(mocker) -> None:
+    from npa.cli.workbench.workflow import _durable_workflow_status
+
+    profile = {"accelerators": "GPU:1", "cpus": "16+", "memory": "128+"}
+    manifest = RunManifest(
+        "training", "resource-snapshot", "npa.workflow/v0.0.1", status="running"
+    )
+    resolution = RunResolution(
+        run_id="resource-snapshot",
+        project="test",
+        found=True,
+        source="durable_runtime_ledger",
+        manifest=manifest.to_dict(),
+        runtime_state={
+            "schema_version": "npa.workflow.runtime.v1",
+            "status": "running",
+            "waves": [
+                {
+                    "key": "001|serial|:qualify:-",
+                    "states": ["qualify"],
+                    "status": "running",
+                    "attempt": 1,
+                    "resource_profiles": {"qualify": profile},
+                }
+            ],
+        },
+        state=WorkflowS3Config(
+            bucket="bucket",
+            prefix="resource-snapshot/npa-workflow",
+            endpoint_url="https://storage.example.test",
+            aws_access_key_id="test",
+            aws_secret_access_key="test",
+        ),
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.run_resolution.resolve_run",
+        return_value=resolution,
+    )
+    latest = mocker.patch(
+        "npa.orchestration.npa_workflow.supervisor.SupervisorLedger.latest",
+        return_value=None,
+    )
+
+    payload = _durable_workflow_status("resource-snapshot", cached=True)
+
+    assert payload["stages"]["qualify"]["requested_accelerators"] == "GPU:1"
+    assert payload["stages"]["qualify"]["resources_profile"] == profile
+    latest.assert_called_once_with(run_id="resource-snapshot")
+
+
+def test_runtime_resource_snapshot_preserves_manifest_profile() -> None:
+    from npa.cli.workbench.workflow import _merge_runtime_resource_profiles
+
+    existing = {"accelerators": "GPU:1", "memory": "64+", "source": "manifest"}
+    steps = [{"state": "qualify", "resources_profile": existing.copy()}]
+    waves = [
+        {
+            "resource_profiles": {
+                "qualify": {
+                    "accelerators": "OTHER:8",
+                    "memory": "512+",
+                    "source": "runtime",
+                }
+            }
+        }
+    ]
+
+    _merge_runtime_resource_profiles(steps, waves)
+
+    assert steps[0]["resources_profile"] == existing
+
+
+def test_runtime_submission_receipt_preserves_redacted_preview_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench.workflow import _runtime_submission_receipt
+    from npa.orchestration.npa_workflow import load_spec
+    from npa.orchestration.npa_workflow import runtime
+
+    def fail_preview(*_args, **_kwargs):
+        raise ValueError("AWS_SECRET_ACCESS_KEY=do-not-persist")
+
+    monkeypatch.setattr(runtime, "plan_preview", fail_preview)
+    receipt = _runtime_submission_receipt(load_spec(FANOUT), "preview-run", "")
+
+    assert receipt["steps"] == []
+    assert receipt["plan_preview"]["status"] == "failed"
+    assert "do-not-persist" not in receipt["plan_preview"]["error"]
+    assert "<redacted>" in receipt["plan_preview"]["error"]
 
 
 def test_terminal_status_uses_latest_attempt_without_erasing_history() -> None:
@@ -183,7 +343,11 @@ def satisfied_preflight(mocker, monkeypatch):
         return_value=(None, {}),
     )
 
-    mocker.patch.object(skybin, "resolve_sky_bin", lambda _bin: "/usr/bin/sky")
+    mocker.patch.object(
+        skybin,
+        "resolve_sky_bin",
+        lambda value: Path(value) if value else Path("/usr/bin/sky"),
+    )
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://rt-bucket/npa-src/npa")
     monkeypatch.setattr(
         storage_validation,
@@ -212,6 +376,12 @@ def fake_runtime(mocker, satisfied_preflight):
 
         receipt = load_submission_state(kwargs["options"].project, kwargs["run_id"])
         assert receipt["launch"] == {"status": "launching", "kind": "runtime"}
+        assert receipt["controller"] == {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": kwargs["options"].isolated_config_dir is not None,
+            "isolated_config_dir": str(kwargs["options"].isolated_config_dir or ""),
+            "sky_bin": kwargs["options"].sky_bin,
+        }
         assert not submission_proves_never_launched(
             receipt,
             project=kwargs["options"].project,
@@ -826,6 +996,54 @@ def test_runtime_required_workflow_rejects_explicit_no_runtime(mocker) -> None:
     runtime_driver.assert_not_called()
 
 
+def test_non_runtime_submit_records_the_exact_controller_route(
+    mocker, monkeypatch, satisfied_preflight, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import load_submission_state
+
+    controller_root = (tmp_path / "controller").resolve()
+    sky_bin = Path("/opt/npa/pinned-sky")
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot._bin.resolve_sky_bin", lambda value: sky_bin
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot._bin.resolve_isolated_config_dir",
+        lambda value: controller_root,
+    )
+    submitted = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "non-runtime-controller-route",
+            "--project",
+            "unit",
+            "--no-runtime",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    receipt = load_submission_state("unit", "non-runtime-controller-route")
+    assert receipt["controller"] == {
+        "schema": "npa.workflow.controller-route.v1",
+        "isolated": True,
+        "isolated_config_dir": str(controller_root),
+        "sky_bin": str(sky_bin),
+    }
+    assert submitted.call_args.kwargs["sky_bin"] == str(sky_bin)
+    assert submitted.call_args.kwargs["isolated_config_dir"] == controller_root
+
+
 def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> None:
     mocker.patch(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime",
@@ -1387,3 +1605,268 @@ def test_plan_only_does_not_bind_runtime_api_environment(runtime_api_environment
     assert snapshots == []
     driver.assert_not_called()
     assert {name: os.environ.get(name) for name in names} == before
+
+
+def test_absolute_prefix_submission_receipt_matches_canonical_store(
+    tmp_path: Path,
+) -> None:
+    from npa.cli.workbench.workflow import _workflow_submission_receipt
+    from npa.orchestration.npa_workflow.run_state import store_for_config
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    source = tmp_path / "absolute-prefix.yaml"
+    source.write_text(
+        """apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: absolute-prefix}
+config:
+  bucket: unit-output
+  prefix: s3://unit-output/task/unit-run
+initial: execute
+states:
+  execute:
+    run: {shell: 'true'}
+    terminal: true
+"""
+    )
+    spec = load_spec(source)
+    receipt = _workflow_submission_receipt(spec, [], "unit-run")
+    store = store_for_config(spec.config, run_id="unit-run")
+
+    assert store is not None
+    assert receipt["run_prefix_uri"] == store.run_prefix_uri
+    assert receipt["manifest_uri"] == (
+        "s3://unit-output/task/unit-run/npa-workflow/manifest.json"
+    )
+
+
+def test_resume_store_uses_exact_recorded_legacy_location(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.workbench.workflow import _recorded_runtime_store
+    from npa.orchestration.npa_workflow import submission_state
+
+    legacy = "s3://unit-output/s3://unit-output/task/legacy-run"
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda project, run_id: SimpleNamespace(
+            outcome="found",
+            payload={"workflow": {"run_prefix_uri": legacy}},
+        ),
+    )
+
+    store = _recorded_runtime_store(
+        "unit", "legacy-run", resume=True, credentials=_selected_storage_credentials()
+    )
+
+    assert store is not None
+    assert store.run_prefix_uri == legacy
+    assert store.prefix == "s3://unit-output/task/legacy-run"
+    assert store._endpoint_url == "https://storage.us-central1.nebius.cloud"
+    assert store._aws_access_key_id == "selected-access"
+    assert store._aws_secret_access_key == "selected-secret"
+
+
+def test_fresh_runtime_does_not_reuse_recorded_location(monkeypatch) -> None:
+    from npa.cli.workbench.workflow import _recorded_runtime_store
+    from npa.orchestration.npa_workflow import submission_state
+
+    called = False
+
+    def inspect(project: str, run_id: str):
+        nonlocal called
+        called = True
+        raise AssertionError("fresh runs must not inspect an old receipt")
+
+    monkeypatch.setattr(submission_state, "inspect_submission_state", inspect)
+
+    assert (
+        _recorded_runtime_store(
+            "unit",
+            "fresh-run",
+            resume=False,
+            credentials=_selected_storage_credentials(),
+        )
+        is None
+    )
+    assert not called
+
+
+def test_resume_store_allows_an_absent_local_receipt(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.workbench.workflow import _recorded_runtime_store
+    from npa.orchestration.npa_workflow import submission_state
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda project, run_id: SimpleNamespace(outcome="absent", payload={}),
+    )
+
+    assert (
+        _recorded_runtime_store(
+            "unit", "new", resume=True, credentials=_selected_storage_credentials()
+        )
+        is None
+    )
+
+
+def _write_local_receipt(monkeypatch, tmp_path: Path, run_id: str, raw: str) -> None:
+    from npa.clients import config
+    from npa.orchestration.npa_workflow.submission_state import submission_state_path
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    path = submission_state_path("unit", run_id)
+    path.parent.mkdir(parents=True)
+    path.write_text(raw, encoding="utf-8")
+
+
+def test_cli_resume_preserves_recorded_legacy_store(
+    fake_runtime, monkeypatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import load_submission_state
+
+    run_id = "legacy-run"
+    legacy = "s3://unit-output/s3://unit-output/task/legacy-run"
+    payload = {
+        "schema_version": "npa.workflow.submission.v1",
+        "project": "unit",
+        "run_id": run_id,
+        "workflow": {"run_prefix_uri": legacy},
+    }
+    _write_local_receipt(monkeypatch, tmp_path, run_id, json.dumps(payload))
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume",
+            "--run-id",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["state_store"].run_prefix_uri == legacy
+    receipt = load_submission_state("unit", run_id)
+    assert receipt["workflow"]["run_prefix_uri"] == legacy
+    assert receipt["workflow"]["manifest_uri"] == f"{legacy}/npa-workflow/manifest.json"
+
+
+def test_cli_denied_recorded_prefix_stops_before_update_or_launch(
+    monkeypatch, mocker, satisfied_preflight, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa import execution_preflight
+    from npa.cli.workbench import workflow as workflow_cli
+
+    legacy = "s3://unit-output/s3://unit-output/task/denied-run"
+    _write_local_receipt(
+        monkeypatch, tmp_path, "denied-run", _resume_receipt("denied-run", legacy)
+    )
+    captured = {}
+
+    def resolve(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(
+        workflow_cli, "_execution_target_preflight", REAL_EXECUTION_TARGET_PREFLIGHT
+    )
+    monkeypatch.setattr(execution_preflight, "resolve_execution_target", resolve)
+    monkeypatch.setattr(
+        execution_preflight,
+        "verify_execution_target",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("legacy denied")),
+    )
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    result = _invoke_runtime_resume("denied-run")
+
+    assert result.exit_code == 1 and "legacy denied" in result.output
+    assert legacy + "/" in captured["output_uris"]
+    assert any(uri.startswith("s3://rt-bucket/") for uri in captured["output_uris"])
+    assert captured["output_kinds"][legacy + "/"] == "directory"
+    update.assert_not_called()
+    driver.assert_not_called()
+
+
+def _resume_receipt(run_id: str, legacy: str) -> str:
+    return json.dumps(
+        {
+            "schema_version": "npa.workflow.submission.v1",
+            "project": "unit",
+            "run_id": run_id,
+            "workflow": {"run_prefix_uri": legacy},
+        }
+    )
+
+
+def _invoke_runtime_resume(run_id: str):
+    return RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume",
+            "--run-id",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+
+@pytest.mark.parametrize("receipt_kind", ["unavailable", "missing-workflow"])
+def test_cli_resume_rejects_unusable_receipt_before_update_or_launch(
+    receipt_kind, monkeypatch, mocker, satisfied_preflight, tmp_path: Path
+) -> None:
+    run_id = f"resume-{receipt_kind}"
+    payload = {
+        "schema_version": "npa.workflow.submission.v1",
+        "project": "unit",
+        "run_id": run_id,
+    }
+    raw = "{" if receipt_kind == "unavailable" else json.dumps(payload)
+    _write_local_receipt(monkeypatch, tmp_path, run_id, raw)
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume",
+            "--run-id",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "receipt" in result.output
+    update.assert_not_called()
+    driver.assert_not_called()

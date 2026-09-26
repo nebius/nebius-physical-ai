@@ -23,12 +23,14 @@ import yaml
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.run_state import (
+    RunManifest,
     RunStateStore,
     RuntimeRunState,
     runtime_key,
 )
 from npa.orchestration.npa_workflow.runtime import (
     CANCELLATION_VERIFY_ATTEMPTS,
+    IMAGE_IDENTITY_VERSION,
     MAX_TERMINAL_PLAN_MIGRATIONS,
     SCHEDULER_OBSERVATION_SCHEMA,
     SCHEDULER_OBSERVATION_SOURCE,
@@ -36,15 +38,181 @@ from npa.orchestration.npa_workflow.runtime import (
     RuntimeOptions,
     SkyPilotWaveExecutor,
     WaveAttempt,
+    _claims_for_steps,
+    _expected_image_identity,
+    _image_identity,
+    _loaded_image_identity,
     _record_reached_running,
+    _reference_set_identity,
+    _resource_profiles_for_steps,
+    _wave_image_references,
     plan_fingerprint,
     run_workflow_runtime,
     s3_artifact_exists,
     s3_trigger_waiter,
     wave_key,
 )
-from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
+    build_skypilot_task_doc,
+)
 from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+
+def test_wave_attempt_persists_exact_rendered_claim_names() -> None:
+    steps = [
+        SimpleNamespace(
+            resources_profile={
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [
+                                {
+                                    "persistentVolumeClaim": {
+                                        "claimName": "run-workspace"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+    ]
+    claims = _claims_for_steps(steps)
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        persistent_volume_claims=list(claims),
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert claims == ("run-workspace",)
+    assert record["persistent_volume_claims"] == ["run-workspace"]
+    assert restored.persistent_volume_claims == ["run-workspace"]
+
+
+def test_wave_attempt_round_trip_preserves_resource_and_image_evidence() -> None:
+    reference = "registry.example/npa@sha256:" + "a" * 64
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        image_digest=_reference_set_identity([reference]),
+        image_identity_version=IMAGE_IDENTITY_VERSION,
+        image_references=[reference],
+        resource_profiles={"train": {"accelerators": "B200:1", "cpus": 16}},
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert restored.resource_profiles == attempt.resource_profiles
+    assert restored.image_references == [reference]
+    identity = record["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["all_references_content_addressed"] is True
+    attempt.image_references = ["registry.example/npa:mutable"]
+    mutable = attempt.to_dict()["image_identity"]
+    assert mutable["all_references_content_addressed"] is False
+    legacy = WaveAttempt(
+        key="legacy", states=["train"], kind="serial", image_digest="c" * 64
+    ).to_dict()["image_identity"]
+    assert legacy["kind"] == "legacy_digest_pin_set"
+    assert "reference_set_sha256" not in legacy
+    tampered = json.loads(json.dumps(record))
+    tampered["image_identity"]["references"] = ["registry.example/other:tag"]
+    with pytest.raises(NpaWorkflowError, match="reference-set identity differs"):
+        SkyPilotWaveExecutor._attempt_from_record(
+            tampered, steps=[], kind="serial", group=""
+        )
+
+
+@pytest.mark.parametrize("invalid", [None, "", 1, {}, []])
+def test_image_identity_rejects_invalid_reference_members(invalid) -> None:
+    reference = "registry.example/image:tag"
+    record = {
+        "immutable_identity": {"image_digest": _reference_set_identity([reference])},
+        "image_identity": {
+            "version": IMAGE_IDENTITY_VERSION,
+            "references": [reference, invalid],
+        },
+    }
+    with pytest.raises(NpaWorkflowError, match="must be nonempty strings"):
+        _loaded_image_identity(record)
+
+
+def test_resource_snapshot_matches_rendered_environment_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    accelerators: B200:1"
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="resource-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions(
+        gpu_accelerator_overrides={"B200:1": "nvidia.com/gpu:B200:1"}
+    )
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", "H200:1")
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "96Gi")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://source-role/" + "d" * 64)
+    rendered = build_skypilot_task_doc(
+        spec, step, run_id="resource-evidence", options=options
+    )["resources"]
+    expected = {
+        key: value
+        for key, value in rendered.items()
+        if key not in {"image_id", "image_login_config"}
+    }
+    snapshots = _resource_profiles_for_steps(spec, [step], options, "resource-evidence")
+
+    assert snapshots[step.state] == expected
+    assert snapshots[step.state]["accelerators"] == "H200:1"
+    assert snapshots[step.state]["memory"] == "96+"
+
+
+def test_resolved_image_identity_includes_inline_image_and_keeps_legacy(
+    tmp_path: Path,
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    image: repo/image@sha256:" + "a" * 64
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions()
+
+    references = _wave_image_references(spec, [step], options, "image-evidence")
+    resolved = _expected_image_identity(
+        spec, [step], options, IMAGE_IDENTITY_VERSION, "image-evidence"
+    )
+    changed_spec = load_spec(_write_spec(tmp_path, source.replace("a" * 64, "c" * 64)))
+    changed_step = build_plan(
+        changed_spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+
+    assert references == ("repo/image@sha256:" + "a" * 64,)
+    assert resolved != _image_identity(options)
+    assert resolved != _expected_image_identity(
+        changed_spec,
+        [changed_step],
+        options,
+        IMAGE_IDENTITY_VERSION,
+        "image-evidence",
+    )
+    assert _expected_image_identity(spec, [step], options, "", "image-evidence") == (
+        _image_identity(options)
+    )
 
 
 def _typed_running_observation(
@@ -436,12 +604,17 @@ class FakeStatus:
 class MemoryStore(RunStateStore):
     """RunStateStore backed by a dict (mirrors the injected reader/writer seam)."""
 
-    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+    def __init__(
+        self,
+        objects: dict[str, bytes] | None = None,
+        *,
+        prefix: str = "unit-prefix",
+    ) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
         self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
-            prefix="unit-prefix",
+            prefix=prefix,
             reader=self._read_obj,
             writer=self._write_obj,
             artifact_lister=self._list_obj,
@@ -900,6 +1073,164 @@ def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
 
     assert report.status == "succeeded"
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
+
+
+def _completed_runtime_prefix(tmp_path: Path):
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    objects: dict[str, bytes] = {}
+    first_store = MemoryStore(objects)
+    first_executor = _executor(spec, run_id="cpu-run", store=first_store)
+    first_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    first = run_workflow_runtime(
+        spec,
+        run_id="cpu-run",
+        executor=first_executor,
+        state_store=first_store,
+        options=first_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=first_yaml,
+    )
+    assert first.status == "succeeded"
+    return spec, objects
+
+
+def test_runtime_rejects_foreign_run_on_shared_prefix_before_any_write(
+    tmp_path: Path,
+) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+
+    second_store = MemoryStore(objects)
+    second_submitter = FakeSubmitter()
+    second_executor = _executor(
+        spec,
+        run_id="gpu-run",
+        store=second_store,
+        submitter=second_submitter,
+    )
+    with pytest.raises(NpaWorkflowError, match="already belongs.*cpu-run"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=second_executor,
+            state_store=second_store,
+            options=second_executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert second_submitter.calls == []
+    assert second_store.write_calls == []
+    assert objects == snapshot
+
+
+def test_runtime_allows_a_new_run_with_a_distinct_prefix(tmp_path: Path) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+    other_store = MemoryStore(objects, prefix="gpu-prefix")
+    other_executor = _executor(spec, run_id="gpu-run", store=other_store)
+    other = run_workflow_runtime(
+        spec,
+        run_id="gpu-run",
+        executor=other_executor,
+        state_store=other_store,
+        options=other_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=b"different workflow source",
+    )
+    assert other.status == "succeeded"
+    assert objects["gpu-prefix/workflow.yaml"] == b"different workflow source"
+    assert {key: objects[key] for key in snapshot} == snapshot
+
+
+def test_runtime_rejects_foreign_manifest_owner_when_runtime_is_absent(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    store.write_manifest(
+        RunManifest(
+            workflow=spec.name,
+            run_id="cpu-run",
+            api_version=spec.api_version,
+        )
+    )
+    snapshot = dict(store.objects)
+    store.write_calls.clear()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="run manifest.*unique config.prefix"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+@pytest.mark.parametrize(
+    "manifest_bytes",
+    [b"[1]", b'{"workflow":"example"}', b'{"run_id":"cpu-run"}'],
+)
+def test_runtime_rejects_corrupt_manifest_before_any_write(
+    tmp_path: Path,
+    manifest_bytes: bytes,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    key = "unit-prefix/npa-workflow/manifest.json"
+    store = MemoryStore({key: manifest_bytes})
+    snapshot = dict(store.objects)
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="durable run manifest is corrupt"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+def test_runtime_prefix_guard_propagates_storage_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    def fail_read() -> RuntimeRunState | None:
+        raise PermissionError("state read denied")
+
+    monkeypatch.setattr(store, "read_runtime_state", fail_read)
+    with pytest.raises(PermissionError, match="state read denied"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == {}
 
 
 def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(
@@ -1763,6 +2094,84 @@ def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:
 
     assert len(name) <= 60
     assert name.endswith("-a3")
+
+
+def test_long_job_names_bind_complete_run_wave_and_iteration(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    prefix = "example-evaluation-run-" + "x" * 42
+    names = set()
+    for run_suffix, sequence, state, iteration in (
+        ("1", 1, "diagnose", None),
+        ("2", 1, "diagnose", None),
+        ("1", 2, "diagnose", None),
+        ("1", 1, "publish", None),
+        ("1", 1, "diagnose", 2),
+        ("1", 1, "diagnose", 3),
+    ):
+        executor = _executor(spec, run_id=f"{prefix}{run_suffix}")
+        executor._sequence = sequence
+        step = SimpleNamespace(state=state, iteration=iteration)
+        name = executor._job_name(
+            [step],
+            group="",
+            attempt=WaveAttempt(key="wave", states=[state], kind="serial"),
+        )
+        assert len(name) <= 60
+        assert "-h" in name
+        discriminator = name.rsplit("-h", maxsplit=1)[1]
+        assert len(discriminator) == 16
+        int(discriminator, 16)
+        names.add(name)
+
+    assert len(names) == 6
+
+
+def test_short_job_name_remains_readable_and_byte_compatible(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    executor = _executor(spec, run_id="short-run")
+    executor._sequence = 1
+    step = SimpleNamespace(state="diagnose", iteration=None)
+
+    name = executor._job_name(
+        [step],
+        group="",
+        attempt=WaveAttempt(key="wave", states=[step.state], kind="serial"),
+    )
+
+    assert name == "short-run-01-diagnose"
+
+
+def test_resume_preserves_recorded_pre_hash_long_job_name(tmp_path: Path) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    step = next(iter(build_plan(spec, run_id="legacy-long-run").steps))
+    key = wave_key([step], group="", sequence_number=1)
+    legacy_name = "example-legacy-job-" + "x" * 41
+    observed = []
+
+    def reconcile(name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        observed.append((name, job_id))
+        return ManagedJobEvidence("found", job_id=job_id, status="SUCCEEDED")
+
+    executor = _executor(spec, run_id="legacy-long-run", reconcile_fn=reconcile)
+    executor.ledger.record(
+        WaveAttempt(
+            key=key,
+            states=[step.state],
+            kind="serial",
+            job_id="41",
+            job_name=legacy_name,
+            status="running",
+            sky_status="RUNNING",
+            logical_launch_id="legacy-logical-launch",
+        )
+    )
+
+    adopted = executor._reconcile_in_flight(key, [step], kind="serial", group="")
+
+    assert adopted is not None and adopted.job_name == legacy_name
+    assert observed == [(legacy_name, "41")]
 
 
 def test_parallel_job_name_fingerprints_exact_batch_membership(tmp_path: Path) -> None:
@@ -4126,6 +4535,80 @@ def test_runtime_refresh_failure_invalidates_prior_submit_proof(
     runtime_sdk_submission.job.assert_called_once()
 
 
+def _terminal_supervisor_run(tmp_path, mocker, statuses, *, outputs=True, retries=0):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(job_id="1"),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-terminal", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    store, submitter = MemoryStore(), FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-terminal",
+        store=store,
+        submitter=submitter,
+        status_fn=FakeStatus(statuses),
+        output_checker=lambda _uri: outputs,
+        options=RuntimeOptions(poll_seconds=0, retries=retries),
+    )
+    return executor, gate, store, submitter
+
+
+@pytest.mark.parametrize(
+    ("terminal", "outputs", "action"),
+    [
+        ("FAILED", False, "terminalize"),
+        ("FAILED_SETUP", False, "terminalize"),
+        ("CANCELLED", False, "terminalize"),
+        ("SUCCEEDED", False, "terminalize"),
+        ("SUCCEEDED", True, "reuse_completed_wave"),
+    ],
+)
+def test_terminal_supervisor_replaces_stale_live_advice(
+    tmp_path, mocker, terminal, outputs, action
+):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path, mocker, ["PENDING", "RUNNING", terminal], outputs=outputs
+    )
+    if action == "terminalize":
+        with pytest.raises(NpaWorkflowError):
+            executor.execute(gate)
+    else:
+        executor.execute(gate)
+    event = SupervisorLedger(store).latest()
+    assert event["phase"] == "attempt_terminal"
+    assert event["recovery"]["action"] == action
+    assert "Continue observing" not in event["recovery"]["remediation"]
+    assert store.read_runtime_state().waves[-1]["recovery_decision"] == action
+    assert len(submitter.calls) == 1
+
+
+def test_terminal_advice_preserves_explicit_payload_retry(tmp_path, mocker):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path,
+        mocker,
+        ["PENDING", "FAILED", "PENDING", "SUCCEEDED"],
+        retries=1,
+    )
+    executor.execute(gate)
+    attempts = store.read_runtime_state().waves
+    assert [row["status"] for row in attempts] == ["failed", "succeeded"]
+    assert [row["recovery_decision"] for row in attempts] == [
+        "terminalize",
+        "reuse_completed_wave",
+    ]
+    assert len(submitter.calls) == 2
+
+
 def test_runtime_supervisor_stops_configuration_retry_immediately(
     tmp_path: Path, mocker
 ) -> None:
@@ -4185,6 +4668,9 @@ def test_runtime_supervisor_stops_configuration_retry_immediately(
     ]
     assert executor.attempts[0].error_category == "actionable_configuration"
     assert executor.attempts[0].recovery_decision == "cancel_and_terminalize"
+    assert executor.attempts[0].resource_profiles == {
+        "gate": {"cloud": "kubernetes", "cpus": "4+", "memory": "16+"}
+    }
 
 
 def test_runtime_supervisor_recovers_transient_once_without_duplicate(

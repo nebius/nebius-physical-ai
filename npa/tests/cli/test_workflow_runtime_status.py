@@ -99,6 +99,314 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+@pytest.mark.parametrize("cached", [False, True])
+def test_supervisor_snapshot_does_not_inherit_live_status_trust(
+    observed_status, mocker, cached
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [_wave("train", "12", "running")]
+    snapshot = {
+        "recorded_at": "2000-01-01T00:00:00Z",
+        "attempt_identity": {"run_id": "run-test"},
+        "observation": {"state": "queued"},
+        "outputs": {"status": "absent", "missing": ["s3://bucket/result.json"]},
+    }
+    latest = mocker.patch(
+        "npa.orchestration.npa_workflow.supervisor.SupervisorLedger.latest",
+        return_value=snapshot,
+    )
+
+    payload = _durable_workflow_status("run-test", cached=cached)
+
+    assert payload["automation_may_trust_state"] is not cached
+    if not cached:
+        assert payload["live_verified"] is True
+        assert payload["status"] == "RUNNING"
+    expected = {
+        **snapshot,
+        "observation_scope": "durable_supervisor_snapshot",
+        "current_artifact_state_verified": False,
+    }
+    assert payload["supervisor"] == expected
+    assert "observation_scope" not in snapshot
+    assert "current_artifact_state_verified" not in snapshot
+    latest.assert_called_once_with(run_id="run-test")
+
+
+def _legacy_terminal_snapshot(status, sky_status, category):
+    return {
+        "recorded_at": "2000-01-01T00:00:00Z",
+        "phase": "attempt_terminal",
+        "classification": category,
+        "attempt": {
+            "status": status,
+            "sky_status": sky_status,
+            "error_category": category,
+            "recovery_decision": "adopt_exact_attempt",
+            "operator_remedy": "Continue observing the exact recorded provider job.",
+        },
+        "recovery": {"action": "adopt_exact_attempt", "remediation": "keep observing"},
+    }
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize(
+    "status,sky_status,category,expected_action,expected_category",
+    [
+        ("failed", "FAILED", "none", "terminalize", "unknown"),
+        (
+            "failed",
+            "FAILED_SETUP",
+            "actionable_configuration",
+            "terminalize",
+            "actionable_configuration",
+        ),
+        ("failed", "CANCELLED", "none", "terminalize", "unknown"),
+        ("failed", "SUCCEEDED", "payload", "terminalize", "payload"),
+        ("succeeded", "SUCCEEDED", "none", "reuse_completed_wave", "none"),
+        ("failed", "RUNNING", "payload", "adopt_exact_attempt", "payload"),
+    ],
+)
+def test_old_terminal_snapshot_replaces_only_live_recovery_advice(
+    observed_status,
+    mocker,
+    cached,
+    status,
+    sky_status,
+    category,
+    expected_action,
+    expected_category,
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [_wave("train", "12", status)]
+    snapshot = _legacy_terminal_snapshot(status, sky_status, category)
+    original = json.dumps(snapshot, sort_keys=True)
+    mocker.patch(
+        "npa.orchestration.npa_workflow.supervisor.SupervisorLedger.latest",
+        return_value=snapshot,
+    )
+
+    view = _durable_workflow_status("run-test", cached=cached)["supervisor"]
+
+    assert view["recovery"]["action"] == expected_action
+    assert view["classification"] == expected_category
+    assert view["attempt"]["recovery_decision"] == expected_action
+    assert view["current_artifact_state_verified"] is False
+    assert view["recorded_at"] == snapshot["recorded_at"]
+    assert json.dumps(snapshot, sort_keys=True) == original
+    if expected_action != "adopt_exact_attempt":
+        assert view["recovery_guidance_basis"] == "recorded_terminal_attempt"
+        assert view["recovery"]["remediation"] == view["attempt"]["operator_remedy"]
+    else:
+        assert "recovery_guidance_basis" not in view
+
+
+def test_status_probes_only_claims_attributed_to_each_managed_job(
+    observed_status, mocker
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [
+        _wave("prepare", "11", "succeeded"),
+        _wave("train", "12", "pending"),
+    ]
+    resolution.manifest["steps"] = [
+        {
+            "state": name,
+            "status": "submitted",
+            "resources_profile": {
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [
+                                {
+                                    "persistentVolumeClaim": {
+                                        "claimName": f"{name}-workspace"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        for name in ("prepare", "train")
+    ]
+    stalled = mocker.patch(
+        "npa.cli.workbench.workflow._stalled_job_blockers", return_value=[]
+    )
+
+    _durable_workflow_status("run-test")
+
+    calls = {
+        call.args[0]: call.kwargs["claim_names"] for call in stalled.call_args_list
+    }
+    assert calls == {
+        "11": ("prepare-workspace",),
+        "12": ("train-workspace",),
+    }
+
+
+def _volume_conflict_logs(mocker, returncode=0):
+    message = (
+        "Volume train-workspace with access mode ReadWriteOnce is already in use "
+        "by Pods ['previous-worker-head']."
+    )
+    logs = mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        side_effect=lambda job_id, **kwargs: SimpleNamespace(
+            returncode=returncode,
+            stdout=(message + "\n" + "setup output\n" * 1000 + message)
+            if job_id == "12"
+            else "Preparing a different job.",
+            stderr="",
+        ),
+    )
+    return message, logs
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_pending_controller_logs_stay_with_their_job_without_mutating_state(
+    observed_status, mocker, returncode
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [
+        _wave("prepare", "11", "pending"),
+        _wave("train", "12", "pending"),
+    ]
+    message, controller_logs = _volume_conflict_logs(mocker, returncode)
+    stalled = mocker.patch(
+        "npa.cli.workbench.workflow._stalled_job_blockers", return_value=[]
+    )
+    original_manifest = json.dumps(resolution.manifest, sort_keys=True)
+    original_runtime = json.dumps(resolution.runtime_state, sort_keys=True)
+
+    for _ in range(2):
+        payload = _durable_workflow_status("run-test")
+        outputs = {
+            call.args[0]: call.kwargs["controller_output"]
+            for call in stalled.call_args_list
+        }
+        assert (message in outputs["12"]) is (returncode == 0)
+        assert message not in outputs["11"]
+        assert max(map(len, outputs.values())) <= 4000
+        assert payload["status"] == "PENDING"
+        assert json.dumps(resolution.manifest, sort_keys=True) == original_manifest
+        assert json.dumps(resolution.runtime_state, sort_keys=True) == original_runtime
+
+    assert [call.args[0] for call in controller_logs.call_args_list] == [
+        "11",
+        "12",
+        "11",
+        "12",
+    ]
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_receipt_pending_status_requires_successful_controller_log_transport(
+    observed_status, mocker, returncode
+):
+    from npa.cli.workbench.workflow import _manifest_pending_status
+
+    resolution, _jobs = observed_status
+    resolution.job_id = "12"
+    resolution.runtime_state["waves"] = [_wave("train", "12", "pending")]
+    message, logs = _volume_conflict_logs(mocker, returncode)
+    stalled = mocker.patch(
+        "npa.cli.workbench.workflow._stalled_job_blockers", return_value=[]
+    )
+
+    payload = _manifest_pending_status(
+        resolution, project="test", sky_bin="", startup_failure_threshold=2
+    )
+
+    output = stalled.call_args.kwargs["controller_output"]
+    assert (message in output) is (returncode == 0)
+    assert len(output) <= 4000
+    assert payload["status"] == "RETRYING"
+    assert payload["live_status"] == "PENDING"
+    if returncode:
+        assert any(
+            "controller logs are unavailable" in row for row in payload["diagnostics"]
+        )
+    logs.assert_called_once()
+
+
+def test_claim_attribution_preserves_collisions_with_emitted_stage_keys():
+    from types import SimpleNamespace
+
+    from npa.cli.workbench.workflow import _rendered_claims_by_managed_job
+
+    steps = [
+        {
+            "state": name,
+            "resources_profile": {
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [{"persistentVolumeClaim": {"claimName": claim}}]
+                        }
+                    }
+                }
+            },
+        }
+        for name, claim in (
+            ("train", "first-workspace"),
+            ("train", "second-workspace"),
+            ("train@1", "third-workspace"),
+        )
+    ]
+    attribution = {
+        "train": {"managed_job_id": "11"},
+        "train@1": {"managed_job_id": "12"},
+        "train@1@2": {"managed_job_id": "13"},
+    }
+
+    assert _rendered_claims_by_managed_job(
+        SimpleNamespace(steps=steps), attribution
+    ) == {
+        "11": ("first-workspace",),
+        "12": ("second-workspace",),
+        "13": ("third-workspace",),
+    }
+
+
+def test_failed_workflow_status_exposes_running_sibling_tasks(observed_status, mocker):
+    resolution, _ = observed_status
+    resolution.runtime_state.update(
+        status="failed",
+        waves=[
+            {
+                "key": "001|workers|workers:first:-,workers:second:-",
+                "states": ["first", "second"],
+                "group": "workers",
+                "kind": "parallel",
+                "job_id": "11",
+                "attempt": 1,
+                "status": "failed",
+            }
+        ],
+    )
+    resolution.manifest.update(
+        status="failed",
+        steps=[{"state": name, "status": "failed"} for name in ("first", "second")],
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        return_value=[
+            {"task_id": 0, "task_name": "first", "status": "FAILED"},
+            {"task_id": 1, "task_name": "second", "status": "RUNNING"},
+        ],
+    )
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "FAILED"
+    assert payload["live_verified"] is True
+    assert payload["scheduler_task_activity"] == {
+        "active_stage_keys": ["second"],
+        "unresolved_stage_keys": [],
+        "all_stage_tasks_terminal": False,
+    }
+
+
 @pytest.mark.parametrize("runtime_status", ["running", "failed"])
 def test_completed_observed_jobs_do_not_prove_workflow_completion(
     observed_status, runtime_status

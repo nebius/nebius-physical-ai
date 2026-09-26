@@ -1,0 +1,218 @@
+{
+  "batch": {
+    "batch_ordinal": 0,
+    "flow_draws": 8,
+    "indices": [
+      0,
+      20,
+      40,
+      60,
+      80,
+      100,
+      120,
+      140,
+      160,
+      180,
+      200,
+      220,
+      240,
+      260,
+      280,
+      300
+    ],
+    "loss_seed": 1701,
+    "size": 16
+  },
+  "candidate_rollout_admitted": false,
+  "checkpoint_step": 600,
+  "compared_state_leaves": 75,
+  "diagnostic_source_sha256": "a964f802c069aef6309761523e7364357d2ba944f1420f9fa34e2d2b89886e2b",
+  "metric_comparisons": {
+    "native_reloaded_vs_direct_before": {
+      "equal": true,
+      "metrics": {
+        "action_dimension_losses": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        },
+        "action_loss": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        },
+        "stage_cross_entropy": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        },
+        "stage_logits": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        }
+      }
+    },
+    "native_vs_direct_after_native_correlation_only": {
+      "equal": true,
+      "metrics": {
+        "action_dimension_losses": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        },
+        "action_loss": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        },
+        "stage_cross_entropy": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        },
+        "stage_logits": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        }
+      }
+    },
+    "native_vs_direct_before": {
+      "equal": false,
+      "metrics": {
+        "action_dimension_losses": {
+          "byte_equal": false,
+          "dtype_equal": true,
+          "max_abs_delta": 0.005817413330078125,
+          "mean_abs_delta": 0.0002441424165463895,
+          "shape_equal": true
+        },
+        "action_loss": {
+          "byte_equal": false,
+          "dtype_equal": true,
+          "max_abs_delta": 0.00023823976516723633,
+          "mean_abs_delta": 9.233527816832066e-05,
+          "shape_equal": true
+        },
+        "stage_cross_entropy": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        },
+        "stage_logits": {
+          "byte_equal": true,
+          "dtype_equal": true,
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "shape_equal": true
+        }
+      }
+    }
+  },
+  "runtime_versions": {
+    "flax": "0.10.2",
+    "orbax-checkpoint": "0.11.13"
+  },
+  "scalar_contracts_equal": true,
+  "schema": "npa.behavior.public-serving-parity-diagnostic.v2",
+  "scope": "One fixed 16-record holdout batch at checkpoint 600; no rollout or selected-checkpoint validation.",
+  "selected_checkpoint_validation": {
+    "adapter_manifest_sha256": "af8693ba9a72c3fe87df61793ae7ccde7f4f7938d538c0c67c458e54241eda2c",
+    "candidate_rollout_admitted": true,
+    "fixed_batch_metrics": {
+      "all_byte_equal": true,
+      "max_abs_delta": 0.0,
+      "mean_abs_delta": 0.0,
+      "parts": 4
+    },
+    "fixed_rng_actions": {
+      "existing_adapter_action": {
+        "dtype": "float32",
+        "finite": true,
+        "sha256": "1aa57a284d385fe82766a9c746969fbdd74609e900af791c7cfb014746f2fa39",
+        "shape": [
+          23
+        ]
+      },
+      "masked_stage_logits": {
+        "byte_equal_native_direct_and_existing_jit": true,
+        "max_abs_delta": null,
+        "mean_abs_delta": null,
+        "undefined_delta_reason": "Invalid task stages use identical negative-infinity sentinels; subtracting those sentinels is undefined."
+      },
+      "physical_actions": {
+        "byte_equal_native_direct_and_existing_jit": true,
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0
+      }
+    },
+    "raw_validation_receipt_sha256": "be3411a9e886575a8c8a7ded1c46af355a9264c0b100c4ad85ec5c9e38133dd0",
+    "scope": "Selected update 3599 serving validation on one fixed batch and fixed-RNG action call; no simulator rollout or policy-quality comparison.",
+    "selected_step": 3599,
+    "status": "serving_validated_not_rollout_evaluated",
+    "typed_state": {
+      "compared_leaves": 75,
+      "equal_after_adapter": true,
+      "only_pre_adapter_difference": {
+        "direct_dtype": "float32",
+        "native_dtype": "bfloat16",
+        "native_sha256": "0104a7911ffff4658eedb7feb259f2705fdc07cab933bf5c62c54dffb3063ee7",
+        "path": "action_correlation_cholesky",
+        "variable_type": "Intermediate"
+      }
+    },
+    "worker_receipt_sha256": "c2dd6260dd8979335c3a61aae2077b9fe6f4314869346b1e75c556ab0fffddce"
+  },
+  "source_result_sha256": "a6be2b8e3cf5cc37161f337f307f4da565d534c1c27a2c81e8114f02322fc734",
+  "state_difference": {
+    "differing": [
+      {
+        "direct": {
+          "bytes": 3686400,
+          "dtype": "float32",
+          "path": "action_correlation_cholesky",
+          "sha256": "f4592b717febbd3046b8bbdc7b9f2a0c4b1bc2836463663c5095da6a40687c8c",
+          "shape": [
+            960,
+            960
+          ],
+          "variable_type": "Intermediate"
+        },
+        "native": {
+          "bytes": 1843200,
+          "dtype": "bfloat16",
+          "path": "action_correlation_cholesky",
+          "sha256": "0104a7911ffff4658eedb7feb259f2705fdc07cab933bf5c62c54dffb3063ee7",
+          "shape": [
+            960,
+            960
+          ],
+          "variable_type": "Intermediate"
+        },
+        "path": "action_correlation_cholesky"
+      }
+    ],
+    "direct_only": [],
+    "equal": false,
+    "native_only": []
+  }
+}

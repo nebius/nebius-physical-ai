@@ -48,6 +48,12 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.
+  Every declared output is required on runtime success. Declare success
+  artifacts under `outputs`; publish failure-only diagnostics from the failure
+  handler and return a nonzero exit code. Requiring both mutually exclusive
+  artifacts makes a successful job fail durable-output validation. Exercise
+  the output check against each execution path's actual artifact set; syntax
+  and render checks cannot establish that contract.
 
 ## Validation Hardening (v0.0.1)
 
@@ -107,7 +113,7 @@ when execution is requested.
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
-npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --json
+npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --check-render --json
 npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo --plan-only
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
@@ -117,6 +123,11 @@ npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
 For npa.workflow specs it plans → renders serial SkyPilot YAML → `sky jobs launch`.
 Use `--plan-only` to inspect the rendered YAML without launching. Dynamic
 branches still need `--assume-decision`.
+
+Use `plan-spec --check-render` during authoring. It exercises the production
+SkyPilot renderer locally with registry-secret materialization disabled, so pod
+configuration and first-party image startup-contract failures surface before
+provider preflight or submission.
 
 Live infra (required before merge):
 

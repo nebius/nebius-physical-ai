@@ -1,0 +1,312 @@
+# Matched stage-conditioning training for BEHAVIOR
+
+This reference implementation fine-tunes the action path of the released RLC
+BEHAVIOR policy while holding the task and stage predictors fixed. It compares
+two training arms that use the same examples, ordering, optimizer, random seed,
+and parameter partition:
+
+- **teacher** uses the released demonstration's equal-time stage bin;
+- **replay** uses the published parent policy's filtered stage prediction from
+  the preceding replan point.
+
+The implementation is in
+[`workflows/implementations/behavior-matched-training`](../../workflows/implementations/behavior-matched-training/).
+Both matched arms completed 3,600 updates on B200 GPUs, scored six checkpoints
+on the fixed holdout, and exported a selected model. A subsequent serving
+consistency check found different loss metrics despite identical learned
+parameters. A B200 diagnostic isolated a correlation-statistics precision
+difference at update 600: matching that one array made all four checked metrics
+byte-identical. The selected update-3599 model then passed typed-state,
+fixed-batch metric, fixed-RNG action, and existing-wrapper validation with the
+same explicit native BF16 correlation asset. The replay-selected model then
+completed the radio development cell at Q=0.10 with one success, versus stock's
+Q=0.40 with four successes on the same ten cases. Trash scored Q=0.30 versus
+stock's Q=0.366667, with two successes each. Shoes scored Q=0.43 versus stock's
+Q=0.44, with zero versus one success. Across all three trained tasks, selected
+Q=0.276667 regressed from stock's Q=0.402222, with three versus seven successes.
+The furniture transfer cell scored Q=0 for both models. Fire scored Q=0.2125
+versus stock's Q=0.2375; hot dogs improved to Q=0.75 versus stock's Q=0.50.
+Across all sixty matched cases, selected Q=0.298750 regressed from stock's
+Q=0.324028, with ten versus twelve full successes. See the
+[experiment report](behavior-matched-results-2026-09-19.md).
+
+## What is trained
+
+Both arms run 3,600 updates with batch size 16, four flow samples, a 600-step
+warmup to `5e-6`, and cosine decay to `1e-6`. The sampler contributes an equal
+number of examples from tasks 0, 1, and 22. At the planned 57,600 examples,
+each task contributes 19,200 examples.
+
+Only the 23 action-path leaves declared in `action_partition.py` are trainable.
+They cover the second language-model expert, action input/output projections,
+time MLP, and key/value transform. Vision, language, task selection, stage
+classification, gates, and fusion remain frozen. Stage and FAST auxiliary loss
+weights are zero. The released normalization statistics and 30-action targets
+remain unchanged.
+
+The freeze filter selects only `nnx.Param` leaves. The upstream initializer also
+uses this filter to cast frozen weights to BF16; selecting non-parameter state
+would round the correlation statistics stored as `nnx.Intermediate`. A pinned
+Flax test reproduced that behavior. This correction applies to future runs;
+the completed experiment used the earlier filter and remains recorded with its
+original checkpoint state and holdout scores.
+
+## Runtime inputs
+
+The repository contains no checkpoint, training data, credentials, or runtime
+cache. Supply the paths described by `runtime-inputs.schema.json`. The source,
+checkpoint, dataset, split, validation record, and adapter must match the
+identities pinned in `trace-identities.json` and the checks in
+`matched_train.py`.
+
+The released policy source, weights, and demonstrations retain their upstream
+terms. Fetch them at runtime using the operator's own authorized access. Do not
+bake or redistribute those payloads with this implementation.
+
+The dataset view must contain ordinary RGB observations, state, actions, and
+training metadata. The split contains 180 training and 20 holdout episodes for
+each task. Development, reporting, hidden-test, success, and termination data
+must not enter prefix replay or optimization.
+
+## Run the matched pair
+
+Use the Python environment from the pinned upstream RLC/OpenPI checkout. The
+commands below show the data flow; replace the paths with one validated runtime
+input record.
+
+```bash
+IMPL=workflows/implementations/behavior-matched-training
+RUNTIME=/runtime
+
+$RUNTIME/openpi/.venv/bin/python $IMPL/gpu_preflight.py \
+  --source-root $RUNTIME/source/behavior-policy \
+  --adapter-root $RUNTIME/npa-behavior-adapter \
+  --checkpoint $RUNTIME/checkpoints/published-parent \
+  --checkpoint-archive $RUNTIME/checkpoints/published-parent.zip \
+  --dataset-root $RUNTIME/datasets/released-rgb-view \
+  --episode-split $RUNTIME/manifests/episode-split.json \
+  --config $IMPL/config-teacher.json \
+  --output $RUNTIME/output/gpu-prefix-preflight.json
+```
+
+The preflight requires exactly one B200. It verifies source and checkpoint
+identities, loads one real training sample for each task, and checks that
+canonical batch-one inference produces identical stage logits with one and 20
+denoising steps. The sampled actions are discarded. It also runs one discarded
+native update, checks that the 23 action paths are the only parameter and EMA
+paths that can change, and verifies that all frozen paths remain byte-equal.
+The training wrapper preserves frozen EMA leaves explicitly: applying the
+native moving-average arithmetic to an unchanged low-precision weight can
+otherwise change its stored value through rounding.
+
+Prefix replay uses those canonical batch-one, one-step stage logits. The
+direct 15-way classifier output is stored as auxiliary diagnostic data and
+never drives the controller. The selected LeRobot v3 reader derives episode
+boundaries from validated metadata and checks episode, frame, task, and
+absolute-row identities before decoding observations.
+CPU workers decode and transform fixed batches in order. Auxiliary classifier
+batches pad their final partial batch and discard the padding. Canonical replay
+decisions still use one original sample per inference call.
+
+Generate prefix records and replay traces for both released splits:
+
+```bash
+for split in training holdout; do
+  $RUNTIME/openpi/.venv/bin/python $IMPL/generate_prefix_records.py \
+    --source-root $RUNTIME/source/behavior-policy \
+    --adapter-root $RUNTIME/npa-behavior-adapter \
+    --checkpoint $RUNTIME/checkpoints/published-parent \
+    --checkpoint-archive $RUNTIME/checkpoints/published-parent.zip \
+    --dataset-root $RUNTIME/datasets/released-rgb-view \
+    --episode-split $RUNTIME/manifests/episode-split.json \
+    --config $IMPL/config-teacher.json --split $split \
+    --output $RUNTIME/output/$split-prefix.jsonl
+
+  $RUNTIME/openpi/.venv/bin/python $IMPL/build_replay_trace.py \
+    --prefix-records $RUNTIME/output/$split-prefix.jsonl \
+    --identities $IMPL/trace-identities.json --split $split \
+    --output $RUNTIME/output/$split-trace.jsonl
+done
+```
+
+### Generate prefixes on two GPUs
+
+Run the generation command on each GPU with `--shard-count 2` and a distinct
+`--shard-index 0` or `--shard-index 1`. Name each output
+`$split-prefix-$SHARD_INDEX.jsonl`. Shards contain alternating complete episodes
+in the frozen split order; they keep every replan frame and the same native
+batch-one inference. No training examples or stage-controller settings change.
+
+After transferring both outputs to the same runtime, merge each split before
+building its replay trace:
+
+```bash
+for split in training holdout; do
+  $RUNTIME/openpi/.venv/bin/python $IMPL/merge_prefix_records.py \
+    --episode-split $RUNTIME/manifests/episode-split.json --split $split \
+    --shard-input $RUNTIME/output/$split-prefix-0.jsonl \
+    --shard-input $RUNTIME/output/$split-prefix-1.jsonl \
+    --output $RUNTIME/output/$split-prefix.jsonl \
+    --receipt $RUNTIME/output/$split-prefix-merge.json
+done
+```
+
+The merger requires exact shard membership and frame order. Its receipt records
+the input and output hashes. Both training arms consume the same merged traces.
+
+Freeze each arm's inputs, then invoke `matched_train.py`. The trainer performs
+two consecutive compiled updates on disposable state before the planned run.
+The first checks finite loss, gradient norm, and parameter norm; byte equality
+for every frozen leaf; and changes confined to the action allowlist. Both
+updates pass through the native metric reduction and numeric formatter.
+Reporting metrics are converted to scalar float32 after the model update.
+The planned run rebuilds its state and data loader from the original seed.
+
+```bash
+for arm in teacher replay; do
+  $RUNTIME/openpi/.venv/bin/python $IMPL/freeze_inputs.py \
+    --config $IMPL/config-$arm.json \
+    --episode-split $RUNTIME/manifests/episode-split.json \
+    --source-manifest $RUNTIME/manifests/source-manifest.json \
+    --dataset-validation $RUNTIME/manifests/dataset-validation.json \
+    --training-trace $RUNTIME/output/training-trace.jsonl \
+    --trace-identities $IMPL/trace-identities.json \
+    --adapter-files $RUNTIME/manifests/adapter-files.json \
+    --output $RUNTIME/output/$arm-inputs.json
+
+  $RUNTIME/openpi/.venv/bin/python $IMPL/matched_train.py \
+    --source-root $RUNTIME/source/behavior-policy \
+    --adapter-root $RUNTIME/npa-behavior-adapter \
+    --checkpoint $RUNTIME/checkpoints/published-parent \
+    --checkpoint-archive $RUNTIME/checkpoints/published-parent.zip \
+    --dataset-root $RUNTIME/datasets/released-rgb-view \
+    --output-root $RUNTIME/output/$arm \
+    --config $IMPL/config-$arm.json \
+    --input-manifest $RUNTIME/output/$arm-inputs.json \
+    --episode-split $RUNTIME/manifests/episode-split.json \
+    --source-manifest $RUNTIME/manifests/source-manifest.json \
+    --dataset-validation $RUNTIME/manifests/dataset-validation.json \
+    --training-trace $RUNTIME/output/training-trace.jsonl
+done
+```
+
+## Holdout selection and export
+
+Each arm retains updates 600, 1200, 1800, 2400, 3000, and 3599. Score every
+checkpoint on all 20 held-out released episodes per task with eight deterministic
+flow draws. Selection minimizes the equal-task mean action loss; exact ties pick
+the earlier update. Stage cross-entropy and per-action-dimension losses are
+diagnostics and do not affect selection.
+
+Run `evaluate_holdout.py` with the arm's checkpoint directory, frozen input
+manifest, and holdout trace. Then pass its `selection.json` to
+`export_selected.py`. The export contains the selected EMA parameters and the
+unchanged normalization assets. A selected offline checkpoint is still
+`not_rollout_evaluated`; measure it with the unchanged official evaluator before
+making a policy-quality claim.
+
+The completed run's selected export also contains the native BF16
+`action_correlation_cholesky` intermediate. The serving loader overwrites that
+saved array with recomputed FP32 correlation statistics during model creation,
+so the adapter restores the validated native bytes before inference. To serve
+one of these selected checkpoints, first validate the full native state against
+the export and emit a correlation manifest, artifact, and serving-validation
+receipt. Package the selected files under the exact
+`selected-model/` archive prefix, then use `--policy-kind rlc-selected` with:
+
+- `--policy-selected-export-receipt`
+- `--policy-correlation-manifest`
+- `--policy-validation-receipt`
+
+The loader binds all three receipts, the selected step, the correlation bytes,
+and the unchanged RLC serving sources. It installs the validated intermediate
+before the policy constructs its JIT sampler. This route preserves the completed
+checkpoint's native precision semantics; it does not alter selection or imply a
+rollout gain. Future runs using the corrected parameter-only freeze filter do
+not automatically inherit this historical compatibility requirement.
+
+The selected export inherits checkpoint 2's 16-task support ceiling: task IDs
+0, 1, 7, 8, 9, 12, 16, 17, 18, 20, 21, 22, 26, 30, 43, and 45. The completed
+run fine-tuned IDs 0, 1, and 22 and the matched development evaluation covers
+IDs 0, 1, 8, 22, 30, and 45. The runner rejects tasks outside that inherited
+set; support within the set does not imply that an unevaluated task improved.
+
+New validators should emit the generic
+`npa.behavior.rlc-selected-native-correlation-adapter.v1` and
+`npa.behavior.rlc-selected-serving-validation.v1` schemas with status
+`selected_serving_validated`. The loader also accepts the retained
+update-3599-specific schemas and status only when their selected step is exactly
+3599. Generic receipts require a positive selected step, finite correlation
+values, exact exported-file inventory, and exact RLC serving-source identities.
+
+## Optional execution variants
+
+Native RLC execution remains the default. The runner also exposes two narrow,
+source-bound execution experiments through `--policy-execution-variant`:
+
+| Policy kind | Variant | Change from native execution |
+| --- | --- | --- |
+| `rlc` | `final-stage-backtrack` | After native voting, move from the final stage to the preceding stage only when all three retained votes select that preceding stage. |
+| `rlc` | `adaptive-short-chunk` | At a prediction boundary in either of the final two stages, request 10 actions, retain four inpainting actions, and replan after 10 actions. Earlier stages keep the native 26-to-20-plus-four settings. |
+| `rlc` | `adaptive-short-chunk-transition-refresh` | Keep the adaptive horizons, but discard the remaining old-stage action queue after an accepted stage transition and immediately resample once from the new stage. |
+| `rlc-selected` | `final-stage-backtrack` | Apply the same final-stage vote rule after the selected-state loader and its validation gates. |
+
+For example, add one of these pairs to the internal evaluation worker command:
+
+```text
+--policy-kind rlc --policy-execution-variant final-stage-backtrack
+--policy-kind rlc --policy-execution-variant adaptive-short-chunk
+--policy-kind rlc --policy-execution-variant adaptive-short-chunk-transition-refresh
+--policy-kind rlc-selected --policy-execution-variant final-stage-backtrack
+```
+
+The adaptive option changes the horizon only when the native wrapper needs a
+new prediction. Its transition-refresh derivative changes one more boundary:
+after native voting accepts a new stage, it clears the old-stage queue and
+performs one bounded resample from that new stage. It never retries that
+resample recursively. These options retain the same weights, observations,
+stage predictions, correction rules, and evaluator. Their ordinal-only `RLC_FINAL_STAGE_*` and
+`RLC_HORIZON_*` log records describe interventions without embedding evaluator
+case identifiers.
+
+These options are experimental. `policy-provenance.json` binds the staged
+adapter hashes and the selected intervention. Retained experiments also carry
+their originating source and configuration hashes. The repository does not
+claim an aggregate quality gain. Evaluate a complete predeclared development
+panel against the matching native policy before considering any option. The
+selected-only `transition-refresh` experiment remains a separate execution
+variant and is not combined with adaptive short chunks.
+
+Managed RLC policies support one frozen task in either the development or report
+split. The report path uses the same verified source, weights, adapter, and
+execution-variant gates; enabling it does not submit a challenge entry or turn a
+local report panel into an official leaderboard score.
+
+```bash
+for arm in teacher replay; do
+  candidate=$(case $arm in
+    teacher) echo stage_teacher_action_only_3600 ;;
+    replay) echo stage_parent_replay_action_only_3600 ;;
+  esac)
+  checkpoint_root=$RUNTIME/output/$arm/checkpoints/pi_behavior_b1k_fast/$candidate
+
+  $RUNTIME/openpi/.venv/bin/python $IMPL/evaluate_holdout.py \
+    --source-root $RUNTIME/source/behavior-policy \
+    --adapter-root $RUNTIME/npa-behavior-adapter \
+    --checkpoint $RUNTIME/checkpoints/published-parent \
+    --checkpoint-archive $RUNTIME/checkpoints/published-parent.zip \
+    --checkpoint-root $checkpoint_root \
+    --dataset-root $RUNTIME/datasets/released-rgb-view \
+    --episode-split $RUNTIME/manifests/episode-split.json \
+    --config $IMPL/config-$arm.json \
+    --input-manifest $RUNTIME/output/$arm-inputs.json \
+    --holdout-trace $RUNTIME/output/holdout-trace.jsonl \
+    --output $RUNTIME/output/$arm-holdout-losses.jsonl \
+    --selection $RUNTIME/output/$arm-selection.json
+
+  $RUNTIME/openpi/.venv/bin/python $IMPL/export_selected.py \
+    --checkpoint-root $checkpoint_root \
+    --selection $RUNTIME/output/$arm-selection.json \
+    --output-root $RUNTIME/output/$arm-selected
+done
+```

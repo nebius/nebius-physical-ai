@@ -147,10 +147,11 @@ A real trial with
 distorted gripper/battery details and was rejected. Higher control guidance did
 not establish task preservation. Compare changes on the same episode, appearance
 profiles and seeds in separate fresh run IDs, with a separate SkyPilot API
-directory per run. When testing different source revisions, also give each run
-its own `NPA_CONFIG_DIR`: source staging updates that configuration, and a live
-API correctly rejects changes to its bound configuration. Use the same strict
-evaluation settings for each. Adjust one
+directory per run. A shared, one-shot legacy submission persists staged source
+as the project default. Runtime submissions and submissions with an explicit
+`--isolated-config-dir` keep the source binding scoped to that submission, so
+they do not rewrite the shared `NPA_CONFIG_DIR`. Use the same strict evaluation
+settings for each. Adjust one
 generation control at a time after observing the failure; lowering thresholds
 does not improve pixels.
 

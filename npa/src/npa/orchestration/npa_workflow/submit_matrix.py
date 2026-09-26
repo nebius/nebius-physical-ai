@@ -72,6 +72,30 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "behavior-comet-native-full-training.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The reference requires operator-bound source, dataset, parent, "
+            "runtime and admission identities, an immutable runtime image, "
+            "and a durable volume; shipped values are explicit placeholders."
+        ),
+        notes="Native OpenPI input preflight, full-state training and durable resume.",
+    ),
+    SubmitLiveCase(
+        "behavior-challenge-eval.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Licensed BEHAVIOR asset use is unresolved; the shipped runtime image "
+            "is an explicit placeholder. Dedicated live coverage requires an "
+            "operator-prepared runtime, asset volume, and fixed policy service."
+        ),
+        notes="Official v3.9.2 RGBD evaluator; no challenge score has been measured.",
+    ),
+    SubmitLiveCase(
         "xr1-antioch-finetune.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

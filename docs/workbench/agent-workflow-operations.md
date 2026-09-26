@@ -104,7 +104,20 @@ Omit `--cached` to read live logs from the recorded managed job. Logs for a
 single-stage serial wave remain available if the driver stopped before its first
 task observation. A provider response that the requested task does not exist is
 reported as `VERIFICATION_UNAVAILABLE` with exit code 2; it is not verified stage
-output.
+output. For JSON output, live-query verification covers transport only:
+`live_log_state: available` means the query returned stdout or stderr bytes, while
+`live_log_state: empty` means the query succeeded without returning log bytes.
+When the exact managed job is still `PENDING` or `STARTING`, a non-following
+live request returns immediately with `live_log_state: not_started`, an empty
+log, and the verified status diagnostics. This means the payload has not
+started; it is not a successful empty execution. Use `--follow` to wait for
+payload logs. A `--cached` request never substitutes a live controller query.
+
+SkyPilot managed-job IDs are local to their controller state. If submission used
+an isolated SkyPilot state root, pass that same absolute path as
+`--isolated-config-dir` to `status`, `logs`, and `cancel`. This binds every queue,
+log, pre-cancel verification, and cancellation call to the controller that owns
+the recorded IDs; an unrelated controller can reuse the same numeric job ID.
 
 Diagnose a failed run from the status result first, then request the named failed
 stage's bounded log tail and artifact inventory. Preserve the run ID for resume;

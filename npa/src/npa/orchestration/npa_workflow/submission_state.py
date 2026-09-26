@@ -31,6 +31,10 @@ _SECRET_KEY = re.compile(
 # for an exact receipt and does not persist credential material. Child values
 # remain recursively scanned, so malformed embedded credentials still fail.
 _SAFE_REFERENCE_KEYS = frozenset({"imagePullSecrets", "secret_safe"})
+# This Kubernetes PodSpec field contains a boolean, despite matching the
+# credential-key heuristic through its ``Token`` suffix. The parent/key pair
+# keeps the exemption tied to the rendered Kubernetes structure.
+_SAFE_BOOLEAN_FIELDS = frozenset({("spec", "automountServiceAccountToken")})
 
 
 @dataclass(frozen=True)
@@ -183,8 +187,11 @@ def _contains_secret(value: object, *, parent: str = "") -> bool:
     if isinstance(value, Mapping):
         for key, child in value.items():
             name = str(key)
-            if _SECRET_KEY.search(name) and name not in _SAFE_REFERENCE_KEYS:
-                return True
+            if _SECRET_KEY.search(name):
+                if (parent, name) in _SAFE_BOOLEAN_FIELDS and type(child) is bool:
+                    continue
+                if name not in _SAFE_REFERENCE_KEYS:
+                    return True
             if _contains_secret(child, parent=name):
                 return True
     elif isinstance(value, (list, tuple)):

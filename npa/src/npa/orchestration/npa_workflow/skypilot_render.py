@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shlex
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
@@ -397,6 +398,62 @@ class SkypilotRenderOptions:
     accept_eula: bool = True
 
 
+def _normalize_accelerator(
+    resources: Mapping[str, Any], overrides: Mapping[str, str], env_override: str
+) -> Any:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import accelerator_spec
+
+    value = resources["accelerators"]
+    cloud = str(resources.get("cloud") or "").strip().casefold()
+    alternatives = isinstance(value, Mapping) and len(value) > 1
+    if alternatives and cloud not in {"kubernetes", "k8s"}:
+        return env_override or overrides.get(str(value).strip(), "") or value
+    value = accelerator_spec(value)
+    selected = env_override or overrides.get(value, "")
+    # Product-name remapping must preserve the requested GPU quantity.
+    if selected and ":" not in selected and ":" in value:
+        return f"{selected}:{value.rsplit(':', 1)[1]}"
+    return selected or value
+
+
+def _normalize_resource_memory(value: Any) -> Any:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lower().endswith("gi"):
+            return stripped[:-2]
+        if stripped.lower().endswith("g"):
+            return stripped[:-1]
+    return value
+
+
+def _normalize_cloud_resources(resources: dict[str, Any]) -> dict[str, Any]:
+    cloud = str(resources.get("cloud") or "").strip().casefold()
+    if cloud not in {"kubernetes", "k8s"}:
+        resources.pop("disk_size", None)
+        return resources
+    # SkyPilot ignores Kubernetes disk_size; request pod ephemeral storage.
+    if "disk_size" in resources:
+        resources["ephemeral_storage"] = resources.pop("disk_size")
+    for key in ("cpus", "memory"):
+        if key not in resources:
+            continue
+        raw = str(resources[key]).strip()
+        if raw and not raw.endswith("+"):
+            resources[key] = f"{raw}+"
+    return resources
+
+
+_SKYPILOT_RESOURCE_KEYS = (
+    "cloud",
+    "accelerators",
+    "cpus",
+    "memory",
+    "disk_size",
+    "use_spot",
+    "region",
+)
+
+
 def normalize_resources(
     resources: Mapping[str, Any],
     *,
@@ -404,84 +461,38 @@ def normalize_resources(
 ) -> dict[str, Any]:
     """Map an npa.workflow resource profile onto a SkyPilot ``resources`` block.
 
-    On Kubernetes, exact ``cpus`` / ``memory`` often fail prechecks when no node
-    has that precise free shape. Append ``+`` so SkyPilot can schedule on larger
-    nodes (including GPU nodes with spare CPU).
+    Args:
+        resources: Resolved workflow resource profile.
+        accelerator_overrides: Product names discovered for concrete requests.
+
+    Returns:
+        SkyPilot resources, allowing larger CPU/memory shapes on Kubernetes.
+
+    Raises:
+        ValueError: A Kubernetes accelerator mapping has unselected alternatives.
     """
 
     import os as _os
 
-    # Cluster-specific GPU product override: SkyPilot k8s matches on the node's
-    # advertised accelerator name, which varies by cluster (e.g. RTXPRO6000 vs
-    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). A blanket env override still wins so
-    # operators can retarget without editing the committed blueprint; otherwise
-    # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
     gpu_memory_override = str(_os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or "").strip()
     overrides = dict(accelerator_overrides or {})
-
     out: dict[str, Any] = {}
-    # NOTE: `num_nodes` is deliberately absent. SkyPilot puts it at the TASK level, next
-    # to `resources`, so the renderer lifts it out of the profile in
-    # build_skypilot_task_doc. Adding it here would produce an invalid resources block.
-    for key in (
-        "cloud",
-        "accelerators",
-        "cpus",
-        "memory",
-        "disk_size",
-        "use_spot",
-        "region",
-    ):
+    # num_nodes belongs on the SkyPilot task, not its resources block.
+    for key in _SKYPILOT_RESOURCE_KEYS:
         if key not in resources or resources[key] in (None, ""):
             continue
         value = resources[key]
         if key == "accelerators":
-            selected_override = accel_override or overrides.get(str(value).strip(), "")
-            # A cluster-specific product name should not silently collapse a
-            # multi-GPU request. Accept either an exact ``NAME:COUNT`` override
-            # or a name-only override that preserves the profile's count.
-            if (
-                selected_override
-                and ":" not in selected_override
-                and isinstance(value, str)
-                and ":" in value
-            ):
-                _declared_name, declared_count = value.rsplit(":", 1)
-                value = f"{selected_override}:{declared_count}"
-            elif selected_override:
-                value = selected_override
+            value = _normalize_accelerator(resources, overrides, accel_override)
+            if not value:
+                continue
         if key == "memory":
             if gpu_memory_override and resources.get("accelerators"):
                 value = gpu_memory_override
-            if isinstance(value, str):
-                stripped = value.strip()
-                if stripped.lower().endswith("gi"):
-                    value = stripped[:-2]
-                elif stripped.lower().endswith("g"):
-                    value = stripped[:-1]
+            value = _normalize_resource_memory(value)
         out[key] = value
-
-    cloud = str(out.get("cloud") or "").strip().lower()
-    if cloud in {"kubernetes", "k8s"}:
-        # SkyPilot 0.12.x accepts ``disk_size`` on Kubernetes but explicitly
-        # ignores it because pods have no cloud boot disk. Preserve the profile's
-        # capacity intent using SkyPilot's supported Kubernetes resource request,
-        # which renders as ``ephemeral-storage`` on the pod.
-        if "disk_size" in out:
-            out["ephemeral_storage"] = out.pop("disk_size")
-        for key in ("cpus", "memory"):
-            if key not in out:
-                continue
-            raw = str(out[key]).strip()
-            if raw and not raw.endswith("+"):
-                out[key] = f"{raw}+"
-    else:
-        # Preserve the renderer's historical behavior outside Kubernetes. This
-        # review deliberately settles only the affected Kubernetes profiles and
-        # does not introduce a new VM-cloud boot-disk contract.
-        out.pop("disk_size", None)
-    return out
+    return _normalize_cloud_resources(out)
 
 
 def tool_pip_extra(tool_ref: str) -> str:
@@ -598,6 +609,10 @@ def render_pip_extra_setup(extra: str) -> str:
 #: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
 #: arbitrary cluster configuration.
 TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
+# Linux limits each individual execve argument to 32 4 KiB pages, including
+# its terminating NUL byte. Kubernetes workers use this bound even when the
+# process-wide ARG_MAX is larger.
+_LINUX_MAX_ARGUMENT_BYTES = 131_072
 
 
 def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
@@ -633,6 +648,39 @@ def _contains_uid_zero_override(value: object) -> bool:
                 return True
     elif isinstance(value, (list, tuple)):
         return any(_contains_uid_zero_override(child) for child in value)
+    return False
+
+
+def _main_container_blocks_passwordless_sudo(
+    task_config: Mapping[str, Any],
+) -> bool:
+    """Return whether the explicit Sky task security context disables sudo."""
+
+    kubernetes = task_config.get("kubernetes")
+    if not isinstance(kubernetes, Mapping):
+        return False
+    pod_config = kubernetes.get("pod_config")
+    if not isinstance(pod_config, Mapping):
+        return False
+    spec = pod_config.get("spec")
+    if not isinstance(spec, Mapping):
+        return False
+    pod_security = spec.get("securityContext")
+    pod_security = pod_security if isinstance(pod_security, Mapping) else {}
+    containers = spec.get("containers")
+    if not isinstance(containers, list):
+        return False
+    for container in containers:
+        if not isinstance(container, Mapping) or container.get("name") != "ray-node":
+            continue
+        security = container.get("securityContext")
+        security = security if isinstance(security, Mapping) else {}
+        if security.get("allowPrivilegeEscalation") is not False:
+            return False
+        run_as_user = security.get("runAsUser", pod_security.get("runAsUser"))
+        run_as_non_root = security.get("runAsNonRoot", pod_security.get("runAsNonRoot"))
+        explicit_non_root_user = type(run_as_user) is int and run_as_user > 0
+        return run_as_non_root is True or explicit_non_root_user
     return False
 
 
@@ -1040,18 +1088,27 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
 
     if not command:
         raise NpaWorkflowRenderError("cannot render empty command for SkyPilot task")
-    quoted = " ".join(shlex.quote(str(part)) for part in command)
+    command_parts = [str(part) for part in command]
+    for index, part in enumerate(command_parts):
+        observed_bytes = len(part.encode("utf-8"))
+        if observed_bytes >= _LINUX_MAX_ARGUMENT_BYTES:
+            raise NpaWorkflowRenderError(
+                f"command argument {index} is {observed_bytes} UTF-8 bytes; Linux "
+                f"execve allows at most {_LINUX_MAX_ARGUMENT_BYTES - 1} bytes per "
+                "argument; stage large payloads as declared workflow inputs, "
+                "objects, or mounts and keep the command argument bounded"
+            )
+    quoted = " ".join(shlex.quote(part) for part in command_parts)
     preamble_block = f"{preamble.rstrip(chr(10))}\n" if preamble.strip() else ""
     return (
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
         'export PATH="$HOME/.local/bin:$PATH"\n'
         # Interpreter-independent import path for npa. `pip install -e` binds npa to
-        # whichever python ran pip, and the command below runs through `bash -lc`,
-        # whose login profile can resolve a DIFFERENT python3 (observed on SkyPilot's
-        # GPU default image: the outer shell imports npa fine, the login shell does
-        # not). Prepending the staged source tree unconditionally fixes every shell;
-        # it is the same package, so it is a no-op where the install already works.
+        # whichever python ran pip. Stage commands inherit this environment through
+        # a non-login `bash -c`; otherwise a login profile could select a different
+        # python3, as observed on SkyPilot's GPU default image. Explicit source
+        # precedence also keeps a baked package from shadowing the staged code.
         # Images activate their toolchain either through docker ENV (inherited) or
         # through profile scripts; source the latter best-effort so dropping the login
         # shell (see scheduler.build_scheduler_task) changes nothing for them.
@@ -1108,6 +1165,9 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         '    npa_python=""\n'
         "  fi\n"
         "fi\n"
+        # Custom stages may activate a policy environment or reset PATH in a child
+        # shell. Preserve the prepared control interpreter for artifact operations.
+        'export NPA_CONTROL_PYTHON="$npa_python"\n'
         # A vendor image can bake a STALE npa source tree on PYTHONPATH, which shadows every
         # install — editable or not, in any interpreter. Live job 285: the cosmos2-transfer image
         # ships `PYTHONPATH=/opt/npa/src`, whose npa predates the `cosmos2` subcommand, so the
@@ -1283,6 +1343,14 @@ def default_npa_setup() -> str:
         # Record where npa was installed from so a per-tool extra (see
         # TOOL_REF_PIP_EXTRAS) can be layered on top of the SAME source tree.
         "npa_record_src_root() { printf '%s' \"$1\" > /tmp/npa-src-root; }\n"
+        # Prefer the image's declared dependency-complete interpreter. Isaac images put an
+        # externally managed system python first on PATH while keeping the supported NPA
+        # runtime in NPA_BAKED_PYTHON. Falling back remains necessary for generic images.
+        'npa_setup_python="${NPA_BAKED_PYTHON:-}"\n'
+        'if [ -z "$npa_setup_python" ] || [ ! -x "$npa_setup_python" ] '
+        '|| ! "$npa_setup_python" -c "import sys" >/dev/null 2>&1; then\n'
+        '  npa_setup_python="$(command -v python3)"\n'
+        "fi\n"
         # Thin workbench images keep the installable project at /opt/npa rather than the
         # legacy /opt/nebius-physical-ai/npa path.  Record it even when the baked `npa`
         # launcher is already on PATH: vendor-interpreter setup still needs the source root
@@ -1303,17 +1371,16 @@ def default_npa_setup() -> str:
         # uv-created environments deliberately need not contain pip. GR00T's
         # image is one: `python3 -m pip` exits before the source overlay can be
         # staged even though the image ships uv. Let uv target the exact
-        # interpreter that `python3` resolves to; unlike activating another
-        # interpreter, this preserves the vendor environment and its pins.
-        '  npa_install_python="$(command -v python3)"\n'
-        '  if "$npa_install_python" -m pip --version >/dev/null 2>&1; then\n'
-        '    "$npa_install_python" -m pip install -q "$target" "$@" \\\n'
-        '      || "$npa_install_python" -m pip install -q "$target" "$@" --break-system-packages \\\n'
-        '      || "$npa_install_python" -m pip install -q "$target" "$@" --user\n'
+        # selected setup interpreter; unlike activating another interpreter,
+        # this preserves the supported baked environment and its pins.
+        '  if "$npa_setup_python" -m pip --version >/dev/null 2>&1; then\n'
+        '    "$npa_setup_python" -m pip install -q "$target" "$@" \\\n'
+        '      || "$npa_setup_python" -m pip install -q "$target" "$@" --break-system-packages \\\n'
+        '      || "$npa_setup_python" -m pip install -q "$target" "$@" --user\n'
         "  elif command -v uv >/dev/null 2>&1; then\n"
-        '    uv pip install -q --python "$npa_install_python" "$target" "$@"\n'
+        '    uv pip install -q --python "$npa_setup_python" "$target" "$@"\n'
         "  else\n"
-        '    echo "python3 has no pip and uv is unavailable: $npa_install_python" >&2\n'
+        '    echo "selected python has no pip and uv is unavailable: $npa_setup_python" >&2\n'
         "    return 1\n"
         "  fi\n"
         "}\n"
@@ -1332,8 +1399,10 @@ def default_npa_setup() -> str:
         "    npa_record_src_root /opt/nebius-physical-ai/npa\n"
         "  else\n"
         '    if [ ! -d /tmp/npa-src ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
-        "      npa_pip_install boto3\n"
-        "      python3 - <<'PY'\n"
+        "      if ! \"$npa_setup_python\" -c 'import boto3, botocore' >/dev/null 2>&1; then\n"
+        "        npa_pip_install boto3\n"
+        "      fi\n"
+        "      \"$npa_setup_python\" - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
         "import boto3\n"
@@ -1385,8 +1454,10 @@ def default_npa_setup() -> str:
         # baked workbench image so branch code (e.g. a new augment prompt path)
         # actually runs on GPU without rebuilding the image. Default off (no-op).
         'if [ "$NPA_SRC_OVERLAY" = "1" ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
-        "  npa_pip_install boto3\n"
-        "  python3 - <<'PY'\n"
+        "  if ! \"$npa_setup_python\" -c 'import boto3, botocore' >/dev/null 2>&1; then\n"
+        "    npa_pip_install boto3\n"
+        "  fi\n"
+        "  \"$npa_setup_python\" - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
         "import boto3\n"
@@ -1433,15 +1504,19 @@ def default_npa_setup() -> str:
         "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
         "  fi\n"
         "  export PYTHONPATH\n"
-        # --no-deps FIRST: the overlay is the same distribution the image already has, so
-        # resolving its requirements would only risk moving a pinned vendor stack.
-        "  if ! npa_pip_install -e /tmp/npa-src-overlay --no-deps; then\n"
-        "    echo 'using isolated non-root npa overlay environment' >&2\n"
-        "    python3 -m venv --system-site-packages /tmp/npa-overlay-venv\n"
-        "    /tmp/npa-overlay-venv/bin/python -m pip install -q -e "
+        # A source-first PYTHONPATH is sufficient when the baked interpreter already has
+        # the CLI dependency set. Avoid changing that environment merely to register the
+        # same distribution. If the import fails, preserve the safe --no-deps-first order.
+        "  if ! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
+        "    if ! npa_pip_install -e /tmp/npa-src-overlay --no-deps; then\n"
+        "      echo 'using isolated non-root npa overlay environment' >&2\n"
+        '      "$npa_setup_python" -m venv --system-site-packages /tmp/npa-overlay-venv\n'
+        "      /tmp/npa-overlay-venv/bin/python -m pip install -q -e "
         "/tmp/npa-src-overlay --no-deps\n"
-        '    PATH="/tmp/npa-overlay-venv/bin:$PATH"\n'
-        "    export PATH\n"
+        "      npa_setup_python=/tmp/npa-overlay-venv/bin/python\n"
+        '      PATH="/tmp/npa-overlay-venv/bin:$PATH"\n'
+        "      export PATH\n"
+        "    fi\n"
         "  fi\n"
         # ... and WITH deps if the CLI still will not import. An image that installed npa with
         # its own curated `--no-deps` list leaves the overlay short of whatever that list
@@ -1449,7 +1524,7 @@ def default_npa_setup() -> str:
         # tree that declares paramiko as a dependency. Probe the CLI, not `import npa` — npa
         # imported fine there; it was the command tree that could not load. Same
         # safe-then-sufficient order as the vendor-interpreter install.
-        "  if ! python3 -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
+        "  if ! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         "    echo 'npa CLI is not importable after the overlay; installing its dependencies'"
         " >&2\n"
         "    npa_pip_install -e /tmp/npa-src-overlay\n"
@@ -1465,20 +1540,20 @@ def default_npa_setup() -> str:
         # Record a python COMMAND that can import npa, so stage bodies can be pointed
         # at it. Three candidates are tried in order, because each of them is the right
         # answer on some real image:
-        #   1. NPA_BAKED_PYTHON - the image's declared, dependency-complete runtime;
-        #   2. sys.executable - correct on normal images;
+        #   1. npa_setup_python - the interpreter used and verified above;
+        #   2. NPA_BAKED_PYTHON - the image's declared, dependency-complete runtime;
         #   3. the alias target - the Isaac Lab image aliases python3 to
         #      /workspace/isaaclab/_isaac_sim/python.sh, and its embedded kit python
         #      cannot import its own site-packages unless launched through that
         #      wrapper (live run: "could not record a usable npa interpreter");
         #   4. `type -P python3` - the PATH binary, ignoring any alias.
-        "python3 -c 'import npa' >/dev/null 2>&1 || "
+        "\"$npa_setup_python\" -c 'import npa' >/dev/null 2>&1 || "
         "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
         'npa_python=""\n'
         'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
         '-e "s/^\'//" -e "s/\'$//")"\n'
-        'for candidate in "${NPA_BAKED_PYTHON:-}" '
-        "\"$(python3 -c 'import sys; print(sys.executable)' "
+        'for candidate in "$npa_setup_python" "${NPA_BAKED_PYTHON:-}" '
+        '"$("$npa_setup_python" -c \'import sys; print(sys.executable)\' '
         '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
         '|| true)"; do\n'
         '  if [ -n "$candidate" ] && [ -x "$candidate" ] && '
@@ -1502,9 +1577,9 @@ def default_npa_setup() -> str:
         # scripts dir — the judge stage died with `bash: npa: command not found` on an image
         # where that fallback fired (live job 260).
         "  for scripts_dir in "
-        '"$(python3 -c \'import sysconfig; print(sysconfig.get_path("scripts"))\' '
+        '"$("$npa_setup_python" -c \'import sysconfig; print(sysconfig.get_path("scripts"))\' '
         '2>/dev/null || true)" '
-        "\"$(python3 -c 'import sysconfig; "
+        '"$("$npa_setup_python" -c \'import sysconfig; '
         'print(sysconfig.get_path("scripts", scheme="posix_user"))\' 2>/dev/null || true)" '
         '"$HOME/.local/bin"; do\n'
         '    if [ -n "$scripts_dir" ] && [ -x "$scripts_dir/npa" ]; then\n'
@@ -2190,6 +2265,16 @@ def build_skypilot_task_doc(
                 "first-party workflow images must satisfy the SkyPilot bootstrap "
                 "contract as their declared image user; runAsUser: 0 overrides are forbidden"
             )
+        if is_trusted_npa_image(image) and _main_container_blocks_passwordless_sudo(
+            task_config
+        ):
+            raise NpaWorkflowRenderError(
+                "first-party workflow images require passwordless sudo for the "
+                "SkyPilot bootstrap when the main container runs as non-root; "
+                "allowPrivilegeEscalation: false enables no-new-privileges and "
+                "blocks sudo; omit the conflicting main-container override or "
+                "allow sudo privilege escalation"
+            )
     # A pod is discarded when the stage ends, so on Kubernetes the cache env above
     # only survives the run if it points at a volume that outlives the pod. Mount
     # the operator's claim; a profile that already mounts something at the cache
@@ -2471,11 +2556,178 @@ def _render_docs(
                 width=10_000,
             ).rstrip()
         )
-    return "\n---\n".join(chunks) + "\n"
+    rendered = "\n---\n".join(chunks) + "\n"
+    assert_literal_python_heredocs_compile(rendered)
+    return rendered
 
 
 _SKYPILOT_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SKYPILOT_SHELL_FIELDS = frozenset({"run", "setup"})
+_SIMPLE_HEREDOC_RE = re.compile(
+    r"<<(?P<strip>-?)(?:(?P<quote>['\"])(?P<quoted>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P=quote)|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))\s*(?:#.*)?$"
+)
+_SHELL_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=(.*)", re.DOTALL)
+_PYTHON_EXECUTABLE_RE = re.compile(r"python(?:3(?:\.\d+)?)?")
+_PYTHON_STDIN_OPTION_RE = re.compile(r"-[BEIOPsSuvx]+")
+_DYNAMIC_OR_CONTROL_SHELL_CHARS = frozenset("$`~;&|<>(){}*?[]")
+
+
+def _heredoc_end(
+    lines: list[str], start: int, delimiter: str, strip_tabs: bool
+) -> int | None:
+    """Return the terminator index for one simple heredoc."""
+
+    for index in range(start, len(lines)):
+        candidate = lines[index].lstrip("\t") if strip_tabs else lines[index]
+        if candidate == delimiter:
+            return index
+    return None
+
+
+def _literal_command_tokens(prefix: str) -> list[str] | None:
+    """Parse a literal command prefix and remove fixed environment assignments."""
+
+    try:
+        tokens = shlex.split(prefix, comments=True, posix=True)
+    except ValueError:
+        return None
+    if any(_DYNAMIC_OR_CONTROL_SHELL_CHARS.intersection(token) for token in tokens):
+        return None
+    while tokens:
+        assignment = _SHELL_ASSIGNMENT_RE.fullmatch(tokens[0])
+        if assignment is None:
+            break
+        tokens.pop(0)
+    return tokens
+
+
+def _python_reads_stdin(prefix: str) -> bool:
+    """Return whether a supported literal Python command reads its program on stdin."""
+
+    tokens = _literal_command_tokens(prefix)
+    if not tokens:
+        return False
+    executable = tokens[0].rsplit("/", 1)[-1]
+    if _PYTHON_EXECUTABLE_RE.fullmatch(executable) is None:
+        return False
+    arguments = tokens[1:]
+    if not arguments:
+        return True
+    stdin_index = arguments.index("-") if "-" in arguments else len(arguments)
+    options = arguments[:stdin_index]
+    if not all(_PYTHON_STDIN_OPTION_RE.fullmatch(option) for option in options):
+        return False
+    return True
+
+
+def _shell_quote_state(text: str, initial: str | None) -> tuple[str | None, bool, bool]:
+    """Return shell quote, comment, and trailing-continuation state."""
+
+    state = initial
+    escaped = False
+    for character in text:
+        if state == "'":
+            state = None if character == "'" else state
+            continue
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if state in {'"', "`"}:
+            state = None if character == state else state
+            continue
+        if character == "#":
+            return state, False, False
+        if character in {'"', "'", "`"}:
+            state = character
+    return state, True, escaped
+
+
+def _shell_heredocs(script: str) -> Iterator[tuple[str, str, re.Match[str], int]]:
+    """Yield simple heredocs while skipping their bodies during command scanning."""
+
+    lines = script.splitlines()
+    index = 0
+    quote_state: str | None = None
+    continued_command = False
+    while index < len(lines):
+        line = lines[index]
+        match = _SIMPLE_HEREDOC_RE.search(line)
+        prefix_state, active, _ = _shell_quote_state(
+            line[: match.start()] if match else line, quote_state
+        )
+        if match is not None and active and prefix_state is None:
+            delimiter = match.group("quoted") or match.group("bare")
+            strip_tabs = match.group("strip") == "-"
+            end = _heredoc_end(lines, index + 1, delimiter, strip_tabs)
+            if end is not None:
+                body_lines = lines[index + 1 : end]
+                if strip_tabs:
+                    body_lines = [body.lstrip("\t") for body in body_lines]
+                if not continued_command:
+                    yield (
+                        line[: match.start()],
+                        "\n".join(body_lines) + "\n",
+                        match,
+                        index + 1,
+                    )
+                quote_state, _, trailing = _shell_quote_state(line, quote_state)
+                continued_command = quote_state is not None or trailing
+                index = end + 1
+                continue
+        quote_state, _, trailing = _shell_quote_state(line, quote_state)
+        continued_command = quote_state is not None or trailing
+        index += 1
+
+
+def assert_literal_python_heredocs_compile(yaml_text: str) -> None:
+    """Compile supported literal Python heredocs in rendered shell fields.
+
+    Args:
+        yaml_text: Rendered SkyPilot YAML to inspect.
+
+    Returns:
+        None.
+
+    Raises:
+        NpaWorkflowRenderError: If rendered YAML is invalid or a supported
+            quoted Python heredoc contains invalid syntax.
+    """
+
+    try:
+        documents = list(yaml.safe_load_all(yaml_text))
+    except yaml.YAMLError as exc:
+        raise NpaWorkflowRenderError(
+            f"rendered SkyPilot YAML is invalid while checking Python heredocs: {exc}"
+        ) from exc
+    for document_number, document in enumerate(documents, start=1):
+        if not isinstance(document, Mapping):
+            continue
+        for field_name in _SKYPILOT_SHELL_FIELDS:
+            script = document.get(field_name)
+            if not isinstance(script, str):
+                continue
+            _compile_python_heredocs(script, document_number, field_name)
+
+
+def _compile_python_heredocs(script: str, document: int, field_name: str) -> None:
+    """Compile the supported Python heredocs from one shell field."""
+
+    for prefix, body, match, line_number in _shell_heredocs(script):
+        if match.group("quote") is None or not _python_reads_stdin(prefix):
+            continue
+        delimiter = match.group("quoted")
+        filename = f"<SkyPilot document {document} {field_name} heredoc {delimiter}>"
+        try:
+            compile(body, filename, "exec")
+        except SyntaxError as exc:
+            raise NpaWorkflowRenderError(
+                f"literal Python heredoc in SkyPilot document {document} "
+                f"{field_name!r} at shell line {line_number} does not compile: {exc.msg}"
+            ) from exc
 
 
 def _placeholder_names(value: object) -> set[str]:
