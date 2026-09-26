@@ -1,7 +1,7 @@
 """Gemini Robotics 2 API-backed BYOF pipeline.
 
-Orchestrates the three ``workbench.gemini_robotics`` stages — ER planning,
-on-device adaptation, and rubric evaluation — and writes content-addressed
+Orchestrates the ``workbench.gemini_robotics`` stages — ER planning and
+rubric evaluation — and writes content-addressed
 receipts for every artifact.  The Gemini API is closed-weight, so all stages
 are zero-GPU: the client is injected (real ``GeminiRoboticsClient`` in
 production, a fake in tests) and no heavy imports happen at module load.
@@ -18,10 +18,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from npa.cli.workbench.gemini_robotics import (
-    ADAPT_RECEIPT_SCHEMA,
     EVAL_RECEIPT_SCHEMA,
     PLAN_RECEIPT_SCHEMA,
-    AdaptationJob,
     EvalResult,
     GeminiRoboticsClient,
     GeminiRoboticsError,
@@ -44,10 +42,6 @@ class GeminiRoboticsPipelineConfig:
     output_dir: str
     images: list[str] = field(default_factory=list)
     model: str = ""
-    run_adaptation: bool = False
-    dataset_path: str = ""
-    adaptation_display_name: str = ""
-    adapt_wait: bool = True
     rubric_path: str = ""
 
     def resolved_model(self, default: str) -> str:
@@ -115,48 +109,6 @@ def run_er_planning_stage(
     return receipt
 
 
-def run_adaptation_stage(
-    config: GeminiRoboticsPipelineConfig,
-    client: GeminiRoboticsClient | None = None,
-) -> dict[str, Any]:
-    """Run the on-device adaptation stage and persist its receipt."""
-    from npa.cli.workbench.gemini_robotics import PROVISIONAL_MODEL_ID, _read_examples
-
-    if not config.dataset_path:
-        raise GeminiRoboticsPipelineError(
-            "Adaptation stage requires dataset_path to be set."
-        )
-    active = _client_or_default(client)
-    try:
-        examples = _read_examples(Path(config.dataset_path))
-        operation = active.submit_adaptation(
-            display_name=config.adaptation_display_name or config.task,
-            base_model=config.resolved_model(PROVISIONAL_MODEL_ID),
-            examples=examples,
-        )
-        job: AdaptationJob | None = None
-        if config.adapt_wait:
-            job = active.wait_for_adaptation(operation)
-    except GeminiRoboticsError as exc:
-        raise GeminiRoboticsPipelineError(f"Adaptation stage failed: {exc}") from exc
-    receipt: dict[str, Any] = {
-        "schema": ADAPT_RECEIPT_SCHEMA,
-        "display_name": config.adaptation_display_name or config.task,
-        "base_model": config.resolved_model(PROVISIONAL_MODEL_ID),
-        "operation": operation,
-        "num_examples": len(examples),
-        "done": bool(job.done) if job else False,
-        "tuned_model": job.tuned_model if job else "",
-        "error": job.error if job else "",
-        "created_at": _utc_now(),
-    }
-    adapt_path = Path(config.output_dir) / "adaptation.json"
-    digest = _write_json(adapt_path, receipt)
-    receipt["artifact_path"] = str(adapt_path)
-    receipt["artifact_sha256"] = digest
-    return receipt
-
-
 def run_eval_stage(
     config: GeminiRoboticsPipelineConfig,
     plan_receipt: Mapping[str, Any],
@@ -195,19 +147,13 @@ def run_pipeline(
     config: GeminiRoboticsPipelineConfig,
     client: GeminiRoboticsClient | None = None,
 ) -> dict[str, Any]:
-    """Run plan → (adapt) → eval and write the pipeline receipt."""
+    """Run plan → eval and write the pipeline receipt."""
     stages: dict[str, Any] = {}
     plan_receipt = run_er_planning_stage(config, client)
     stages["plan"] = {
         "artifact_path": plan_receipt["artifact_path"],
         "artifact_sha256": plan_receipt["artifact_sha256"],
     }
-    if config.run_adaptation:
-        adapt_receipt = run_adaptation_stage(config, client)
-        stages["adaptation"] = {
-            "artifact_path": adapt_receipt["artifact_path"],
-            "artifact_sha256": adapt_receipt["artifact_sha256"],
-        }
     if config.rubric_path:
         eval_receipt = run_eval_stage(config, plan_receipt, client)
         stages["eval"] = {
@@ -256,15 +202,6 @@ def build_parser() -> argparse.ArgumentParser:
     plan_p.add_argument("--model", required=True, help="Gemini model id (required).")
     plan_p.add_argument("--output-dir", required=True)
 
-    adapt_p = sub.add_parser("adapt", help="Submit an adaptation job.")
-    adapt_p.add_argument("--dataset-path", required=True)
-    adapt_p.add_argument("--display-name", required=True)
-    adapt_p.add_argument(
-        "--base-model", required=True, help="Base model id (required)."
-    )
-    adapt_p.add_argument("--output-dir", required=True)
-    adapt_p.add_argument("--no-wait", dest="wait", action="store_false", default=True)
-
     eval_p = sub.add_parser("eval", help="Evaluate a plan against a rubric.")
     eval_p.add_argument("--plan-path", required=True)
     eval_p.add_argument("--rubric-path", required=True)
@@ -291,17 +228,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             model=args.model,
         )
         receipt = run_er_planning_stage(pipeline_config, client)
-    elif args.command == "adapt":
-        pipeline_config = GeminiRoboticsPipelineConfig(
-            task=args.display_name,
-            output_dir=args.output_dir,
-            model=args.base_model,
-            dataset_path=args.dataset_path,
-            adaptation_display_name=args.display_name,
-            run_adaptation=True,
-            adapt_wait=args.wait,
-        )
-        receipt = run_adaptation_stage(pipeline_config, client)
     elif args.command == "eval":
         pipeline_config = GeminiRoboticsPipelineConfig(
             task=args.plan_path,

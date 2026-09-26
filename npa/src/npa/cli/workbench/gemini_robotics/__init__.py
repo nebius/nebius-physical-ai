@@ -6,8 +6,7 @@ API-gateway posture as ``token_factory`` and ``vlm_eval``: it calls the hosted
 Gemini API for
 
 - ``plan`` — ER embodied-reasoning planning, with safety tool calls;
-- ``adapt`` — on-device adaptation jobs (model tuning via the Gemini API);
-- ``eval`` — rubric-scored evaluation of a plan or adaptation outcome.
+- ``eval`` — rubric-scored evaluation of a plan.
 
 Credentials come from the ``GOOGLE_API_KEY`` environment variable (overrideable
 with ``GEMINI_ROBOTICS_BASE_URL`` for the endpoint).  Auth failures raise a
@@ -36,15 +35,13 @@ from rich.console import Console
 # (override-required) and fails closed otherwise. Do not treat these as
 # operational.
 PROVISIONAL_API_BASE_URL = "https://generativelanguage.googleapis.com"
-PROVISIONAL_MODEL_ID = "gemini-robotics-er-1.6"
+PROVISIONAL_MODEL_ID = "gemini-robotics-er-2-preview"
 API_KEY_ENV = "GOOGLE_API_KEY"
 BASE_URL_ENV = "GEMINI_ROBOTICS_BASE_URL"
 
 DEFAULT_TIMEOUT_S = 120.0
 DEFAULT_RETRY_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
-DEFAULT_ADAPT_TIMEOUT_S = 86_400.0
-DEFAULT_ADAPT_POLL_INTERVAL_S = 30.0
 
 ER_SYSTEM_INSTRUCTION = (
     "You are Gemini Robotics-ER, an embodied-reasoning planner for physical robots. "
@@ -79,13 +76,12 @@ SAFETY_TOOL_DECLARATIONS: list[dict[str, Any]] = [
 ]
 
 PLAN_RECEIPT_SCHEMA = "npa.gemini_robotics.plan.v1"
-ADAPT_RECEIPT_SCHEMA = "npa.gemini_robotics.adaptation.v1"
 EVAL_RECEIPT_SCHEMA = "npa.gemini_robotics.eval.v1"
 
 app = typer.Typer(
     name="gemini-robotics",
     help=(
-        "Gemini Robotics API-backed toolRef (plan, adapt, eval). "
+        "Gemini Robotics API-backed toolRef (plan, eval). "
         "Provisional adapter: API base URL and model id must be supplied "
         "explicitly; no live access has been validated."
     ),
@@ -116,13 +112,6 @@ class GeminiRoboticsConfig:
 
     def generate_content_url(self, model: str) -> str:
         return f"{self.base_url}/v1beta/models/{model}:generateContent"
-
-    @property
-    def tuned_models_url(self) -> str:
-        return f"{self.base_url}/v1beta/tunedModels"
-
-    def operation_url(self, operation_name: str) -> str:
-        return f"{self.base_url}/v1beta/{operation_name}"
 
 
 def resolve_config(
@@ -165,17 +154,6 @@ class PlanResult:
     safety_calls: list[dict[str, Any]] = field(default_factory=list)
     model: str = ""
     finish_reason: str = ""
-
-
-@dataclass
-class AdaptationJob:
-    """Adaptation (tuning) job state."""
-
-    name: str
-    display_name: str
-    done: bool
-    tuned_model: str = ""
-    error: str = ""
 
 
 @dataclass
@@ -335,85 +313,6 @@ class GeminiRoboticsClient:
             finish_reason=str((candidates[0] or {}).get("finishReason", "")),
         )
 
-    def submit_adaptation(
-        self,
-        *,
-        display_name: str,
-        base_model: str,
-        examples: Sequence[Mapping[str, str]],
-    ) -> str:
-        """Submit an on-device adaptation (tuning) job; returns the operation name."""
-        if not examples:
-            raise GeminiRoboticsError("Adaptation needs at least one training example.")
-        training_examples = [
-            {"text_input": ex["input"], "output": ex["output"]} for ex in examples
-        ]
-        payload = {
-            "display_name": display_name,
-            "base_model": f"models/{base_model}",
-            "tuning_task": {
-                "training_data": {"examples": {"examples": training_examples}}
-            },
-        }
-        body = self._request(
-            "POST", self._config.tuned_models_url, payload, "adaptation submit"
-        )
-        name = body.get("name")
-        if not name:
-            raise GeminiRoboticsError(
-                "Gemini API did not return an operation name for the adaptation job."
-            )
-        return str(name)
-
-    def adaptation_status(self, operation_name: str) -> AdaptationJob:
-        """Poll a single adaptation operation."""
-        body = self._request(
-            "GET", self._config.operation_url(operation_name), None, "adaptation status"
-        )
-        done = bool(body.get("done"))
-        error = ""
-        tuned_model = ""
-        response = body.get("response")
-        if isinstance(response, dict):
-            tuned_model = str(response.get("name", ""))
-        err = body.get("error")
-        if isinstance(err, dict) and err.get("message"):
-            error = str(err["message"])
-        display_name = ""
-        metadata = body.get("metadata")
-        if isinstance(metadata, dict):
-            display_name = str(metadata.get("displayName", ""))
-        return AdaptationJob(
-            name=operation_name,
-            display_name=display_name,
-            done=done,
-            tuned_model=tuned_model,
-            error=error,
-        )
-
-    def wait_for_adaptation(
-        self,
-        operation_name: str,
-        timeout_s: float = DEFAULT_ADAPT_TIMEOUT_S,
-        poll_interval_s: float = DEFAULT_ADAPT_POLL_INTERVAL_S,
-    ) -> AdaptationJob:
-        """Block until the adaptation operation completes or the timeout hits."""
-        deadline = time.monotonic() + timeout_s
-        while True:
-            job = self.adaptation_status(operation_name)
-            if job.done:
-                if job.error:
-                    raise GeminiRoboticsError(
-                        f"Adaptation job {operation_name} failed: {job.error}"
-                    )
-                return job
-            if time.monotonic() >= deadline:
-                raise GeminiRoboticsError(
-                    f"Adaptation job {operation_name} did not finish within "
-                    f"{timeout_s:.0f}s."
-                )
-            self._sleeper(poll_interval_s)
-
     def eval_plan(
         self,
         *,
@@ -489,34 +388,6 @@ def _write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
     )
 
 
-def _read_examples(dataset_path: Path) -> list[dict[str, str]]:
-    examples: list[dict[str, str]] = []
-    for lineno, line in enumerate(
-        dataset_path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = json.loads(line)
-        except ValueError as exc:
-            raise GeminiRoboticsError(
-                f"Dataset line {lineno} is not valid JSON: {dataset_path}"
-            ) from exc
-        if (
-            not isinstance(record, dict)
-            or "input" not in record
-            or "output" not in record
-        ):
-            raise GeminiRoboticsError(
-                f"Dataset line {lineno} needs 'input' and 'output' keys: {dataset_path}"
-            )
-        examples.append(
-            {"input": str(record["input"]), "output": str(record["output"])}
-        )
-    return examples
-
-
 @app.command("plan")
 def plan_cmd(
     task: str = typer.Argument(..., help="Natural-language task for the ER planner."),
@@ -565,71 +436,6 @@ def plan_cmd(
         "plan_text": result.text,
         "safety_calls": result.safety_calls,
         "finish_reason": result.finish_reason,
-    }
-    if output_path and not dry_run:
-        _write_receipt(Path(output_path), receipt)
-        receipt["written_path"] = output_path
-    console.print(json.dumps(receipt, indent=2))
-    return receipt
-
-
-@app.command("adapt")
-def adapt_cmd(
-    dataset_path: str = typer.Argument(
-        ..., help="JSONL dataset with 'input'/'output' per line."
-    ),
-    display_name: str = typer.Option(
-        ..., "--display-name", help="Human-readable adaptation job name."
-    ),
-    base_model: str = typer.Option(
-        ..., "--base-model", help="Base model id to adapt (required; no default)."
-    ),
-    api_base_url: str = typer.Option(
-        "",
-        "--api-base-url",
-        help=f"Gemini API base URL (or set {BASE_URL_ENV}).",
-    ),
-    output_path: str = typer.Option(
-        "", "--output-path", help="Write the adaptation receipt JSON here."
-    ),
-    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for completion."),
-    timeout_s: float = typer.Option(
-        DEFAULT_ADAPT_TIMEOUT_S, "--timeout-s", help="Max seconds to wait."
-    ),
-    poll_interval_s: float = typer.Option(
-        DEFAULT_ADAPT_POLL_INTERVAL_S,
-        "--poll-interval-s",
-        help="Seconds between status polls.",
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Do not write the receipt artifact."
-    ),
-) -> dict[str, Any]:
-    """Submit an on-device adaptation job via the Gemini API."""
-    try:
-        config = resolve_config(base_url=api_base_url or None)
-        client = GeminiRoboticsClient(config)
-        examples = _read_examples(Path(dataset_path))
-        operation = client.submit_adaptation(
-            display_name=display_name, base_model=base_model, examples=examples
-        )
-        job: AdaptationJob | None = None
-        if wait:
-            job = client.wait_for_adaptation(
-                operation, timeout_s=timeout_s, poll_interval_s=poll_interval_s
-            )
-    except GeminiRoboticsError as exc:
-        _fail(str(exc))
-        raise  # pragma: no cover - _fail raises
-    receipt: dict[str, Any] = {
-        "schema": ADAPT_RECEIPT_SCHEMA,
-        "display_name": display_name,
-        "base_model": base_model,
-        "operation": operation,
-        "num_examples": len(examples),
-        "done": bool(job.done) if job else False,
-        "tuned_model": job.tuned_model if job else "",
-        "error": job.error if job else "",
     }
     if output_path and not dry_run:
         _write_receipt(Path(output_path), receipt)

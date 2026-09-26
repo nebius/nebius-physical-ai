@@ -27,9 +27,8 @@ leisaac  LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool
 nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses
     Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
-mjlab  MJLab locomotion policy evaluation for SONIC workflows.
-gemini-robotics  Gemini Robotics API-backed toolRef (plan, adapt, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated.
 mjlab  MJLab GPU robot learning, evaluation and ONNX export.
+gemini-robotics  Gemini Robotics API-backed toolRef (plan, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated.
 namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
 openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
@@ -82,9 +81,8 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `leisaac` | LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool. |
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
-| `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
-| `gemini-robotics` | Gemini Robotics API-backed toolRef (plan, adapt, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated. |
 | `mjlab` | MJLab GPU robot learning, evaluation and ONNX export. |
+| `gemini-robotics` | Gemini Robotics API-backed toolRef (plan, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated. |
 | `namespace` | Create or select Kubernetes namespaces. |
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
 | `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |

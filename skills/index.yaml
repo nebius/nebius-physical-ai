@@ -602,7 +602,7 @@ skills:
         path: npa/docker/workbench/lichtblick/Dockerfile
   - name: gemini-robotics
     category: tools
-    when_to_use: "Gemini Robotics 2 toolRefs: ER embodied-reasoning planning, on-device adaptation jobs, or rubric evaluation via the hosted Gemini API, or the npa workbench gemini-robotics CLI."
+    when_to_use: "Gemini Robotics 2 toolRefs: ER embodied-reasoning planning or rubric evaluation via the hosted Gemini API, or the npa workbench gemini-robotics CLI."
     path: skills/tools/gemini-robotics/SKILL.md
     smoke:
       - type: cli_help

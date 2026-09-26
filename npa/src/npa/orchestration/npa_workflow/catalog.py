@@ -68,7 +68,6 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.gemini_robotics.plan": "public Gemini Robotics planning primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
-    "workbench.gemini_robotics.adapt": "public Gemini Robotics adaptation primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
     "workbench.gemini_robotics.eval": "public Gemini Robotics evaluation primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
 }
 
@@ -2053,28 +2052,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--task",
             "{{config.task}}",
             "--model",
-            "{{config.model_id}}",
-            "--output-dir",
-            "{{config.output_dir}}",
-        ],
-    ),
-    "workbench.gemini_robotics.adapt": ToolEntry(
-        name="workbench.gemini_robotics.adapt",
-        description=(
-            "Submit an on-device adaptation job via the Gemini API "
-            "(provisional adapter: API base URL and model id must be supplied "
-            "explicitly; no live access has been validated)."
-        ),
-        argv_template=[
-            *_GEMINI_ROBOTICS_PIPELINE,
-            "--api-base-url",
-            "{{config.api_base_url}}",
-            "adapt",
-            "--dataset-path",
-            "{{config.dataset_path}}",
-            "--display-name",
-            "{{config.adaptation_display_name}}",
-            "--base-model",
             "{{config.model_id}}",
             "--output-dir",
             "{{config.output_dir}}",

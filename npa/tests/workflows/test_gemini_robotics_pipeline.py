@@ -11,14 +11,12 @@ from pathlib import Path
 import pytest
 
 from npa.cli.workbench.gemini_robotics import (
-    AdaptationJob,
     EvalResult,
     PlanResult,
 )
 from npa.workflows.byof.gemini_robotics_pipeline import (
     GeminiRoboticsPipelineConfig,
     GeminiRoboticsPipelineError,
-    run_adaptation_stage,
     run_er_planning_stage,
     run_eval_stage,
     run_pipeline,
@@ -28,7 +26,6 @@ from npa.workflows.byof.gemini_robotics_pipeline import (
 class FakeClient:
     def __init__(self) -> None:
         self.plans = 0
-        self.adaptations: list[str] = []
 
     def plan(self, **kwargs):
         self.plans += 1
@@ -37,18 +34,6 @@ class FakeClient:
             safety_calls=[{"name": "check_safety", "args": {"action": "grasp"}}],
             model=kwargs.get("model", ""),
             finish_reason="STOP",
-        )
-
-    def submit_adaptation(self, **kwargs):
-        self.adaptations.append(kwargs["display_name"])
-        return "tunedModels/x/operations/op1"
-
-    def wait_for_adaptation(self, operation_name, **kwargs):
-        return AdaptationJob(
-            name=operation_name,
-            display_name="adapt",
-            done=True,
-            tuned_model="tunedModels/x",
         )
 
     def eval_plan(self, **kwargs):
@@ -79,23 +64,6 @@ def test_planning_stage_writes_receipt(tmp_path: Path) -> None:
     assert stored["plan_text"] == receipt["plan_text"]
 
 
-def test_adaptation_stage_requires_dataset(tmp_path: Path) -> None:
-    with pytest.raises(GeminiRoboticsPipelineError, match="dataset_path"):
-        run_adaptation_stage(_config(tmp_path), FakeClient())
-
-
-def test_adaptation_stage_writes_receipt(tmp_path: Path) -> None:
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text('{"input": "a", "output": "b"}\n')
-    receipt = run_adaptation_stage(
-        _config(tmp_path, dataset_path=str(dataset)), FakeClient()
-    )
-    assert receipt["schema"] == "npa.gemini_robotics.adaptation.v1"
-    assert receipt["done"] is True
-    assert receipt["tuned_model"] == "tunedModels/x"
-    assert receipt["num_examples"] == 1
-
-
 def test_eval_stage_writes_receipt(tmp_path: Path) -> None:
     rubric = tmp_path / "rubric.txt"
     rubric.write_text("safety first")
@@ -118,21 +86,6 @@ def test_full_pipeline_plan_and_eval(tmp_path: Path) -> None:
         assert len(stage["artifact_sha256"]) == 64
 
 
-def test_full_pipeline_with_adaptation(tmp_path: Path) -> None:
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text('{"input": "a", "output": "b"}\n')
-    receipt = run_pipeline(
-        _config(
-            tmp_path,
-            run_adaptation=True,
-            dataset_path=str(dataset),
-            adaptation_display_name="adapt-1",
-        ),
-        FakeClient(),
-    )
-    assert set(receipt["stages"]) == {"plan", "adaptation"}
-
-
 def _toolref_stage_argv(name: str) -> "list[str]":
     import re
 
@@ -147,7 +100,6 @@ def test_toolref_argv_parses_against_pipeline() -> None:
 
     for tool_name, command in [
         ("workbench.gemini_robotics.plan", "plan"),
-        ("workbench.gemini_robotics.adapt", "adapt"),
         ("workbench.gemini_robotics.eval", "eval"),
     ]:
         argv = _toolref_stage_argv(tool_name)
@@ -168,7 +120,6 @@ def test_toolref_descriptions_state_provisional() -> None:
 
     for tool_name in (
         "workbench.gemini_robotics.plan",
-        "workbench.gemini_robotics.adapt",
         "workbench.gemini_robotics.eval",
     ):
         description = TOOL_CATALOG[tool_name].description

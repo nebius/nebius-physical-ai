@@ -1,25 +1,25 @@
 ---
 name: gemini-robotics
-description: Use when working on Gemini Robotics 2 toolRefs — ER embodied-reasoning planning, on-device adaptation jobs, or rubric evaluation via the hosted Gemini API.
+description: Use when working on Gemini Robotics 2 toolRefs — ER embodied-reasoning planning or rubric evaluation via the hosted Gemini API.
 ---
 
 # Gemini Robotics
 
 Gemini Robotics is the closed-weight VLA tool for ER (embodied reasoning)
-planning, on-device adaptation, and rubric evaluation, all served through the
+planning and rubric evaluation, all served through the
 hosted Gemini API (``GOOGLE_API_KEY`` required).
 
 The toolRefs are a provisional override-required API adapter: every stage
 requires an explicit ``--model`` (no default) and the model id is pinned to
-the provisional ``gemini-robotics-er-1.6`` constant until the production
+the provisional ``gemini-robotics-er-2-preview`` constant until the production
 model id is confirmed.
 
 ## Interfaces
 
-- CLI: `npa workbench gemini-robotics <plan|adapt|eval> --help`
+- CLI: `npa workbench gemini-robotics <plan|eval> --help`
 - Python SDK (workbench-first): `npa.workbench.gemini_robotics`
-  (`plan`, `adapt`, `eval` — aliases of `run_er_planning_stage`,
-  `run_adaptation_stage`, `run_eval_stage`)
+  (`plan`, `eval` — aliases of `run_er_planning_stage`,
+  `run_eval_stage`)
 - Workflow module: `npa.workflows.byof.gemini_robotics_pipeline`
   (stage functions, receipt writing, argparse entrypoint)
 

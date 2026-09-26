@@ -161,66 +161,6 @@ def test_plan_server_error_includes_detail() -> None:
     assert len(sleeps) == 3
 
 
-def test_submit_adaptation_posts_tuning_task() -> None:
-    seen: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen["url"] = str(request.url)
-        seen["body"] = json.loads(request.content.decode())
-        return httpx.Response(
-            200, json={"name": "tunedModels/abc/operations/op1"}, request=request
-        )
-
-    operation = _client(handler).submit_adaptation(
-        display_name="adapt-1",
-        base_model="base-m",
-        examples=[{"input": "in", "output": "out"}],
-    )
-    assert operation == "tunedModels/abc/operations/op1"
-    assert seen["url"] == f"{PROVISIONAL_API_BASE_URL}/v1beta/tunedModels"
-    body = seen["body"]
-    assert body["display_name"] == "adapt-1"
-    assert body["base_model"] == "models/base-m"
-    assert body["tuning_task"]["training_data"]["examples"]["examples"] == [
-        {"text_input": "in", "output": "out"}
-    ]
-
-
-def test_wait_for_adaptation_polls_until_done() -> None:
-    responses = iter(
-        [
-            {"done": False, "metadata": {"displayName": "adapt-1"}},
-            {"done": True, "response": {"name": "tunedModels/abc"}},
-        ]
-    )
-    polls = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal polls
-        polls += 1
-        return httpx.Response(200, json=next(responses), request=request)
-
-    job = _client(handler, sleeper=lambda _: None).wait_for_adaptation(
-        "tunedModels/abc/operations/op1", timeout_s=60, poll_interval_s=1
-    )
-    assert job.done is True
-    assert job.tuned_model == "tunedModels/abc"
-    assert job.error == ""
-    assert polls == 2
-
-
-def test_wait_for_adaptation_surfaces_job_error() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"done": True, "error": {"message": "quota exhausted"}},
-            request=request,
-        )
-
-    with pytest.raises(GeminiRoboticsError, match="quota exhausted"):
-        _client(handler, sleeper=lambda _: None).wait_for_adaptation("op")
-
-
 def test_eval_plan_parses_json_scores() -> None:
     seen: dict = {}
 
@@ -278,21 +218,17 @@ def test_workbench_surface_is_pipeline_first() -> None:
     from npa.workflows.byof import gemini_robotics_pipeline as pipe
 
     assert gemini_robotics.plan is pipe.run_er_planning_stage
-    assert gemini_robotics.adapt is pipe.run_adaptation_stage
     assert gemini_robotics.eval is pipe.run_eval_stage
     assert gemini_robotics.run_er_planning_stage is pipe.run_er_planning_stage
-    assert gemini_robotics.run_adaptation_stage is pipe.run_adaptation_stage
     assert gemini_robotics.run_eval_stage is pipe.run_eval_stage
     assert not any(
         hasattr(getattr(gemini_robotics, name), "__npa_cli_module__")
-        for name in ("plan", "adapt", "eval")
+        for name in ("plan", "eval")
     )
     assert set(gemini_robotics.__all__) == {
         "plan",
-        "adapt",
         "eval",
         "run_er_planning_stage",
-        "run_adaptation_stage",
         "run_eval_stage",
     }
 
