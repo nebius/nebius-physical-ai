@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -15,18 +16,17 @@ from npa.orchestration.npa_workflow.skypilot_render import render_task_run_scrip
 
 def _isolated_script(tmp_path: Path, command: list[str]) -> str:
     script = render_task_run_script(command)
-    # Relocate worker-owned paths so this executes the complete generated shell
-    # without touching another test's setup receipts or interpreter shims.
-    for path in (
-        "/tmp/npa-python",
-        "/tmp/npa-shim",
-        "/tmp/npa-src-overlay",
-        "/tmp/npa-src-root",
-        "/tmp/npa-baked-pythonpath",
-        "/etc/profile.d",
-    ):
-        script = script.replace(path, str(tmp_path / Path(path).name))
-    return script
+    # Discover every generated worker-state directory so future additions also
+    # stay isolated from other tests and existing setup receipts.
+    runtime_paths = set()
+    for value in re.findall(r"/[A-Za-z0-9_./-]+", script):
+        parts = PurePosixPath(value).parts
+        if len(parts) >= 3 and parts[1] == "tmp" and parts[2].startswith("npa-"):
+            runtime_paths.add(PurePosixPath(*parts[:3]))
+    assert runtime_paths
+    for path in sorted(runtime_paths, key=str, reverse=True):
+        script = script.replace(str(path), str(tmp_path / path.name))
+    return script.replace("/etc/profile.d", str(tmp_path / "profile.d"))
 
 
 def _run_script(script: str) -> subprocess.CompletedProcess[str]:
