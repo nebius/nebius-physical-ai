@@ -156,8 +156,8 @@ continue to block a new launch. Prior attempts remain in the run history.
 
 A durable `block_relaunch` decision remains unresolved unless the same record
 already contains verified terminal cancellation. After the reported dependency
-is repaired, resume reconciles the exact recorded job ID before doing anything
-else: a live job is adopted and polled, unavailable queue evidence remains
+is repaired, a record with provider identity is reconciled against that exact
+job ID: a live job is adopted and polled, unavailable queue evidence remains
 blocked, and neither case resets the attempt number or submits replacement
 work. A previously verified terminal attempt keeps the ordinary terminal retry
 path and does not become queue-dependent again.

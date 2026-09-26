@@ -249,6 +249,20 @@ def test_malformed_launch_sequence_does_not_prove_prelaunch_absence(
     assert state.in_flight_wave(record["key"]) == record
 
 
+def test_missing_launch_sequence_does_not_prove_prelaunch_absence() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "job_id": "",
+        "recovery_decision": "future_preflight_decision",
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
 def test_unknown_recovery_decision_remains_in_flight() -> None:
     from npa.orchestration.npa_workflow.run_state import RuntimeRunState
 
