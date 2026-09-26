@@ -971,9 +971,27 @@ def test_real_completion_cached_mode_stays_non_authoritative(completed_interpret
 def test_real_completion_controls_final_artifact_loading(
     completed_interpreter_run, mocker, invalid
 ):
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        SubmitCredentialContext,
+    )
+
     resolution, _, _ = completed_interpreter_run
     if invalid:
         resolution.runtime_state["waves"] = [_wave("finalize", "11", "failed")]
+    credential_values = {
+        "AWS_ACCESS_KEY_ID": "synthetic-access-key",
+        "AWS_SECRET_ACCESS_KEY": "synthetic-secret-key",
+    }
+    storage_endpoint = "https://project-storage.invalid"
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        return_value=SubmitCredentialContext(
+            endpoint_url=storage_endpoint,
+            access_key_id=credential_values["AWS_ACCESS_KEY_ID"],
+            secret_access_key=credential_values["AWS_SECRET_ACCESS_KEY"],
+            secret_values=credential_values,
+        ),
+    )
     loader = mocker.patch(
         "npa.cli.workbench.workflow._load_paidf_artifact",
         return_value={"status": "verified", "verified": True},
@@ -1001,9 +1019,79 @@ def test_real_completion_controls_final_artifact_loading(
             project="test",
             run_id="run-test",
             run_prefix_uri="s3://bucket/run-test",
-            s3_endpoint="",
+            s3_endpoint=storage_endpoint,
+            credential_values=credential_values,
             agent_name="",
         )
+
+
+def test_load_artifact_sanitizes_status_failure_with_resolved_credentials(
+    mocker,
+) -> None:
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        SubmitCredentialContext,
+    )
+
+    plain_secret = "hunter2"
+    query_secret = "synthetic-retry-query"
+    assignment_secret = "synthetic-retry-assignment"
+    bearer_secret = "synthetic-retry-bearer"
+    storage_endpoint = "https://project-storage.invalid"
+    resolver = mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        return_value=SubmitCredentialContext(
+            endpoint_url=storage_endpoint,
+            access_key_id="synthetic-access-key",
+            secret_access_key=plain_secret,
+            secret_values={
+                "AWS_ACCESS_KEY_ID": "synthetic-access-key",
+                "AWS_SECRET_ACCESS_KEY": plain_secret,
+            },
+        ),
+    )
+    status = mocker.patch(
+        "npa.cli.workbench.workflow._durable_workflow_status",
+        side_effect=RuntimeError(
+            "status failed at "
+            f"s3://bucket/run?signature={query_secret} "
+            f'{{"aws_secret_access_key":"{assignment_secret}"}} '
+            f"Bearer {bearer_secret} login failed for {plain_secret}"
+        ),
+    )
+    loader = mocker.patch("npa.cli.workbench.workflow._load_paidf_artifact")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "load-artifact",
+            "run-test",
+            "--project",
+            "test",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    exposed = f"{result.stdout}\n{result.stderr}"
+    assert query_secret not in exposed
+    assert assignment_secret not in exposed
+    assert bearer_secret not in exposed
+    assert plain_secret not in exposed
+    assert "<redacted>" in exposed
+    resolver.assert_called_once_with(
+        project="test",
+        explicit_endpoint="",
+        requested=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    )
+    status.assert_called_once_with(
+        "run-test",
+        project="test",
+        workflow_s3_uri="",
+        s3_endpoint=storage_endpoint,
+    )
+    loader.assert_not_called()
 
 
 def test_real_completion_cannot_hide_runtime_identity_mismatch(

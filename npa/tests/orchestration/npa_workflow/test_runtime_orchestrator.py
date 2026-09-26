@@ -22,14 +22,21 @@ import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
+from npa.orchestration.npa_workflow.run_state import (
+    RunStateStore,
+    RuntimeRunState,
+    runtime_key,
+)
 from npa.orchestration.npa_workflow.runtime import (
     CANCELLATION_VERIFY_ATTEMPTS,
     MAX_TERMINAL_PLAN_MIGRATIONS,
+    SCHEDULER_OBSERVATION_SCHEMA,
+    SCHEDULER_OBSERVATION_SOURCE,
     RuntimeLedger,
     RuntimeOptions,
     SkyPilotWaveExecutor,
     WaveAttempt,
+    _record_reached_running,
     plan_fingerprint,
     run_workflow_runtime,
     s3_artifact_exists,
@@ -38,6 +45,138 @@ from npa.orchestration.npa_workflow.runtime import (
 )
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+
+def _typed_running_observation(
+    *,
+    wave_key: str,
+    job_id: str,
+    job_name: str,
+    logical_launch_id: str,
+    attempt: int = 1,
+    scheduler_fence_sequence: int = 1,
+    launch_sequence: int = 1,
+    scheduler_state: str = "RUNNING",
+) -> dict[str, object]:
+    return {
+        "schema": SCHEDULER_OBSERVATION_SCHEMA,
+        "source": SCHEDULER_OBSERVATION_SOURCE,
+        "observed_at": "2026-09-15T19:00:00+00:00",
+        "wave_key": wave_key,
+        "job_id": job_id,
+        "job_name": job_name,
+        "logical_launch_id": logical_launch_id,
+        "attempt": attempt,
+        "scheduler_fence_sequence": scheduler_fence_sequence,
+        "launch_sequence": launch_sequence,
+        "scheduler_state": scheduler_state,
+    }
+
+
+def test_typed_exact_scheduler_running_evidence_authorizes_adoption() -> None:
+    record = {
+        "key": "001|serial|state:-",
+        "job_id": "77",
+        "job_name": "typed-job",
+        "logical_launch_id": "logical-1",
+        "attempt": 2,
+        "scheduler_fence_sequence": 8,
+        "launch_sequence": 3,
+    }
+    record["observations"] = [
+        _typed_running_observation(
+            wave_key=record["key"],
+            job_id=record["job_id"],
+            job_name=record["job_name"],
+            logical_launch_id=record["logical_launch_id"],
+            attempt=record["attempt"],
+            scheduler_fence_sequence=record["scheduler_fence_sequence"],
+            launch_sequence=record["launch_sequence"],
+        )
+    ]
+
+    assert _record_reached_running(record) is True
+
+
+@pytest.mark.parametrize(
+    ("label", "observation"),
+    [
+        (
+            "queued",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="77",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=2,
+                scheduler_fence_sequence=8,
+                launch_sequence=3,
+                scheduler_state="PENDING",
+            ),
+        ),
+        (
+            "submitted",
+            {
+                "scheduler_state": "SUBMITTED",
+                "message": "job may be running soon",
+            },
+        ),
+        (
+            "ambiguous-running-text",
+            {"message": "submitted; worker running setup", "statuses": {}},
+        ),
+        (
+            "mismatched-job",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="different-job",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=2,
+                scheduler_fence_sequence=8,
+                launch_sequence=3,
+            ),
+        ),
+        (
+            "stale-launch",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="77",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=1,
+                scheduler_fence_sequence=7,
+                launch_sequence=2,
+            ),
+        ),
+        (
+            "unavailable",
+            {
+                "schema": SCHEDULER_OBSERVATION_SCHEMA,
+                "source": SCHEDULER_OBSERVATION_SOURCE,
+                "scheduler_state": "UNAVAILABLE",
+            },
+        ),
+    ],
+)
+def test_non_running_or_unbound_scheduler_evidence_cannot_authorize_adoption(
+    label: str, observation: dict[str, object]
+) -> None:
+    del label
+    record = {
+        "key": "001|serial|state:-",
+        "job_id": "77",
+        "job_name": "typed-job",
+        "logical_launch_id": "logical-1",
+        "attempt": 2,
+        "scheduler_fence_sequence": 8,
+        "launch_sequence": 3,
+        "observations": [observation],
+        "tasks": [{"status": "RUNNING", "log": "running"}],
+    }
+
+    assert _record_reached_running(record) is False
+
 
 GATE_LOOP_SPEC = """
 apiVersion: npa.workflow/v0.0.1
@@ -322,6 +461,7 @@ class MemoryStore(RunStateStore):
 
     def __init__(self, objects: dict[str, bytes] | None = None) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
+        self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
             prefix="unit-prefix",
@@ -336,6 +476,7 @@ class MemoryStore(RunStateStore):
         return self.objects[key].decode("utf-8")
 
     def _write_obj(self, bucket: str, key: str, body: bytes) -> None:
+        self.write_calls.append(key)
         self.objects[key] = body
 
     def _list_obj(self, _bucket: str, prefix: str) -> list[str]:
@@ -743,6 +884,147 @@ def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
 # ------------------------------------------------------------------- early exit
 
 
+def _image_pin_bindings() -> dict[str, str]:
+    return {
+        "cr.example/tool-a:latest": "cr.example/tool-a@sha256:" + "a" * 64,
+        "cr.example/tool-b:latest": "cr.example/tool-b@sha256:" + "b" * 64,
+    }
+
+
+def _image_pin_options(bindings: dict[str, str]) -> SkypilotRenderOptions:
+    return SkypilotRenderOptions(
+        image_overrides={"*": "cr.example/x@sha256:" + "c" * 64},
+        image_digest_pins=bindings,
+    )
+
+
+@pytest.mark.parametrize("change", ["swap", "rename", "add", "remove"])
+def test_image_identity_binds_digest_pins_to_reference_keys(change: str) -> None:
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+
+    bindings = _image_pin_bindings()
+    if change == "swap":
+        changed = {
+            "cr.example/tool-a:latest": bindings["cr.example/tool-b:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-a:latest"],
+        }
+    elif change == "rename":
+        changed = {
+            "cr.example/tool-a-renamed:latest": bindings["cr.example/tool-a:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-b:latest"],
+        }
+    elif change == "add":
+        changed = {
+            **bindings,
+            "cr.example/tool-c:latest": "cr.example/tool-c@sha256:" + "c" * 64,
+        }
+    else:
+        changed = {"cr.example/tool-a:latest": bindings["cr.example/tool-a:latest"]}
+
+    expected = _image_identity(_image_pin_options(bindings))
+    reordered = _image_identity(
+        _image_pin_options(dict(reversed(list(bindings.items()))))
+    )
+    actual = _image_identity(_image_pin_options(changed))
+
+    assert reordered == expected
+    assert actual != expected
+
+
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_swapped_image_pin_bindings(tmp_path, outputs_exist):
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=_image_pin_options(bindings)
+    )
+    swapped = dict(zip(bindings, reversed(list(bindings.values()))))
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=_image_pin_options(swapped)
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_accepts_reordered_image_pin_bindings(tmp_path):
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=_image_pin_options(bindings)
+    )
+    reordered = dict(reversed(list(bindings.items())))
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=_image_pin_options(reordered)
+    )
+    assert report.status == "succeeded"
+    assert report.waves[0]["replayed"] is True
+    assert submitter.calls == []
+
+
+def _image_selection_replay_spec() -> str:
+    document = yaml.safe_load(COMPLETED_REPLAY_SPEC)
+    document["config"].update(
+        images_uri="s3://example-bucket/images/",
+        captions_uri="s3://example-bucket/captions/",
+        caption_model="fixture-model",
+        max_images=1,
+        max_tokens=8,
+    )
+    document["initial"] = "caption"
+    document["states"]["caption"] = {
+        "toolRef": "workbench.token_factory.caption",
+        "resources": "cpu",
+        "outputs": [{"uri": "s3://example-bucket/captions/result.json"}],
+        "next": "export",
+    }
+    return yaml.safe_dump(document)
+
+
+def _image_selection_options(
+    overrides, *, pins=None, registry="", gpu_target="", image_variant=""
+):
+    return SkypilotRenderOptions(
+        registry=registry,
+        image_overrides=overrides,
+        image_digest_pins=pins or {},
+        gpu_target=gpu_target,
+        image_variant=image_variant,
+    )
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_reassigned_image_selection(
+    tmp_path,
+    pinned,
+    outputs_exist,
+):
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    bindings = _image_pin_bindings()
+    references = list(bindings) if pinned else list(bindings.values())
+    pins = bindings if pinned else {}
+    initial = _image_selection_options(
+        {"*": references[0], "workbench.token_factory.caption": references[1]},
+        pins=pins,
+    )
+    changed = _image_selection_options(
+        {"*": references[1], "workbench.token_factory.caption": references[0]},
+        pins=pins,
+    )
+    assert resolve_task_image("", {}, options=initial) != resolve_task_image(
+        "", {}, options=changed
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_image_selection_replay_spec()
+    )
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
 def test_runtime_early_exits_when_gate_promotes_on_first_iteration(
     tmp_path: Path,
 ) -> None:
@@ -987,6 +1269,197 @@ def test_runtime_reads_exact_iteration_scoped_decision_output(tmp_path: Path) ->
         "gate",
         "publish",
     ]
+
+
+def _changed_image_selection(overrides, references, change):
+    changed = dict(overrides)
+    options = {}
+    if change == "swap":
+        changed = {
+            "workbench.train": references[1],
+            "workbench.evaluate": references[0],
+        }
+    elif change == "rename":
+        changed["workbench.builder"] = changed.pop("workbench.train")
+    elif change == "add":
+        changed["workbench.publish"] = references[0]
+    elif change == "remove":
+        changed.pop("workbench.evaluate")
+    else:
+        options[change] = f"changed-{change}"
+    return changed, options
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["swap", "rename", "add", "remove", "registry", "gpu_target", "image_variant"],
+)
+def test_image_identity_binds_render_selection_inputs(change):
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"workbench.train": references[0], "workbench.evaluate": references[1]}
+    changed_overrides, options = _changed_image_selection(overrides, references, change)
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(changed_overrides, pins=pins, **options)
+    reordered = _image_selection_options(
+        dict(reversed(list(overrides.items()))),
+        pins=dict(reversed(list(pins.items()))),
+    )
+    if change == "swap":
+        assert (
+            resolve_task_image("workbench.train", {}, options=initial)
+            == pins[references[0]]
+        )
+        assert (
+            resolve_task_image("workbench.train", {}, options=changed)
+            == pins[references[1]]
+        )
+    assert _image_identity(reordered) == _image_identity(initial)
+    assert _image_identity(changed) != _image_identity(initial)
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_changed_image_selection(
+    tmp_path, pinned, outputs_exist
+):
+    bindings = _image_pin_bindings()
+    references = list(bindings) if pinned else list(bindings.values())
+    pins = bindings if pinned else {}
+    initial = _image_selection_options({"*": references[0]}, pins=pins)
+    changed = _image_selection_options({"*": references[1]}, pins=pins)
+    spec, store = _completed_replay_case(tmp_path, render_options=initial)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("field", ["registry", "gpu_target", "image_variant"])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_changed_render_selector(
+    tmp_path, field, outputs_exist
+):
+    image = next(iter(_image_pin_bindings().values()))
+    initial = _image_selection_options({"*": image})
+    changed = _image_selection_options({"*": image}, **{field: "changed"})
+    spec, store = _completed_replay_case(tmp_path, render_options=initial)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("reorder", ["pins", "selectors", "both"])
+def test_completed_replay_accepts_reordered_image_selection(tmp_path, reorder):
+    from npa.orchestration.npa_workflow.skypilot_render import plan_images
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"workbench.token_factory.caption": references[0], "*": references[1]}
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(
+        dict(reversed(list(overrides.items()))) if reorder != "pins" else overrides,
+        pins=dict(reversed(list(pins.items()))) if reorder != "selectors" else pins,
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_image_selection_replay_spec()
+    )
+    plan = build_plan(spec, run_id="rt-completed-replay-identity")
+    for selection in (initial, changed):
+        assert plan_images(
+            spec, plan.steps, run_id="rt-completed-replay-identity", options=selection
+        ) == list(pins.values())
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=changed
+    )
+    assert report.status == "succeeded"
+    assert len(report.waves) == 2
+    assert all(wave["replayed"] for wave in report.waves)
+    assert submitter.calls == []
+
+
+def _legacy_image_identity(pins, schema):
+    if schema == "values-only":
+        material = "\0".join(sorted(pins.values()))
+    else:
+        material = json.dumps(
+            {
+                "bindings": sorted(pins.items()),
+                "schema": "npa.workflow.image-pin-bindings/v2",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("schema", ["values-only", "pin-only"])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_legacy_image_identity(
+    tmp_path, schema, outputs_exist
+):
+    pins = _image_pin_bindings()
+    selection = _image_selection_options({"*": next(iter(pins))}, pins=pins)
+    spec, store = _completed_replay_case(tmp_path, render_options=selection)
+    persisted = store.read_runtime_state()
+    persisted.waves[-1]["immutable_identity"]["image_digest"] = _legacy_image_identity(
+        pins, schema
+    )
+    store.write_runtime_state(persisted)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=selection
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("selector", ["*", "workbench.train", "workbench.train.export"])
+def test_image_identity_tracks_effective_override_precedence(selector):
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"*": references[0], selector: references[0]}
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(
+        {**overrides, selector: references[1]}, pins=pins
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=initial)
+        == pins[references[0]]
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=changed)
+        == pins[references[1]]
+    )
+    assert _image_identity(initial) != _image_identity(changed)
+
+
+@pytest.mark.parametrize("field", ["image", "image_id"])
+def test_workflow_identity_binds_resource_image_selection(tmp_path, field):
+    from dataclasses import replace
+    from npa.orchestration.npa_workflow.runtime import _workflow_identity
+
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    images = list(_image_pin_bindings().values())
+    initial = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[0]}}
+    )
+    changed = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[1]}}
+    )
+    assert _workflow_identity(initial) != _workflow_identity(changed)
 
 
 def test_runtime_branch_follows_transition_goto(tmp_path: Path) -> None:
@@ -1366,12 +1839,111 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
 
 
+SEMANTIC_RESUME_CORRUPTION_CASES = (
+    "truncated_json",
+    "empty_object",
+    "missing_run_id",
+    "missing_workflow",
+    "mismatched_run_id",
+    "mismatched_workflow",
+    "missing_schema_version",
+    "unsupported_schema_version",
+    "waves_string",
+    "waves_non_object_entry",
+    "stages_string",
+    "decisions_object",
+    "plan_migrations_string",
+    "watermarks_array",
+    "api_version_array",
+)
+
+
+def _semantic_resume_payload(
+    case: str,
+    *,
+    workflow: str,
+    run_id: str,
+) -> dict[str, object]:
+    payload = RuntimeRunState(workflow=workflow, run_id=run_id).to_dict()
+    if case == "empty_object":
+        return {}
+    if case.startswith("missing_"):
+        payload.pop(case.removeprefix("missing_"))
+    elif case == "mismatched_run_id":
+        payload["run_id"] = "other-run"
+    elif case == "mismatched_workflow":
+        payload["workflow"] = "other-workflow"
+    elif case == "unsupported_schema_version":
+        payload["schema_version"] = "npa.workflow.runtime.v999"
+    elif case == "waves_string":
+        payload["waves"] = "corrupt-but-valid-json"
+    elif case == "waves_non_object_entry":
+        payload["waves"] = [
+            {"key": "done", "status": "succeeded"},
+            "corrupt-entry",
+        ]
+    elif case == "stages_string":
+        payload["stages"] = "corrupt-but-valid-json"
+    elif case == "decisions_object":
+        payload["decisions"] = {"decision": "promote"}
+    elif case == "plan_migrations_string":
+        payload["plan_migrations"] = "corrupt-but-valid-json"
+    elif case == "watermarks_array":
+        payload["watermarks"] = []
+    elif case == "api_version_array":
+        payload["api_version"] = ["wrong-type"]
+    return payload
+
+
+@pytest.mark.parametrize("case", SEMANTIC_RESUME_CORRUPTION_CASES)
+def test_resume_rejects_corrupt_ledger_before_executor_creation(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    run_id = "rt-corrupt-ledger"
+    corrupt_bytes = (
+        b'{"schema_version":'
+        if case == "truncated_json"
+        else (
+            json.dumps(
+                _semantic_resume_payload(case, workflow=spec.name, run_id=run_id),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+    )
+    key = runtime_key("unit-prefix")
+    store = MemoryStore({key: corrupt_bytes})
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(resume=True)
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ) as error:
+        _executor(
+            spec,
+            run_id=run_id,
+            submitter=submitter,
+            options=options,
+            store=store,
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects[key] == corrupt_bytes
+    assert key in str(error.value)
+    assert "s3://unit-bucket" not in str(error.value)
+
+
 def _completed_replay_case(
     tmp_path: Path,
     *,
     render_options: SkypilotRenderOptions | None = None,
+    spec_text: str = COMPLETED_REPLAY_SPEC,
 ) -> tuple[Any, MemoryStore]:
-    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    spec = load_spec(_write_spec(tmp_path, spec_text))
     store = MemoryStore()
     first = _executor(
         spec,
@@ -1392,263 +1964,6 @@ def _completed_replay_case(
     return spec, store
 
 
-def _image_pin_bindings() -> dict[str, str]:
-    return {
-        "cr.example/tool-a:latest": "cr.example/tool-a@sha256:" + "a" * 64,
-        "cr.example/tool-b:latest": "cr.example/tool-b@sha256:" + "b" * 64,
-    }
-
-
-def _image_pin_options(bindings: dict[str, str]) -> SkypilotRenderOptions:
-    return SkypilotRenderOptions(
-        image_overrides={"*": "cr.example/x@sha256:" + "c" * 64},
-        image_digest_pins=bindings,
-    )
-
-
-@pytest.mark.parametrize("change", ["swap", "rename", "add", "remove"])
-def test_image_identity_binds_digest_pins_to_reference_keys(change: str) -> None:
-    from npa.orchestration.npa_workflow.runtime import _image_identity
-
-    bindings = _image_pin_bindings()
-    if change == "swap":
-        changed = {
-            "cr.example/tool-a:latest": bindings["cr.example/tool-b:latest"],
-            "cr.example/tool-b:latest": bindings["cr.example/tool-a:latest"],
-        }
-    elif change == "rename":
-        changed = {
-            "cr.example/tool-a-renamed:latest": bindings["cr.example/tool-a:latest"],
-            "cr.example/tool-b:latest": bindings["cr.example/tool-b:latest"],
-        }
-    elif change == "add":
-        changed = {
-            **bindings,
-            "cr.example/tool-c:latest": "cr.example/tool-c@sha256:" + "c" * 64,
-        }
-    else:
-        changed = {"cr.example/tool-a:latest": bindings["cr.example/tool-a:latest"]}
-
-    expected = _image_identity(_image_pin_options(bindings))
-    reordered = _image_identity(
-        _image_pin_options(dict(reversed(list(bindings.items()))))
-    )
-    actual = _image_identity(_image_pin_options(changed))
-
-    assert reordered == expected
-    assert actual != expected
-
-
-def test_completed_replay_rejects_swapped_image_pin_bindings(tmp_path: Path) -> None:
-    bindings = _image_pin_bindings()
-    spec, store = _completed_replay_case(
-        tmp_path,
-        render_options=_image_pin_options(bindings),
-    )
-    swapped = {
-        "cr.example/tool-a:latest": bindings["cr.example/tool-b:latest"],
-        "cr.example/tool-b:latest": bindings["cr.example/tool-a:latest"],
-    }
-    submitter = FakeSubmitter()
-    options = RuntimeOptions(poll_seconds=0, resume=True)
-    resumed = _executor(
-        spec,
-        run_id="rt-completed-replay-identity",
-        submitter=submitter,
-        options=options,
-        output_checker=lambda _uri: True,
-        store=store,
-        render_options=_image_pin_options(swapped),
-    )
-
-    report = run_workflow_runtime(
-        spec,
-        run_id="rt-completed-replay-identity",
-        executor=resumed,
-        options=options,
-    )
-
-    assert report.status == "failed"
-    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
-    assert submitter.calls == []
-
-
-def test_completed_replay_accepts_reordered_image_pin_bindings(tmp_path: Path) -> None:
-    bindings = _image_pin_bindings()
-    spec, store = _completed_replay_case(
-        tmp_path,
-        render_options=_image_pin_options(bindings),
-    )
-    submitter = FakeSubmitter()
-    options = RuntimeOptions(poll_seconds=0, resume=True)
-    resumed = _executor(
-        spec,
-        run_id="rt-completed-replay-identity",
-        submitter=submitter,
-        options=options,
-        output_checker=lambda _uri: True,
-        store=store,
-        render_options=_image_pin_options(dict(reversed(list(bindings.items())))),
-    )
-
-    report = run_workflow_runtime(
-        spec,
-        run_id="rt-completed-replay-identity",
-        executor=resumed,
-        options=options,
-    )
-
-    assert report.status == "succeeded"
-    assert report.waves[0]["replayed"] is True
-    assert submitter.calls == []
-
-
-def _image_selection_options(
-    overrides: dict[str, str],
-    *,
-    pins: dict[str, str] | None = None,
-    registry: str = "",
-    gpu_target: str = "",
-    image_variant: str = "",
-) -> SkypilotRenderOptions:
-    return SkypilotRenderOptions(
-        registry=registry,
-        image_overrides=overrides,
-        image_digest_pins=pins or {},
-        gpu_target=gpu_target,
-        image_variant=image_variant,
-    )
-
-
-@pytest.mark.parametrize(
-    "change",
-    ["swap", "rename", "add", "remove", "registry", "gpu_target", "image_variant"],
-)
-def test_image_identity_binds_render_selection_inputs(change: str) -> None:
-    from npa.orchestration.npa_workflow.runtime import _image_identity
-    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
-
-    pins = _image_pin_bindings()
-    references = list(pins)
-    overrides = {
-        "workbench.train": references[0],
-        "workbench.evaluate": references[1],
-    }
-    changed_overrides = dict(overrides)
-    kwargs: dict[str, str] = {}
-    if change == "swap":
-        changed_overrides = {
-            "workbench.train": references[1],
-            "workbench.evaluate": references[0],
-        }
-    elif change == "rename":
-        changed_overrides = {
-            "workbench.builder": references[0],
-            "workbench.evaluate": references[1],
-        }
-    elif change == "add":
-        changed_overrides["workbench.publish"] = references[0]
-    elif change == "remove":
-        changed_overrides.pop("workbench.evaluate")
-    else:
-        kwargs[change] = f"changed-{change}"
-
-    initial = _image_selection_options(overrides, pins=pins)
-    changed = _image_selection_options(changed_overrides, pins=pins, **kwargs)
-    reordered = _image_selection_options(
-        dict(reversed(list(overrides.items()))),
-        pins=dict(reversed(list(pins.items()))),
-    )
-
-    if change == "swap":
-        assert (
-            resolve_task_image("workbench.train", {}, options=initial)
-            == pins[references[0]]
-        )
-        assert (
-            resolve_task_image("workbench.train", {}, options=changed)
-            == pins[references[1]]
-        )
-    assert _image_identity(reordered) == _image_identity(initial)
-    assert _image_identity(changed) != _image_identity(initial)
-
-
-@pytest.mark.parametrize("pinned", [True, False])
-def test_completed_replay_rejects_changed_image_selection(
-    tmp_path: Path,
-    pinned: bool,
-) -> None:
-    pins = _image_pin_bindings() if pinned else {}
-    references = list(_image_pin_bindings())
-    initial_reference = (
-        references[0] if pinned else "cr.example/tool-a@sha256:" + "a" * 64
-    )
-    changed_reference = (
-        references[1] if pinned else "cr.example/tool-b@sha256:" + "b" * 64
-    )
-    spec, store = _completed_replay_case(
-        tmp_path,
-        render_options=_image_selection_options({"*": initial_reference}, pins=pins),
-    )
-    submitter = FakeSubmitter()
-    options = RuntimeOptions(poll_seconds=0, resume=True)
-    resumed = _executor(
-        spec,
-        run_id="rt-completed-replay-identity",
-        submitter=submitter,
-        options=options,
-        output_checker=lambda _uri: True,
-        store=store,
-        render_options=_image_selection_options({"*": changed_reference}, pins=pins),
-    )
-
-    report = run_workflow_runtime(
-        spec,
-        run_id="rt-completed-replay-identity",
-        executor=resumed,
-        options=options,
-    )
-
-    assert report.status == "failed"
-    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
-    assert submitter.calls == []
-
-
-def test_completed_replay_accepts_reordered_image_selection(tmp_path: Path) -> None:
-    pins = _image_pin_bindings()
-    references = list(pins)
-    overrides = {"*": references[1]}
-    spec, store = _completed_replay_case(
-        tmp_path,
-        render_options=_image_selection_options(overrides, pins=pins),
-    )
-    submitter = FakeSubmitter()
-    options = RuntimeOptions(poll_seconds=0, resume=True)
-    resumed = _executor(
-        spec,
-        run_id="rt-completed-replay-identity",
-        submitter=submitter,
-        options=options,
-        output_checker=lambda _uri: True,
-        store=store,
-        render_options=_image_selection_options(
-            dict(reversed(list(overrides.items()))),
-            pins=dict(reversed(list(pins.items()))),
-        ),
-    )
-
-    report = run_workflow_runtime(
-        spec,
-        run_id="rt-completed-replay-identity",
-        executor=resumed,
-        options=options,
-    )
-
-    assert report.status == "succeeded"
-    assert report.waves[0]["replayed"] is True
-    assert submitter.calls == []
-
-
 @pytest.mark.parametrize(
     ("identity_field", "identity_function"),
     [
@@ -1659,8 +1974,9 @@ def test_completed_replay_accepts_reordered_image_selection(tmp_path: Path) -> N
 )
 @pytest.mark.parametrize(
     ("recorded_identity", "expected_identity_missing"),
-    [("changed", False), ("", False), ("", True)],
+    [("changed", False), ("", False), ("", True), ("changed", True)],
 )
+@pytest.mark.parametrize("outputs_exist", [True, False])
 def test_completed_replay_requires_current_immutable_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1668,6 +1984,7 @@ def test_completed_replay_requires_current_immutable_identity(
     identity_function: str,
     recorded_identity: str,
     expected_identity_missing: bool,
+    outputs_exist: bool,
 ) -> None:
     from npa.orchestration.npa_workflow import runtime as runtime_module
 
@@ -1681,36 +1998,13 @@ def test_completed_replay_requires_current_immutable_identity(
     if expected_identity_missing:
         monkeypatch.setattr(runtime_module, identity_function, lambda *_args: "")
 
-    submitter = FakeSubmitter()
-    options = RuntimeOptions(poll_seconds=0, resume=True)
-    resumed = _executor(
-        spec,
-        run_id="rt-completed-replay-identity",
-        submitter=submitter,
-        options=options,
-        output_checker=lambda _uri: True,
-        store=store,
-    )
-    report = run_workflow_runtime(
-        spec,
-        run_id="rt-completed-replay-identity",
-        executor=resumed,
-        options=options,
-    )
-
+    report, submitter = _resume_completed_case(spec, store, outputs_exist)
     assert report.status == "failed"
     assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
     assert submitter.calls == []
 
 
-def test_completed_replay_checks_missing_outputs_before_identity(
-    tmp_path: Path,
-) -> None:
-    spec, store = _completed_replay_case(tmp_path)
-    persisted = store.read_runtime_state()
-    assert persisted is not None
-    persisted.waves[-1]["immutable_identity"]["image_digest"] = "d" * 64
-    store.write_runtime_state(persisted)
+def _resume_completed_case(spec, store, outputs_exist: bool, *, render_options=None):
     submitter = FakeSubmitter()
     options = RuntimeOptions(poll_seconds=0, resume=True)
     resumed = _executor(
@@ -1719,17 +2013,40 @@ def test_completed_replay_checks_missing_outputs_before_identity(
         submitter=submitter,
         status_fn=FakeStatus(["SUCCEEDED"]),
         options=options,
-        output_checker=lambda _uri: False,
+        output_checker=lambda _uri: outputs_exist,
         store=store,
+        render_options=render_options,
     )
-
     report = run_workflow_runtime(
         spec,
         run_id="rt-completed-replay-identity",
         executor=resumed,
         options=options,
     )
+    return report, submitter
 
+
+@pytest.mark.parametrize("identity", [None, {}, [], "invalid"])
+def test_completed_replay_rejects_unreadable_identity(
+    tmp_path: Path,
+    identity,
+) -> None:
+    spec, store = _completed_replay_case(tmp_path)
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    persisted.waves[-1]["immutable_identity"] = identity
+    store.write_runtime_state(persisted)
+    report, submitter = _resume_completed_case(spec, store, True)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_checks_missing_outputs_with_matching_identity(
+    tmp_path: Path,
+) -> None:
+    spec, store = _completed_replay_case(tmp_path)
+    report, submitter = _resume_completed_case(spec, store, False)
     assert report.status == "failed"
     assert "completed without declared durable output" in report.error
     assert "IMMUTABLE_IDENTITY_MISMATCH" not in report.error
@@ -2880,13 +3197,16 @@ def test_explicit_resume_adopts_controller_lost_running_wave_with_valid_outputs(
             "attempt": 1,
             "sky_status": "RUNNING",
             "logical_launch_id": "logical-output-adopt",
+            "scheduler_fence_sequence": 1,
             "launch_sequence": 1,
             "recovery_decision": "submitted_and_reconciled",
             "observations": [
-                {
-                    "scheduler_state": "RUNNING",
-                    "statuses": {"rt-output-adopt-01-shards": "RUNNING"},
-                }
+                _typed_running_observation(
+                    wave_key="001|shards|shards:shard-a:-,shards:shard-b:-",
+                    job_id="77",
+                    job_name="rt-output-adopt-01-shards",
+                    logical_launch_id="logical-output-adopt",
+                )
             ],
         }
     )
@@ -2947,6 +3267,7 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
             "attempt": 1,
             "sky_status": "SUBMITTED",
             "logical_launch_id": "logical-output-interrupted",
+            "scheduler_fence_sequence": 1,
             "launch_sequence": 1,
             "recovery_decision": "adopt_exact_attempt",
             "error": "KeyboardInterrupt:",
@@ -2957,10 +3278,12 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
                 }
             ],
             "observations": [
-                {
-                    "scheduler_state": "RUNNING",
-                    "statuses": {"rt-output-interrupted-01-shards": "RUNNING"},
-                }
+                _typed_running_observation(
+                    wave_key="001|shards|shards:shard-a:-,shards:shard-b:-",
+                    job_id="77",
+                    job_name="rt-output-interrupted-01-shards",
+                    logical_launch_id="logical-output-interrupted",
+                )
             ],
             "cancellation": {"state": "failed", "error": "controller absent"},
         }
@@ -2996,6 +3319,72 @@ def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt
     assert all(
         call["job_name"] != "rt-output-interrupted-01-shards-a2"
         for call in submitter.calls
+    )
+
+
+def test_explicit_resume_rejects_untyped_running_task_evidence(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-output-task-evidence")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "77",
+            "job_name": "rt-output-task-evidence-01-shards",
+            "attempt": 1,
+            "sky_status": "SUBMITTED",
+            "logical_launch_id": "logical-output-task-evidence",
+            "launch_sequence": 1,
+            "recovery_decision": "block_indeterminate",
+            "outputs": [
+                {
+                    "uri": "s3://bucket/prefix/shard-a.json",
+                    "schema": "test.output.v1",
+                }
+            ],
+            "tasks": [{"task_id": 0, "status": "RUNNING"}],
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        adopt_absent_in_flight_outputs=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-output-task-evidence",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-output-task-evidence", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert submitter.calls == []
+    assert not any(
+        item.get("recovery_decision") == "operator_authorized_absent_output_adoption"
+        for item in report.waves
     )
 
 
@@ -4413,6 +4802,16 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
     assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
 
 
+def _resume_recovery_gate(spec: Any) -> Any:
+    return next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-block-relaunch", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+
+
 def _seed_resume_recovery_case(
     tmp_path: Path,
     *,
@@ -4426,13 +4825,7 @@ def _seed_resume_recovery_case(
     )
 
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
-    gate = next(
-        step
-        for step in build_plan(
-            spec, run_id="rt-block-relaunch", assume_decision="promote_checkpoint"
-        ).steps
-        if step.state == "gate"
-    )
+    gate = _resume_recovery_gate(spec)
     store = MemoryStore()
     seed = _executor(spec, run_id="rt-block-relaunch", store=store)
     key = wave_key([gate], group="", sequence_number=1)
@@ -4675,19 +5068,77 @@ def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
     )
 
 
+def _replace_supervisor_event(store, key, payload) -> str:
+    body = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    digest = hashlib.sha256(body).hexdigest()
+    replacement = f"{key.rsplit('/', 1)[0]}/{payload['phase']}-{digest}.json"
+    del store.objects[key]
+    store.objects[replacement] = body
+    return replacement
+
+
+class _ReusePowerLoss(BaseException):
+    pass
+
+
+def _output_reuse_crash_executor(spec, run_id, store, mocker, submission, terminal):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING", terminal]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=[],
+        output_checker=lambda _uri: submission.job.call_count >= 2,
+        store=store,
+    )
+    executor._submitter = None
+    return executor
+
+
+def _crash_reuse_write(executor, mocker, before_record):
+    original_record = executor.ledger.record
+    crashed = []
+
+    def record(attempt):
+        if (
+            not crashed
+            and attempt.recovery_decision == "reuse_completed_wave"
+            and attempt.status == "running"
+        ):
+            crashed.append(True)
+            if not before_record:
+                original_record(attempt)
+            # Power loss cannot run the in-process abort handler.
+            executor._abort_wave = lambda *_args, **_kwargs: None
+            raise _ReusePowerLoss
+        original_record(attempt)
+
+    mocker.patch.object(executor.ledger, "record", side_effect=record)
+    return crashed
+
+
 def _crashed_output_reuse_case(
-    tmp_path: Path,
+    tmp_path,
     mocker,
     runtime_sdk_submission,
     *,
-    run_id: str,
-    crash_before_runtime_record: bool,
-) -> tuple[Any, Any, MemoryStore, dict[str, Any]]:
-    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
-
-    class SimulatedPowerLoss(BaseException):
-        pass
-
+    run_id="rt-output-reuse-crash",
+    crash_before_runtime_record=True,
+    terminal_status="CANCELLED",
+):
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     gate = next(
         step
@@ -4696,100 +5147,34 @@ def _crashed_output_reuse_case(
         ).steps
         if step.state == "gate"
     )
-    mocker.patch(
-        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
-        return_value=JobBlockerReport(
-            job_id="job", unready_nodes=["worker (NodeNotReady)"]
-        ),
-    )
     store = MemoryStore()
-    executor = _executor(
-        spec,
-        run_id=run_id,
-        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING", "CANCELLED"]),
-        options=RuntimeOptions(
-            poll_seconds=0,
-            retries=5,
-            max_infrastructure_recoveries=1,
-            preflight_evidence=_supervisor_preflight(),
-        ),
-        cancels=[],
-        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
-        store=store,
+    executor = _output_reuse_crash_executor(
+        spec, run_id, store, mocker, runtime_sdk_submission, terminal_status
     )
-    executor._submitter = None
-    original_record = executor.ledger.record
-    crashed = False
-
-    def crash_at_reuse_record(attempt) -> None:
-        nonlocal crashed
-        if (
-            not crashed
-            and attempt.recovery_decision == "reuse_completed_wave"
-            and attempt.status == "running"
-        ):
-            crashed = True
-            if not crash_before_runtime_record:
-                original_record(attempt)
-            # A real power loss cannot run the in-process abort handler.
-            executor._abort_wave = lambda *_args, **_kwargs: None
-            raise SimulatedPowerLoss
-        original_record(attempt)
-
-    mocker.patch.object(executor.ledger, "record", side_effect=crash_at_reuse_record)
-
-    # The unit harness may surface the injected process death as a failed step
-    # after the abort hook is disabled; only durable state crosses the restart.
-    with pytest.raises((SimulatedPowerLoss, NpaWorkflowError)):
+    crashed = _crash_reuse_write(executor, mocker, crash_before_runtime_record)
+    with pytest.raises((_ReusePowerLoss, NpaWorkflowError)):
         executor.execute(gate)
-
     state = store.read_runtime_state()
-    assert state is not None
-    crashed_attempt = state.waves[-1]
-    assert crashed
+    assert state is not None and crashed
     assert runtime_sdk_submission.job.call_count == 2
     assert any(
         event["phase"] == "cancellation"
         and event["recovery"]["action"] == "reuse_completed_wave"
         for event in SupervisorLedger(store).events()
     )
-    return spec, gate, store, crashed_attempt
+    return spec, gate, store, state.waves[-1]
 
 
-@pytest.mark.parametrize("crash_before_runtime_record", [True, False])
-def test_resume_reuses_output_complete_wave_after_driver_crash(
-    tmp_path: Path,
-    mocker,
-    runtime_sdk_submission,
-    crash_before_runtime_record: bool,
-) -> None:
-    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+def _unexpected_reuse_reconcile(_name, *, job_id=""):
+    raise AssertionError(f"provider reconciliation was not expected for {job_id}")
 
-    run_id = (
-        "rt-output-reuse-crash-before-record"
-        if crash_before_runtime_record
-        else "rt-output-reuse-crash-after-record"
-    )
-    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
-        tmp_path,
-        mocker,
-        runtime_sdk_submission,
-        run_id=run_id,
-        crash_before_runtime_record=crash_before_runtime_record,
-    )
 
-    submitter = FakeSubmitter()
-    reconciled: list[tuple[str, str]] = []
-
-    def reconcile(name: str, *, job_id: str = "") -> ManagedJobEvidence:
-        reconciled.append((name, job_id))
-        return ManagedJobEvidence("found", job_id=job_id, status="CANCELLED")
-
-    resumed = _executor(
+def _reuse_executor(case, *, output_checker=lambda _uri: True):
+    spec, _gate, store, _attempt = case
+    return _executor(
         spec,
-        run_id=run_id,
-        submitter=submitter,
-        status_fn=FakeStatus(["SUCCEEDED"]),
+        run_id=store.read_runtime_state().run_id,
+        submitter=FakeSubmitter(),
         options=RuntimeOptions(
             poll_seconds=0,
             retries=5,
@@ -4797,343 +5182,318 @@ def test_resume_reuses_output_complete_wave_after_driver_crash(
             resume=True,
             preflight_evidence=_supervisor_preflight(),
         ),
-        output_checker=lambda _uri: True,
+        output_checker=output_checker,
         store=store,
-        reconcile_fn=reconcile,
+        reconcile_fn=_unexpected_reuse_reconcile,
     )
 
-    assert resumed.execute(gate)["status"] == "ok"
+
+def _reuse_cancellation_key(store):
+    keys = [
+        key
+        for key, body in store.objects.items()
+        if "/supervisor/attempts/" in key
+        and (event := json.loads(body)).get("phase") == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+    ]
+    assert len(keys) == 1
+    return keys[0]
+
+
+def _deny_reuse_event_read(store, key, mocker):
+    reader = store.read_artifact
+
+    def read_artifact(relative_key):
+        if key == f"{store.prefix}/{relative_key}":
+            raise PermissionError("history denied")
+        return reader(relative_key)
+
+    mocker.patch.object(store, "read_artifact", side_effect=read_artifact)
+
+
+def _assert_reuse_blocked(case, executor, match="output-reuse"):
+    with pytest.raises(NpaWorkflowError, match=match):
+        executor.execute(case[1])
+    assert executor._submitter.calls == []
+    blocked = executor.attempts[-1]
+    assert blocked.attempt == case[3]["attempt"]
+    assert blocked.status == "failed"
+    assert blocked.recovery_decision == "reuse_completed_wave"
+    assert blocked.supervisor_blocks_cancellation
+    return blocked
+
+
+@pytest.mark.parametrize("crash_before_runtime_record", [True, False])
+@pytest.mark.parametrize("terminal_status", ["CANCELLED", "FAILED", "SUCCEEDED"])
+def test_resume_reuses_output_complete_wave_after_driver_crash(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    crash_before_runtime_record,
+    terminal_status,
+):
+    case = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        crash_before_runtime_record=crash_before_runtime_record,
+        terminal_status=terminal_status,
+    )
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
     adopted = resumed.attempts[-1]
-    assert submitter.calls == []
-    assert adopted.attempt == crashed_attempt["attempt"]
+    assert resumed._submitter.calls == []
+    assert adopted.attempt == case[3]["attempt"]
     assert adopted.status == "succeeded"
-    assert adopted.sky_status == "CANCELLED"
+    assert adopted.sky_status == terminal_status
     assert adopted.cancellation_state == "verified"
     assert adopted.recovery_decision == "reuse_completed_wave"
     assert adopted.adopted and adopted.replayed
-    assert len(reconciled) <= 1
+    assert not adopted.supervisor_blocks_cancellation
 
 
 @pytest.mark.parametrize("output_state", ["missing", "unavailable"])
 @pytest.mark.parametrize("crash_before_runtime_record", [True, False])
 def test_resume_blocks_output_reuse_when_artifacts_cannot_be_revalidated(
-    tmp_path: Path,
+    tmp_path,
     mocker,
     runtime_sdk_submission,
-    output_state: str,
-    crash_before_runtime_record: bool,
-) -> None:
-    boundary = "before-record" if crash_before_runtime_record else "after-record"
-    run_id = f"rt-output-reuse-{output_state}-{boundary}"
-    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
+    output_state,
+    crash_before_runtime_record,
+):
+    case = _crashed_output_reuse_case(
         tmp_path,
         mocker,
         runtime_sdk_submission,
-        run_id=run_id,
         crash_before_runtime_record=crash_before_runtime_record,
     )
-    submitter = FakeSubmitter()
 
-    def check_output(_uri: str) -> bool:
+    def check_output(_uri):
         if output_state == "unavailable":
             raise RuntimeError("object store unavailable")
         return False
 
-    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
-        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
-
-    blocked = _executor(
-        spec,
-        run_id=run_id,
-        submitter=submitter,
-        options=RuntimeOptions(
-            poll_seconds=0,
-            retries=5,
-            max_infrastructure_recoveries=1,
-            resume=True,
-            preflight_evidence=_supervisor_preflight(),
-        ),
-        output_checker=check_output,
-        store=store,
-        reconcile_fn=unexpected_reconcile,
+    blocked = _assert_reuse_blocked(
+        case, _reuse_executor(case, output_checker=check_output), "declared output"
     )
-
-    with pytest.raises(NpaWorkflowError, match="declared output"):
-        blocked.execute(gate)
-    assert submitter.calls == []
-    blocked_attempt = blocked.attempts[-1]
-    assert blocked_attempt.attempt == crashed_attempt["attempt"]
-    assert blocked_attempt.recovery_decision == "reuse_completed_wave"
-    assert blocked_attempt.supervisor_blocks_cancellation
-    assert blocked_attempt.sky_status == "CANCELLED"
-    assert blocked_attempt.cancellation_state == "verified"
-
-    # Once authoritative output access returns, another resume terminalizes the
-    # same exact attempt rather than assigning a replacement identity.
-    resumed = _executor(
-        spec,
-        run_id=run_id,
-        submitter=submitter,
-        options=RuntimeOptions(
-            poll_seconds=0,
-            retries=5,
-            max_infrastructure_recoveries=1,
-            resume=True,
-            preflight_evidence=_supervisor_preflight(),
-        ),
-        output_checker=lambda _uri: True,
-        store=store,
-        reconcile_fn=unexpected_reconcile,
-    )
-    assert resumed.execute(gate)["status"] == "ok"
-    assert submitter.calls == []
-    assert resumed.attempts[-1].attempt == crashed_attempt["attempt"]
+    assert blocked.sky_status == "CANCELLED"
+    assert blocked.cancellation_state == "verified"
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    assert resumed._submitter.calls == []
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
     assert resumed.attempts[-1].sky_status == "CANCELLED"
+    assert not resumed.attempts[-1].supervisor_blocks_cancellation
+
+
+@pytest.mark.parametrize("crash_before_runtime_record", [True, False])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "missing_event",
+        "invalid_json",
+        "invalid_envelope",
+        "invalid_schema",
+        "content_address_mismatch",
+        "event_read_failure",
+        "event_list_failure",
+    ],
+)
+def test_resume_blocks_unreadable_output_reuse_history(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    tamper,
+    crash_before_runtime_record,
+):
+    case = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        crash_before_runtime_record=crash_before_runtime_record,
+    )
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    body = store.objects[key]
+    if tamper == "missing_event":
+        del store.objects[key]
+    elif tamper == "invalid_schema":
+        payload = json.loads(body)
+        payload["schema_version"] = "future-schema"
+        _replace_supervisor_event(store, key, payload)
+    elif tamper == "event_read_failure":
+        _deny_reuse_event_read(store, key, mocker)
+    elif tamper == "event_list_failure":
+        mocker.patch.object(
+            store, "list_artifacts", side_effect=PermissionError("history denied")
+        )
+    else:
+        store.objects[key] = {
+            "invalid_json": b"{invalid",
+            "invalid_envelope": b"[]",
+            "content_address_mismatch": body + b" ",
+        }[tamper]
+    _assert_reuse_blocked(case, _reuse_executor(case))
 
 
 @pytest.mark.parametrize(
-    ("tamper", "crash_before_runtime_record"),
+    ("section", "field", "value"),
     [
-        ("missing_event", False),
-        ("inexact_cancellation", False),
-        ("identity_mismatch", False),
-        ("output_mismatch", False),
-        ("malformed_recovery", True),
-        ("malformed_identity", True),
-        ("empty_recovery", True),
-        ("missing_recovery_action", True),
-        ("unknown_recovery_action", True),
-        ("unknown_phase", True),
-        ("logical_attempt_mismatch", True),
-        ("invalid_json", True),
-        ("event_read_failure", True),
+        ("attempt_identity", "runtime", "serverless"),
+        ("attempt_identity", "run_id", "different-run"),
+        ("attempt_identity", "attempt", 99),
+        ("attempt_identity", "logical_attempt_id", "different-attempt"),
+        ("attempt_identity", "provider_job_id", "different-job"),
+        ("attempt_identity", "provider_job_name", "different-name"),
+        ("attempt_identity", "workflow_sha256", "d" * 64),
+        ("attempt_identity", "source_sha256", "d" * 64),
+        ("attempt_identity", "image_digest", "sha256:" + "d" * 64),
+        ("cancellation", "provider_job_id", "different-job"),
+        ("cancellation", "exact", False),
+        ("cancellation", "status", "requested"),
+        ("cancellation", "provider_terminal_status", "RUNNING"),
+        ("cancellation", "error", "verification unavailable"),
+        ("recovery", "action", "future_recovery_action"),
+        ("recovery", "action", "terminalize"),
+        ("recovery", "reason_code", "different-reason"),
+        ("outputs", "valid", []),
+        ("outputs", "declared", {}),
+        ("outputs", "missing", None),
+        ("outputs", "status", "indeterminate"),
     ],
 )
-def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
-    tmp_path: Path,
+def test_resume_blocks_mismatched_output_reuse_evidence(
+    tmp_path,
     mocker,
     runtime_sdk_submission,
-    tamper: str,
-    crash_before_runtime_record: bool,
-) -> None:
-    run_id = f"rt-output-reuse-tamper-{tamper}"
-    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
-        tmp_path,
-        mocker,
-        runtime_sdk_submission,
-        run_id=run_id,
-        crash_before_runtime_record=crash_before_runtime_record,
-    )
-    cancellation_keys = []
-    for key, body in store.objects.items():
-        if "/supervisor/attempts/" not in key:
-            continue
-        payload = json.loads(body)
-        if (
-            payload.get("phase") == "cancellation"
-            and (payload.get("recovery") or {}).get("action") == "reuse_completed_wave"
-        ):
-            cancellation_keys.append(key)
-    assert len(cancellation_keys) == 1
-    event_key = cancellation_keys[0]
-    if tamper == "missing_event":
-        del store.objects[event_key]
-    elif tamper == "invalid_json":
-        store.objects[event_key] = b"{invalid"
-    elif tamper == "event_read_failure":
-        original_reader = store._reader
-        assert original_reader is not None
+    section,
+    field,
+    value,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    payload = json.loads(store.objects[key])
+    payload[section][field] = value
+    _replace_supervisor_event(store, key, payload)
+    _assert_reuse_blocked(case, _reuse_executor(case))
 
-        def fail_event_read(bucket: str, key: str):
-            if key == event_key:
-                raise PermissionError("supervisor event read denied")
-            return original_reader(bucket, key)
 
-        mocker.patch.object(store, "_reader", side_effect=fail_event_read)
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("recovery", []),
+        ("recovery", {}),
+        ("recovery", {"reason_code": "valid"}),
+        ("attempt_identity", []),
+        ("cancellation", []),
+        ("outputs", []),
+        ("phase", "future_phase"),
+    ],
+)
+def test_resume_blocks_malformed_output_reuse_evidence(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    field,
+    value,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    payload = json.loads(store.objects[key])
+    payload[field] = value
+    _replace_supervisor_event(store, key, payload)
+    _assert_reuse_blocked(case, _reuse_executor(case))
+
+
+@pytest.mark.parametrize("later_conflict", [True, False])
+@pytest.mark.parametrize("conflict", ["terminal_status", "outputs", "nonreuse"])
+def test_resume_blocks_conflicting_output_reuse_history(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    later_conflict,
+    conflict,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    payload = json.loads(store.objects[key])
+    payload["recorded_at"] = "9999" if later_conflict else "0000"
+    if conflict == "terminal_status":
+        payload["cancellation"]["provider_terminal_status"] = "FAILED"
+    elif conflict == "outputs":
+        payload["outputs"]["valid"] = []
     else:
-        payload = json.loads(store.objects[event_key])
-        if tamper == "inexact_cancellation":
-            payload["cancellation"]["exact"] = False
-        elif tamper == "identity_mismatch":
-            payload["attempt_identity"]["image_digest"] = "sha256:" + "d" * 64
-        elif tamper == "output_mismatch":
-            payload["outputs"]["valid"] = []
-        elif tamper == "malformed_recovery":
-            payload["recovery"] = ["reuse_completed_wave"]
-        elif tamper == "empty_recovery":
-            payload["recovery"] = {}
-        elif tamper == "missing_recovery_action":
-            payload["recovery"].pop("action")
-        elif tamper == "unknown_recovery_action":
-            payload["recovery"]["action"] = "future_recovery_action"
-        elif tamper == "unknown_phase":
-            payload["phase"] = "future_phase"
-        elif tamper == "logical_attempt_mismatch":
-            payload["attempt_identity"]["logical_attempt_id"] = "different-attempt"
-        else:
-            payload["attempt_identity"] = ["malformed"]
-        store.objects[event_key] = json.dumps(payload).encode()
+        payload["recovery"]["action"] = "terminalize"
+    SupervisorLedger(store).record(payload)
+    _assert_reuse_blocked(case, _reuse_executor(case))
 
-    submitter = FakeSubmitter()
 
-    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
-        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
-
-    resumed = _executor(
-        spec,
-        run_id=run_id,
-        submitter=submitter,
-        options=RuntimeOptions(
-            poll_seconds=0,
-            retries=5,
-            max_infrastructure_recoveries=1,
-            resume=True,
-            preflight_evidence=_supervisor_preflight(),
-        ),
-        output_checker=lambda _uri: True,
-        store=store,
-        reconcile_fn=unexpected_reconcile,
-    )
-
-    with pytest.raises(NpaWorkflowError, match="output-reuse"):
-        resumed.execute(gate)
-    assert submitter.calls == []
-    blocked = resumed.attempts[-1]
-    assert blocked.attempt == crashed_attempt["attempt"]
-    assert blocked.status == "failed"
-    assert blocked.recovery_decision == "reuse_completed_wave"
-    assert blocked.supervisor_blocks_cancellation
+@pytest.mark.parametrize("field", ["workflow_sha256", "source_sha256", "image_digest"])
+def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    field,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    state = case[2].read_runtime_state()
+    state.waves[-1]["immutable_identity"][field] = "d" * 64
+    case[2].write_runtime_state(state)
+    _assert_reuse_blocked(case, _reuse_executor(case), "runtime output-reuse identity")
 
 
 def test_resume_skips_well_formed_nonreuse_cancellation_event(
-    tmp_path: Path,
+    tmp_path,
     mocker,
     runtime_sdk_submission,
-) -> None:
-    run_id = "rt-output-reuse-nonreuse-event"
-    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
-        tmp_path,
-        mocker,
-        runtime_sdk_submission,
-        run_id=run_id,
-        crash_before_runtime_record=True,
-    )
-    for key, body in store.objects.items():
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    for key, body in list(store.objects.items()):
         if "/supervisor/attempts/" not in key:
             continue
         payload = json.loads(body)
         if payload.get("phase") != "cancellation":
             continue
-        payload["recovery"]["action"] = "terminalize"
-        store.objects[key] = json.dumps(payload).encode()
-
-    resumed = _executor(
-        spec,
-        run_id=run_id,
-        options=RuntimeOptions(poll_seconds=0, resume=True),
-        output_checker=lambda _uri: True,
-        store=store,
-    )
-    record = resumed.ledger.in_flight_wave(crashed_attempt["key"])
+        payload["recovery"]["action"] = "block_relaunch"
+        payload["recovery"]["reason_code"] = "CANCELLATION_UNVERIFIED"
+        payload["cancellation"]["status"] = "cancellation_requested"
+        payload["cancellation"]["provider_terminal_status"] = ""
+        _replace_supervisor_event(store, key, payload)
+    resumed = _reuse_executor(case)
+    record = resumed.ledger.in_flight_wave(case[3]["key"])
     assert record is not None
     attempt = resumed._attempt_from_record(
-        record, steps=[gate], kind="serial", group=""
+        record, steps=[case[1]], kind="serial", group=""
     )
-
     assert not resumed._resume_durable_output_reuse(attempt)
 
 
+@pytest.mark.parametrize("unrelated_suffix", ["unrelated", "same-prefix"])
 def test_resume_ignores_unrelated_malformed_supervisor_history(
-    tmp_path: Path,
+    tmp_path,
     mocker,
     runtime_sdk_submission,
-) -> None:
-    run_id = "rt-output-reuse-unrelated-malformed-event"
-    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
-        tmp_path,
-        mocker,
-        runtime_sdk_submission,
-        run_id=run_id,
-        crash_before_runtime_record=True,
+    unrelated_suffix,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    logical_id = case[3]["logical_launch_id"]
+    unrelated = (
+        "unrelated" if unrelated_suffix == "unrelated" else logical_id + "-other"
     )
     store.objects[
         f"{store.prefix}/npa-workflow/supervisor/attempts/"
-        "unrelated/cancellation-deadbeef.json"
+        f"{unrelated}/cancellation-deadbeef.json"
     ] = b"{invalid"
-    submitter = FakeSubmitter()
-
-    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
-        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
-
-    resumed = _executor(
-        spec,
-        run_id=run_id,
-        submitter=submitter,
-        options=RuntimeOptions(
-            poll_seconds=0,
-            retries=5,
-            max_infrastructure_recoveries=1,
-            resume=True,
-            preflight_evidence=_supervisor_preflight(),
-        ),
-        output_checker=lambda _uri: True,
-        store=store,
-        reconcile_fn=unexpected_reconcile,
-    )
-
-    assert resumed.execute(gate)["status"] == "ok"
-    assert submitter.calls == []
-    adopted = resumed.attempts[-1]
-    assert adopted.attempt == crashed_attempt["attempt"]
-    assert adopted.sky_status == "CANCELLED"
-    assert adopted.recovery_decision == "reuse_completed_wave"
-
-
-def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
-    tmp_path: Path,
-    mocker,
-    runtime_sdk_submission,
-) -> None:
-    run_id = "rt-output-reuse-runtime-identity-mismatch"
-    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
-        tmp_path,
-        mocker,
-        runtime_sdk_submission,
-        run_id=run_id,
-        crash_before_runtime_record=False,
-    )
-    state = store.read_runtime_state()
-    assert state is not None
-    state.waves[-1]["immutable_identity"]["image_digest"] = "sha256:" + "d" * 64
-    store.write_runtime_state(state)
-    submitter = FakeSubmitter()
-
-    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
-        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
-
-    resumed = _executor(
-        spec,
-        run_id=run_id,
-        submitter=submitter,
-        options=RuntimeOptions(
-            poll_seconds=0,
-            retries=5,
-            max_infrastructure_recoveries=1,
-            resume=True,
-            preflight_evidence=_supervisor_preflight(),
-        ),
-        output_checker=lambda _uri: True,
-        store=store,
-        reconcile_fn=unexpected_reconcile,
-    )
-
-    with pytest.raises(NpaWorkflowError, match="runtime output-reuse identity"):
-        resumed.execute(gate)
-    assert submitter.calls == []
-    blocked = resumed.attempts[-1]
-    assert blocked.attempt == crashed_attempt["attempt"]
-    assert blocked.recovery_decision == "reuse_completed_wave"
-    assert blocked.supervisor_blocks_cancellation
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    assert resumed._submitter.calls == []
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed.attempts[-1].sky_status == "CANCELLED"
 
 
 def test_runtime_preserves_unverified_output_reuse_cancellation(

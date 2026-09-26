@@ -91,7 +91,7 @@ pip install -e "npa[genesis]"   # Genesis sim + distillation (local GPU)
 pip install -e "npa[groot]"     # GR00T SDK (local GPU)
 pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (local GPU)
 pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
-pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
+pip install -e "npa[dev,adapter]" # tests, lint (pytest, ruff, pyarrow for dataset tests)
 ```
 
 The `full`, `data`, `lancedb`, `viz`, `server`, and `agent-eval` extras are
