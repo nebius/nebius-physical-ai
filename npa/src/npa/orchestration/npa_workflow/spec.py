@@ -337,6 +337,15 @@ def _state_boolean(
                 f"state {state_name}: {candidate} must be a boolean, "
                 f"got {type(value).__name__}"
             )
+    if (
+        alias is not None
+        and field_name in entry
+        and alias in entry
+        and entry[field_name] != entry[alias]
+    ):
+        raise NpaWorkflowError(
+            f"state {state_name}: {field_name} and {alias} must agree when both are set"
+        )
     if field_name in entry:
         return entry[field_name]
     if alias is not None and alias in entry:
