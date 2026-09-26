@@ -228,6 +228,11 @@ weights, uses thirty UniPC denoising steps and guidance 1.0.
 Simulator processes use one OpenMP, BLAS and software-renderer thread each,
 so parallel environments do not create nested CPU thread pools. Tracked
 modifications to either pinned source checkout fail the evaluation preflight.
+Single-environment requests use the native batch client's 300-second HTTP
+timeout: the observed first inference required 32.9 seconds and exceeded the
+single-environment client's upstream 30-second default. This transport timeout
+does not limit the number of trials or the total evaluation duration. Preserve
+any failed attempt separately; a request timeout cannot count as a policy failure.
 
 `--record-rollouts --envs 1` preserves native rollout and prediction-comparison
 GIFs. Upstream vectorized evaluation does not save those videos, so the script

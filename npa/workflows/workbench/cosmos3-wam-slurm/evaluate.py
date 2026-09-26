@@ -115,6 +115,8 @@ def _client_command(args, worker, tasks, output):
         "osmesa",
         "--seed",
         str(args.seed),
+        "--timeout",
+        "300",
         "--output_dir",
         str(output / "rollouts"),
     ]
