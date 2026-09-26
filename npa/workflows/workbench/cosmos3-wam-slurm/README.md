@@ -62,6 +62,7 @@ example follows upstream LIBERO-10's training schedule.
 | `distributed_preflight.py` | Rank/host placement and a real NCCL all-reduce before training |
 | `report.py` | Complete-checkpoint verification, timings, GPU-hours, and comparable-run speedup |
 | `profile_report.py` | CUDA trace hashes, kernel categories and overlap-aware observed busy time |
+| `storage_telemetry.py` | Timestamped Linux disk counters to quantify checkpoint I/O |
 | `benchmark-protocol.json` | Full schedules, repeated timing runs, separate profiles, and the 90% quality target |
 | `bootstrap-controller.sh` / `slurm_controller.py` / `slurm.conf.in` | Fresh dedicated Ubuntu Slurm controller and first worker |
 | `preserve-slurm-ipc.sh` | Prevent login-session cleanup from deleting batch-job shared memory |
@@ -241,6 +242,10 @@ results. Reports also retain actual processed-token throughput and native VAE
 and data-preparation timers. VAE time is included in data preparation; those
 timers must not be added together. No automatic extrapolation or policy-quality
 assertion is emitted by the training report.
+
+Every node's log is checked for Python failures and skipped optimizer updates,
+including nodes that emit no rank-zero timing lines. Successful process exit
+codes alone cannot qualify a run with a failed background data-loader thread.
 
 For a completed 110-step `--profile` run, use `profile_report.py --run-dir RUN`.
 It requires actual CUDA kernels in the two active profiler steps on ranks 0,

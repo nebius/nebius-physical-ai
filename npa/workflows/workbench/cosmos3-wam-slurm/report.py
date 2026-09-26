@@ -54,13 +54,17 @@ def _work_metrics(log, warmup, steps):
     return result
 
 
-def _timings(log, warmup, steps):
+def _check_log_errors(log):
     if "Traceback (most recent call last):" in log:
         raise ValueError(
             "training log contains a Python failure, including worker threads"
         )
     if "skipping optimizer step" in log:
         raise ValueError("native training skipped an unstable optimizer step")
+
+
+def _timings(log, warmup, steps):
+    _check_log_errors(log)
     values = {}
     for match in _ITERATION.finditer(log):
         iteration, seconds, loss = int(match[1]), float(match[2]), float(match[3])
@@ -127,6 +131,7 @@ def _nodes(run, settings):
         for rank in range(settings["nodes"])
     ]
     for rank, node in enumerate(nodes):
+        _check_log_errors((run / f"node-{rank}.log").read_text())
         if (
             node["run_sha256"]
             != hashlib.sha256((run / "run.json").read_bytes()).hexdigest()

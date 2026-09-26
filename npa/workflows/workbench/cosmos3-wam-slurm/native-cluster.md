@@ -28,6 +28,15 @@ at exactly the same absolute path. Preserve identical operator usernames,
 UIDs and home paths because the shared virtualenvs reference managed Python
 interpreters under the operator's home directory.
 
+Size retention for the complete campaign, including optimizer states, repeated
+runs and profiles. A 2 TiB disk is the working volume; it does not hold every
+campaign artifact indefinitely. Between performance runs, archive completed
+runs to private object storage and verify downloaded bytes against SHA-256
+hashes before pruning local copies. Retain every full-run model checkpoint for
+quality evaluation and the final model, optimizer, scheduler and trainer
+components for the training reporter. Record archival time separately from
+training and keep archival I/O outside profiling and timing runs.
+
 Use provider-verified SSH host keys. Keep creation requests, IDs, addresses,
 SSH configuration and accounting records in private operator storage.
 
@@ -138,6 +147,29 @@ Keep the host clock synchronized and record its timezone. The campaign hosts
 use UTC; GPU telemetry is joined to the native training logs by timestamp.
 This sampling can miss shorter utilization and memory peaks. Stop this exact
 recorder after the campaign with `sudo systemctl stop "$WAM_GPU_TELEMETRY_UNIT"`.
+Use a local telemetry path on each worker, then archive those files with the
+campaign evidence.
+
+Record disk counters on the node hosting the shared training data and
+checkpoints. Find its actual block-device name with `lsblk`, set
+`WAM_DATA_DEVICE`, and select a fresh `WAM_DISK_TELEMETRY` output path and
+`WAM_DISK_TELEMETRY_UNIT` name:
+
+```bash
+sudo systemd-run --unit "$WAM_DISK_TELEMETRY_UNIT" --uid "$USER" \
+  --property Type=exec --property UMask=0077 \
+  /usr/bin/python3 "$WAM_RECIPE/storage_telemetry.py" \
+  --device "$WAM_DATA_DEVICE" --output-path "$WAM_DISK_TELEMETRY"
+```
+
+The recorder emits cumulative counters as JSONL once per second by default;
+`--interval` changes sampling resolution. It runs until stopped with
+`sudo systemctl stop "$WAM_DISK_TELEMETRY_UNIT"`. Derive transfer rates from
+counter differences and monotonic elapsed time. Linux reports
+[512-byte sectors](https://docs.kernel.org/block/stat.html), independently of
+the filesystem block size. These are whole-device measurements, including
+other host I/O; they are not per-process byte counts. On an NFS client, local
+disk counters do not measure the server's storage traffic.
 
 For each training run, select its planned directory in `WAM_RUN` and retain
 the same NCCL diagnostics used by the campaign:

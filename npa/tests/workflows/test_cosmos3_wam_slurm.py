@@ -323,6 +323,7 @@ def _completed_run(tmp_path, nodes=1):
     recipe._plan(args)
     run = args.run_dir
     for rank in range(nodes):
+        (run / f"node-{rank}.log").write_text("Worker log\n")
         (run / f"node-{rank}.finished.json").write_text(
             json.dumps(
                 {
@@ -379,6 +380,16 @@ def test_report_measures_complete_run_and_never_claims_quality(tmp_path):
     assert report["quality_measured"] is False
     assert report["work"]["measured_tokens"] == 4000
     assert report["work"]["tokens_per_second"] == 200
+
+
+def test_report_rejects_background_failure_on_a_nonprimary_node(tmp_path):
+    run = _completed_run(tmp_path, 2)
+    (run / "node-1.log").write_text(
+        "Exception in thread feeder:\nTraceback (most recent call last):\n"
+        "RuntimeError: shared-memory cleanup failure\n"
+    )
+    with pytest.raises(ValueError, match="Python failure"):
+        _load("report")._summarize(run, 50)
 
 
 @pytest.mark.parametrize(
