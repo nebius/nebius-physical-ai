@@ -14,7 +14,7 @@ covers data preparation, native training, one-node to multi-node scaling,
 profiling, and the evidence needed to connect training time to policy quality.
 The current implementation has passed local launch and reporting tests, real
 dataset inspection, native checkpoint conversion and B200 runtime checks. An
-actual one-GPU WAM attempt exposed a memory limit described below. Completed
+actual one-GPU WAM attempt exposed a memory limit described below.
 Slurm training is now running on eight B200s; completed training duration,
 multi-node scaling and policy measurements remain pending.
 
@@ -102,8 +102,8 @@ telemetry; the trained-policy evaluation remains pending.
 
 ## Change GPU count while preserving the experiment
 
-The proposed comparison starts with one eight-GPU B200 node, then moves to two
-and four nodes. Within each node, fully sharded data parallel training
+The measured campaign starts with one eight-GPU B200 node, then moves to two
+nodes. Within each node, fully sharded data parallel training
 distributes model state across eight GPUs. Between nodes, hybrid sharded data
 parallel training replicates those groups and synchronizes their updates.
 
@@ -111,7 +111,9 @@ parallel training replicates those groups and synchronizes their updates.
 | --- | --- | --- | --- | --- |
 | One node | 8 | 64 | 4 | 2,048 |
 | Two nodes | 16 | 64 | 2 | 2,048 |
-| Four nodes | 32 | 64 | 1 | 2,048 |
+
+The launcher also supports a four-node, 32-GPU plan with accumulation one.
+That configuration is outside this campaign's measurement protocol.
 
 The launcher derives accumulation from the requested batch and GPU count and
 rejects configurations that cannot preserve it exactly. Learning rate,
@@ -184,7 +186,6 @@ tasks may require a different dataset and acceptance criterion.
 | --- | --- | --- | --- | --- | --- | --- |
 | 8 | Pending | Pending | Baseline, unmeasured | Pending | Pending | Pending |
 | 16 | Pending | Pending | Pending | Pending | Pending | Pending |
-| 32 | Pending | Pending | Pending | Pending | Pending | Pending |
 
 The publication package needs matched complete runs, observed sample/token
 work, independent repetitions, scheduler accounting, representative traces and

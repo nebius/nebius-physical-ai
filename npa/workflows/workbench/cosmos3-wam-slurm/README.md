@@ -27,7 +27,7 @@ shared filesystem. Planning creates a new directory and never submits a job:
 
 ```bash
 export WAM_SHARED_ROOT=/shared/cosmos3-wam
-export WAM_RUN_ROOT=/shared/cosmos3-wam-runs
+export WAM_RUN_ROOT="$WAM_SHARED_ROOT/runs"
 npa/.venv/bin/python npa/workflows/workbench/cosmos3-wam-slurm/recipe.py plan \
   --shared-root "$WAM_SHARED_ROOT" --run-dir "$WAM_RUN_ROOT/b200-8" \
   --name b200-8 --nodes 1 --steps 2000
@@ -152,6 +152,9 @@ only for fifty trials per task. Server or simulator errors fail evaluation;
 they do not become policy failures. The script checks revisions and the actual
 checkpoint loaded by each loopback-bound server. Native evaluation loads EMA
 weights, uses thirty UniPC denoising steps and guidance 1.0.
+Simulator processes use one OpenMP, BLAS and software-renderer thread each,
+so parallel environments do not create nested CPU thread pools. Tracked
+modifications to either pinned source checkout fail the evaluation preflight.
 
 `--record-rollouts --envs 1` preserves native rollout and prediction-comparison
 GIFs. Upstream vectorized evaluation does not save those videos, so the script
@@ -191,8 +194,9 @@ config, DCP state, profiler traces, `checkpoint-hashes.json`, and
 details; inspect and redact before publication. Upload artifacts to a private
 run-scoped S3 prefix for durable cross-tool handoff. Stop only this recipe's
 active jobs with `scancel`, verify they are absent from `squeue`, preserve
-artifacts, then destroy only the dedicated cluster via `npa soperator destroy`.
-The complete sequence is in the runbook.
+artifacts, then remove the dedicated native VMs and GPU cluster as described in
+[native-cluster.md](native-cluster.md). For the separate Soperator alternative,
+use `npa soperator destroy` after the same cancellation and archival checks.
 
 ## Tests
 

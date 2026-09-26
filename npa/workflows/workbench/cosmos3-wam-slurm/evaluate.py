@@ -147,6 +147,17 @@ def _stop(server):
         server.wait()
 
 
+def _client_environment(env):
+    # Each simulator process owns a software renderer; avoid nested CPU pools.
+    return dict(
+        env,
+        OMP_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+        MKL_NUM_THREADS="1",
+        LP_NUM_THREADS="1",
+    )
+
+
 def _evaluate_worker(args, checkpoint, worker, tasks):
     output = args.output_dir / f"worker-{worker}"
     output.mkdir(mode=0o700)
@@ -171,7 +182,7 @@ def _evaluate_worker(args, checkpoint, worker, tasks):
                 subprocess.run(
                     client_command,
                     cwd=args.shared_root / "framework",
-                    env=env,
+                    env=_client_environment(env),
                     stdout=evaluation_log,
                     stderr=evaluation_log,
                     check=True,
@@ -215,6 +226,15 @@ def _wilson(successes, total):
     return [center - radius, center + radius]
 
 
+def _check_revision(directory, expected):
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=directory, text=True
+    ).strip()
+    if revision != expected:
+        raise ValueError("evaluation source revision differs from training")
+    subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=directory, check=True)
+
+
 def _validate(args):
     if args.workers not in range(1, 9) or args.trials < 1 or args.envs < 1:
         raise ValueError("workers must be 1..8; trials and envs must be positive")
@@ -236,11 +256,7 @@ def _validate(args):
         ("framework", "framework"),
         ("simulation/LIBERO", "libero"),
     ):
-        revision = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=args.shared_root / directory, text=True
-        ).strip()
-        if revision != settings["sources"][name]:
-            raise ValueError(f"evaluation {name} revision differs from training")
+        _check_revision(args.shared_root / directory, settings["sources"][name])
     return checkpoint
 
 

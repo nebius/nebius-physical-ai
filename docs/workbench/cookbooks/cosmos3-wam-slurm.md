@@ -105,7 +105,7 @@ space for downloads, converted base, optimizer checkpoints and traces:
 
 ```bash
 export WAM_SHARED_ROOT=/shared/cosmos3-wam
-export WAM_RUN_ROOT=/shared/cosmos3-wam-runs
+export WAM_RUN_ROOT="$WAM_SHARED_ROOT/runs"
 mkdir -p "$WAM_SHARED_ROOT" "$WAM_RUN_ROOT"
 chmod 700 "$WAM_SHARED_ROOT" "$WAM_RUN_ROOT"
 git init "$WAM_SHARED_ROOT/framework"
