@@ -186,6 +186,7 @@ def test_contact_reduction_excludes_support_and_detects_obstacles(monkeypatch):
     )
     data.env = SimpleNamespace(num_envs=2, physics_dt=0.005)
     data.obstacle = torch.zeros(2)
+    data.evidence = None
     data.body_count, data.base_index = 2, 0
     forces = torch.tensor([20.0, 100.0, 5.0, 80.0])
     normals = torch.tensor(

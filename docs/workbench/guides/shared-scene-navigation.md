@@ -455,3 +455,28 @@ variables (`NPA_NAVIGATION_INPUT_URI` and `NPA_NAVIGATION_IMAGE` are consumed by
 the live matrix materializer). Local contract tests make no native GPU, proprietary-task, physical
 robot or camera-scale acceptance claim. No infrastructure is deployed by the
 stage adapters; resource cleanup remains with the standard workflow runtime.
+
+
+### Diagnosing reference probe contacts
+
+The built-in reference retains `probe-<name>-contacts/index.json` and one NPZ
+per executed control step alongside each physical probe trace. These are raw,
+private diagnostic artifacts. They record the strongest classified individual
+contact per classified robot during that interval, including native sensor and
+filter paths, signed normal force, contact point/normal/separation, the actual
+body and root poses, and native physics event count/time. Ties keep the first
+sampled contact. They are samples, not a complete history of every contact.
+
+The index retains actual native sensor order separately from the existing
+robot/body indices used by contact classification. Poses are matched by actual
+native paths, so a mapping disagreement remains visible. The sample's summed
+classified force and contribution count belong to its recorded physics tick;
+`control_interval_peak_classified_sum_n` separately preserves every robot's
+original interval maximum after the existing force threshold. Several small
+contacts can trigger that sum even when the retained individual force is small.
+
+Evidence is written before probe success/failure checks, including a partial
+control step if native stepping raises. Recording is limited to the physical
+probe contexts and does not alter forces, physics settings, thresholds or
+episode scoring. CPU regressions verify the association and copy semantics;
+new runtime/source combinations still require native GPU qualification.

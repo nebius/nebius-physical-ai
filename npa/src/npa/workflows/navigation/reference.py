@@ -118,3 +118,31 @@ def probe_state(env):
         for field in ("sea_hidden_state_per_env", "sea_cell_state_per_env"):
             values[f"{name}/{field}"] = getattr(actuator, field).transpose(0, 1)
     return values
+
+
+@contextmanager
+def record_probe_contacts(env, output, name):
+    """Retain probe contact identity and poses before physical-control gates.
+
+    Args:
+        env: Native reference environment.
+        output: Private native artifact directory, or None.
+        name: Internal probe name.
+    Returns:
+        Context that leaves native contact math and physics unchanged.
+    Raises:
+        ValueError: Native contact evidence is malformed.
+    """
+    if output is None:
+        yield
+        return
+    from npa.workflows.navigation.contact_evidence import ContactEvidence
+
+    native = env.unwrapped
+    measurements = native.npa_contacts
+    previous = measurements.evidence
+    measurements.evidence = ContactEvidence(native, measurements, output, name)
+    try:
+        yield
+    finally:
+        measurements.evidence = previous

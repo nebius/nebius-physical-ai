@@ -1,5 +1,7 @@
 """Instrument the native Isaac manager environment without replacing physics or PPO."""
 
+from contextlib import nullcontext
+
 from isaaclab.envs import ManagerBasedRLEnv
 
 from npa.workflows.navigation.reference_contacts import ContactMeasurements
@@ -41,7 +43,10 @@ class ReferenceEnvironment(ManagerBasedRLEnv):
             RuntimeError: Native stepping fails.
         """
         self.npa_contacts.reset()
-        return super().step(action)
+        evidence = self.npa_contacts.evidence
+        context = evidence.interval() if evidence is not None else nullcontext()
+        with context:
+            return super().step(action)
 
     def _reset_idx(self, env_ids):
         super()._reset_idx(env_ids)

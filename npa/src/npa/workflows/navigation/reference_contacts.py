@@ -40,14 +40,17 @@ class ContactMeasurements:
         from isaaclab_physx.physics import PhysxManager
 
         self.env = env
+        self.evidence = None
         self.obstacle = torch.zeros(env.num_envs, device=env.device)
         self.peer = torch.zeros_like(self.obstacle)
         physics = PhysxManager.get_physics_sim_view()
         bodies = env.scene["contact_forces"].body_names
+        self.body_names = list(bodies)
         self.body_count = len(bodies)
         self.base_index = bodies.index("base")
         names = "(" + "|".join(bodies) + ")"
         filters = _scene_filters(env.sim.stage, env.cfg.npa_scene_prim)
+        self.filter_paths = filters
         self.view = physics.create_rigid_contact_view(
             f"/World/envs/env_*/Robot/{names}",
             filter_patterns=filters,
@@ -103,9 +106,8 @@ class ContactMeasurements:
         import torch
 
         view = self.view
-        force, _, normals, _, counts, starts = view.get_contact_data(
-            dt=self.env.physics_dt
-        )
+        data = view.get_contact_data(dt=self.env.physics_dt)
+        force, _, normals, _, counts, starts = data
         counts = _tensor(counts).long().flatten()
         starts = _tensor(starts).long().flatten()
         pairs = torch.repeat_interleave(
@@ -126,4 +128,6 @@ class ContactMeasurements:
         result.scatter_add_(
             0, pairs // (view.filter_count * self.body_count), magnitudes
         )
+        if self.evidence is not None:
+            self.evidence.sample(data, pairs, indices, obstacle, result)
         return torch.where(result > 0.02, result, 0.0)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import numpy as np
 
 from npa.workflows.navigation.contract import finite_array
@@ -216,9 +218,12 @@ def _probe_controls(adapter, env, wrapped, recipe, parked, baseline, output=None
 
 
 def _recorded_probe(adapter, env, wrapped, recipe, cases, output, name):
-    trace = _probe_trace(
-        adapter, env, wrapped, cases, recipe.probe.actions, recipe.probe.tolerance
-    )
+    recorder = getattr(adapter, "record_probe_contacts", None)
+    context = recorder(env, output, name) if recorder else nullcontext()
+    with context:
+        trace = _probe_trace(
+            adapter, env, wrapped, cases, recipe.probe.actions, recipe.probe.tolerance
+        )
     if output is not None:
         save_trace(output, name, trace)
     return trace
