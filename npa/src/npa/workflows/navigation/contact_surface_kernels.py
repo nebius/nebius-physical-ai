@@ -146,9 +146,6 @@ def _classify(
     reasons[index] = 3
     if radius <= 0.0:
         return
-    reasons[index] = 4
-    if wp.abs(separations[index]) > radius:
-        return
     reasons[index] = 5
     query = wp.mesh_query_point_no_sign(mesh, point, radius)
     if not query.result:

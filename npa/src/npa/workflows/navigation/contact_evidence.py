@@ -132,7 +132,7 @@ class ContactEvidence:
         write_json(
             self.output / "index.json",
             {
-                "schema": "npa.navigation.probe-contact-samples.v2",
+                "schema": "npa.navigation.probe-contact-samples.v3",
                 "selection": "strongest ORIGINAL normal/base-rule individual contact per robot per control interval, including recognized floor; ties retain the first sampled contact",
                 "scope": "Probe steps only; no initial-reset sampling; not a complete contact history",
                 "pose_format": "world xyz and quaternion xyzw; native PhysxManager subspace root is /",
@@ -367,6 +367,8 @@ def _surface_row(fields, index):
             "support_radius_m": -1.0,
             "native_separation_m": -1.0,
             "support_rest_offset_m": -1.0,
+            "terrain_witness_world_m": np.full(3, -1.0),
+            "support_witness_valid": False,
             "original_candidate": True,
             "effective_candidate": True,
         }

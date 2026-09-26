@@ -5,7 +5,7 @@ _REASONS = {
     1: "recognized_floor",
     2: "not_an_oblique_foot_candidate",
     3: "unavailable_single_shape_margin",
-    4: "separation_exceeds_native_margin",
+    4: "legacy_unused_in_v3",
     5: "no_source_face_within_margin",
     6: "nearby_non_upward_or_degenerate_face",
     7: "root_not_above_source_surface",
@@ -13,6 +13,8 @@ _REASONS = {
     9: "conflicting_surface_normals",
     10: "local_face_capacity_exceeded",
     11: "disconnected_local_surfaces",
+    12: "unsupported_sphere_collider",
+    13: "invalid_contact_witness",
 }
 
 
@@ -204,19 +206,40 @@ class FootSupport:
         self.surface = SurfaceMesh.from_sensor(
             env.scene["navigation_ranges"], env.sim.stage
         )
+        shapes = self._bind_spheres(rows)
         self.metadata = {
             **self.surface.metadata,
             "foot_max_shapes": self.view.max_shapes,
             "native_foot_offsets": rows,
+            "native_foot_shapes": shapes,
             "native_foot_offset_status": (
                 "resolved_single_shape"
                 if self.view.max_shapes == 1
                 else "unavailable_multi_shape_zero_sentinel"
             ),
             "reason_codes": _REASONS,
-            "radius_scope": "Resolved single-shape FOOT contact offset only; no inferred terrain margin or fitted distance",
+            "radius_scope": "Resolved single-shape FOOT contact offset bounds terrain witness geometry only; no inferred terrain margin or fitted distance",
+            "point_anchor_method": "verified_sphere_sensor_surface: point - separation * sign(force) * normal",
+            "separation_scope": "Signed native shape separation; contact offset is not a maximum penetration bound",
+            "normal_unit_tolerance": 8 * torch.finfo(torch.float32).eps,
             "slope_threshold": 0.7,
         }
+
+    def _bind_spheres(self, offsets):
+        import torch
+        from npa.workflows.navigation.contact_witness import _sphere_record
+
+        records = []
+        supported = [False] * len(self.feet)
+        for row in offsets:
+            record = _sphere_record(
+                self.env.sim.stage, row["native_path"], self.view.max_shapes
+            )
+            record["sensor_index"] = row["sensor_index"]
+            records.append(record)
+            supported[row["sensor_index"]] = record["status"] == "verified_live_sphere"
+        self.spheres = torch.tensor(supported, dtype=torch.bool, device=self.env.device)
+        return records
 
     def recognize(self, data, pairs, indices, original, retain=False):
         """Recognize a bounded, connected upward source patch around actual contacts.
@@ -239,13 +262,36 @@ class FootSupport:
         supported = torch.zeros_like(original)
         if not len(candidates):
             return supported, None
-        inputs = self._inputs(data, indices[candidates], sensors[candidates])
-        fields = _query(self.surface, *inputs)
+        fields = self._witness_fields(data, indices[candidates], sensors[candidates])
         supported[candidates] = fields["support_reason"] == 1
         if not retain:
             return supported, None
         fields["support_rest_offset_m"] = self.rests[sensors[candidates]]
         return supported, _expanded(fields, candidates, len(indices))
+
+    def _witness_fields(self, data, indices, sensors):
+        import torch
+        from npa.workflows.navigation.contact_witness import _terrain_witness
+
+        points, radii, separation, roots = self._inputs(data, indices, sensors)
+        witness, valid, reason = _terrain_witness(
+            points,
+            _tensor(data[2])[indices],
+            separation,
+            _tensor(data[0]).flatten()[indices],
+            self.spheres[sensors],
+        )
+        fields = _query(
+            self.surface, witness, torch.where(valid, radii, 0.0), separation, roots
+        )
+        reason = torch.where(radii > 0, reason, 3)
+        fields["support_reason"] = torch.where(
+            reason > 0, reason, fields["support_reason"]
+        )
+        fields["support_radius_m"] = radii
+        fields["terrain_witness_world_m"] = witness
+        fields["support_witness_valid"] = valid
+        return fields
 
     def _inputs(self, data, indices, sensors):
         import torch
@@ -267,6 +313,8 @@ def _expanded(fields, candidates, count):
     result = {}
     for name, values in fields.items():
         default = 2 if name == "support_reason" else -1
+        if values.dtype == torch.bool:
+            default = False
         result[name] = torch.full(
             (count, *values.shape[1:]),
             default,

@@ -51,7 +51,6 @@ def test_actual_warp_cpu_recognizes_interior_floor_across_shared_triangle_edge()
 @pytest.mark.parametrize(
     "changes,expected",
     [
-        ({"separation": -0.021}, 4),
         ({"point": (0, 0, -0.03)}, 5),
         ({"root": (0, 0, -0.5)}, 7),
         ({"point": (1.995, 0.5, -0.01)}, 8),
@@ -62,6 +61,32 @@ def test_deep_missing_below_and_boundary_contacts_keep_obstacle_classification(
     changes, expected
 ):
     assert _reason(*_plane(), **changes)[0] == expected
+
+
+def test_native_penetration_does_not_bound_valid_terrain_witness():
+    assert _reason(*_plane(), point=(0, 0, 0), separation=-0.03, radius=0.0012)[0] == 1
+
+
+@pytest.mark.parametrize("force,normal", [(2.0, (0, 0, 1)), (-2.0, (0, 0, -1))])
+def test_signed_sphere_witness_reaches_real_warp_floor_query(force, normal):
+    from npa.workflows.navigation.contact_witness import _terrain_witness
+
+    witness, valid, _ = _terrain_witness(
+        torch.tensor([[0, 0, -0.016]], dtype=torch.float32),
+        torch.tensor([normal], dtype=torch.float32),
+        torch.tensor([-0.016]),
+        torch.tensor([force]),
+        torch.tensor([True]),
+    )
+    assert valid.tolist() == [True]
+    assert _reason(*_plane(), point=witness[0].tolist(), radius=0.0012)[0] == 1
+
+
+def test_terrain_witness_still_rejects_wall_and_open_edge():
+    points, faces = _plane()
+    wall = points[:, [2, 1, 0]].copy()
+    assert _reason(wall, faces, point=(0, 0, 0), radius=0.0012)[0] == 6
+    assert _reason(points, faces, point=(2, 0, 0), radius=0.0012)[0] == 8
 
 
 def test_underside_and_nearby_wall_are_not_floor():
@@ -248,6 +273,7 @@ def test_only_actual_feet_are_queried_and_unavailable_margin_retains_reason_thre
     support = FootSupport.__new__(FootSupport)
     support.measurements = SimpleNamespace(view=SimpleNamespace(filter_count=1))
     support.feet = torch.tensor([False, False, True, True])
+    support.spheres = support.feet.clone()
     support.radii = torch.tensor([0.0, 0.0, 0.02, 0.0])
     support.rests = torch.zeros(4)
     support.surface = _surface(*_plane())
@@ -258,7 +284,11 @@ def test_only_actual_feet_are_queried_and_unavailable_margin_retains_reason_thre
         torch.tensor([[0, 0, 0.5]] * len(indices)),
     )
     mask, fields = support.recognize(
-        None,
+        (
+            torch.ones((4, 1)),
+            torch.zeros((4, 3)),
+            torch.tensor([[0, 0, 1]] * 4, dtype=torch.float32),
+        ),
         torch.arange(4),
         torch.arange(4),
         torch.ones(4, dtype=torch.bool),
@@ -266,6 +296,8 @@ def test_only_actual_feet_are_queried_and_unavailable_margin_retains_reason_thre
     )
     assert mask.tolist() == [False, False, True, False]
     assert fields["support_reason"].tolist() == [2, 2, 1, 3]
+    assert fields["support_witness_valid"][:2].tolist() == [False, False]
+    assert fields["terrain_witness_world_m"][:2].tolist() == [[-1] * 3] * 2
 
 
 def test_source_binding_rejects_multiple_paths_quads_and_stale_world_cache():

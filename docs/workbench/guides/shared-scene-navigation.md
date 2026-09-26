@@ -13,7 +13,7 @@ reloaded policies, physical controls and native rendered evidence were verified.
 Proprietary robot and scene integration remains operator input.
 The 4000-robot measurements use static-scene range observations; camera-conditioned
 policy training at that population remains unqualified. The warehouse result used
-the earlier contact metric; the geometry-aware foot-support revision below has
+the earlier contact metric; the spherical-foot terrain-witness revision below has
 local coverage, with its separate native qualification still pending.
 
 The reference extends the pinned public
@@ -85,20 +85,29 @@ definition and report it through the same measurement contract.
 The contact instrumentation samples native PhysX at every physics substep. Its
 original obstacle rule is `abs(normal.z) < 0.7` or any base contact. Native foot
 contacts against a triangle floor can have oblique solver normals, so the
-current reference additionally checks the source geometry before counting
-those foot contacts as obstacles. Base contacts and contacts on other body
+current reference additionally checks a verified spherical foot's terrain-side
+witness against the source geometry before counting those contacts as obstacles.
+Base contacts and contacts on other body
 parts keep the original rule. Unexpected net contacts after subtracting
 static-scene forces remain peer contacts. Obstacle force is summed per robot;
 both obstacle and peer measurements must exceed 0.02 N to count. The force
 threshold is unchanged.
 
 A foot contact is recognized as support only when its actual native body path
-identifies one reference foot with one collision shape. The query radius is
+identifies one reference foot with one enabled, active and loaded spherical
+collision shape in the composed USD, including instance proxies. Uniform,
+positive, unsheared transforms and native single-shape identity are required.
+The query radius is
 that shape's resolved, positive contact offset. Its finite rest offset must be
 smaller than the contact offset; zero and negative rest offsets are allowed.
-Neither offset is modified. Both the source-surface distance and the absolute
-native contact separation must fit inside this radius, and the root must be
-above the selected source point. Each native root pose is bound to the unique
+Neither offset is modified. The source-surface distance from
+`point - separation * sign(force) * normal` must fit inside this radius, and the
+root must be above the selected source point. Contact offset defines contact
+onset, not a maximum negative penetration; it does not bound the absolute native
+separation. Finite inputs, nonzero signed force and a unit normal within the
+recorded float32 tolerance are required. See the
+[spherical foot contact contract](navigation-contact-witness.md) for the source
+semantics and live identity boundary. Each native root pose is bound to the unique
 USD articulation root within its robot asset, including roots nested below the
 asset container. Missing, ambiguous or mismatched roots abort qualification.
 
@@ -502,7 +511,7 @@ stage adapters; resource cleanup remains with the standard workflow runtime.
 
 The built-in reference retains `probe-<name>-contacts/index.json` and one NPZ
 per executed control step alongside each physical probe trace. The index uses
-`npa.navigation.probe-contact-samples.v2`. These private artifacts retain the
+`npa.navigation.probe-contact-samples.v3`. These private artifacts retain the
 strongest individual contact selected by the **original** normal/base rule for
 each robot during the interval, including contacts subsequently recognized as
 floor support. Ties keep the first sampled contact. This bounded selection is
@@ -514,12 +523,17 @@ count/time. The index keeps actual sensor order and the original classifier's
 robot/body indices separately. Support classification requires these identities
 to agree. Native body and root paths independently select the copied poses.
 
-The v2 index also records resolved foot offsets, source mesh hash and topology,
+The v3 index also records resolved foot offsets, each live sphere's collider
+identity and transform, the witness method, source mesh hash and topology,
 query capacity and reason codes. Selected foot samples retain the actual radius,
-rest offset, source face, nearest point, distance and decision reason.
+rest offset, source face, nearest point, distance and decision reason, plus
+`terrain_witness_world_m` and `support_witness_valid`. Raw point, signed force,
+normal and separation remain unchanged.
 `original_candidate` and `effective_candidate` distinguish the two metrics.
 Non-foot samples keep explicit geometry sentinels; their original native
 separation remains in `separation_m`.
+Historical v1/v2 artifacts retain their original meanings and must not be
+decoded as v3.
 
 `sample_tick_original_classified_sum_n` and
 `sample_tick_effective_classified_sum_n`, with their corresponding contribution

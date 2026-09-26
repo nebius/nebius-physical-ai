@@ -213,6 +213,8 @@ def test_recognized_original_contact_is_retained_with_effective_counts_and_geome
         "support_radius_m": n.torch.tensor([0.02, 0.02]),
         "source_face_index": n.torch.tensor([15, 16]),
         "source_distance_m": n.torch.tensor([0.01, 0.01]),
+        "terrain_witness_world_m": n.torch.tensor([[1, 2, 3], [4, 5, 6]]),
+        "support_witness_valid": n.torch.tensor([True, True]),
     }
     n.measurements.surface.recognize = lambda *args, **kwargs: (
         n.torch.tensor([True, False]),
@@ -221,11 +223,24 @@ def test_recognized_original_contact_is_retained_with_effective_counts_and_geome
     with n.evidence.interval():
         result = _tick(n)
         fields["source_face_index"][:] = 999
+        fields["terrain_witness_world_m"][:] = 999
     row = n.evidence.rows[0]
     assert row["force_magnitude_n"] == 100.0 and result[0] == 10.0
     assert row["original_candidate"] and not row["effective_candidate"]
     assert row["source_face_index"] == 15
+    assert row["terrain_witness_world_m"].tolist() == [1, 2, 3]
+    assert row["support_witness_valid"]
     assert row["sample_tick_original_contributing_contacts"] == 2
     assert row["sample_tick_effective_contributing_contacts"] == 1
     assert row["sample_tick_original_classified_sum_n"] == 110.0
     assert row["sample_tick_effective_classified_sum_n"] == 10.0
+
+
+def test_v3_nonfoot_geometry_has_false_witness_sentinel(native):
+    import json
+
+    index = json.loads((native.evidence.output / "index.json").read_text())
+    assert index["schema"] == "npa.navigation.probe-contact-samples.v3"
+    row = contact_evidence._surface_row(None, 0)
+    assert row["support_reason"] == 2 and row["support_witness_valid"] is False
+    assert row["terrain_witness_world_m"].tolist() == [-1, -1, -1]
