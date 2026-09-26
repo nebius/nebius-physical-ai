@@ -337,6 +337,17 @@ pipeline. Key safety notes are condensed below.
   `/bin/bash`; sshd is not enabled by default. SkyPilot may generate ephemeral
   host keys and start SSH inside a submitted task. The packaging contract must
   record this exemption whenever a public image carries `NOPASSWD:ALL`.
+- **`robomimic` Phase A refusal** — the unbuilt neutral candidate is intended to
+  run as uid 1000, start no sshd, and contain no CUDA/PyTorch runtime, data,
+  weights, populated cache, credentials, or outputs. Its `entrypoint-smoke` is
+  a planned/static refusal contract; the unbuilt candidate has not executed, so
+  refusal without mutation is not yet execution evidence or capability proof.
+  The real four-step held-out checkpoint-reload
+  gate and any public-image claim remain blocked on a customer-created,
+  run/manifest-bound runtime authorization, separate transaction authorization,
+  built-byte/security/SBOM/provenance checks, and an exact-digest run on exactly
+  one STRICT-reserved B200 with authenticated run/Pod/node/provider allocation
+  observation.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
   `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`,
   `loop-eval`, `robocasa`, and the runtime-fetch `isaac-lab`) run as the unprivileged

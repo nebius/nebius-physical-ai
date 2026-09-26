@@ -34,6 +34,7 @@ WAN_RUNTIME_REQUIREMENTS_PATH = (
 WAN_RUNTIME_SCRIPT_PATH = (
     ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
 )
+ROBOMIMIC_SMOKE_PATH = ROOT / "npa" / "docker" / "workbench" / "robomimic" / "smoke.py"
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
@@ -157,6 +158,16 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "droid_100_config_gen",
         ],
     },
+    "robomimic": {
+        "capability_name": "lift_ph_lowdim_checkpoint_reload_action",
+        "smoke_artifact_name": "robomimic-smoke.json",
+        "spec": "byof-robomimic.yaml",
+        "must_exercise": [
+            "lift_ph_lowdim_bc_train",
+            "lift_ph_lowdim_heldout_validate",
+            "lift_ph_lowdim_checkpoint_reload_action",
+        ],
+    },
     "open-dreamer": {
         "capability_name": "dreamer4_tokenizer_train_two_gpu",
         "smoke_artifact_name": "open_dreamer_world_model_2gpu.json",
@@ -213,6 +224,9 @@ def _load_config(path: Path) -> dict[str, object]:
 def _smoke_contract(path: Path, config: dict[str, object]) -> str:
     """Read an embedded smoke or the fixed neutral-bootstrap hard gate."""
 
+    if path.name == "byof-robomimic.yaml":
+        assert config.get("smoke_command") == "robomimic-entrypoint train-smoke"
+        return ROBOMIMIC_SMOKE_PATH.read_text(encoding="utf-8")
     smoke = str(config.get("smoke_command") or "")
     if path.name == "byof-libero.yaml":
         assert smoke == "/opt/npa/libero/smoke.sh"

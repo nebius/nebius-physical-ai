@@ -176,6 +176,7 @@ CONTAINER_IMAGE_NAMES = {
     "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
     "robocasa": "npa-robocasa",
+    "robomimic": "npa-robomimic",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
@@ -231,6 +232,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "rerun-viewer",
         "sim2real-control",
         "envgen",
+        "robomimic",
     }
 )
 
@@ -291,7 +293,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"openpi", "curobo", "ncore", "robomimic", "libero", "sam3"}
 )
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
 # A development candidate may use the trusted full-SHA builder before it has
@@ -302,11 +304,15 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
 # Compatibility view used by publication callers and public imports. Derive it
-# from the two canonical validation-state inventories; never maintain it
+# from the canonical validation-state inventories; never maintain it
 # independently.
 PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
-    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+    UNVALIDATED_PUBLICATION_TOOLS
+    | VALIDATION_CANDIDATE_TOOLS
+    | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
 )
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
@@ -423,6 +429,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "retargeting": "0.1.1",
     "envgen": "0.1.2-sim2real-coherent-20260904",
     "robocasa": "0.1.0",
+    "robomimic": "0.1.0-neutral-unbuilt",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -2095,6 +2102,8 @@ def sonic_image_variants() -> dict[str, dict[str, Any]]:
 def supported_tool_version(tool: str) -> str:
     if tool == "sonic":
         return str(_default_sonic_image()["tag"])
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        return NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
 
     try:
         import tomllib
@@ -2299,11 +2308,27 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
-    if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+    if (
+        tool == "robomimic"
+        and tool in PUBLICATION_QUARANTINE_TOOLS
+        and is_public_registry(resolved_registry)
+        and not re.fullmatch(r"dev-[0-9a-f]{40}", tag or "")
+    ):
         raise ValueError(
-            "NCore has no accepted release image. Supply the validated immutable "
-            "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
-            "or explicitly select a dev-<full-source-sha> tag for validation."
+            "robomimic remains publication-quarantined for releases; "
+            "select an explicit dev-<full-source-sha> for validation"
+        )
+    if (
+        tool in {"ncore", "robomimic"}
+        and tool in PUBLICATION_QUARANTINE_TOOLS
+        and not tag
+    ):
+        display_tool = "NCore" if tool == "ncore" else tool
+        raise ValueError(
+            f"{display_tool} has no accepted release image. Supply the validated immutable "
+            "private image with --image-override TOOL_REF=IMAGE@sha256:DIGEST or "
+            "explicitly select a dev-<full-source-sha> tag in an operator-private "
+            "registry for validation."
         )
     if tool == "sonic":
         entry = sonic_image_entry(
@@ -2503,6 +2528,11 @@ def development_image_for_tool(
     image_variant: str | None = None,
 ) -> str:
     """Return an official public development reference for redistributable bytes."""
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        raise ValueError(
+            f"{tool!r} remains publication-quarantined and has no official "
+            "public development image"
+        )
     if not is_publicly_redistributable(tool):
         raise ValueError(
             f"{tool!r} is restricted/build-your-own and cannot be pushed to "
@@ -2566,9 +2596,10 @@ def is_publicly_redistributable(tool: str) -> bool:
 
     ``False`` for any tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
-    build-your-own use only. See the set's comment for current membership.
+    build-your-own use only — and for neutral unbuilt candidates whose exact-byte
+    redistribution eligibility has not been established. See the sets' comments.
     """
-    return tool not in RESTRICTED_PUBLICATION_TOOLS
+    return tool not in (RESTRICTED_PUBLICATION_TOOLS | NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
 
 
 def restricted_image_names() -> list[str]:

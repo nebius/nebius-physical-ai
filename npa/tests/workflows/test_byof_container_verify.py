@@ -4826,3 +4826,105 @@ def test_libero_render_binds_customer_registration_before_signing(monkeypatch):
         ).hexdigest()
         != first_sha256
     )
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_cleanup_uses_selected_isolated_state(monkeypatch, tmp_path, explicit) -> None:
+    module = _load_module()
+    selected = tmp_path / ("explicit-state" if explicit else "environment-state")
+    monkeypatch.setenv(
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path / "environment-state")
+    )
+    monkeypatch.delenv("SKYPILOT_API_SERVER_ENDPOINT", raising=False)
+    arguments = ["--isolated-config-dir", str(selected)] if explicit else []
+    args = module._parse_args(arguments)
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed.update(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    guard = module.SignalTeardown(
+        run_id="isolated-cleanup", isolated_config_dir=args.isolated_config_dir
+    )
+    guard._run(["sky", "status"], timeout=1)
+
+    assert observed["HOME"] == str(selected / "home")
+    assert observed["NPA_SKYPILOT_ISOLATED_API_DIR"] == str(selected)
+    assert (selected / "local-api" / "daemon.json").is_file()
+
+
+def _managed_submission_scope(module, monkeypatch, tmp_path, args, observed):
+    isolated = tmp_path / args.run_id
+    isolated.mkdir(mode=0o700)
+    args.isolated_config_dir = str(isolated)
+    config = tmp_path / "skypilot.yaml"
+    scope = {"isolated_config_dir": isolated, "config_path": config}
+
+    def guard_factory(**kwargs):
+        assert kwargs["isolated_config_dir"] == isolated
+        return SimpleNamespace(
+            run_id=args.run_id,
+            timeout=10,
+            isolated_config_dir=isolated,
+            mark_launched=lambda **_kwargs: None,
+            teardown=lambda: observed.append("teardown") or module.CleanupResult(),
+        )
+
+    def submit(_yaml, run_id, **kwargs):
+        assert run_id == args.run_id
+        assert all(kwargs[key] == value for key, value in scope.items())
+        return SimpleNamespace(job_id="17", log_paths={"config": str(config)})
+
+    monkeypatch.setattr(module, "SignalTeardown", guard_factory)
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    return scope
+
+
+def _observe_managed_cleanup(module, monkeypatch, args, scope, observed):
+    def status(job_id, **kwargs):
+        assert job_id == "17"
+        assert all(kwargs[key] == value for key, value in scope.items())
+        observed.append(("status", job_id))
+        return SimpleNamespace(status="SUCCEEDED")
+
+    def absence(**kwargs):
+        assert kwargs["run_id"] == args.run_id
+        assert all(kwargs[key] == value for key, value in scope.items())
+        observed.append("absence")
+        return _verified_cleanup(module, "exact-run-clusters")
+
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(module, "_verify_managed_clusters_absent", absence)
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_kwargs: pytest.fail("cancelled terminal job"),
+    )
+
+
+def test_managed_wait_and_cleanup_use_returned_scheduler_id(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Keep waiting and verified cleanup bound to one returned scheduler identity.
+
+    Args:
+        monkeypatch: Replaces external scheduler and infrastructure calls.
+        tmp_path: Isolated scheduler configuration.
+        capsys: Captures the emitted cleanup receipt.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Waiting, cleanup scope, or absence evidence differs.
+    """
+    module = _load_module()
+    args = _indirect_submit_args(module, monkeypatch, tmp_path)
+    args.cleanup = True
+    observed = []
+    scope = _managed_submission_scope(module, monkeypatch, tmp_path, args, observed)
+
+    _observe_managed_cleanup(module, monkeypatch, args, scope, observed)
+    assert module._submit_and_wait(args) == 0
+    assert observed == [("status", "17"), ("status", "17"), "teardown", "absence"]
+    assert json.loads(capsys.readouterr().out)["cleanup"]["remote_absence_verified"]

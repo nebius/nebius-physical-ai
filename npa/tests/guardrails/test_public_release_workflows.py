@@ -229,7 +229,7 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     )
     script = step["run"]
     assert script.index("docker buildx prune --all --force") < script.index(
-        'docker save --output "$RUNNER_TEMP/${TOOL}.tar"'
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar"'
     )
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
@@ -368,7 +368,8 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
         in post_push
     )
     assert (
-        'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"'
+        in post_push
     )
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push

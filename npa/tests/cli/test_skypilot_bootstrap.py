@@ -346,6 +346,11 @@ def test_skypilot_bootstrap_can_install_local_tiny_package(
     marker = json.loads(result.marker_path.read_text())
     assert marker["kubernetes_client"] == "30.1.0"
     assert marker["kubernetes_client_spec"] == skypilot_cli.KUBERNETES_CLIENT_SPEC
+    state = skypilot_cli.inspect_venv(result.sky_bin.parent.parent)
+    assert (
+        state.importable and state.version == "0.12.2" and state.kubernetes_compatible
+    )
+    _assert_bootstrap_fixture_refuses_index(state.python_bin)
 
 
 @pytest.mark.parametrize("missing_package", ["click", "kubernetes"])
@@ -1185,3 +1190,30 @@ def test_bootstrap_lock_is_owner_only(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     lock = venv.with_name(f".{venv.name}{skypilot_cli.BOOTSTRAP_LOCK_SUFFIX}")
     assert lock.stat().st_mode & 0o777 == 0o600
+
+
+def _assert_bootstrap_fixture_refuses_index(python_bin: Path) -> None:
+    refused = subprocess.run(
+        [
+            str(python_bin),
+            "-m",
+            "pip",
+            "install",
+            "-vv",
+            "--index-url",
+            "https://index.invalid/simple",
+            "npa-missing-bootstrap-fixture==0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = refused.stdout + refused.stderr
+    assert refused.returncode != 0
+    assert "Ignoring indexes: https://index.invalid/simple" in combined
+    assert (
+        "No matching distribution found for npa-missing-bootstrap-fixture==0"
+        in combined
+    )
+    assert "Starting new HTTPS connection" not in combined
+    assert "Retrying" not in combined

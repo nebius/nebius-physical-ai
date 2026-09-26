@@ -968,6 +968,18 @@
       }
     },
     {
+      "name": "npa-robomimic",
+      "dockerfile": "robomimic/Dockerfile",
+      "build_script": "robomimic/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "torch": "not baked; the CUDA-capable PyTorch closure is a separately authorized, exact-inventory, read-only operator runtime mount",
+      "source_compiled_extensions": [],
+      "smoke": "after authoritative CUDA/cuDNN runtime-use authorization, run the real upstream Lift PH low-dimensional behavior-cloning train, held-out validation, checkpoint reload, and finite held-out action inference gate on exactly one B200",
+      "notes": "The neutral bootstrap supports public full-SHA development publication with verified corresponding sources and no governed runtime payload. Release promotion remains quarantined pending real GPU proof; this declaration supplies no B200/B300 execution evidence. The bootstrap may fetch and install only a customer-authorized exact runtime inventory after origin-bound credential checks and installed-RECORD verification, never accept terms, or turn a credential or private registry into permission."
+    },
+    {
       "name": "npa-curobo",
       "dockerfile": "curobo/Dockerfile",
       "build_script": "curobo/build.sh",

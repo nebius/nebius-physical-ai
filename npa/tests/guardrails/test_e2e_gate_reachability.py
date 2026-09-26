@@ -98,6 +98,9 @@ MANUAL_GATES = {
         "LIBERO qualification consumes an accepted immutable candidate image and one reserved B200"
     ),
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_BYOF_ROBOMIMIC_LIVE_B200": (
+        "robomimic B200 training requires operator runtime approval and exact private selectors"
+    ),
     "NPA_ANTIOCH_ACCEPT_TERMS": (
         "Antioch live validation requires the operator's own runtime terms acceptance"
     ),

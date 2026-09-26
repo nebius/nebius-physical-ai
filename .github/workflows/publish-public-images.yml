@@ -444,6 +444,18 @@ jobs:
         if: matrix.tool != 'ncore'
         run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 
+      - name: Prepare robomimic pinned build inputs and corresponding source
+        if: matrix.tool == 'robomimic'
+        run: |
+          set -euo pipefail
+          image_root=npa/docker/workbench/robomimic
+          npa/.venv/bin/python "$image_root/verify_image.py" prepare-build-inputs \
+            --output-root "$image_root/build-inputs" \
+            --debian-lock "$image_root/debian-packages.lock" \
+            --source-manifest "$image_root/source-manifest.json"
+          npa/.venv/bin/python "$image_root/source_delivery.py" fetch \
+            --output-root "$image_root/corresponding-source"
+
       - name: Build NCore committed attested OCI archive
         if: matrix.tool == 'ncore'
         env:
@@ -501,6 +513,10 @@ jobs:
             # enters an image layer or the public workflow artifacts.
             secret_args=(--secret id=npa_host_ca_bundle,src=/etc/ssl/certs/ca-certificates.crt)
           fi
+          build_context=npa
+          if [[ "$TOOL" == robomimic ]]; then
+            build_context=npa/docker/workbench/robomimic
+          fi
           docker buildx build \
             "${secret_args[@]}" \
             --file "$DOCKERFILE" \
@@ -510,7 +526,7 @@ jobs:
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
-            npa
+            "$build_context"
           if [[ "$TOOL" == libero ]]; then
             test -s "$RUNNER_TEMP/libero-build-metadata.json"
             test -s "$RUNNER_TEMP/libero-build.oci.tar"
@@ -592,7 +608,19 @@ jobs:
           # otherwise leaves insufficient space to serialize large GPU images for
           # the mandatory layer-by-layer payload scan.
           docker buildx prune --all --force
-          docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          save_platform=()
+          if [[ "$TOOL" == robomimic ]]; then
+            save_platform=(--platform linux/amd64)
+          fi
+          docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          if [[ "$TOOL" == robomimic ]]; then
+            npa/.venv/bin/python npa/docker/workbench/robomimic/source_delivery.py verify \
+              --image-archive "$RUNNER_TEMP/${TOOL}.tar" \
+              > "$RUNNER_TEMP/robomimic-source-delivery.json"
+            npa/.venv/bin/python npa/scripts/scan_image_robomimic_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/robomimic-payload.json"
+          fi
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
@@ -966,6 +994,10 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
+          save_platform=()
+          if [[ "$TOOL" == robomimic ]]; then
+            save_platform=(--platform linux/amd64)
+          fi
           libero_export_container=""
           cleanup_libero_export() {
             primary_status=$?
@@ -1003,7 +1035,7 @@ jobs:
               layer_diff_ids="$(docker image inspect --format '{{json .RootFS.Layers}}' "$exact")" &&
               test "$(docker image inspect --format '{{.Id}}' "$exact")" = \
                 "$(docker image inspect --format '{{.Id}}' "$IMAGE")" &&
-              docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" &&
+              docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" &&
               npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
                 --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
                 --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
@@ -1019,6 +1051,14 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [[ "$TOOL" == robomimic ]]; then
+            npa/.venv/bin/python npa/docker/workbench/robomimic/source_delivery.py verify \
+              --image-archive "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              > "$RUNNER_TEMP/robomimic-pushed-source-delivery.json"
+            npa/.venv/bin/python npa/scripts/scan_image_robomimic_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/robomimic-pushed-payload.json"
+          fi
           if [ "$TOOL" = gymnasium-robotics ]; then
             # The pulled immutable image ID above equals the pre-scanned image.
             # Its config digest was authenticated through that image's manifest.

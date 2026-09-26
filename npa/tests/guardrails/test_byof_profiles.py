@@ -28,6 +28,7 @@ EXPECTED_PROFILES = frozenset(
         "byof-solution-smoke-libero-b200-gpu.yaml",
         "byof-solution-smoke-libero-customer-b200-gpu.yaml",
         "byof-solution-smoke-openpi-b200-gpu.yaml",
+        "byof-solution-smoke-robomimic-b200-gpu.yaml",
         "byof-solution-smoke-wan22-rtxpro-gpu.yaml",
         "byof-solution-smoke-wan22-b200-4gpu.yaml",
         "byof-solution-smoke-ltx2-rtxpro-gpu.yaml",

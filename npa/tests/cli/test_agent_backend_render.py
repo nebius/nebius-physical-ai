@@ -3017,6 +3017,49 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         sys.modules.pop(module_name, None)
 
 
+def _isolate_rrd_history_access(monkeypatch, module):
+    """Supply typed access while refusing external discovery in this fixture."""
+    from unittest.mock import Mock
+
+    capabilities = {
+        "artifact_discovery": module.CapabilityAccess("available", "fixture")
+    }
+    bucket = module.StorageResourceAccess(
+        "fixture-bucket", "artifact-bucket", "artifact-project", capabilities
+    )
+    project = module.ProjectAccess(
+        "artifact-project", "fixture", True, "available", capabilities, (bucket,)
+    )
+    report = module.AgentAccessReport(
+        "fixture-tenant",
+        "artifact-project",
+        "fixture",
+        "available",
+        "fixture-only",
+        capabilities,
+        (project,),
+    )
+
+    def access_report(*, refresh=False):
+        if refresh:
+            module._finish_agent_access_refresh(report)
+        return report
+
+    access = Mock(wraps=module._begin_agent_artifact_access)
+    external = Mock(side_effect=AssertionError("unexpected external access discovery"))
+    monkeypatch.setattr(module, "_agent_access_report", access_report)
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", access)
+    for name in (
+        "_discover_agent_access_report",
+        "_agent_inventory_credential_context",
+        "_agent_command_env",
+        "_agent_nebius_json",
+        "_agent_s3_client_optional",
+    ):
+        monkeypatch.setattr(module, name, external)
+    return access, external
+
+
 def test_source_qualified_rrd_loads_keep_independent_history(
     monkeypatch, tmp_path
 ) -> None:
@@ -3025,8 +3068,13 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     import shutil
     import sys
 
+    # Dedicated archive tests retain real staging; history needs only rendering.
+    monkeypatch.setattr(
+        "npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
     module_name = "npa_rendered_artifact_history_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    access, external = _isolate_rrd_history_access(monkeypatch, module)
     recordings = tmp_path / "recordings"
     recordings.mkdir()
     module.RECORDINGS_DIR = recordings
@@ -3201,6 +3249,10 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             != responses[0]["sim_viz"]["artifact_preview_url"]
         )
         assert selected_one["rerun_ready"] is True
+        assert access.call_count >= 3
+        assert snapshots[ref_one]["project_id"] == "artifact-project"
+        assert snapshots[ref_two]["project_id"] == "artifact-project"
+        external.assert_not_called()
     finally:
         sys.modules.pop(module_name, None)
 

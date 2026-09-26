@@ -1,0 +1,136 @@
+{
+  "abi": {
+    "architecture": "linux-x86_64",
+    "cuda": "12.8",
+    "cudnn": "9.7.1.26",
+    "python": "3.11",
+    "torch_cuda": "cu128"
+  },
+  "artifact_hash_closure": "required-in-runtime-inventory",
+  "customer_entitlement": {
+    "maximum_validity_seconds": 86400,
+    "responsibilities": [
+      "runtime-use",
+      "derivative-use",
+      "service-use",
+      "output-use",
+      "no-redistribution-grant"
+    ],
+    "schema": "npa.robomimic.customer-runtime-entitlement.v1",
+    "terms": [
+      {
+        "name": "NVIDIA CUDA Toolkit EULA",
+        "url": "https://docs.nvidia.com/cuda/eula/index.html"
+      },
+      {
+        "name": "NVIDIA Software License Agreement",
+        "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/"
+      },
+      {
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html"
+      }
+    ]
+  },
+  "packages": {
+    "anyio": "4.14.2",
+    "boto3": "1.38.33",
+    "botocore": "1.38.33",
+    "certifi": "2025.4.26",
+    "charset-normalizer": "3.4.2",
+    "contourpy": "1.3.2",
+    "cycler": "0.12.1",
+    "diffusers": "0.38.0",
+    "filelock": "3.32.5",
+    "fonttools": "4.64.0",
+    "fsspec": "2025.5.1",
+    "h11": "0.16.0",
+    "h5py": "3.14.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface-hub": "0.36.2",
+    "idna": "3.19",
+    "imageio": "2.37.0",
+    "importlib-metadata": "8.7.0",
+    "jinja2": "3.1.6",
+    "jmespath": "1.0.1",
+    "kiwisolver": "1.4.8",
+    "markupsafe": "3.0.2",
+    "matplotlib": "3.10.3",
+    "mpmath": "1.3.0",
+    "networkx": "3.4.2",
+    "numpy": "1.26.4",
+    "nvidia-cublas-cu12": "12.8.3.14",
+    "nvidia-cuda-cupti-cu12": "12.8.57",
+    "nvidia-cuda-nvrtc-cu12": "12.8.61",
+    "nvidia-cuda-runtime-cu12": "12.8.57",
+    "nvidia-cudnn-cu12": "9.7.1.26",
+    "nvidia-cufft-cu12": "11.3.3.41",
+    "nvidia-cufile-cu12": "1.13.0.11",
+    "nvidia-curand-cu12": "10.3.9.55",
+    "nvidia-cusolver-cu12": "11.7.2.55",
+    "nvidia-cusparse-cu12": "12.5.7.53",
+    "nvidia-cusparselt-cu12": "0.6.3",
+    "nvidia-nccl-cu12": "2.26.2",
+    "nvidia-nvjitlink-cu12": "12.8.61",
+    "nvidia-nvtx-cu12": "12.8.55",
+    "packaging": "25.0",
+    "pillow": "12.3.0",
+    "psutil": "7.0.0",
+    "pyparsing": "3.2.3",
+    "python-dateutil": "2.9.0.post0",
+    "pyyaml": "6.0.2",
+    "regex": "2024.11.6",
+    "requests": "2.34.2",
+    "s3transfer": "0.13.0",
+    "safetensors": "0.5.3",
+    "six": "1.17.0",
+    "sympy": "1.13.3",
+    "termcolor": "3.1.0",
+    "torch": "2.7.1+cu128",
+    "torchvision": "0.22.1+cu128",
+    "tqdm": "4.67.1",
+    "triton": "3.3.1",
+    "typing-extensions": "4.14.0",
+    "urllib3": "2.7.0",
+    "zipp": "3.23.0"
+  },
+  "runtime_id": "robomimic-cu128-py311-v1",
+  "runtime_fetch": {
+    "allowed_hosts": [
+      "download.pytorch.org",
+      "files.pythonhosted.org",
+      "pypi.org",
+      "huggingface.co",
+      "ngc.nvidia.com",
+      "nvcr.io"
+    ],
+    "credential_hosts": {
+      "HF_TOKEN": [
+        "huggingface.co"
+      ],
+      "NGC_API_KEY": [
+        "ngc.nvidia.com",
+        "nvcr.io"
+      ]
+    },
+    "credential_envs": [
+      "HF_TOKEN",
+      "NGC_API_KEY"
+    ],
+    "denylist_env": "NPA_ROBOMIMIC_CUSTOMER_DENYLIST",
+    "installer": {
+      "name": "pip",
+      "version": "26.2.1",
+      "filename": "pip-26.2.1-py3-none-any.whl",
+      "source": "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl",
+      "size": 1816632,
+      "sha256": "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e"
+    },
+    "schema": "npa.robomimic.runtime-fetch.v1",
+    "site_packages_default": "payload/lib/python3.11/site-packages"
+  },
+  "schema": "npa.robomimic.runtime-lock.v1",
+  "source_revision": "d309eaecc18acf4152a830a895a6984b8ac71b05"
+}

@@ -52,10 +52,10 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **56 packaging entries** (47 redistribution-eligible
-and nine restricted) and **47 mapped tools**: 37 public-release members, two
-restricted tools, and eight quarantined tools (`antioch`, `curobo`, `libero`, `mjlab`, `ncore`,
-`openpi`, `robocasa` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+The current source inventory has **57 packaging entries** (48 redistribution-eligible
+and nine restricted) and **48 mapped tools**: 37 public-release members, two
+restricted tools, and nine quarantined tools (`antioch`, `curobo`, `libero`, `mjlab`, `ncore`,
+`openpi`, `robocasa`, `robomimic` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
 
@@ -632,7 +632,35 @@ And no published image has a recorded L40S capability run; those cells are
 supported, blocked, not routed, unverified, or CPU-only rather than verified or
 historical evidence.
 
-## Intentionally not published as separate images
+## Images outside the supported public release inventory
+
+- **`npa-robomimic`** has a public neutral development image from producer
+  `7a66a3b604cb0740314bac76bead5fed0f54f293`, published as
+  `ghcr.io/nebius/nebius-physical-ai/npa-robomimic@sha256:6bdea3d866d07ac0661ff8ba585177e1bb2079501aaf46d7cbf0b13a8aa44a80`.
+  The [trusted build](https://github.com/nebius/nebius-physical-ai/actions/runs/35783662126)
+  enforced source delivery, payload, security, SBOM, and provenance gates.
+  Anonymous readback verified all 12 OCI blobs (516,425,997 bytes). The managed
+  B200 smoke completed four optimizer updates, heldout validation, checkpoint
+  reload, action inference, and verified artifact upload. These are development
+  qualification results; no supported release or default-image promotion has
+  been made. Its packaging class is `public`, while
+  `UNVALIDATED_PUBLICATION_TOOLS` and `PUBLICATION_QUARANTINE_TOOLS` keep it out
+  of the supported public release table.
+
+  The image contains pinned MIT robomimic source and a neutral Debian/bootstrap
+  closure. CUDA/PyTorch/vendor runtime wheels, weights, Lift PH data, populated
+  caches, credentials, and outputs remain outside the image. The standard
+  62-entry runtime is a separately authorized, exact-inventory read-only mount;
+  access records do not grant redistribution rights.
+
+  A supplemental qualification of that same image with a separately declared
+  runtime bundle completed 2,000 epochs and 200,000 CUDA optimizer updates on
+  RTX PRO 6000, then succeeded on 50/50 Lift episodes and decoded 2,244 frames.
+  Learning and inference used CUDA, rendering used NVIDIA EGL, and MuJoCo
+  physics used CPU. That external runner and expanded runtime bundle are not
+  the committed standard workflow or its original locked runtime. See
+  [the PR evidence](https://github.com/nebius/nebius-physical-ai/pull/452) for
+  their scope and artifact hashes.
 
 - **LIBERO** has a quarantined public-neutral-bootstrap development candidate,
   with no supported release. Its neutral bytes contain only a
