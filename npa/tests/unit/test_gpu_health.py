@@ -275,6 +275,51 @@ def test_probe_accepts_only_literal_true_for_each_running_container(
     assert snapshot["errors"] == []
 
 
+class _MalformedComponentReadiness(_Kubectl):
+    def __call__(self, args, **kwargs):
+        if args[1:3] == ["get", "pods"]:
+            payload = _component_pod_with_readiness(True, "false")
+            status = payload["items"][0]["status"]["containerStatuses"][1]
+            status["state"] = {"waiting": {"reason": "ImagePullBackOff"}}
+            return self._result(payload)
+        return super().__call__(args, **kwargs)
+
+
+@pytest.mark.parametrize("driver_mode", ["managed-image", "operator"])
+def test_validation_rejects_malformed_readiness_before_gpu_smoke(
+    tmp_path: Path, driver_mode: str
+) -> None:
+    clock = _Clock()
+    kubectl = _MalformedComponentReadiness([_healthy_nodes()])
+    path = tmp_path / "gpu-health.json"
+    with pytest.raises(GpuHealthError, match="ImagePullBackOff"):
+        validate_gpu_health(
+            kubectl,
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_config(
+                driver_mode=driver_mode,
+                cuda_smoke=True,
+                graphics_smoke=driver_mode == "operator",
+                timeout_seconds=1,
+            ),
+            evidence_path=path,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
+
+    evidence = json.loads(path.read_text())
+    assert evidence["status"] == "failed"
+    assert evidence["cuda_smokes"] == []
+    assert evidence["graphics_smokes"] == []
+    assert kubectl.applied_manifests == []
+    assert kubectl.created_nodes == []
+    namespace = "gpu-operator" if driver_mode == "operator" else "nvidia-device-plugin"
+    assert evidence["final_snapshot"]["errors"] == [
+        f"{namespace}/readiness-probe: phase=Running (ImagePullBackOff)"
+    ]
+
+
 def test_probe_preserves_succeeded_component_completion_behavior(
     tmp_path: Path,
 ) -> None:
