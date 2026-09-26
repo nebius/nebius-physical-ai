@@ -43,14 +43,14 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "Native qualification used a digest-pinned runtime and content-addressed reviewed source overlay; the public workflow template still requires an operator-supplied exact image.",
+      "reason": "The historical warehouse qualification used a digest-pinned runtime and content-addressed reviewed source overlay. Its result remains bound to that original navigation source; the current contact-metric revision awaits separate native qualification. The public workflow template still requires an operator-supplied exact image.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Isaac Sim 6.0.1 / Isaac Lab 3 executed all 4000 robots in one scene. Repeated-reset/peer-isolation and obstacle controls passed. All 1500 PPO iterations and 48 million control transitions completed with finite checkpoint updates and learning curves. Independent paired reload verified 8000 episode records and 602 native frames with strict camera, clock and frozen-state checks; both MP4s fully decoded. Goal success rose from 0 to 11/4000 (0.275%), below the unchanged 80% threshold, despite obstacle-contact episodes falling from 3982 to 11. These results precede the arrival-reward correction; corrected-objective native training, reconstructed-scene contact-buffer qualification and optional RGB-D task probes remain pending.",
+      "reason": "The original static-range warehouse source completed 1500 initial and 500 continuation PPO iterations. Independent fresh-cohort reloads measured 14/4000 (0.350%) baseline versus 3997/4000 (99.925%) continuation success, passing the unchanged 80% threshold with native physical controls and decoded rendering. Those results retain navigation source digest 9a0cce1c8e4b7b9cca5431d06b8cf31488b600095b0c7e7c1833e40de6403aaf and its original contact metric. The current geometry-aware foot-support revision has local Warp/tensor coverage; its separate native reconstructed-scene qualification remains pending. Reconstructed-scene policy improvement and optional RGB-D task probes remain unqualified.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]

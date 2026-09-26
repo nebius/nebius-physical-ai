@@ -12,7 +12,9 @@ and a further 500 iterations with a corrected arrival reward. Independently
 reloaded policies, physical controls and native rendered evidence were verified.**
 Proprietary robot and scene integration remains operator input.
 The 4000-robot measurements use static-scene range observations; camera-conditioned
-policy training at that population remains unqualified.
+policy training at that population remains unqualified. The warehouse result used
+the earlier contact metric; the geometry-aware foot-support revision below has
+local coverage, with its separate native qualification still pending.
 
 The reference extends the pinned public
 [Isaac Lab navigation configuration](https://github.com/isaac-sim/IsaacLab/blob/v3.0.0-beta2.patch1/source/isaaclab_tasks/isaaclab_tasks/manager_based/navigation/config/anymal_c/navigation_env_cfg.py).
@@ -80,13 +82,43 @@ Raw world root positions, upright cosine, clearance and support diagnostics are
 retained. Custom BYOF tasks must implement their own physically valid support
 definition and report it through the same measurement contract.
 
-The contact instrumentation samples native PhysX at every physics substep. It
-classifies nonvertical contact normals as obstacles, counts every base contact,
-and excludes ordinary vertical foot support. Unexpected net contacts after
-subtracting static-scene forces are reported as peer contacts. Values below
-0.02 N are treated as numerical noise. These controls and the 4000-robot target
-require real GPU validation; local tensor and USD tests do not prove runtime
-throughput or learning convergence.
+The contact instrumentation samples native PhysX at every physics substep. Its
+original obstacle rule is `abs(normal.z) < 0.7` or any base contact. Native foot
+contacts against a triangle floor can have oblique solver normals, so the
+current reference additionally checks the source geometry before counting
+those foot contacts as obstacles. Base contacts and contacts on other body
+parts keep the original rule. Unexpected net contacts after subtracting
+static-scene forces remain peer contacts. Obstacle force is summed per robot;
+both obstacle and peer measurements must exceed 0.02 N to count. The force
+threshold is unchanged.
+
+A foot contact is recognized as support only when its actual native body path
+identifies one reference foot with one collision shape. The query radius is
+that shape's resolved, positive contact offset. Its finite rest offset must be
+smaller than the contact offset; zero and negative rest offsets are allowed.
+Neither offset is modified. Both the source-surface distance and the absolute
+native contact separation must fit inside this radius, and the root must be
+above the selected source point.
+
+The query uses the exact world-space triangle mesh already used by the static
+range sensor, checked against its authored USD geometry. Every triangle within
+the radius must face upward with normal z at least 0.7. Its normal's dot product
+with the selected face normal must also be at least 0.7, and the local faces
+must connect through edges inside the radius.
+A nearby wall, underside, open or nonmanifold edge, inconsistent winding,
+degenerate face, disconnected surface or more than 64 local faces preserves
+obstacle classification. Feet without a verified single-shape margin keep the
+original rule. Inconsistent native identities, invalid offsets or mismatched
+source geometry abort qualification. The 64-face bound limits query memory;
+it does not limit workload duration or simulation steps.
+
+This correction changes the obstacle metric, which also feeds the reference's
+training rewards and termination. It does not modify physics, collision shapes,
+reset cases, actions or evaluation thresholds. The separate native acceptance
+must demonstrate unchanged physical probe trajectories, retained obstacle
+positive controls and source-bound contact evidence. CPU Warp geometry tests
+and local tensor tests cover the decision and failure paths; native acceptance
+for this revision is pending, and those tests do not prove learning convergence.
 
 A native RTX PRO 6000 qualification constructed all 4000 robots in one warehouse
 and passed repeated-reset and coincident-peer controls with zero measured focal
@@ -148,6 +180,13 @@ produced these results:
 | Episodes with physical failure | 0 | 0 |
 | Episodes ending at the time limit | 3981 | 0 |
 | Median final goal distance | 0.634 m | 0.322 m |
+
+These fresh-cohort results, verified on 26 September 2026, retain their original
+contact metric and source:
+commit `8998db8aaad36d21c33a16cb625ae0ed7861c70d`, with navigation module digest
+`9a0cce1c8e4b7b9cca5431d06b8cf31488b600095b0c7e7c1833e40de6403aaf`.
+They have not been recomputed or relabeled as results from the geometry-aware
+foot-support revision.
 
 The baseline's 14 successes differ from its earlier 11 because this is a fresh
 cohort, evaluated using the same original checkpoint. The continuation passes
@@ -460,23 +499,39 @@ stage adapters; resource cleanup remains with the standard workflow runtime.
 ### Diagnosing reference probe contacts
 
 The built-in reference retains `probe-<name>-contacts/index.json` and one NPZ
-per executed control step alongside each physical probe trace. These are raw,
-private diagnostic artifacts. They record the strongest classified individual
-contact per classified robot during that interval, including native sensor and
-filter paths, signed normal force, contact point/normal/separation, the actual
-body and root poses, and native physics event count/time. Ties keep the first
-sampled contact. They are samples, not a complete history of every contact.
+per executed control step alongside each physical probe trace. The index uses
+`npa.navigation.probe-contact-samples.v2`. These private artifacts retain the
+strongest individual contact selected by the **original** normal/base rule for
+each robot during the interval, including contacts subsequently recognized as
+floor support. Ties keep the first sampled contact. This bounded selection is
+not a complete history of every contact.
 
-The index retains actual native sensor order separately from the existing
-robot/body indices used by contact classification. Poses are matched by actual
-native paths, so a mapping disagreement remains visible. The sample's summed
-classified force and contribution count belong to its recorded physics tick;
-`control_interval_peak_classified_sum_n` separately preserves every robot's
-original interval maximum after the existing force threshold. Several small
-contacts can trigger that sum even when the retained individual force is small.
+Each sample records actual native sensor/filter paths, signed force, world
+contact point and normal, separation, body/root poses and native physics event
+count/time. The index keeps actual sensor order and the original classifier's
+robot/body indices separately. Support classification requires these identities
+to agree. Native body and root paths independently select the copied poses.
 
-Evidence is written before probe success/failure checks, including a partial
-control step if native stepping raises. Recording is limited to the physical
-probe contexts and does not alter forces, physics settings, thresholds or
-episode scoring. CPU regressions verify the association and copy semantics;
-new runtime/source combinations still require native GPU qualification.
+The v2 index also records resolved foot offsets, source mesh hash and topology,
+query capacity and reason codes. Selected foot samples retain the actual radius,
+rest offset, source face, nearest point, distance and decision reason.
+`original_candidate` and `effective_candidate` distinguish the two metrics.
+Non-foot samples keep explicit geometry sentinels; their original native
+separation remains in `separation_m`.
+
+`sample_tick_original_classified_sum_n` and
+`sample_tick_effective_classified_sum_n`, with their corresponding contribution
+counts, describe the selected sample's actual physics tick.
+`control_interval_peak_effective_sum_n` separately records every robot's interval
+maximum after the unchanged force threshold and must match the probe trajectory.
+The strongest individual contact and the largest summed force can occur at
+different ticks. Several small contacts can exceed the threshold together, so
+these samples cannot reconstruct every contributing contact or removed force.
+
+Evidence is written before the later probe success/failure checks, including a
+partial control step if native stepping raises. The recorder runs only inside
+physical probes and does not change native arrays, forces or physics settings.
+Independent validation must check the exact sample schema, native identities,
+resolved margins, source geometry and full-population interval metrics. Native
+qualification additionally checks all physical controls and rendering; a local
+decoder or a contact diagnostic alone is not a successful policy evaluation.
