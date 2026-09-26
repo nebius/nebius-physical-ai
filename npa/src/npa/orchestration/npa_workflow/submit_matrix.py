@@ -800,7 +800,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "mjlab-eval.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="Requires an operator-provided native MJLab checkpoint and a built MJLab image.",
+    ),
+    SubmitLiveCase(
+        "mjlab-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="mjlab",
+        rotation_skip=True,
+        skip_reason="Requires a trained native checkpoint and an explicit built MJLab image override.",
+        notes="Rendering GPU evaluation publishes measured episodes, MP4 and self-contained HTML.",
     ),
     SubmitLiveCase(
         "sonic-train.yaml",
@@ -945,6 +956,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "status; it is not closed-loop or physical-robot task evidence."
         ),
     ),
+    SubmitLiveCase(
+        "mjlab-train-eval.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="MJLab image awaits the complete public release gates after private GPU qualification.",
+        notes="Native train -> eval -> export -> independent-seed eval; requires an explicit built image override.",
+    ),
     # --- Multi-stage GPU ---
     SubmitLiveCase(
         "sonic-export-eval.yaml",
@@ -966,7 +985,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NGC_API_KEY",
         ),
         notes=(
-            "retarget → train → mjlab. Retargeting consumes the SOMA/G1 motion "
+            "retarget → train → export → native SONIC eval. Retargeting consumes the SOMA/G1 motion "
             "clips staged in the run bucket (see SONIC_MOTION_FIXTURE_PREFIX in "
             "the live helpers, overridable with NPA_E2E_SONIC_MOTION_SRC); train "
             "uses the in-job runtime."
@@ -997,17 +1016,15 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         rotation_skip=True,
         skip_reason=(
-            "Two reasons, both structural. (1) Every stage talks to a workbench "
-            "SERVICE deployed in-cluster (npa-lancedb:8686, "
-            "npa-detection-training:8790); a standalone submit cannot bring "
-            "those up, and it also wants the raw-bdd100k demo dataset in the run "
-            "bucket. (2) 11 sequential stages, each its own cluster: measured "
-            "~2.2 min per stage of provisioning alone on RTXPRO-6000 (from the "
-            "3-stage SONIC chain), so ~25 min before any real work — over the "
-            "rotation's bounded window once CLIP backfill, three trainings and "
-            "three evals are added. Run it manually against a live workbench."
+            "The standalone submit rotation does not deploy the required in-cluster "
+            "LanceDB and detection-training services or stage the BDD100K subset. "
+            "Run it manually after those prerequisites are reachable."
         ),
-        notes="11-stage AV pipeline over in-cluster services; longest wall-clock.",
+        notes=(
+            "Ten-stage AV pipeline over in-cluster services; completion means all "
+            "three detector metrics artifacts were written. FiftyOne inspection is "
+            "a post-run operator activity."
+        ),
     ),
     SubmitLiveCase(
         "tokenfactory-cosmos-gate.yaml",
@@ -1235,6 +1252,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
+        "byof-libero.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "LIBERO's public-neutral candidate remains quarantined and unbuilt; a "
+            "separately authorized exact-digest one-B200 gate owns qualification"
+        ),
+        notes=(
+            "Managed prebuilt LIBERO-Spatial BC-RNN train/reload/heldout path with "
+            "manifest-bound runtime fetch; this matrix neither builds nor submits it, "
+            "and the report validator never proves infrastructure execution by itself."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,
@@ -1249,6 +1280,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "byof-gymnasium-robotics.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated exact-digest RTX PRO live onboarding tier",
+        notes=(
+            "Gymnasium-Robotics Shadow Hand BYOF hard gate: one strictly reserved "
+            "RTX PRO 6000 Blackwell, real MuJoCo touch/contact physics and EGL RGB; "
+            "covered by test_byof_onboarding_live_e2e.py."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-robocasa.yaml",
         "multi",
         plan_only=True,
@@ -1258,17 +1300,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-robotwin.yaml",
         "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "RoboTwin's public worker bridge is disabled pending independently "
+            "attested customer authorization; the separate operator runner owns "
+            "exact-digest RTX qualification"
+        ),
         secret_envs=(
             "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
         ),
         notes=(
-            "Normal submit uses a CPU-only outer launcher and delegates the sole "
-            "accelerator request to one STRICT RTX PRO 6000 Blackwell inner job. "
-            "The private/restricted RoboTwin 2.0 beat_block_hammer pass requires "
-            "SAPIEN/Vulkan, task success, HDF5 actions, decoded MP4 frames, exact "
-            "runtime asset revision, and pod image-digest evidence."
+            "The workflow validates and plans, but normal submit refuses before "
+            "provider calls. Operator-only evidence covers SAPIEN/Vulkan, task "
+            "success, HDF5 actions, decoded MP4 frames, immutable runtime assets, "
+            "and the exact pod image digest. It does not enable this worker path."
         ),
     ),
     SubmitLiveCase(
@@ -1415,22 +1462,32 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "cosmos-synth-fanout-curation.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        runtime=True,
+        expected_parallel_tasks=2,
         plan_only=True,
-        plan_only_justification="contains a stub FiftyOne state and colliding synthetic output targets",
+        plan_only_justification=(
+            "downstream merge-index and workbench.fiftyone.launch_app stages remain stubs"
+        ),
         notes=(
-            "workbench.fiftyone.launch_app is a stub, and both synthetic shard states "
-            "currently target the same transfer manifest object; keep plan-only until "
-            "both gaps close."
+            "The two Cosmos Transfer producers form a collision-free runtime parallel "
+            "wave. merge-index and workbench.fiftyone.launch_app remain stubs, so no "
+            "merged index, human review, or successful curation is claimed."
         ),
     ),
     SubmitLiveCase(
         "av-night-scene-hardening.yaml",
         "multi",
-        plan_only=True,
-        plan_only_justification="terminal FiftyOne launch state remains a stub",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "The standalone submit rotation does not deploy the required in-cluster "
+            "LanceDB and detection-training services or stage the BDD100K night subset. "
+            "Run it manually after those prerequisites are reachable."
+        ),
         notes=(
-            "The terminal workbench.fiftyone.launch_app state is a stub; retain a full "
-            "render preflight until the review toolRef becomes executable."
+            "Eight-stage AV night-scene pipeline over in-cluster services; completion "
+            "means both detector metrics artifacts were written. FiftyOne inspection "
+            "is a post-run operator activity."
         ),
     ),
     SubmitLiveCase(

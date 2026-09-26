@@ -43,10 +43,31 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "refusal creates no source, runtime cache, asset, or output path",
         "zero-payload packaging check only; no SAPIEN or GPU capability claimed",
     ],
+    "gymnasium-robotics": [
+        "future exact candidate runs the registered Shadow Dexterous Hand environment",
+        "120 MuJoCo steps and 2,400 substeps prove contact, touch, and orientation change",
+        "EGL produces distinct RGB frames on one RTX PRO 6000 Blackwell",
+        "neutral bootstrap is unbuilt and none of these checks are current-image evidence",
+    ],
+    "libero": [
+        "quarantined neutral bootstrap requires an explicit immutable "
+        "acceptance-candidate digest",
+        "runtime fetch verifies the pinned official MIT LIBERO source and "
+        "CC BY 4.0 demonstration hashes before use",
+        "headless one-B200 smoke requires real upstream BC-RNN Adam steps "
+        "and strict checkpoint reload",
+        "trajectory-disjoint held-out loss and actions plus exact image and "
+        "GPU evidence are required in libero-smoke.json",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
+    ],
+    "mjlab": [
+        "native MJLab PPO training writes a loadable RSL-RL checkpoint",
+        "real complete-episode evaluation produces finite measured returns",
+        "native ONNX export passes the ONNX checker",
     ],
     "curobo": [
         "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",

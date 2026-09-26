@@ -34,6 +34,15 @@ missing-authorization gate creates no source, asset, cache, or output paths.
 The candidate is unbuilt and publication-quarantined, so this definition is not
 a recorded container pass and never establishes SAPIEN, Vulkan, task-success,
 HDF5/video, or RTX capability.
+Gymnasium-Robotics appears in the machine-readable manifest as an internal
+development-candidate record with `needs-image-update`. This records the future real
+MuJoCo/EGL gate without registering a supported image. The neutral candidate
+must contain no upstream source, Shadow asset, MuJoCo/Python workload runtime,
+or populated cache; its Dockerfile refuses before package network access when
+the exact signed-snapshot bootstrap or corresponding-source locks differ. An
+owner-only reference build supplied exact config and ordered-layer scanner
+anchors but did not complete the product scan or leave an accepted artifact. No
+golden evaluation, accepted image, or public availability is claimed.
 
 ## CLI
 

@@ -1,0 +1,715 @@
+# Gymnasium-Robotics Shadow Hand capability smoke on exactly one datacenter
+# RTX PRO 6000 Blackwell GPU. The cluster itself must already be manager-owned
+# and bound STRICT to the assigned reserved-capacity block.
+name: byof-solution-smoke-gymnasium-robotics-rtxpro-gpu
+execution: serial
+---
+name: byof-solution-smoke-gymnasium-robotics-rtxpro-gpu
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 4+
+  memory: 16+
+  disk_size: 20
+  image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
+config:
+  kubernetes:
+    # SkyPilot 0.12.2 reads this hook only from global --config. Mirror it in
+    # the task-private global config to verify bytes before Sky creates caches.
+    post_provision_runcmd:
+      - /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py || exit $?
+    pod_config:
+      spec:
+        automountServiceAccountToken: false
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: ray-node
+            env:
+              - name: NVIDIA_DRIVER_CAPABILITIES
+                value: "graphics,utility"
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
+              privileged: false
+              # The packaging contract permits passwordless-root SkyPilot setup.
+              # Fetched code separately enters runtime-bootstrap's NNP sandbox.
+              allowPrivilegeEscalation: true
+              capabilities:
+                drop: [ALL]
+                add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SYS_CHROOT, NET_BIND_SERVICE]
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "descriptor-bound-runtime-cache"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_IMAGE: ""
+  NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS: "900"
+  NPA_GYMNASIUM_RUNTIME_CACHE: "/workspace/.cache/npa/gymnasium-robotics"
+  NVIDIA_DRIVER_CAPABILITIES: "graphics,utility"
+  MUJOCO_GL: "egl"
+  PYOPENGL_PLATFORM: "egl"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -x /usr/bin/python3
+  test -f /opt/npa/gymnasium-robotics/capability_smoke.py
+  test -f /opt/npa/gymnasium-robotics/runtime-bootstrap.py
+  test -f /opt/npa/gymnasium-robotics/source-lock.json
+  /usr/bin/python3 -I -B -c 'import boto3, botocore'
+  install -d -m 0700 "${NPA_GYMNASIUM_RUNTIME_CACHE}"
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+  unset AWS_SHARED_CREDENTIALS_FILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN
+  unset AWS_CONTAINER_CREDENTIALS_RELATIVE_URI AWS_CONTAINER_CREDENTIALS_FULL_URI
+run: |
+  set -euo pipefail
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  /usr/bin/python3 -I -B - "${OUTPUT_DIR}" <<'PY'
+  import os
+  from pathlib import Path
+  import stat
+  import sys
+
+  output = Path(sys.argv[1])
+  if not output.is_absolute() or len(output.parts) < 2:
+      raise SystemExit("Gymnasium output path must be absolute")
+  flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+  descriptors = [os.open("/", flags)]
+  try:
+      for name in output.parts[1:]:
+          try:
+              child_fd = os.open(name, flags, dir_fd=descriptors[-1])
+          except FileNotFoundError:
+              os.mkdir(name, 0o700, dir_fd=descriptors[-1])
+              child_fd = os.open(name, flags, dir_fd=descriptors[-1])
+          descriptor_stat = os.fstat(child_fd)
+          path_stat = os.stat(
+              name, dir_fd=descriptors[-1], follow_symlinks=False
+          )
+          identity = (descriptor_stat.st_dev, descriptor_stat.st_ino)
+          if (
+              not stat.S_ISDIR(descriptor_stat.st_mode)
+              or not stat.S_ISDIR(path_stat.st_mode)
+              or identity != (path_stat.st_dev, path_stat.st_ino)
+              or descriptor_stat.st_uid not in {0, os.geteuid()}
+          ):
+              os.close(child_fd)
+              raise SystemExit("Gymnasium output path component is unsafe")
+          descriptors.append(child_fd)
+      if os.fstat(descriptors[-1]).st_uid != os.geteuid():
+          raise SystemExit("Gymnasium output root has an unexpected owner")
+  finally:
+      for descriptor in reversed(descriptors):
+          os.close(descriptor)
+  PY
+  test -n "${BYOF_IMAGE}"
+  if ! printf '%s\n' "${BYOF_IMAGE}" | grep -Eq '@sha256:[0-9a-f]{64}$'; then
+    echo "BYOF_IMAGE must be an immutable sha256 reference" >&2
+    exit 65
+  fi
+  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1
+  nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1
+  test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 1
+  nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv,noheader,nounits \
+    > "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "RTX PRO 6000" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "Blackwell" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  grep -F "12.0" "${OUTPUT_DIR}/nvidia_smi_identity.txt"
+  ldconfig -p 2>/dev/null | grep -E 'libGLX_nvidia|libEGL_nvidia|libEGL|libGL' \
+    > "${OUTPUT_DIR}/graphics_libraries_before_render.txt"
+
+  # The owner-side live gate reads this exact SkyPilot Pod through the
+  # task-owned kubeconfig and writes a receipt through pods/exec. The workload
+  # service account deliberately needs no Kubernetes API permission.
+  POD_IMAGE_RECEIPT="${OUTPUT_DIR}/npa_pod_image_receipt.json"
+  RECEIPT_TIMEOUT_SECONDS="${NPA_BYOF_POD_IMAGE_RECEIPT_TIMEOUT_SECONDS}"
+  case "${RECEIPT_TIMEOUT_SECONDS}" in
+    ""|*[!0-9]*) echo "receipt timeout must be a positive integer" >&2; exit 65 ;;
+  esac
+  if [ "${RECEIPT_TIMEOUT_SECONDS}" -le 0 ]; then
+    echo "receipt timeout must be a positive integer" >&2
+    exit 65
+  fi
+  RECEIPT_DEADLINE=$((SECONDS + RECEIPT_TIMEOUT_SECONDS))
+  while [ ! -s "${POD_IMAGE_RECEIPT}" ]; do
+    if [ "${SECONDS}" -ge "${RECEIPT_DEADLINE}" ]; then
+      echo "timed out waiting for the owner-side Pod image receipt" >&2
+      exit 124
+    fi
+    sleep 1
+  done
+  export NPA_BYOF_POD_IMAGE_ID="$(/usr/bin/python3 -I -B - <<'PY'
+  import json
+  import os
+  import re
+  from pathlib import Path
+
+  def require_keys(value, keys, label):
+      if not isinstance(value, dict) or set(value) != set(keys):
+          raise SystemExit(f"Pod policy receipt has an unexpected {label} schema")
+
+  def same_facts(actual, expected):
+      # JSON preserves the distinction between booleans and numeric lookalikes.
+      return json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+
+  def validate_ipc(policy):
+      volumes, mounts = policy["volumes"], policy["mounts"]
+      if volumes == [] and mounts == []:
+          return
+      approved = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
+      if not same_facts(volumes, approved) or not isinstance(mounts, list) or len(mounts) != 1:
+          raise SystemExit("Pod policy receipt has unapproved volumes or mounts")
+      mount = mounts[0]
+      if not isinstance(mount, dict):
+          raise SystemExit("Pod policy receipt has a malformed IPC mount")
+      mount = dict(mount)
+      if mount.pop("readOnly", False) is not False or mount.pop("mountPropagation", "None") != "None":
+          raise SystemExit("Pod policy receipt has unapproved IPC mount options")
+      if mount != {"name": "dshm", "mountPath": "/dev/shm"}:
+          raise SystemExit("Pod policy receipt has an unapproved IPC mount")
+
+  def validate_identity(policy, receipt):
+      identity = policy["identity"]
+      require_keys(identity, ("name", "namespace", "uid", "resourceVersion"), "identity")
+      for value in identity.values():
+          if not isinstance(value, str) or not value or value != value.strip():
+              raise SystemExit("Pod policy receipt has a missing identity fact")
+      for key in ("name", "namespace", "uid"):
+          if identity[key] != receipt["pod_" + key]:
+              raise SystemExit("Pod policy receipt identity differs from the image receipt")
+      if receipt["container_name"] != "ray-node" or policy["container_names"] != ["ray-node"]:
+          raise SystemExit("Pod policy receipt has an unapproved container population")
+
+  def validate_policy(receipt):
+      policy = receipt["admitted_pod_policy"]
+      require_keys(policy, (
+          "policy", "identity", "service_account", "automount_service_account_token",
+          "container_names", "volumes", "mounts", "pod_security_context",
+          "container_security_context", "spec_sha256",
+      ), "admitted-policy")
+      if policy["policy"] != "gymnasium-admitted-pod.v1":
+          raise SystemExit("Pod policy receipt has an unapproved policy version")
+      if policy["service_account"] not in ("default", "skypilot-service-account"):
+          raise SystemExit("Pod policy receipt has an unapproved service account")
+      if policy["automount_service_account_token"] is not False:
+          raise SystemExit("Pod policy receipt must explicitly disable service-account automount")
+      pod_security = {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}}
+      container_security = {
+          "runAsUser": 1000, "runAsGroup": 1000,
+          "runAsNonRoot": True, "privileged": False, "allowPrivilegeEscalation": True,
+          "capabilities": {
+              "drop": ["ALL"],
+              "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "SYS_CHROOT", "NET_BIND_SERVICE"],
+          },
+      }
+      if not same_facts(policy["pod_security_context"], pod_security):
+          raise SystemExit("Pod policy receipt has unapproved Pod security facts")
+      if not same_facts(policy["container_security_context"], container_security):
+          raise SystemExit("Pod policy receipt has unapproved container security facts")
+      digest = policy["spec_sha256"]
+      if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+          raise SystemExit("Pod policy receipt is missing its checked spec digest")
+      validate_identity(policy, receipt)
+      validate_ipc(policy)
+
+  expected = os.environ["BYOF_IMAGE"]
+  match = re.search(r"sha256:[0-9a-f]{64}$", expected)
+  if match is None:
+      raise SystemExit("BYOF_IMAGE is not immutable")
+  expected_digest = match.group(0)
+  receipt_path = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]) / "npa_pod_image_receipt.json"
+  payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+  required = {
+      "schema_version",
+      "source",
+      "run_id",
+      "pod_name",
+      "pod_namespace",
+      "pod_uid",
+      "node_name",
+      "container_name",
+      "spec_image",
+      "image_id",
+      "expected_digest",
+      "observed_digest",
+      "observed_unix",
+      "admitted_pod_policy",
+  }
+  if not isinstance(payload, dict) or set(payload) != required:
+      raise SystemExit("owner-side Pod image receipt has an unexpected schema")
+  if payload["schema_version"] != "npa.byof.pod-image-receipt.v1":
+      raise SystemExit("owner-side Pod image receipt has an unexpected version")
+  if payload["source"] != "owner-side-kubernetes-status":
+      raise SystemExit("Pod image receipt did not come from the owner-side gate")
+  if payload["run_id"] != os.environ["NPA_BYOF_RUN_ID"]:
+      raise SystemExit("Pod image receipt belongs to a different run")
+  if payload["spec_image"] != expected:
+      raise SystemExit("Pod spec image differs from BYOF_IMAGE")
+  if payload["expected_digest"] != expected_digest:
+      raise SystemExit("Pod image receipt expected digest differs from BYOF_IMAGE")
+  if payload["observed_digest"] != expected_digest:
+      raise SystemExit("Pod image receipt observed a different digest")
+  image_id = str(payload["image_id"])
+  if expected_digest not in image_id:
+      raise SystemExit("Kubernetes imageID differs from BYOF_IMAGE")
+  for key in (
+      "pod_name",
+      "pod_namespace",
+      "pod_uid",
+      "node_name",
+      "container_name",
+  ):
+      if not isinstance(payload[key], str) or not payload[key]:
+          raise SystemExit(f"Pod image receipt is missing {key}")
+  validate_policy(payload)
+  print(image_id)
+  PY
+  )"
+  test -n "${NPA_BYOF_POD_IMAGE_ID}"
+  # The owner-side receipt contains run-private Kubernetes identifiers. Keep
+  # only its digest result in the public smoke summary and remove the receipt
+  # before any artifact collection can begin.
+  rm -f -- "${POD_IMAGE_RECEIPT}"
+
+  # Replace the credential-bearing shell with a non-dumpable trusted
+  # coordinator. Runtime-fetched code gets a scrubbed environment, no network
+  # authority, and no privilege elevation; uploads begin only after the
+  # descriptor-bound supervisor has proved the complete process tree absent.
+  exec /usr/bin/python3 -I -B - <<'PY'
+  import contextlib
+  import ctypes
+  import hashlib
+  import json
+  import os
+  import stat
+  import subprocess
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+
+
+  def _descriptor_identity(file_stat):
+      return (
+          file_stat.st_dev,
+          file_stat.st_ino,
+          file_stat.st_mode,
+          file_stat.st_nlink,
+          file_stat.st_uid,
+      )
+
+
+  def _directory_identity(directory_stat):
+      return (
+          directory_stat.st_dev,
+          directory_stat.st_ino,
+          directory_stat.st_mode,
+          directory_stat.st_uid,
+      )
+
+
+  def _require_bound_directory(parent_fd, child_fd, name, identity):
+      descriptor_stat = os.fstat(child_fd)
+      try:
+          path_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+      except OSError as exc:
+          raise SystemExit("Gymnasium output directory chain changed") from exc
+      if (
+          not stat.S_ISDIR(descriptor_stat.st_mode)
+          or not stat.S_ISDIR(path_stat.st_mode)
+          or _directory_identity(descriptor_stat) != identity
+          or _directory_identity(path_stat) != identity
+          or descriptor_stat.st_uid not in {0, os.geteuid()}
+          or os.get_inheritable(child_fd)
+      ):
+          raise SystemExit("Gymnasium output directory chain changed")
+
+
+  def _open_bound_output_root(path):
+      flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+      if not path.is_absolute() or any(
+          part in {"", ".", ".."} for part in path.parts[1:]
+      ):
+          raise SystemExit("Gymnasium output path is unsafe")
+      descriptors = []
+      bindings = []
+      try:
+          descriptors.append(os.open("/", flags))
+          for index, name in enumerate(path.parts[1:]):
+              parent_fd = descriptors[-1]
+              try:
+                  child_fd = os.open(name, flags, dir_fd=parent_fd)
+              except FileNotFoundError:
+                  if index != len(path.parts[1:]) - 1:
+                      raise
+                  os.mkdir(name, 0o700, dir_fd=parent_fd)
+                  child_fd = os.open(name, flags, dir_fd=parent_fd)
+              descriptors.append(child_fd)
+              identity = _directory_identity(os.fstat(child_fd))
+              _require_bound_directory(parent_fd, child_fd, name, identity)
+              bindings.append((parent_fd, child_fd, name, identity))
+      except BaseException as exc:
+          _close_bound_output_chain(descriptors)
+          if isinstance(exc, OSError):
+              raise SystemExit(
+                  "cannot bind Gymnasium output directory safely"
+              ) from exc
+          raise
+      if os.fstat(descriptors[-1]).st_uid != os.geteuid():
+          for descriptor in reversed(descriptors):
+              os.close(descriptor)
+          raise SystemExit("Gymnasium output root has an unexpected owner")
+      return descriptors[-1], tuple(descriptors), tuple(bindings)
+
+
+  def _require_bound_output_chain(bindings):
+      for parent_fd, child_fd, name, identity in bindings:
+          _require_bound_directory(parent_fd, child_fd, name, identity)
+
+
+  def _close_bound_output_chain(descriptors):
+      for descriptor in reversed(descriptors):
+          with contextlib.suppress(OSError):
+              os.close(descriptor)
+
+
+  def _require_owned_regular(file_fd, expected_uid, label):
+      file_stat = os.fstat(file_fd)
+      if not stat.S_ISREG(file_stat.st_mode):
+          raise SystemExit(f"{label} is not a regular file")
+      if file_stat.st_nlink != 1:
+          raise SystemExit(f"{label} must have exactly one link")
+      if file_stat.st_uid != expected_uid:
+          raise SystemExit(f"{label} has an unexpected owner")
+      return file_stat
+
+
+  def _require_bound_log_stat(file_stat, expected_uid, label):
+      if not stat.S_ISREG(file_stat.st_mode):
+          raise SystemExit(f"{label} is not a regular file")
+      if file_stat.st_nlink != 1:
+          raise SystemExit(f"{label} must have exactly one link")
+      if file_stat.st_uid != expected_uid:
+          raise SystemExit(f"{label} has an unexpected owner")
+      if stat.S_IMODE(file_stat.st_mode) != 0o600:
+          raise SystemExit(f"{label} has an unexpected mode")
+      return file_stat
+
+
+  def _open_bound_log(directory_fd, name, expected_uid, label):
+      flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+      try:
+          file_fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
+      except OSError as exc:
+          raise SystemExit(f"cannot create {label} exclusively") from exc
+      keep_open = False
+      try:
+          descriptor_stat = _require_bound_log_stat(
+              os.fstat(file_fd), expected_uid, label
+          )
+          try:
+              path_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+          except OSError as exc:
+              raise SystemExit(f"cannot verify {label} path") from exc
+          _require_bound_log_stat(path_stat, expected_uid, label)
+          if _descriptor_identity(descriptor_stat) != _descriptor_identity(path_stat):
+              raise SystemExit(f"{label} path and descriptor differ")
+          if os.get_inheritable(file_fd):
+              raise SystemExit(f"{label} descriptor is inheritable")
+          keep_open = True
+          return file_fd, _descriptor_identity(descriptor_stat)
+      finally:
+          if not keep_open:
+              os.close(file_fd)
+
+
+  def _verify_bound_log(directory_fd, name, file_fd, expected_uid, identity, label):
+      os.fsync(file_fd)
+      descriptor_stat = _require_bound_log_stat(os.fstat(file_fd), expected_uid, label)
+      if _descriptor_identity(descriptor_stat) != identity:
+          raise SystemExit(f"{label} descriptor identity changed")
+      try:
+          path_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+      except OSError as exc:
+          raise SystemExit(f"cannot verify {label} path") from exc
+      _require_bound_log_stat(path_stat, expected_uid, label)
+      if _descriptor_identity(path_stat) != identity:
+          raise SystemExit(f"{label} path identity changed")
+
+
+  def _read_bound_json(directory_fd, name, expected_uid, label):
+      flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+      try:
+          file_fd = os.open(name, flags, dir_fd=directory_fd)
+      except OSError as exc:
+          raise SystemExit(f"cannot open {label} safely") from exc
+      try:
+          before = _require_owned_regular(file_fd, expected_uid, label)
+          if before.st_size > MAX_OUTPUT_BYTES:
+              raise SystemExit(f"{label} exceeds the size limit")
+          remaining = before.st_size
+          chunks = []
+          while remaining:
+              chunk = os.read(file_fd, min(remaining, 1024 * 1024))
+              if not chunk:
+                  raise SystemExit(f"{label} changed while being read")
+              chunks.append(chunk)
+              remaining -= len(chunk)
+          if os.read(file_fd, 1):
+              raise SystemExit(f"{label} changed while being read")
+          payload = b"".join(chunks)
+          after = _require_owned_regular(file_fd, expected_uid, label)
+          if _descriptor_identity(before) != _descriptor_identity(after):
+              raise SystemExit(f"{label} identity changed while being read")
+          if after.st_size != len(payload) or before.st_size != after.st_size:
+              raise SystemExit(f"{label} size changed while being read")
+          json.loads(payload)
+          return payload
+      finally:
+          os.close(file_fd)
+
+
+  def _write_bound_summary(directory_fd, name, payload, expected_uid):
+      flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+      try:
+          file_fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
+      except OSError as exc:
+          raise SystemExit("cannot create Gymnasium summary exclusively") from exc
+      try:
+          before = _require_owned_regular(file_fd, expected_uid, "Gymnasium summary")
+          if before.st_size != 0:
+              raise SystemExit("new Gymnasium summary is not empty")
+          view = memoryview(payload)
+          while view:
+              written = os.write(file_fd, view)
+              if written <= 0:
+                  raise SystemExit("cannot write complete Gymnasium summary")
+              view = view[written:]
+          os.fsync(file_fd)
+          after = _require_owned_regular(file_fd, expected_uid, "Gymnasium summary")
+          if _descriptor_identity(before) != _descriptor_identity(after):
+              raise SystemExit("Gymnasium summary identity changed while being written")
+          if after.st_size != len(payload):
+              raise SystemExit("Gymnasium summary size changed while being written")
+          return payload
+      finally:
+          os.close(file_fd)
+
+
+  def _output_uploads(artifact_name, artifact_payload, summary_payload):
+      return (
+          (artifact_name, artifact_payload),
+          ("npa_byof_summary.json", summary_payload),
+      )
+
+
+  def _require_conditional_put(params, **_kwargs):
+      # Ubuntu's pinned botocore predates the IfNoneMatch API argument. Its
+      # supported before-call hook adds this header before SigV4 signing.
+      params["headers"]["If-None-Match"] = "*"
+
+
+  def _require_uploaded_hash(response, digest):
+      # S3-compatible endpoints may preserve HTTP metadata header casing.
+      hashes = [
+          value for name, value in response.get("Metadata", {}).items()
+          if name.lower() == "sha256"
+      ]
+      if hashes != [digest]:
+          raise SystemExit("qualification object hash metadata changed after upload")
+
+
+  libc = ctypes.CDLL(None, use_errno=True)
+  if libc.prctl(4, 0, 0, 0, 0) != 0:
+      raise SystemExit("cannot protect the credential-bearing coordinator")
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  root = Path(f"/workspace/byof-runs/{run_id}")
+  root_fd, root_descriptors, root_bindings = _open_bound_output_root(root)
+  _require_bound_output_chain(root_bindings)
+  expected_output_uid = os.geteuid()
+  expected_command = "\n".join(
+      (
+          "export MUJOCO_GL=egl",
+          "export PYOPENGL_PLATFORM=egl",
+          "export NVIDIA_DRIVER_CAPABILITIES=graphics,utility",
+          "exec /usr/local/bin/npa-gymnasium-entrypoint run-smoke",
+      )
+  )
+  if os.environ.get("BYOF_SMOKE_COMMAND", "").strip() != expected_command:
+      raise SystemExit("unexpected Gymnasium smoke command")
+  runtime_environment_allowlist = {
+      "BYOF_IMAGE",
+      "MUJOCO_GL",
+      "NPA_BYOF_POD_IMAGE_ID",
+      "NPA_GYMNASIUM_RUNTIME_CACHE",
+      "NPA_SMOKE_OUTPUT_DIR",
+      "NVIDIA_DRIVER_CAPABILITIES",
+      "PYOPENGL_PLATFORM",
+  }
+  runtime_environment = {
+      name: os.environ[name]
+      for name in runtime_environment_allowlist
+      if name in os.environ
+  }
+  runtime_environment["PATH"] = (
+      "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  )
+  stdout_name = "solution_smoke_stdout.log"
+  stderr_name = "solution_smoke_stderr.log"
+  stdout_fd, stdout_identity = _open_bound_log(
+      root_fd, stdout_name, expected_output_uid, "Gymnasium smoke stdout"
+  )
+  stderr_fd = None
+  try:
+      stderr_fd, stderr_identity = _open_bound_log(
+          root_fd, stderr_name, expected_output_uid, "Gymnasium smoke stderr"
+      )
+      completed = subprocess.run(
+          ["/usr/local/bin/npa-gymnasium-entrypoint", "run-smoke"],
+          cwd="/",
+          env=runtime_environment,
+          stdin=subprocess.DEVNULL,
+          stdout=stdout_fd,
+          stderr=stderr_fd,
+          check=False,
+      )
+      _require_bound_output_chain(root_bindings)
+      _verify_bound_log(
+          root_fd,
+          stdout_name,
+          stdout_fd,
+          expected_output_uid,
+          stdout_identity,
+          "Gymnasium smoke stdout",
+      )
+      _verify_bound_log(
+          root_fd,
+          stderr_name,
+          stderr_fd,
+          expected_output_uid,
+          stderr_identity,
+          "Gymnasium smoke stderr",
+      )
+  finally:
+      if stderr_fd is not None:
+          os.close(stderr_fd)
+      os.close(stdout_fd)
+  smoke_exit_code = completed.returncode
+  artifact_name = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "")
+  if artifact_name != "gymnasium-robotics-smoke.json":
+      raise SystemExit("unexpected Gymnasium qualification artifact name")
+  artifact_payload = _read_bound_json(
+      root_fd,
+      artifact_name,
+      expected_output_uid,
+      "Gymnasium qualification artifact",
+  )
+  artifact_evidence = {
+      "name": artifact_name,
+      "media_type": "application/json",
+      "size_bytes": len(artifact_payload),
+      "sha256": hashlib.sha256(artifact_payload).hexdigest(),
+  }
+  metadata = json.loads(
+      Path("/opt/npa/gymnasium-robotics/source-lock.json").read_text(encoding="utf-8")
+  )
+  summary = {
+      "status": "success" if smoke_exit_code == 0 else "failed",
+      "tool": "byof",
+      "workload": "solution-smoke-gymnasium-robotics-rtxpro",
+      "run_id": run_id,
+      "image": os.environ.get("BYOF_IMAGE", ""),
+      "pod_observed_image_id": os.environ.get("NPA_BYOF_POD_IMAGE_ID", ""),
+      "repo_root": os.environ["BYOF_REPO_ROOT"],
+      "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+      "smoke_artifact_name": artifact_name,
+      "smoke_artifact": artifact_evidence,
+      "smoke_exit_code": smoke_exit_code,
+      "created_unix": round(time.time(), 3),
+  }
+  summary_payload = (
+      json.dumps(summary, indent=2, sort_keys=True) + "\n"
+  ).encode("utf-8")
+  summary_payload = _write_bound_summary(
+      root_fd,
+      "npa_byof_summary.json",
+      summary_payload,
+      expected_output_uid,
+  )
+  print(summary_payload.decode("utf-8"), end="", flush=True)
+  if smoke_exit_code != 0:
+      raise SystemExit(smoke_exit_code)
+
+  # No boto/storage client exists until the isolated runtime supervisor has
+  # returned, which includes its fail-closed surviving-descendant check.
+  import boto3
+  from botocore.config import Config
+
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme == "s3" and parsed.netloc:
+      _require_bound_output_chain(root_bindings)
+      endpoint = (
+          os.environ.get("AWS_ENDPOINT_URL")
+          or os.environ.get("NEBIUS_S3_ENDPOINT")
+          or ""
+      ).strip() or None
+      client_kwargs = {
+          "endpoint_url": endpoint,
+          "config": Config(s3={"addressing_style": "path"}),
+      }
+      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+      if access_key and secret_key:
+          client_kwargs["aws_access_key_id"] = access_key
+          client_kwargs["aws_secret_access_key"] = secret_key
+          if session_token:
+              client_kwargs["aws_session_token"] = session_token
+      s3 = boto3.client("s3", **client_kwargs)
+      s3.meta.events.register("before-call.s3.PutObject", _require_conditional_put)
+      prefix = parsed.path.lstrip("/")
+      upload_payloads = _output_uploads(
+          artifact_name, artifact_payload, summary_payload
+      )
+      expected_keys = {prefix + name for name, _payload in upload_payloads}
+      for name, payload in upload_payloads:
+          json.loads(payload)
+          digest = hashlib.sha256(payload).hexdigest()
+          key = prefix + name
+          s3.put_object(
+              Bucket=parsed.netloc,
+              Key=key,
+              Body=payload,
+              ContentType="application/json",
+              Metadata={"sha256": digest},
+          )
+          head = s3.head_object(Bucket=parsed.netloc, Key=key)
+          if head.get("ContentLength") != len(payload):
+              raise SystemExit("qualification object size changed after upload")
+          if head.get("ContentType") != "application/json":
+              raise SystemExit("qualification object media type changed after upload")
+          _require_uploaded_hash(head, digest)
+      pages = s3.get_paginator("list_objects_v2").paginate(
+          Bucket=parsed.netloc, Prefix=prefix
+      )
+      observed_keys = {
+          item["Key"] for page in pages for item in page.get("Contents", [])
+      }
+      if observed_keys != expected_keys:
+          raise SystemExit("qualification output prefix contains unexpected objects")
+      print(f"uploaded_file_count={len(upload_payloads)}", flush=True)
+  _require_bound_output_chain(root_bindings)
+  _close_bound_output_chain(root_descriptors)
+  PY

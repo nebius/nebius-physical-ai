@@ -96,7 +96,10 @@ def _raise_robotwin_worker_refusal() -> NoReturn:
 def _robotwin_runtime_materialization(
     runner: Any, argv: list[str]
 ) -> Iterator[tuple[Any | None, Mapping[str, str] | None]]:
-    """Materialize a validated worker transport for the internal workflow bridge."""
+    """Exercise the inert transport prototype in unit tests only.
+
+    The public CLI rejects every RoboTwin request before loading its runner.
+    No runtime caller reaches this helper; it does not authorize worker submit."""
 
     from npa.orchestration.npa_workflow.robotwin_preflight import (
         CONTEXT_ENV_NAMES,
@@ -173,11 +176,13 @@ def build_byof_argv(
     base_image: str = "",
     workload: str = "container-verify",
     build_command: str = "",
+    source_prune_path: str = "",
     smoke_command: str = "",
     solution_name: str = "",
     capability_name: str = "",
     smoke_artifact_name: str = "",
     runtime_context_env: str = "",
+    libero_qualified_candidate_image: str = "",
     project: str = "",
     registry: str = "",
     image: str = "",
@@ -229,6 +234,8 @@ def build_byof_argv(
         argv.extend(["--base-image", base_image])
     if build_command:
         argv.extend(["--build-command", build_command])
+    if source_prune_path:
+        argv.extend(["--source-prune-path", source_prune_path])
     if smoke_command:
         argv.extend(["--smoke-command", smoke_command])
     if solution_name:
@@ -239,6 +246,10 @@ def build_byof_argv(
         argv.extend(["--smoke-artifact-name", smoke_artifact_name])
     if runtime_context_env:
         argv.extend(["--runtime-context-env", runtime_context_env])
+    if libero_qualified_candidate_image:
+        argv.extend(
+            ["--libero-qualified-candidate-image", libero_qualified_candidate_image]
+        )
     if project:
         argv.extend(["--project", project])
     if registry:
@@ -304,6 +315,14 @@ def run_cmd(
         "--build-command",
         help="Optional shell command run at image build time from /opt/byof.",
     ),
+    source_prune_path: str = typer.Option(
+        "",
+        "--source-prune-path",
+        help=(
+            "Optional safe repo-relative path removed with Git objects in the source "
+            "clone layer."
+        ),
+    ),
     smoke_command: str = typer.Option(
         "",
         "--smoke-command",
@@ -327,6 +346,11 @@ def run_cmd(
             "Environment-variable name containing owner-only runtime authorization; "
             "the secret value is never placed in argv."
         ),
+    ),
+    libero_qualified_candidate_image: str = typer.Option(
+        "",
+        "--libero-qualified-candidate-image",
+        help="Explicit immutable, separately qualified npa-libero image.",
     ),
     project: str = typer.Option(
         "", "--project", help="Project alias for registry resolution."
@@ -388,11 +412,13 @@ def run_cmd(
         base_image=base_image,
         workload=workload.value,
         build_command=build_command,
+        source_prune_path=source_prune_path,
         smoke_command=smoke_command,
         solution_name=solution_name,
         capability_name=capability_name,
         smoke_artifact_name=smoke_artifact_name,
         runtime_context_env=runtime_context_env,
+        libero_qualified_candidate_image=libero_qualified_candidate_image,
         project=project,
         registry=registry,
         image=image,
@@ -448,18 +474,7 @@ def run_cmd(
         )
 
     runner = _load_runner()
-    with _robotwin_runtime_materialization(runner, argv) as (
-        authorization,
-        _runtime_environment,
-    ):
-        code = int(
-            runner._run_authorized_robotwin(
-                argv,
-                authorization=authorization,
-            )
-            if authorization is not None
-            else runner.main(argv)
-        )
+    code = int(runner.main(argv))
     raise SystemExit(code)
 
 

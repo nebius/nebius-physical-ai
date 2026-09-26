@@ -260,6 +260,66 @@ def _redact_submit_private_values(value: Any) -> Any:
     return value
 
 
+def _workflow_log_attempt(record: Mapping[str, object]) -> int:
+    """Read a positive whole-number attempt, preserving missing legacy values.
+
+    Historical ledgers may encode integral numbers as strings or floats. Reject
+    booleans and fractional numbers instead of silently attributing another attempt.
+    """
+
+    raw_attempt = record.get("attempt")
+    if raw_attempt is None:
+        return 1
+    try:
+        attempt = int(raw_attempt)
+        if (
+            isinstance(raw_attempt, bool)
+            or (isinstance(raw_attempt, float) and raw_attempt != attempt)
+            or attempt < 1
+        ):
+            raise ValueError("attempt must be a positive whole number")
+        return attempt
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("persisted workflow attempt metadata is invalid") from exc
+
+
+def _invalid_log_attempt_payload(
+    *, run_id: str, stage: str, available: list[str], manifest: Mapping[str, object]
+) -> dict[str, object]:
+    """Build a sanitized failure when durable log attribution is malformed."""
+
+    from npa.verification import VERIFICATION_UNAVAILABLE, apply_verification
+
+    reason = (
+        "persisted attempt metadata is invalid; live logs cannot be attributed safely"
+    )
+    payload = apply_verification(
+        {
+            "run_id": run_id,
+            "stage": stage,
+            "manifest_state": "available",
+            "persisted_stages": available,
+            "stage_ledger_state": "invalid",
+            "live_log_state": "unavailable",
+            "cached_log_state": "unknown",
+            "error_code": "STAGE_ATTEMPT_INVALID",
+            "reason": reason,
+        },
+        status=VERIFICATION_UNAVAILABLE,
+        target=run_id,
+        last_known_state=str(manifest.get("status") or "UNKNOWN"),
+        last_known_at=str(manifest.get("updated_at") or ""),
+        last_known_source="stage_ledger_or_manifest",
+        reason=reason,
+        retry_command=f"npa workbench workflow status {run_id}",
+    )
+    live_verification = payload["live_verification"]
+    assert isinstance(live_verification, dict)
+    live_verification["error_code"] = "STAGE_ATTEMPT_INVALID"
+    live_verification["category"] = "ATTRIBUTION"
+    return payload
+
+
 def _fail(
     msg: str,
     code: int = 1,
@@ -6698,7 +6758,7 @@ def _matching_stage_log_waves(
 
     job_id = str(stage_attempt.get("managed_job_id") or "")
     stage_key = str(stage_attempt.get("wave_key") or "")
-    attempt = int(stage_attempt.get("attempt") or 1)
+    attempt = _workflow_log_attempt(stage_attempt)
     if not stage_key and not job_id:
         return []
     matches: list[dict[str, object]] = []
@@ -6707,15 +6767,11 @@ def _matching_stage_log_waves(
             continue
         if stage not in list(raw_wave.get("states") or []):
             continue
-        try:
-            wave_attempt = int(raw_wave.get("attempt") or 1)
-        except (TypeError, ValueError):
-            continue
-        if wave_attempt != attempt:
-            continue
         if stage_key and str(raw_wave.get("key") or "") != stage_key:
             continue
         if job_id and str(raw_wave.get("job_id") or "") != job_id:
+            continue
+        if _workflow_log_attempt(raw_wave) != attempt:
             continue
         matches.append(raw_wave)
     return matches
@@ -6987,7 +7043,7 @@ def logs_cmd(
                         for index, state_name in enumerate(wave_states):
                             reconstructed = {
                                 "stage": str(state_name),
-                                "attempt": int(wave.get("attempt") or 1),
+                                "attempt": wave.get("attempt"),
                                 "managed_job_id": str(wave.get("job_id") or ""),
                                 "logical_state": str(wave.get("status") or "unknown"),
                                 "provenance": "legacy_runtime_wave_reconstruction",
@@ -7025,19 +7081,39 @@ def logs_cmd(
                     for item in runtime_stages
                     if str(item.get("stage") or "") == selected_stage
                 ]
-                stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
-                selected_attempt = stage_attempts[-1] if stage_attempts else {}
-                attribution_error = ""
-                if cached:
-                    job_id = str(selected_attempt.get("managed_job_id") or "")
-                else:
-                    selected_attempt, job_id, attribution_error = (
-                        _recover_stage_log_wave_attribution(
-                            resolution.runtime_state,
-                            selected_attempt,
-                            selected_stage,
+                try:
+                    stage_attempts.sort(key=_workflow_log_attempt)
+                    selected_attempt = stage_attempts[-1] if stage_attempts else {}
+                    selected_attempt_number = _workflow_log_attempt(selected_attempt)
+                    attribution_error = ""
+                    if cached:
+                        job_id = str(selected_attempt.get("managed_job_id") or "")
+                    else:
+                        selected_attempt, job_id, attribution_error = (
+                            _recover_stage_log_wave_attribution(
+                                resolution.runtime_state,
+                                selected_attempt,
+                                selected_stage,
+                            )
                         )
+                except ValueError:
+                    source_payload = _invalid_log_attempt_payload(
+                        run_id=resolution.run_id,
+                        stage=selected_stage,
+                        available=available,
+                        manifest=manifest,
                     )
+                    if json_output:
+                        typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
+                    else:
+                        typer.echo("VERIFICATION_UNAVAILABLE")
+                        typer.echo("manifest_state: available")
+                        typer.echo(f"persisted stages: {', '.join(available)}")
+                        typer.echo(f"cause: {source_payload['reason']}")
+                        live_verification = source_payload["live_verification"]
+                        assert isinstance(live_verification, dict)
+                        typer.echo(f"retry: {live_verification['retry_command']}")
+                    raise typer.Exit(code=2)
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
@@ -7045,7 +7121,7 @@ def logs_cmd(
                 source_payload: dict[str, object] = {
                     "run_id": resolution.run_id,
                     "stage": selected_stage,
-                    "attempt": int(selected_attempt.get("attempt") or 1),
+                    "attempt": selected_attempt_number,
                     "managed_job_id": job_id,
                     "manifest_state": "available",
                     "persisted_stages": available,

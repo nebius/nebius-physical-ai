@@ -89,8 +89,14 @@ MANUAL_GATES = {
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",
     "NPA_BYOF_LIVE_GPU": "BYOF GPU mutation requires a reviewed onboarding target",
+    "NPA_BYOF_GYMNASIUM_ROBOTICS_LIVE_GPU": (
+        "Gymnasium-Robotics MuJoCo EGL acceptance requires manager-reserved RTX PRO capacity and private evidence"
+    ),
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
+    "NPA_BYOF_LIBERO_LIVE_B200": (
+        "LIBERO qualification consumes an accepted immutable candidate image and one reserved B200"
+    ),
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
     "NPA_BYOF_ROBOTWIN_LIVE": (
         "RoboTwin mutation requires the manager-owned STRICT RTX PRO runtime context and operator license decisions"

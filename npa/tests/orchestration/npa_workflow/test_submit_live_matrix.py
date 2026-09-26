@@ -282,7 +282,6 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
-        "av-night-scene-hardening.yaml",
         "byof-droid-policy-learning.yaml",
         "byof-maniskill.yaml",
         "byof-mujoco-playground.yaml",
@@ -298,6 +297,44 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         assert case.plan_only, (
             f"{name} must retain its reviewed plan-only classification"
         )
+
+
+def test_cosmos_synth_fanout_records_runtime_topology_without_live_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = "cosmos-synth-fanout-curation.yaml"
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == name)
+
+    assert case.runtime
+    assert case.expected_parallel_tasks == 2
+    assert case.plan_only
+    assert "merge-index" in case.plan_only_justification
+    assert "workbench.fiftyone.launch_app" in case.plan_only_justification
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    }
+
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", name)
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "multi")
+    assert runtime_submit_cases() == []
+    assert one_shot_submit_cases() == []
+
+
+def test_av_night_scene_rotation_skip_names_real_prerequisites() -> None:
+    case = next(
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.spec == "av-night-scene-hardening.yaml"
+    )
+
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert "LanceDB" in case.skip_reason
+    assert "detection-training" in case.skip_reason
+    assert "BDD100K night subset" in case.skip_reason
+    assert "FiftyOne inspection" in case.notes
 
 
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
@@ -370,22 +407,25 @@ def test_groot_case_truthfully_describes_offline_configurable_training() -> None
     assert "not closed-loop or physical-robot task evidence" in case.notes
 
 
-def test_robotwin_case_is_normal_submit_with_one_delegated_strict_rtx() -> None:
+def test_robotwin_case_is_plan_only_until_worker_authorization_exists() -> None:
     case = next(
         item for item in SUBMIT_LIVE_MATRIX if item.spec == "byof-robotwin.yaml"
     )
 
     assert case.tier == "multi"
-    assert not case.plan_only
+    assert case.plan_only
     assert not case.runtime
     assert set(case.secret_envs) == {
         "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     }
-    assert "CPU-only outer launcher" in case.notes
-    assert "sole accelerator request" in case.notes
-    assert "one STRICT RTX PRO 6000 Blackwell inner job" in case.notes
+    assert "public worker bridge is disabled" in case.plan_only_justification
+    assert (
+        "independently attested customer authorization" in case.plan_only_justification
+    )
+    assert "normal submit refuses before provider calls" in case.notes
+    assert "Operator-only evidence" in case.notes
 
 
 @pytest.mark.parametrize(
@@ -851,11 +891,15 @@ def test_runtime_specs_are_registered_with_the_right_tiers() -> None:
         assert not case.plan_only, f"{spec} is the live proof; it must not be plan-only"
 
 
-def test_runtime_cases_declare_their_secrets_and_are_not_plan_only() -> None:
+def test_runtime_cases_declare_secrets_and_explain_plan_only_status() -> None:
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.runtime):
         assert case.secret_envs, f"{case.spec} must declare the secrets its tasks need"
         assert "AWS_ACCESS_KEY_ID" in case.secret_envs
-        assert not case.plan_only
+        if case.plan_only:
+            assert case.plan_only_justification.strip(), (
+                f"{case.spec} records runtime topology but does not explain why "
+                "live submission remains disabled"
+            )
 
 
 def test_every_live_case_declares_the_object_store_credentials_setup_needs() -> None:
