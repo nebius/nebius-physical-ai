@@ -110,7 +110,11 @@ class NativeTrainingRuntime(Protocol):
         ...
 
     def runtime_record(self) -> dict[str, Any]:
-        """Return runtime provenance. Args: None. Returns: Record. Raises: None."""
+        """Collect startup runtime provenance before the first update.
+
+        Args: None. Returns: Runtime identity and environment record.
+        Raises: ValueError when required provenance is unavailable.
+        """
         ...
 
 
@@ -185,6 +189,7 @@ def run_native_training(
     Raises: ValueError for chronology/metric drift; RuntimeError for cleanup failure.
     """
     start = _verify_start(runtime, plan)
+    runtime_record = runtime.runtime_record()
     records = runtime.durable_milestones()
     metrics: list[dict[str, Any]] = []
     started = clock()
@@ -201,7 +206,7 @@ def run_native_training(
         "manager_index_semantics": "manager_step_equals_logical_update_minus_one",
         "checkpoints": records,
         "hot_path_metrics": metrics,
-        "runtime": runtime.runtime_record(),
+        "runtime": runtime_record,
         "elapsed_seconds": clock() - started,
         "selection_or_scoring_executed": False,
         "serving_export_qualified": False,

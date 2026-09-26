@@ -13,6 +13,12 @@ and publishes each new milestone. Communication is through immutable JSON files
 and subprocess exit status; no storage SDK is installed into the scientific
 environment.
 
+The reusable training loop collects its runtime provenance before the first
+optimizer update and retains that startup record in the final receipt. Missing
+required environment metadata therefore fails before training or checkpoint
+publication. Legacy worker adapters must adopt this ordering separately; their
+existing saved checkpoints still require the normal restoration checks.
+
 A milestone is eligible for resume only after every full FP32 TrainState and
 AdamW member, its dense serving-parameter subset, and its receipt have been
 conditionally created and streamed back byte-for-byte. Cursor advancement occurs

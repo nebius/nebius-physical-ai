@@ -82,6 +82,37 @@ def test_publication_failure_never_retires(tmp_path):
     assert not any(value.startswith("retire") for value in runtime.events)
 
 
+def test_missing_runtime_provenance_fails_before_updates(tmp_path, monkeypatch):
+    runtime = Runtime()
+
+    def missing_provenance():
+        raise ValueError("Inherited GPU visibility contract is absent")
+
+    monkeypatch.setattr(runtime, "runtime_record", missing_provenance)
+    with pytest.raises(ValueError, match="GPU visibility contract is absent"):
+        run_native_training(runtime, NativeTrainingPlan(2, (0, 2)), tmp_path)
+
+    assert runtime.state.step == runtime.cursor == 0
+    assert runtime.events == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_receipt_retains_provenance_collected_before_training(tmp_path, monkeypatch):
+    runtime = Runtime()
+    calls = []
+
+    def startup_provenance():
+        calls.append(runtime.state.step)
+        return {"engine": "tiny_fixture", "captured_at_step": runtime.state.step}
+
+    monkeypatch.setattr(runtime, "runtime_record", startup_provenance)
+    receipt = run_native_training(runtime, NativeTrainingPlan(2, (0, 2)), tmp_path)
+
+    assert calls == [0]
+    assert receipt["runtime"] == {"engine": "tiny_fixture", "captured_at_step": 0}
+    assert receipt["logical_updates"] == runtime.state.step == 2
+
+
 @pytest.mark.parametrize("milestones", [(1, 2), (0, 2, 2), (0, 1)])
 def test_plan_rejects_noncanonical_schedule(milestones):
     with pytest.raises(ValueError):
