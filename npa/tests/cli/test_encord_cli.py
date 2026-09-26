@@ -20,13 +20,50 @@ class Result(SimpleNamespace):
         return dict(self.payload)
 
 
-def test_encord_group_exposes_only_transport_verbs() -> None:
+def test_encord_group_exposes_transport_and_labeling_verbs() -> None:
     result = runner.invoke(app, ["workbench", "encord", "--help"])
     assert result.exit_code == 0, result.output
     assert "push" in result.output
     assert "pull" in result.output
     assert "verify-roundtrip" in result.output
+    assert "import-labels" in result.output
+    assert "render-labels" in result.output
     assert "seed-demo" not in result.output
+
+
+@pytest.mark.parametrize("source", ["s3://test-bucket/labels.json", "labels.json"])
+def test_label_import_enforces_s3_contract_and_emits_json(monkeypatch, source):
+    captured = {}
+
+    def fake_import(**kwargs):
+        captured.update(kwargs)
+        return {"status": "completed"}
+
+    monkeypatch.setattr("npa.sdk.workbench.encord.import_labels", fake_import)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "encord",
+            "import-labels",
+            "--input-path",
+            source,
+            "--receipt-uri",
+            "s3://test-bucket/push.json",
+            "--project-title",
+            "new-label-project",
+            "--output-path",
+            "s3://test-bucket/label-receipt.json",
+            "--json",
+        ],
+    )
+    if source.startswith("s3://"):
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"status": "completed"}
+        assert captured["project_title"] == "new-label-project"
+    else:
+        assert result.exit_code != 0
+        assert not captured
 
 
 def test_push_defaults_to_register_and_forwards_sidecar(

@@ -309,6 +309,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
     SubmitLiveCase(
+        "encord-labeling-demo.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires operator-selected media and content-bound prelabels; creates "
+            "an Encord dataset, ontology, project, and unreviewed annotations."
+        ),
+    ),
+    SubmitLiveCase(
         "encord-push.yaml",
         "cpu",
         secret_envs=(

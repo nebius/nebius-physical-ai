@@ -20,6 +20,102 @@ app = typer.Typer(
 )
 
 
+@app.command("import-labels")
+@json_stdout_contract
+def import_labels_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 bounding-box label plan."
+    ),
+    receipt_uri: str = typer.Option(
+        ..., "--receipt-uri", help="Completed S3 push receipt."
+    ),
+    project_title: str = typer.Option(
+        ..., "--project-title", help="Unique NEW Encord project title."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="New S3 label receipt JSON."
+    ),
+    workflow_run: str = typer.Option("", "--workflow-run"),
+    output_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Create an ontology and project, then save unreviewed video prelabels.
+
+    Args:
+        input_path, receipt_uri: S3 input artifacts binding labels to media bytes.
+        project_title, output_path, workflow_run: New project and receipt identity.
+        output_json: Emit a single JSON document.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: Validation or import fails.
+    """
+    from npa.sdk.workbench.encord import import_labels
+
+    _label_command(
+        import_labels,
+        output_json,
+        input_path=input_path,
+        receipt_uri=receipt_uri,
+        project_title=project_title,
+        output_path=output_path,
+        workflow_run=workflow_run,
+    )
+
+
+@app.command("render-labels")
+@json_stdout_contract
+def render_labels_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 project pull manifest."
+    ),
+    label_receipt_uri: str = typer.Option(..., "--label-receipt-uri"),
+    verification_uri: str = typer.Option(..., "--verification-uri"),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="New S3 MP4 and demo.json prefix."
+    ),
+    output_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Verify exported Encord labels and render them over returned video bytes.
+
+    Args:
+        input_path, label_receipt_uri, verification_uri: S3 evidence artifacts.
+        output_path: New S3 output prefix.
+        output_json: Emit a single JSON document.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: Validation or rendering fails.
+    """
+    from npa.sdk.workbench.encord import render_labels
+
+    _label_command(
+        render_labels,
+        output_json,
+        input_path=input_path,
+        label_receipt_uri=label_receipt_uri,
+        verification_uri=verification_uri,
+        output_path=output_path,
+    )
+
+
+def _label_command(operation, output_json, **kwargs):
+    from npa.cli.path_contract import validate_read_path, validate_write_path
+
+    try:
+        for name, value in kwargs.items():
+            if name == "input_path" or name.endswith("_uri"):
+                validate_read_path(value, tool="encord labels", allow_hf=False)
+        validate_write_path(kwargs["output_path"], tool="encord labels", required=True)
+        result = operation(**kwargs)
+    except (ValueError, EncordToolError) as exc:
+        _fail(str(exc))
+    typer.echo(
+        json.dumps(result, indent=2)
+        if output_json
+        else f"Encord labels: {result['status']}"
+    )
+
+
 class TransferMode(str, Enum):
     register = "register"
     upload = "upload"

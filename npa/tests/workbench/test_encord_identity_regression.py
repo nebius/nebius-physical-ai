@@ -99,8 +99,12 @@ class _S3:
         payload = self.objects[(Bucket, Key)]
         return {"ContentLength": len(payload), "ETag": '"opaque"'}
 
-    def get_object(self, *, Bucket: str, Key: str):
-        return {"Body": _Body(self.objects[(Bucket, Key)])}
+    def get_object(self, *, Bucket: str, Key: str, IfMatch: str = ""):
+        assert not IfMatch or IfMatch == "opaque"
+        return {
+            **self.head_object(Bucket=Bucket, Key=Key),
+            "Body": _Body(self.objects[(Bucket, Key)]),
+        }
 
     def put_object(self, *, Bucket: str, Key: str, Body, **_):
         self.objects[(Bucket, Key)] = Body

@@ -10,6 +10,7 @@ artifacts. Start with a runbook that matches the result you want.
 
 | Goal | Spec and runbook |
 | --- | --- |
+| Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
@@ -106,6 +107,8 @@ workflow YAMLs remain unchanged from `main`.
 
 | Entry | Notes |
 | --- | --- |
+| [Encord labeling demo](partners/encord/encord-labeling-demo.yaml) | Upload → create labeling project → import bounding-box tracks → export and verify → annotated MP4; [runbook](partners/encord/README.md). |
+| [Encord roundtrip demo](partners/encord/encord-roundtrip-smoke.yaml) | Exact media push → pull → verify, alongside standalone [push](partners/encord/encord-push.yaml) and [pull](partners/encord/encord-pull.yaml). |
 | [OpenPI live pickup runbook](partners/antioch/openpi-live-pickup.md) | Operator-managed Antioch simulation ↔ pretrained π0.5 inference on Nebius, with finite physical checks and native recording. Uses the live deployment commands. |
 | [`antioch-offline-policy-train.yaml`](partners/antioch/antioch-offline-policy-train.yaml) | Antioch trajectory collection → completed LeRobotDataset v3 → ACT training. Defaults exercise the cartpole data/checkpoint path with one optimizer step. |
 | [`xr1-antioch-finetune.yaml`](partners/antioch/xr1-antioch-finetune.yaml) | [Antioch pipeline](partners/antioch/README.md): robot demonstrations → Nebius S3 → native XR1 fine-tuning on eight RTX PRO 6000 GPUs → Antioch held-out evaluation → results and recordings in S3. |

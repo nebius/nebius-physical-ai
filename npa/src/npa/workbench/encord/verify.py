@@ -217,6 +217,25 @@ def _compare_row(
         observed_checksum,
         observed_kind,
     )
+    if (
+        not reasons
+        and source_comparison is None
+        and source.source_checksum_kind in {"sha256", "s3_checksum_sha256"}
+        and source.source_checksum
+    ):
+        try:
+            digest = object_store.hash_object(metadata)
+        except Exception as exc:  # noqa: BLE001 - readback errors must produce a failed durable report
+            reasons.append(f"destination content readback failed: {type(exc).__name__}")
+        else:
+            observed_checksum = digest.sha256
+            observed_kind = "sha256"
+            source_comparison = compare_checksums(
+                source.source_checksum,
+                source.source_checksum_kind,
+                observed_checksum,
+                observed_kind,
+            )
     stored_comparison = compare_checksums(
         observed.destination_checksum,
         observed.destination_checksum_kind,
