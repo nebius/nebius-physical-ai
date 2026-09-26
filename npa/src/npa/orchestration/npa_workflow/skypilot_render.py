@@ -55,6 +55,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.alpamayo2_super": "alpamayo2-super",
+    "workbench.flex_pi": "flex-pi",
     "workbench.curobo": "curobo",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
@@ -95,6 +96,10 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
+    # The released flex-pi checkpoint is public, but its multi-shard runtime
+    # fetch can exceed the anonymous Hub rate limit. Forward an operator token
+    # only through the workflow secret channel when one is available.
+    "workbench.flex_pi": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
@@ -683,6 +688,22 @@ def tool_image_key(tool_ref: str) -> str | None:
             if len(prefix) > len(best):
                 best = prefix
     return TOOL_REF_IMAGE_TOOL.get(best)
+
+
+def source_overlay_requested(config: Mapping[str, Any]) -> bool:
+    """Resolve the overlay opt-in consistently for staging and rendering."""
+    import os
+
+    if str(config.get("require_baked_npa") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    return str(
+        os.environ.get("NPA_SRC_OVERLAY") or config.get("source_overlay") or ""
+    ).strip().lower() in {"1", "true"}
 
 
 def tool_requires_staged_npa_source(tool_ref: str) -> bool:
@@ -2138,6 +2159,8 @@ def build_skypilot_task_doc(
     # and exports SKYPILOT_NODE_RANK / SKYPILOT_NODE_IPS into each. Emitted only when the
     # profile asks for more than one node, so every existing rendered doc is unchanged.
     num_nodes = int(scheduler_task.get("num_nodes") or 1)
+    if str(scheduler_task.get("tool_ref") or "") == "workbench.flex_pi.train":
+        envs["NPA_FLEX_PI_NODE_COUNT"] = str(num_nodes)
     if (
         str(scheduler_task.get("tool_ref") or "")
         == "workbench.cosmos2.transfer_execute"
@@ -2201,8 +2224,6 @@ def build_skypilot_task_doc(
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
     # it once with `npa configure --src-s3-uri` so the next shell still finds it.
-    import os
-
     src_uri = resolve_src_s3_uri()
     if require_baked:
         # Exact images must contain the full runtime and pinned dependencies. Never
@@ -2232,17 +2253,7 @@ def build_skypilot_task_doc(
             doc["envs"] = envs
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
-        if (
-            str(
-                os.environ.get("NPA_SRC_OVERLAY")
-                or spec.config.get("source_overlay")
-                or ""
-            )
-            .strip()
-            .lower()
-            in {"1", "true"}
-            and src_uri
-        ):
+        if source_overlay_requested(spec.config) and src_uri:
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
     _inject_operator_registry_docker_secrets(

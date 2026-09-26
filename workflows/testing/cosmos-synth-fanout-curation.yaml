@@ -5,40 +5,36 @@ kind: Workflow
 # followed by data curation on Voxel51 / FiftyOne.
 #
 # Shape:
-#   [seed dataset] -> synth-fanout (N Cosmos Transfer 2.5 shard jobs, one GPU each,
-#                     run in parallel at the K8s execution layer) -> merge/index
+#   [seed dataset] -> synth-fanout (two Cosmos Transfer 2.5 shard jobs, one GPU
+#                     each, submitted as one parallel runtime wave) -> merge/index
 #                  -> curate on Voxel51 (FiftyOne) -> terminal
 #
 # Cosmos Transfer 2.5 is the synthetic-data engine: each shard perturbs the seed
 # episodes (lighting/texture/background/contrast) into augmented variants. The
-# shards fan out across GPUs; a merge step indexes all shard outputs, and FiftyOne
-# (Voxel51) curates the combined synthetic set for human review / filtering.
+# shards fan out across GPUs. The merge/index shell and FiftyOne launch ToolRef are
+# explicit stubs: this blueprint does not claim that either stage merges an index,
+# performs human review, or completes curation.
 #
-# NOTE on parallelism: npa.workflow/v0.0.1 has no native parallel fan-out (see the
-# npa-workflow-guide "out of scope" section), so the fan-out is expressed as a
-# `sequence` of shard states under one parent. Real parallel GPU execution is done
-# at the scheduler/K8s layer — this blueprint was validated by fanning out >=2
-# Cosmos Transfer 2.5 GPU jobs on the RTX PRO 6000 cluster (one nvidia.com/gpu each).
+# NOTE on parallelism: the explicit member list is coupled to synth_shards through
+# parallelCount, so an override cannot silently disagree with the scheduled fan-out.
 #
 # Authored via the diagram-to-npa-workflow skill.
 
 metadata:
   name: cosmos-synth-fanout-curation
   description: >
-    Fan-out synthetic-data generation with Cosmos Transfer 2.5 followed by Voxel51
-    (FiftyOne) curation: seed dataset -> N Cosmos Transfer shard jobs (one GPU each)
-    -> merge/index -> FiftyOne curation. Fan-out topology; GPU synth + CPU curation tiers.
+    Planning-only fan-out blueprint: two Cosmos Transfer 2.5 GPU shard jobs
+    with distinct output prefixes, followed by unfinished merge/index and
+    FiftyOne launch stages. It does not yet merge an index or complete curation.
 
 config:
   bucket: example-bucket
   prefix: "cosmos-synth-fanout/{{run.id}}"
 
-  synth_shards: "2"          # number of Cosmos Transfer shard jobs (>=2 GPUs)
+  synth_shards: "2"          # must equal the two explicit parallel members
   cosmos_transfer_image: "npa-cosmos2-transfer:2.5.1"
 
   trigger_uri: "s3://{{config.bucket}}/synth-seeds/{{run.id}}/lerobot-pusht/"
-  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/"
-  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/manifest.json"
   frames_index_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/index.json"
   # FiftyOne / Voxel51 reads the curated dataset from this prefix.
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/"
@@ -60,25 +56,23 @@ initial: synth-fanout
 states:
   synth-fanout:
     description: Fan out Cosmos Transfer 2.5 synthetic-data jobs (one GPU per shard).
-    sequence:
+    parallel:
       - synth-shard-a
       - synth-shard-b
+    parallelCount: "{{config.synth_shards}}"
     next: merge-index
 
   synth-shard-a:
     description: Cosmos Transfer 2.5 synthetic shard A — perturb seed episodes on GPU.
     toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
+    params:
+      augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/shard-a/"
+      augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/shard-a/manifest.json"
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.lerobot.dataset.v1
     outputs:
-      # DEFECT, recorded rather than disguised: both shards pass the SAME
-      # {{config.augment_uri}} as --output-uri because the toolRef reads one
-      # config key. Both publish this manifest/frame prefix, so the second
-      # clobbers the first and the apparent fan-out yields one shard of data.
-      # Fixing it requires a per-shard config token; until then this blueprint
-      # stays plan-only. Do not remove this warning as cosmetic cleanup.
       - uri: "{{config.augment_manifest_uri}}"
         schema: npa.cosmos2.transfer.v1
 
@@ -86,17 +80,18 @@ states:
     description: Cosmos Transfer 2.5 synthetic shard B — perturb seed episodes on GPU.
     toolRef: workbench.cosmos2.transfer_conditioned_execute
     resources: gpu
+    params:
+      augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/shard-b/"
+      augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/synthetic/shard-b/manifest.json"
     inputs:
       - uri: "{{config.trigger_uri}}"
         schema: npa.lerobot.dataset.v1
     outputs:
-      # Same deliberate warning as synth-shard-a: this second real render
-      # overwrites the canonical manifest/frame prefix at the shared URI.
       - uri: "{{config.augment_manifest_uri}}"
         schema: npa.cosmos2.transfer.v1
 
   merge-index:
-    description: Merge shard outputs into a single synthetic-frame index for curation.
+    description: "Stub: describe a future merge of shard outputs into one frame index."
     needs: [synth-fanout]
     run:
       shell: >
@@ -108,7 +103,7 @@ states:
     next: curate
 
   curate:
-    description: Curate the combined synthetic set on Voxel51 (FiftyOne) for review/filtering.
+    description: "Stub: launch_app does not perform human review or successful curation."
     needs: [merge-index]
     toolRef: workbench.fiftyone.launch_app
     resources: cpu

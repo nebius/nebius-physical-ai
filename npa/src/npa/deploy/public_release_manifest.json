@@ -38,7 +38,8 @@
     "diffusers": {"tag": "0.38.0-rtfetch-20260916", "published_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
     "lingbot-world": {"tag": "a43bec7-rtfetch-20260916", "published_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
     "sam2": {"tag": "2.1-rtfetch-20260916", "published_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
-    "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"}
+    "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"},
+    "flex-pi": {"tag": "0.1.0-cu128-r2", "published_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6", "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46"}
   },
   "publication_pending": {
     "antioch": "The adapter image is redistribution-eligible but has not yet been published and verified for anonymous pull."

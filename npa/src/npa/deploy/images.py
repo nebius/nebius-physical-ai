@@ -192,6 +192,7 @@ CONTAINER_IMAGE_NAMES = {
     "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
     "alpamayo2-super": "npa-alpamayo2-super",
+    "flex-pi": "npa-flex-pi",
     "curobo": "npa-curobo",
     "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
@@ -224,6 +225,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "libero",
         "fiftyone",
         "groot",
+        "gymnasium-robotics",
         "isaac-lab",
         "isaac-arena",
         "openarm",
@@ -293,6 +295,14 @@ UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {"openpi", "curobo", "ncore", "libero", "sam3"}
 )
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
+# A development candidate may use the trusted full-SHA builder before it has
+# earned a supported release tag.  Keep this state separate from the canonical
+# supported-tool inventory and from unbuilt release records.
+DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robotics"})
+# Retained for compatibility with older callers.  Gymnasium-Robotics now has a
+# truthful development-build path; release promotion remains blocked by the
+# development-build quarantine above instead of a pre-registration build refusal.
+PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
 # independently.
@@ -359,6 +369,10 @@ GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "openarm": {
         "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda",
         "oci_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+    },
+    "flex-pi": {
+        "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46",
+        "oci_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
     },
 }
 GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS: dict[str, str] = {
@@ -435,6 +449,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # resolves only to the zero-payload digest recorded in ltx2_image_manifest.json.
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128-r3",
+    "flex-pi": "0.1.0-cu128-r2",
     "curobo": "0.8.0-cuda13-b300-unbuilt",
     "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
     "content-agents": "0.5.2-npa2",
@@ -2314,12 +2329,19 @@ def container_image_for_tool(
                 f"Workload-specific image selection is only defined for SONIC, "
                 f"got tool={tool!r}"
             )
-        image_name = CONTAINER_IMAGE_NAMES[tool]
-        resolved_tag = tag or (
-            public_release_tag_for_tool(tool)
-            if is_public_registry(resolved_registry)
-            else supported_tool_version(tool)
-        )
+        if tool == "gymnasium-robotics":
+            # The neutral candidate is intentionally outside the supported-tool
+            # release table.  This narrow resolver path exists only for explicit
+            # development builds and the private neutral placeholder.
+            image_name = "npa-gymnasium-robotics"
+            resolved_tag = tag or "neutral-unbuilt"
+        else:
+            image_name = CONTAINER_IMAGE_NAMES[tool]
+            resolved_tag = tag or (
+                public_release_tag_for_tool(tool)
+                if is_public_registry(resolved_registry)
+                else supported_tool_version(tool)
+            )
     if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "

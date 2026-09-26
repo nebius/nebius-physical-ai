@@ -318,10 +318,11 @@ def kubernetes_sky_environment(
             user_id=validation_user_id,
         ):
             raise
-        # Recovery archives the verified client config with the stale API. The
-        # new API must receive those same bytes, not a path into retired state.
-        fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(fd, "wb") as handle:
+        # Recovery archives the client configuration along with the stale API.
+        # Recreate the same verified bytes before starting its replacement.
+        with open(
+            config_path, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)
+        ) as handle:
             handle.write(config_bytes)
             handle.flush()
             os.fsync(handle.fileno())

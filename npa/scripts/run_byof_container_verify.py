@@ -33,6 +33,7 @@ from npa.deploy.images import (
 )
 from npa.execution_preflight import (
     SKYPILOT_ENGINE_SERVICE_ACCOUNT,
+    validate_gymnasium_task_configuration,
     libero_executable_profile_bytes,
     is_libero_official_image_reference,
     skypilot_task_documents,
@@ -2172,6 +2173,7 @@ def render_workflow(
     smoke_artifact_name: str = "",
 ) -> list[dict[str, Any]]:
     docs = _load_yaml_documents(yaml_path)
+    validate_gymnasium_task_configuration(docs, solution_name=solution_name)
     for doc in docs[1:]:
         envs = doc.get("envs")
         if not isinstance(envs, dict):
@@ -2575,6 +2577,43 @@ def _wait_for_terminal(
             "workflow is not terminal; inspect SkyPilot controller/job and pod events"
         )
     return final, diagnostics
+
+
+def _validate_gymnasium_launch_configuration(
+    documents: list[dict[str, Any]],
+    *,
+    solution_name: str = "",
+    config_path: str | Path = "",
+    secret_envs: list[str] | None = None,
+) -> None:
+    """Check selected task/configuration facts before resolving runtime credentials."""
+    names = DEFAULT_SECRET_ENVS if secret_envs is None else secret_envs
+    if not validate_gymnasium_task_configuration(
+        documents, solution_name=solution_name, secret_envs=names
+    ):
+        return
+    from npa.execution_preflight import ExecutionPreflightError
+
+    if any(
+        name in os.environ for name in ("SKYPILOT_CONFIG", "SKYPILOT_PROJECT_CONFIG")
+    ):
+        raise ExecutionPreflightError(
+            "gymnasium_credential_isolation",
+            "implicit SkyPilot configuration is forbidden",
+        )
+    if (Path.cwd() / ".sky.yaml").exists():
+        raise ExecutionPreflightError(
+            "gymnasium_credential_isolation",
+            "implicit project configuration is forbidden",
+        )
+    config = (
+        yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+        if config_path
+        else {}
+    )
+    validate_gymnasium_task_configuration(
+        documents, solution_name=solution_name, global_config=config, secret_envs=names
+    )
 
 
 def _exact_scheduler_job_id(value: Any) -> str:
@@ -3037,6 +3076,12 @@ def _complete_libero_cleanup(
 
 
 def _submit_and_wait(args: argparse.Namespace) -> int:
+    _validate_gymnasium_launch_configuration(
+        _load_yaml_documents(args.yaml_path),
+        solution_name=args.solution_name,
+        config_path=args.config_path or "",
+        secret_envs=args.secret_env,
+    )
     run_id = args.run_id or _default_run_id()
     output_root = _normalize_output_root(args.output_root)
     docs = render_workflow(
@@ -3625,6 +3670,11 @@ def _direct_launch(
     cleanup: bool = True,
     secret_envs: list[str] | None = None,
 ) -> int:
+    _validate_gymnasium_launch_configuration(
+        _load_yaml_documents(rendered_yaml),
+        config_path=config_path,
+        secret_envs=secret_envs,
+    )
     cmd = [
         sky_bin,
         "launch",

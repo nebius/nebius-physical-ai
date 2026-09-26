@@ -13,7 +13,10 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
-from npa.deploy.images import CONTAINER_IMAGE_NAMES
+from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
+    DEVELOPMENT_BUILD_QUARANTINE_TOOLS,
+)
 
 _LOG = logging.getLogger(__name__)
 _WORKBENCH = "npa/docker/workbench/"
@@ -224,7 +227,8 @@ def select_public_image_builds(root: Path, before: str, head: str) -> list[str]:
     entries = {
         key: entry
         for key, entry in _contract(root, head)["images"].items()
-        if entry.get("redistribution") == "public" and key in CONTAINER_IMAGE_NAMES
+        if entry.get("redistribution") == "public"
+        and (key in CONTAINER_IMAGE_NAMES or key in DEVELOPMENT_BUILD_QUARANTINE_TOOLS)
     }
     if not _SHA.fullmatch(before) or set(before) == {"0"}:
         return sorted(entries)
