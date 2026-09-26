@@ -16,10 +16,10 @@ monkeypatch a synthetic restricted catalog tool in, proving the mechanism still 
 
 from __future__ import annotations
 
-import json
 import copy
 import hashlib
 import http.client
+import json
 import re
 import subprocess
 import urllib.error
@@ -49,6 +49,7 @@ from npa.deploy.images import (
 from npa.deploy.publish_public import (
     PublishItem,
     _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
+    _valid_content_agents_rigid_physics,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_gpu_accepted_publication_source as REAL_GPU_ACCEPTANCE_GATE,
@@ -95,6 +96,70 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         "verify_gpu_accepted_publication_source",
         lambda item: (True, "test fixture: GPU acceptance gate verified"),
     )
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("mass_or_density", "friction"),
+    [(5e-324, 0.1), (1, 2.0)],
+)
+def test_content_agents_gate_accepts_finite_physics_boundaries(
+    mass_or_density: int | float, friction: float
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": mass_or_density,
+        "friction": friction,
+    }
+
+    assert _valid_content_agents_rigid_physics(rigid)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mass_or_density", float("nan")),
+        ("mass_or_density", float("inf")),
+        ("mass_or_density", float("-inf")),
+        ("mass_or_density", True),
+        ("mass_or_density", False),
+        ("mass_or_density", "1.0"),
+        ("mass_or_density", "not-a-number"),
+        ("mass_or_density", 0),
+        ("mass_or_density", -1),
+        ("mass_or_density", _MISSING),
+        ("friction", float("nan")),
+        ("friction", float("inf")),
+        ("friction", float("-inf")),
+        ("friction", True),
+        ("friction", False),
+        ("friction", "0.5"),
+        ("friction", "not-a-number"),
+        ("friction", 0.09),
+        ("friction", 2.01),
+        ("friction", _MISSING),
+    ],
+)
+def test_content_agents_gate_rejects_invalid_physics_evidence(
+    field: str, value: object
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": 1.0,
+        "friction": 0.5,
+    }
+    if value is _MISSING:
+        rigid.pop(field)
+    else:
+        rigid[field] = value
+
+    assert not _valid_content_agents_rigid_physics(rigid)
 
 
 @pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
