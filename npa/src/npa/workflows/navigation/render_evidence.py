@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from fractions import Fraction
+import json
 
 import numpy as np
 
@@ -21,15 +22,20 @@ def capture_settings():
 
     settings = carb.settings.get_settings()
     prefix = "/exts/omni.replicator.core/"
-    with _settings(
-        settings,
-        {
-            prefix + "Orchestrator/enabled": True,
-            "/omni/replicator/captureOnPlay": False,
-            "/rtx/hydra/supportMultiTickRate": True,
-            "/rtx/rendering/perSensorTickTlas": True,
-        },
-    ):
+    changes = {
+        prefix + "Orchestrator/enabled": True,
+        "/omni/replicator/captureOnPlay": False,
+        "/rtx/hydra/supportMultiTickRate": True,
+        "/rtx/rendering/perSensorTickTlas": True,
+    }
+    original = {key: settings.get(key) for key in changes}
+    print(
+        json.dumps(
+            {"capture_settings_before": original, "capture_settings_requested": changes}
+        ),
+        flush=True,
+    )
+    with _settings(settings, changes):
         yield
 
 
