@@ -272,3 +272,9 @@ may remove a trailing control-directory suffix only when the requested run ID
 and path layout, or the manifest's exact run-prefix provenance, identify the
 parent as the run root. Workflow names and pending status alone never authorize
 listing a parent prefix that could contain a sibling workflow's outputs.
+
+Completed-wave replay requires nonempty, matching workflow, source, and image
+identities before checking its retained outputs. A changed or missing identity
+blocks both replay and replacement submission, even when an output is missing.
+With matching identities, missing declared outputs retain the normal recovery
+path; a replacement must publish and verify its own declared outputs.
