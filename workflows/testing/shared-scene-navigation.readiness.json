@@ -22,7 +22,7 @@
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "Native qualification materialized sealed input/source objects and verified prepared and completed 1500-iteration learned-checkpoint publications through configured storage; accepted evaluation publication remains pending.",
+      "reason": "Native qualification materialized sealed input/source objects and verified prepared, completed 1500-iteration learned-checkpoint and both independently reloaded evaluation publications through configured storage.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]
@@ -50,7 +50,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Isaac Sim 6.0.1 / Isaac Lab 3 executed all 4000 robots in one scene. Repeated-reset/peer-isolation controls passed with zero state/observation deltas and peer contact; the obstacle contact control passed. All 1500 PPO iterations and 48 million control transitions completed with finite checkpoint updates and learning curves. Reloaded held-out comparison, corrected rollout video and optional RGB-D task probes remain pending.",
+      "reason": "Isaac Sim 6.0.1 / Isaac Lab 3 executed all 4000 robots in one scene. Repeated-reset/peer-isolation and obstacle controls passed. All 1500 PPO iterations and 48 million control transitions completed with finite checkpoint updates and learning curves. Independent paired reload verified 8000 episode records and 602 native frames with strict camera, clock and frozen-state checks; both MP4s fully decoded. Goal success rose from 0 to 11/4000 (0.275%), below the unchanged 80% threshold, despite obstacle-contact episodes falling from 3982 to 11. These results precede the arrival-reward correction; corrected-objective native training, reconstructed-scene contact-buffer qualification and optional RGB-D task probes remain pending.",
       "evidence": [
         "docs/workbench/guides/shared-scene-navigation.md"
       ]

@@ -5,9 +5,10 @@ built-in public reference or an operator's registered Isaac Lab navigation task:
 prepare inputs → native RSL-RL train → reload checkpoint and evaluate held-out
 goals. It requires a self-contained collision USDZ and explicit reset/probe cases.
 The public bundle builder supplies a cluttered warehouse and reviewed native task;
-custom robots retain the BYOF adapter boundary. **Native 4000-robot physical controls
-and 1500 PPO training iterations have completed; independently reloaded held-out
-performance and video acceptance remain pending.**
+custom robots retain the BYOF adapter boundary. **Native 4000-robot physical controls,
+1500 PPO training iterations and an independently reloaded, rendered comparison
+have completed. Goal success remains below the 80% qualification threshold; the
+arrival-reward correction described below awaits a new native training result.**
 Proprietary robot and scene integration remains operator input.
 
 The reference extends the pinned public
@@ -90,8 +91,39 @@ state/observation deltas and zero peer contact. The obstacle positive control
 produced actual contact. Native PPO completed 1500 iterations and 48 million
 control transitions in 6230.69 seconds of learning, averaging 7703.80 transitions
 per second. The checkpoint changed by a finite, nonzero parameter norm and all
-34,500 exported scalar observations were finite. Independent held-out performance
-and video acceptance remain outstanding in the readiness record.
+34,500 exported scalar observations were finite. Independently reloaded initial
+and trained checkpoints each completed a 300-step evaluation of 4000 held-out
+start/goal cases in the same warehouse, with 301 native frames and an MP4 per arm.
+Independent readback recomputed every episode metric, checked every frame's
+trajectory, camera and native-clock binding, and decoded both complete videos.
+
+| Measured outcome | Initial checkpoint | After 1500 PPO iterations |
+| --- | ---: | ---: |
+| Goal success within 0.5 m | 0 / 4000 | 11 / 4000 (0.275%) |
+| Episodes with obstacle contact | 3982 | 11 |
+| Episodes with peer contact | 0 | 0 |
+| Episodes with physical failure | 0 | 3 |
+| Median final goal distance | 17.00 m | 0.635 m |
+
+The trained policy avoided most collisions and approached goals, but 3978
+episodes timed out; 3957 finished between 0.5 and 0.7 m from the goal. It did not
+meet the unchanged 80% goal-success requirement. These measurements precede the
+arrival-reward correction and do not establish a usable navigation policy.
+
+The inherited position rewards pay repeatedly near a goal, while arrival ends
+the training episode. Without a terminal success reward, this creates an
+incentive to remain just outside the goal radius. The corrected reference adds
+an arrival reward only when distance is below 0.5 m and there is no obstacle,
+peer or physical failure. Its weight of 200 yields 40 reward units after the
+pinned 0.2-second native scaling. This exceeds both the maximum 30 units of
+position reward over a 30-second episode and its infinite discounted value of
+20 at the pinned PPO discount of 0.99, including timeout bootstrapping. The bonus
+is disabled for probes and evaluation, which do not automatically reset on goal
+arrival. This removes the position-reward incentive to delay success; it does
+not guarantee learning. Other reward terms, the
+goal radius and the qualification threshold are unchanged. A new sealed native
+training experiment must establish the correction's effect; the earlier
+checkpoint, comparison and videos remain evidence of the original objective.
 
 Native training retains `reference_checkpoint.pt` before the first update,
 `policy.pt` after learning, TensorBoard logs and exported `learning-curves.json`.
@@ -129,7 +161,9 @@ creates or writes a renderer clock. Uncached native root transforms, root
 velocities, joint state, native and Lab step counts, and clocks must remain
 unchanged across rendering. The native
 time origin follows the preceding controls; it is distinct from the video's
-relative rollout time. Native qualification of this capture correction is pending.
+relative rollout time. Native qualification passed all 301 frames in the complete
+initial-checkpoint diagnostic and all 602 frames of the paired comparison. This
+validates the renderer and checkpoint reload separately from goal-success quality.
 Artifacts include `rendered-rollout/*.png`, frame measurements,
 and `rollout.mp4` when the runtime supplies FFmpeg. The PNG sequence can be encoded
 later without rerunning or reconstructing the simulation. Custom BYOF tasks
@@ -139,6 +173,11 @@ The focal robot continues stepping in the video while other robots finish their
 episodes. Its score stops at its first goal arrival, obstacle/peer contact, or
 physical failure. Present the focal robot's scored step count and outcome beside
 the full video; later frames do not change that score or the cohort metrics.
+The HUD's `Failed` value reports the separate physical-support/fall indicator;
+an obstacle collision can end an episode while this indicator remains false.
+The trailing camera can be occluded by scene geometry near walls. Preserve those
+actual frames and the scored outcome rather than interpreting visibility as a
+collision or success measurement.
 
 ## Resume and independent checkpoint evaluation
 

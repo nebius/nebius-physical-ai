@@ -155,6 +155,21 @@ def collision(env):
     return ((env.npa_contacts.obstacle > 0) | (env.npa_contacts.peer > 0)).float()
 
 
+def arrival(env):
+    """Reward valid goal arrival before the native manager resets the episode.
+
+    Args:
+        env: Native reference environment with current physical measurements.
+    Returns:
+        Training success indicators; zero during probes and evaluation.
+    Raises:
+        RuntimeError: Physical measurements are invalid.
+    """
+    if env.npa_probe or not env.cfg.npa_training:
+        return torch.zeros(env.num_envs, device=env.device)
+    return ((_distance(env) < 0.5) & (failure(env) == 0)).float()
+
+
 def terminate(env):
     """End training episodes on physical collision or successful goal arrival.
 

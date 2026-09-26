@@ -162,6 +162,11 @@ def _task(config):
     config.commands.pose_command.resampling_time_range = (1.0e9, 1.0e9)
     config.episode_length_s = 30.0
     config.rewards.progress = RewardTermCfg(func=_mdp("progress"), weight=3.0)
+    # Both inherited position terms together pay at most 1 per simulated second.
+    # Arrival pays 40 after dt=0.2 scaling, above both the 30-second return (30)
+    # and the infinite discounted value (20 at gamma=0.99), including timeout
+    # bootstrapping. This removes the position-reward incentive to delay arrival.
+    config.rewards.arrival = RewardTermCfg(func=_mdp("arrival"), weight=200.0)
     config.rewards.obstacle = RewardTermCfg(func=_mdp("collision"), weight=-25.0)
     config.rewards.physical_failure = RewardTermCfg(
         func=_mdp("physical_failure"), weight=-25.0

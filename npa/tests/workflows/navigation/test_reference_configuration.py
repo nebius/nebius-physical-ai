@@ -34,7 +34,8 @@ def _stub_configuration_types(monkeypatch):
         monkeypatch.setitem(sys.modules, name, module)
 
 
-def test_task_configuration_defers_all_mdp_implementation_imports(monkeypatch):
+@pytest.fixture
+def task_config(monkeypatch):
     _stub_configuration_types(monkeypatch)
     # A real import of this module would traverse TerrainImporter -> pxr.
     name = "npa.workflows.navigation.reference_mdp"
@@ -47,21 +48,51 @@ def test_task_configuration_defers_all_mdp_implementation_imports(monkeypatch):
         actions=SimpleNamespace(pre_trained_policy_action=SimpleNamespace()),
         events=SimpleNamespace(),
         commands=SimpleNamespace(pose_command=SimpleNamespace()),
-        rewards=SimpleNamespace(termination_penalty=SimpleNamespace()),
+        rewards=SimpleNamespace(
+            termination_penalty=SimpleNamespace(),
+            position_tracking=SimpleNamespace(weight=0.5),
+            position_tracking_fine_grained=SimpleNamespace(weight=0.5),
+        ),
         terminations=SimpleNamespace(),
     )
     module._task(cfg)
+    return cfg, name
+
+
+def test_task_configuration_defers_all_mdp_implementation_imports(task_config):
+    cfg, name = task_config
     assert cfg.commands.pose_command.class_type == name + ":FixedGoalCommand"
     assert cfg.events.reset_base.func == name + ":reset_cases"
     assert cfg.rewards.progress.func == name + ":progress"
+    assert cfg.rewards.arrival.func == name + ":arrival"
     assert cfg.terminations.base_contact.func == name + ":terminate"
     assert sys.modules[name] is None
 
 
+def test_arrival_return_exceeds_loitering_including_timeout_bootstrap(task_config):
+    cfg, _ = task_config
+    # The pinned RewardManager multiplies every term by the native control dt.
+    arrival_return = cfg.rewards.arrival.weight * 0.2
+    maximum_occupancy_return = cfg.episode_length_s * (
+        cfg.rewards.position_tracking.weight
+        + cfg.rewards.position_tracking_fine_grained.weight
+    )
+    assert arrival_return == 40.0
+    assert maximum_occupancy_return == 30.0
+    assert arrival_return > maximum_occupancy_return
+    # The native PPO timeout bootstrap is not bounded by the episode horizon.
+    maximum_discounted_return = 0.2 * 1.0 / (1.0 - 0.99)
+    assert maximum_discounted_return == pytest.approx(20.0)
+    assert arrival_return > maximum_discounted_return
+    for delayed_steps in (1, 5, 100):
+        discount = 0.99**delayed_steps
+        delayed_return = maximum_discounted_return * (1 - discount)
+        delayed_return += discount * (arrival_return + 0.2)
+        assert arrival_return > delayed_return
+
+
 @pytest.mark.parametrize("large_presets", [False, True])
-def test_physics_buffers_cover_observed_coincident_population(
-    monkeypatch, large_presets
-):
+def test_physics_buffers_cover_measured_contact_workload(monkeypatch, large_presets):
     _stub_configuration_types(monkeypatch)
     physics = SimpleNamespace(
         gpu_found_lost_pairs_capacity=2**21,
