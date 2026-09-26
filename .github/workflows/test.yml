@@ -230,10 +230,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install npa
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
         run: |
           python -m venv npa/.venv
           # Python 3.10 needs the pinned TOML reader before checking project pins.
-          if [ "${{ matrix.python-version }}" = "3.10" ]; then
+          if [ "$PYTHON_VERSION" = "3.10" ]; then
             uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt tomli
           fi
           npa/.venv/bin/python npa/scripts/ci_requirements.py --check

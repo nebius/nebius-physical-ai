@@ -299,13 +299,14 @@ def test_fresh_nightly_bootstraps_toml_without_adding_candidate_installs(
     tmp_path, version
 ):
     _bootstrap_stubs(tmp_path)
-    script = _step("test.yml", "test", "Install npa")["run"].replace(
-        "${{ matrix.python-version }}", version
-    )
+    step = _step("test.yml", "test", "Install npa")
+    assert step["env"]["PYTHON_VERSION"] == "${{ matrix.python-version }}"
+    script = step["run"]
     env = {
         **os.environ,
         "PATH": str(tmp_path) + os.pathsep + os.environ.get("PATH", ""),
         "TEST_VERSION": version,
+        "PYTHON_VERSION": version,
         "CALL_LOG": str(tmp_path / "calls"),
         "GITHUB_PATH": str(tmp_path / "github-path"),
         "GITHUB_WORKSPACE": str(tmp_path),
