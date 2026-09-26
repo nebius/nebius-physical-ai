@@ -184,6 +184,24 @@ even at the allowance boundary. If the exact provider attempt is still live,
 its cancellation must reach a verified terminal state before that reuse is
 accepted.
 The workflow completion result is separate from the observed provider status.
+The verified cancellation and output-reuse decision are written as an immutable
+supervisor event before the mutable runtime attempt is terminalized. If the
+driver stops between those writes, resume binds that event to the exact attempt,
+workflow, source, and image identities, revalidates every declared output, and
+completes the same attempt without submitting replacement work. Missing,
+malformed, conflicting, mismatched, or temporarily unreadable evidence remains
+blocked and retryable under the same run ID. The provider's verified terminal
+status remains factual even while output revalidation is blocked.
+
+An unreadable supervisor history blocks reconciliation without creating a reuse
+claim. Restoring access lets the same attempt reconcile its exact provider job.
+If the driver stopped after the reuse decision but before recording verified
+cancellation, resume validates the decision's identity and output declarations,
+then reconciles that exact job. A live job is adopted; a succeeded job must still
+pass output validation. A cancelled or failed job retains its terminal failure
+and launches no replacement during that resume. A later resume can request the
+ordinary explicit workload retry. An attempt already marked for reuse still
+requires its immutable cancellation proof; missing or corrupt proof stays blocked.
 
 
 `status` resolves the exact run from the selected project's receipt, the
