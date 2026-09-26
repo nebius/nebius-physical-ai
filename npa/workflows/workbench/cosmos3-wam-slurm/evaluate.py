@@ -5,14 +5,13 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import http.client
 import json
 import math
 import os
 from pathlib import Path
 import subprocess
 import time
-import urllib.error
-import urllib.request
 
 
 def _write(path, value):
@@ -87,7 +86,9 @@ def _client_command(args, worker, tasks, output):
     root = args.shared_root
     command = [
         str(root / "simulation/libenv/bin/python"),
-        str(root / "framework/cosmos_framework/simulation/libero/closed_loop_eval.py"),
+        str(Path(__file__).with_name("simulation_client.py")),
+        "--shared-root",
+        str(root),
         "--server_url",
         f"http://127.0.0.1:{8000 + worker}",
         "--task_suite",
@@ -122,14 +123,23 @@ def _client_command(args, worker, tasks, output):
     return command
 
 
+def _server_info(worker):
+    connection = http.client.HTTPConnection("127.0.0.1", 8000 + worker, timeout=5)
+    try:
+        connection.request("GET", "/info")
+        response = connection.getresponse()
+        if response.status != 200:
+            raise ConnectionError("local policy server is not ready")
+        return json.load(response)
+    finally:
+        connection.close()
+
+
 def _wait_ready(server, worker, checkpoint):
     while server.poll() is None:
         try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{8000 + worker}/info", timeout=5
-            ) as reply:
-                info = json.load(reply)
-        except (urllib.error.URLError, TimeoutError):
+            info = _server_info(worker)
+        except (OSError, http.client.HTTPException):
             time.sleep(2)
             continue
         if Path(info.get("checkpoint", "")).resolve() != checkpoint / "model":

@@ -2,24 +2,32 @@
 
 import argparse
 import json
+from multiprocessing.shared_memory import SharedMemory
 import os
 from pathlib import Path
 import time
-import uuid
+
+
+def _exists(name):
+    try:
+        view = SharedMemory(name=name)
+    except FileNotFoundError:
+        return False
+    view.close()
+    return True
 
 
 def _probe(output):
     output.parent.mkdir(parents=True, exist_ok=True)
-    path = Path("/dev/shm") / ("wam_ipc_probe_" + uuid.uuid4().hex)
     started = time.time()
     with output.open("x") as receipt:
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        memory = SharedMemory(create=True, size=64)
         try:
-            os.write(descriptor, b"workload-owned POSIX IPC probe\n")
+            memory.buf[:9] = b"wam-probe"
             present = True
             for _ in range(300):
                 time.sleep(0.1)
-                if not path.exists():
+                if not _exists(memory.name):
                     present = False
                     break
             result = {
@@ -30,8 +38,12 @@ def _probe(output):
             }
             receipt.write(json.dumps(result, indent=2) + "\n")
         finally:
-            os.close(descriptor)
-            path.unlink(missing_ok=True)
+            memory.close()
+            try:
+                memory.unlink()
+            except FileNotFoundError:
+                # The failed probe already recorded that logout removed the object.
+                pass
     return 0 if present else 1
 
 

@@ -138,6 +138,12 @@ precision, action representation and source revisions stay fixed. Native
 packing can still change actual sample and token work, so the final analysis
 must inspect those counters as well as the nominal settings.
 
+The pinned upstream preset uses 128 samples per rank on sixteen GPUs with
+one accumulation step. This campaign uses 64 on both topologies and adjusts
+accumulation to retain the same nominal batch of 2,048. Its performance results
+apply to that recorded batch layout; a different per-rank cap needs its own
+measurement.
+
 Slurm starts one launch process per node. Each process starts eight training
 ranks, using a single rendezvous address from the allocation. Before training,
 the recipe checks the device type, verifies rank placement and performs an

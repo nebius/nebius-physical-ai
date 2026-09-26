@@ -35,6 +35,13 @@
   "gpu_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json",
   "b200_scaling_measured": false,
   "policy_quality_measured": false,
+  "simulation_readiness": {
+    "fresh_bootstrap_reproduced": true,
+    "initial_states_verified": 500,
+    "camera_images_rendered": 20,
+    "learned_policy_executed": false,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-simulation-runtime.json"
+  },
   "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; the eight-GPU full run is executing.",
   "remaining_evidence": [
     "Complete comparable 8/16-GPU runs",

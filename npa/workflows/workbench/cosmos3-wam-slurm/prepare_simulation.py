@@ -39,8 +39,7 @@ def _install(root, env, log):
     _run(
         [
             *install,
-            "torch==2.5.1+cpu",
-            "torchvision==0.20.1+cpu",
+            "torch==2.14.0+cpu",
             "--index-url",
             "https://download.pytorch.org/whl/cpu",
         ],
@@ -64,9 +63,8 @@ def _configure(root, env, log):
         PYTHONPATH=str(root / "LIBERO"),
     )
     code = """
-import pathlib, subprocess, sys, torch, torchvision
-assert torch.__version__ == '2.5.1+cpu'
-assert torchvision.__version__ == '0.20.1+cpu'
+import pathlib, subprocess, sys, torch
+assert torch.__version__ == '2.14.0+cpu'
 assert torch.version.cuda is None
 from libero.libero import set_libero_default_path
 set_libero_default_path()

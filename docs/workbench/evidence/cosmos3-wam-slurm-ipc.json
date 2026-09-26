@@ -25,13 +25,22 @@
     "survived_logout": true
   },
   "public_recipe_probe": {
-    "started_unix": 1790396655.5157633,
-    "ended_unix": 1790396685.5839832,
+    "started_unix": 1790401354.8424904,
+    "ended_unix": 1790401384.9214323,
     "survived_logout": true,
     "observation_window_seconds": 30
   },
-  "public_probe_sha256": "cb8b5c913f70b4c71051223911de6521f1b436c54a312e71495501a97342fab7",
+  "public_probe_sha256": "0b634b9857057488d28361e46c408fefd948b28493f85bf5e9133aba742cfbc0",
   "configuration_change": "[Login] RemoveIPC=no in /etc/systemd/logind.conf.d/90-wam-slurm-ipc.conf; restarted systemd-logind",
   "method": "Run the user-owned shared-memory probe as a system service with --uid; close all SSH sessions for that user; inspect the receipt after thirty seconds",
-  "guardrail": "The training reporter rejects Python thread tracebacks even when the trainer continues. The affected partial run is excluded from benchmark results."
+  "guardrail": "The training reporter rejects Python thread tracebacks even when the trainer continues. The affected partial run is excluded from benchmark results.",
+  "prior_public_recipe_probe": {
+    "observation": {
+      "started_unix": 1790396655.5157633,
+      "ended_unix": 1790396685.5839832,
+      "survived_logout": true,
+      "observation_window_seconds": 30
+    },
+    "source_sha256": "cb8b5c913f70b4c71051223911de6521f1b436c54a312e71495501a97342fab7"
+  }
 }

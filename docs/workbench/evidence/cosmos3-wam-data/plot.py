@@ -122,14 +122,19 @@ def _header(figure, sample):
 
 
 def _save(figure, root):
-    for suffix in ("png", "svg"):
+    figure.savefig(root / "data-pipeline.png", facecolor=figure.get_facecolor())
+    # Keep bitmap bytes in inspectable PNG files, outside the SVG's text content.
+    with plt.rc_context(
+        {"svg.image_inline": False, "svg.hashsalt": "cosmos3-wam-data-v1"}
+    ):
         figure.savefig(
-            root / ("data-pipeline." + suffix), facecolor=figure.get_facecolor()
+            root / "data-pipeline.svg",
+            facecolor=figure.get_facecolor(),
+            metadata={"Date": None},
         )
     path = root / "data-pipeline.svg"
-    path.write_text(
-        "\n".join(line.rstrip() for line in path.read_text().splitlines()) + "\n"
-    )
+    text = path.read_text().replace(f'xlink:href="{root}/', 'xlink:href="')
+    path.write_text("\n".join(line.rstrip() for line in text.splitlines()) + "\n")
 
 
 def _main():

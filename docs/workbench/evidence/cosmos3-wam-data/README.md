@@ -39,6 +39,10 @@ NumPy, Matplotlib and Pillow dependencies are included in Workbench:
 npa/.venv/bin/python docs/workbench/evidence/cosmos3-wam-data/plot.py
 ```
 
-The renderer writes PNG and SVG figures. See [NOTICE.md](NOTICE.md) for source
+The renderer writes a standalone PNG and an SVG with three linked bitmap
+files named `data-pipeline.svg.image*.png`. Keep those PNGs beside the SVG when
+sharing its vector version. The image bytes remain inspectable as ordinary
+PNG files rather than encoded text inside the SVG.
+See [NOTICE.md](NOTICE.md) for source
 attribution and [render-manifest.json](render-manifest.json) for artifact
 hashes and rendering versions.

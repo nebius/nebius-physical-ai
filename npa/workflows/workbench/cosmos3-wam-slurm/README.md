@@ -68,6 +68,8 @@ example follows upstream LIBERO-10's training schedule.
 | `ipc_probe.py` | Thirty-second background shared-memory survival check across SSH logout |
 | `add_worker.py` / `bootstrap-worker.sh` / `slurm_worker.py` | Private second-worker bundle, shared storage, and native Slurm join |
 | `prepare_simulation.py` / `simulation-requirements.txt` | Separate pinned Python 3.10.21 CPU LIBERO environment |
+| `simulation_probe.py` | All 500 initial states and actual two-camera renders for all ten tasks |
+| `simulation_client.py` | Native evaluator with restricted NumPy state deserialization |
 | `evaluate.py` | Native policy servers and all ten tasks, with per-trial evidence and strict result checks |
 | `quality_curve.py` | Checkpoint-linked success curve and observed training time to the first passing checkpoint |
 
@@ -154,10 +156,34 @@ insufficient evidence. The reporter rejects Python tracebacks from worker
 threads as well as failed optimizer updates.
 
 `prepare_simulation.py --shared-root PATH` creates a fresh `PATH/simulation`
-with Python 3.10.21, CPU PyTorch 2.5.1, the pinned LIBERO source and the exact
+with Python 3.10.21, CPU PyTorch 2.14.0, the pinned LIBERO source and the exact
 packages in `simulation-requirements.txt`. It needs `uv`, git, `libosmesa6`,
 `cmake` and `build-essential`. It preserves the separate CUDA training venv.
 The simulator's `LIBERO_CONFIG_PATH` and source `PYTHONPATH` are set explicitly.
+The environment contains the dependencies used by evaluation; LIBERO's separate
+policy-training dependencies are omitted. PyTorch retains weights-only loading.
+The client permits only the NumPy constructors needed by the pinned initial-state
+arrays, after checking both native source revisions. It does not enable general
+pickle loading to accommodate legacy states.
+
+Before allocating GPUs to evaluation, verify all initial states and simulator
+assets with an actual CPU rendering pass:
+
+```bash
+"$WAM_SHARED_ROOT/simulation/libenv/bin/python" "$WAM_RECIPE/simulation_probe.py" \
+  --shared-root "$WAM_SHARED_ROOT" \
+  --output-path "$WAM_SHARED_ROOT/simulation/readiness"
+```
+
+The output directory must be fresh. Its manifest records all 500 state inputs,
+twenty camera images, pixel hashes and runtime versions. This checks simulator
+readiness; it does not execute or score a learned policy.
+
+The [executed simulator check](../../../../docs/workbench/evidence/cosmos3-wam-simulation-runtime.json)
+records a fresh bootstrap, all 500 finite states, twenty rendered camera frames,
+and the exact dependency inventory hash. Updating the CPU environment preserved
+all state values and rendered pixels. The recorded dependency scan is dated;
+it is not a guarantee about future vulnerability reports.
 
 After training, use `evaluate.py --shared-root PATH --run-dir RUN --step 500
 --output-dir OUTPUT` inside an exclusive eight-GPU Slurm allocation. Repeat for

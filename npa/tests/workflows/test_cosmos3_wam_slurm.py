@@ -3,9 +3,11 @@
 import importlib.util
 from datetime import datetime, timezone
 import hashlib
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 import subprocess
+import threading
 
 import pytest
 
@@ -501,3 +503,28 @@ def test_reserved_cluster_plan_cannot_fall_back(tmp_path, monkeypatch):
     assert not spec.workers[0].preemptible
     assert spec.workers[0].size == 2
     assert args.output.stat().st_mode & 0o077 == 0
+
+
+def test_policy_readiness_never_follows_http_redirects():
+    requests = []
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_response(302)
+            self.send_header("Location", "/unexpected")
+            self.end_headers()
+
+        def log_message(self, *_args):
+            return
+
+    with HTTPServer(("127.0.0.1", 0), RedirectHandler) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            with pytest.raises(ConnectionError, match="not ready"):
+                _load("evaluate")._server_info(server.server_port - 8000)
+        finally:
+            server.shutdown()
+            thread.join()
+    assert requests == ["/info"]

@@ -10,15 +10,7 @@ import torch
 from torch.nn import functional as F
 
 
-def probe():
-    from cosmos_framework.utils.generator.fused_adam import FusedAdam
-
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is unavailable")
-    device = torch.cuda.current_device()
-    properties = torch.cuda.get_device_properties(device)
-    if "B200" not in properties.name:
-        raise RuntimeError("this qualification requires a real B200")
+def _attention():
     torch.manual_seed(42)
     tensors = [
         torch.randn(1, 4, 32, 64, device="cuda", dtype=torch.bfloat16).requires_grad_()
@@ -37,6 +29,12 @@ def probe():
         for tensor in tensors
     ):
         raise RuntimeError("CUDA attention backward produced invalid gradients")
+    return (output.float().cpu() - reference).abs().max().item()
+
+
+def _fused_optimizer():
+    from cosmos_framework.utils.generator.fused_adam import FusedAdam
+
     parameter = torch.nn.Parameter(torch.zeros(64, device="cuda", dtype=torch.float32))
     optimizer = FusedAdam(
         [parameter], lr=5e-5, eps=1e-8, master_weights=False, capturable=True
@@ -46,6 +44,17 @@ def probe():
     if not torch.isfinite(parameter).all().item() or not (parameter < 0).all().item():
         raise RuntimeError("native FusedAdam did not apply a finite CUDA update")
     torch.cuda.synchronize()
+
+
+def _probe():
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable")
+    device = torch.cuda.current_device()
+    properties = torch.cuda.get_device_properties(device)
+    if "B200" not in properties.name:
+        raise RuntimeError("this qualification requires a real B200")
+    error = _attention()
+    _fused_optimizer()
     drivers = subprocess.check_output(
         ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
         text=True,
@@ -66,10 +75,7 @@ def probe():
         "bf16_attention_forward_matches_fp32_reference": True,
         "bf16_attention_backward_finite_nonzero": True,
         "native_fused_adam_fp32_parameter_update": True,
-        "forward_max_absolute_error": (output.float().cpu() - reference)
-        .abs()
-        .max()
-        .item(),
+        "forward_max_absolute_error": error,
         "scope": "one-device CUDA kernel qualification; no WAM training or multi-node claim",
     }
 
@@ -78,7 +84,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    result = probe()
+    result = _probe()
     with args.output.open("x") as stream:
         stream.write(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

@@ -121,6 +121,37 @@ hosts and an all-reduce sum of 136 before training starts.
 
 ## Evidence and cleanup
 
+On each dedicated worker, start the same one-second GPU recorder before the
+campaign. Choose a private output path in `WAM_GPU_TELEMETRY`, create its parent
+directory, and choose a unique systemd unit name in `WAM_GPU_TELEMETRY_UNIT`:
+
+```bash
+sudo systemd-run --unit "$WAM_GPU_TELEMETRY_UNIT" --uid "$USER" \
+  --property Type=exec --property UMask=0077 --property Restart=on-failure \
+  --property "StandardOutput=append:$WAM_GPU_TELEMETRY" \
+  /usr/bin/nvidia-smi \
+  --query-gpu=timestamp,index,name,memory.used,utilization.gpu,power.draw,temperature.gpu,clocks.sm,clocks.mem \
+  --format=csv,noheader,nounits --loop=1
+```
+
+Keep the host clock synchronized and record its timezone. The campaign hosts
+use UTC; GPU telemetry is joined to the native training logs by timestamp.
+This sampling can miss shorter utilization and memory peaks. Stop this exact
+recorder after the campaign with `sudo systemctl stop "$WAM_GPU_TELEMETRY_UNIT"`.
+
+For each training run, select its planned directory in `WAM_RUN` and retain
+the same NCCL diagnostics used by the campaign:
+
+```bash
+NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET,GRAPH \
+  NCCL_DEBUG_FILE="$WAM_RUN/nccl.%h.%p.log" \
+  sbatch "$WAM_RUN/train.sbatch"
+```
+
+NCCL replaces `%h` and `%p` with the host name and process ID, so these raw logs
+remain private. Check the actual transport selected between nodes; a passing
+collective alone does not establish InfiniBand use or bandwidth.
+
 Record `sacct` elapsed time, exit status and allocated TRES for each job. Keep
 one-second GPU telemetry, raw NCCL transport logs and package versions private.
 The public report contains counts, versions, timings and hashes, without
