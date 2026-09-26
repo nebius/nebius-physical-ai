@@ -835,13 +835,16 @@ def _write_fingerprint_probe(tmp_path: Path) -> None:
 
 
 def _run_fresh_install_step(tmp_path: Path, version: str, fingerprint_exit: int):
-    command = _step("test.yml", "test", "Install npa")["run"]
-    command = command.replace("${{ matrix.python-version }}", version)
+    step = _step("test.yml", "test", "Install npa")
+    assert step["env"] == {"NPA_CI_PYTHON_VERSION": "${{ matrix.python-version }}"}
+    command = step["run"]
+    assert "${{" not in command
     environment = dict(os.environ, GITHUB_WORKSPACE=str(tmp_path))
     environment["GITHUB_PATH"] = str(tmp_path / "github-path")
     environment["BOOTSTRAP_LOG"] = str(tmp_path / "commands")
     environment["FINGERPRINT_EXIT"] = str(fingerprint_exit)
     environment["PYTHON_VERSION"] = version
+    environment["NPA_CI_PYTHON_VERSION"] = version
     _write_fingerprint_probe(tmp_path)
     functions = """
 python() { [[ "$*" == "-m venv npa/.venv" ]]; }
