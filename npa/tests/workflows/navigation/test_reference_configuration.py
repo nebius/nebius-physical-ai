@@ -59,7 +59,9 @@ def test_task_configuration_defers_all_mdp_implementation_imports(monkeypatch):
 
 
 @pytest.mark.parametrize("large_presets", [False, True])
-def test_physics_buffers_cover_observed_coincident_population(monkeypatch, large_presets):
+def test_physics_buffers_cover_observed_coincident_population(
+    monkeypatch, large_presets
+):
     _stub_configuration_types(monkeypatch)
     physics = SimpleNamespace(
         gpu_found_lost_pairs_capacity=2**21,
