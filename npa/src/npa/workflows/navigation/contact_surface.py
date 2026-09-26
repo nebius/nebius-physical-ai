@@ -94,13 +94,30 @@ def _root_indices(env):
     roots = {_robot_index(path): index for index, path in enumerate(paths)}
     if len(paths) != env.num_envs or len(roots) != len(paths):
         raise ValueError("Native root paths must identify each robot exactly once")
-    if set(roots) != set(range(env.num_envs)) or any(
-        path != f"/World/envs/env_{robot}/Robot"
-        for robot, index in roots.items()
-        for path in [paths[index]]
-    ):
+    if set(roots) != set(range(env.num_envs)):
         raise ValueError("Native root paths do not cover the reference population")
+    for robot, index in roots.items():
+        container = f"/World/envs/env_{robot}/Robot"
+        if paths[index] != _articulation_root_path(env.sim.stage, container):
+            raise ValueError("Native root path differs from the resolved articulation")
     return roots
+
+
+def _articulation_root_path(stage, container):
+    from pxr import Usd, UsdPhysics
+
+    prim = stage.GetPrimAtPath(container)
+    if not prim.IsValid():
+        raise ValueError("Reference robot container is absent from the native stage")
+    # Lab resolves one API prim below the asset, without traversing instance proxies.
+    paths = [
+        str(child.GetPath())
+        for child in Usd.PrimRange(prim)
+        if child.HasAPI(UsdPhysics.ArticulationRootAPI)
+    ]
+    if len(paths) != 1:
+        raise ValueError("Reference robot must contain exactly one ArticulationRootAPI")
+    return paths[0]
 
 
 def _query(surface, points, radii, separation, roots):

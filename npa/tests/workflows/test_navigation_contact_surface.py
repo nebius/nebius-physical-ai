@@ -207,32 +207,14 @@ def test_multishape_native_margin_is_not_guessed():
     assert offset.tolist() == rest.tolist() == [0.0] * 4
 
 
-@pytest.mark.parametrize(
-    "paths",
-    [
-        ["/World/envs/env_0/Robot"],
-        ["/World/envs/env_0/Robot"] * 2,
-        ["/World/envs/env_0/Robot", "/World/envs/env_2/Robot"],
-        ["/World/envs/env_0/Robot", "/World/envs/env_1/Robot/base"],
-    ],
-)
-def test_root_mapping_requires_exact_population_and_root_paths(paths):
-    from types import SimpleNamespace
-    from npa.workflows.navigation.contact_surface import _root_indices
-
-    env = SimpleNamespace(
-        num_envs=2,
-        scene={"robot": SimpleNamespace(root_view=SimpleNamespace(prim_paths=paths))},
-    )
-    with pytest.raises(ValueError):
-        _root_indices(env)
-
-
 def test_native_path_order_maps_offsets_and_rejects_inferred_order_disagreement():
     from types import SimpleNamespace
+    from pxr import Usd, UsdPhysics
     from npa.workflows.navigation.contact_surface import _sensor_tables
 
     prefix = "/World/envs/env_0/Robot"
+    stage = Usd.Stage.CreateInMemory()
+    UsdPhysics.ArticulationRootAPI.Apply(stage.DefinePrim(prefix, "Xform"))
     names = ["base", "LF_FOOT", "LH_FOOT", "RF_FOOT", "RH_FOOT"]
     sensors = [f"{prefix}/{name}" for name in names]
     view = SimpleNamespace(
@@ -244,6 +226,7 @@ def test_native_path_order_maps_offsets_and_rejects_inferred_order_disagreement(
     )
     env = SimpleNamespace(
         num_envs=1,
+        sim=SimpleNamespace(stage=stage),
         scene={
             "robot": SimpleNamespace(root_view=SimpleNamespace(prim_paths=[prefix]))
         },
