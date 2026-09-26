@@ -73,6 +73,24 @@ def _component_pods() -> dict[str, Any]:
     }
 
 
+def _component_pod_with_readiness(
+    *ready_values: object, phase: str = "Running"
+) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "metadata": {"name": "readiness-probe"},
+                "status": {
+                    "phase": phase,
+                    "containerStatuses": [
+                        {"ready": ready_value} for ready_value in ready_values
+                    ],
+                },
+            }
+        ]
+    }
+
+
 class _Clock:
     def __init__(self) -> None:
         self.value = 0.0
@@ -203,6 +221,124 @@ def test_probe_validates_generalized_topology_and_managed_components(
     assert snapshot["ready_nodes"] == 3
     assert snapshot["total_gpus"] == 16
     assert kubectl.component_namespaces == ["nvidia-device-plugin"]
+
+
+@pytest.mark.parametrize(
+    "ready_value",
+    [False, "false", "true", None, 0, 1, [], {}],
+    ids=[
+        "false",
+        "false-string",
+        "true-string",
+        "null",
+        "zero",
+        "one",
+        "list",
+        "object",
+    ],
+)
+def test_probe_rejects_non_boolean_true_container_readiness(
+    tmp_path: Path, ready_value: object
+) -> None:
+    class ComponentReadiness(_Kubectl):
+        def __call__(self, args, **kwargs):
+            if args[1:3] == ["get", "pods"]:
+                return self._result(_component_pod_with_readiness(ready_value))
+            return super().__call__(args, **kwargs)
+
+    snapshot = probe_gpu_health(
+        ComponentReadiness([_healthy_nodes()]),
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(),
+    )
+
+    assert "nvidia-device-plugin/readiness-probe: phase=Running" in snapshot["errors"]
+
+
+def test_probe_accepts_only_literal_true_for_each_running_container(
+    tmp_path: Path,
+) -> None:
+    class ComponentReadiness(_Kubectl):
+        def __call__(self, args, **kwargs):
+            if args[1:3] == ["get", "pods"]:
+                return self._result(_component_pod_with_readiness(True, True))
+            return super().__call__(args, **kwargs)
+
+    snapshot = probe_gpu_health(
+        ComponentReadiness([_healthy_nodes()]),
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(),
+    )
+
+    assert snapshot["errors"] == []
+
+
+class _MalformedComponentReadiness(_Kubectl):
+    def __call__(self, args, **kwargs):
+        if args[1:3] == ["get", "pods"]:
+            payload = _component_pod_with_readiness(True, "false")
+            status = payload["items"][0]["status"]["containerStatuses"][1]
+            status["state"] = {"waiting": {"reason": "ImagePullBackOff"}}
+            return self._result(payload)
+        return super().__call__(args, **kwargs)
+
+
+@pytest.mark.parametrize("driver_mode", ["managed-image", "operator"])
+def test_validation_rejects_malformed_readiness_before_gpu_smoke(
+    tmp_path: Path, driver_mode: str
+) -> None:
+    clock = _Clock()
+    kubectl = _MalformedComponentReadiness([_healthy_nodes()])
+    path = tmp_path / "gpu-health.json"
+    with pytest.raises(GpuHealthError, match="ImagePullBackOff"):
+        validate_gpu_health(
+            kubectl,
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_config(
+                driver_mode=driver_mode,
+                cuda_smoke=True,
+                graphics_smoke=driver_mode == "operator",
+                timeout_seconds=1,
+            ),
+            evidence_path=path,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
+
+    evidence = json.loads(path.read_text())
+    assert evidence["status"] == "failed"
+    assert evidence["cuda_smokes"] == []
+    assert evidence["graphics_smokes"] == []
+    assert kubectl.applied_manifests == []
+    assert kubectl.created_nodes == []
+    namespace = "gpu-operator" if driver_mode == "operator" else "nvidia-device-plugin"
+    assert evidence["final_snapshot"]["errors"] == [
+        f"{namespace}/readiness-probe: phase=Running (ImagePullBackOff)"
+    ]
+
+
+def test_probe_preserves_succeeded_component_completion_behavior(
+    tmp_path: Path,
+) -> None:
+    class CompletedComponent(_Kubectl):
+        def __call__(self, args, **kwargs):
+            if args[1:3] == ["get", "pods"]:
+                return self._result(
+                    _component_pod_with_readiness("false", phase="Succeeded")
+                )
+            return super().__call__(args, **kwargs)
+
+    snapshot = probe_gpu_health(
+        CompletedComponent([_healthy_nodes()]),
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(),
+    )
+
+    assert snapshot["errors"] == []
 
 
 def test_probe_accepts_current_managed_plugin_in_kube_system(tmp_path: Path) -> None:
