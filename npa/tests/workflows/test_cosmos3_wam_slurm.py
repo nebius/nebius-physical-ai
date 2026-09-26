@@ -2,6 +2,7 @@
 
 import importlib.util
 from datetime import datetime, timezone
+import gzip
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
@@ -327,6 +328,125 @@ def test_profile_busy_time_does_not_double_count_overlapping_collectives():
         "collectives": 7,
     }
     assert result["observed_kernel_busy_seconds_by_device"] == {"0": 12}
+
+
+@pytest.mark.parametrize(
+    "operator,category",
+    [
+        ("aten::mm", "matrix_multiply"),
+        ("aten::cudnn_convolution", "convolution"),
+        ("aten::copy_", "other"),
+    ],
+)
+def test_profile_links_blackwell_kernel_to_its_actual_operator(operator, category):
+    profiler = _load("profile_report")
+    events = [
+        {"cat": "cpu_op", "name": operator, "args": {"External id": 17}},
+        {
+            "cat": "kernel",
+            "name": "nvjet_sm100_tst_128x256",
+            "ts": 0,
+            "dur": 1_000_000,
+            "args": {"External id": 17, "device": 0},
+        },
+    ]
+    kernels = profiler._linked_kernels(events)
+    result = profiler._kernel_metrics(kernels, 0, 1_000_000)
+    assert result["kernel_duration_seconds_by_category"] == {category: 1}
+    assert result["cpu_operator_linked_kernel_count"] == 1
+    assert result["total_kernel_count"] == 1
+
+
+def test_profile_does_not_guess_ambiguous_operator_links():
+    profiler = _load("profile_report")
+    events = [
+        {"cat": "cpu_op", "name": name, "args": {"External id": 17}}
+        for name in ("aten::mm", "aten::cudnn_convolution", "aten::mm")
+    ]
+    events.append({"cat": "kernel", "name": "nvjet_sm100", "args": {"External id": 17}})
+    kernel = profiler._linked_kernels(events)[0]
+    assert kernel["cpu_operator"] is None
+    assert profiler._kernel_category(kernel) == "other"
+
+
+@pytest.mark.parametrize(
+    "operator,category",
+    [
+        ("natten::blackwell_fmha_forward", "attention"),
+        ("triton_poi_fused_addmm_blackwell_fmha_forward_squeeze_t_view_8", "other"),
+    ],
+)
+def test_profile_distinguishes_attention_operators_from_fused_pointwise_work(
+    operator, category
+):
+    event = {"name": "opaque_device_kernel", "cpu_operator": operator}
+    assert _load("profile_report")._kernel_category(event) == category
+
+
+def _profile_trace(path, host_steps):
+    events = []
+    for index in range(host_steps):
+        for category, offset in (("user_annotation", 0), ("gpu_user_annotation", 10)):
+            events.append(
+                {
+                    "ph": "X",
+                    "cat": category,
+                    "name": f"ProfilerStep#{index}",
+                    "ts": index * 100 + offset,
+                    "dur": 100 - offset,
+                }
+            )
+    events.append(
+        {
+            "ph": "X",
+            "cat": "kernel",
+            "name": "gemm",
+            "ts": 10,
+            "dur": 10,
+            "args": {"device": 0},
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(gzip.compress(json.dumps({"traceEvents": events}).encode()))
+
+
+def test_profile_gpu_annotation_cannot_masquerade_as_a_second_step(tmp_path):
+    path = tmp_path / "trace.json.gz"
+    _profile_trace(path, 1)
+    with pytest.raises(ValueError, match="two distinct host steps"):
+        _load("profile_report")._trace(path)
+
+
+def test_profile_uses_host_boundaries_without_duplicate_gpu_markers(tmp_path):
+    path = tmp_path / "trace.json.gz"
+    _profile_trace(path, 2)
+    steps, _, start, stop = _load("profile_report")._trace(path)
+    assert [event["name"] for event in steps] == ["ProfilerStep#0", "ProfilerStep#1"]
+    assert (start, stop) == (0, 200)
+
+
+def test_profile_can_reanalyze_without_overwriting_the_recorded_summary(tmp_path):
+    from argparse import Namespace
+
+    run = tmp_path / "run"
+    trace = (
+        run
+        / "output/cosmos3_wam/libero_10/baseline/torch_trace/iteration_100/rank0_trace.json.gz"
+    )
+    _profile_trace(trace, 2)
+    (run / "run.json").write_text(
+        json.dumps({"profile": True, "nodes": 1, "name": "baseline"})
+    )
+    (run / "node-0.finished.json").write_text(json.dumps({"returncode": 0}))
+    original = run / "profile-summary.json"
+    original.write_text("original archived report\n")
+    output = tmp_path / "reanalyzed.json"
+    _load("profile_report")._main(Namespace(run_dir=run, output_path=output))
+    assert original.read_text() == "original archived report\n"
+    assert json.loads(output.read_text())["ranks"]["0"]["profiler_steps"] == [
+        "ProfilerStep#0",
+        "ProfilerStep#1",
+    ]
 
 
 def _completed_nodes(run, nodes):

@@ -8,6 +8,10 @@ worker returned zero, Slurm recorded `COMPLETED` with exit code `0:0`, and the
 reporter found no Python failures or skipped optimizer updates. All four
 scheduled checkpoints completed.
 
+The [full-run GPU activity record](../cosmos3-wam-full-gpu-activity/README.md)
+adds 225,576 device samples, the sampled memory maxima on each GPU, and a
+reproducible visualization of utilization across the complete process.
+
 | Measurement | Observed result |
 | --- | --- |
 | Native training-process duration | 28,233.477 s — 7 h 50 m 33 s |

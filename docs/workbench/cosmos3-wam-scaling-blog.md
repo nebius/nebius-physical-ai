@@ -96,6 +96,16 @@ use was 55.85–58.55 GiB per GPU. A single utilization sample establishes live
 execution; the completed timing runs and evaluations answer performance and
 quality questions.
 
+![GPU utilization and sampled device memory across the complete run](evidence/cosmos3-wam-full-gpu-activity/full-gpu-activity.png)
+
+The [full-run telemetry](evidence/cosmos3-wam-full-gpu-activity/README.md)
+adds 225,576 device samples spanning the complete native training process.
+Sampled memory maxima ranged from 55.85 to 58.55 GiB per GPU. The pale
+utilization bands align with checkpoint saves; the per-minute averages show
+why an instantaneous 100% utilization reading cannot describe the whole run.
+The recorder targeted one-second sampling, with an observed maximum gap of
+8.7 seconds. These are sampled device-memory maxima, not allocator peaks.
+
 The live preparation test also found an operational issue: the native converter
 could resolve a moving processor revision. The recipe now selects the staged
 processor and VAE explicitly and pins the training tokenizer separately.
@@ -248,10 +258,25 @@ is not pure write time. Storage throughput belongs in the training-time
 discussion alongside GPU count. The completed full-run report includes all
 four periodic saves, including the 404.61-second final iteration.
 
-More GPUs help only if the work can use them. A separate profiling run captures
-PyTorch traces from a representative rank on each node. The analysis follows
-the path from loading and decoding data, through VAE encoding and model
-computation, to communication and checkpoint writes.
+The separate 110-update profiling run also completed on eight B200s. Its
+[actual CUDA trace](evidence/cosmos3-wam-profile-8/README.md) captures two host
+steps on rank zero over 29.352 seconds. It contains 397,612 CUDA kernels,
+whose overlapping intervals cover 15.131 seconds on that device.
+
+![Actual CUDA kernel timeline from the separate profiling run](evidence/cosmos3-wam-profile-8/cuda-timeline.png)
+
+The analyzer links kernels to their CPU operators instead of relying only on
+Blackwell kernel names. It also separates host step boundaries from duplicate
+GPU annotations. The 906 NCCL kernel events sum to 2.306 seconds, but that is
+not exposed communication overhead: their execution overlaps other kernels.
+The figure merges intervals within each row; rows still must not be stacked.
+This is one instrumented rank, not an all-GPU utilization or throughput result.
+
+Separately, the full-run native logs measured mean VAE encoding of 3.01 seconds
+per update across ranks, included within the 3.05-second data-preparation
+timer. These timers overlap. Together with the trace, they identify areas to
+inspect before increasing the allocation without claiming that every gap is
+CPU-bound or that more GPUs will remove it.
 
 Input stalls suggest improving data access or decoding. A large difference
 between rank-average and rank-maximum time suggests imbalance. Communication
@@ -280,12 +305,13 @@ tasks may require a different dataset and acceptance criterion.
 
 | B200 GPUs | Complete training time | Full-run median / p95 step | Repeated-run speedup / efficiency | Training GPU-hours | LIBERO-10 success | Time to quality |
 | --- | --- | --- | --- | --- | --- | --- |
-| 8 | 7 h 50 m 33 s | 13.29 / 13.43 s | Baseline repetitions pending | 62.74 | Pending | Pending |
+| 8 | 7 h 50 m 33 s | 13.29 / 13.43 s | Timing aggregation pending | 62.74 | Pending | Pending |
 | 16 | Pending | Pending | Pending | Pending | Pending | Pending |
 
 The completed eight-GPU row answers how long this particular full schedule
-took. A matched two-node run, separate timing repetitions, representative CUDA
-traces and full checkpoint-linked evaluations are still needed to answer how
+took, and the separate trace establishes actual eight-GPU profiling evidence.
+A matched two-node run, verified timing aggregation and full checkpoint-linked
+evaluations are still needed to answer how
 well it scales and how long it takes to reach the selected policy target.
 The final publication will retain unsuccessful outcomes and uncertainty, with
 the tested driver, CUDA, PyTorch and source revisions. Pending results cannot

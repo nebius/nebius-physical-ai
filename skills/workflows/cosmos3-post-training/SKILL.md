@@ -70,6 +70,13 @@ while those measurements are pending. Current upstream
 LIBERO already describes two-node training; avoid the outdated blanket claim
 that all public Cosmos3 recipes stop at one node.
 
+The separate eight-GPU profiling run has completed with a real CUDA timeline.
+The completed full training run also has sampled GPU telemetry. Kernel groups
+use linked CPU operators where available; host step markers exclude repeated GPU
+annotations. Overlapping kernel durations are not a wall-time breakdown or
+exposed communication stalls. Use a fresh `profile_report.py --output-path`
+when reanalyzing archived traces, preserving the original report and trace hash.
+
 The Slurm recipe pins a newer framework than the experimental Workbench policy
 workflow. Keep each run's source/model/data/evaluation revisions coherent;
 do not use one path's successful execution as proof for the other.

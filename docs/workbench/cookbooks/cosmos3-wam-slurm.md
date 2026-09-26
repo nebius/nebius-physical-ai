@@ -259,6 +259,14 @@ Use Nsight Systems only as a separate diagnostic run with the pinned upstream
 `trainer.profiling.enable_nsys`/CUDA profiler API mechanism and native rank
 launch integration; this recipe's `--profile` selects PyTorch traces only.
 
+The [completed eight-B200 profile](../evidence/cosmos3-wam-profile-8/README.md)
+includes an actual trace-derived timeline and reproduction commands. Its
+analyzer links CUDA kernels to CPU operators, distinguishes host step markers
+from repeated GPU annotations, and measures overlapping kernel intervals.
+Use `profile_report.py --run-dir RUN --output-path FRESH_REPORT` to reanalyze
+without replacing an archived report. A single-rank kernel trace does not
+measure all-GPU utilization or exposed cross-node communication overhead.
+
 ## 6. Measure policy quality and time to quality
 
 A low training loss and a saved checkpoint do not establish a useful policy.

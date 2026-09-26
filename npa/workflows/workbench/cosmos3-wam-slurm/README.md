@@ -22,6 +22,11 @@ quality remain unmeasured. The running deployment uses native Slurm
 worker. The Soperator path remains an unvalidated deployment alternative. See
 [validation.json](validation.json) and the [GPU evidence](../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json).
 
+The [full-run GPU telemetry](../../../../docs/workbench/evidence/cosmos3-wam-full-gpu-activity/README.md)
+contains 225,576 device samples. A separate completed
+[CUDA profiling run](../../../../docs/workbench/evidence/cosmos3-wam-profile-8/README.md)
+provides a trace-linked kernel timeline, excluded from scaling comparisons.
+
 ## Plan without cloud resources
 
 From the Workbench checkout, choose absolute paths that will exist on the Slurm
@@ -341,7 +346,13 @@ variation in policy quality across training seeds.
 
 For a completed 110-step `--profile` run, use `profile_report.py --run-dir RUN`.
 It requires actual CUDA kernels in the two active profiler steps on ranks 0,
-8 and so on, and writes `profile-summary.json`. Kernel-duration sums can exceed
+8 and so on, and writes `profile-summary.json`. Optional `--output-path PATH`
+writes a separate analysis, so an archived original report can be preserved.
+Host profiler annotations define distinct steps; duplicate GPU annotations do
+not count as additional steps. Kernel categories prefer CPU operators linked
+by trace `External id`, with names used for NCCL and unlinked kernels. Fused
+Triton kernels remain other; generated names alone do not identify one operation.
+Kernel-duration sums can exceed
 wall time because streams overlap; the report computes interval unions for
 observed kernel busy time and never labels collective duration as exposed
 communication stalls. Memory and utilization come from the separate GPU
