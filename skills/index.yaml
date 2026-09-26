@@ -1236,6 +1236,8 @@ skills:
         paths:
           - workflows/main/nurec-reconstruct.yaml
           - workflows/testing/nurec-colmap-reconstruct.yaml
+          - workflows/testing/scan-to-isaac-navigation.yaml
+          - workflows/testing/rgbd-scan-to-isaac.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."

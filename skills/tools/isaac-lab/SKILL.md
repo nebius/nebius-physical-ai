@@ -201,6 +201,18 @@ Architecture + licensing rationale: `docs/architecture/sim-backend-selection.md`
 
 ## Operational Safety
 
+For a captured static environment, use
+`workflows/testing/scan-to-isaac-navigation.yaml` and the contract in
+`docs/workbench/guides/scan-to-isaac-navigation.md`. Its stateless native probe
+runs with `/isaac-sim/python.sh` and tests PhysX ray intersections against the
+assembled collision geometry. It verifies sealed scene/provenance bytes and
+rejects raw OmniScripting/OmniGraph declarations before Kit opens the stage,
+including hidden variants and nested archives. It records actual Isaac/PhysX
+versions separately from the operator-declared immutable image reference;
+runtime introspection does not attest a registry digest. This path has committed
+opt-in live coverage but no completed GPU acceptance, navigation-policy result,
+or NuRec-rendering proof. Stock robot tasks do not qualify these scene inputs.
+
 Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
 plans that would destroy or replace critical infrastructure are blocked unless
 the operator passes `--replace` and confirms with `--yes` for automation.

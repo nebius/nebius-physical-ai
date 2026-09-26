@@ -1113,15 +1113,16 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # ships `PYTHONPATH=/opt/npa/src`, whose npa predates the `cosmos2` subcommand, so the
         # stage kept running the old CLI no matter what had just been installed. Third image to
         # do this (lerobot was job 250), so the engine handles it rather than each image.
-        # Prepending the recorded source is a no-op wherever the install already wins.
+        # The recorded source must be FIRST, not merely present: restoring a baked
+        # image path above can otherwise put stale code ahead of the branch overlay.
         # (no ${...} expansions here: the renderer's placeholder guard rejects them)
         'if [ -s /tmp/npa-src-root ] && [ -d "$(cat /tmp/npa-src-root)/src" ]; then\n'
         '  npa_src_path="$(cat /tmp/npa-src-root)/src"\n'
         '  if [ -z "$PYTHONPATH" ]; then\n'
         '    export PYTHONPATH="$npa_src_path"\n'
         "  else\n"
-        '    case ":$PYTHONPATH:" in\n'
-        '      *":$npa_src_path:"*) : ;;\n'
+        '    case "$PYTHONPATH" in\n'
+        '      "$npa_src_path"|"$npa_src_path":*) : ;;\n'
         '      *) export PYTHONPATH="$npa_src_path:$PYTHONPATH" ;;\n'
         "    esac\n"
         "  fi\n"
