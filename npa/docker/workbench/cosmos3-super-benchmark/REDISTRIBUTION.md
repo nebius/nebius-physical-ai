@@ -7,4 +7,7 @@ separately establishing redistribution rights for every inherited layer.
 
 The build adds only the SkyPilot 0.12.2 bootstrap packages (`openssh-server`,
 `rsync`, and `sudo`). Models remain runtime-fetched with the operator's own
-Hugging Face credential and explicit NVIDIA Software License acceptance.
+Hugging Face credential where authentication is required. The upstream runtime
+terms remain applicable; the benchmark does not add an NPA acceptance flag.
+NVIDIA describes acceptance through registration or use in its
+[Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/).

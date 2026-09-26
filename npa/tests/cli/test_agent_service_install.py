@@ -122,11 +122,13 @@ def bootstrap_harness(monkeypatch):
     monkeypatch.setattr(agent.agent_llm_config, "write_agent_llm_env", llm)
     for writer in (
         "_write_agent_s3_env",
-        "_write_agent_artifact_sources_env",
         "_write_agent_operator_profile",
         "_record_remote_setup_ready",
     ):
         monkeypatch.setattr(agent, writer, Mock())
+    monkeypatch.setattr(
+        agent.agent_artifact_options, "write_artifact_sources_env", Mock()
+    )
     credentials = Mock(side_effect=[SSHError("staging interrupted"), None])
     monkeypatch.setattr(agent, "_write_agent_nebius_env", credentials)
     monkeypatch.setattr(agent, "verify_remote_deployment", Mock())

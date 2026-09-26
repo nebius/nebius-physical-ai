@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.cli.fiftyone import FIFTYONE_VERSION
+from npa.clients.config import StorageConfig
 
 runner = CliRunner()
 TERRAFORM_PLAN_FIXTURES = (
@@ -21,6 +22,26 @@ def _terraform_plan_allows_apply(mocker):
     mocker.patch(
         "npa.cli.fiftyone.provisioner.plan",
         return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
+    mocker.patch(
+        "npa.clients.project_credential_store.project_credential_record",
+        return_value={
+            "storage": {
+                "bucket": "s3://selected-bucket/checkpoints/",
+                "endpoint": "https://selected-storage.example",
+                "access_key": "selected-access",
+                "secret_key": "selected-secret",
+            }
+        },
+    )
+    mocker.patch(
+        "npa.clients.config.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://selected-bucket/checkpoints/",
+            endpoint_url="https://selected-storage.example",
+            aws_access_key_id="selected-access",
+            aws_secret_access_key="selected-secret",
+        ),
     )
 
 

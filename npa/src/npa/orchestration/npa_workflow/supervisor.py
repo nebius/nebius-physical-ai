@@ -209,10 +209,16 @@ class PreflightEvidence:
 
     @property
     def relaunch_ready(self) -> bool:
-        return all(
-            str(self.checks.get(name) or "").lower() in {"pass", "not_required"}
-            for name in self.REQUIRED_RELAUNCH_CHECKS
-        )
+        for name in self.REQUIRED_RELAUNCH_CHECKS:
+            value = str(self.checks.get(name) or "").lower()
+            # Credential evidence is deliberately persisted only as the
+            # redacted marker.  It still proves the access check passed without
+            # putting a token or credential value into the durable receipt.
+            if name == "credentials_access" and value == "<redacted>":
+                continue
+            if value not in {"pass", "not_required"}:
+                return False
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -319,11 +325,11 @@ def decide_recovery(
             code,
             "Inspect the exact attempt logs and fix the payload; infrastructure retry is disabled.",
         )
-    identity_must_match = (
-        failure_class is FailureClass.TRANSIENT_INFRASTRUCTURE
-        and observation.state is not BackendState.SUCCEEDED
-    ) or (observation.state is BackendState.SUCCEEDED and context.outputs.all_valid)
-    if identity_must_match and not _immutable_identity_matches(identity, context):
+    if (
+        observation.state is BackendState.SUCCEEDED
+        and context.outputs.all_valid
+        and not _immutable_identity_matches(identity, context)
+    ):
         return RecoveryDecision(
             RecoveryAction.BLOCK_RELAUNCH,
             FailureClass.UNKNOWN,
@@ -367,6 +373,13 @@ def decide_recovery(
             FailureClass.UNKNOWN,
             code,
             "The failure is not proven transient; inspect exact backend evidence before recovery.",
+        )
+    if not _immutable_identity_matches(identity, context):
+        return RecoveryDecision(
+            RecoveryAction.BLOCK_RELAUNCH,
+            FailureClass.UNKNOWN,
+            "IMMUTABLE_IDENTITY_MISMATCH",
+            "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
         )
     if (
         context.outputs.all_valid
@@ -450,6 +463,20 @@ def decide_recovery(
     )
 
 
+def _supervisor_event_order(event: Mapping[str, Any]) -> tuple[str, int, int]:
+    phase_order = {
+        "decision": 0,
+        "cancellation": 1,
+        "recovery_reserved": 2,
+        "launch": 2,
+    }
+    return (
+        str(event.get("recorded_at") or ""),
+        int((event.get("attempt_identity") or {}).get("attempt") or 0),
+        phase_order.get(str(event.get("phase") or ""), 99),
+    )
+
+
 class SupervisorLedger:
     """Content-addressed supervisor events stored under the run prefix."""
 
@@ -476,38 +503,58 @@ class SupervisorLedger:
         )
 
     def events(self, logical_attempt_id: str = "") -> list[dict[str, Any]]:
+        """Read supervisor history, requiring intact evidence for scoped recovery.
+
+        Args:
+            logical_attempt_id: Exact attempt to validate; empty lists all history.
+        Returns:
+            Events ordered by observation time, attempt number, and phase.
+        Raises:
+            RuntimeError: Scoped history is missing, corrupt, or bound elsewhere.
+            Exception: The backing store cannot list or read the history.
+        """
         result: list[dict[str, Any]] = []
         prefix = "npa-workflow/supervisor/attempts"
         if logical_attempt_id:
             prefix = f"{prefix}/{_safe_component(logical_attempt_id)}"
         for key in self.store.list_artifacts(prefix):
+            if logical_attempt_id:
+                result.append(self._read_attempt_event(key, logical_attempt_id))
+                continue
             try:
                 payload = json.loads(self.store.read_artifact(key))
-            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-                if logical_attempt_id:
-                    raise RuntimeError(
-                        f"immutable supervisor event is unreadable: {key}"
-                    ) from exc
+            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
                 continue
-            if (
-                isinstance(payload, dict)
-                and payload.get("schema_version") == SUPERVISOR_SCHEMA_VERSION
+            if isinstance(payload, dict) and (
+                payload.get("schema_version") == SUPERVISOR_SCHEMA_VERSION
             ):
                 result.append(payload)
-        phase_order = {
-            "decision": 0,
-            "cancellation": 1,
-            "recovery_reserved": 2,
-            "launch": 2,
-        }
-        return sorted(
-            result,
-            key=lambda item: (
-                str(item.get("recorded_at") or ""),
-                int((item.get("attempt_identity") or {}).get("attempt") or 0),
-                phase_order.get(str(item.get("phase") or ""), 99),
-            ),
+        return sorted(result, key=_supervisor_event_order)
+
+    def _read_attempt_event(self, key: str, logical_attempt_id: str) -> dict[str, Any]:
+        try:
+            body = self.store.read_artifact(key)
+            payload = json.loads(body)
+        except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise RuntimeError("immutable supervisor event is unreadable") from exc
+        if not isinstance(payload, dict) or (
+            payload.get("schema_version") != SUPERVISOR_SCHEMA_VERSION
+        ):
+            raise RuntimeError("immutable supervisor event schema is invalid")
+        identity = payload.get("attempt_identity")
+        if not isinstance(identity, Mapping) or (
+            identity.get("logical_attempt_id") != logical_attempt_id
+        ):
+            raise RuntimeError("immutable supervisor event attempt identity differs")
+        phase = _safe_component(str(payload.get("phase") or "observation"))
+        digest = hashlib.sha256(body).hexdigest()
+        expected = (
+            "npa-workflow/supervisor/attempts/"
+            f"{_safe_component(logical_attempt_id)}/{phase}-{digest}.json"
         )
+        if key != expected:
+            raise RuntimeError("immutable supervisor event content address differs")
+        return payload
 
     def latest(self) -> dict[str, Any] | None:
         events = self.events()

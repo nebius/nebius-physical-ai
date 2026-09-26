@@ -1,18 +1,19 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "36a93ba4154eb3eb026c723d947d2466ff0af50e9fcc7e70a92f474c36e8bd0f",
+  "workflow_sha256": "967bba12e25ea4278db7e993d6f1f56c0970aa1ad6ae8877ad04377b3954523d",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The source workflow and owner-instantiated configuration passed validate-spec and plan-spec on 2026-09-17; the fresh workflow completed on the exact requested hardware.",
+      "reason": "The source workflow and owner-instantiated configuration passed validate-spec and plan-spec on 2026-09-17; the fresh workflow completed on the exact requested hardware. The later video_profile field defaults to empty, preserving that validated invocation, and its optional forwarding has local CLI-contract coverage; this record does not qualify the film override.",
       "evidence": [
         "workflows/testing/isaac-arena-evaluation-rtxpro.yaml",
-        "arena-rtx-reconcile-ae5adea6-20260917-r3"
+        "arena-rtx-reconcile-ae5adea6-20260917-r3",
+        "npa/tests/orchestration/npa_workflow/test_toolref_cli_contract.py"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Fresh gr1_open_microwave replay executed actions 1-43 exactly once through native terminal with zero padding and success=1.0. Door openness increased 0.200 to 0.815; four coherent frame pairs overlapped and spatially matched native progress. All 44 capture physics bindings and action evidence match the preceding rejected visual run; native lighting quality changed, with every acceptance threshold retained.",
+      "reason": "Fresh gr1_open_microwave replay executed actions 1-43 exactly once through native terminal with zero padding and success=1.0. Door openness increased 0.200 to 0.815; four coherent frame pairs overlapped and spatially matched native progress. All 44 capture physics bindings and action evidence match the preceding rejected visual run; native lighting quality changed, with every acceptance threshold retained. The added empty video_profile default leaves this historically verified task path unchanged; the optional film path is not claimed here.",
       "evidence": [
         "arena-rtx-reconcile-ae5adea6-20260917-r3",
         "npa.isaac-arena.visual-acceptance.v1",
@@ -47,7 +48,7 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "Trusted public build 35211514544 passed source/license, complete-byte security, bootstrap, SBOM and provenance gates. Independent anonymous full pull, source hashes and signatures passed. Corrected independent scans verified all 42 layers / 127,560 paths, plus the 126,146-path registry filesystem and history. The earlier outer-archive probe is explicitly non-qualifying.",
+      "reason": "Trusted public build 35211514544 passed source/license, complete-byte security, bootstrap, SBOM and provenance gates. Independent anonymous full pull, source hashes and signatures passed. Corrected independent scans verified all 42 layers / 127,560 paths, plus the 126,146-path registry filesystem and history. The earlier outer-archive probe is explicitly non-qualifying. This verified image covers the workflow's empty video_profile default, not the newer film override that requires an updated runtime.",
       "evidence": [
         "ghcr.io/nebius/nebius-physical-ai/npa-isaac-arena:dev-ae5adea6ab895660996f513f14160c89d06f47e5",
         "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
