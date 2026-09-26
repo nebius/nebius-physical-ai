@@ -1,0 +1,60 @@
+{
+  "schema": "npa.cosmos3.wam-timing-evidence.v1",
+  "date": "2026-09-26",
+  "scope": "Three separate unprofiled eight-GPU runs from the same base checkpoint and training seed; the sixteen-GPU comparison is not measured.",
+  "conditions": "Warm runtime and filesystem caches; no evaluation or archival I/O overlapped these training executions. Final checkpoint writing is outside the timed iteration series and inside each native process duration.",
+  "analysis_source_sha256": "7d75c00e12bcaec76c74b5ccc6bc8f823cfc9099a6a3da606b496ae8811dcc60",
+  "files_sha256": {
+    "repeat-1/checkpoint-hashes.json": "f53f1a2f09e702d672887ada2d3b1e623c8e0be98817a95ae1bfe9dc1c69760f",
+    "repeat-1/distributed-preflight.json": "de0f497c0716665476578761fc657ca57b6228fe911f7be8ff3cc0bf072bb5fd",
+    "repeat-1/iteration-series.csv": "f50991d73851f6502d27d891c66e0d8a8833c425a146305acd036b7a35f723db",
+    "repeat-1/measurement.json": "c4d4fb91a95fb8786218aa57f14c45ff9b98bc2245f414d014eb21f721f7af99",
+    "repeat-2/checkpoint-hashes.json": "40b4ee8a1c8298c145d40582e9acaa52afe7dd3a1242d026fc83e7e0ae359c12",
+    "repeat-2/distributed-preflight.json": "de0f497c0716665476578761fc657ca57b6228fe911f7be8ff3cc0bf072bb5fd",
+    "repeat-2/iteration-series.csv": "4eb2c878123a01cc03cf10c749bca95a085054e59026142ce7f23890cd5f295b",
+    "repeat-2/measurement.json": "e8c647015d1b13603cadd60db8c3cc1d717cf5ad01f452728e5fbf44f6056996",
+    "repeat-3/checkpoint-hashes.json": "0f4e59a4331f38bf498e09ebc0266c94708020e14a3d43855c128237f41fdd23",
+    "repeat-3/distributed-preflight.json": "de0f497c0716665476578761fc657ca57b6228fe911f7be8ff3cc0bf072bb5fd",
+    "repeat-3/iteration-series.csv": "0913b2242836d34d1f0c5e2e187885bde4f27cef7913d0896282361d55b66cf2",
+    "repeat-3/measurement.json": "f2602ec5a77cae6510d0dd397674efcc5517207a5da37b9f238c9e9fa1c90674",
+    "repeated-scaling.json": "761e62dc014533f94b0fd37010c336a5e043862cbc06309c3270806e3aab40a2"
+  },
+  "repetitions": [
+    {
+      "repetition": 1,
+      "completion_receipt_sha256": "bbd750996b99cffaf0d96ee0ddc222a185d8ef26c23898dc743f94258012342a",
+      "run_settings_sha256": "1a750f8f3fa03cb14ec282bb581ff63cf832a18dd3ceafe7fd60253fa2053fb0",
+      "checkpoint_files": 36,
+      "checkpoint_bytes": 177284648532,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 3182
+      }
+    },
+    {
+      "repetition": 2,
+      "completion_receipt_sha256": "15a35214d64f231b9cf0ce5c26b2c8c47722cfc1b6b6716130d60cb40834ff65",
+      "run_settings_sha256": "8f3dd09480ff864deeb26e6250becae15fa2c4b4444aaaca508452a932c35c9b",
+      "checkpoint_files": 36,
+      "checkpoint_bytes": 177284648532,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 3173
+      }
+    },
+    {
+      "repetition": 3,
+      "completion_receipt_sha256": "02e07380d74ab7565c4d5b2240f52aeabed98f34c202e8288ea2919772cad71d",
+      "run_settings_sha256": "8853bc76ee5b8992387e6f09da517fc0f445edc0f54d078c6f6ef9bc3ccb3ddc",
+      "checkpoint_files": 36,
+      "checkpoint_bytes": 177284648532,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 3174
+      }
+    }
+  ]
+}

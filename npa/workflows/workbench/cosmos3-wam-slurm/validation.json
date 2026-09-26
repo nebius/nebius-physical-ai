@@ -1,6 +1,6 @@
 {
   "schema": "npa.cosmos3.wam-recipe-validation.v1",
-  "status": "experimental-eight-gpu-duration-and-profile-measured",
+  "status": "experimental-eight-gpu-duration-profile-and-timing-measured",
   "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
   "upstream_toml_schema": {
     "checked": true,
@@ -42,7 +42,7 @@
     "learned_policy_executed": false,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-simulation-runtime.json"
   },
-  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; eight-GPU timing aggregation and full policy evaluations are in progress.",
+  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity; full policy evaluations remain pending.",
   "remaining_evidence": [
     "Complete comparable 16-GPU run",
     "Verified repeated 8/16-GPU timing comparison and 16-GPU profiling",
@@ -103,5 +103,14 @@
     "device_samples": 225576,
     "gpus": 8,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-gpu-activity/evidence.json"
+  },
+  "eight_gpu_timing_repetitions": {
+    "completed": 3,
+    "updates_per_run": 200,
+    "measured_steps": 447,
+    "mean_step_seconds": 13.307986577181207,
+    "sample_standard_deviation_of_run_means_seconds": 0.01359685828418573,
+    "pooled_tokens_per_second": 68652.77818403105,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-timing-8/evidence.json"
   }
 }

@@ -49,6 +49,8 @@ re-encodes the rotation into six values, and applies the matching quantile
 normalization. Each window contains sixteen actions and seventeen paired video
 frames. The raw action has seven values; the transformed action has ten.
 Confusing the two can produce a training run with incorrect policy semantics.
+The two 256×256 camera images form a 256×512 paired view, mapped to the
+192×320 model canvas for training; dimensions here are height × width.
 
 ![Actual LIBERO camera views and native action transformation](evidence/cosmos3-wam-data/data-pipeline.png)
 
@@ -169,6 +171,11 @@ parallel training replicates those groups and synchronizes their updates.
 | One node | 8 | 64 | 4 | 2,048 |
 | Two nodes | 16 | 64 | 2 | 2,048 |
 
+Both configurations use BF16 computation, FP32 parameter storage and EMA,
+with learning rate 5e-5, 500 warmup updates and a 16,000-update scheduler cycle.
+The measured LIBERO-10 schedule stops at 2,000 updates; the scheduler cycle
+does not imply that we trained for 16,000 updates.
+
 The launcher also supports a four-node, 32-GPU plan with accumulation one.
 That configuration is outside this campaign's measurement protocol.
 
@@ -242,6 +249,17 @@ mean to 14.098 seconds. The final checkpoint contains 177.28 GB across all
 complete checkpoints and finite updates establish completed training; the
 full policy evaluations determine whether those weights meet the task target.
 
+![Three actual eight-B200 timing repetitions](evidence/cosmos3-wam-timing-8/repeated-timings.png)
+
+The [three separate timing runs](evidence/cosmos3-wam-timing-8/README.md)
+completed 200 updates each without errors. Their mean step times were
+13.3236, 13.2985 and 13.3019 seconds. The average was **13.3080 seconds**, with
+an across-run sample standard deviation of **0.0136 seconds**. Across all 447
+recorded iterations, pooled throughput was **68,652.78 tokens/s**. Measured
+token totals were almost identical, while all raw counters remain available
+for the later topology comparison. The standard deviation describes three
+run means, not 447 independent trials or policy variation across seeds.
+
 ## Profile the bottleneck before increasing the allocation
 
 The completed eight-GPU run exposes a substantial checkpoint pause.
@@ -301,18 +319,26 @@ before training; Workbench's current absolute qualification convention is
 quality. A lower training loss alone does not. A partner's own manipulation
 tasks may require a different dataset and acceptance criterion.
 
+Here, time to quality means the training time when a checkpoint became
+available, with its success rate verified afterward. It excludes the later
+evaluation time and campaign queue delay. We report those separately and
+identify the first passing scheduled checkpoint, without inferring an exact
+threshold crossing between saves. The target applies to the observed success
+rate; pooled Wilson intervals describe sampling uncertainty and do not measure
+variation across tasks or independently trained seeds.
+
 ## Measured results and remaining campaign work
 
-| B200 GPUs | Complete training time | Full-run median / p95 step | Repeated-run speedup / efficiency | Training GPU-hours | LIBERO-10 success | Time to quality |
+| B200 GPUs | Complete training time | Full-run median / p95 step | Repeated step mean / across-run SD | Training GPU-hours | LIBERO-10 success | Time to quality |
 | --- | --- | --- | --- | --- | --- | --- |
-| 8 | 7 h 50 m 33 s | 13.29 / 13.43 s | Timing aggregation pending | 62.74 | Pending | Pending |
+| 8 | 7 h 50 m 33 s | 13.29 / 13.43 s | 13.3080 / 0.0136 s | 62.74 | Pending | Pending |
 | 16 | Pending | Pending | Pending | Pending | Pending | Pending |
 
 The completed eight-GPU row answers how long this particular full schedule
 took, and the separate trace establishes actual eight-GPU profiling evidence.
-A matched two-node run, verified timing aggregation and full checkpoint-linked
-evaluations are still needed to answer how
-well it scales and how long it takes to reach the selected policy target.
+Three verified timing repetitions establish the eight-GPU baseline. A matched
+two-node run and full checkpoint-linked evaluations are still needed to answer
+how well it scales and how long it takes to reach the selected policy target.
 The final publication will retain unsuccessful outcomes and uncertainty, with
 the tested driver, CUDA, PyTorch and source revisions. Pending results cannot
 support a scaling claim or a time-to-quality recommendation.

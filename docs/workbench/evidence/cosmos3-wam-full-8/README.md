@@ -52,7 +52,8 @@ This full run used caches primed by preparation and the earlier excluded
 partial attempt. An early visualization worker also accessed shared storage
 during part of training. These are observed results under those recorded
 conditions. Separate, unprofiled 200-update repetitions provide the primary
-scaling comparison; that comparison is still pending. Full 500-trial policy
+scaling comparison; the [three-run eight-GPU baseline](../cosmos3-wam-timing-8/README.md)
+is now measured, while the two-node comparison is still pending. Full 500-trial policy
 evaluation and time to the predeclared 90% success target are also pending.
 
 ## Evidence and reproduction

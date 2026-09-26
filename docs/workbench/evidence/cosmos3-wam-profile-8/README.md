@@ -42,6 +42,11 @@ other category because their generated names can mention several operations.
 These are operator-origin groups, including their helper kernels, not exact
 model-stage boundaries or FLOP counts.
 
+This link follows the [pinned Kineto trace writer](https://github.com/pytorch/kineto/blob/31f85df8fbd89c188f14ef10f1ec65379786b943/libkineto/src/output_json.cpp):
+an event with a linked activity receives that activity's correlation ID as
+its `External id`. CPU events use their own correlation ID. The analyzer
+therefore uses the trace's recorded relationship to the host operator.
+
 The trace also contains GPU annotations repeating the host profiler-step
 names. Only distinct host annotations define the step markers. A duplicated
 CPU/GPU annotation cannot satisfy the requirement for two recorded steps.

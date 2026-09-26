@@ -16,7 +16,10 @@ sample per step. The eight-GPU Slurm run completed all 2,000 updates in
 7 h 50 m 33 s, with an eight-rank NCCL check and complete checkpoint hashes.
 The [full-run evidence](../evidence/cosmos3-wam-full-8/README.md) records its
 conditions and timing scope. Scaling efficiency and full policy success remain
-unmeasured.
+unmeasured. The [three measured timing repetitions](../evidence/cosmos3-wam-timing-8/README.md)
+establish the eight-GPU baseline: mean step 13.3080 s, with 0.0136 s sample
+standard deviation across the three run means. Their saved reports and all
+447 timed iterations reproduce the aggregate.
 The [GPU evidence record](../evidence/cosmos3-wam-b200-runtime.json)
 includes runtime versions, hashes, and the memory failure.
 Consult the [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json).

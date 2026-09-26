@@ -26,6 +26,9 @@ The [full-run GPU telemetry](../../../../docs/workbench/evidence/cosmos3-wam-ful
 contains 225,576 device samples. A separate completed
 [CUDA profiling run](../../../../docs/workbench/evidence/cosmos3-wam-profile-8/README.md)
 provides a trace-linked kernel timeline, excluded from scaling comparisons.
+The [three completed timing repetitions](../../../../docs/workbench/evidence/cosmos3-wam-timing-8/README.md)
+provide the eight-GPU baseline: 13.3080 s mean step, with 0.0136 s sample
+standard deviation across run means. The two-node comparison remains pending.
 
 ## Plan without cloud resources
 
