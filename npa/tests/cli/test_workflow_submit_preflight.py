@@ -1716,6 +1716,59 @@ HARDENING_SPEC = (
 )
 
 
+@pytest.fixture
+def image_selector_boundaries(mocker):
+    targets = (
+        "npa.orchestration.npa_workflow.first_run_state.prepare_run",
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        "npa.cli.workbench.workflow._stage_npa_src_for_submit",
+        "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        "npa.cli.workbench.workflow._run_npa_workflow_runtime",
+    )
+    boundaries = []
+    for target in targets:
+        boundary = mocker.patch(target, side_effect=AssertionError(target))
+        boundaries.append(boundary)
+    return boundaries
+
+
+@pytest.mark.parametrize("preflight", ["--preflight-images", "--no-preflight-images"])
+@pytest.mark.parametrize(
+    ("selector", "message"),
+    [
+        ("workbench.scenario_gen.generat", "matched no workflow toolRef"),
+        ("workbench.scenario_gen.genreate", "matched no workflow toolRef"),
+        ("workbench.*", "Use TOOL_REF=IMAGE"),
+    ],
+)
+def test_submit_rejects_image_selector_before_mutations(
+    image_selector_boundaries, preflight, selector, message
+):
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(HARDENING_SPEC),
+            "--run-id",
+            "invalid-image-selector",
+            "--runtime",
+            "--deploy-if-absent",
+            "--image-override",
+            f"{selector}=cr.example/custom:1",
+            preflight,
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert message in result.output
+    for boundary in image_selector_boundaries:
+        boundary.assert_not_called()
+
+
 def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
