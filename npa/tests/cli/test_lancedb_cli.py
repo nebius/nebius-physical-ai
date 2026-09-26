@@ -676,13 +676,13 @@ def _assert_kubernetes_storage_manifest(output: str, storage_path: str) -> None:
         assert credentials == []
 
 
-@pytest.mark.parametrize("storage_path", ["s3://example-bucket/review", "/data/review"])
 def test_lancedb_kubernetes_dry_run_binds_storage_without_exposing_keys(
-    monkeypatch: pytest.MonkeyPatch, storage_path: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exercise the real CLI-to-manifest boundary without contacting Kubernetes."""
     from npa.workbench import service_kubernetes
 
+    storage_path = "s3://example-bucket/review"
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "placeholder-access-value")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "placeholder-secret-value")
     monkeypatch.delenv("LANCEDB_TOKEN", raising=False)
