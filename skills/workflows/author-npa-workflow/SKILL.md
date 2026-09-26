@@ -48,6 +48,12 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.
+  Every declared output is required on runtime success. Declare success
+  artifacts under `outputs`; publish failure-only diagnostics from the failure
+  handler and return a nonzero exit code. Requiring both mutually exclusive
+  artifacts makes a successful job fail durable-output validation. Exercise
+  the output check against each execution path's actual artifact set; syntax
+  and render checks cannot establish that contract.
 
 ## Validation Hardening (v0.0.1)
 

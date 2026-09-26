@@ -176,6 +176,16 @@ Declare `inputs` and `outputs` beside `run` in the state mapping. A `run` block
 accepts only `shell` or `argv`; validation rejects nested artifact declarations
 before planning so they cannot disappear from the rendered task.
 
+Every declared `output` is required when a runtime state succeeds. If a state
+publishes `result.json` on success and `failure.json` on failure, declare only
+`result.json` as its output. Preserve `failure.json` in the failure handler and
+return a nonzero exit code. Declaring both makes a successful job fail the
+durable-output check because `failure.json` is absent.
+
+Check this contract with the artifacts each execution path actually produces.
+`validate-spec` and `plan-spec --check-render` cannot prove that a command will
+write its declared outputs.
+
 ## Tokens (no Jinja)
 
 | Token | Meaning |
