@@ -1,8 +1,7 @@
-# Thin CLIP-embedding + LanceDB service layer on the shared CUDA/torch base.
-# NPA_CUDA_BASE defaults to the locally-built base tag; override with
-# --build-arg NPA_CUDA_BASE=<registry>/npa-workbench-cuda-base:<tag> to build
-# against a published base.
-ARG NPA_CUDA_BASE=npa-workbench-cuda-base:cuda13.0-torch2.12.1
+# Thin CLIP-embedding + LanceDB service layer on the accepted public CUDA/torch
+# foundation. Keep clean builds independent of a mutable builder-local base tag;
+# NPA_CUDA_BASE remains available for an explicitly selected compatible base.
+ARG NPA_CUDA_BASE=ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
 FROM ${NPA_CUDA_BASE}
 
 ARG UBUNTU_SNAPSHOT=20260820T000000Z
@@ -21,6 +20,8 @@ WORKDIR /app
 # Insights stages use this image through the standard SkyPilot Kubernetes
 # runtime.  Keep its non-root bootstrap closure identical to the other native
 # workflow images and source OS packages from an immutable Ubuntu snapshot.
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
+  /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
   /usr/local/bin/install-workflow-runtime-prereqs
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"
@@ -28,7 +29,12 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"
 # Only the CLIP embedding dependency is unique to this image; the FastAPI +
 # lancedb + pyarrow + pillow + boto3 stack comes from the shared base.
 COPY docker/workbench/lancedb/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# The inherited scientific-build helper is not used at runtime and caps click
+# below the version required by the pinned Hugging Face closure.
+RUN pip install --no-cache-dir -r /app/requirements.txt \
+    && python -m pip uninstall -y spin \
+    && python -m pip check \
+    && python -c "import transformers; print(transformers.__version__)"
 
 COPY src/npa/workbench/lancedb/bdd100k_import.py /app/npa_lancedb_bdd100k_import.py
 COPY src/npa/workbench/lancedb/bdd100k_udfs.py /app/npa_lancedb_bdd100k_udfs.py
@@ -37,10 +43,10 @@ COPY src/npa/workbench/lancedb/views.py /app/npa_lancedb_views.py
 COPY src/npa/workbench/lancedb/server.py /app/npa_lancedb_server.py
 # Golden-eval smoke (standalone; the image does not install the npa package).
 COPY src/npa/smoke/test_lancedb_functional.py /app/smoke_functional.py
-COPY docker/workbench/lancedb/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=0755 docker/workbench/lancedb/entrypoint.sh /entrypoint.sh
 # The smoke starts uvicorn against the flattened server module in /app.
-ENV LANCEDB_SMOKE_APP=npa_lancedb_server:app
+ENV LANCEDB_SMOKE_APP=npa_lancedb_server:app \
+    LANCEDB_SMOKE_ENTRYPOINT=/entrypoint.sh
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /app
@@ -50,6 +56,6 @@ EXPOSE 8686
 USER ubuntu
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD python -c "import os,urllib.request; p=os.environ.get('LANCEDB_PORT','8686'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1
+  CMD python -c "import os,urllib.request; p=os.environ.get('LANCEDB_PORT','8686'); urllib.request.urlopen(f'http://127.0.0.1:{p}/readyz', timeout=3)" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

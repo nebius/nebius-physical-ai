@@ -68,6 +68,7 @@ def test_sonic_materializer_skips_registry_auth_for_kubernetes_targets(
     plan = materialize_sonic_workflow(
         SONIC_TRAIN_STANDALONE_YAML,
         run_id="sonic-proof",
+        image=("ghcr.io/nebius/nebius-physical-ai/npa-sonic:dev-" + "a" * 40),
         registry="ghcr.io/nebius/nebius-physical-ai",
         gpu_target="gpu-rtx6000",
         s3_endpoint="https://storage.example",

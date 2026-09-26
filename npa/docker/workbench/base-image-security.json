@@ -6,6 +6,12 @@
     "upgrade_os": false
   },
   {
+    "name": "nvidia-cuda-12-4-1-cudnn-devel-ubuntu22-04",
+    "image": "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42",
+    "purge_linux_libc_dev": true,
+    "upgrade_os": false
+  },
+  {
     "name": "nvidia-cuda-12-6-3-devel-ubuntu22-04",
     "image": "nvidia/cuda:12.6.3-devel-ubuntu22.04@sha256:d49bb8a4ff97fb5fe477947a3f02aa8c0a53eae77e11f00ec28618a0bcaa2ad1",
     "purge_linux_libc_dev": true,
@@ -40,6 +46,18 @@
     "image": "python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534",
     "purge_linux_libc_dev": false,
     "upgrade_os": true
+  },
+  {
+    "name": "python-3-12-slim",
+    "image": "python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9",
+    "purge_linux_libc_dev": false,
+    "upgrade_os": true
+  },
+  {
+    "name": "pytorch-2-12-1-cuda13-0-cudnn9-runtime",
+    "image": "pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime@sha256:72f863fa1fe13d5d87a72d00db2c85fb2d43409ee08dd26bc469de4c8a28b427",
+    "purge_linux_libc_dev": true,
+    "upgrade_os": false
   },
   {
     "name": "nvidia-cuda-13-0-1-cudnn-devel-ubuntu22-04",

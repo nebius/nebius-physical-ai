@@ -16,19 +16,22 @@
 #     the documented download_kitchen_assets script under the operator's own
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
-ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
-FROM --platform=linux/amd64 ${BASE_IMAGE}
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42
+ARG NPA_BUILD_PLATFORM=linux/amd64
+FROM --platform=${NPA_BUILD_PLATFORM} ${BASE_IMAGE}
 
 ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
 ARG ROBOCASA_REPO_REF=v1.0
 ARG ROBOSUITE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4
 ARG ROBOCASA_VERSION=0.1.0
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
-      npa.base_image="${BASE_IMAGE}" \
+      npa.base_profile="public-cuda-12.4" \
       npa.runtime_user="ubuntu" \
-      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120"
+      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -36,6 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ROBOCASA_PORT=8791 \
     PYTHONPATH=/app \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
@@ -55,7 +59,8 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3.12 python3.12-dev python3.12-venv \
     && rm -rf /var/lib/apt/lists/* \
-    && python3.12 -m venv /opt/robocasa/venv
+    && python3.12 -m venv /opt/robocasa/venv \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40
 
 WORKDIR /opt/robocasa
 
@@ -91,11 +96,19 @@ RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
-# Copy the shared workbench implementation into the image.
-RUN mkdir -p /app/npa/workbench
-RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py
+# Copy the shared workbench implementation and its two local-only helpers into
+# the image.  Keep this list explicit so the service image does not acquire the
+# full NPA CLI/client dependency tree by accident.
+RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/cli
+RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py \
+    /app/npa/clients/__init__.py /app/npa/cli/__init__.py
+COPY src/npa/clients/storage.py /app/npa/clients/storage.py
+COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py
 COPY src/npa/workbench/robocasa /app/npa/workbench/robocasa
 COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
+
+# Catch missing in-repository runtime modules before an image can be tagged.
+RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /app /opt/robocasa
@@ -103,6 +116,11 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
 EXPOSE 8791
 
 USER ubuntu
+
+# Exercise the final non-root filesystem and the actual service process.  A
+# narrow dependency import is insufficient: the service imports shared path and
+# object-storage containment helpers that are intentionally copied above.
+RUN python /app/smoke_functional.py
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python3 -c "import os,urllib.request; p=os.environ.get('ROBOCASA_PORT','8791'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1

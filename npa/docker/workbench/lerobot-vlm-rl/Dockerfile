@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422
 FROM ${BASE_IMAGE}
 
 ARG LEROBOT_VLM_RL_VERSION=0.1.1
@@ -6,6 +6,7 @@ ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="lerobot-vlm-rl" \
       npa.version="${LEROBOT_VLM_RL_VERSION}" \
+      npa.base.image="npa-envgen" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
@@ -32,8 +33,9 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
-    && python -m pip install --no-deps -e /opt/npa \
     && python -m pip check \
+    && env -u PYTHONPATH python -c \
+      'from npa.workbench.lerobot.policy_container import parse_vlm_signal_batch; assert callable(parse_vlm_signal_batch)' \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
     && python - <<'PY'
 from npa.workbench.lerobot.policy_container import parse_vlm_signal_batch

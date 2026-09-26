@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -28,6 +29,136 @@ SIM2REAL_DEMO = (
     / "sim2real-vlm-rl-demo.yaml"
 )
 RUNNER = CliRunner()
+
+
+def _write_raw_spec(tmp_path: Path, data: dict, name: str = "raw.yaml") -> Path:
+    path = tmp_path / name
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _minimal_raw_spec() -> dict:
+    return {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "strict-state-shapes"},
+        "config": {},
+        "initial": "work",
+        "states": {
+            "work": {"run": {"shell": "echo ok"}, "next": "done"},
+            "done": {"terminal": True},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("states", "work", "needs"), "dependency"),
+        (("states", "work", "sequence"), "child"),
+        (("states", "work", "run", "argv"), "--not-a-list"),
+        (("states", "work", "run", "shell"), True),
+        (("states", "done", "terminal"), "false"),
+        (("states", "work", "writesDecision"), "false"),
+        (("states", "work", "inputs"), {"uri": "s3://bucket/input"}),
+        (("states", "work", "outputs"), "s3://bucket/output"),
+        (("states", "work", "transitions"), {"goto": "done"}),
+    ],
+)
+def test_state_shape_coercions_are_rejected(
+    tmp_path: Path, path: tuple[str, ...], value: object
+) -> None:
+    data = _minimal_raw_spec()
+    target = data
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = value
+
+    with pytest.raises(NpaWorkflowError):
+        load_spec(_write_raw_spec(tmp_path, data))
+
+
+@pytest.mark.parametrize("bad_value", [True, 1.9, "1.9", None, ""])
+def test_trigger_poll_seconds_requires_exact_integer(
+    tmp_path: Path, bad_value: object
+) -> None:
+    data = _minimal_raw_spec()
+    data["states"]["work"]["trigger"] = {
+        "uri": "s3://bucket/inbox/",
+        "pollSeconds": bad_value,
+    }
+    with pytest.raises(NpaWorkflowError, match="pollSeconds"):
+        load_spec(_write_raw_spec(tmp_path, data))
+
+
+@pytest.mark.parametrize("bad_value", [True, 1.9, "1.9"])
+def test_config_integer_reference_rejects_bool_and_fraction(
+    tmp_path: Path, bad_value: object
+) -> None:
+    data = _minimal_raw_spec()
+    data["config"]["poll"] = bad_value
+    data["states"]["work"]["trigger"] = {
+        "uri": "s3://bucket/inbox/",
+        "pollSeconds": "{{config.poll}}",
+    }
+    with pytest.raises(NpaWorkflowError, match="integer loop bound"):
+        load_spec(_write_raw_spec(tmp_path, data))
+
+
+def test_fractional_accelerator_count_is_not_truncated(tmp_path: Path) -> None:
+    data = _minimal_raw_spec()
+    data["resources"] = {"gpu": {"cloud": "kubernetes", "accelerators": {"H100": 1.9}}}
+    data["states"]["work"]["resources"] = "gpu"
+    with pytest.raises(NpaWorkflowError, match="count must be a positive integer"):
+        load_spec(_write_raw_spec(tmp_path, data))
+
+
+@pytest.mark.parametrize("location", ["config", "params", "states"])
+def test_mapping_keys_that_drive_tokens_and_states_must_be_strings(
+    tmp_path: Path, location: str
+) -> None:
+    data = _minimal_raw_spec()
+    if location == "config":
+        data["config"][1] = "value"
+    elif location == "params":
+        data["states"]["work"]["params"] = {1: "value"}
+    else:
+        data["states"][1] = {"terminal": True}
+    with pytest.raises(NpaWorkflowError, match="must be strings|string"):
+        load_spec(_write_raw_spec(tmp_path, data))
+
+
+def test_unknown_next_is_rejected_at_validate_time(tmp_path: Path) -> None:
+    data = _minimal_raw_spec()
+    data["states"]["work"]["next"] = "missing"
+    with pytest.raises(
+        NpaWorkflowError, match="next references unknown state 'missing'"
+    ):
+        load_spec(_write_raw_spec(tmp_path, data))
+
+
+def test_sequence_composition_cycle_is_rejected(tmp_path: Path) -> None:
+    data = _minimal_raw_spec()
+    data["states"] = {
+        "outer": {"sequence": ["inner"]},
+        "inner": {"sequence": ["outer"]},
+        "done": {"terminal": True},
+    }
+    data["initial"] = "outer"
+    with pytest.raises(NpaWorkflowError, match="unbounded control-flow cycle"):
+        load_spec(_write_raw_spec(tmp_path, data))
+
+
+def test_sequence_child_back_edge_is_rejected(tmp_path: Path) -> None:
+    data = _minimal_raw_spec()
+    data["states"] = {
+        "outer": {"sequence": ["inner"], "next": "done"},
+        "inner": {"run": {"shell": "echo inner"}, "next": "outer"},
+        "done": {"terminal": True},
+    }
+    data["initial"] = "outer"
+    with pytest.raises(NpaWorkflowError, match="unbounded control-flow cycle"):
+        load_spec(_write_raw_spec(tmp_path, data))
 
 
 def test_promote_checkpoint_plans_finalize_once() -> None:

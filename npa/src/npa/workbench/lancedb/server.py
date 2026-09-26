@@ -7,6 +7,8 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
+import tempfile
 from typing import Any, Literal
 
 import lancedb
@@ -75,7 +77,7 @@ except ImportError:  # pragma: no cover - used by the copied Docker module.
 
 
 class CreateTableRequest(BaseModel):
-    schema: dict[str, Any] | None = None
+    table_schema: dict[str, Any] | None = Field(default=None, alias="schema")
     input_path: str = ""
     rows: list[dict[str, Any]] = Field(default_factory=list)
     mode: Literal["create", "overwrite", "append"] = "create"
@@ -205,6 +207,21 @@ def _normalize_table_names(values: Any) -> list[str]:
     return names
 
 
+def _verify_local_storage_writable(storage_path: str) -> None:
+    """Prove a local LanceDB path supports the mutation its API advertises."""
+
+    if storage_path.startswith("s3://"):
+        return
+    directory = Path(storage_path)
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=directory, prefix=".npa-ready-", delete=True
+    ) as sentinel:
+        sentinel.write(b"ready")
+        sentinel.flush()
+        os.fsync(sentinel.fileno())
+
+
 def _parse_arrow_type(type_spec: Any) -> pa.DataType:
     if isinstance(type_spec, str):
         try:
@@ -300,6 +317,58 @@ def _rows_as_arrow_table(
         raise HTTPException(
             status_code=400,
             detail=f"rows are incompatible with the table schema: {exc}",
+        ) from exc
+
+
+def _normalize_inferred_vector(table: pa.Table, *, vector_column: str) -> pa.Table:
+    """Make LanceDB's implicit vector conversion explicit and verifiable.
+
+    LanceDB stores an inferred ``list<double>`` vector as a fixed-size
+    ``float32`` vector. Comparing the stored schema with the pre-conversion
+    Arrow schema therefore reported HTTP 500 after a successful write. Cast
+    the designated vector before mutation so the schema we verify is the
+    schema we asked LanceDB to store.
+    """
+
+    if not vector_column or vector_column not in table.schema.names:
+        return table
+    field = table.schema.field(vector_column)
+    if not (pa.types.is_list(field.type) or pa.types.is_large_list(field.type)):
+        return table
+    if not (
+        pa.types.is_integer(field.type.value_type)
+        or pa.types.is_floating(field.type.value_type)
+    ):
+        raise HTTPException(
+            status_code=400, detail=f"{vector_column} must contain numeric vectors"
+        )
+    vectors = [
+        value for value in table.column(vector_column).to_pylist() if value is not None
+    ]
+    sizes = {len(value) for value in vectors}
+    if not sizes or len(sizes) != 1 or 0 in sizes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{vector_column} vectors must have one consistent positive size",
+        )
+    vector_size = sizes.pop()
+    fields = [
+        pa.field(
+            candidate.name,
+            pa.list_(pa.float32(), vector_size)
+            if candidate.name == vector_column
+            else candidate.type,
+            nullable=candidate.nullable,
+            metadata=candidate.metadata,
+        )
+        for candidate in table.schema
+    ]
+    try:
+        return table.cast(pa.schema(fields, metadata=table.schema.metadata))
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{vector_column} is incompatible with a float32 vector: {exc}",
         ) from exc
 
 
@@ -409,7 +478,7 @@ def _mutate_table(
             status_code=400,
             detail="server-side S3 import is not implemented in the OSS wrapper",
         )
-    requested_schema = _parse_arrow_schema(body.schema)
+    requested_schema = _parse_arrow_schema(body.table_schema)
     if not body.rows and requested_schema is None:
         raise HTTPException(
             status_code=400, detail="rows or a usable schema are required"
@@ -427,6 +496,10 @@ def _mutate_table(
         status = "appended"
     else:
         incoming = _rows_as_arrow_table(body.rows, requested_schema)
+        if requested_schema is None:
+            incoming = _normalize_inferred_vector(
+                incoming, vector_column=body.vector_column
+            )
         mode = "overwrite" if body.mode == "overwrite" else "create"
         db.create_table(table_name, data=incoming, mode=mode)
         expected_rows = len(body.rows)
@@ -469,6 +542,18 @@ def create_app(
             )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
+
+    @app.get("/readyz")
+    async def readyz() -> dict[str, str]:
+        """Unauthenticated storage readiness for container and Kubernetes probes."""
+
+        try:
+            known_tables.update(_list_tables(db))
+            _verify_local_storage_writable(resolved_storage)
+        except Exception as exc:
+            LOGGER.exception("LanceDB storage readiness check failed")
+            raise HTTPException(status_code=503, detail="storage is not ready") from exc
+        return {"status": "ok"}
 
     @app.get("/health")
     async def health(

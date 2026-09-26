@@ -144,7 +144,20 @@ def test_engine_vlm_job_script_prepares_hf_cache(monkeypatch) -> None:
 
     script = _component_job_script("vlm_eval_reason2")
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in script
-    safe = _kubernetes_component_env({}, Sim2RealLoopConfig(run_id="r"))
+    operator_image = "registry.example.invalid/operator/npa-sim2real:test"
+    safe = _kubernetes_component_env(
+        {},
+        Sim2RealLoopConfig(
+            run_id="r",
+            augment_image=operator_image,
+            envgen_image=operator_image,
+            policy_image=operator_image,
+            trainer_image=operator_image,
+            vlm_image=operator_image,
+            eval_image=operator_image,
+            isaac_image=operator_image,
+        ),
+    )
     assert safe["HF_HOME"] == "/tmp/hf_home"
     assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
 

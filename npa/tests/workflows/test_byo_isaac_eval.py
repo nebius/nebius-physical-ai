@@ -486,7 +486,12 @@ def test_dryrun_main_writes_normalizable_report(tmp_path, monkeypatch):
     assert payload["camera_metadata"][0]["width"] == 640
     assert payload["camera_metadata"][0]["height"] == 480
     # The engine normalizer computes success_rate from per_env (2 of 4 < 0.05m).
-    cfg = build_config_from_env(threshold=0.45, s3_bucket="", run_id="t")
+    cfg = build_config_from_env(
+        threshold=0.45,
+        s3_bucket="",
+        run_id="t",
+        registry="registry.example.invalid/operator/workbench",
+    )
     report = _normalize_heldout_report(
         payload, config=cfg, outer_iteration=1, inner_evidence_uri="x", invocation={}
     )
@@ -774,7 +779,12 @@ def test_normalize_heldout_preserves_render_manifest_and_provenance():
         "generated_envs_tested": 1,
         "generated_env_ids": ["env-00000"],
     }
-    cfg = build_config_from_env(threshold=0.45, s3_bucket="", run_id="t")
+    cfg = build_config_from_env(
+        threshold=0.45,
+        s3_bucket="",
+        run_id="t",
+        registry="registry.example.invalid/operator/workbench",
+    )
     report = _normalize_heldout_report(
         payload, config=cfg, outer_iteration=1, inner_evidence_uri="x", invocation={}
     )

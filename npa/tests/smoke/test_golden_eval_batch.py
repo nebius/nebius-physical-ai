@@ -7,25 +7,56 @@ from unittest.mock import patch
 import pytest
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
-from npa.smoke.batch import iter_containers, run_all, run_container_eval
+from npa.smoke.batch import (
+    iter_containers,
+    run_all,
+    run_container_eval,
+    select_containers,
+)
 
 
-def test_iter_containers_excludes_blocked_by_default() -> None:
+def test_iter_containers_excludes_unrunnable_by_default() -> None:
     names = iter_containers(include_foundation=True)
     assert "base-cuda13-b300" not in names
     assert "cosmos3-reason" not in names
+    assert "ncore" not in names
+    assert "wan2-2" not in names
+
+
+def test_iter_containers_can_include_each_unrunnable_status() -> None:
+    blocked = iter_containers(include_blocked=True)
+    needs_update = iter_containers(include_needs_image_update=True)
+    assert "base-cuda13-b300" in blocked
+    assert "ncore" not in blocked
+    assert "base-cuda13-b300" not in needs_update
+    assert "ncore" in needs_update
+
+
+def test_default_selection_records_every_status_exclusion() -> None:
+    from npa.smoke.manifest import load_manifest
+
+    selection = select_containers(tools_only=True, include_foundation=False)
+    expected = {
+        name: spec.golden_eval.status
+        for name, spec in load_manifest().items()
+        if name in CONTAINER_IMAGE_NAMES
+        and spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
+    }
+
+    assert {result.name: result.status for result in selection.excluded} == expected
+    assert all(result.skipped and result.skip_reason for result in selection.excluded)
 
 
 def test_iter_containers_tools_only_matches_image_names() -> None:
     from npa.smoke.manifest import load_manifest
 
     names = iter_containers(tools_only=True, include_foundation=False)
-    blocked = {
+    unrunnable = {
         name
         for name, spec in load_manifest().items()
-        if spec.golden_eval.status == "blocked-on-upstream"
+        if spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
     }
-    expected = set(CONTAINER_IMAGE_NAMES) - blocked
+    expected = set(CONTAINER_IMAGE_NAMES) - unrunnable
     assert set(names) == expected
 
 
@@ -39,12 +70,12 @@ def test_run_container_eval_dry_run() -> None:
 def test_run_all_dry_run_includes_every_tool() -> None:
     from npa.smoke.manifest import load_manifest
 
-    blocked = {
+    unrunnable = {
         name
         for name, spec in load_manifest().items()
-        if spec.golden_eval.status == "blocked-on-upstream"
+        if spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
     }
-    expected = set(CONTAINER_IMAGE_NAMES) - blocked
+    expected = set(CONTAINER_IMAGE_NAMES) - unrunnable
     batch = run_all(
         iter_containers(tools_only=True, include_foundation=False),
         execute=False,
@@ -118,6 +149,8 @@ def test_run_all_cli_dry_run() -> None:
     assert result.exit_code == 0, strip_ansi(result.output)
     output = strip_ansi(result.output)
     assert "lerobot" in output
+    assert '"skipped"' in output
+    assert "needs-image-update" in output
     assert '"passed"' in output
 
 
@@ -143,6 +176,8 @@ def test_run_all_script_dry_run() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "lerobot" in proc.stdout
+    assert '"skipped"' in proc.stdout
+    assert "needs-image-update" in proc.stdout
 
 
 # --------------------------------------------------------------------------------------
@@ -197,3 +232,14 @@ def test_run_container_eval_defaults_to_the_canonical_image(monkeypatch) -> None
 
     assert seen["registry"] is None
     assert seen["tag"] is None
+
+
+@pytest.mark.parametrize("execute", [False, True])
+def test_candidate_overrides_fail_closed_without_serverless(execute: bool) -> None:
+    from npa.smoke import batch
+
+    result = batch.run_container_eval("lerobot", execute=execute, tag="candidate-123")
+
+    assert not result.ok
+    assert result.exit_code == 2
+    assert result.detail["error"] == "CandidateOverrideRequiresServerless"

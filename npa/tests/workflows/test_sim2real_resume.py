@@ -8,11 +8,14 @@ command's environment, and the runner state that carries it across iterations.
 
 from __future__ import annotations
 
+import pytest
 
 import npa.workflows.sim2real.engine as engine
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.runner import Sim2RealWorkflow
 from npa.workflows.sim2real.state import WorkflowState
+
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
 
 def _update(checkpoint_path: str):

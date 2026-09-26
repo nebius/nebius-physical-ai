@@ -1,3 +1,5 @@
+# Envgen starts from the real Genesis parent, removes payload outside this
+# capability's contract, and flattens the sanitized filesystem below.
 ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca
 FROM ${BASE_IMAGE} AS sanitized
 
@@ -15,11 +17,14 @@ COPY docker/workbench/common/sim2real-genesis-requirements.txt \
     /opt/npa/sim2real-genesis-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
+    /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
     /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
-COPY docker/workbench/common/envgen_compat /opt/npa/compat
+COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
+    /opt/npa/compat/tetgen.py
 
 # The public Genesis parent includes three payloads that are outside this
 # capability's public packaging/security contract:
@@ -42,6 +47,8 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
+    && chmod 0755 /opt/npa/compat \
+    && chmod 0644 /opt/npa/compat/tetgen.py \
     && python -m pip uninstall -y npa \
     && python -m pip uninstall -y transformers imageio-ffmpeg wandb tetgen \
     && python /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py \

@@ -57,10 +57,16 @@ def test_lancedb_deploy_vm_requires_storage_path() -> None:
     assert "--storage-path is required" in result.output
 
 
-def test_lancedb_deploy_vm_blocked_message_is_actionable() -> None:
+def test_lancedb_deploy_vm_blocked_message_is_actionable(tmp_path: Path) -> None:
     result = runner.invoke(
         lancedb_app,
-        ["deploy", "--runtime", "vm", "--storage-path", "/tmp/lancedb-smoke"],
+        [
+            "deploy",
+            "--runtime",
+            "vm",
+            "--storage-path",
+            str(tmp_path / "lancedb-smoke"),
+        ],
     )
 
     assert result.exit_code == 1
@@ -111,7 +117,7 @@ def test_lancedb_deploy_cloud_requires_endpoint_and_api_key_env(
     assert "LANCEDB_API_KEY is required" in result.output
 
 
-def test_lancedb_deploy_validates_port_range() -> None:
+def test_lancedb_deploy_validates_port_range(tmp_path: Path) -> None:
     result = runner.invoke(
         lancedb_app,
         [
@@ -119,7 +125,7 @@ def test_lancedb_deploy_validates_port_range() -> None:
             "--runtime",
             "container",
             "--storage-path",
-            "/tmp/lancedb",
+            str(tmp_path / "lancedb"),
             "--port",
             "99",
         ],
@@ -136,7 +142,15 @@ def test_lancedb_container_s3_path_requires_credentials(
     # must fail up front instead of only once the container hits the bucket.
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
 
-    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(
+        lancedb_deploy,
+        "storage_env",
+        lambda: {
+            "AWS_ACCESS_KEY_ID": "must-not-reach-local-container",
+            "AWS_SECRET_ACCESS_KEY": "must-not-reach-local-container",
+        },
+    )
+    monkeypatch.setenv("LANCEDB_TOKEN", "must-not-reach-unauthenticated-container")
     result = runner.invoke(
         lancedb_app,
         [
@@ -183,12 +197,13 @@ def test_lancedb_container_s3_path_ok_with_credentials(
 
 
 def test_lancedb_container_local_path_skips_s3_guard(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # A local storage path needs no S3 credentials, so the guard must not fire.
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
 
     monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    storage_path = tmp_path / "lancedb"
     result = runner.invoke(
         lancedb_app,
         [
@@ -196,12 +211,162 @@ def test_lancedb_container_local_path_skips_s3_guard(
             "--runtime",
             "container",
             "--storage-path",
-            "/tmp/lancedb",
+            str(storage_path),
             "--dry-run",
         ],
     )
 
     assert result.exit_code == 0, result.output
+    assert (
+        f"--mount type=bind,source={storage_path},target=/data/lancedb" in result.output
+    )
+    assert f"--user {os.getuid()}:{os.getgid()}" in result.output
+    assert "LANCEDB_STORAGE_PATH=/data/lancedb" in result.output
+
+
+def test_lancedb_container_creates_and_mounts_local_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    storage_path = tmp_path / "nested" / "lancedb"
+    seen: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return lancedb_deploy.subprocess.CompletedProcess(
+            command, 0, stdout="container-id\n", stderr=""
+        )
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(lancedb_deploy.subprocess, "run", fake_run)
+
+    container_id = lancedb_deploy._run_container(
+        image="npa-lancedb:test",
+        name="npa-lancedb-test",
+        port=8686,
+        storage_path=str(storage_path),
+        auth_mode="none",
+        token_env="LANCEDB_TOKEN",
+        storage_endpoint="",
+        detach=True,
+        replace=False,
+        dry_run=False,
+    )
+
+    assert container_id == "container-id"
+    assert storage_path.is_dir()
+    command = seen["command"]
+    assert isinstance(command, list)
+    assert [
+        "--mount",
+        f"type=bind,source={storage_path},target=/data/lancedb",
+    ] == command[command.index("--mount") : command.index("--mount") + 2]
+    assert command[command.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+    assert "LANCEDB_STORAGE_PATH=/data/lancedb" in command
+    assert "HOME=/data/lancedb" in command
+    assert not any(token.startswith("AWS_ACCESS_KEY_ID=") for token in command)
+    assert not any(token.startswith("AWS_SECRET_ACCESS_KEY=") for token in command)
+    assert not any(token.startswith("LANCEDB_TOKEN=") for token in command)
+
+
+def test_lancedb_container_refuses_unwritable_local_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(
+        lancedb_deploy.tempfile,
+        "mkstemp",
+        lambda **_kwargs: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            str(tmp_path / "lancedb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "not writable by uid" in result.output
+
+
+def test_lancedb_container_refuses_root_owned_local_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(lancedb_deploy.os, "getuid", lambda: 0)
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            str(tmp_path / "lancedb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "deployed by a non-root host user" in result.output
+
+
+def test_lancedb_container_s3_storage_is_not_bind_mounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench.lancedb import deploy as lancedb_deploy
+
+    monkeypatch.setattr(
+        lancedb_deploy,
+        "storage_env",
+        lambda: {
+            "AWS_ACCESS_KEY_ID": "AK",
+            "AWS_SECRET_ACCESS_KEY": "SK",
+            "AWS_ENDPOINT_URL": "https://storage.example.invalid",
+        },
+    )
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "container",
+            "--storage-path",
+            "s3://my-bucket/lancedb",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--mount" not in result.output
+    assert "LANCEDB_STORAGE_PATH=s3://my-bucket/lancedb" in result.output
+    assert "HOME=" not in result.output
+
+
+def test_lancedb_kubernetes_rejects_ephemeral_local_storage(tmp_path: Path) -> None:
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "kubernetes",
+            "--storage-path",
+            str(tmp_path / "lancedb"),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires an s3:// --storage-path" in result.output
+    assert "not persistent across rollouts or restarts" in result.output
 
 
 def test_lancedb_status_endpoint_required() -> None:
@@ -511,13 +676,13 @@ def _assert_kubernetes_storage_manifest(output: str, storage_path: str) -> None:
         assert credentials == []
 
 
-@pytest.mark.parametrize("storage_path", ["s3://example-bucket/review", "/data/review"])
 def test_lancedb_kubernetes_dry_run_binds_storage_without_exposing_keys(
-    monkeypatch: pytest.MonkeyPatch, storage_path: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exercise the real CLI-to-manifest boundary without contacting Kubernetes."""
     from npa.workbench import service_kubernetes
 
+    storage_path = "s3://example-bucket/review"
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "placeholder-access-value")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "placeholder-secret-value")
     monkeypatch.delenv("LANCEDB_TOKEN", raising=False)

@@ -265,7 +265,7 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "machine-readable runtime health/version contract",
         "source and weight fetch both refuse without the operator's own "
         "entitlement on the gated Lightricks/LTX-2.5 repository",
-        "CUDA runtime fetch refuses before NVIDIA terms acceptance",
+        "offline CUDA runtime probe refuses without downloading the absent cache",
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
     "sim2real-control": [

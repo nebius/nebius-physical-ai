@@ -30,7 +30,8 @@ Read the `status` column before spending anything:
 - `blocked-on-upstream` — excluded from batch runs unless you pass
   `--include-blocked`. A failure here is expected and is not your regression.
 - `needs-image-update` — the manifest and the published image disagree; rebuild
-  before drawing conclusions.
+  before drawing conclusions. It is excluded from default batches; pass
+  `--include-needs-image-update` only when exercising a rebuilt candidate.
 
 `kind` tells you what is actually exercised: `container-smoke`, `server-smoke`,
 `entrypoint-smoke`, `workflow-smoke`, or `build-import`. A `build-import` passing
@@ -66,6 +67,7 @@ npa workbench golden-eval run-all --serverless --parallel 4 \
 npa workbench golden-eval run-all lerobot groot --serverless
 npa workbench golden-eval run-all --tools-only --serverless
 npa workbench golden-eval run-all --include-blocked --serverless
+npa workbench golden-eval run-all --include-needs-image-update --serverless
 ```
 
 Positional arguments restrict the run to a subset; the default is every manifest

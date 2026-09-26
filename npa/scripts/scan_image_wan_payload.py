@@ -239,7 +239,7 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
         "6733636aeb1c5d541aa06c578a95d12c2253c4e99fc85623595341905d3d6221"
     ),
     "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
-        "66f751ec9d3d5bff254a498e020d37f9bbde8e0193ba11d1b78f29153ffe694a"
+        "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec"
     ),
     "usr/sbin/sshd": "9f6cdc787a2d5144f3189e850fc104aa7d8ab12593a3d4e902c692a38794716e",
     "usr/lib/x86_64-linux-gnu/libunistring.so.2.2.0": (

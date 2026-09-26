@@ -57,6 +57,8 @@ COSMOS2_TRANSFER = ROOT / "workflows" / "testing" / "cosmos2-transfer.yaml"
 # (both run the same manifest builder — EVIDENCE §R2).
 COSMOS3_REASON = ROOT / "workflows" / "testing" / "cosmos3-reason.yaml"
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def _component_command(tmp_path: Path) -> str:
     script = tmp_path / "component_contract.py"

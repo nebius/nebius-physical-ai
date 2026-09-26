@@ -12,7 +12,7 @@ ARG RSL_RL_VERSION=5.5.1
 LABEL npa.tool="genesis" \
       npa.version="${GENESIS_VERSION}" \
       npa.image.flavor="sm80-sm90-sm100-sm103-sm120" \
-      npa.base.image="${BASE_IMAGE}"
+      npa.base.profile="cuda13-workbench"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GENESIS_VERSION=${GENESIS_VERSION} \

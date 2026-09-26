@@ -11,7 +11,7 @@
 # license acceptance, and we ship no weight bytes. npa.workbench.cosmos.generate
 # (require_model_access) refuses to run without those credentials, and the build
 # asserts below that no checkpoint file landed in a layer.
-ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
+ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01
 FROM ${BASE_IMAGE}
 
 # cosmos-framework release that COSMOS3_REF points at.
@@ -83,13 +83,14 @@ RUN apt-get update \
         rsync \
         sudo \
         wget \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/* \
     && find /opt/nvidia/nsight-compute -type f \
          -path '*/plugins/efa_metrics/nic_sampler' -delete \
     && test -z "$(find /opt/nvidia/nsight-compute -type f \
          -path '*/plugins/efa_metrics/nic_sampler' -print -quit)"
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /uvx /usr/local/bin/
 
 # The runtime user owns its trees BEFORE the heavy layers, and every later layer
 # runs as that user. A trailing `chown -R` would instead rewrite the whole 9.3 GB

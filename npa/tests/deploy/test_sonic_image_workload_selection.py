@@ -98,6 +98,15 @@ def test_explicit_variant_is_still_checked_against_the_workload() -> None:
 
 
 def test_container_image_for_tool_threads_the_workload() -> None:
+    public_ref = container_image_for_tool(
+        "sonic",
+        gpu_target="gpu-rtx6000",
+        workload=ISAAC_RENDER,
+    )
+    assert public_ref.startswith(
+        "ghcr.io/nebius/nebius-physical-ai/npa-sonic:cuda13-b300-"
+    )
+
     ref = container_image_for_tool(
         "sonic",
         registry="registry.example",

@@ -111,10 +111,14 @@ class CuratorAvailability:
     def encoder(self) -> str:
         """Preferred encoder for the transcoding stage, or ``""`` if none works."""
 
-        if GPU_ENCODER in self.encoders and _has_gpu():
-            return GPU_ENCODER
+        # The in-process integration is deliberately a CPU path.  Prefer its
+        # known-good encoder even when a Serverless job exposes a throughput GPU:
+        # H100/H200 devices have no NVENC hardware, although ffmpeg still advertises
+        # h264_nvenc and nvidia-smi reports a usable CUDA device.
         if CPU_ENCODER in self.encoders:
             return CPU_ENCODER
+        if GPU_ENCODER in self.encoders and _has_gpu():
+            return GPU_ENCODER
         return ""
 
     @property

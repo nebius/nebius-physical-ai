@@ -93,7 +93,10 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
 
     assert "pip uninstall -y transformers imageio-ffmpeg wandb tetgen" in text
     assert "sanitize-sim2real-envgen-parent.py" in text
-    assert "COPY docker/workbench/common/envgen_compat /opt/npa/compat" in text
+    assert "COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py " in text
+    assert "/opt/npa/compat/tetgen.py" in text
+    assert "chmod 0755 /opt/npa/compat" in text
+    assert "chmod 0644 /opt/npa/compat/tetgen.py" in text
     assert "PYTHONPATH=/opt/npa/compat:/opt/npa/src" in text
     assert '("genesis-world", "tetgen")' in sanitizer
     assert '("lerobot", "wandb")' in sanitizer
@@ -111,13 +114,23 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
         encoding="utf-8"
     )
-    assert "linux-libc-dev=5.15.0-190.200" in installer
+    snapshot_config = (WORKBENCH / "common/configure_ubuntu_snapshot.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in snapshot_config
+    assert "ubuntu:22.04" in snapshot_config
+    assert "ubuntu:24.04" in snapshot_config
+    assert "configure-ubuntu-snapshot" in installer
+    assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
+    assert 'linux_libc_dev_version="6.8.0-138.138"' in installer
+    assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     for relative in (
         "sim2real-envgen/Dockerfile",
         "sim2real-eval/Dockerfile",
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
         assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
+        assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
 def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:

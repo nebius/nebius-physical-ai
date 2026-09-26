@@ -15,6 +15,7 @@ from npa.orchestration.npa_workflow.detect import (
     is_npa_workflow_spec,
 )
 from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
@@ -303,7 +304,10 @@ def test_sonic_stage_setup_installs_torch_stack(
         spec,
         build_plan(spec, run_id="demo"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     assert docs, rendered
@@ -737,7 +741,10 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
         spec,
         build_plan(spec, run_id="demo", assume_decision="promote_checkpoint"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
     transfer = next(doc for doc in docs if "cosmos2 transfer" in doc.get("run", ""))
@@ -1197,6 +1204,29 @@ def test_resolve_task_image_uses_override() -> None:
         options=SkypilotRenderOptions(image_overrides={"*": "cr.example/custom:1"}),
     )
     assert image == "cr.example/custom:1"
+
+
+def test_resolve_task_image_reports_quarantine_as_workflow_error() -> None:
+    with pytest.raises(NpaWorkflowError, match="no consumable public release"):
+        resolve_task_image(
+            "workbench.cosmos_evaluator.evaluate",
+            {},
+            options=SkypilotRenderOptions(),
+        )
+
+
+def test_resolve_task_image_uses_active_sonic_manifest_variant() -> None:
+    image = resolve_task_image(
+        "workbench.sonic.eval",
+        {},
+        options=SkypilotRenderOptions(gpu_target="gpu-rtx6000"),
+    )
+
+    assert image == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-sonic:"
+        "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-"
+        "20260803T034152Z"
+    )
 
 
 def test_first_party_image_rejects_uid_zero_pod_override(

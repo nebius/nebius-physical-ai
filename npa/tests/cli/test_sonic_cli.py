@@ -360,6 +360,32 @@ def test_sonic_onnx_eval_resolves_render_manifest_image(mocker) -> None:
     )
 
 
+def test_sonic_onnx_eval_accepts_explicit_operator_image(mocker) -> None:
+    evaluate = mocker.patch(
+        "npa.cli.workbench.sonic.eval.evaluate_onnx_policy",
+        return_value={"status": "completed"},
+    )
+    operator_image = "registry.example.invalid/npa-sonic:reviewed"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "eval",
+            "--onnx",
+            "policy.onnx",
+            "--backend",
+            "container",
+            "--container-image",
+            operator_image,
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert evaluate.call_args.kwargs["container_image"] == operator_image
+
+
 def test_sonic_eval_container_render_allows_rt_core_target(mocker, tmp_path) -> None:
     onnx = tmp_path / "policy.onnx"
     onnx.write_bytes(b"onnx")
@@ -976,6 +1002,8 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
 
     assert "ARG SONIC_VERSION=0.1.2" in dockerfile
     assert "ARG BASE_IMAGE=" in dockerfile
+    assert "ARG NPA_BUILD_PLATFORM=linux/amd64" in dockerfile
+    assert "FROM --platform=${NPA_BUILD_PLATFORM} ${BASE_IMAGE}" in dockerfile
     # Flipped 0 -> 1: with torch installed by us rather than inherited from the
     # nvcr.io base, a Blackwell-capable build is something we can require, not hope for.
     assert "ARG REQUIRE_TORCH_SM120=1" in dockerfile
@@ -1005,7 +1033,11 @@ def test_sonic_container_build_script_uses_supported_version() -> None:
     assert "vector-quantize-pytorch==1.31.1" in requirements
     assert "find \"${SONIC_HOME}/gear_sonic\" -type f -name '*.urdf'" in dockerfile
     assert '-exec chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" {} +' in dockerfile
-    assert "COPY docker/workbench/sonic/entrypoint.sh" in dockerfile
+    assert (
+        "COPY --chmod=0755 docker/workbench/sonic/entrypoint.sh /entrypoint.sh"
+        in dockerfile
+    )
+    assert "RUN chmod +x /entrypoint.sh" not in dockerfile
     assert (
         'git clone --filter=blob:none --no-checkout "${SONIC_REPO_URL}"' in dockerfile
     )

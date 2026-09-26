@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
+import tempfile
 from typing import Any
 
 import typer
@@ -74,15 +76,55 @@ def _run_container(
     replace: bool,
     dry_run: bool,
 ) -> str:
-    s3_env = storage_env()
+    local_storage = not storage_path.startswith("s3://")
+    container_storage_path = "/data/lancedb" if local_storage else storage_path
+    host_storage_path: Path | None = None
+    if local_storage:
+        if "," in storage_path:
+            fail("Local LanceDB --storage-path cannot contain a comma")
+        host_storage_path = Path(storage_path)
+        if not dry_run:
+            try:
+                host_storage_path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                fail(f"Cannot create LanceDB storage directory {storage_path}: {exc}")
+            if not host_storage_path.is_dir():
+                fail(f"LanceDB storage path is not a directory: {storage_path}")
+            if os.getuid() == 0:
+                fail(
+                    "Local LanceDB container storage must be deployed by a non-root "
+                    "host user so the container can use the same uid/gid without "
+                    "weakening its non-root runtime."
+                )
+            try:
+                descriptor, sentinel = tempfile.mkstemp(
+                    dir=host_storage_path, prefix=".npa-lancedb-write-"
+                )
+                os.close(descriptor)
+                Path(sentinel).unlink()
+            except OSError as exc:
+                fail(
+                    f"LanceDB storage directory is not writable by uid {os.getuid()}: "
+                    f"{storage_path}: {exc}"
+                )
+
+    # Local bind mounts do not need object-storage credentials. Keeping those
+    # credentials out of the container also prevents an unrelated local service
+    # compromise from becoming an S3 credential compromise.
+    s3_env = storage_env() if not local_storage else {}
     env = {
         **s3_env,
-        "LANCEDB_STORAGE_PATH": storage_path,
+        "LANCEDB_STORAGE_PATH": container_storage_path,
         "LANCEDB_PORT": str(port),
         "LANCEDB_AUTH_MODE": auth_mode,
-        "LANCEDB_TOKEN": os.environ.get(token_env, ""),
+        "LANCEDB_TOKEN": os.environ.get(token_env, "") if auth_mode == "token" else "",
     }
-    if storage_endpoint:
+    if local_storage:
+        # Arbitrary non-root uid mapping must not inherit /home/ubuntu as a
+        # potentially unwritable home directory. The bind mount was just proven
+        # writable by this uid and gives caches a private, persistent location.
+        env["HOME"] = container_storage_path
+    if storage_endpoint and not local_storage:
         endpoint_url = storage_endpoint_url(storage_endpoint)
         env["AWS_ENDPOINT_URL"] = endpoint_url
         env["NEBIUS_S3_ENDPOINT"] = endpoint_url
@@ -122,6 +164,11 @@ def _run_container(
         f"{port}:{port}",
     ]
     redacted_cmd = list(cmd)
+    if host_storage_path is not None:
+        mount = f"type=bind,source={host_storage_path},target={container_storage_path}"
+        runtime_user = f"{os.getuid()}:{os.getgid()}"
+        cmd.extend(["--user", runtime_user, "--mount", mount])
+        redacted_cmd.extend(["--user", runtime_user, "--mount", mount])
     for key, value in env.items():
         if value:
             cmd.extend(["-e", f"{key}={value}"])
@@ -302,6 +349,15 @@ def deploy_cmd(
     resolved_storage = validate_storage_path(storage_path)
     resolved_auth = _auth_mode_for(runtime, auth_mode)
     image_ref = container_image(image)
+    if (
+        runtime == LanceDBRuntime.kubernetes
+        and not destroy
+        and not resolved_storage.startswith("s3://")
+    ):
+        fail(
+            "--runtime kubernetes requires an s3:// --storage-path; a pod-local "
+            "path is not persistent across rollouts or restarts"
+        )
 
     if destroy and runtime == LanceDBRuntime.container:
         name = _container_name(container_name, port)

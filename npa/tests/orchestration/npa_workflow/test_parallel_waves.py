@@ -358,11 +358,9 @@ def test_serial_renderer_still_rejects_parallel_option(parallel_spec) -> None:
 
 # --------------------------------------------------------- field type failures
 #
-# NOTE: the shipped JSON Schema is only enforced at the document level — the
-# hand-rolled walker in schema_validation.py does not resolve `$ref`/`$defs`, so
-# `states.<name>.*` bodies have never been schema-checked. Type errors for the new
-# fields therefore have to raise (with an actionable message) from the Python
-# parser/validator, which is what these tests pin.
+# State shapes are checked in both the parser and the lightweight JSON Schema
+# walker. The parser runs first so these domain-specific failures retain an
+# actionable message instead of exposing schema implementation details.
 
 
 @pytest.mark.parametrize(

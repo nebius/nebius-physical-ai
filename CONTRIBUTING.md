@@ -397,6 +397,13 @@ Current YAML rules:
 - Use `resources.<profile>` blocks and point states at profiles by name.
 - Express dependencies with `initial`, `needs`, `next`, `parallel`, and
   `transitions`; the renderer emits the SkyPilot task documents.
+- Treat the schema as strictly typed. Omit an optional field instead of writing
+  `null`; `inputs`, `outputs`, `params`, and other collection fields reject
+  explicit nulls. Integer fields reject booleans and every YAML float (including
+  `1.0`), boolean fields accept only YAML `true`/`false`, and duplicate state
+  names are errors.
+  Quote template tokens when YAML might otherwise pre-type a scalar, and rerun
+  `validate-spec` after generated content or `--var` overrides.
 - Keep customer-specific bucket, registry, project, and credential values out of
   committed YAML.
 - Add `validate-spec`, `plan-spec`, render-only, mock-endpoint, or snapshot

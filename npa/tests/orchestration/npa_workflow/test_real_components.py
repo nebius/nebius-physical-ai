@@ -198,7 +198,10 @@ def test_blueprint_overlays_reviewed_source_on_baked_component_images(
         spec,
         plan,
         run_id="overlay-contract",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     tasks = [
         task
@@ -478,6 +481,32 @@ def test_optional_sam2_config_is_validated_before_provisioning(
     raw["config"]["protected_luma_max_delta"] = "256"
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(NpaWorkflowError, match="within 0..255"):
+        load_spec(path)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("sam2_points_per_side", 16.5, "numeric sampling"),
+        ("sam2_max_objects", True, "numeric sampling"),
+        ("protected_luma_max_delta", 32.5, "must be integers"),
+        ("protected_feather_pixels", False, "must be integers"),
+    ],
+)
+def test_optional_sam2_integer_fields_are_exact(
+    tmp_path: pathlib.Path, key: str, value: object, message: str
+) -> None:
+    raw = _spec()
+    raw["config"].update(
+        segmentation_mode="sam2-auto",
+        segmentation_uri="s3://example/run/segmentation/",
+        augment_nodes="1",
+    )
+    raw["config"][key] = value
+    path = tmp_path / f"invalid-{key}.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(NpaWorkflowError, match=message):
         load_spec(path)
 
 

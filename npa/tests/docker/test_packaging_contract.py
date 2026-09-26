@@ -228,6 +228,41 @@ def _base_image_refs(dockerfile_text: str) -> list[str]:
     return refs
 
 
+def _resolved_build_sources(dockerfile_text: str) -> list[str]:
+    """Resolve image sources used by FROM and external COPY instructions."""
+
+    defaults = dict(
+        re.findall(
+            r"(?m)^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)",
+            dockerfile_text,
+        )
+    )
+    stages = set(
+        re.findall(
+            r"(?m)^\s*FROM\s+(?:--\S+\s+)*\S+\s+AS\s+(\S+)",
+            dockerfile_text,
+        )
+    )
+    raw_sources = re.findall(r"(?m)^\s*FROM\s+(?:--\S+\s+)*(\S+)", dockerfile_text)
+    # Dockerfile instructions in this tree are uppercase. Keeping this
+    # case-sensitive avoids treating Python heredoc lines (`from x import y`) as
+    # Dockerfile FROM instructions.
+    raw_sources.extend(re.findall(r"(?m)^\s*COPY\s+--from=(\S+)", dockerfile_text))
+
+    sources: list[str] = []
+    for raw in raw_sources:
+        variable = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", raw)
+        source = defaults.get(variable.group(1), raw) if variable else raw
+        if source == "scratch" or source in stages:
+            continue
+        sources.append(source)
+    return sources
+
+
+def _is_immutable_build_source(source: str) -> bool:
+    return bool(re.search(r"@sha256:[0-9a-f]{64}$", source))
+
+
 def _workbench_parents(dockerfile_text: str, contract_images: dict) -> set[str]:
     """Contract image names this Dockerfile inherits from (``npa-<name>`` refs)."""
     parents: set[str] = set()
@@ -582,6 +617,69 @@ def test_image_declares_redistribution_class(image_name: str) -> None:
     assert cls in classes, (
         f"{image_name}: redistribution must be one of {sorted(classes)}, got {cls!r}"
     )
+
+
+def test_public_recipes_do_not_embed_operator_base_references_in_labels() -> None:
+    """Build provenance may record a profile, never a private registry coordinate."""
+
+    contract = _load_contract()
+    unsafe = re.compile(
+        r'npa\.(?:base[._]image(?:_digest)?|build_info)="[^"\n]*\$\{BASE_IMAGE'
+    )
+    for image_name, entry in contract["images"].items():
+        if entry.get("redistribution") != "public":
+            continue
+        dockerfile = WORKBENCH_DOCKER / entry["dockerfile"]
+        text = dockerfile.read_text(encoding="utf-8")
+        assert unsafe.search(text) is None, (
+            f"{image_name}: public OCI labels must not expose the operator's "
+            "BASE_IMAGE registry or digest"
+        )
+
+
+def test_public_recipes_use_immutable_external_build_sources() -> None:
+    """Every inherited/copied byte is tied to a digest before publication."""
+
+    contract = _load_contract()
+    checked: set[Path] = set()
+    offenders: list[str] = []
+    for image_name, entry in contract["images"].items():
+        if entry.get("redistribution") != "public":
+            continue
+        dockerfile = WORKBENCH_DOCKER / entry["dockerfile"]
+        if dockerfile in checked:
+            continue
+        checked.add(dockerfile)
+        for source in _resolved_build_sources(dockerfile.read_text(encoding="utf-8")):
+            if not _is_immutable_build_source(source):
+                offenders.append(f"{image_name}: {source}")
+
+    assert offenders == [], (
+        "public image build sources must use @sha256 (FROM and external COPY); "
+        f"unpinned sources: {offenders}"
+    )
+
+
+def test_robocasa_build_binds_the_exact_npa_source_revision() -> None:
+    dockerfile = (WORKBENCH_DOCKER / "robocasa/Dockerfile").read_text(encoding="utf-8")
+    build_script = (WORKBENCH_DOCKER / "robocasa/build.sh").read_text(encoding="utf-8")
+    assert '--build-arg NPA_SOURCE_SHA="${NPA_SOURCE_SHA}"' in build_script
+    assert "ARG NPA_SOURCE_SHA" in dockerfile
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in dockerfile
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("python:3.12-slim", False),
+        ("npa-genesis:release", False),
+        ("ghcr.io/example/tool@sha256:" + "a" * 64, True),
+    ],
+)
+def test_immutable_build_source_guard_mutations(source: str, expected: bool) -> None:
+    assert _is_immutable_build_source(source) is expected
 
 
 @pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))

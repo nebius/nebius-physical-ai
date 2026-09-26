@@ -10,6 +10,15 @@ from npa.cli.main import app
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _operator_sim2real_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep health-contract tests independent of quarantined public releases."""
+
+    monkeypatch.setenv(
+        "NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator/workbench"
+    )
+
+
 def test_health_registered_under_workbench() -> None:
     result = runner.invoke(app, ["workbench", "health", "--help"])
     assert result.exit_code == 0
@@ -113,6 +122,29 @@ def test_health_rejects_unknown_check() -> None:
     )
     assert result.exit_code != 0
     assert "unknown check" in result.output.lower()
+
+
+def test_health_reports_quarantined_public_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_SIM2REAL_REGISTRY")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "config",
+            "--s3-bucket",
+            "real-bucket",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "no consumable public release" in result.output
+    assert "operator-controlled registry/image" in result.output
 
 
 def test_health_help_lists_preflight_not_deprecated_sim2real() -> None:

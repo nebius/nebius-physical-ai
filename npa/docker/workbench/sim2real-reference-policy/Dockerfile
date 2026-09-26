@@ -1,8 +1,9 @@
-ARG BASE_IMAGE=npa-envgen:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.title="npa-reference-policy"
 LABEL org.opencontainers.image.description="Reference BYO-compatible Sim2Real action policy image"
+LABEL npa.base.image="npa-envgen"
 
 ENV POLICY_IMAGE_KIND=npa-reference-policy
 ENV NPA_SIM2REAL_POLICY_VARIANT=reference

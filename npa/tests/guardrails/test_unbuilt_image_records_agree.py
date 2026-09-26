@@ -19,11 +19,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 import yaml
 
 from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
+    LAYER_STALE_PUBLICATION_TOOLS,
+    METADATA_STALE_PUBLICATION_TOOLS,
     PUBLICATION_QUARANTINE_TOOLS,
+    STALE_PUBLICATION_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
@@ -110,7 +115,9 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
 
 def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
     assert PUBLICATION_QUARANTINE_TOOLS == (
-        UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+        UNVALIDATED_PUBLICATION_TOOLS
+        | VALIDATION_CANDIDATE_TOOLS
+        | STALE_PUBLICATION_TOOLS
     )
     for tool in VALIDATION_CANDIDATE_TOOLS:
         version = str(SUPPORTED_TOOL_VERSIONS[tool])
@@ -118,6 +125,73 @@ def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
         build = REPO_ROOT / "npa" / "docker" / "workbench" / tool / "build.sh"
         assert build.is_file(), tool
         assert version in build.read_text(encoding="utf-8"), tool
+
+
+def test_stale_publications_are_built_releases_awaiting_requalification() -> None:
+    """Stale bytes are not confused with images that have never been built."""
+
+    assert STALE_PUBLICATION_TOOLS == frozenset(
+        {
+            "cosmos-curate",
+            "cosmos-evaluator",
+            "cosmos3",
+            "cosmos3-ray-serve",
+            "genesis",
+            "isaac-lab",
+            "isaac-arena",
+            "lerobot",
+            "lerobot-vlm-rl",
+            "loop-eval",
+            "reference-policy",
+            "sonic",
+        }
+    )
+    assert STALE_PUBLICATION_TOOLS == (
+        LAYER_STALE_PUBLICATION_TOOLS | METADATA_STALE_PUBLICATION_TOOLS
+    )
+    assert STALE_PUBLICATION_TOOLS.isdisjoint(UNVALIDATED_PUBLICATION_TOOLS)
+    assert STALE_PUBLICATION_TOOLS.isdisjoint(VALIDATION_CANDIDATE_TOOLS)
+    for tool in STALE_PUBLICATION_TOOLS:
+        assert not SUPPORTED_TOOL_VERSIONS[tool].endswith(UNBUILT_TAG_SUFFIX), tool
+
+
+def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
+    """A child cannot be accepted while retaining every layer of a stale parent."""
+
+    image_to_tool = {image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()}
+    parent_pattern = re.compile(r"\bnpa-[a-z0-9-]+(?=[:@])")
+    directory_aliases = {
+        "sim2real-envgen": {"envgen"},
+        "sim2real-eval": {"loop-eval"},
+        "sim2real-reference-policy": {"reference-policy"},
+    }
+    inspected_variants: set[str] = set()
+    for dockerfile in sorted((REPO_ROOT / "npa/docker/workbench").rglob("Dockerfile*")):
+        if not dockerfile.is_file():
+            continue
+        inspected_variants.add(dockerfile.name)
+        directory = dockerfile.parent.name
+        children = ({directory} if directory in CONTAINER_IMAGE_NAMES else set()) | (
+            directory_aliases.get(directory, set())
+        )
+        if not children:
+            continue
+        parents = {
+            image_to_tool[image]
+            for image in parent_pattern.findall(dockerfile.read_text(encoding="utf-8"))
+            if image in image_to_tool
+        }
+        stale_parents = parents & LAYER_STALE_PUBLICATION_TOOLS
+        if stale_parents:
+            for child in children:
+                assert child in STALE_PUBLICATION_TOOLS, (
+                    f"{child} inherits stale image layer(s) from "
+                    f"{sorted(stale_parents)} in {dockerfile.name} but remains "
+                    "publication-eligible"
+                )
+    assert {"Dockerfile.k8s-prereqs", "Dockerfile.b300", "Dockerfile.sm120"} <= (
+        inspected_variants
+    )
 
 
 def test_pending_build_never_carries_a_confident_verdict() -> None:
