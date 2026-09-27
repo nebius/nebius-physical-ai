@@ -477,6 +477,15 @@ creates a case receipt. A self-declared digest is not verified evidence.
 
 ## TRAIN autonomous experience
 
+For paired prompt diagnostics with a parity-qualified `comet-trained` policy,
+`--policy-prompt-override` supplies one literal wrapper prompt. The option is
+accepted only with `--train-experience` on a non-reporting TRAIN panel. Its
+literal value and validation source are included in the serving identity before
+startup or case claim. The admitted task slug remains the wrapper metadata
+lookup key; the option changes the resulting `task_prompt` only. Omit it to use
+the released instruction from that exact task mapping. DEV and REPORT reject
+the override.
+
 The internal campaign worker can record reusable Comet TRAIN experience with
 `--train-experience`. The option is accepted only for a non-reporting TRAIN
 panel served by `--policy-kind comet-native` or a parity-qualified

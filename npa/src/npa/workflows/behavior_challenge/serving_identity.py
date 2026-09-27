@@ -65,6 +65,8 @@ def _serving_source(args) -> dict[str, str]:
         source_names += _TRAINED_COMET_SERVING_FILES
     if getattr(args, "train_experience", False):
         source_names += _TRAIN_EXPERIENCE_SERVING_FILES
+    if getattr(args, "policy_prompt_override", None) is not None:
+        source_names += ("policy_prompt.py",)
     root = Path(__file__).parent
     return {name: file_digest(root / name) for name in source_names}
 
@@ -106,6 +108,9 @@ def serving_artifact(args) -> dict:
             else None
         ),
     }
+    prompt = getattr(args, "policy_prompt_override", None)
+    if prompt is not None:
+        payload["prompt_override"] = prompt
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded)}
 

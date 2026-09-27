@@ -159,6 +159,9 @@ def _stop_policy(process: subprocess.Popen) -> None:
 
 
 def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[str]:
+    from .policy_prompt import prompt_override
+
+    prompt_override(args, train_panel=plan.get("recipe", {}).get("split") == "train")
     require_openpi_terms()
     _verify_specialist_report_options(args)
     if args.host not in {"localhost", "127.0.0.1"}:

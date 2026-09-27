@@ -68,7 +68,7 @@ def _process_identity(args, initial_rng: str) -> str:
 
 
 def _process_identity_payload(args, initial_rng: str) -> dict:
-    return {
+    value = {
         "schema": "npa.behavior.comet-native-serving-process-identity.v1",
         "case_id": args.case_id,
         "task": args.task_name,
@@ -80,6 +80,10 @@ def _process_identity_payload(args, initial_rng: str) -> dict:
         "trace_configuration_sha256": args.trace_configuration_sha256,
         "initial_rng_sha256": initial_rng,
     }
+    prompt_override = getattr(args, "task_prompt_override", None)
+    if prompt_override is not None:
+        value["task_prompt_override"] = prompt_override
+    return value
 
 
 @contextmanager
@@ -108,6 +112,26 @@ def _canonical_asset_id(value: str) -> str:
     ):
         raise ValueError("Native Comet asset ID differs")
     return value
+
+
+def _literal_prompt(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if (
+        not 1 <= len(value) <= 512
+        or value != value.strip()
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
+        raise ValueError("Native Comet prompt override differs")
+    return value
+
+
+def _apply_prompt_override(wrapper, args, task: str) -> None:
+    prompt = getattr(args, "task_prompt_override", None)
+    wrapper.task_prompt = prompt or wrapper.task_prompt
+    expected = prompt or task
+    if wrapper.task_name != args.task_name or wrapper.task_prompt != expected:
+        raise ValueError("Native Comet effective prompt differs")
 
 
 def _load_policy(args, overlay: Path):
@@ -146,6 +170,7 @@ def _load_policy(args, overlay: Path):
             max_len=32,
             fine_grained_level=0,
         )
+    _apply_prompt_override(wrapper, args, row["task"])
     return wrapper, policy
 
 
@@ -265,7 +290,7 @@ def _process_receipt(
     inference_count: int,
     action_count: int,
 ) -> dict:
-    return {
+    value = {
         "schema": "npa.behavior.comet-native-serving-process.v1",
         "status": "ready" if action_count == 0 else "sent_action_recorded",
         "process_identity_sha256": args.process_identity_sha256,
@@ -283,6 +308,10 @@ def _process_receipt(
         "action_count": action_count,
         "trace_enabled": args.action_trace is not None,
     }
+    prompt_override = getattr(args, "task_prompt_override", None)
+    if prompt_override is not None:
+        value["task_prompt_override"] = prompt_override
+    return value
 
 
 def validate_process_receipt(value: object, expected: dict | None = None) -> dict:
@@ -314,7 +343,10 @@ def validate_process_receipt(value: object, expected: dict | None = None) -> dic
         "action_count",
         "trace_enabled",
     }
-    if not isinstance(value, dict) or set(value) != required:
+    if not isinstance(value, dict) or set(value) not in {
+        frozenset(required),
+        frozenset({*required, "task_prompt_override"}),
+    }:
         raise ValueError("Native Comet process receipt fields differ")
     for name in (
         "process_identity_sha256",
@@ -368,22 +400,27 @@ def validate_process_receipt(value: object, expected: dict | None = None) -> dic
         "trace_configuration_sha256": value["trace_configuration_sha256"],
         "initial_rng_sha256": value["initial_rng_sha256"],
     }
+    if "task_prompt_override" in value:
+        _literal_prompt(value["task_prompt_override"])
+        identity_payload["task_prompt_override"] = value["task_prompt_override"]
     if value["process_identity_sha256"] != _canonical_digest(identity_payload):
         raise ValueError("Native Comet process identity differs")
     if expected is not None:
-        stable = required - {
+        stable = set(value) - {
             "status",
             "current_rng_sha256",
             "inference_count",
             "action_count",
         }
-        if any(value[name] != expected[name] for name in stable):
+        if set(expected) != set(value) or any(
+            value[name] != expected[name] for name in stable
+        ):
             raise ValueError("Native Comet process receipt lineage differs")
     return value
 
 
 def _load_qualification(args) -> dict:
-    return {
+    value = {
         "schema": "npa.behavior.comet-native-serving-load-qualification.v1",
         "status": "checkpoint_loaded_with_explicit_case_rng",
         "case_id": args.case_id,
@@ -402,6 +439,10 @@ def _load_qualification(args) -> dict:
         "process_identity_sha256": args.process_identity_sha256,
         "inference_count": 0,
     }
+    prompt_override = getattr(args, "task_prompt_override", None)
+    if prompt_override is not None:
+        value["task_prompt_override"] = prompt_override
+    return value
 
 
 def validate_load_qualification(value: object, expected: dict) -> dict:
@@ -434,9 +475,12 @@ def validate_load_qualification(value: object, expected: dict) -> dict:
         "process_identity_sha256",
         "inference_count",
     }
-    if not isinstance(value, dict) or set(value) != keys:
+    if not isinstance(value, dict) or set(value) not in {
+        frozenset(keys),
+        frozenset({*keys, "task_prompt_override"}),
+    }:
         raise ValueError("Native Comet serving-load qualification fields differ")
-    stable = keys - {"initial_rng_sha256", "process_identity_sha256"}
+    stable = set(value) - {"initial_rng_sha256", "process_identity_sha256"}
     if set(expected) != stable or any(value[name] != expected[name] for name in stable):
         raise ValueError("Native Comet serving-load qualification differs")
     for name in ("initial_rng_sha256", "process_identity_sha256"):
@@ -457,6 +501,9 @@ def validate_load_qualification(value: object, expected: dict) -> dict:
         "trace_configuration_sha256": value["trace_configuration_sha256"],
         "initial_rng_sha256": value["initial_rng_sha256"],
     }
+    if "task_prompt_override" in value:
+        _literal_prompt(value["task_prompt_override"])
+        identity_payload["task_prompt_override"] = value["task_prompt_override"]
     if value["process_identity_sha256"] != _canonical_digest(identity_payload):
         raise ValueError("Native Comet serving-load process identity differs")
     return value
@@ -664,6 +711,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--asset-id", required=True)
     value.add_argument("--task-id", type=int, required=True)
     value.add_argument("--task-name", required=True)
+    value.add_argument("--task-prompt-override")
     value.add_argument("--policy-label", default="comet-native-train")
     value.add_argument("--port", type=int, required=True)
     value.add_argument(
@@ -686,6 +734,7 @@ def parser() -> argparse.ArgumentParser:
 
 def _main() -> None:
     args = parser().parse_args()
+    args.task_prompt_override = _literal_prompt(args.task_prompt_override)
     logging.basicConfig(level=logging.INFO)
     verify_source(args.source_root)
     with tempfile.TemporaryDirectory(prefix="npa-comet-native-source-") as temporary:

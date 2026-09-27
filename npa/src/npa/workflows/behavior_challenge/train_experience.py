@@ -288,6 +288,19 @@ def write_experience_config(root: Path, value: Mapping[str, Any]) -> dict[str, A
     return config
 
 
+def _validate_config_prompt(value: dict[str, Any]) -> None:
+    if "policy_prompt_override" not in value:
+        return
+    prompt = value["policy_prompt_override"]
+    if (
+        not isinstance(prompt, str)
+        or not 1 <= len(prompt) <= 512
+        or prompt != prompt.strip()
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in prompt)
+    ):
+        raise ValueError("TRAIN experience prompt override differs")
+
+
 def validate_experience_config(value: object) -> dict[str, Any]:
     """Validate an exact model-decision TRAIN experience configuration.
 
@@ -312,7 +325,8 @@ def validate_experience_config(value: object) -> dict[str, Any]:
         "rng_contract_sha256",
         "source_commit",
     }
-    if not isinstance(value, dict) or set(value) != keys:
+    actual = set(value) if isinstance(value, dict) else set()
+    if actual not in {frozenset(keys), frozenset({*keys, "policy_prompt_override"})}:
         raise ValueError("TRAIN experience configuration fields differ")
     case = value["case"]
     if not isinstance(case, dict) or set(case) != {
@@ -324,6 +338,7 @@ def validate_experience_config(value: object) -> dict[str, Any]:
     }:
         raise ValueError("TRAIN experience case fields differ")
     _validate_config_values(value, case)
+    _validate_config_prompt(value)
     return value
 
 

@@ -74,6 +74,12 @@ The execution variant defaults to `native`, which is the only accepted value for
 this policy kind. See the
 [selected trained-Comet contract](../docs/workbench/behavior-campaign.md#prescribed-non-reporting-train-panels)
 for the admission boundary and derivative-checkpoint limitations.
+Recorded `comet-trained` TRAIN runs may use `--policy-prompt-override` to test
+one frozen literal prompt while retaining the admitted task slug as the wrapper
+metadata lookup key. The option requires `--train-experience` and a
+non-reporting TRAIN panel; omitting it uses the released task-mapping
+instruction. DEV and REPORT reject it. The campaign guide documents the
+serving-identity and recording contract.
 
 Fleet recovery can remove a failed CPU pool without charging unchanged reserved
 GPUs against free capacity again. The requested CPU count must be zero, every

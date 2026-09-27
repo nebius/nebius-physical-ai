@@ -31,6 +31,7 @@ _BASE_RUNTIME_FIELDS = (
 )
 _OPTIONAL_POLICY_FLAGS = {
     "policy_task_name": "--policy-task-name",
+    "policy_prompt_override": "--policy-prompt-override",
     "policy_selected_export_receipt": "--policy-selected-export-receipt",
     "policy_correlation_manifest": "--policy-correlation-manifest",
     "policy_validation_receipt": "--policy-validation-receipt",

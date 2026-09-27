@@ -73,7 +73,9 @@ class AutonomousCometDataset:
             "action": actions,
             "action_valid_mask": valid,
             "action_is_pad": ~valid,
-            "prompt": self.config["case"]["task"],
+            "prompt": self.config.get(
+                "policy_prompt_override", self.config["case"]["task"]
+            ),
             "episode_index": np.asarray(0),
             "frame_index": np.asarray(frame),
         }

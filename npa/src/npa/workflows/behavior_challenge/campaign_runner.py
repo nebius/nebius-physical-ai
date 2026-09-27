@@ -742,6 +742,8 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
 
 
 def _validate_train_experience_scope(args, panel) -> None:
+    from .policy_prompt import prompt_override
+
     experience = getattr(args, "train_experience", False)
     train_policy_kinds = {"comet-native", "comet-trained"}
     if (
@@ -758,6 +760,7 @@ def _validate_train_experience_scope(args, panel) -> None:
         raise ValueError("TRAIN experience depth requires recording")
     if _is_train_panel(panel) and args.policy_kind not in train_policy_kinds:
         raise ValueError("TRAIN campaign execution requires an admitted Comet adapter")
+    prompt_override(args, train_panel=_is_train_panel(panel))
 
 
 def _execute_partition(args, panel, partition, storage, workspace):

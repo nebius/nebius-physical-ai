@@ -112,11 +112,14 @@ def _write_experience_config(args, panel, case, output, admission) -> None:
         "rng_contract_sha256": admission["rng_contract"]["sha256"],
         "source_commit": SOURCE_COMMIT,
     }
+    prompt = getattr(args, "policy_prompt_override", None)
+    if prompt is not None:
+        value["policy_prompt_override"] = prompt
     write_experience_config(output / "train-experience", value)
 
 
 def _server_identity_arguments(args, plan, output, admission, case, seed) -> list[str]:
-    return [
+    command = [
         str(args.policy_python),
         str(output / "native_comet_server.py"),
         "--source-root",
@@ -154,12 +157,16 @@ def _server_identity_arguments(args, plan, output, admission, case, seed) -> lis
         "--process-receipt",
         str(output / "native-process.json"),
     ]
+    prompt = getattr(args, "policy_prompt_override", None)
+    if prompt is not None:
+        command.extend(("--task-prompt-override", prompt))
+    return command
 
 
 def _expected_qualification(
-    admission: dict, case: dict, seed: int
+    admission: dict, case: dict, seed: int, prompt: str | None = None
 ) -> dict[str, object]:
-    return {
+    value = {
         "schema": "npa.behavior.comet-native-serving-load-qualification.v1",
         "status": "checkpoint_loaded_with_explicit_case_rng",
         "case_id": case["case_id"],
@@ -176,6 +183,9 @@ def _expected_qualification(
         "trace_configuration_sha256": canonical_digest(admission["trace"]),
         "inference_count": 0,
     }
+    if prompt is not None:
+        value["task_prompt_override"] = prompt
+    return value
 
 
 def _qualify(command: list[str], args, output: Path, expected: dict) -> Path:
@@ -243,7 +253,12 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     command = _server_command(args, plan, output, admission)
     seed = case_seed(_rng_identity(admission), case)
     qualification = _qualify(
-        command, args, output, _expected_qualification(admission, case, seed)
+        command,
+        args,
+        output,
+        _expected_qualification(
+            admission, case, seed, getattr(args, "policy_prompt_override", None)
+        ),
     )
     _record_provenance(output, admission, case, seed, qualification, adapters, command)
     return command
