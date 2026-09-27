@@ -1029,11 +1029,6 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
-          if [ "$TOOL" = habitat-sim ]; then
-            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
-              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
-              --json "$RUNNER_TEMP/${TOOL}-pushed-bootstrap-source.json"
-          fi
           if [ "$TOOL" = gymnasium-robotics ]; then
             # The pulled immutable image ID above equals the pre-scanned image.
             # Its config digest was authenticated through that image's manifest.
@@ -1099,6 +1094,11 @@ jobs:
               --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
             rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
+          fi
+          if [ "$TOOL" = habitat-sim ]; then
+            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-bootstrap-source.json"
           fi
           if [ "$TOOL" = antioch ]; then
             docker pull "$exact"

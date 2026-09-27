@@ -271,13 +271,13 @@ def authorize(args, directory):
     archive, verification = binding(args.archive), binding(args.verification_report)
     report = W.bound_json(verification)
     W.require(
-        report.get("valid") is True
+        (
+            report.get("valid") is True
+            and report.get("schema_version") == "npa.habitat-sim.oci-verification.v1"
+        )
+        or report.get("valid") is True
         and report.get("schema_version")
-        in (
-            "npa.curobo.image-verification.v1",
-            "npa.ncore.oci-verification.v1",
-            "npa.habitat-sim.oci-verification.v1",
-        ),
+        in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"),
         "accepted_graph_report_required",
     )
     trusted_contract = None

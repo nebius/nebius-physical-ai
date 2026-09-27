@@ -63,6 +63,7 @@ status and evidence recorded in their own rows and catalog records.
 | `npa-cosmos3` | current `1.2.2-cu130-r7` (index `sha256:d8e1fe370f75…`) | 2.13.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-cosmos3-ray-serve` | `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (`linux/amd64` manifest `sha256:6e42f553a0d1…`); the published `ray1-cu130` tag resolves to that same digest | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-cosmos3-reason` | `…-3.0.1-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
+| `npa-habitat-sim` | not routed; unverified | blocked (supported NVIDIA OpenGL/EGL path unverified) | **development evidence only** [19-step exact-digest RTX result](validation/habitat-sim-development-image-manifest.json); supported release quarantined | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) |
 | `npa-genesis` | `…-0.4.6-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-envgen` / `npa-reference-policy` / `npa-lerobot-vlm-rl` / `npa-loop-eval` | `…-20260803T034152Z` | inherited 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-sonic` | `…-0.1.2-k8s-runtime-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
@@ -135,13 +136,13 @@ likewise predates its current coherent release.
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
-| `npa-habitat-sim` | not routed; unverified | blocked (supported NVIDIA OpenGL/EGL path unverified) | **development evidence only** [19-step exact-digest RTX result](validation/habitat-sim-development-image-manifest.json); supported release quarantined | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [78] | **verified** [77] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-flex-pi` | supported | supported | **verified** [87] | **verified** [86] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
 | `npa-cosmos2-transfer` | supported | supported | supported | **historical evidence** [9] | blocked (cu128 NVRTC cannot JIT `sm_103`) |
 | `npa-cosmos` | blocked (Predict2 allowlist) | **verified** [33] | blocked (Predict2 allowlist) | **verified** [32] | blocked (Predict2 allowlist) |
+| `npa-habitat-sim` | not routed; unverified | blocked (supported NVIDIA OpenGL/EGL path unverified) | **development evidence only** [19-step exact-digest RTX result](validation/habitat-sim-development-image-manifest.json); supported release quarantined | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) | blocked (supported NVIDIA OpenGL/EGL path unverified; strict RTX-only route) |
 | `npa-genesis` | supported | **verified** [46] | **verified** [14] | **verified** [44] | **verified** [45] |
 | `npa-envgen` | supported | **historical evidence** [49] | **historical evidence** [15] | **historical evidence** [47] | **historical evidence** [48] |
 | `npa-reference-policy` | supported | **verified** [52] | **verified** [16] | **verified** [50] | **verified** [51] |

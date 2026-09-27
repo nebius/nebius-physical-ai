@@ -10,15 +10,6 @@ NCore development images use the [attested OCI publication path](ncore-oci-publi
 to preserve the exact buildx index through local gates and anonymous readback.
 NCore remains quarantined pending its independent RTX acceptance.
 
-Habitat-Sim uses a neutral runtime-fetch bootstrap image with exact corresponding
-Ubuntu package sources. Its public development digest and successful one-RTX
-standard-workflow validation are recorded in the
-[image catalog](container-image-catalog.md#not-in-the-public-image-table).
-Supported release selection remains in `UNVALIDATED_PUBLICATION_TOOLS`.
-The official CC BY Skokloster scene is runtime data, never an image input.
-A rebuild must pass its own exact-image publication and capability gates;
-previous digest evidence does not automatically validate changed image bytes.
-
 ## SkyPilot worker bootstrap contract
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
@@ -202,6 +193,15 @@ installs and byte-checks the shared SkyPilot prerequisites, removes build-time
 SSH host keys, forwards orchestrator arguments, and records the same
 `skypilot-0.12.2-v1` OCI attestation. Ad-hoc means the solution is not a catalog
 image; it does not exempt its runtime bytes from the worker bootstrap contract.
+
+Habitat-Sim uses a neutral runtime-fetch bootstrap image with exact corresponding
+Ubuntu package sources. Its public development digest and successful one-RTX
+standard-workflow validation are recorded in the
+[image catalog](container-image-catalog.md#habitat-sim-development-image).
+Supported release selection remains in `UNVALIDATED_PUBLICATION_TOOLS`.
+The official CC BY Skokloster scene is runtime data, never an image input.
+A rebuild must pass its own exact-image publication and capability gates;
+previous digest evidence does not automatically validate changed image bytes.
 
 ## Packaging tiers
 

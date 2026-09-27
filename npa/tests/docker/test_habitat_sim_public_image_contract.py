@@ -35,7 +35,7 @@ EXPECTED_RUNTIME_IDENTITY_COMMANDS = (
 )
 
 
-def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
+def test_habitat_source_closure_agrees_with_packaging_and_registry() -> None:
     entries = PACKAGING["images"]
     assert entries["habitat-sim"]["redistribution"] == "public"
     assert entries["habitat-sim"]["dockerfile"] == "habitat-sim/Dockerfile.bootstrap"
@@ -51,11 +51,20 @@ def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
         value: sum(row["redistribution"] == value for row in entries.values())
         for value in ("public", "restricted", "unvalidated")
     }
-    assert counts == {"public": 49, "restricted": 9, "unvalidated": 0}
+    assert sum(counts.values()) == len(entries)
+    assert set(images.CONTAINER_IMAGE_NAMES) <= set(entries)
+    public = set(images.publicly_publishable_tools())
+    assert public.isdisjoint(images.PUBLICATION_QUARANTINE_TOOLS)
+    assert public.isdisjoint(images.RESTRICTED_PUBLICATION_TOOLS)
+    assert public <= set(images.CONTAINER_IMAGE_NAMES)
+    assert all(entries[tool]["redistribution"] == "public" for tool in public)
+    for tool in images.RESTRICTED_PUBLICATION_TOOLS:
+        assert entries[tool]["redistribution"] == "restricted", tool
+    assert "habitat-sim" in images.PUBLICATION_QUARANTINE_TOOLS
+    assert images.CONTAINER_IMAGE_NAMES["habitat-sim"] == "npa-habitat-sim"
     catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
-    assert "58 packaging entries" in catalog
-    assert "49 redistribution-eligible" in catalog
-    assert "and nine restricted" in catalog
+    assert "`npa-habitat-sim`" in catalog
+    assert "habitat-sim/Dockerfile.bootstrap" in catalog
     assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 

@@ -110,7 +110,7 @@ The packaging contract records `redistribution: public` for
 workflow and its exact-image checks. `UNVALIDATED_PUBLICATION_TOOLS` still
 excludes Habitat-Sim from supported release selection; it has no supported-release
 manifest entry or public-release table row. Development image evidence is recorded
-separately in the [image catalog](container-image-catalog.md#not-in-the-public-image-table).
+separately in the [image catalog](container-image-catalog.md#habitat-sim-development-image).
 The [development image manifest](validation/habitat-sim-development-image-manifest.json)
 binds producer `dd49fdb6ee66a72e505b9830a29dad883df91e91` and digest
 `sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2`

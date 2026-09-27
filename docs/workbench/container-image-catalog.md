@@ -53,13 +53,11 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **58 packaging entries** (49 redistribution-eligible
-and nine restricted) and **49 mapped tools**: 38 public-release members, two
-restricted tools, and nine quarantined tools (`antioch`, `curobo`, `habitat-sim`,
-`libero`, `mjlab`, `ncore`, `openpi`, `robocasa` and `sam3`). These counts come from
-`packaging-contract.yaml` and `npa.deploy.images`;
-the seven restricted PAIDF images have no mapped tool entry. These counts do not
-constitute acceptance of the quarantined images.
+The current build inventory is maintained in `packaging-contract.yaml`, and
+the tool map in `npa.deploy.images`. `publicly_publishable_tools()` selects the
+public release inventory; `PUBLICATION_QUARANTINE_TOOLS` identifies candidates
+awaiting acceptance. The seven restricted PAIDF images have no mapped tool entry.
+Inventory membership does not constitute acceptance of a quarantined image.
 
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU
@@ -134,6 +132,26 @@ or moving either tag, the maintained workflow toolRef enabled the image's
 existing `--torch-compile` path. Five paired warm samples measured 2.645× median
 speedup on RTX PRO 6000 and 2.278× on B200, with finite 32×14 actions inside the
 documented BF16 tolerance and five durable read-back objects per final target.
+
+## Habitat-Sim development image
+
+- **`npa-habitat-sim`** uses `habitat-sim/Dockerfile.bootstrap`, a neutral
+  Ubuntu/Python launcher with accompanying exact Ubuntu sources. Pinned
+  Habitat-Sim, native build dependencies, scientific wheels and the attributed
+  CC BY Skokloster scene are fetched only at runtime. It remains in
+  `UNVALIDATED_PUBLICATION_TOOLS` for supported release selection. The public
+  development image at digest
+  `sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2`
+  was built from `dd49fdb6ee66a72e505b9830a29dad883df91e91` and passed its
+  exact-image scans and one-RTX managed-workflow capability gate: 19 RGB frames,
+  19 depth frames, 19 Bullet steps, and 2.2466 metres of traversal. The
+  [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522)
+  is bound to its GPU report, artifact manifest, provenance, SBOM, and unchanged
+  image inputs in the [development evidence manifest](validation/habitat-sim-development-image-manifest.json).
+  This 19-step functional workload is not a long benchmark or policy-training
+  result and does not promote a supported release. The legacy baked candidate remains
+  quarantined and is not the public build target. See
+  [`byof-habitat-sim.md`](byof-habitat-sim.md).
 
 ## Native model publication
 
@@ -676,25 +694,8 @@ And no published image has a recorded L40S capability run; those cells are
 supported, blocked, not routed, unverified, or CPU-only rather than verified or
 historical evidence.
 
-## Not in the public image table
+## Intentionally not published as separate images
 
-- **`npa-habitat-sim`** uses `habitat-sim/Dockerfile.bootstrap`, a neutral
-  Ubuntu/Python launcher with accompanying exact Ubuntu sources. Pinned
-  Habitat-Sim, native build dependencies, scientific wheels and the attributed
-  CC BY Skokloster scene are fetched only at runtime. It remains in
-  `UNVALIDATED_PUBLICATION_TOOLS` for supported release selection. The public
-  development image at digest
-  `sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2`
-  was built from `dd49fdb6ee66a72e505b9830a29dad883df91e91` and passed its
-  exact-image scans and one-RTX managed-workflow capability gate: 19 RGB frames,
-  19 depth frames, 19 Bullet steps, and 2.2466 metres of traversal. The
-  [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522)
-  is bound to its GPU report, artifact manifest, provenance, SBOM, and unchanged
-  image inputs in the [development evidence manifest](validation/habitat-sim-development-image-manifest.json).
-  This 19-step functional workload is not a long benchmark or policy-training
-  result and does not promote a supported release. The legacy baked candidate remains
-  quarantined and is not the public build target. See
-  [`byof-habitat-sim.md`](byof-habitat-sim.md).
 - **LIBERO** has a quarantined public-neutral-bootstrap development candidate,
   with no supported release. Its neutral bytes contain only a
   digest-pinned Python/Debian base, snapshot-locked bootstrap packages, NPA
