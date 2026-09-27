@@ -26,7 +26,7 @@ from npa.workflows.behavior_challenge.comet_policy import (
 from npa.workflows.behavior_challenge.native_training_checkpoint import file_identity
 
 
-def _released_fixture(tmp_path: Path, monkeypatch):
+def _released_fixture(tmp_path: Path, monkeypatch, prescribed_cases=None):
     root = tmp_path / "inputs"
     root.mkdir()
     evidence = {}
@@ -51,7 +51,11 @@ def _released_fixture(tmp_path: Path, monkeypatch):
             "split_manifest": evidence["task_mapping"]["identity"],
             "mapping_artifact": evidence["task_mapping"]["identity"],
         },
-        [{"instance_id": 200, "rollout_id": 0}],
+        (
+            prescribed_cases
+            if prescribed_cases is not None
+            else [{"instance_id": 200, "rollout_id": 0}]
+        ),
         {
             "behavior_upstream_commit": "1" * 40,
             "task_registry": evidence["task_mapping"]["identity"],
@@ -138,6 +142,37 @@ def test_released_admission_is_params_only(tmp_path, monkeypatch):
     assert admission["full_train_state_claimed"] is False
     assert admission["optimizer_state_claimed"] is False
     assert admission["checkpoint_file_count"] == 1
+
+
+def test_released_admission_accepts_exact_multicase_train_shape(tmp_path, monkeypatch):
+    prescribed = [
+        {"instance_id": instance_id, "rollout_id": 0}
+        for instance_id in (202, 204, 205, 207)
+    ]
+    fixture = _released_fixture(tmp_path, monkeypatch, prescribed)
+    admission = _validate(fixture)
+    assert [
+        (case["instance_id"], case["rollout_id"]) for case in fixture[4]["cases"]
+    ] == [(202, 0), (204, 0), (205, 0), (207, 0)]
+    assert admission["status"] == "released_params_checkpoint_and_train_protocol_exact"
+
+
+@pytest.mark.parametrize(("field", "value"), [("task", "mixed_task"), ("split", "dev")])
+def test_released_multicase_rejects_mixed_task_or_dev_case(
+    tmp_path, monkeypatch, field, value
+):
+    fixture = _released_fixture(
+        tmp_path,
+        monkeypatch,
+        [
+            {"instance_id": instance_id, "rollout_id": 0}
+            for instance_id in (202, 204, 205, 207)
+        ],
+    )
+    changed_panel = deepcopy(fixture[4])
+    changed_panel["cases"][1][field] = value
+    with pytest.raises(ValueError, match="canonical declaration"):
+        _validate((*fixture[:4], changed_panel, fixture[-1]))
 
 
 @pytest.mark.parametrize(

@@ -143,11 +143,15 @@ def _stock_correlation_record(path: Path | None) -> dict | None:
 
 def _verify_task(args, plan):
     tasks = plan["recipe"]["tasks"]
+    trace = getattr(args, "native_train_trace", False)
+    allowed_splits = {"train"} if trace else {"development", "report"}
     if (
-        plan["recipe"]["split"] not in {"development", "report"}
+        plan["recipe"]["split"] not in allowed_splits
         or not isinstance(tasks, list)
         or len(tasks) != 1
     ):
+        if trace:
+            raise ValueError("Native RLC TRAIN split or task differs")
         raise ValueError("RLC transfer requires one development or report task")
     for relative, revision in (
         (".", SOURCE_COMMIT),
@@ -519,6 +523,8 @@ def _prepare_policy_runtime(args, plan: dict, output: Path) -> list[str]:
         stock_correlation,
         upstream_commit=upstream_commit,
     )
+    if getattr(args, "native_train_trace", False):
+        command = _prepare_native_trace(args, plan, output, command)
     _record_prepared_policy(
         output,
         command,
@@ -529,6 +535,89 @@ def _prepare_policy_runtime(args, plan: dict, output: Path) -> list[str]:
         args,
         staged,
         stock_correlation,
+    )
+    return command
+
+
+def _stage_native_trace_sources(args, output: Path) -> dict:
+    from .native_semantic_trace import RUNTIME_WRAPPERS, file_identity, source_authority
+    from .native_train_admission import EXACT_FILES
+
+    names = (
+        "native_semantic_trace.py",
+        "native_train_arrays.py",
+        "native_train_policy_server.py",
+        "native_train_trace_evaluator.py",
+        "train_official_q.py",
+    )
+    for name in names:
+        shutil.copyfile(Path(__file__).with_name(name), output / name)
+    source = source_authority(args.upstream_root, args.policy_root)
+    source["runtime_wrapper"] = next(
+        {"bytes": size, "sha256": digest}
+        for size, digest in RUNTIME_WRAPPERS
+        if size == 14046
+    )
+    component = {
+        "module": file_identity(output / "native_semantic_trace.py"),
+        "official_q": file_identity(output / "train_official_q.py"),
+        "lossless_arrays": file_identity(output / "native_train_arrays.py"),
+        "source": source,
+    }
+    if component["lossless_arrays"] != {
+        key: EXACT_FILES["lossless_arrays"][key] for key in ("bytes", "sha256")
+    }:
+        raise ValueError("staged Native TRAIN lossless recorder differs")
+    return component
+
+
+def _native_trace_config(args, plan, semantic_component: dict) -> dict:
+    panel = args.native_train_panel
+    case = plan["cases"][0]
+    admission_path = Path(args.native_train_admission)
+    return {
+        "schema": "npa.behavior.native-rlc-train-trace-config.v1",
+        "status": "native_train_audit_trace_enabled",
+        "case": case,
+        "panel_id": panel["panel_id"],
+        "policy_identity_sha256": panel["policy_binding_sha256"],
+        "checkpoint_sha256": panel["policy_binding"]["artifacts"]["checkpoint"][
+            "sha256"
+        ],
+        "source_commits": {
+            "rlc": SOURCE_COMMIT,
+            "openpi": OPENPI_COMMIT,
+            "behavior": BEHAVIOR_COMMIT,
+        },
+        "semantic_component": semantic_component,
+        "admission_sha256": file_digest(admission_path),
+        "development_or_report_used": False,
+        "policy_changed": False,
+        "training_ready": False,
+    }
+
+
+def _prepare_native_trace(args, plan, output: Path, command: list[str]) -> list[str]:
+    from .native_train_trace import write_config
+
+    if (
+        getattr(args, "policy_kind", None) != "rlc"
+        or getattr(args, "policy_execution_variant", None) != "native"
+        or plan["recipe"]["split"] != "train"
+    ):
+        raise ValueError("Native trace requires unchanged RLC TRAIN execution")
+    component = _stage_native_trace_sources(args, output)
+    config = _native_trace_config(args, plan, component)
+    write_config(output / "native-train-trace", config)
+    server_index = command.index(str(output / "rlc_server.py"))
+    command[server_index] = str(output / "native_train_policy_server.py")
+    command.extend(
+        (
+            "--native-trace-root",
+            str(output / "native-trace-policy"),
+            "--native-trace-source",
+            str(output / "native-train-trace/config.json"),
+        )
     )
     return command
 

@@ -306,6 +306,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
     policy_kind = getattr(args, "policy_kind", "official")
     experience = getattr(args, "train_experience", False)
     experience_depth = getattr(args, "train_experience_depth", False)
+    native_trace = getattr(args, "native_train_trace", False)
     if experience and policy_kind not in {
         "comet-native",
         "comet-released",
@@ -314,6 +315,12 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         raise ValueError("TRAIN experience recording requires an admitted Comet policy")
     if experience_depth and not experience:
         raise ValueError("TRAIN experience depth requires recording to be enabled")
+    if native_trace and (policy_kind != "rlc" or experience):
+        raise ValueError(
+            "Native TRAIN trace requires an RLC policy without Comet experience"
+        )
+    if native_trace != bool(getattr(args, "native_train_admission", None)):
+        raise ValueError("Native TRAIN trace requires its exact admission")
     task_name = getattr(args, "policy_task_name", None)
     comet_kind = policy_kind in {
         "comet12",
@@ -395,9 +402,18 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             print("Waiting for the managed policy to become ready.", flush=True)
             _wait_for_policy(process, args.port)
             print("Managed policy is ready.", flush=True)
-            yield _train_experience_config_identity(output) if experience else None
+            prepared_identity = None
+            if experience:
+                prepared_identity = _train_experience_config_identity(output)
+            elif native_trace:
+                prepared_identity = _native_trace_config_identity(output)
+            yield prepared_identity
         finally:
             _stop_policy(process)
+            if native_trace:
+                from .native_train_trace import finalize_trace
+
+                finalize_trace(output)
             if policy_kind in {"comet-native", "comet-released", "comet-trained"}:
                 if policy_kind == "comet-native":
                     from .native_comet_policy import finalize_process
@@ -413,4 +429,11 @@ def _train_experience_config_identity(output: Path) -> dict[str, int | str]:
     path = output / "train-experience/config.json"
     if path.is_symlink() or not path.is_file():
         raise ValueError("Prepared TRAIN experience config is absent")
+    return {"bytes": path.stat().st_size, "sha256": file_digest(path)}
+
+
+def _native_trace_config_identity(output: Path) -> dict[str, int | str]:
+    path = output / "native-train-trace/config.json"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Prepared Native TRAIN trace config is absent")
     return {"bytes": path.stat().st_size, "sha256": file_digest(path)}

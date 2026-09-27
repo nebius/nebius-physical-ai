@@ -89,6 +89,17 @@ panel, evaluator, RNG, normalization, tokenizer, task mapping, and serving
 sources before startup. It records inference experience and does not claim an
 optimizer or resumable TrainState.
 
+The unchanged Native RLC policy has a separate audit-only TRAIN recorder.
+Pass `--native-train-trace --native-train-admission PATH` with
+`--policy-kind rlc` and the `native` execution variant. The admission is
+required and binds the frozen TRAIN panel, Native checkpoint/source, and
+official semantic-label implementation. This mode records lossless allowed
+decision observations, raw 30-action model chunks, raw post-wrapper 20-action
+chunks, every float32 returned/applied action, and the final allowed observation. It
+keeps Native stage, grasp, inside, and official-Q labels separate from policy
+inputs. It cannot be combined with Comet `--train-experience`, DEV, or REPORT.
+See the [Native RLC TRAIN trace contract](../docs/workbench/behavior-campaign.md#native-rlc-train-semantic-traces).
+
 Fleet recovery can remove a failed CPU pool without charging unchanged reserved
 GPUs against free capacity again. The requested CPU count must be zero, every
 other rendered capacity setting must match, and fresh provider evidence must

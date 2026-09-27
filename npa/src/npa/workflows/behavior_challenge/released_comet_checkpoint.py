@@ -172,7 +172,7 @@ def validate_released_comet_admission(
     *,
     expected_serving_identity: dict,
 ) -> dict:
-    """Validate exact release bytes and a one-case TRAIN protocol before startup."""
+    """Validate exact release bytes and a prescribed TRAIN panel before startup."""
     if binding_path.is_symlink() or not binding_path.is_file():
         raise ValueError("Released Comet binding must be a regular file")
     binding = _validate_binding(json.loads(binding_path.read_text()))
@@ -199,9 +199,11 @@ def _panel_binding(binding: dict, panel: dict, serving: dict) -> None:
     if (
         protocol["split"] != "train"
         or not isinstance(cases, list)
-        or len(cases) != 1
-        or cases[0].get("task") != binding["task"]
-        or cases[0].get("rollout_id") != 0
+        or not cases
+        or any(
+            case.get("task") != binding["task"] or case.get("rollout_id") != 0
+            for case in cases
+        )
         or protocol["task"] != binding["task"]
         or mapping["data_task_id"] != binding["task_id"]
         or evaluator["model_prediction_horizon"] != 32

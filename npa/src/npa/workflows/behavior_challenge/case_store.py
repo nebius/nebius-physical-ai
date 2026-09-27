@@ -84,6 +84,10 @@ def _valid_state_fields(record: dict) -> bool:
             fields.add("train_experience_config")
             if not _valid_file_identity(record["train_experience_config"]):
                 return False
+        if "native_train_trace_config" in record:
+            fields.add("native_train_trace_config")
+            if not _valid_file_identity(record["native_train_trace_config"]):
+                return False
     if record["state"] == "complete":
         fields.update(("completed_at", "rollout"))
         if not _valid_time(record.get("completed_at")) or not isinstance(
@@ -260,12 +264,14 @@ class CaseStore:
         version: CaseVersion,
         *,
         train_experience_config: dict[str, Any] | None = None,
+        native_train_trace_config: dict[str, Any] | None = None,
     ) -> CaseVersion:
         """Commit the start marker before invoking the official evaluator.
 
         Args:
             version: Current pre-start claim returned by this store.
             train_experience_config: Exact prepared config identity, when enabled.
+            native_train_trace_config: Exact Native trace config identity, when enabled.
         Returns:
             Started record with its new ETag.
         Raises:
@@ -280,6 +286,10 @@ class CaseStore:
             if not _valid_file_identity(train_experience_config):
                 raise ValueError("TRAIN experience config identity differs")
             record["train_experience_config"] = dict(train_experience_config)
+        if native_train_trace_config is not None:
+            if not _valid_file_identity(native_train_trace_config):
+                raise ValueError("Native TRAIN trace config identity differs")
+            record["native_train_trace_config"] = dict(native_train_trace_config)
         record.update(state="started", started_at=_now())
         return CaseVersion(record, self._write(record["case"], record, version.etag))
 

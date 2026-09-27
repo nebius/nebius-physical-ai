@@ -194,7 +194,7 @@ manufacture that evidence.
 
 The `comet-released` policy kind records TRAIN inference from the exact
 published Comet12 params release. Its binding joins the immutable archive and
-packaged 5948-member inventory to the one-case TRAIN panel and provider-read
+packaged 5948-member inventory to the prescribed TRAIN panel and provider-read
 RNG, normalization, tokenizer, task mapping, evaluator argv/source/controller,
 and robot configuration bytes. The worker rechecks the extracted tree against
 the archive before startup, then performs a discarded explicit-RNG load. This
@@ -230,6 +230,38 @@ checkpoint topology check, then validates the v2 cursor, partition totals,
 provider-member closure, and source-bound static reconstruction directly. It
 does not translate the selected receipt into the generic resumable-training
 contract.
+
+### Native RLC TRAIN semantic traces
+
+The published Native RLC policy can record a separate audit-only TRAIN trace
+with `--native-train-trace --native-train-admission PATH`. The option is valid
+only for `--policy-kind rlc`, the unchanged `native` execution variant, and a
+one-case nonreporting TRAIN panel. It cannot be combined with
+`--train-experience`, DEV, or REPORT.
+
+The policy process stores lossless compressed NPZ shards for each model-decision
+observation: the three allowed RGB images and 61-value proprioception vector,
+the raw 30-action model horizon, and the raw post-wrapper 20-action chunk. A
+separate bounded shard stream records every returned 23-value action. The
+evaluator records every officially applied action and one final post-apply
+allowed observation. Shards retain native array dtypes and shapes and always
+load with pickle disabled.
+
+TRAIN-only side labels contain the exact per-can inside predicate, per-arm
+grasp state, official Q masks and score. The policy process records raw current,
+proposed, and accepted Native stages. The validator casts each raw wrapper
+action through the documented float32 return boundary, joins it to the exact
+returned and applied action, joins each later decision observation to the preceding post-apply
+observation hash, checks the final observation, and preserves 30/20 cadence.
+Privileged labels remain outside policy-input shards. Policy and evaluator
+fragments close independently before a terminal-last manifest is published.
+
+An enabled trace identity is committed with the durable case start. Publication
+and fresh-workspace recovery require the same config, manifest, and every
+inventoried member. A missing trace cannot be treated as a legacy unrecorded
+case. Successful collection remains audit-only (`training_ready: false`);
+model fitting requires a later, separately frozen cohort and training
+admission.
 
 For managed workers, construct the serving artifact with
 `serving_identity.serving_artifact(args)`. It hashes the actual adapter files,

@@ -83,8 +83,11 @@ def _put_original(storage, payload, uri):
 
 def _record_originals(store, version, output, record):
     experience = _train_experience_bundle(store, version, output)
+    native_trace = _native_trace_bundle(store, version, output)
     if experience is not None:
         _record_train_experience_requirement(store, version, experience)
+    if native_trace is not None:
+        _record_native_trace_requirement(store, version, native_trace)
     prefix = store.artifact_prefix(version)
     _record_case_provenance(store, version, output)
     _put_original(store.storage, _json_bytes(record), f"{prefix}/validation.json")
@@ -94,7 +97,54 @@ def _record_originals(store, version, output, record):
             raise ValueError("Original artifact changed after inspection")
         _put_original(store.storage, source.read_bytes(), f"{prefix}/{relative}")
     _publish_train_experience(store, version, experience)
+    _publish_native_trace(store, version, native_trace)
     return store.complete(version, record)
+
+
+def _native_trace_bundle(store, version, output):
+    from .native_train_trace import validate_finalized_trace
+
+    root = output / "native-train-trace"
+    expected = version.record.get("native_train_trace_config")
+    if not root.exists():
+        if expected is not None:
+            raise ValueError("Enabled Native TRAIN trace root is absent")
+        return None
+    manifest = validate_finalized_trace(root)
+    config = _payload_identity((root / "config.json").read_bytes())
+    if expected != config or manifest["config"]["panel_id"] != store.panel_id:
+        raise ValueError("Native TRAIN trace differs from durable case start")
+    if manifest["config"]["case"] != version.record["case"]:
+        raise ValueError("Native TRAIN trace case differs")
+    manifest_payload = (root / "trace-manifest.json").read_bytes()
+    requirement = {
+        "schema": "npa.behavior.native-train-trace-publication-requirement.v1",
+        "status": "complete_native_train_trace_required",
+        "config": config,
+        "manifest": _payload_identity(manifest_payload),
+    }
+    return root, manifest, requirement
+
+
+def _record_native_trace_requirement(store, version, bundle) -> None:
+    prefix = store.artifact_prefix(version) + "/native-train-trace"
+    _put_original(
+        store.storage, _json_bytes(bundle[2]), f"{prefix}/publication-requirement.json"
+    )
+
+
+def _publish_native_trace(store, version, bundle) -> None:
+    if bundle is None:
+        return
+    root, manifest, _ = bundle
+    prefix = store.artifact_prefix(version) + "/native-train-trace"
+    for name in manifest["members"]:
+        _put_original(store.storage, (root / name).read_bytes(), f"{prefix}/{name}")
+    _put_original(
+        store.storage,
+        (root / "trace-manifest.json").read_bytes(),
+        f"{prefix}/trace-manifest.json",
+    )
 
 
 def _record_train_experience(store, version, output) -> None:
@@ -314,6 +364,7 @@ def _restore_originals(store, version, output, panel):
         if file_digest(destination) != digest:
             raise ValueError("Recovered original artifact failed SHA-256 verification")
     _restore_train_experience(store, version, output)
+    _restore_native_trace(store, version, output)
     inspected = inspect_rollout(output, version.record["case"])
     if inspected != record:
         raise ValueError("Recovered video or metrics differ from original inspection")
@@ -348,6 +399,41 @@ def _restore_train_experience(store, version, output) -> None:
     )
     if restored is None or restored[3] != requirement:
         raise ValueError("Recovered TRAIN experience requirement differs")
+
+
+def _restore_native_trace(store, version, output) -> None:
+    prefix = store.artifact_prefix(version) + "/native-train-trace"
+    saved = store.storage.read_bytes_with_etag(f"{prefix}/publication-requirement.json")
+    expected = version.record.get("native_train_trace_config")
+    if saved is None:
+        if expected is not None:
+            raise CaseAlreadyStarted("Complete required Native TRAIN trace publication")
+        return
+    requirement = json.loads(saved[0])
+    if (
+        requirement.get("schema")
+        != "npa.behavior.native-train-trace-publication-requirement.v1"
+        or requirement.get("status") != "complete_native_train_trace_required"
+        or requirement.get("config") != expected
+    ):
+        raise ValueError("Recovered Native TRAIN trace requirement differs")
+    manifest = store.storage.read_bytes_with_etag(f"{prefix}/trace-manifest.json")
+    if manifest is None or _payload_identity(manifest[0]) != requirement.get(
+        "manifest"
+    ):
+        raise CaseAlreadyStarted("Complete required Native TRAIN trace publication")
+    value = json.loads(manifest[0])
+    root = output / "native-train-trace"
+    root.mkdir(parents=True, exist_ok=True)
+    for name, identity in value.get("members", {}).items():
+        payload = store.storage.read_bytes_with_etag(f"{prefix}/{name}")
+        if payload is None or _payload_identity(payload[0]) != identity:
+            raise CaseAlreadyStarted("Complete required Native TRAIN trace publication")
+        _restore_experience_member(root, name, payload[0])
+    _restore_experience_member(root, "trace-manifest.json", manifest[0])
+    restored = _native_trace_bundle(store, version, output)
+    if restored is None or restored[2] != requirement:
+        raise ValueError("Recovered Native TRAIN trace requirement differs")
 
 
 def _validate_experience_requirement(value):
@@ -438,7 +524,15 @@ def recover_case(store, version, output: Path, panel: dict) -> dict:
 
 
 def run_partition(
-    panel, partition, worker_index, store, workspace, execute_case, *, prepare_case=None
+    panel,
+    partition,
+    worker_index,
+    store,
+    workspace,
+    execute_case,
+    *,
+    prepare_case=None,
+    preparation_kind="train_experience",
 ):
     """Run unstarted prescribed cases and verify every reused original artifact.
 
@@ -471,14 +565,28 @@ def run_partition(
     cases = [case for case in panel["cases"] if case["case_id"] in assigned]
     return [
         _run_or_recover(
-            store, panel, case, workspace, worker_index, execute_case, prepare_case
+            store,
+            panel,
+            case,
+            workspace,
+            worker_index,
+            execute_case,
+            prepare_case,
+            preparation_kind,
         )
         for case in cases
     ]
 
 
 def _run_or_recover(
-    store, panel, case, workspace, worker_index, execute_case, prepare_case
+    store,
+    panel,
+    case,
+    workspace,
+    worker_index,
+    execute_case,
+    prepare_case,
+    preparation_kind,
 ):
     existing = store.read(case)
     if existing and existing.record["state"] in {"started", "complete"}:
@@ -490,10 +598,13 @@ def _run_or_recover(
         return recover_case(store, claim, output, panel)
     preparation = prepare_case(case, output) if prepare_case else nullcontext()
     try:
-        with preparation as train_experience_config:
-            started = store.start(
-                claim, train_experience_config=train_experience_config
+        with preparation as prepared_identity:
+            fields = (
+                {"native_train_trace_config": prepared_identity}
+                if preparation_kind == "native_trace"
+                else {"train_experience_config": prepared_identity}
             )
+            started = store.start(claim, **fields)
             execute_case(case, output)
             (output / "evaluator-exit.json").write_bytes(_json_bytes(case))
         record = inspect_rollout(output, case)
@@ -697,6 +808,13 @@ def _prepared_evaluator(args, panel, workspace):
             case_environment["NPA_TRAIN_EXPERIENCE_ROOT"] = str(
                 output / "train-experience"
             )
+        if getattr(args, "native_train_trace", False):
+            if not _is_train_panel(panel) or args.policy_kind != "rlc":
+                raise ValueError("Native trace requires an admitted RLC TRAIN panel")
+            command = _native_train_trace_evaluator_argv(command, output)
+            case_environment["NPA_NATIVE_TRAIN_TRACE_ROOT"] = str(
+                output / "native-train-trace"
+            )
         _run_case(command, args, output, case, case_environment)
         verify_upstream(args.upstream_root, revision)
 
@@ -713,6 +831,12 @@ def _train_experience_evaluator_argv(command: list[str], output: Path) -> list[s
     if len(command) < 3 or command[1:3] != ["-m", "omnigibson.eval.eval"]:
         raise ValueError("Official TRAIN evaluator command shape differs")
     return [command[0], str(output / "train_experience_evaluator.py"), *command[3:]]
+
+
+def _native_train_trace_evaluator_argv(command: list[str], output: Path) -> list[str]:
+    if len(command) < 3 or command[1:3] != ["-m", "omnigibson.eval.eval"]:
+        raise ValueError("Official TRAIN evaluator command shape differs")
+    return [command[0], str(output / "native_train_trace_evaluator.py"), *command[3:]]
 
 
 def _simulator_preparation(args, workspace):
@@ -745,6 +869,7 @@ def _validate_train_experience_scope(args, panel) -> None:
     from .policy_prompt import prompt_override
 
     experience = getattr(args, "train_experience", False)
+    native_trace = getattr(args, "native_train_trace", False)
     train_policy_kinds = {"comet-native", "comet-released", "comet-trained"}
     if (
         _is_train_panel(panel)
@@ -758,9 +883,20 @@ def _validate_train_experience_scope(args, panel) -> None:
         not _is_train_panel(panel) or args.policy_kind not in train_policy_kinds
     ):
         raise ValueError("TRAIN experience requires an admitted Comet TRAIN panel")
+    if native_trace and (
+        not _is_train_panel(panel)
+        or args.policy_kind != "rlc"
+        or experience
+        or getattr(args, "policy_execution_variant", None) != "native"
+    ):
+        raise ValueError("Native trace requires unchanged RLC TRAIN execution")
     if getattr(args, "train_experience_depth", False) and not experience:
         raise ValueError("TRAIN experience depth requires recording")
-    if _is_train_panel(panel) and args.policy_kind not in train_policy_kinds:
+    if (
+        _is_train_panel(panel)
+        and args.policy_kind not in train_policy_kinds
+        and not native_trace
+    ):
         raise ValueError("TRAIN campaign execution requires an admitted Comet adapter")
     prompt_override(args, train_panel=_is_train_panel(panel))
 
@@ -770,7 +906,9 @@ def _execute_partition(args, panel, partition, storage, workspace):
     _validate_worker_startup_binding(args, workspace)
     _train_evaluator_preclaim(args, panel)
     if _is_train_panel(panel):
-        if args.policy_kind == "comet-native":
+        if args.policy_kind == "rlc":
+            _native_trace_preclaim(args, panel, workspace)
+        elif args.policy_kind == "comet-native":
             _native_train_preclaim(args, panel, workspace)
         elif args.policy_kind == "comet-released":
             _released_comet_preclaim(args, panel, workspace)
@@ -791,6 +929,11 @@ def _execute_partition(args, panel, partition, storage, workspace):
                 workspace,
                 execute,
                 prepare_case=prepare,
+                preparation_kind=(
+                    "native_trace"
+                    if getattr(args, "native_train_trace", False)
+                    else "train_experience"
+                ),
             )
     except BaseException:
         try:
@@ -866,6 +1009,24 @@ def _native_train_preclaim(args, panel, workspace) -> None:
     args.policy_native_panel = panel
     args.policy_native_admission = admission
     atomic_json(Path(workspace) / "native-train-admission.json", admission)
+
+
+def _native_trace_preclaim(args, panel, workspace) -> None:
+    from .native_train_admission import validate
+    from .native_training_checkpoint import atomic_json
+
+    admission_path = getattr(args, "native_train_admission", None)
+    if not getattr(args, "native_train_trace", False) or admission_path is None:
+        raise ValueError("Native RLC TRAIN requires its trace admission")
+    admission = validate(Path(admission_path), source_root=Path(__file__).parents[5])
+    admitted_panel = json.loads(
+        (Path(admission_path).parent / admission["panel"]["path"]).read_bytes()
+    )
+    if admitted_panel != panel:
+        raise ValueError("Native RLC TRAIN panel differs from admission")
+    args.native_train_panel = panel
+    args.native_train_execution_admission = admission
+    atomic_json(Path(workspace) / "native-rlc-train-admission.json", admission)
 
 
 def _trained_comet_preclaim(args, panel, workspace) -> None:

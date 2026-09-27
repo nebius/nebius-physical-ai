@@ -40,6 +40,7 @@ _OPTIONAL_POLICY_FLAGS = {
     "policy_trained_input_root": "--policy-trained-input-root",
     "policy_released_binding": "--policy-released-binding",
     "policy_released_input_root": "--policy-released-input-root",
+    "native_train_admission": "--native-train-admission",
     "policy_specialist_equivalence_receipt": "--policy-specialist-equivalence-receipt",
     "policy_specialist_equivalence_sha256": "--policy-specialist-equivalence-sha256",
     "policy_specialist_report_admission": "--policy-specialist-report-admission",
@@ -51,6 +52,7 @@ _OPTIONAL_RUNTIME_FLAGS = {
 _BOOLEAN_RUNTIME_FLAGS = {
     "train_experience": "--train-experience",
     "train_experience_depth": "--train-experience-depth",
+    "native_train_trace": "--native-train-trace",
 }
 
 
@@ -242,8 +244,20 @@ def _runtime_config(runtime: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("stock correlation artifact and SHA-256 must appear together")
     _validate_trained_policy_config(values["policy_kind"], optional)
     _validate_released_policy_config(values["policy_kind"], optional, booleans)
+    _validate_native_trace_config(values["policy_kind"], optional, booleans)
     _validate_specialist_report_config(optional)
     return {**values, **optional, **booleans}
+
+
+def _validate_native_trace_config(
+    policy_kind: str, optional: dict[str, str], booleans: dict[str, bool]
+) -> None:
+    enabled = booleans.get("native_train_trace", False)
+    admitted = "native_train_admission" in optional
+    if enabled != admitted or (enabled and policy_kind != "rlc"):
+        raise ValueError("Native TRAIN trace requires rlc and its admission")
+    if enabled and booleans.get("train_experience", False):
+        raise ValueError("Native TRAIN trace is distinct from Comet experience")
 
 
 def _validate_trained_policy_config(policy_kind: str, optional: dict[str, str]) -> None:
