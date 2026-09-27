@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -1051,6 +1052,20 @@ def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> N
             workflow=spec.name,
             run_id="rt-cli-fail",
             status="failed",
+            waves=[
+                {
+                    "key": "wave-001",
+                    "status": "failed",
+                    "logical_launch_id": "logical-wave-001",
+                    "recovery_decision": "operator_review",
+                    "operator_remedy": "repair capacity before resume",
+                    "infrastructure_recovery": {
+                        "used": 2,
+                        "limit": 2,
+                        "exhausted": True,
+                    },
+                }
+            ],
             error="wave 001 reached terminal status FAILED",
         ),
     )
@@ -1071,9 +1086,58 @@ def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> N
         ],
     )
     assert result.exit_code == 1
-    payload = json.loads(result.output[result.output.index("{") :])
+    payload = json.loads(result.stdout)
     assert payload["status"] == "failed"
+    assert payload["run_id"] == "rt-cli-fail"
+    assert payload["waves"][0]["logical_launch_id"] == "logical-wave-001"
+    assert payload["waves"][0]["recovery_decision"] == "operator_review"
+    assert payload["waves"][0]["operator_remedy"] == ("repair capacity before resume")
+    assert payload["waves"][0]["infrastructure_recovery"] == {
+        "used": 2,
+        "limit": 2,
+        "exhausted": True,
+    }
     assert "terminal status FAILED" in payload["error"]
+
+
+def test_submit_access_block_preserves_resume_identity(
+    mocker, satisfied_preflight
+) -> None:
+    payload = {
+        "status": "blocked",
+        "run_id": "access-blocked-run",
+        "resume_command": "npa workbench workflow submit spec --resume-run access-blocked-run",
+        "providers": [{"name": "huggingface", "ready": False}],
+        "legal_assent": False,
+    }
+
+    def block_access(*_args, **_kwargs) -> None:
+        typer.echo(json.dumps(payload))
+        raise typer.Exit(1)
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._enforce_workflow_access",
+        side_effect=block_access,
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "access-blocked-run",
+            "--runtime",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == payload
 
 
 def test_submit_without_runtime_uses_the_one_shot_path(
@@ -1175,6 +1239,278 @@ def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -
     payload = json.loads(result.output)
     assert payload["status"] == "PLANNED"
     assert "execution: serial" in payload["skypilot_yaml"]
+
+
+def test_runtime_workflow_prefix_selects_control_store(fake_runtime) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "runtime-prefix-1",
+            "--var",
+            "bucket=rt-bucket",
+            "--var",
+            "prefix=science/output",
+            "--workflow-s3-prefix",
+            "campaign/runtime",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["state_store"].run_prefix_uri == (
+        "s3://rt-bucket/campaign/runtime/runtime-prefix-1"
+    )
+    assert fake_runtime["spec"].config["prefix"] == "science/output"
+
+
+def test_runtime_workflow_uri_selects_exact_control_store(fake_runtime) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "runtime-uri-1",
+            "--var",
+            "bucket=science-bucket",
+            "--workflow-s3-uri",
+            "s3://control-bucket/campaign/runtime/runtime-uri-1/",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["state_store"].run_prefix_uri == (
+        "s3://control-bucket/campaign/runtime/runtime-uri-1"
+    )
+
+
+def test_plan_only_reports_same_workflow_prefix_location(
+    mocker, monkeypatch, satisfied_preflight
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    runtime_driver = mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--plan-only",
+            "--run-id",
+            "runtime-prefix-1",
+            "--var",
+            "bucket=rt-bucket",
+            "--workflow-s3-prefix",
+            "campaign/runtime",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    runtime_driver.assert_not_called()
+    assert json.loads(result.output)["run_prefix_uri"] == (
+        "s3://rt-bucket/campaign/runtime/runtime-prefix-1"
+    )
+
+
+def test_runtime_plan_resume_reports_recorded_store(
+    monkeypatch, tmp_path: Path, satisfied_preflight
+) -> None:
+    run_id = "recorded-plan-store"
+    recorded = f"s3://control-bucket/recorded/{run_id}"
+    _write_local_receipt(
+        monkeypatch, tmp_path, run_id, _resume_receipt(run_id, recorded)
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--plan-only",
+            "--resume-run",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=science-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["run_prefix_uri"] == recorded
+
+
+def test_runtime_plan_resume_rejects_explicit_store_conflict_before_update(
+    monkeypatch, mocker, tmp_path: Path, satisfied_preflight
+) -> None:
+    run_id = "recorded-plan-conflict"
+    recorded = f"s3://control-bucket/recorded/{run_id}"
+    _write_local_receipt(
+        monkeypatch, tmp_path, run_id, _resume_receipt(run_id, recorded)
+    )
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--plan-only",
+            "--resume-run",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=science-bucket",
+            "--workflow-s3-uri",
+            f"s3://control-bucket/different/{run_id}",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "conflicts with the recorded resume location" in result.output
+    update.assert_not_called()
+    driver.assert_not_called()
+
+
+def test_non_runtime_plan_does_not_advertise_runtime_control_uri(
+    satisfied_preflight,
+) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--plan-only",
+            "--run-id",
+            "one-shot-plan",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "run_prefix_uri" not in json.loads(result.output)
+
+
+def test_runtime_rejects_conflicting_workflow_destinations_before_update(
+    mocker, satisfied_preflight
+) -> None:
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "conflicting-storage",
+            "--var",
+            "bucket=rt-bucket",
+            "--workflow-s3-uri",
+            "s3://rt-bucket/exact/conflicting-storage",
+            "--workflow-s3-prefix",
+            "other-parent",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "conflicts" in result.output
+    update.assert_not_called()
+    driver.assert_not_called()
+
+
+def test_runtime_rejects_full_uri_as_parent_prefix_before_update(
+    mocker, satisfied_preflight
+) -> None:
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "absolute-parent",
+            "--var",
+            "bucket=rt-bucket",
+            "--workflow-s3-prefix",
+            "s3://rt-bucket/campaign/runtime",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "must be a relative S3 key prefix" in result.output
+    update.assert_not_called()
+    driver.assert_not_called()
+
+
+@pytest.mark.parametrize("exact_uri", ["relative/path", "s3:///missing-bucket"])
+def test_runtime_rejects_malformed_exact_uri_before_update(
+    mocker, satisfied_preflight, exact_uri: str
+) -> None:
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "malformed-exact-uri",
+            "--workflow-s3-uri",
+            exact_uri,
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "must be a canonical s3://bucket/key URI" in result.output
+    update.assert_not_called()
+    driver.assert_not_called()
 
 
 def test_plan_spec_waves_text_and_json() -> None:
@@ -1759,6 +2095,44 @@ def test_cli_resume_preserves_recorded_legacy_store(
     receipt = load_submission_state("unit", run_id)
     assert receipt["workflow"]["run_prefix_uri"] == legacy
     assert receipt["workflow"]["manifest_uri"] == f"{legacy}/npa-workflow/manifest.json"
+
+
+def test_cli_resume_rejects_a_different_explicit_store_before_update(
+    monkeypatch, mocker, satisfied_preflight, tmp_path: Path
+) -> None:
+    run_id = "recorded-store-conflict"
+    recorded = f"s3://unit-output/recorded/{run_id}"
+    _write_local_receipt(
+        monkeypatch, tmp_path, run_id, _resume_receipt(run_id, recorded)
+    )
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume-run",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=unit-output",
+            "--workflow-s3-uri",
+            f"s3://unit-output/different/{run_id}",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "conflicts with the recorded resume location" in result.output
+    update.assert_not_called()
+    driver.assert_not_called()
 
 
 def test_cli_denied_recorded_prefix_stops_before_update_or_launch(

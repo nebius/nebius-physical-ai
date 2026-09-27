@@ -492,8 +492,21 @@ module entrypoint, and package initializers that the evaluator interpreter runs.
 The startup gate sets the bound simulator data path, headless mode, and bytecode
 suppression for both smoke and evaluation. It does not set any license or EULA
 acceptance variable. Supply the specification at the same mounted local path on
-every campaign worker when using `--simulator-startup-spec`; a retry accepts an
-existing local receipt only when the specification bytes are unchanged.
+every campaign worker when using `--simulator-startup-spec`. The specification's
+`apps.owner_root` must resolve to that worker's exact `--workspace`. A single
+global specification is therefore valid only when every isolated worker maps the
+same absolute workspace path. A retry accepts an existing local receipt only when
+the specification bytes are unchanged.
+
+Generated campaigns with different worker workspace paths must set each
+`worker_slots[]` entry's `simulator_startup` to exactly one absolute local `spec`
+or `receipt` path. The generator forwards the corresponding mutually exclusive
+worker flag. Do not combine these per-worker bindings with the runtime-level
+`simulator_startup_spec`. A pre-created receipt remains bound to its referenced
+specification and must describe the same owner root as its worker workspace.
+Pin the specification and receipt identities in the enclosing materialization or
+workflow-input contract; a local path alone is routing information, not
+independent provenance.
 
 Invoke the startup gate with paths already prepared for the worker:
 

@@ -32,7 +32,10 @@ from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_c
 
 if TYPE_CHECKING:
     from npa.orchestration.npa_workflow.interpreter import ExecutionPlan
-    from npa.orchestration.npa_workflow.run_state import RunStateStore
+    from npa.orchestration.npa_workflow.run_state import (
+        RunStateStore,
+        RunStorageLocation,
+    )
     from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
     from npa.orchestration.npa_workflow.submit_credentials import (
         SubmitCredentialContext,
@@ -772,6 +775,7 @@ def _workflow_submit_recovery_argv(
 
 
 @app.command("submit")
+@json_stdout_contract(fail_closed_on_exception=True)
 def submit_cmd(
     yaml_path: Path = typer.Argument(
         help="Workflow YAML path (SkyPilot or npa.workflow/v0.0.1)."
@@ -1147,7 +1151,10 @@ def submit_cmd(
     workflow_s3_prefix: str = typer.Option(
         "",
         "--workflow-s3-prefix",
-        help="Parent prefix for durable workflow state. The run ID is appended.",
+        help=(
+            "Relative parent key for durable workflow state; the run ID is "
+            "appended. Use --workflow-s3-uri for a full S3 URI."
+        ),
     ),
     secret_env: list[str] = typer.Option(
         [],
@@ -1245,6 +1252,7 @@ def submit_cmd(
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
     from npa.orchestration.npa_workflow.run_state import (
         is_paidf_input_workflow_name,
+        resolve_workflow_storage_location,
     )
     from npa.orchestration.skypilot.workflow import (
         SkyPilotSubmitError,
@@ -1264,6 +1272,9 @@ def submit_cmd(
     requested_secret_env = tuple(secret_env)
     if submit_timeout <= 0:
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
+    if workflow_s3_uri and workflow_s3_prefix:
+        _fail("--workflow-s3-uri conflicts with --workflow-s3-prefix; select one")
+        return
 
     substitutions = _parse_submit_vars(var)
     try:
@@ -1527,6 +1538,22 @@ def submit_cmd(
     extra_env: dict[str, str] = dict(submit_credentials.secret_values)
     if s3_endpoint:
         extra_env.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, s3_endpoint))
+
+    selected_runtime_location = None
+    if is_npa_spec and runtime:
+        assert merged_npa_spec is not None
+        from npa.orchestration.npa_workflow.runtime import _resolved_config
+
+        try:
+            selected_runtime_location = resolve_workflow_storage_location(
+                _resolved_config(merged_npa_spec, resolved_run_id),
+                run_id=resolved_run_id,
+                workflow_s3_uri=workflow_s3_uri,
+                workflow_s3_prefix=workflow_s3_prefix,
+            )
+        except ValueError as exc:
+            _fail(str(exc))
+            return
     # Storage is an intrinsic runtime dependency for npa.workflow specs, not an
     # optional user-requested secret.  The writable-storage preflight already
     # uses these project-scoped values; keep the local ledger and every runtime
@@ -1892,12 +1919,18 @@ def submit_cmd(
             paidf_placement_prechecked = True
 
         recorded_store = None
-        if runtime and not plan_only:
+        if runtime:
             try:
                 recorded_store = _recorded_runtime_store(
                     project,
                     resolved_run_id,
                     resume=resume,
+                    credentials=submit_credentials,
+                )
+                recorded_store = _selected_runtime_store(
+                    selected_runtime_location,
+                    explicit=bool(workflow_s3_uri or workflow_s3_prefix),
+                    recorded_store=recorded_store,
                     credentials=submit_credentials,
                 )
             except ValueError as exc:
@@ -2578,6 +2611,14 @@ def submit_cmd(
                 "plan": prepared_npa.plan.to_dict(),
                 "skypilot_yaml": rendered,
             }
+            if runtime:
+                planned_payload["run_prefix_uri"] = (
+                    recorded_store.run_prefix_uri
+                    if recorded_store is not None
+                    else selected_runtime_location.uri
+                    if selected_runtime_location is not None
+                    else ""
+                )
             if output_format == OutputFormat.json:
                 typer.echo(json.dumps(planned_payload, indent=2, sort_keys=True))
             else:
@@ -2586,6 +2627,15 @@ def submit_cmd(
                 typer.echo("submission_state: NOT_SUBMITTED")
                 typer.echo(f"preflight_decision: {preflight_decision}")
                 typer.echo(f"run_id: {resolved_run_id}")
+                if runtime:
+                    planned_uri = (
+                        recorded_store.run_prefix_uri
+                        if recorded_store is not None
+                        else selected_runtime_location.uri
+                        if selected_runtime_location is not None
+                        else ""
+                    )
+                    typer.echo(f"run_prefix_uri: {planned_uri}")
                 typer.echo(f"workflow: {prepared_npa.spec.name}")
                 typer.echo(f"steps: {len(prepared_npa.plan.steps)}")
                 typer.echo(
@@ -3223,6 +3273,37 @@ def _recorded_runtime_store(
         endpoint_url=credentials.endpoint_url,
         aws_access_key_id=credentials.access_key_id,
         aws_secret_access_key=credentials.secret_access_key,
+    )
+
+
+def _selected_runtime_store(
+    location: RunStorageLocation | None,
+    *,
+    explicit: bool,
+    recorded_store: RunStateStore | None,
+    credentials: SubmitCredentialContext,
+) -> RunStateStore | None:
+    """Keep a recorded resume store or construct the selected fresh store."""
+
+    selected_uri = location.uri if location is not None else ""
+    if recorded_store is not None:
+        if explicit and recorded_store.run_prefix_uri != selected_uri:
+            raise ValueError(
+                "requested workflow storage conflicts with the recorded "
+                f"resume location {recorded_store.run_prefix_uri!r}"
+            )
+        return recorded_store
+    if not explicit or location is None:
+        return None
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+
+    return store_for_recorded_run_prefix(
+        selected_uri,
+        endpoint_url=credentials.endpoint_url,
+        aws_access_key_id=str(getattr(credentials, "access_key_id", "") or ""),
+        aws_secret_access_key=str(getattr(credentials, "secret_access_key", "") or ""),
     )
 
 

@@ -292,6 +292,20 @@ resumes. `--workspace` is a persistent worker directory. Required
 Run and monitor it with `npa workbench workflow submit`, `status`, `logs`, and
 `artifacts`, as with other Workbench workflows.
 
+When workers use separate workspace paths, give each `worker_slots` entry a
+`simulator_startup` object containing either `spec` or `receipt`, with an
+absolute container path. For example:
+
+```json
+{"simulator_startup": {"receipt": "/campaign/worker-0/simulator-startup.json"}}
+```
+
+The startup specification's `apps.owner_root` and the receipt's evaluator
+context must name that worker's workspace. The worker checks this binding before
+reading campaign inputs or preparing a policy. Pin the specification and receipt
+identities in the enclosing workflow inputs. See the
+[startup qualification contract](behavior-challenge.md) for creation and reuse.
+
 The per-case ledger uses atomic conditional S3 writes:
 
 1. A worker claims a prescribed case. A replaced pre-start owner cannot start it.

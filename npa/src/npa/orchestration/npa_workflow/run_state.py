@@ -110,6 +110,78 @@ def resolve_run_storage_location(
     return RunStorageLocation(bucket=bucket, prefix=prefix)
 
 
+def _exact_workflow_storage(exact_uri: str, run_id: str) -> RunStorageLocation:
+    parsed = urlparse(exact_uri)
+    if not parsed.hostname:
+        raise ValueError("--workflow-s3-uri must be a canonical s3://bucket/key URI")
+    location = resolve_run_storage_location(
+        {"bucket": parsed.hostname, "prefix": exact_uri}, run_id=run_id
+    )
+    if location is None:
+        raise ValueError("--workflow-s3-uri must name an S3 bucket")
+    return location
+
+
+def _prefixed_workflow_storage(
+    config: Mapping[str, Any], parent_prefix: str, run_id: str
+) -> RunStorageLocation:
+    if parent_prefix.startswith("s3:") or "://" in parent_prefix:
+        raise ValueError("--workflow-s3-prefix must be a relative S3 key prefix")
+    configured = resolve_run_storage_location(config, run_id=run_id)
+    if configured is None:
+        raise ValueError("--workflow-s3-prefix requires config.bucket or --s3-bucket")
+    parent = parent_prefix.strip("/")
+    if (
+        not parent
+        or "\\" in parent
+        or "//" in parent
+        or any(part in {".", ".."} for part in parent.split("/"))
+    ):
+        raise ValueError("--workflow-s3-prefix must be a safe non-empty key prefix")
+    location = resolve_run_storage_location(
+        {"bucket": configured.bucket, "prefix": f"{parent}/{run_id}"},
+        run_id=run_id,
+    )
+    if location is None:
+        raise ValueError("--workflow-s3-prefix requires an S3 bucket")
+    return location
+
+
+def resolve_workflow_storage_location(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    workflow_s3_uri: str = "",
+    workflow_s3_prefix: str = "",
+) -> RunStorageLocation | None:
+    """Resolve CLI-selected runtime storage with the normal run-state parser.
+
+    Args:
+        config: Resolved workflow configuration.
+        run_id: Exact run identifier appended to a relative parent prefix.
+        workflow_s3_uri: Optional exact canonical S3 run root.
+        workflow_s3_prefix: Optional relative parent key for the run root.
+
+    Returns:
+        The selected canonical location, or ``None`` without a configured bucket.
+
+    Raises:
+        ValueError: Selectors conflict or contain an invalid storage location.
+    """
+
+    exact_uri = str(workflow_s3_uri or "").strip()
+    parent_prefix = str(workflow_s3_prefix or "").strip()
+    if exact_uri and parent_prefix:
+        raise ValueError(
+            "--workflow-s3-uri conflicts with --workflow-s3-prefix; select one"
+        )
+    if exact_uri:
+        return _exact_workflow_storage(exact_uri, run_id)
+    if parent_prefix:
+        return _prefixed_workflow_storage(config, parent_prefix, run_id)
+    return resolve_run_storage_location(config, run_id=run_id)
+
+
 def is_paidf_input_workflow_name(name: object) -> bool:
     """Whether submit owns real-video/LeRobot preparation for this workflow."""
 

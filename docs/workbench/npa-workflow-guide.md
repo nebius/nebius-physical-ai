@@ -77,6 +77,27 @@ image remains an override; it is not a prerequisite for the ordinary path.
 Resume the exact run using the command NPA prints, or `--resume-run <id>` with
 the original specification and target. See [run identity](../run-lifecycle.md#run-identity).
 
+For runtime orchestration, `--workflow-s3-uri` selects the exact control-state
+run root. `--workflow-s3-prefix` accepts a relative parent key and appends the
+run ID; use `--workflow-s3-uri` when supplying a full S3 URI. A
+plan-only submit reports the same resolved `run_prefix_uri` that execution will
+use. Resume keeps the location recorded by the original submit and rejects a
+different explicit destination before updating local or remote run state.
+
+The opt-in runtime-storage live regression uses the normal CPU Insights workflow
+and requires explicit operator routing. Set
+`NPA_E2E_RUNTIME_STORAGE_ISOLATED_ROOT` to a fresh, empty, canonical absolute
+directory owned by the current user with mode `0700`. The test creates a random
+run child below it and passes that child's controller directory through
+`--isolated-config-dir`. Set `NPA_E2E_SKY_BIN` (or the existing exact
+`NPA_SKYPILOT_BIN`) and `NPA_E2E_KUBECONTEXT`; the test passes both the pinned
+Sky executable and `--infra k8s/<context>` to plan, launch, and mismatched-resume
+commands. Before planning, it writes an owner-only `launch-coordinates.json`
+under the random run child with the run ID, spec path, isolated controller path,
+and science/control URIs so an operator can monitor the blocking test. See
+`npa/tests/e2e/test_workflow_runtime_storage_live_e2e.py` for the complete
+opt-in environment contract.
+
 ### Choose another spec
 
 Browse the [workflow catalog](../../workflows/README.md). `workflows/main/`

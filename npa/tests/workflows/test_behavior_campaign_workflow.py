@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -16,6 +19,7 @@ from npa.workflows.behavior_challenge.campaign import (
 from npa.workflows.behavior_challenge.campaign_workflow import (
     build_campaign_workflow,
 )
+from npa.workflows.behavior_challenge import campaign_runner
 
 IMAGE = "registry.example.invalid/behavior@sha256:" + "1" * 64
 
@@ -224,8 +228,12 @@ def test_worker_argv_includes_operator_runtime_and_only_supplied_optional_flags(
 
 
 def test_worker_runs_source_bound_simulator_startup_inline():
+    slots = [_slot(0, "a"), _slot(1, "b")]
+    for slot in slots:
+        slot["workspace"] = "/campaign/worker"
     document = _workflow(
-        runtime=_runtime(simulator_startup_spec="/campaign/startup-spec.json")
+        runtime=_runtime(simulator_startup_spec="/campaign/startup-spec.json"),
+        slots=slots,
     )
 
     assert document["config"]["simulator_startup_spec"] == (
@@ -235,6 +243,137 @@ def test_worker_runs_source_bound_simulator_startup_inline():
         argv = document["states"][name]["run"]["argv"]
         assert argv[argv.index("--simulator-startup-spec") + 1] == (
             "{{config.simulator_startup_spec}}"
+        )
+
+
+def test_global_startup_spec_rejects_distinct_worker_workspaces():
+    with pytest.raises(ValueError, match="one identical worker workspace"):
+        _workflow(runtime=_runtime(simulator_startup_spec="/campaign/spec.json"))
+
+
+def test_global_startup_spec_path_must_be_absolute():
+    slots = [_slot(0, "a"), _slot(1, "b")]
+    for slot in slots:
+        slot["workspace"] = "/campaign/worker"
+    with pytest.raises(ValueError, match="path must be absolute"):
+        _workflow(
+            slots=slots,
+            runtime=_runtime(simulator_startup_spec="startup-spec.json"),
+        )
+
+
+def test_per_worker_startup_bindings_render_mutually_exclusive_flags():
+    slots = [_slot(0, "a"), _slot(1, "b")]
+    slots[0]["simulator_startup"] = {"receipt": "/campaign/a/worker-0/startup.json"}
+    slots[1]["simulator_startup"] = {"spec": "/campaign/b/worker-1/startup-spec.json"}
+
+    document = _workflow(slots=slots)
+    first = document["states"]["campaign-worker-0"]["run"]["argv"]
+    second = document["states"]["campaign-worker-1"]["run"]["argv"]
+
+    assert first[first.index("--simulator-startup-receipt") + 1] == (
+        "/campaign/a/worker-0/startup.json"
+    )
+    assert "--simulator-startup-spec" not in first
+    assert second[second.index("--simulator-startup-spec") + 1] == (
+        "/campaign/b/worker-1/startup-spec.json"
+    )
+    assert "--simulator-startup-receipt" not in second
+
+
+def test_generated_cross_workspace_specs_match_each_worker_before_startup(
+    tmp_path: Path,
+):
+    slots = [_slot(0, "a"), _slot(1, "b")]
+    for slot in slots:
+        workspace = tmp_path / f"worker-{slot['worker_index']}"
+        workspace.mkdir()
+        slot.pop("pvc")
+        slot["workspace"] = str(workspace)
+        spec = tmp_path / f"startup-{slot['worker_index']}.json"
+        spec.write_text(
+            json.dumps(
+                {
+                    "schema": "npa.workbench.simulator-startup-spec.v1",
+                    "apps": {
+                        "isaac_root": str(tmp_path / "isaac"),
+                        "owner_root": str(workspace),
+                        "view_root": str(workspace / "view"),
+                        "version_file": "VERSION",
+                        "version": {"bytes": 0, "sha256": "0" * 64},
+                        "applications": {},
+                        "linked_directories": [],
+                        "absent_directories": [],
+                    },
+                    "appdata_root": str(workspace / "appdata"),
+                    "command": ["/bin/true"],
+                    "marker_path": str(workspace / "marker.json"),
+                    "shutdown_request_path": str(workspace / "shutdown.json"),
+                    "log_path": str(workspace / "startup.log"),
+                    "environment": {},
+                    "evaluation_context": {
+                        "upstream_root": str(tmp_path / "upstream"),
+                        "evaluator_python": "/bin/true",
+                        "data_root": str(tmp_path / "data"),
+                    },
+                }
+            )
+        )
+        slot["simulator_startup"] = {"spec": str(spec)}
+
+    document = _workflow(slots=slots)
+    rendered = []
+    for index in range(2):
+        argv = document["states"][f"campaign-worker-{index}"]["run"]["argv"]
+        workspace = Path(argv[argv.index("--workspace") + 1])
+        spec = Path(argv[argv.index("--simulator-startup-spec") + 1])
+        campaign_runner._validate_worker_startup_binding(
+            SimpleNamespace(
+                simulator_startup_spec=spec,
+                simulator_startup_receipt=None,
+            ),
+            workspace,
+        )
+        rendered.append((workspace, spec))
+
+    with pytest.raises(ValueError, match="owner_root must equal"):
+        campaign_runner._validate_worker_startup_binding(
+            SimpleNamespace(
+                simulator_startup_spec=rendered[0][1],
+                simulator_startup_receipt=None,
+            ),
+            rendered[1][0],
+        )
+
+
+@pytest.mark.parametrize(
+    "binding, message",
+    [
+        (
+            {"spec": "/campaign/spec.json", "receipt": "/campaign/receipt.json"},
+            "exactly one",
+        ),
+        ({"receipt": "relative.json"}, "must be absolute"),
+    ],
+)
+def test_per_worker_startup_binding_rejects_ambiguous_or_relative_paths(
+    binding, message
+):
+    slots = [_slot(0, "a"), _slot(1, "b")]
+    slots[0]["simulator_startup"] = binding
+    with pytest.raises(ValueError, match=message):
+        _workflow(slots=slots)
+
+
+def test_global_and_per_worker_startup_bindings_conflict():
+    slots = [_slot(0, "a"), _slot(1, "b")]
+    for slot in slots:
+        slot["workspace"] = "/campaign/worker"
+    slots[0]["simulator_startup"] = {"receipt": "/campaign/worker/startup.json"}
+    with pytest.raises(ValueError, match="conflicts"):
+        _workflow(
+            slots=slots,
+            runtime=_runtime(simulator_startup_spec="/campaign/startup-spec.json"),
         )
 
 

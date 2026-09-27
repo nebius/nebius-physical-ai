@@ -568,6 +568,129 @@ def test_workbench_workflow_submit_json_exposes_run_id(mocker, tmp_path) -> None
     assert payload["status"] == "SUBMITTED"
 
 
+def test_workbench_workflow_submit_json_removes_stdout_progress(
+    mocker, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+
+    def noisy_submit(*_args, **_kwargs):
+        print("unexpected submit progress")
+        return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=noisy_submit,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "json-run-noisy",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["run_id"] == "json-run-noisy"
+    assert "unexpected submit progress" not in result.stdout
+    assert "command diagnostics were removed" in result.stderr
+
+
+def test_workbench_workflow_submit_json_rejects_stale_success_on_failure(
+    mocker, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+
+    def failed_submit(*_args, **_kwargs):
+        print(json.dumps({"status": "SUBMITTED", "job_id": "stale"}))
+        raise OSError("submit failed after intermediate output")
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=failed_submit,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "json-run-failed",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["result"] == "error"
+    assert payload["mutation_state"] == "unknown"
+    assert payload["error_type"]
+    assert "stale" not in result.stdout
+
+
+def test_workbench_workflow_submit_json_preserves_launch_transaction(
+    mocker, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.launch_transaction import (
+        FailureCategory,
+        LaunchState,
+        LaunchTransactionResult,
+    )
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    transaction = LaunchTransactionResult(
+        state=LaunchState.INDETERMINATE,
+        logical_launch_id="logical-submit-1",
+        job_id="42",
+        launch_sequence=3,
+        category=FailureCategory.KUBERNETES_TRANSPORT,
+        recovery_decision="operator_review",
+        operator_remedy="inspect the exact controller before retrying",
+        existence="indeterminate",
+        controller={"name": "controller-1"},
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=SkyPilotSubmitError(
+            "launch outcome is indeterminate", transaction=transaction
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "json-run-transaction",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "failed"
+    assert payload["launch_transaction"] == transaction.to_dict()
+
+
 def test_stage_src_uses_resolved_project_storage_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1197,6 +1197,50 @@ def test_relative_config_prefix_keeps_existing_location() -> None:
     assert location.uri == "s3://unit-bucket/runs/demo"
 
 
+def test_workflow_storage_prefix_appends_run_id_with_shared_parser() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_workflow_storage_location,
+    )
+
+    location = resolve_workflow_storage_location(
+        {"bucket": "unit-bucket", "prefix": "science/output"},
+        run_id="runtime-1",
+        workflow_s3_prefix="campaign/runtime",
+    )
+
+    assert location is not None
+    assert location.uri == "s3://unit-bucket/campaign/runtime/runtime-1"
+
+
+def test_workflow_storage_exact_uri_uses_shared_canonical_checks() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_workflow_storage_location,
+    )
+
+    location = resolve_workflow_storage_location(
+        {"bucket": "science-bucket", "prefix": "science/output"},
+        run_id="runtime-1",
+        workflow_s3_uri="s3://control-bucket/campaign/runtime/runtime-1/",
+    )
+
+    assert location is not None
+    assert location.uri == "s3://control-bucket/campaign/runtime/runtime-1"
+
+
+def test_workflow_storage_rejects_conflicting_selectors() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_workflow_storage_location,
+    )
+
+    with pytest.raises(ValueError, match="conflicts"):
+        resolve_workflow_storage_location(
+            {"bucket": "unit-bucket"},
+            run_id="runtime-1",
+            workflow_s3_uri="s3://unit-bucket/exact/runtime-1",
+            workflow_s3_prefix="campaign/runtime",
+        )
+
+
 @pytest.mark.parametrize(
     "prefix",
     [

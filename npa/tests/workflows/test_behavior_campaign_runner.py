@@ -115,6 +115,100 @@ def test_worker_reuse_requires_the_same_startup_spec(tmp_path: Path, monkeypatch
     assert args.simulator_startup_receipt == receipt
 
 
+def test_startup_spec_owner_must_equal_worker_workspace_before_writes(tmp_path: Path):
+    owner = tmp_path / "bootstrap-owner"
+    workspace = tmp_path / "campaign-worker"
+    owner.mkdir()
+    workspace.mkdir()
+    spec = tmp_path / "startup-spec.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "schema": "npa.workbench.simulator-startup-spec.v1",
+                "apps": {
+                    "isaac_root": str(tmp_path / "isaac"),
+                    "owner_root": str(owner),
+                    "view_root": str(owner / "view"),
+                    "version_file": "VERSION",
+                    "version": {"bytes": 0, "sha256": "0" * 64},
+                    "applications": {},
+                    "linked_directories": [],
+                    "absent_directories": [],
+                },
+                "appdata_root": str(owner / "appdata"),
+                "command": ["/bin/true"],
+                "marker_path": str(owner / "marker.json"),
+                "shutdown_request_path": str(owner / "shutdown.json"),
+                "log_path": str(owner / "startup.log"),
+                "environment": {},
+                "evaluation_context": {
+                    "upstream_root": str(tmp_path / "upstream"),
+                    "evaluator_python": "/bin/true",
+                    "data_root": str(tmp_path / "data"),
+                },
+            }
+        )
+    )
+    args = SimpleNamespace(
+        simulator_startup_spec=spec,
+        simulator_startup_receipt=None,
+    )
+
+    with pytest.raises(ValueError, match="owner_root must equal"):
+        campaign_runner._validate_worker_startup_binding(args, workspace)
+
+    assert list(owner.iterdir()) == []
+    assert list(workspace.iterdir()) == []
+
+
+def test_startup_binding_rejects_before_policy_or_case_work(
+    tmp_path: Path, monkeypatch
+):
+    events = []
+
+    def reject(*_args):
+        events.append("startup-binding")
+        raise ValueError("startup binding mismatch")
+
+    monkeypatch.setattr(campaign_runner, "_validate_worker_startup_binding", reject)
+    monkeypatch.setattr(
+        campaign_runner,
+        "_native_train_preclaim",
+        lambda *_args: events.append("policy-preclaim"),
+    )
+
+    with pytest.raises(ValueError, match="startup binding mismatch"):
+        campaign_runner._execute_partition(
+            SimpleNamespace(), {}, {}, object(), tmp_path
+        )
+
+    assert events == ["startup-binding"]
+
+
+def test_startup_binding_rejects_before_storage_or_input_materialization(
+    tmp_path: Path, monkeypatch
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    events = []
+    monkeypatch.setattr(
+        campaign_runner.StorageClient,
+        "from_environment",
+        lambda: events.append("storage"),
+    )
+    args = SimpleNamespace(
+        workspace=workspace,
+        simulator_startup_spec=Path("relative-spec.json"),
+        simulator_startup_receipt=None,
+    )
+
+    with pytest.raises(ValueError, match="path must be absolute"):
+        campaign_runner.evaluate_partition(args)
+
+    assert events == []
+    assert list(workspace.iterdir()) == []
+
+
 def test_invalid_startup_file_fails_before_policy_check(tmp_path: Path, monkeypatch):
     receipt = tmp_path / "startup.json"
     receipt.write_text("{}")
@@ -547,6 +641,9 @@ def test_startup_failure_is_published_before_policy_or_case_claim(fixture, monke
 
     monkeypatch.setattr(
         simulator_startup, "write_simulator_startup_receipt", fail_startup
+    )
+    monkeypatch.setattr(
+        campaign_runner, "_validate_worker_startup_binding", lambda *_: None
     )
     monkeypatch.setattr(campaign_runner, "_prepared_evaluator", evaluator)
     args = SimpleNamespace(

@@ -494,6 +494,7 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
 
 
 def _execute_partition(args, panel, partition, storage, workspace):
+    _validate_worker_startup_binding(args, workspace)
     if _is_train_panel(panel) and getattr(args, "policy_kind", None) != "comet-native":
         raise ValueError(
             "TRAIN campaign execution requires the reviewed comet-native adapter"
@@ -527,6 +528,41 @@ def _execute_partition(args, panel, partition, storage, workspace):
     else:
         _publish_worker_provenance(storage, workspace, args.worker_receipt_uri)
         return records
+
+
+def _validate_worker_startup_binding(args, workspace: Path) -> None:
+    """Reject a startup binding that cannot belong to this worker."""
+
+    spec_path = getattr(args, "simulator_startup_spec", None)
+    receipt_path = getattr(args, "simulator_startup_receipt", None)
+    if spec_path is not None and receipt_path is not None:
+        raise ValueError("simulator startup spec conflicts with startup receipt")
+    for label, path in (("specification", spec_path), ("receipt", receipt_path)):
+        if path is not None and not Path(path).is_absolute():
+            raise ValueError(f"simulator startup {label} path must be absolute")
+    if spec_path is not None:
+        from .simulator_startup import load_simulator_startup_spec
+
+        spec = load_simulator_startup_spec(Path(spec_path))
+        if spec.apps.owner_root.resolve(strict=True) != workspace.resolve(strict=True):
+            raise ValueError(
+                "simulator startup specification owner_root must equal the "
+                "campaign worker workspace"
+            )
+        return
+    if receipt_path is not None:
+        from .simulator_startup import (
+            build_evaluation_context,
+            validate_simulator_startup_receipt,
+        )
+
+        context = build_evaluation_context(
+            args.upstream_root,
+            Path(args.evaluator_python),
+            Path(args.data_root),
+            workspace,
+        )
+        validate_simulator_startup_receipt(Path(receipt_path), context)
 
 
 def _native_train_preclaim(args, panel, workspace) -> None:
@@ -601,6 +637,7 @@ def evaluate_partition(args) -> dict:
     """
     workspace = args.workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
+    _validate_worker_startup_binding(args, workspace)
     storage = StorageClient.from_environment()
     panel, partition = _worker_declarations(args, storage, workspace)
     verify_upstream(args.upstream_root, _upstream_commit(panel))

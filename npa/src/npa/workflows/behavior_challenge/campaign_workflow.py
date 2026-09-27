@@ -73,7 +73,8 @@ def build_campaign_workflow(
             collide with immutable worker receipts or policy provenance.
         runtime_image: Operator image pinned by a full SHA-256 digest.
         runtime: Preinstalled evaluator and managed-policy path parameters.
-        worker_slots: Resource, workspace, and optional PVC for each worker.
+        worker_slots: Resource, workspace, optional PVC, and optional exact
+            per-worker simulator startup spec or receipt path.
         aggregate: Optional barrier resource, workspace, and receipt URI.
     Returns:
         JSON-compatible ``npa.workflow/v0.0.1`` document.
@@ -123,6 +124,7 @@ def _build_workflow(
     )
     common = _runtime_config(runtime)
     slots = _validate_slots(worker_slots, partition["worker_count"])
+    _validate_startup_bindings(slots, common)
     resources = _resources(slots, aggregate)
     config = _config(
         runtime_image,
@@ -265,6 +267,7 @@ def _validate_slots(slots: object, worker_count: int) -> list[dict[str, Any]]:
             "resource",
             "workspace",
             "pvc",
+            "simulator_startup",
         }:
             raise ValueError("worker slot fields differ")
         if not {"worker_index", "resource", "workspace"}.issubset(slot):
@@ -288,6 +291,9 @@ def _validate_slot(slot: dict[str, Any]) -> None:
     workspace = slot["workspace"]
     if not isinstance(workspace, str) or not PurePosixPath(workspace).is_absolute():
         raise ValueError("worker workspace must be an absolute container path")
+    startup = slot.get("simulator_startup")
+    if startup is not None:
+        _validate_worker_startup(startup)
     pvc = slot.get("pvc")
     if pvc is None:
         return
@@ -298,6 +304,34 @@ def _validate_slot(slot: dict[str, Any]) -> None:
     mount = PurePosixPath(pvc["mount_path"])
     if not mount.is_absolute() or not PurePosixPath(workspace).is_relative_to(mount):
         raise ValueError("worker workspace must be inside its writable PVC mount")
+
+
+def _validate_worker_startup(value: object) -> None:
+    if not isinstance(value, dict) or set(value) not in ({"spec"}, {"receipt"}):
+        raise ValueError(
+            "worker simulator_startup requires exactly one of spec or receipt"
+        )
+    [path] = value.values()
+    if not isinstance(path, str) or not PurePosixPath(path).is_absolute():
+        raise ValueError("worker simulator startup path must be absolute")
+
+
+def _validate_startup_bindings(
+    slots: list[dict[str, Any]], runtime: dict[str, Any]
+) -> None:
+    global_spec = runtime.get("simulator_startup_spec")
+    per_worker = [slot for slot in slots if "simulator_startup" in slot]
+    if global_spec is not None and not PurePosixPath(global_spec).is_absolute():
+        raise ValueError("global simulator_startup_spec path must be absolute")
+    if global_spec is not None and per_worker:
+        raise ValueError(
+            "global simulator_startup_spec conflicts with per-worker startup bindings"
+        )
+    if global_spec is not None and len({slot["workspace"] for slot in slots}) != 1:
+        raise ValueError(
+            "global simulator_startup_spec requires one identical worker workspace; "
+            "use per-worker startup bindings for distinct workspaces"
+        )
 
 
 def _resources(
@@ -436,7 +470,7 @@ def _worker_state(slot: dict[str, Any], runtime: dict[str, Any]) -> dict[str, An
     return {
         "description": f"Run immutable campaign partition worker {index}.",
         "resources": f"campaign-worker-{index}",
-        "run": {"argv": _worker_argv(index, slot["workspace"], receipt, runtime)},
+        "run": {"argv": _worker_argv(slot, receipt, runtime)},
         "inputs": [
             {"uri": "{{config.panel_uri}}", "schema": "npa.behavior.campaign-panel.v1"},
             {
@@ -449,8 +483,10 @@ def _worker_state(slot: dict[str, Any], runtime: dict[str, Any]) -> dict[str, An
 
 
 def _worker_argv(
-    index: int, workspace: str, receipt: str, runtime: dict[str, Any]
+    slot: dict[str, Any], receipt: str, runtime: dict[str, Any]
 ) -> list[str]:
+    index = slot["worker_index"]
+    workspace = slot["workspace"]
     argv = [
         "python3",
         "-m",
@@ -477,6 +513,10 @@ def _worker_argv(
     for field, flag in _OPTIONAL_RUNTIME_FLAGS.items():
         if field in runtime:
             argv.extend((flag, f"{{{{config.{field}}}}}"))
+    startup = slot.get("simulator_startup")
+    if startup is not None:
+        [kind] = startup
+        argv.extend((f"--simulator-startup-{kind}", startup[kind]))
     return argv
 
 
