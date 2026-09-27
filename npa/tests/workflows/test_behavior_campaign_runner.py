@@ -661,6 +661,7 @@ def test_startup_failure_is_published_before_policy_or_case_claim(fixture, monke
     assert all(store.read(case) is None for case in panel["cases"])
     uploaded = {uri.rsplit("/", 1)[-1] for uri in store.storage.objects}
     assert uploaded == {
+        "provenance-index.json",
         "simulator-startup-failure.json",
         "simulator-startup.log",
     }
@@ -712,8 +713,57 @@ def test_parallel_workers_have_separate_original_provenance(tmp_path):
         campaign_runner._publish_worker_provenance(
             storage, workspace, f"s3://example-bucket/run/workers/worker-{index}.json"
         )
-    assert len(storage.objects) == 2
-    assert {value[0] for value in storage.objects.values()} == {
+    assert len(storage.objects) == 4
+    assert {
+        value[0] for uri, value in storage.objects.items() if uri.endswith(".log")
+    } == {
         b"worker 0 original log",
         b"worker 1 original log",
     }
+
+
+def test_completed_worker_recovers_with_staged_archive_without_policy_calls(
+    fixture, monkeypatch
+):
+    panel, partition, store, workspace = fixture
+    records = campaign_runner.run_partition(
+        panel, partition, 0, store, workspace / "original", _write_original
+    )
+    originals = dict(store.storage.objects)
+    fresh = workspace / "recovered"
+    fresh.mkdir()
+    with (fresh / "checkpoint.zip").open("wb") as stream:
+        stream.truncate(12 * 1024**3)
+
+    def forbidden(*_):
+        pytest.fail("A completed case must never prepare a policy or execute again")
+
+    @contextmanager
+    def evaluator(*_):
+        yield forbidden, forbidden
+
+    monkeypatch.setattr(campaign_runner, "_prepared_evaluator", evaluator)
+    monkeypatch.setattr(
+        campaign_runner.StorageClient, "from_environment", lambda: store.storage
+    )
+    monkeypatch.setattr(
+        campaign_runner, "_worker_declarations", lambda *_: (panel, partition)
+    )
+    monkeypatch.setattr(campaign_runner, "verify_upstream", lambda *_: None)
+    args = SimpleNamespace(
+        workspace=fresh,
+        upstream_root=workspace / "upstream",
+        worker_index=0,
+        output_path="s3://example-bucket/campaign",
+        worker_receipt_uri="s3://example-bucket/run/workers/worker-0.json",
+        policy_kind="comet",
+    )
+    receipt = campaign_runner.evaluate_partition(args)
+    assert receipt["completed"] == len(records) == 2
+    assert receipt["case_ids"] == [record["case_id"] for record in records]
+    assert all(store.storage.objects[uri] == saved for uri, saved in originals.items())
+    assert json.loads(store.storage.objects[args.worker_receipt_uri][0]) == receipt
+    index_uri = args.worker_receipt_uri.removesuffix(".json") + "/provenance-index.json"
+    assert json.loads(store.storage.objects[index_uri][0])["excluded_inputs"] == [
+        {"name": "checkpoint.zip", "bytes": 12 * 1024**3, "reason": "not_diagnostic"}
+    ]

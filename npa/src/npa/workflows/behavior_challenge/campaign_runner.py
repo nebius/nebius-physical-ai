@@ -736,10 +736,9 @@ def _simulator_preparation(args, workspace):
 
 
 def _publish_worker_provenance(storage, workspace, receipt_uri):
-    prefix = receipt_uri.removesuffix(".json") + "/provenance"
-    for path in sorted(workspace.iterdir()):
-        if path.is_file() and not path.is_symlink():
-            _put_original(storage, path.read_bytes(), f"{prefix}/{path.name}")
+    from .worker_provenance import publish_worker_provenance
+
+    publish_worker_provenance(storage, workspace, receipt_uri, _put_original)
 
 
 def _validate_train_experience_scope(args, panel) -> None:

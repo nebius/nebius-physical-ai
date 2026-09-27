@@ -363,6 +363,16 @@ records their hashes and explicitly marks them unvalidated. This diagnostic
 manifest neither completes the case nor authorizes recovery or another rollout.
 If storage fails, keep the original worker volume; logs report the failed upload.
 
+Worker-level publication includes top-level JSON, log, Python, shell, text, and
+YAML diagnostics. It records excluded binary inputs in `provenance-index.json`
+without claiming to verify their contents again. Staged model archives therefore
+cannot exceed the storage service's single-upload limit during finalization.
+Diagnostics larger than 64 MiB are preserved in ordered parts; the index records
+each part's URI and hash plus the complete file's size and hash. Small files keep
+their original object names. Every uploaded part is read back before the index
+is published. Completed case metrics and videos keep their existing format and
+recovery checks.
+
 Each case starts with the policy's native initial random state. A websocket
 reset alone does not reset the RLC sampler's random generator. Fresh processes
 keep the sampler state independent of preceding cases, worker assignments, and
