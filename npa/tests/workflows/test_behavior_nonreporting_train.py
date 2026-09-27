@@ -47,14 +47,16 @@ def _lineage() -> dict:
     }
 
 
-def _evaluator() -> dict:
+def _evaluator(
+    *, wrapper: str = "fixture.Wrapper", robot_config: dict | None = None
+) -> dict:
     return {
         "argv_contract": _artifact("9"),
         "evaluator_source": _artifact("2"),
         "controller_source": _artifact("3"),
-        "robot_config": _artifact("4"),
+        "robot_config": robot_config or _artifact("4"),
         "rng_contract": _artifact("5"),
-        "wrapper": "fixture.Wrapper",
+        "wrapper": wrapper,
         "mode": "train",
         "num_envs": 1,
         "num_rollouts": 1,
@@ -224,22 +226,33 @@ def test_protocol_rejects_duplicate_cases_and_wrong_identity():
         )
 
 
-def test_train_evaluator_argv_is_one_exact_train_case_without_step_override():
+def test_train_evaluator_argv_is_one_exact_train_case_without_step_override(
+    tmp_path, monkeypatch
+):
     lineage = _lineage()
     lineage["behavior_upstream_commit"] = "6cbf70b075816096e9be53958780769f3264d25d"
+    root = tmp_path / "upstream"
+    robot = root / train.EVAL_DIRECTORY / "r1pro.yaml"
+    robot.parent.mkdir(parents=True)
+    robot.write_bytes(b"official robot config\n")
+    robot_identity = {
+        "bytes": robot.stat().st_size,
+        "sha256": train.file_digest(robot),
+    }
+    monkeypatch.setattr(train, "verify_upstream", lambda *_: None)
     protocol = train.declare_train_protocol(
         "fixture_task",
         _mapping("fixture_task"),
         [{"instance_id": 7, "rollout_id": 0}],
         lineage,
-        _evaluator(),
+        _evaluator(wrapper=train.WRAPPER, robot_config=robot_identity),
     )
     panel = train.declare_train_panel(protocol, _policy("6"))
 
     argv = train.train_evaluator_argv(
         protocol,
         panel["cases"][0],
-        root=Path("/verified/upstream"),
+        root=root,
         python="/locked/python",
         host="127.0.0.1",
         port=8000,
@@ -257,12 +270,40 @@ def test_train_evaluator_argv_is_one_exact_train_case_without_step_override():
         train.train_evaluator_argv(
             protocol,
             {**panel["cases"][0], "instance_id": 8},
-            root=Path("/verified/upstream"),
+            root=root,
             python="/locked/python",
             host="127.0.0.1",
             port=8000,
             output=Path("/case/output"),
         )
+
+
+def test_train_execution_rejects_invalid_wrapper_and_wrong_robot(tmp_path, monkeypatch):
+    lineage = _lineage()
+    lineage["behavior_upstream_commit"] = "6cbf70b075816096e9be53958780769f3264d25d"
+    invalid = train.declare_train_protocol(
+        "fixture_task",
+        _mapping("fixture_task"),
+        [{"instance_id": 7, "rollout_id": 0}],
+        lineage,
+        _evaluator(wrapper="omnigibson.evaluator.Evaluator"),
+    )
+    with pytest.raises(ValueError, match="official evaluator wrapper"):
+        train.verify_train_evaluator_source(invalid, tmp_path)
+
+    robot = tmp_path / train.EVAL_DIRECTORY / "r1pro.yaml"
+    robot.parent.mkdir(parents=True)
+    robot.write_bytes(b"wrong robot config\n")
+    monkeypatch.setattr(train, "verify_upstream", lambda *_: None)
+    official = train.declare_train_protocol(
+        "fixture_task",
+        _mapping("fixture_task"),
+        [{"instance_id": 7, "rollout_id": 0}],
+        lineage,
+        _evaluator(wrapper=train.WRAPPER),
+    )
+    with pytest.raises(ValueError, match="robot configuration bytes differ"):
+        train.verify_train_evaluator_source(official, tmp_path)
 
 
 def test_panel_and_partition_bind_complete_policy_and_case_order():

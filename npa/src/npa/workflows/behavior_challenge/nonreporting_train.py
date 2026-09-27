@@ -8,7 +8,14 @@ import re
 from typing import Any
 
 from .campaign import canonical_digest, validate_policy_identity
-from .protocol import EVAL_DIRECTORY, UPSTREAM_COMMITS, require_supported_upstream
+from .protocol import (
+    EVAL_DIRECTORY,
+    UPSTREAM_COMMITS,
+    WRAPPER,
+    file_digest,
+    require_supported_upstream,
+    verify_upstream,
+)
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -481,6 +488,7 @@ def train_evaluator_argv(
         ValueError: Protocol, case, revision, or endpoint differs.
     """
     valid = validate_train_protocol(protocol)
+    verify_train_evaluator_source(valid, root)
     expected_cases = {
         (item["instance_id"], item["rollout_id"]) for item in valid["prescribed_cases"]
     }
@@ -525,6 +533,36 @@ def train_evaluator_argv(
     if revision == UPSTREAM_COMMITS["3.9.3"]:
         argv.extend(("--num-envs", "1", "--replay-action-chunk-size", "0"))
     return argv + ["--write-video", "--headless"]
+
+
+def verify_train_evaluator_source(
+    protocol: dict[str, Any], root: Path
+) -> dict[str, Any]:
+    """Verify the official evaluator and declared robot configuration.
+
+    Args:
+        protocol: Valid non-reporting TRAIN protocol.
+        root: Pinned BEHAVIOR source checkout used by the evaluator.
+    Returns:
+        Exact wrapper and robot configuration identity used at runtime.
+    Raises:
+        ValueError: The wrapper, source revision, or robot bytes differ.
+        OSError: The robot configuration cannot be inspected.
+        subprocess.CalledProcessError: Git cannot inspect the checkout.
+    """
+    valid = validate_train_protocol(protocol)
+    contract = valid["evaluator_contract"]
+    if contract["wrapper"] != WRAPPER:
+        raise ValueError("TRAIN execution requires the official evaluator wrapper")
+    revision = valid["science_lineage"]["behavior_upstream_commit"]
+    verify_upstream(root, revision)
+    robot = root / EVAL_DIRECTORY / "r1pro.yaml"
+    if robot.is_symlink() or not robot.is_file():
+        raise ValueError("Official TRAIN robot configuration path differs")
+    observed = {"bytes": robot.stat().st_size, "sha256": file_digest(robot)}
+    if observed != contract["robot_config"]:
+        raise ValueError("Declared TRAIN robot configuration bytes differ")
+    return {"wrapper": WRAPPER, "robot_config": observed}
 
 
 def _rollout_files(record: dict[str, Any], case: dict[str, Any]) -> dict[str, str]:

@@ -107,6 +107,13 @@ and emits the `npa.behavior.inspect-rollout.v1` contract with the verification
 flag true. The protocol binds source and argv artifact identities; constructing
 it alone does not verify those bytes.
 
+Before a TRAIN worker loads a policy or claims a case, it verifies the pinned,
+clean BEHAVIOR checkout, requires the official
+`omnigibson.eval.wrappers.RGBDFullResWrapper`, and matches the declared robot
+configuration to `OmniGibson/omnigibson/eval/r1pro.yaml` byte for byte. Generic
+dotted evaluator declarations remain valid as portable protocol data, but the
+production TRAIN runner accepts only this source-bound official invocation.
+
 `rank_train_study()` compares any declared number of complete, file-backed
 policy aggregates. It rejects pure caller-supplied aggregates. It uses ascending
 primary/secondary calibration loss and descending mean Q/success count, with

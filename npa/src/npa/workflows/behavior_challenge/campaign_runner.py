@@ -30,6 +30,7 @@ from .nonreporting_train import (
     train_evaluator_argv,
     validate_train_panel,
     validate_train_partition,
+    verify_train_evaluator_source,
 )
 from .policy import POLICY_FIELDS, managed_policy
 from .protocol import evaluator_argv, file_digest, verify_upstream
@@ -766,6 +767,7 @@ def _validate_train_experience_scope(args, panel) -> None:
 def _execute_partition(args, panel, partition, storage, workspace):
     _validate_train_experience_scope(args, panel)
     _validate_worker_startup_binding(args, workspace)
+    _train_evaluator_preclaim(args, panel)
     if _is_train_panel(panel):
         if args.policy_kind == "comet-native":
             _native_train_preclaim(args, panel, workspace)
@@ -798,6 +800,12 @@ def _execute_partition(args, panel, partition, storage, workspace):
     else:
         _publish_worker_provenance(storage, workspace, args.worker_receipt_uri)
         return records
+
+
+def _train_evaluator_preclaim(args, panel) -> None:
+    if not _is_train_panel(panel):
+        return
+    verify_train_evaluator_source(panel["protocol"], args.upstream_root)
 
 
 def _validate_worker_startup_binding(args, workspace: Path) -> None:

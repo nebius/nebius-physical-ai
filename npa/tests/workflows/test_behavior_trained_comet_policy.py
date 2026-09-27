@@ -665,7 +665,13 @@ def _artifact(marker: str) -> dict:
     return {"bytes": 1, "sha256": marker * 64}
 
 
-def _train_panel(args, admission: Path) -> dict:
+def _train_panel(
+    args,
+    admission: Path,
+    *,
+    wrapper: str = "omnigibson.evaluator.Evaluator",
+    robot_config: dict | None = None,
+) -> dict:
     admitted = json.loads(admission.read_text())
     normalization = {
         name: admitted["normalization"]["provider"][name]
@@ -700,9 +706,9 @@ def _train_panel(args, admission: Path) -> dict:
             "argv_contract": _artifact("a"),
             "evaluator_source": _artifact("b"),
             "controller_source": _artifact("c"),
-            "robot_config": _artifact("d"),
+            "robot_config": robot_config or _artifact("d"),
             "rng_contract": rng_contract,
-            "wrapper": "omnigibson.evaluator.Evaluator",
+            "wrapper": wrapper,
             "mode": "train",
             "num_envs": 1,
             "num_rollouts": 1,
@@ -1385,11 +1391,17 @@ def test_trained_train_admission_precedes_startup_and_case_claim(
         original(*values)
         events.append("admission")
 
+    def evaluator_preclaim(*_values):
+        events.append("evaluator-contract")
+
     def startup(*_values):
         events.append("startup")
         raise RuntimeError("stop before claim")
 
     monkeypatch.setattr(campaign_runner, "_trained_comet_preclaim", preclaim)
+    monkeypatch.setattr(
+        campaign_runner, "_train_evaluator_preclaim", evaluator_preclaim
+    )
     monkeypatch.setattr(campaign_runner, "_prepare_worker_startup", startup)
     monkeypatch.setattr(campaign_runner, "_publish_worker_provenance", lambda *_: None)
     monkeypatch.setattr(
@@ -1402,7 +1414,51 @@ def test_trained_train_admission_precedes_startup_and_case_claim(
         campaign_runner._execute_partition(
             args, panel, partition, object(), args.workspace
         )
-    assert events == ["admission", "startup"]
+    assert events == ["evaluator-contract", "admission", "startup"]
+
+
+def test_train_evaluator_source_rejects_before_policy_or_case_side_effects(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admission, checkpoint, _inputs, _dev_panel, args = _fixture(tmp_path, monkeypatch)
+    args.train_experience = True
+    args.policy_checkpoint = checkpoint
+    args.workspace = tmp_path / "workspace"
+    args.workspace.mkdir()
+    args.upstream_root = tmp_path / "upstream"
+    args.worker_index = 0
+
+    for name in ("_trained_comet_preclaim", "_prepare_worker_startup", "CaseStore"):
+        monkeypatch.setattr(
+            campaign_runner,
+            name,
+            lambda *_args, gate=name: pytest.fail(
+                f"{gate} ran before source rejection"
+            ),
+        )
+
+    invalid_wrapper = _train_panel(args, admission)
+    invalid_partition = nonreporting_train.partition_train_panel(invalid_wrapper, 1)
+    with pytest.raises(ValueError, match="official evaluator wrapper"):
+        campaign_runner._execute_partition(
+            args, invalid_wrapper, invalid_partition, object(), args.workspace
+        )
+
+    robot = args.upstream_root / nonreporting_train.EVAL_DIRECTORY / "r1pro.yaml"
+    robot.parent.mkdir(parents=True)
+    robot.write_bytes(b"wrong robot configuration\n")
+    monkeypatch.setattr(nonreporting_train, "verify_upstream", lambda *_: None)
+    wrong_robot = _train_panel(
+        args,
+        admission,
+        wrapper=nonreporting_train.WRAPPER,
+        robot_config=_artifact("d"),
+    )
+    wrong_partition = nonreporting_train.partition_train_panel(wrong_robot, 1)
+    with pytest.raises(ValueError, match="robot configuration bytes differ"):
+        campaign_runner._execute_partition(
+            args, wrong_robot, wrong_partition, object(), args.workspace
+        )
 
 
 def test_trained_train_without_recording_rejects_before_any_runtime_gate(

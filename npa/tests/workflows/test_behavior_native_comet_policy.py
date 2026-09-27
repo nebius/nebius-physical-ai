@@ -695,6 +695,7 @@ def test_native_worker_rejects_bad_binding_before_startup_or_store(
     monkeypatch.setattr(
         campaign_runner, "_prepare_worker_startup", unexpected("startup")
     )
+    monkeypatch.setattr(campaign_runner, "_train_evaluator_preclaim", lambda *_: None)
     monkeypatch.setattr(campaign_runner, "_specialist_preclaim", unexpected("preclaim"))
     monkeypatch.setattr(campaign_runner, "CaseStore", unexpected("case-store"))
     with pytest.raises(
@@ -739,6 +740,7 @@ def test_native_worker_admits_before_startup_and_preserves_admission_on_failure(
             self.objects[uri] = payload
 
     storage = Storage()
+    monkeypatch.setattr(campaign_runner, "_train_evaluator_preclaim", lambda *_: None)
     monkeypatch.setattr(campaign_runner, "_prepare_worker_startup", fail_startup)
     with pytest.raises(RuntimeError, match="after native admission"):
         campaign_runner._execute_partition(
