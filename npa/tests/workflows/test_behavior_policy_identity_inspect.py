@@ -129,7 +129,7 @@ def test_inspector_matches_production_digests_without_effects(
     assert result["policy"]["checkpoint"] == panel["policy"]["artifacts"]["checkpoint"]
     assert result["policy"]["serving"] == panel["policy"]["artifacts"]["serving"]
     assert not any(result["effects"].values())
-    assert list(tmp_path.iterdir()) == [checkpoint, panel_path]
+    assert set(tmp_path.iterdir()) == {checkpoint, panel_path}
 
 
 def test_inspector_reports_expected_and_actual_checkpoint(tmp_path: Path):
