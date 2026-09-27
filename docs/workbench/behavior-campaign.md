@@ -249,7 +249,10 @@ load with pickle disabled.
 
 TRAIN-only side labels contain the exact per-can inside predicate, per-arm
 grasp state, official Q masks and score. The policy process records raw current,
-proposed, and accepted Native stages. The validator casts each raw wrapper
+proposed, and accepted Native stages. Stage proposals preserve the published
+model's negative-infinity masks for invalid stages and its unchanged argmax;
+NaN, positive infinity, and fully masked predictions are rejected.
+The validator casts each raw wrapper
 action through the documented float32 return boundary, joins it to the exact
 returned and applied action, joins each later decision observation to the preceding post-apply
 observation hash, checks the final observation, and preserves 30/20 cadence.

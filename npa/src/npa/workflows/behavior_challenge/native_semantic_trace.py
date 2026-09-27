@@ -315,7 +315,15 @@ class StageTrace:
         logits = np.asarray(result.get("subtask_logits"))
         if before.shape != () or not np.issubdtype(before.dtype, np.integer):
             raise ValueError("native stage input differs")
-        if logits.ndim != 1 or logits.size < 1 or not np.isfinite(logits).all():
+        valid_logits = (
+            logits.ndim == 1
+            and logits.size >= 1
+            and np.issubdtype(logits.dtype, np.floating)
+            and not np.isnan(logits).any()
+            and not np.isposinf(logits).any()
+            and np.isfinite(logits).any()
+        )
+        if not valid_logits:
             raise ValueError("native raw stage proposal differs")
         self.pending = {
             "stage_before": int(before),

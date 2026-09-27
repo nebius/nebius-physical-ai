@@ -56,8 +56,8 @@ EXACT_FILES = {
     },
     "semantic_module": {
         "path": "native_semantic_trace.py",
-        "bytes": 20361,
-        "sha256": "fc418c220ab38c5aed9c9f7a9d6a493aeec6ba79cb98a1866505ba146afe4638",
+        "bytes": 20594,
+        "sha256": "675afdf3499d2919c58d05e279fa8a60ec5a373fe464f245fcb14ef0831ef234",
     },
     "official_q": {
         "path": "train_official_q.py",

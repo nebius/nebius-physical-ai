@@ -19,8 +19,11 @@ from npa.workflows.behavior_challenge import campaign_runner, campaign_workflow
 from npa.workflows.behavior_challenge.case_store import CaseStore
 from npa.workflows.behavior_challenge.native_semantic_trace import (
     CANS,
+    NativeStageObserver,
+    StageTrace,
     allowed_observation_sha256,
     array_sha256,
+    file_identity,
 )
 from npa.workflows.behavior_challenge.native_train_arrays import (
     NativeEvaluatorArrays,
@@ -56,6 +59,69 @@ class MemoryStorage:
         etag = str(self.revision)
         self.objects[uri] = (payload, etag)
         return etag
+
+
+def test_native_stage_observer_accepts_exact_masked_first_inference(tmp_path):
+    """The released model masks invalid task stages with negative infinity."""
+
+    wrapper_source = tmp_path / "eval_b1k_wrapper.py"
+    wrapper_source.write_text("# exact wrapper identity fixture\n")
+    source = {"runtime_wrapper": file_identity(wrapper_source)}
+
+    class Wrapper:
+        def __init__(self):
+            self.action = np.arange(23, dtype=np.float32)
+            self.current_stage = 0
+            self.prediction_count = 0
+            self.prediction_history = []
+
+        def update_current_stage(self, logits):
+            predicted_stage = int(np.argmax(logits))
+            self.prediction_history.append(predicted_stage)
+            self.current_stage = predicted_stage
+
+        def act(self, observation):
+            assert observation == {"allowed": True}
+            logits = np.asarray(
+                [0.1, 0.2, 0.9, 0.3, 0.0, 0.4] + [float("-inf")] * 9,
+                dtype=np.float32,
+            )
+            assert np.isfinite(logits).sum() == 6
+            self.update_current_stage(logits)
+            self.prediction_count += 1
+            return self.action
+
+    wrapper = Wrapper()
+    trace = StageTrace(source)
+    returned = NativeStageObserver(wrapper, trace, wrapper_path=wrapper_source).act(
+        {"allowed": True}
+    )
+
+    assert returned is wrapper.action
+    assert wrapper.prediction_history == [2]
+    assert trace.rows[0]["raw_predicted_stage"] == int(
+        np.argmax([0.1, 0.2, 0.9, 0.3, 0.0, 0.4] + [float("-inf")] * 9)
+    )
+    assert trace.rows[0]["stage_after"] == 2
+
+
+@pytest.mark.parametrize(
+    "logits",
+    [
+        np.asarray([float("-inf"), float("-inf")], dtype=np.float32),
+        np.asarray([0.0, float("inf")], dtype=np.float32),
+        np.asarray([0.0, float("nan")], dtype=np.float32),
+        np.asarray([0, 1], dtype=np.int32),
+        np.asarray([[0.0, 1.0]], dtype=np.float32),
+    ],
+)
+def test_native_stage_trace_rejects_non_model_logit_contract(logits):
+    trace = StageTrace({"runtime_wrapper": {}})
+    with pytest.raises(ValueError, match="raw stage proposal"):
+        trace.record_inference(
+            {"subtask_state": np.asarray(0, dtype=np.int32)},
+            {"subtask_logits": logits},
+        )
 
 
 def _config(case):
@@ -700,7 +766,7 @@ def test_native_admission_binds_lossless_recorder_source():
             "bytes": 1539,
             "sha256": "bb2c1fa8ad87a952a4709fa22ec2f9bdf4de25cf07d8301c637729d5a74547f8",
         },
-        "module": {"bytes": 20361, "sha256": "0" * 64},
+        "module": {"bytes": 20594, "sha256": "0" * 64},
         "scope": "audit_only",
     }
     semantic["independent_go"]["sha256"] = native_train_admission.EXACT_FILES[

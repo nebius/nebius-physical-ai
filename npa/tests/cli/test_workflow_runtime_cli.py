@@ -344,7 +344,7 @@ def satisfied_preflight(mocker, monkeypatch):
         return_value=(None, {}),
     )
 
-    mocker.patch.object(
+    monkeypatch.setattr(
         skybin,
         "resolve_sky_bin",
         lambda value: Path(value) if value else Path("/usr/bin/sky"),
