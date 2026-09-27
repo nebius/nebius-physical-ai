@@ -136,6 +136,12 @@ def _campaign_status(args):
     return observe_campaign(args)
 
 
+def _policy_identity_inspect(args):
+    from .policy_identity_inspect import inspect_policy_identity
+
+    return inspect_policy_identity(args, args.panel_path)
+
+
 def _evaluate(args):
     from .execution import evaluate
 
@@ -173,6 +179,16 @@ def _add_simulator_startup_commands(commands) -> None:
     child.set_defaults(handler=_simulator_startup_child)
 
 
+def _add_policy_identity_command(commands) -> None:
+    inspect = commands.add_parser(
+        "policy-identity-inspect",
+        help="Verify frozen policy identity without starting policy or simulator",
+    )
+    inspect.add_argument("--panel-path", type=Path, required=True)
+    _add_policy_arguments(inspect)
+    inspect.set_defaults(handler=_policy_identity_inspect)
+
+
 def main() -> None:
     """Plan locally or invoke internal stages through the Workbench workflow.
 
@@ -197,6 +213,7 @@ def main() -> None:
     _add_runtime_arguments(run)
     run.set_defaults(handler=_evaluate)
     _add_simulator_startup_commands(commands)
+    _add_policy_identity_command(commands)
     _add_campaign_commands(commands)
     args = parser.parse_args()
     result = args.handler(args)

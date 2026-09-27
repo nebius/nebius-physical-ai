@@ -59,6 +59,8 @@ before integrating a tool programmatically.
 
 For resumable contest evaluations, see the [BEHAVIOR campaign guide](../docs/workbench/behavior-campaign.md).
 It documents case ownership, verified results, and workflow task activity. The
+guide also documents the CPU-only `policy-identity-inspect` internal command for
+checking checkpoint and serving digests before simulator allocation. The
 optional `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` environment variable points to
 private JSON settings for the read-only live status regression; it is unset by
 default and submits no work.

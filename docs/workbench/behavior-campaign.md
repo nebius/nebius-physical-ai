@@ -66,6 +66,23 @@ declaration = declare_campaign(
 The example hashes are synthetic. A real declaration must use the byte
 identities verified during packaging.
 
+Before allocating a simulator or policy process, an internal CPU stage can
+check one frozen panel against its local checkpoint archive, serving source,
+and policy settings:
+
+```bash
+python -m npa.workflows.behavior_challenge policy-identity-inspect \
+  --panel-path /inputs/panel.json \
+  --policy-kind official \
+  --policy-archive /inputs/checkpoint.json
+```
+
+Pass the same policy flags that the campaign worker will receive. Add
+`--train-experience` only for a prescribed non-reporting TRAIN panel. The
+command emits one JSON identity receipt and does not create a workspace, claim
+a case, start a simulator, or start a policy process. It verifies identity
+only; campaign startup and admission checks still run in the worker.
+
 ## Prescribed non-reporting TRAIN panels
 
 The `nonreporting_train` module freezes small TRAIN-only panels for descriptive

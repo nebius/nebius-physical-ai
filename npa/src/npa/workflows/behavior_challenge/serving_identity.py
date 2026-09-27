@@ -141,21 +141,30 @@ def _trained_configuration(path: Path) -> dict:
     }
 
 
-def verify_serving_identity(args, policy: dict) -> None:
+def verify_serving_identity(args, policy: dict) -> dict:
     """Reject policy execution if checkpoint or serving identities have changed.
 
     Args:
         args: Managed policy paths and execution settings.
         policy: Frozen campaign policy identity.
     Returns:
-        None.
+        Exact checkpoint and serving identities that matched the policy.
     Raises:
         ValueError: Loaded artifacts differ from the declared policy.
         OSError: The checkpoint archive or adapter inputs cannot be read.
     """
     checkpoint = Path(args.policy_archive)
     actual = {"sha256": file_digest(checkpoint), "bytes": checkpoint.stat().st_size}
-    if actual != policy["artifacts"]["checkpoint"]:
-        raise ValueError("Campaign checkpoint differs from its frozen artifact")
-    if serving_artifact(args) != policy["artifacts"]["serving"]:
-        raise ValueError("Campaign serving code or configuration differs")
+    expected = policy["artifacts"]["checkpoint"]
+    if actual != expected:
+        raise ValueError(
+            f"Campaign checkpoint differs: expected={expected!r} actual={actual!r}"
+        )
+    serving = serving_artifact(args)
+    expected_serving = policy["artifacts"]["serving"]
+    if serving != expected_serving:
+        raise ValueError(
+            "Campaign serving code or configuration differs: "
+            f"expected={expected_serving!r} actual={serving!r}"
+        )
+    return {"checkpoint": actual, "serving": serving}
