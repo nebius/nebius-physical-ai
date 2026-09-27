@@ -30,6 +30,11 @@ from npa.workflows.behavior_challenge.native_train_arrays import (
     NativePolicyArrays,
 )
 from npa.workflows.behavior_challenge import native_train_admission
+from npa.workflows.behavior_challenge.nonreporting_train import (
+    declare_train_panel,
+    declare_train_protocol,
+    partition_train_panel,
+)
 from npa.workflows.behavior_challenge.native_train_trace import (
     finalize_trace,
     validate_finalized_trace,
@@ -785,6 +790,73 @@ def test_native_admission_binds_lossless_recorder_source():
         native_train_admission._validate_semantic_authority(
             {"semantic_trace": semantic}
         )
+
+
+def test_native_multicase_admission_binds_exact_train_instances():
+    case_ids = [f"{index:064x}" for index in range(9)]
+    instances = native_train_admission.BATCH_INSTANCES
+    cases = [
+        {"case_id": case_id, "instance_id": instance_id}
+        for case_id, instance_id in zip(case_ids, instances, strict=True)
+    ]
+    native_train_admission._validate_batch_cases(
+        cases, {"case_ids": case_ids}, worker_count=2
+    )
+    cases[-1]["instance_id"] = 208
+    with pytest.raises(ValueError, match="batch Native TRAIN admission differs"):
+        native_train_admission._validate_batch_cases(
+            cases, {"case_ids": case_ids}, worker_count=2
+        )
+
+
+def _mutated_batch_authority(tmp_path, *, holdout=False, rng=False):
+    fixture = (
+        Path(__file__).parents[1] / "fixtures/behavior/native-train-panel-batch.json"
+    )
+    source = json.loads(fixture.read_text())
+    old = source["protocol"]
+    cases = deepcopy(old["prescribed_cases"])
+    evaluator = deepcopy(old["evaluator_contract"])
+    if holdout:
+        cases[-1]["instance_id"] = 208
+    if rng:
+        evaluator["rng_contract"]["sha256"] = "0" * 64
+    protocol = declare_train_protocol(
+        old["task"], old["task_mapping"], cases, old["science_lineage"], evaluator
+    )
+    panel = declare_train_panel(protocol, source["policy_binding"])
+    partition = partition_train_panel(panel, 2)
+    frozen = tmp_path / "frozen"
+    frozen.mkdir()
+    panel_path = frozen / "native-train-panel.json"
+    partition_path = frozen / "native-train-partition.json"
+    panel_path.write_text(json.dumps(panel, sort_keys=True))
+    partition_path.write_text(json.dumps(partition, sort_keys=True))
+    value = {
+        "schema": "npa.private.native-rlc-train-collector-admission.v2",
+        "panel": {
+            **_file_identity(panel_path),
+            "path": "frozen/native-train-panel.json",
+            "panel_id": panel["panel_id"],
+            "case_ids": [row["case_id"] for row in panel["cases"]],
+        },
+        "partition": {
+            **_file_identity(partition_path),
+            "path": "frozen/native-train-partition.json",
+        },
+    }
+    return value
+
+
+@pytest.mark.parametrize("mutation", ["holdout", "rng"])
+def test_native_multicase_admission_rejects_rehashed_science(tmp_path, mutation):
+    value = _mutated_batch_authority(
+        tmp_path, holdout=mutation == "holdout", rng=mutation == "rng"
+    )
+    with pytest.raises(ValueError, match="frozen batch authority differs"):
+        native_train_admission._panel_rows(value)
+    with pytest.raises(ValueError, match="frozen batch authority differs"):
+        native_train_admission._validate_panel(tmp_path, value)
 
 
 def test_staged_lossless_recorder_identity_is_in_durable_config(tmp_path, monkeypatch):

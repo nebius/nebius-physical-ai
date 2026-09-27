@@ -1,4 +1,4 @@
-"""Validate one exact TRAIN-only native-RLC semantic collector admission."""
+"""Validate exact single-case or prescribed-batch Native TRAIN admission."""
 
 from __future__ import annotations
 
@@ -27,6 +27,29 @@ TREE = {
     "bytes": 12645720778,
     "files": 27,
     "directories": 10,
+}
+BATCH_INSTANCES = (202, 204, 205, 207, 209, 210, 211, 212, 213)
+BATCH_PANEL = {
+    "path": "frozen/native-train-panel.json",
+    "bytes": 6519,
+    "sha256": "a9c22684c80ed25af155dcef366bd17b3e71504e07af2b6a1b056ee5472a76e2",
+    "panel_id": "d4ca853f4ba343347a388f61698a8057e835dddb7de566c89203146a10683f25",
+    "case_ids": [
+        "a43c8fc0dd4d0cc7cf352f3bcd5a6049e7c1d2b5d9dde25bed824472666ab1a6",
+        "9c6d8514619a8d3d54858a1ee321541f2cbccaf142b95734a7aa4ec924d9b363",
+        "61fa66269bcc306b94f7bdb23f2502891132fa0849c90cf02a224bf240d6f9f5",
+        "97d2b7d89c0302347b4ac16fc367a3e2e7d7e2109899a6fa3af07f1e5cc34b33",
+        "fa6f915a445f6503e092a44bffcc404caa5e94ec985d197810e40532ccf2f5eb",
+        "9a68cef7fb0e7c8ed359e8d7de028c7dbca8f08a64a5b77cc90e89caf2d608b4",
+        "a6b49e3a24f884b2a5c9a6cdd539d1efcfd85bc66c7385b20157714f7a426c8a",
+        "07e0c838c01f9b1f6cef7a73fc253c793101ab3eeb35b7532b1c9ba239f07cc6",
+        "002ee418f1e56667117163eff3d6b4cc74fc1d25ef7d02a2266ddd8fb17675ef",
+    ],
+}
+BATCH_PARTITION = {
+    "path": "frozen/native-train-partition.json",
+    "bytes": 1089,
+    "sha256": "010313ff9f3f1ea25924098cf912d7c713ea52a74837292325bed8ef763f8fb3",
 }
 EXACT_FILES = {
     "panel": {
@@ -202,6 +225,17 @@ def _package_root(admission_path: Path) -> Path:
     return path.parent.resolve()
 
 
+def _admission_schema(value: dict[str, Any]) -> str:
+    schema = value.get("schema")
+    supported = {
+        "npa.private.native-rlc-train-collector-admission.v1",
+        "npa.private.native-rlc-train-collector-admission.v2",
+    }
+    if schema not in supported:
+        raise ValueError("native TRAIN admission schema differs")
+    return schema
+
+
 def _validate_envelope(value: dict[str, Any]) -> None:
     required = {
         "claims",
@@ -219,7 +253,11 @@ def _validate_envelope(value: dict[str, Any]) -> None:
     }
     if (
         set(value) != required
-        or value.get("schema") != "npa.private.native-rlc-train-collector-admission.v1"
+        or _admission_schema(value)
+        not in {
+            "npa.private.native-rlc-train-collector-admission.v1",
+            "npa.private.native-rlc-train-collector-admission.v2",
+        }
         or value.get("status")
         != "exact_train_panel_native_policy_and_audit_trace_admitted"
         or value.get("split") != "train"
@@ -236,9 +274,17 @@ def _validate_envelope(value: dict[str, Any]) -> None:
     _validate_envelope_rows(value)
 
 
+def _panel_rows(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    if _admission_schema(value).endswith(".v1"):
+        panel = {**EXACT_FILES["panel"], "panel_id": PANEL_ID, "case_id": CASE_ID}
+        return panel, dict(EXACT_FILES["partition"])
+    if value.get("panel") != BATCH_PANEL or value.get("partition") != BATCH_PARTITION:
+        raise ValueError("native TRAIN frozen batch authority differs")
+    return dict(BATCH_PANEL), dict(BATCH_PARTITION)
+
+
 def _validate_envelope_rows(value: dict[str, Any]) -> None:
-    panel = {**EXACT_FILES["panel"], "panel_id": PANEL_ID, "case_id": CASE_ID}
-    partition = dict(EXACT_FILES["partition"])
+    panel, partition = _panel_rows(value)
     if (
         value["panel"] != panel
         or value["partition"] != partition
@@ -322,21 +368,50 @@ def _validate_semantic_authority(value: dict[str, Any]) -> None:
         raise ValueError("native TRAIN semantic authority differs")
 
 
-def _validate_panel(root: Path) -> None:
-    panel = validate_train_panel(exact_json(root, EXACT_FILES["panel"]))
-    partition = validate_train_partition(
-        exact_json(root, EXACT_FILES["partition"]), panel
+def _validate_batch_cases(
+    cases: list[dict[str, Any]], panel_row: dict[str, Any], worker_count: int
+) -> None:
+    if (
+        tuple(case["instance_id"] for case in cases) != BATCH_INSTANCES
+        or panel_row["case_ids"] != [case["case_id"] for case in cases]
+        or worker_count != 2
+    ):
+        raise ValueError("batch Native TRAIN admission differs")
+
+
+def _validate_panel(root: Path, value: dict[str, Any]) -> None:
+    panel_row, partition_row = _panel_rows(value)
+    panel = validate_train_panel(exact_json(root, panel_row))
+    partition = validate_train_partition(exact_json(root, partition_row), panel)
+    cases = panel["cases"]
+    protocol = panel["protocol"]
+    evaluator = protocol["evaluator_contract"]
+    valid_cases = all(
+        case["task"] == "picking_up_trash"
+        and case["split"] == "train"
+        and case["rollout_id"] == 0
+        for case in cases
     )
     if (
-        panel["panel_id"] != PANEL_ID
+        panel["panel_id"] != panel_row["panel_id"]
         or panel["policy_binding_sha256"] != POLICY_ID
-        or panel["case_count"] != 1
-        or panel["cases"][0]["split"] != "train"
-        or panel["cases"][0]["instance_id"] != 200
-        or panel["cases"][0]["rollout_id"] != 0
-        or partition["worker_count"] != 1
+        or not cases
+        or not valid_cases
+        or protocol["task_mapping"]["data_task_id"] != 1
+        or evaluator["model_prediction_horizon"] != 30
+        or evaluator["executed_prefix"] != 20
     ):
         raise ValueError("native TRAIN panel or partition differs")
+    if _admission_schema(value).endswith(".v1"):
+        if (
+            len(cases) != 1
+            or cases[0]["case_id"] != CASE_ID
+            or cases[0]["instance_id"] != 200
+            or partition["worker_count"] != 1
+        ):
+            raise ValueError("single-case Native TRAIN admission differs")
+    else:
+        _validate_batch_cases(cases, panel_row, partition["worker_count"])
 
 
 def validate(admission_path: Path, *, source_root: Path) -> dict[str, Any]:
@@ -354,7 +429,7 @@ def validate(admission_path: Path, *, source_root: Path) -> dict[str, Any]:
     value = json.loads(admission_path.read_bytes())
     _validate_envelope(value)
     _validate_semantic_authority(value)
-    _validate_panel(root)
+    _validate_panel(root, value)
     for name in (
         "semantic_go",
         "raw_stage_go",

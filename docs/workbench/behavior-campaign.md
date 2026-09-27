@@ -235,9 +235,12 @@ contract.
 
 The published Native RLC policy can record a separate audit-only TRAIN trace
 with `--native-train-trace --native-train-admission PATH`. The option is valid
-only for `--policy-kind rlc`, the unchanged `native` execution variant, and a
-one-case nonreporting TRAIN panel. It cannot be combined with
-`--train-experience`, DEV, or REPORT.
+only for `--policy-kind rlc`, the unchanged `native` execution variant, and an
+admitted nonreporting TRAIN panel. Admission accepts either the original single
+TRAIN instance or the prescribed nine-instance TRAIN batch across two workers.
+The batch binds the exact case order, evaluator randomness contract, and worker
+partition; replacing a case or recomputing its hashes does not authorize it.
+The option cannot be combined with `--train-experience`, DEV, or REPORT.
 
 The policy process stores lossless compressed NPZ shards for each model-decision
 observation: the three allowed RGB images and 61-value proprioception vector,
