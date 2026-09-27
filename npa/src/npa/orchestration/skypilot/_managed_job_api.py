@@ -45,7 +45,9 @@ _SOURCE_HASHES = {
     "skylet/services.py": "c181b243b58a3ace56646d527e2a8d8577443956b7f54444b27d01957db7a02e",
     "server/constants.py": "1e88b0b837500c9bcfb886422db53b5c7049af02aeb4eaf5230b3a58678290f5",
     "utils/controller_utils.py": (
-        "e00b1e4ac249a32763b9ae3c5a4e970f40098a7b671100818e90ced6f1fa186c"
+        # Public sky/utils/controller_utils.py SHA-256 at SKY_SOURCE_COMMIT;
+        # its prefix coincides with the private infrastructure identifier rule.
+        "e00b1e4ac249a32763b9ae3c5a4e970f40098a7b671100818e90ced6f1fa186c"  # gitleaks:allow
     ),
     "utils/common.py": "b2604e6629d52d36c7837b5968b4e55c642839b2490aa230e8865091a4f7df46",
     "templates/jobs-controller-provision.yaml.j2": "d04fd84bce03559968227beab07235707d025f8481d24fa015afdfe7b17c7249",
