@@ -369,6 +369,36 @@
       "validated_registry_scope": "public"
     },
     {
+      "name": "npa-flex-pi",
+      "dockerfile": "flex-pi/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "redistribution": "public",
+      "source_compiled_extensions": [],
+      "smoke": "Real four-step action-only inference produces a finite 32x14 bimanual action chunk from a hash-pinned public RoboTwin observation.",
+      "notes": "The public image contains pinned MIT source/runtime only. Checkpoint, Wan/T5/DINOv3 assets, observation media, credentials, and populated caches are runtime fetches. The r2 digest contains the JSON stdout and fail-closed DINO fixes and passed the complete publication gates plus real compiled four-step action-only inference independently on one B200 and one RTX PRO 6000. Earlier fan-out and paired benchmark results remain under historical_releases and apply only to their original digest.",
+      "measured_torch": "2.7.1+cu128",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "validated_tag": "0.1.0-cu128-r2",
+      "validated_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+      "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46",
+      "validated_registry_scope": "public",
+      "published_tag": "0.1.0-cu128-r2",
+      "published_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ]
+    },
+    {
       "name": "npa-cosmos3-reason",
       "dockerfile": "cosmos3-reason/Dockerfile",
       "verdict": "ready",
@@ -1175,6 +1205,123 @@
       "validated_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
       "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
       "validated_registry_scope": "public"
+    },
+    "npa-flex-pi": {
+      "built": true,
+      "payload_scan": "Passed source/licensing, full-layer payload and history checks, the configured vulnerability/secret/license policy, SBOM/provenance attestations, and anonymous full-layer pull validation. No checkpoint, observation media, populated model cache, token, or credential payload was found.",
+      "hardware_run": "On 2026-09-17 the exact r2 digest completed strict checkpoint loading and real compiled four-step action-only inference independently on one B200 and one RTX PRO 6000. Both workflows terminated successfully with zero restarts, finite 32x14 actions, and three independently read-back-verified objects each. Native GPU architecture and baked source hashes were verified on each exact-image worker. This is observation-level inference and artifact-integrity evidence, not a new fan-out benchmark, paired speedup measurement, or closed-loop task-success claim.",
+      "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+          "observed_image_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+          "gpu_count": 1,
+          "torch_compile": true,
+          "finite_action_shape": [
+            32,
+            14
+          ],
+          "inference_seconds": 0.09418044400013059,
+          "peak_memory_bytes": 25270528512,
+          "readback_verified_objects": 3,
+          "artifact_sha256": {
+            "actions.json": "14cdf795d0d392cc028510c990d7bed196af4466be19f944de272022bd9e26ab",
+            "input.json": "e2ff5ada3d69a8619865750c3b2ae83ccecf07da15b05355d872e579e46c3164",
+            "result.json": "e16cfef2da128da61788d2f27c0084daf5adab904dbd32418db723c173169fdf"
+          },
+          "terminal_status": "SUCCEEDED",
+          "restart_count": 0,
+          "baked_module_hashes_verified": 3
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+          "observed_image_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+          "gpu_count": 1,
+          "torch_compile": true,
+          "finite_action_shape": [
+            32,
+            14
+          ],
+          "inference_seconds": 0.15105402399990453,
+          "peak_memory_bytes": 25270528512,
+          "readback_verified_objects": 3,
+          "artifact_sha256": {
+            "actions.json": "7e34a752fe87cdadbbd0ae087b164a9c710c15f00cb1aabc6b596e7e9fa4c931",
+            "input.json": "e2ff5ada3d69a8619865750c3b2ae83ccecf07da15b05355d872e579e46c3164",
+            "result.json": "ac880a618d122788020ebe3a7bd74ce9c4d4278b6ccdcbdb9685ab9a9ed289d2"
+          },
+          "terminal_status": "SUCCEEDED",
+          "restart_count": 0,
+          "baked_module_hashes_verified": 3
+        }
+      },
+      "validated_tag": "0.1.0-cu128-r2",
+      "validated_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+      "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46",
+      "validated_registry_scope": "public",
+      "historical_releases": {
+        "0.1.0-cu128": {
+          "built": true,
+          "payload_scan": "passed source, licensing, full-layer payload, history, vulnerability, secret, SBOM, provenance, and anonymous-pull gates; no checkpoint, observation media, model cache, token, or credential payload was found",
+          "hardware_run": "The exact accepted image completed real four-step action-only inference independently on physical RTX PRO 6000 and B200 on 2026-09-16. Strict state loading rejected missing or unexpected checkpoint keys. The maximum-capacity B200 run used 24 independent one-GPU replicas, not model parallelism: all 24 produced finite 32x14 actions and 72 read-back-verified objects in 132.0 seconds. On 2026-09-17 the unchanged digest passed five-sample paired eager-versus-compiled warm benchmarks and the standard compiled artifact path on both targets: 2.645x median speedup on RTX PRO 6000 and 2.278x on B200, with five durable objects per final target, zero restarts, and bounded BF16 numerical drift. This observation-level result does not claim closed-loop task success.",
+          "compile_correctness": {
+            "atol": 0.01,
+            "rtol": 0.01,
+            "max_relative_l2": 0.005,
+            "max_action_l2_relative_drift": 0.001,
+            "observed_max_absolute": 0.00800064206123352
+          },
+          "validated_gpus": {
+            "B200": {
+              "platform": "gpu-b200-sxm",
+              "capability": "10.0",
+              "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+              "peak_memory_bytes": 25268430336,
+              "baseline_inference_seconds": 0.577788796,
+              "replica_count": 24,
+              "fanout_wall_seconds": 132.0,
+              "throughput_replicas_per_second": 0.181818,
+              "wall_scaling_efficiency": 0.695627,
+              "warm_eager_median_seconds": 0.1990382052026689,
+              "warm_eager_p95_seconds": 0.20746170124039054,
+              "warm_compiled_median_seconds": 0.08738366886973381,
+              "warm_compiled_p95_seconds": 0.08759428886696696,
+              "warm_compiled_speedup": 2.277750611494498,
+              "warm_eager_throughput_samples_per_second": 4.992263232577875,
+              "warm_compiled_throughput_samples_per_second": 11.449643619011335,
+              "compiled_peak_memory_bytes": 25270528512,
+              "cold_asset_seconds": 451.77155646309257,
+              "compiled_setup_seconds": 121.50725780287758,
+              "paired_repeats": 5
+            },
+            "RTX PRO 6000": {
+              "platform": "gpu-rtx6000",
+              "capability": "12.0",
+              "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+              "peak_memory_bytes": 25268430336,
+              "inference_seconds": 0.6778233840013854,
+              "warm_eager_median_seconds": 0.27005410566926,
+              "warm_eager_p95_seconds": 0.29886764381080866,
+              "warm_compiled_median_seconds": 0.10210401099175215,
+              "warm_compiled_p95_seconds": 0.12783511634916067,
+              "warm_compiled_speedup": 2.644892233382239,
+              "warm_eager_throughput_samples_per_second": 3.6881252237560536,
+              "warm_compiled_throughput_samples_per_second": 9.331415115232462,
+              "compiled_peak_memory_bytes": 25270528512,
+              "cold_asset_seconds": 686.5896260133013,
+              "compiled_setup_seconds": 121.02701552398503,
+              "paired_repeats": 5
+            }
+          },
+          "validated_tag": "0.1.0-cu128",
+          "validated_digest": "sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91",
+          "development_sha": "c0ed82abfa5c3692de5584efa04ac7c453b01458",
+          "validated_registry_scope": "public"
+        }
+      }
     },
     "npa-base": {
       "built": true,

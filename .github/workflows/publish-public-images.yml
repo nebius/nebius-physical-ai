@@ -596,6 +596,11 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = flex-pi ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_flex_pi_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              > "$RUNNER_TEMP/${TOOL}-flex-pi-payload.json"
+          fi
           if [ "$TOOL" = gymnasium-robotics ]; then
             # With the containerd store, the image ID is the OCI manifest digest.
             # Authenticate that BuildKit-bound manifest before reading its config.
@@ -1152,6 +1157,11 @@ jobs:
             docker pull "$exact"
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$exact" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
+          fi
+          if [ "$TOOL" = flex-pi ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_flex_pi_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              > "$RUNNER_TEMP/${TOOL}-pushed-flex-pi-payload.json"
           fi
           path="${IMAGE#ghcr.io/}"
           owner="${path%%/*}"
