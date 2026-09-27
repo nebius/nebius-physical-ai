@@ -16,8 +16,9 @@ import sys
 import tempfile
 from contextlib import ExitStack
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -839,6 +840,19 @@ def _materialize_robomimic_profile_for_launch(
         yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
     )
     return destination
+
+
+def _with_robomimic_profile_lifetime(
+    function: Callable[..., int],
+) -> Callable[..., int]:
+    """Keep the attested profile alive through its run and clean every exit."""
+
+    @wraps(function)
+    def invoke(*args: Any, **kwargs: Any) -> int:
+        with ExitStack() as lifetime_stack:
+            return function(*args, lifetime_stack=lifetime_stack, **kwargs)
+
+    return invoke
 
 
 def _require_robomimic_immutable_inputs(
@@ -2492,6 +2506,7 @@ def _run_worker(
     return 0
 
 
+@_with_robomimic_profile_lifetime
 def _run_byof(
     args: argparse.Namespace,
     *,
@@ -2506,8 +2521,8 @@ def _run_byof(
     registry: str,
     skip_build: bool,
     skip_push: bool,
+    lifetime_stack: ExitStack,
 ) -> int:
-    lifetime_stack = ExitStack()
     try:
         postprocess_key = _required_postprocess_key(
             args, base_image=base_image, base_profile=base_profile
@@ -2795,8 +2810,6 @@ def _run_byof(
         # Do not retain an unsanitized exception as ``__cause__``: callers may
         # serialize the exception chain even though the top-level message is safe.
         raise RuntimeError(_redact_text(str(exc), redactions)) from None
-    finally:
-        lifetime_stack.close()
 
 
 if __name__ == "__main__":
