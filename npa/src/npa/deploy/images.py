@@ -274,6 +274,7 @@ RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     }
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
+PENDING_REDISTRIBUTION_TOOLS: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
@@ -2599,24 +2600,64 @@ def is_official_public_image(image: str) -> bool:
     )
 
 
+def _public_registry_refusals() -> frozenset[str]:
+    """Unify refusal membership without conflating permanent and pending reasons."""
+    return (
+        RESTRICTED_PUBLICATION_TOOLS
+        | RESTRICTED_DERIVED_IMAGES
+        | PENDING_REDISTRIBUTION_TOOLS
+        | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    )
+
+
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
-    ``False`` for any tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
+    ``False`` while redistribution or source delivery is pending, including
+    neutral candidates without exact-byte eligibility, or for any
+    tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
-    build-your-own use only — and for neutral unbuilt candidates whose exact-byte
-    redistribution eligibility has not been established. See the sets' comments.
+    build-your-own use only. See the set's comment for current membership.
+
+    Args:
+        tool: Canonical tool or derived image name.
+
+    Returns:
+        False for any permanent or pending public-registry refusal.
+
+    Raises:
+        None for a canonical string tool name.
     """
-    return tool not in (RESTRICTED_PUBLICATION_TOOLS | NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    return tool not in _public_registry_refusals()
 
 
 def restricted_image_names() -> list[str]:
-    """Return every image name excluded from public registries."""
-    return sorted(RESTRICTED_PUBLICATION_TOOLS | RESTRICTED_DERIVED_IMAGES)
+    """Return every permanent or pending public-registry refusal in stable order.
+
+    Args:
+        None.
+
+    Returns:
+        Sorted names from the same refusal union used by the public predicate.
+
+    Raises:
+        None.
+    """
+    return sorted(_public_registry_refusals())
 
 
 def omniverse_restricted_image_names() -> list[str]:
-    """Compatibility alias for :func:`restricted_image_names`."""
+    """Compatibility alias for :func:`restricted_image_names`.
+
+    Args:
+        None.
+
+    Returns:
+        All permanent and pending public-registry refusal names, sorted.
+
+    Raises:
+        None.
+    """
     return restricted_image_names()
 
 

@@ -4,9 +4,9 @@
 different guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
-* ``SUPPORTED_TOOL_VERSIONS`` — normally a tag ending ``-unbuilt``; the neutral
-  bootstrap exception stays outside this accepted inventory and exposes only a
-  display sentinel through ``supported_tool_version``;
+* the supported or quarantined-candidate version inventory — normally a tag
+  ending ``-unbuilt``; neutral bootstrap display sentinels stay outside the
+  accepted ``SUPPORTED_TOOL_VERSIONS`` inventory;
 * ``blackwell-dc-images.json`` — ``validation: pending-build``;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
