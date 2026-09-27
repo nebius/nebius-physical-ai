@@ -190,8 +190,8 @@ def test_fail_structurally_redacts_raw_multiline_exception(monkeypatch) -> None:
         assert secret not in rendered
 
 
-def test_submit_lists_every_missing_prerequisite_at_once() -> None:
-    result = _submit()
+def test_submit_lists_every_missing_prerequisite_at_once(tmp_path: Path) -> None:
+    result = _submit("--sky-bin", str(tmp_path / "missing-sky"))
 
     assert result.exit_code == 1, result.output
     assert "missing prerequisites" in result.output
@@ -715,6 +715,7 @@ def test_submit_preflight_clears_as_prerequisites_are_met(
 ) -> None:
     """Each satisfied prerequisite drops out of the report."""
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", str(tmp_path / "missing-sky"))
     result = _submit("--var", "bucket=real-bucket")
     assert result.exit_code == 1
     assert "NPA_SRC_S3_URI is unset" not in result.output
