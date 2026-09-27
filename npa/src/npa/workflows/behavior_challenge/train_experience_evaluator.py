@@ -24,6 +24,11 @@ except ModuleNotFoundError:
         file_identity,
     )
 
+try:
+    from train_official_q import bind_official_q_observer
+except ModuleNotFoundError:
+    from .train_official_q import bind_official_q_observer
+
 _ROOT_ENV = "NPA_TRAIN_EXPERIENCE_ROOT"
 
 
@@ -50,11 +55,15 @@ def _initialize_hook(original, progress_source=None):
     def initialize(evaluator, config):
         _validate_config(config)
         original(evaluator, config)
+        official_q = bind_official_q_observer(evaluator)
         recorder = EvaluatorExperienceRecorder(
-            Path(os.environ[_ROOT_ENV]), progress_source=progress_source
+            Path(os.environ[_ROOT_ENV]),
+            progress_source=progress_source,
+            official_q_source=official_q.source,
         )
         evaluator.policy = _recording_policy(evaluator.policy, recorder)
         evaluator._npa_train_experience = recorder
+        evaluator._npa_train_official_q = official_q
 
     return initialize
 
@@ -67,12 +76,18 @@ def _apply_hook(original):
         completed = time.monotonic_ns()
         recorder = evaluator._npa_train_experience
         step = _official_step(result) if recorder.progress_enabled else None
+        official_q = (
+            evaluator._npa_train_official_q.observe(recorder.frame)
+            if recorder.official_q_enabled
+            else None
+        )
         recorder.record_applied(
             evaluator._batch_obs(),
             actions[0],
             started,
             completed,
             official_step=step,
+            official_q=official_q,
         )
         return result
 
@@ -139,7 +154,7 @@ def _run_hook(original):
         if list(instances) != [expected_instance] or kwargs.get("rollout_id") != 0:
             raise ValueError("TRAIN experience requires one prescribed rollout")
         result = original(evaluator, instances, **kwargs)
-        recorder.close()
+        recorder.close(result)
         return result
 
     return run

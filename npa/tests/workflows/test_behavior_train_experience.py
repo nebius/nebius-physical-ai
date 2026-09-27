@@ -36,11 +36,13 @@ from npa.workflows.behavior_challenge.case_store import CaseAlreadyStarted, Case
 from npa.workflows.behavior_challenge.autonomous_training_data import (
     AutonomousCometDataset,
     OfficialGoalProgressDataset,
+    OfficialQProgressDataset,
 )
 from npa.workflows.behavior_challenge.native_comet_policy import _stage_adapters
 from npa.workflows.behavior_challenge.train_experience import (
     EvaluatorExperienceRecorder,
     GOAL_PROGRESS_SOURCE,
+    OFFICIAL_Q_SOURCE,
     PolicyExperienceRecorder,
     RecordingPolicy,
     allowed_observation,
@@ -50,8 +52,10 @@ from npa.workflows.behavior_challenge.train_experience import (
     validate_experience_config,
     write_experience_config,
 )
+from npa.workflows.behavior_challenge.train_official_q import SCHEMA as Q_SCHEMA
 from npa.workflows.behavior_challenge.train_experience_evaluator import (
     _apply_hook,
+    _initialize_hook,
     _official_goal_source,
     _official_step,
     _recording_policy,
@@ -498,10 +502,12 @@ def test_disabled_recording_stages_no_recorder_modules(tmp_path: Path) -> None:
     enabled_rows = _stage_adapters(enabled, train_experience=True)
 
     assert "train_experience.py" not in disabled_rows
+    assert "train_official_q.py" not in disabled_rows
     assert "train_prompt.py" not in disabled_rows
     assert not (disabled / "semantic_monitor").exists()
     assert "train_experience.py" in enabled_rows
     assert "train_experience_evaluator.py" in enabled_rows
+    assert "train_official_q.py" in enabled_rows
     assert "train_prompt.py" in enabled_rows
     assert "semantic_monitor/interface.py" in enabled_rows
 
@@ -519,6 +525,7 @@ sys.modules['jax'] = None
 sys.modules['npa'] = None
 import train_experience
 import train_experience_evaluator
+import train_official_q
 import train_prompt
 import native_comet_server
 import semantic_monitor.collector
@@ -1010,6 +1017,277 @@ def test_official_goal_progress_is_separate_and_action_aligned(tmp_path: Path) -
     annotation = manifest["training_annotations"]["official_goal_status"]
     assert annotation["default_comet_projection_includes_annotation"] is False
     assert annotation["source"] == GOAL_PROGRESS_SOURCE
+
+
+def _fake_q(*, success, now_satisfied_options, initial_satisfied_options):
+    if success:
+        return 1.0
+    current = now_satisfied_options[0]
+    initial = initial_satisfied_options[0]
+    return sum(
+        not before and after for before, after in zip(initial, current, strict=True)
+    ) / len(current)
+
+
+def _q_row(frame: int, current: list[bool], *, success: bool = False) -> dict:
+    return {
+        "schema": Q_SCHEMA,
+        "frame_index": frame,
+        "initial_satisfied_options": [[False, False, False]],
+        "current_satisfied_options": [current],
+        "success": success,
+        "q_score": 1.0 if success else sum(current) / 3,
+        "source": OFFICIAL_Q_SOURCE,
+    }
+
+
+def _closed_q_experience(
+    root: Path,
+    output: Path,
+    monkeypatch,
+    *,
+    final_current: list[bool] | None = None,
+) -> None:
+    monkeypatch.setattr(train_experience, "_official_q_compute", lambda: _fake_q)
+    write_experience_config(root, _config())
+    raw = np.arange(32 * 23, dtype=np.float64).reshape(32, 23)
+    policy_recorder = PolicyExperienceRecorder(root)
+    RecordingPolicy(_Policy(raw), policy_recorder).infer(
+        {"prompt": "pick up the trash"}
+    )
+    evaluator = EvaluatorExperienceRecorder(
+        root,
+        progress_source=GOAL_PROGRESS_SOURCE,
+        official_q_source=OFFICIAL_Q_SOURCE,
+    )
+    evaluator.reset()
+    final_current = final_current or [True, False, False]
+    for frame, current in enumerate(([False] * 3, final_current)):
+        action = raw[frame].astype(np.float32)
+        policy_recorder.record_action(raw[frame], 0)
+        evaluator.record_policy(
+            _observation(frame), action, frame * 4 + 1, frame * 4 + 2
+        )
+        evaluator.record_applied(
+            _observation(frame + 1),
+            action,
+            frame * 4 + 3,
+            frame * 4 + 4,
+            official_step={
+                "goal_status": {"satisfied": [], "unsatisfied": [0]},
+                "terminated": False,
+                "truncated": frame == 1,
+            },
+            official_q=_q_row(frame, current),
+        )
+    final_q = sum(final_current) / 3
+    evaluator.close({0: {"q_score": {"final": final_q}, "success": False}})
+    policy_recorder.close()
+    _metrics(output, 2)
+    metrics = output / "json/picking_up_trash_0_0.json"
+    value = json.loads(metrics.read_text())
+    value["q_score"]["final"] = final_q
+    metrics.write_text(json.dumps(value))
+
+
+def test_official_q_v3_is_distinct_action_aligned_and_required(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "experience"
+    _closed_q_experience(root, tmp_path, monkeypatch)
+    manifest = finalize_experience(root, tmp_path)
+    q_data = OfficialQProgressDataset(root)
+
+    assert [row["q_score"] for row in q_data] == [0.0, 1 / 3]
+    assert (
+        manifest["training_annotations"]["official_q_progress"][
+            "default_comet_projection_includes_annotation"
+        ]
+        is False
+    )
+    assert "q_score" not in AutonomousCometDataset(root)[0]
+
+    legacy = tmp_path / "legacy"
+    legacy_output = tmp_path / "legacy-output"
+    legacy_output.mkdir()
+    _closed_progress_experience(legacy, legacy_output)
+    finalize_experience(legacy, legacy_output)
+    with pytest.raises(ValueError, match="no official Q"):
+        OfficialQProgressDataset(legacy)
+
+
+def test_official_q_terminal_and_consistent_rehash_mutations_reject(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "experience"
+    _closed_q_experience(root, tmp_path, monkeypatch)
+    path = root / "evaluator/official-q.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[-1]["q_score"] = 0.0
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    terminal_path = root / "evaluator/terminal.json"
+    terminal = json.loads(terminal_path.read_text())
+    terminal["official_q_records"] = file_identity(path)
+    terminal_path.write_text(json.dumps(terminal))
+
+    with pytest.raises(ValueError, match="Official Q"):
+        finalize_experience(root, tmp_path)
+
+
+def _rewrite_q_success(root: Path) -> None:
+    q_path = root / "evaluator/official-q.jsonl"
+    rows = [json.loads(line) for line in q_path.read_text().splitlines()]
+    rows[-1]["success"] = True
+    q_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    terminal_path = root / "evaluator/terminal.json"
+    terminal = json.loads(terminal_path.read_text())
+    terminal["official_q_records"] = file_identity(q_path)
+    terminal_path.write_text(json.dumps(terminal))
+
+
+def test_official_q_success_rehash_rejects_finalize_and_dataset(
+    tmp_path: Path, monkeypatch
+) -> None:
+    unfinished = tmp_path / "unfinished"
+    unfinished_output = tmp_path / "unfinished-output"
+    unfinished_output.mkdir()
+    _closed_q_experience(
+        unfinished,
+        unfinished_output,
+        monkeypatch,
+        final_current=[True, True, True],
+    )
+    _rewrite_q_success(unfinished)
+    with pytest.raises(ValueError, match="terminal success"):
+        finalize_experience(unfinished, unfinished_output)
+
+    finalized = tmp_path / "finalized"
+    finalized_output = tmp_path / "finalized-output"
+    finalized_output.mkdir()
+    _closed_q_experience(
+        finalized,
+        finalized_output,
+        monkeypatch,
+        final_current=[True, True, True],
+    )
+    manifest = finalize_experience(finalized, finalized_output)
+    _rewrite_q_success(finalized)
+    terminal = json.loads((finalized / "evaluator/terminal.json").read_text())
+    manifest["training_annotations"]["official_q_progress"]["records"] = terminal[
+        "official_q_records"
+    ]
+    manifest["members"] = train_experience._member_inventory(finalized)
+    (finalized / "experience-manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="terminal success"):
+        OfficialQProgressDataset(finalized)
+
+
+def test_apply_hook_observes_q_after_official_state_mutation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(train_experience, "_official_q_compute", lambda: _fake_q)
+    root = tmp_path / "experience"
+    write_experience_config(root, _config())
+    recorder = EvaluatorExperienceRecorder(
+        root,
+        progress_source=GOAL_PROGRESS_SOURCE,
+        official_q_source=OFFICIAL_Q_SOURCE,
+    )
+    recorder.reset()
+    action = np.zeros((1, 23), dtype=np.float32)
+    recorder.record_policy(_observation(0), action, 1, 2)
+    evaluator = _fake_evaluator(recorder)
+    evaluator.state = [False, False, False]
+
+    class Observer:
+        def observe(self, frame):
+            return _q_row(frame, evaluator.state)
+
+    evaluator._npa_train_official_q = Observer()
+
+    def original(_evaluator, _actions, _indices):
+        evaluator.state[0] = True
+        return (
+            np.asarray([False]),
+            np.asarray([False]),
+            [{"done": {"goal_status": {"satisfied": [], "unsatisfied": [0]}}}],
+        )
+
+    _apply_hook(original)(evaluator, action, [0])
+    row = json.loads((root / "evaluator/official-q.jsonl").read_text())
+    assert row["q_score"] == 1 / 3
+
+
+def test_apply_hook_q_failure_cannot_write_success_terminal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(train_experience, "_official_q_compute", lambda: _fake_q)
+    root = tmp_path / "experience"
+    write_experience_config(root, _config())
+    recorder = EvaluatorExperienceRecorder(
+        root,
+        progress_source=GOAL_PROGRESS_SOURCE,
+        official_q_source=OFFICIAL_Q_SOURCE,
+    )
+    recorder.reset()
+    action = np.zeros((1, 23), dtype=np.float32)
+    recorder.record_policy(_observation(0), action, 1, 2)
+    evaluator = _fake_evaluator(recorder)
+    evaluator._npa_train_official_q = SimpleNamespace(
+        observe=lambda _frame: (_ for _ in ()).throw(ValueError("Q failed"))
+    )
+
+    def original(*_args):
+        return (
+            np.asarray([False]),
+            np.asarray([False]),
+            [{"done": {"goal_status": {"satisfied": [], "unsatisfied": [0]}}}],
+        )
+
+    with pytest.raises(ValueError, match="Q failed"):
+        _apply_hook(original)(evaluator, action, [0])
+    assert not (root / "evaluator/terminal.json").exists()
+    assert (root / "evaluator/official-q.jsonl").read_bytes() == b""
+
+
+def test_initialize_binds_official_q_after_original_evaluator_setup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "experience"
+    write_experience_config(root, _config())
+    monkeypatch.setenv("NPA_TRAIN_EXPERIENCE_ROOT", str(root))
+
+    class Observer:
+        source = OFFICIAL_Q_SOURCE
+
+    def bind(evaluator):
+        assert evaluator.original_initialized is True
+        return Observer()
+
+    monkeypatch.setattr(train_experience_evaluator, "bind_official_q_observer", bind)
+    monkeypatch.setattr(train_experience_evaluator, "_validate_config", lambda _: None)
+    evaluator = SimpleNamespace(policy=SimpleNamespace(reset=lambda: None))
+
+    def original(target, _config):
+        target.original_initialized = True
+
+    _initialize_hook(original, GOAL_PROGRESS_SOURCE)(evaluator, SimpleNamespace())
+    assert evaluator._npa_train_official_q.source == OFFICIAL_Q_SOURCE
+    assert evaluator._npa_train_experience.official_q_enabled is True
+
+
+def test_run_hook_passes_unchanged_official_result_to_terminal() -> None:
+    result = {0: {"q_score": {"final": 1 / 3}}}
+    observed = []
+    recorder = SimpleNamespace(
+        config={"case": {"instance_id": 0}}, close=observed.append
+    )
+    evaluator = SimpleNamespace(_npa_train_experience=recorder)
+
+    returned = _run_hook(lambda *_args, **_kwargs: result)(evaluator, [0], rollout_id=0)
+
+    assert returned is result
+    assert observed == [result]
 
 
 def test_actual_apply_hook_records_official_done_goal_status(tmp_path: Path) -> None:

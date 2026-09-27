@@ -55,7 +55,12 @@ def _stage_adapters(output: Path, *, train_experience: bool = False) -> dict[str
     ]
     if train_experience:
         names.extend(
-            ("train_experience.py", "train_experience_evaluator.py", "train_prompt.py")
+            (
+                "train_experience.py",
+                "train_experience_evaluator.py",
+                "train_official_q.py",
+                "train_prompt.py",
+            )
         )
     rows = {}
     for name in names:

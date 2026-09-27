@@ -200,6 +200,28 @@ class OfficialGoalProgressDataset:
         return result
 
 
+class OfficialQProgressDataset:
+    """Read exact action-aligned official Q labels from finalized TRAIN v3."""
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root)
+        self.manifest = validate_finalized_experience(self.root)
+        annotations = self.manifest.get("training_annotations", {})
+        if "official_q_progress" not in annotations:
+            raise ValueError("TRAIN experience has no official Q progress")
+        self.rows = _official_q_rows(self.root)
+        if len(self.rows) != self.manifest["frame_count"]:
+            raise ValueError("Official Q action alignment differs")
+
+    def __len__(self) -> int:
+        """Return the number of officially applied actions."""
+        return len(self.rows)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        """Return one copied official Q row without deriving coarse labels."""
+        return json.loads(json.dumps(self.rows[index]))
+
+
 def _manifest(root: Path) -> dict[str, Any]:
     return validate_finalized_experience(root)
 
@@ -211,6 +233,16 @@ def _progress_rows(root: Path) -> list[dict[str, Any]]:
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     if not rows or not all(isinstance(row, dict) for row in rows):
         raise ValueError("TRAIN goal progress records differ")
+    return rows
+
+
+def _official_q_rows(root: Path) -> list[dict[str, Any]]:
+    path = root / "evaluator/official-q.jsonl"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Official Q records differ")
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    if not rows or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("Official Q records differ")
     return rows
 
 
@@ -312,4 +344,8 @@ def _rgb_arrays(observation: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     return result
 
 
-__all__ = ["AutonomousCometDataset", "OfficialGoalProgressDataset"]
+__all__ = [
+    "AutonomousCometDataset",
+    "OfficialGoalProgressDataset",
+    "OfficialQProgressDataset",
+]

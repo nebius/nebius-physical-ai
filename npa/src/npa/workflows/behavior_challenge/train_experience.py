@@ -33,6 +33,25 @@ try:
 except ModuleNotFoundError:
     from .train_prompt import validate_prompt_binding
 
+try:
+    from train_official_q import (
+        OFFICIAL_Q_SOURCE,
+        SCHEMA as OFFICIAL_Q_SCHEMA,
+        recompute_official_q,
+        validate_official_q_row,
+        validate_official_q_rows,
+        validate_official_q_terminal,
+    )
+except ModuleNotFoundError:
+    from .train_official_q import (
+        OFFICIAL_Q_SOURCE,
+        SCHEMA as OFFICIAL_Q_SCHEMA,
+        recompute_official_q,
+        validate_official_q_row,
+        validate_official_q_rows,
+        validate_official_q_terminal,
+    )
+
 ACTION_DIMENSION = 23
 ACTION_HORIZON = 32
 DECISION_CADENCE = "model_decision_observation_with_all_applied_actions"
@@ -103,6 +122,10 @@ _TERMINAL_CONTRACTS = {
 _EVALUATOR_V2_KEYS = _TERMINAL_CONTRACTS["all_official_actions_applied"][1] | {
     "progress_records",
     "progress_source",
+}
+_EVALUATOR_V3_FIELDS = _EVALUATOR_V2_KEYS | {
+    "official_q_records",
+    "official_q_source",
 }
 
 
@@ -429,7 +452,11 @@ class EvaluatorExperienceRecorder:
     """Record model-decision observations and all official applied actions."""
 
     def __init__(
-        self, root: Path, *, progress_source: Mapping[str, Any] | None = None
+        self,
+        root: Path,
+        *,
+        progress_source: Mapping[str, Any] | None = None,
+        official_q_source: Mapping[str, Any] | None = None,
     ) -> None:
         self.root = root
         self.config = validate_experience_config(
@@ -441,10 +468,7 @@ class EvaluatorExperienceRecorder:
         self.directory.mkdir()
         self.events = self.directory / "events.jsonl"
         self.events.open("xb").close()
-        self.progress_source = _validated_progress_source(progress_source)
-        self.progress = self.directory / "goal-progress.jsonl"
-        if self.progress_source is not None:
-            self.progress.open("xb").close()
+        self._initialize_annotations(progress_source, official_q_source)
         self.decisions = LosslessShardWriter(
             self.directory / "decisions", records_per_shard=8
         )
@@ -459,6 +483,19 @@ class EvaluatorExperienceRecorder:
         self.pending: tuple[dict[str, np.ndarray], np.ndarray] | None = None
         self.last_observation: dict[str, np.ndarray] | None = None
         self.previous_satisfied: int | None = None
+        self.official_q_initial: list[list[bool]] | None = None
+
+    def _initialize_annotations(self, progress_source, official_q_source) -> None:
+        self.progress_source = _validated_progress_source(progress_source)
+        self.progress = self.directory / "goal-progress.jsonl"
+        if self.progress_source is not None:
+            self.progress.open("xb").close()
+        self.official_q_source = _validated_official_q_source(official_q_source)
+        if self.official_q_source is not None and self.progress_source is None:
+            raise ValueError("Official Q recording requires goal progress recording")
+        self.official_q = self.directory / "official-q.jsonl"
+        if self.official_q_source is not None:
+            self.official_q.open("xb").close()
 
     @property
     def progress_enabled(self) -> bool:
@@ -472,6 +509,11 @@ class EvaluatorExperienceRecorder:
             None.
         """
         return self.progress_source is not None
+
+    @property
+    def official_q_enabled(self) -> bool:
+        """Return whether exact official Q annotations are enabled."""
+        return self.official_q_source is not None
 
     def reset(self) -> None:
         """Record a fresh official evaluator episode boundary.
@@ -535,6 +577,7 @@ class EvaluatorExperienceRecorder:
         completed: int,
         *,
         official_step: Mapping[str, Any] | None = None,
+        official_q: Mapping[str, Any] | None = None,
     ) -> None:
         """Record one action after the official evaluator accepts it.
 
@@ -544,10 +587,7 @@ class EvaluatorExperienceRecorder:
             started: Monotonic time before the original apply call.
             completed: Monotonic time after it returned.
             official_step: Optional official goal-status and termination annotation.
-        Returns:
-            None.
-        Raises:
-            ValueError: The action, observation, or chronology differs.
+        Raises: ValueError if action, observation, or chronology differs.
         """
         if self.pending is None or not 0 <= started <= completed:
             raise ValueError("TRAIN experience apply chronology differs")
@@ -563,6 +603,7 @@ class EvaluatorExperienceRecorder:
             self.events, _applied_event(self.frame, applied, after, started, completed)
         )
         self._record_progress(official_step)
+        self._record_official_q(official_q)
         self.pending = None
         self.frame += 1
         self.last_observation = after
@@ -586,7 +627,22 @@ class EvaluatorExperienceRecorder:
         _append_json(self.progress, row)
         self.previous_satisfied = row["satisfied_count"]
 
-    def close(self) -> dict[str, Any]:
+    def _record_official_q(self, official_q: Mapping[str, Any] | None) -> None:
+        if self.official_q_enabled != (official_q is not None):
+            raise ValueError("Official Q action cadence differs")
+        if official_q is None:
+            return
+        row, initial = validate_official_q_row(
+            official_q,
+            frame=self.frame,
+            initial=self.official_q_initial,
+            compute=_official_q_compute(),
+            source=self.official_q_source,
+        )
+        self.official_q_initial = initial
+        _append_json(self.official_q, row)
+
+    def close(self, official_result: Mapping[Any, Any] | None = None) -> dict[str, Any]:
         """Flush all shards and write the evaluator terminal.
 
         Args:
@@ -610,14 +666,31 @@ class EvaluatorExperienceRecorder:
             }
         )
         value = self._terminal_value()
+        self._add_annotation_terminal(value, official_result)
+        _atomic_json(self.directory / "terminal.json", value)
+        return value
+
+    def _add_annotation_terminal(self, value, official_result) -> None:
         if self.progress_source is not None:
             value.update(
                 schema="npa.behavior.train-experience-evaluator.v2",
                 progress_records=file_identity(self.progress),
                 progress_source=self.progress_source,
             )
-        _atomic_json(self.directory / "terminal.json", value)
-        return value
+        if self.official_q_source is None:
+            return
+        rows = _json_lines(self.official_q)
+        validate_official_q_rows(rows, _official_q_compute(), self.official_q_source)
+        if official_result is None:
+            raise ValueError("Official Q terminal result is absent")
+        validate_official_q_terminal(
+            rows, official_result, self.config["case"]["instance_id"]
+        )
+        value.update(
+            schema="npa.behavior.train-experience-evaluator.v3",
+            official_q_records=file_identity(self.official_q),
+            official_q_source=self.official_q_source,
+        )
 
     def _terminal_value(self) -> dict[str, Any]:
         return {
@@ -650,6 +723,21 @@ def _validated_progress_source(
     if copied != GOAL_PROGRESS_SOURCE:
         raise ValueError("TRAIN goal progress source identity differs")
     return copied
+
+
+def _validated_official_q_source(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    copied = json.loads(json.dumps(value))
+    if copied != OFFICIAL_Q_SOURCE:
+        raise ValueError("Official Q source identity differs")
+    return copied
+
+
+def _official_q_compute():
+    return recompute_official_q
 
 
 def _goal_indices(value: object, name: str) -> list[int]:
@@ -1052,7 +1140,7 @@ def _experience_manifest(config, evaluator, policy, metrics_path, metrics, membe
         "privileged_state_entered_policy_inputs": False,
         "development_or_report_used": False,
     }
-    if evaluator["schema"].endswith("evaluator.v2"):
+    if evaluator["schema"].endswith(("evaluator.v2", "evaluator.v3")):
         value["training_annotations"] = _progress_manifest(evaluator)
     return value
 
@@ -1066,6 +1154,13 @@ def _terminal(path: Path, status: str) -> dict[str, Any]:
         "evaluator.v2"
     ):
         schema, keys = "npa.behavior.train-experience-evaluator.v2", _EVALUATOR_V2_KEYS
+    if status == "all_official_actions_applied" and value.get("schema", "").endswith(
+        "evaluator.v3"
+    ):
+        schema, keys = (
+            "npa.behavior.train-experience-evaluator.v3",
+            _EVALUATOR_V3_FIELDS,
+        )
     if (
         not isinstance(value, dict)
         or set(value) != keys
@@ -1120,7 +1215,7 @@ def _validate_terminal_artifacts(root: Path, evaluator: dict, policy: dict) -> N
 
 
 def _progress_manifest(evaluator: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    annotations = {
         "official_goal_status": {
             "schema": GOAL_PROGRESS_SCHEMA,
             "records": evaluator["progress_records"],
@@ -1129,6 +1224,15 @@ def _progress_manifest(evaluator: Mapping[str, Any]) -> dict[str, Any]:
             "default_comet_projection_includes_annotation": False,
         }
     }
+    if evaluator["schema"].endswith("evaluator.v3"):
+        annotations["official_q_progress"] = {
+            "schema": OFFICIAL_Q_SCHEMA,
+            "records": evaluator["official_q_records"],
+            "source": evaluator["official_q_source"],
+            "alignment": "one_post_apply_label_per_official_action",
+            "default_comet_projection_includes_annotation": False,
+        }
+    return annotations
 
 
 def _validate_progress_artifact(root: Path, evaluator: Mapping[str, Any]) -> None:
@@ -1142,6 +1246,24 @@ def _validate_progress_artifact(root: Path, evaluator: Mapping[str, Any]) -> Non
     if evaluator.get("progress_records") != file_identity(path):
         raise ValueError("TRAIN goal progress record identity differs")
     _validate_progress_rows(_json_lines(path), evaluator["frame_count"])
+    _validate_official_q_artifact(root, evaluator)
+
+
+def _validate_official_q_artifact(root: Path, evaluator: Mapping[str, Any]) -> None:
+    path = root / "evaluator/official-q.jsonl"
+    if not evaluator["schema"].endswith("evaluator.v3"):
+        if path.exists() or path.is_symlink():
+            raise ValueError("Legacy TRAIN experience has unexpected official Q")
+        return
+    if evaluator.get("official_q_source") != OFFICIAL_Q_SOURCE:
+        raise ValueError("Official Q source identity differs")
+    if evaluator.get("official_q_records") != file_identity(path):
+        raise ValueError("Official Q record identity differs")
+    rows = validate_official_q_rows(
+        _json_lines(path), _official_q_compute(), evaluator["official_q_source"]
+    )
+    if len(rows) != evaluator["frame_count"]:
+        raise ValueError("Official Q action alignment differs")
 
 
 def _validate_progress_rows(rows: list[dict[str, Any]], frames: int) -> None:
@@ -1174,6 +1296,12 @@ def _validate_progress_outcome(root: Path, evaluator: dict, metrics: dict) -> No
     complete = final["satisfied_count"] == final["goal_count"]
     if complete is not metrics["success"]:
         raise ValueError("TRAIN goal progress differs from official outcome")
+    if evaluator["schema"].endswith("evaluator.v3"):
+        validate_official_q_terminal(
+            _json_lines(root / "evaluator/official-q.jsonl"),
+            {metrics["instance_id"]: metrics},
+            metrics["instance_id"],
+        )
 
 
 def _validate_chronology(
@@ -1498,7 +1626,7 @@ def _validate_manifest_summary(
         "privileged_state_entered_policy_inputs": False,
         "development_or_report_used": False,
     }
-    if evaluator["schema"].endswith("evaluator.v2"):
+    if evaluator["schema"].endswith(("evaluator.v2", "evaluator.v3")):
         expected["training_annotations"] = _progress_manifest(evaluator)
     if set(manifest) != set(expected) | {"members"} or any(
         manifest.get(name) != value for name, value in expected.items()
@@ -1527,6 +1655,8 @@ __all__ = [
     "EvaluatorExperienceRecorder",
     "GOAL_PROGRESS_SCHEMA",
     "GOAL_PROGRESS_SOURCE",
+    "OFFICIAL_Q_SCHEMA",
+    "OFFICIAL_Q_SOURCE",
     "PolicyExperienceRecorder",
     "RecordingPolicy",
     "allowed_observation",

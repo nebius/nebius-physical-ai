@@ -574,6 +574,21 @@ satisfaction rather than an authored sequence of manipulation stages, so this
 is a source-bound progress target and not a ForesightFlow reproduction or a
 claim of improved task performance.
 
+New v3 recordings also preserve the official `TaskMetric` Q value after every
+applied action in `evaluator/official-q.jsonl`. This observer reads the same
+reset-time predicate masks, current grounded-predicate masks, success flag, and
+`compute_q_score` implementation used by v3.9.3 evaluation. Finalization
+requires the last recorded Q to equal the unchanged official terminal metric.
+`OfficialQProgressDataset` exposes these rows separately from the coarser
+top-level `goal_status`; task 1 has one top-level goal while official Q can show
+one-third increments and regressions among its three grounded predicates.
+
+Official Q remains a TRAIN-only offline annotation. It never enters policy
+inputs or the default `AutonomousCometDataset` projection. Any Q-weighted
+projection must explicitly require `OfficialQProgressDataset`, so evaluator v1
+and coarse-progress-only v2 recordings fail closed instead of receiving an
+inferred Q label.
+
 ## TRAIN semantic labels
 
 The [task-1 semantic monitor](../../npa/src/npa/workflows/behavior_challenge/semantic_monitor/README.md)

@@ -1363,6 +1363,7 @@ def test_trained_policy_stages_recorders_and_exact_train_config(
         == args.policy_trained_execution_admission["rng_contract"]["sha256"]
     )
     assert (output / "train_experience_evaluator.py").is_file()
+    assert (output / "train_official_q.py").is_file()
     assert (output / "semantic_monitor/interface.py").is_file()
 
 

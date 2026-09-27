@@ -44,6 +44,7 @@ _TRAINED_COMET_SERVING_FILES = (
 _TRAIN_EXPERIENCE_SERVING_FILES = (
     "train_experience.py",
     "train_experience_evaluator.py",
+    "train_official_q.py",
     "semantic_monitor/__init__.py",
     "semantic_monitor/collector.py",
     "semantic_monitor/interface.py",
