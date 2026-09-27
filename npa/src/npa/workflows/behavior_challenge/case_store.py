@@ -54,6 +54,17 @@ def _valid_claim_fields(record: dict) -> bool:
     )
 
 
+def _valid_file_identity(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"bytes", "sha256"}
+        and type(value.get("bytes")) is int
+        and value["bytes"] > 0
+        and isinstance(value.get("sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is not None
+    )
+
+
 def _valid_state_fields(record: dict) -> bool:
     fields = {
         "schema",
@@ -69,6 +80,10 @@ def _valid_state_fields(record: dict) -> bool:
         fields.add("started_at")
         if not _valid_time(record.get("started_at")):
             return False
+        if "train_experience_config" in record:
+            fields.add("train_experience_config")
+            if not _valid_file_identity(record["train_experience_config"]):
+                return False
     if record["state"] == "complete":
         fields.update(("completed_at", "rollout"))
         if not _valid_time(record.get("completed_at")) or not isinstance(
@@ -240,11 +255,17 @@ class CaseStore:
             content_type="application/json",
         )
 
-    def start(self, version: CaseVersion) -> CaseVersion:
+    def start(
+        self,
+        version: CaseVersion,
+        *,
+        train_experience_config: dict[str, Any] | None = None,
+    ) -> CaseVersion:
         """Commit the start marker before invoking the official evaluator.
 
         Args:
             version: Current pre-start claim returned by this store.
+            train_experience_config: Exact prepared config identity, when enabled.
         Returns:
             Started record with its new ETag.
         Raises:
@@ -255,6 +276,10 @@ class CaseStore:
         self._verify_identity(record, record["case"])
         if record["state"] != "claimed":
             raise ValueError("Only a claimed case can begin evaluation")
+        if train_experience_config is not None:
+            if not _valid_file_identity(train_experience_config):
+                raise ValueError("TRAIN experience config identity differs")
+            record["train_experience_config"] = dict(train_experience_config)
         record.update(state="started", started_at=_now())
         return CaseVersion(record, self._write(record["case"], record, version.etag))
 

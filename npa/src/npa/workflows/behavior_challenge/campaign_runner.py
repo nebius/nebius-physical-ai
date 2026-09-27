@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import stat
 
 from npa.clients.storage import StorageClient, StoragePreconditionFailed
@@ -32,6 +33,7 @@ from .nonreporting_train import (
 )
 from .policy import POLICY_FIELDS, managed_policy
 from .protocol import evaluator_argv, file_digest, verify_upstream
+from .train_experience import validate_finalized_experience
 
 
 def _json_bytes(value):
@@ -79,6 +81,9 @@ def _put_original(storage, payload, uri):
 
 
 def _record_originals(store, version, output, record):
+    experience = _train_experience_bundle(store, version, output)
+    if experience is not None:
+        _record_train_experience_requirement(store, version, experience)
     prefix = store.artifact_prefix(version)
     _record_case_provenance(store, version, output)
     _put_original(store.storage, _json_bytes(record), f"{prefix}/validation.json")
@@ -87,7 +92,139 @@ def _record_originals(store, version, output, record):
         if file_digest(source) != digest:
             raise ValueError("Original artifact changed after inspection")
         _put_original(store.storage, source.read_bytes(), f"{prefix}/{relative}")
+    _publish_train_experience(store, version, experience)
     return store.complete(version, record)
+
+
+def _record_train_experience(store, version, output) -> None:
+    experience = _train_experience_bundle(store, version, output)
+    if experience is None:
+        return
+    _record_train_experience_requirement(store, version, experience)
+    _publish_train_experience(store, version, experience)
+
+
+def _train_experience_bundle(
+    store, version, output, *, verify_official_source: bool = True
+):
+    root = output / "train-experience"
+    manifest_path = root / "experience-manifest.json"
+    if not root.exists():
+        if version.record.get("train_experience_config") is not None:
+            raise ValueError("Enabled TRAIN experience root is absent")
+        return None
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("TRAIN experience root must be a real directory")
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("Enabled TRAIN experience lacks its success manifest")
+    official_output = output if verify_official_source else None
+    manifest = validate_finalized_experience(root, official_output=official_output)
+    config_identity = _expected_train_experience_config(version, root)
+    payload = manifest_path.read_bytes()
+    rows = _validate_train_experience_manifest(store, version, manifest)
+    _validate_train_experience_inventory(root, manifest_path, rows)
+    requirement = {
+        "schema": "npa.behavior.train-experience-publication-requirement.v2",
+        "status": "complete_train_experience_required",
+        "config": config_identity,
+        "manifest": {
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        },
+    }
+    return root, manifest_path, rows, requirement
+
+
+def _expected_train_experience_config(version, root: Path) -> dict[str, object]:
+    expected = version.record.get("train_experience_config")
+    path = root / "config.json"
+    actual = (
+        {"bytes": path.stat().st_size, "sha256": file_digest(path)}
+        if path.is_file() and not path.is_symlink()
+        else None
+    )
+    if not isinstance(expected, dict) or expected != actual:
+        raise ValueError("TRAIN experience config differs from durable case start")
+    return expected
+
+
+def _validate_train_experience_manifest(store, version, manifest):
+    if not isinstance(manifest, dict):
+        raise ValueError("TRAIN experience success manifest differs")
+    rows = manifest.get("members")
+    config = manifest.get("config")
+    if (
+        manifest.get("schema") != "npa.behavior.train-experience-manifest.v1"
+        or manifest.get("status") != "complete_exact_train_experience"
+        or manifest.get("development_or_report_used") is not False
+        or manifest.get("privileged_state_entered_policy_inputs") is not False
+        or not isinstance(config, dict)
+        or config.get("panel_sha256") != store.panel_id
+        or config.get("case") != version.record["case"]
+        or not isinstance(rows, list)
+    ):
+        raise ValueError("TRAIN experience success manifest differs")
+    names = [row.get("path") for row in rows if isinstance(row, dict)]
+    if len(names) != len(rows) or len(set(names)) != len(names):
+        raise ValueError("TRAIN experience member names differ")
+    return rows
+
+
+def _validate_train_experience_inventory(root, manifest_path, rows) -> None:
+    names = []
+    for row in rows:
+        names.append(_experience_member(root, row).relative_to(root).as_posix())
+    paths = list(root.rglob("*"))
+    if any(path.is_symlink() for path in paths):
+        raise ValueError("TRAIN experience inventory contains a symlink")
+    actual = {
+        path.relative_to(root).as_posix()
+        for path in paths
+        if path.is_file() and path != manifest_path
+    }
+    if actual != set(names):
+        raise ValueError("TRAIN experience member inventory differs")
+
+
+def _record_train_experience_requirement(store, version, experience) -> None:
+    requirement = experience[3]
+    prefix = store.artifact_prefix(version) + "/train-experience"
+    _put_original(
+        store.storage,
+        _json_bytes(requirement),
+        f"{prefix}/publication-requirement.json",
+    )
+
+
+def _publish_train_experience(store, version, experience) -> None:
+    if experience is None:
+        return
+    root, manifest_path, rows, _requirement = experience
+    prefix = store.artifact_prefix(version) + "/train-experience"
+    for row in rows:
+        source = _experience_member(root, row)
+        _put_original(store.storage, source.read_bytes(), f"{prefix}/{row['path']}")
+    _put_original(
+        store.storage, manifest_path.read_bytes(), f"{prefix}/experience-manifest.json"
+    )
+
+
+def _experience_member(root: Path, row: object) -> Path:
+    if not isinstance(row, dict) or set(row) != {"path", "bytes", "sha256"}:
+        raise ValueError("TRAIN experience member row differs")
+    relative = Path(row["path"])
+    source = root / relative
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or source.is_symlink()
+        or not source.is_file()
+        or not source.resolve().is_relative_to(root.resolve())
+        or file_digest(source) != row["sha256"]
+        or source.stat().st_size != row["bytes"]
+    ):
+        raise ValueError("TRAIN experience member differs")
+    return source
 
 
 def _record_case_provenance(store, version, output):
@@ -175,10 +312,105 @@ def _restore_originals(store, version, output, panel):
         store.storage.download_file(f"{prefix}/{relative}", str(destination))
         if file_digest(destination) != digest:
             raise ValueError("Recovered original artifact failed SHA-256 verification")
+    _restore_train_experience(store, version, output)
     inspected = inspect_rollout(output, version.record["case"])
     if inspected != record:
         raise ValueError("Recovered video or metrics differ from original inspection")
     return inspected
+
+
+def _restore_train_experience(store, version, output) -> None:
+    prefix = store.artifact_prefix(version) + "/train-experience"
+    saved = store.storage.read_bytes_with_etag(f"{prefix}/publication-requirement.json")
+    if saved is None:
+        if version.record.get("train_experience_config") is not None:
+            raise CaseAlreadyStarted("Complete required TRAIN experience publication")
+        return
+    requirement = _validate_experience_requirement(json.loads(saved[0]))
+    if requirement["config"] != version.record.get("train_experience_config"):
+        raise ValueError("Recovered TRAIN experience config requirement differs")
+    manifest = store.storage.read_bytes_with_etag(f"{prefix}/experience-manifest.json")
+    if manifest is None or _payload_identity(manifest[0]) != requirement["manifest"]:
+        raise CaseAlreadyStarted("Complete required TRAIN experience publication")
+    value = json.loads(manifest[0])
+    rows = _validate_train_experience_manifest(store, version, value)
+    root = output / "train-experience"
+    root.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        payload = store.storage.read_bytes_with_etag(f"{prefix}/{row['path']}")
+        if payload is None or _payload_identity(payload[0]) != _row_identity(row):
+            raise CaseAlreadyStarted("Complete required TRAIN experience publication")
+        _restore_experience_member(root, row["path"], payload[0])
+    _restore_experience_member(root, "experience-manifest.json", manifest[0])
+    restored = _train_experience_bundle(
+        store, version, output, verify_official_source=False
+    )
+    if restored is None or restored[3] != requirement:
+        raise ValueError("Recovered TRAIN experience requirement differs")
+
+
+def _validate_experience_requirement(value):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema", "status", "config", "manifest"}
+        or value.get("schema")
+        != "npa.behavior.train-experience-publication-requirement.v2"
+        or value.get("status") != "complete_train_experience_required"
+        or not _valid_payload_identity(value.get("config"))
+        or not isinstance(value.get("manifest"), dict)
+        or set(value["manifest"]) != {"bytes", "sha256"}
+        or type(value["manifest"].get("bytes")) is not int
+        or value["manifest"]["bytes"] <= 0
+        or re.fullmatch(r"[0-9a-f]{64}", str(value["manifest"].get("sha256"))) is None
+    ):
+        raise ValueError("TRAIN experience publication requirement differs")
+    return value
+
+
+def _valid_payload_identity(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"bytes", "sha256"}
+        and type(value.get("bytes")) is int
+        and value["bytes"] > 0
+        and isinstance(value.get("sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is not None
+    )
+
+
+def _payload_identity(payload: bytes) -> dict[str, object]:
+    return {"bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+
+
+def _row_identity(row: dict) -> dict[str, object]:
+    return {name: row[name] for name in ("bytes", "sha256")}
+
+
+def _restore_experience_member(root: Path, relative_name: str, payload: bytes) -> None:
+    relative = Path(relative_name)
+    destination = root / relative
+    if relative.is_absolute() or ".." in relative.parts or root.is_symlink():
+        raise ValueError("Recovered TRAIN experience path differs")
+    current = root
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("Recovered TRAIN experience path differs")
+        current.mkdir(exist_ok=True)
+        if not current.is_dir():
+            raise ValueError("Recovered TRAIN experience path differs")
+    if destination.is_symlink():
+        raise ValueError("Recovered TRAIN experience path differs")
+    if not destination.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Recovered TRAIN experience path differs")
+    if destination.exists():
+        if not destination.is_file() or destination.read_bytes() != payload:
+            raise ValueError("Recovered TRAIN experience member differs")
+        return
+    with destination.open("xb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def recover_case(store, version, output: Path, panel: dict) -> dict:
@@ -257,8 +489,10 @@ def _run_or_recover(
         return recover_case(store, claim, output, panel)
     preparation = prepare_case(case, output) if prepare_case else nullcontext()
     try:
-        with preparation:
-            started = store.start(claim)
+        with preparation as train_experience_config:
+            started = store.start(
+                claim, train_experience_config=train_experience_config
+            )
             execute_case(case, output)
             (output / "evaluator-exit.json").write_bytes(_json_bytes(case))
         record = inspect_rollout(output, case)
@@ -454,7 +688,15 @@ def _prepared_evaluator(args, panel, workspace):
                 upstream_commit=revision,
             )
         )
-        _run_case(command, args, output, case, environment)
+        case_environment = dict(environment)
+        if getattr(args, "train_experience", False):
+            if not _is_train_panel(panel):
+                raise ValueError("TRAIN experience recording requires a TRAIN panel")
+            command = _train_experience_evaluator_argv(command, output)
+            case_environment["NPA_TRAIN_EXPERIENCE_ROOT"] = str(
+                output / "train-experience"
+            )
+        _run_case(command, args, output, case, case_environment)
         verify_upstream(args.upstream_root, revision)
 
     def prepare(case, output):
@@ -464,6 +706,12 @@ def _prepared_evaluator(args, panel, workspace):
         environment = _runtime_environment(args)
         environment.update(simulator_environment)
         yield execute, prepare
+
+
+def _train_experience_evaluator_argv(command: list[str], output: Path) -> list[str]:
+    if len(command) < 3 or command[1:3] != ["-m", "omnigibson.eval.eval"]:
+        raise ValueError("Official TRAIN evaluator command shape differs")
+    return [command[0], str(output / "train_experience_evaluator.py"), *command[3:]]
 
 
 def _simulator_preparation(args, workspace):
@@ -495,6 +743,13 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
 
 def _execute_partition(args, panel, partition, storage, workspace):
     _validate_worker_startup_binding(args, workspace)
+    experience = getattr(args, "train_experience", False)
+    if experience and (
+        not _is_train_panel(panel) or args.policy_kind != "comet-native"
+    ):
+        raise ValueError("TRAIN experience requires a native Comet TRAIN panel")
+    if getattr(args, "train_experience_depth", False) and not experience:
+        raise ValueError("TRAIN experience depth requires recording")
     if _is_train_panel(panel) and getattr(args, "policy_kind", None) != "comet-native":
         raise ValueError(
             "TRAIN campaign execution requires the reviewed comet-native adapter"

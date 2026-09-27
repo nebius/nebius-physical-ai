@@ -449,6 +449,51 @@ therefore records:
 The runner must call `inspect_rollout()` on preserved original bytes before it
 creates a case receipt. A self-declared digest is not verified evidence.
 
+## TRAIN autonomous experience
+
+The internal campaign worker can record reusable native-Comet TRAIN experience
+with `--train-experience`. The option is accepted only for a non-reporting
+TRAIN panel served by `--policy-kind comet-native`; development and report
+workers reject it before starting the policy or evaluator. Add
+`--train-experience-depth` to retain the three onboard depth arrays. Depth is
+off by default because the current Comet training sample does not consume it.
+
+The recorder keeps one lossless RGB/proprio observation at each 32-action model
+decision and every action accepted by the official evaluator. It separately
+stores the exact raw 32-by-23 model emission and joins every returned action to
+its source chunk. The join verifies the pinned evaluator transport's explicit
+float32 cast, then requires byte equality between that returned float32 action
+and the action accepted by the official evaluator. Episode resets and
+monotonic policy/apply timings are explicit. Post-apply observation identities
+must equal the next policy input, including the intermediate steps whose large
+image arrays are not duplicated. The manifest declares this cadence as
+`model_decision_observation_with_all_applied_actions`.
+The final post-apply allowed observation is retained once in a separate shard,
+so a partial final action chunk still has a materialized terminal observation.
+
+The successful case directory contains `train-experience/experience-manifest.json`
+and bounded lossless NPZ shards. The final manifest is written only after both
+the evaluator and policy terminals exist and its frame count equals the
+official metrics. The bundle inventories an exact copy of those metrics, and
+publication joins it back to the official evaluator output before upload.
+Partial shards remain failure evidence and are never named by a success
+manifest. The exact config identity produced by validated policy preparation is
+committed in the durable case-start record before the evaluator runs.
+Publication and recovery must match that identity, including the policy,
+checkpoint, RNG, and source fields. Publication writes an immutable manifest
+requirement before the primary case originals. A resumed worker must reconstruct
+and verify every required experience member before it can complete the case; an
+interrupted experience upload remains incomplete instead of silently dropping
+the recording.
+
+`AutonomousCometDataset` projects a finalized recording into the existing
+Comet sample shape: float32 61-element state, three uint8 RGB images, a float32
+32-by-23 future applied-action target, and terminal validity/padding masks.
+Depth is preserved when requested but excluded from this projection. Unknown or
+privileged simulator leaves are excluded before recording and cannot enter the
+policy-side stream or default Comet projection. Privileged TRAIN annotations
+remain a separate optional offline-labeling boundary.
+
 ## TRAIN semantic labels
 
 The [task-1 semantic monitor](../../npa/src/npa/workflows/behavior_challenge/semantic_monitor/README.md)

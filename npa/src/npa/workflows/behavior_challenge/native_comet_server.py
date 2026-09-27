@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import signal
 import sys
 import tempfile
 from pathlib import PurePosixPath
@@ -555,6 +556,7 @@ async def _connection(
     args,
     trace: ActionTrace,
     progress: ProcessProgress,
+    experience: object | None = None,
 ):
     import jax
     from openpi_client import msgpack_numpy
@@ -570,6 +572,8 @@ async def _connection(
         observation = msgpack_numpy.unpackb(payload)
         if wire.is_reset(observation):
             wrapper.reset()
+            if experience is not None:
+                experience.reset()
             continue
         selected = wire.observation_for_policy(observation)
         inputs = policy_observation(selected)
@@ -596,15 +600,23 @@ async def _connection(
             after,
             inference_ordinal,
         )
+        if experience is not None:
+            experience.record_action(action, inference_ordinal)
 
 
 async def _serve(
-    wrapper, policy, args, trace: ActionTrace, progress: ProcessProgress
+    wrapper,
+    policy,
+    args,
+    trace: ActionTrace,
+    progress: ProcessProgress,
+    experience: object | None = None,
 ) -> None:
     from websockets.asyncio.server import serve
 
     lock = asyncio.Lock()
     connected = False
+    shutdown = _shutdown_event(experience)
 
     async def handle(websocket):
         nonlocal connected
@@ -613,17 +625,34 @@ async def _serve(
             return
         connected = True
         async with lock:
-            await _connection(websocket, wrapper, policy, args, trace, progress)
+            await _connection(
+                websocket, wrapper, policy, args, trace, progress, experience
+            )
 
-    async with serve(
-        handle,
-        "127.0.0.1",
-        args.port,
-        compression=None,
-        max_size=16 * 1024 * 1024,
-        process_request=_health,
-    ) as server:
-        await server.serve_forever()
+    try:
+        async with serve(
+            handle,
+            "127.0.0.1",
+            args.port,
+            compression=None,
+            max_size=16 * 1024 * 1024,
+            process_request=_health,
+        ) as server:
+            if shutdown is None:
+                await server.serve_forever()
+            else:
+                await shutdown.wait()
+    finally:
+        if shutdown is not None:
+            asyncio.get_running_loop().remove_signal_handler(signal.SIGTERM)
+
+
+def _shutdown_event(experience: object | None) -> asyncio.Event | None:
+    if experience is None:
+        return None
+    event = asyncio.Event()
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, event.set)
+    return event
 
 
 def parser() -> argparse.ArgumentParser:
@@ -649,6 +678,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--trace-configuration-sha256", required=True)
     value.add_argument("--process-receipt", type=Path, required=True)
     value.add_argument("--action-trace", type=Path)
+    value.add_argument("--train-experience-root", type=Path)
     value.add_argument("--qualify-only", action="store_true")
     value.add_argument("--qualification-output", type=Path)
     return value
@@ -672,6 +702,15 @@ def _main() -> None:
             )
             return
         trace = ActionTrace(args.action_trace, args)
+        experience = None
+        if args.train_experience_root is not None:
+            try:
+                from train_experience import PolicyExperienceRecorder, RecordingPolicy
+            except ModuleNotFoundError:
+                from .train_experience import PolicyExperienceRecorder, RecordingPolicy
+
+            experience = PolicyExperienceRecorder(args.train_experience_root)
+            wrapper.policy = RecordingPolicy(policy, experience)
         progress = ProcessProgress(
             args.process_receipt.with_name("native-process-progress.jsonl"), args
         )
@@ -686,9 +725,11 @@ def _main() -> None:
             ),
         )
         try:
-            asyncio.run(_serve(wrapper, policy, args, trace, progress))
+            asyncio.run(_serve(wrapper, policy, args, trace, progress, experience))
         finally:
             progress.close()
+            if experience is not None:
+                experience.close()
 
 
 if __name__ == "__main__":

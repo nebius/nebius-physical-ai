@@ -18,6 +18,7 @@ from .native_comet_server import (
 )
 from .native_training_checkpoint import atomic_json, file_identity
 from .serving_identity import serving_artifact
+from .train_experience import finalize_experience, write_experience_config
 
 
 def case_seed(rng_identity: dict, case: dict) -> int:
@@ -42,21 +43,31 @@ def case_seed(rng_identity: dict, case: dict) -> int:
     return int.from_bytes(hashlib.sha256(encoded).digest()[:4], "big")
 
 
-def _stage_adapters(output: Path) -> dict[str, dict]:
-    names = (
+def _stage_adapters(output: Path, *, train_experience: bool = False) -> dict[str, dict]:
+    names = [
         "native_comet_server.py",
         "native_comet_policy.py",
         "native_comet_checkpoint.py",
         "comet_policy.py",
         "evaluator_versions.py",
         "evaluator_wire.py",
-    )
+    ]
+    if train_experience:
+        names.extend(("train_experience.py", "train_experience_evaluator.py"))
     rows = {}
     for name in names:
         source = Path(__file__).with_name(name)
         target = output / name
         shutil.copyfile(source, target)
         rows[name] = file_identity(target)
+    if train_experience:
+        monitor = output / "semantic_monitor"
+        monitor.mkdir()
+        for name in ("__init__.py", "interface.py"):
+            source = Path(__file__).with_name("semantic_monitor") / name
+            target = monitor / name
+            shutil.copyfile(source, target)
+            rows[f"semantic_monitor/{name}"] = file_identity(target)
     return rows
 
 
@@ -102,6 +113,8 @@ def _server_command(args, plan: dict, output: Path, seed: int) -> list[str]:
     ]
     if binding["trace"]["enabled"]:
         command.extend(("--action-trace", str(output / "native-actions.jsonl")))
+    if getattr(args, "train_experience", False):
+        command.extend(("--train-experience-root", str(output / "train-experience")))
     return command
 
 
@@ -162,11 +175,23 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     if admission != args.policy_native_admission:
         raise ValueError("Native Comet admission changed after worker preflight")
     output.mkdir(parents=True, exist_ok=True)
-    adapters = _stage_adapters(output)
+    adapters = _stage_adapters(
+        output, train_experience=getattr(args, "train_experience", False)
+    )
     seed = case_seed(
         binding["artifacts"]["rng_contract"]["identity"],
         case,
     )
+    verified = json.loads(Path(args.policy_archive).read_text())
+    if getattr(args, "train_experience", False):
+        _write_experience_config(
+            args,
+            panel=args.policy_native_panel,
+            case=case,
+            output=output,
+            binding=binding,
+            verified=verified,
+        )
     command = _server_command(args, plan, output, seed)
     qualification = output / "native-load-qualification.json"
     qualifier = [
@@ -177,7 +202,6 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     ]
     subprocess.run(qualifier, cwd=args.policy_root, check=True)
     receipt = json.loads(qualification.read_text())
-    verified = json.loads(Path(args.policy_archive).read_text())
     validate_load_qualification(
         receipt,
         {
@@ -212,6 +236,29 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     }
     atomic_json(output / "policy-provenance.json", evidence)
     return command
+
+
+def _write_experience_config(args, *, panel, case, output, binding, verified) -> None:
+    value = {
+        "schema": "npa.behavior.train-experience-config.v1",
+        "status": "train_only_recording_enabled",
+        "split": "train",
+        "cadence": "model_decision_observation_with_all_applied_actions",
+        "action_horizon": 32,
+        "include_depth": getattr(args, "train_experience_depth", False),
+        "case": {
+            name: case[name]
+            for name in ("case_id", "task", "instance_id", "rollout_id", "split")
+        },
+        "panel_sha256": panel["panel_id"],
+        "policy_identity_sha256": panel["policy_binding_sha256"],
+        "checkpoint_sha256": verified["checkpoint"]["content_sha256"],
+        "rng_contract_sha256": binding["artifacts"]["rng_contract"]["identity"][
+            "sha256"
+        ],
+        "source_commit": SOURCE_COMMIT,
+    }
+    write_experience_config(output / "train-experience", value)
 
 
 def _progress_receipts(output: Path, ready: dict) -> tuple[list[dict], dict | None]:
@@ -324,4 +371,18 @@ def finalize_process(output: Path, returncode: int | None) -> dict:
         "progress_journal": progress_identity,
     }
     atomic_json(final_path, result)
+    _finalize_train_experience(output)
     return result
+
+
+def _finalize_train_experience(output: Path) -> None:
+    root = output / "train-experience"
+    if not root.exists():
+        return
+    required = (root / "evaluator/terminal.json", root / "policy/terminal.json")
+    metrics = output / "json"
+    if (
+        all(path.is_file() and not path.is_symlink() for path in required)
+        and metrics.is_dir()
+    ):
+        finalize_experience(root, output)

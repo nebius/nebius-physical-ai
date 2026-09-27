@@ -292,6 +292,12 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         "comet-trained": {"native"},
     }
     policy_kind = getattr(args, "policy_kind", "official")
+    experience = getattr(args, "train_experience", False)
+    experience_depth = getattr(args, "train_experience_depth", False)
+    if experience and policy_kind != "comet-native":
+        raise ValueError("TRAIN experience recording requires comet-native")
+    if experience_depth and not experience:
+        raise ValueError("TRAIN experience depth requires recording to be enabled")
     task_name = getattr(args, "policy_task_name", None)
     comet_kind = policy_kind in {
         "comet12",
@@ -362,7 +368,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             print("Waiting for the managed policy to become ready.", flush=True)
             _wait_for_policy(process, args.port)
             print("Managed policy is ready.", flush=True)
-            yield
+            yield _train_experience_config_identity(output) if experience else None
         finally:
             _stop_policy(process)
             if policy_kind in {"comet-native", "comet-trained"}:
@@ -372,3 +378,10 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
                     from .trained_comet_policy import finalize_process
 
                 finalize_process(output, process.returncode)
+
+
+def _train_experience_config_identity(output: Path) -> dict[str, int | str]:
+    path = output / "train-experience/config.json"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Prepared TRAIN experience config is absent")
+    return {"bytes": path.stat().st_size, "sha256": file_digest(path)}

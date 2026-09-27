@@ -36,6 +36,8 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--policy-native-binding", type=Path)
     parser.add_argument("--policy-native-input-root", type=Path)
     parser.add_argument("--policy-trained-input-root", type=Path)
+    parser.add_argument("--train-experience", action="store_true")
+    parser.add_argument("--train-experience-depth", action="store_true")
     parser.add_argument("--policy-specialist-equivalence-receipt", type=Path)
     parser.add_argument("--policy-specialist-equivalence-sha256")
     parser.add_argument("--policy-specialist-report-admission", type=Path)
