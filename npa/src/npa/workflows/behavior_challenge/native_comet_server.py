@@ -21,22 +21,30 @@ import numpy as np
 
 try:
     from comet_policy import (
+        COMET_PROFILES,
         CONFIG_NAME,
         SOURCE_COMMIT,
         build_source_overlay,
+        get_profile,
         policy_observation,
+        task_identity,
         validate_action,
+        verify_checkpoint,
         verify_source,
     )
     from evaluator_versions import UPSTREAM_COMMITS
     from evaluator_wire import EvaluatorWire
 except ModuleNotFoundError:
     from .comet_policy import (
+        COMET_PROFILES,
         CONFIG_NAME,
         SOURCE_COMMIT,
         build_source_overlay,
+        get_profile,
         policy_observation,
+        task_identity,
         validate_action,
+        verify_checkpoint,
         verify_source,
     )
     from .evaluator_versions import UPSTREAM_COMMITS
@@ -67,9 +75,18 @@ def _process_identity(args, initial_rng: str) -> str:
     return _canonical_digest(_process_identity_payload(args, initial_rng))
 
 
+def _schema(args, suffix: str) -> str:
+    family = (
+        "comet-released"
+        if getattr(args, "checkpoint_layout", "native") == "released"
+        else "comet-native"
+    )
+    return f"npa.behavior.{family}-{suffix}.v1"
+
+
 def _process_identity_payload(args, initial_rng: str) -> dict:
     value = {
-        "schema": "npa.behavior.comet-native-serving-process-identity.v1",
+        "schema": _schema(args, "serving-process-identity"),
         "case_id": args.case_id,
         "task": args.task_name,
         "instance_id": args.instance_id,
@@ -160,13 +177,20 @@ def _load_policy(args, overlay: Path):
         or not row["task"].strip()
     ):
         raise ValueError("Native Comet source task mapping differs")
-    checkpoint = args.checkpoint / str(args.manager_step)
-    asset_id = _canonical_asset_id(args.asset_id)
-    norm_stats = checkpoint.joinpath(
-        "assets", *PurePosixPath(asset_id).parts, "norm_stats.json"
-    )
-    if norm_stats.is_symlink() or not norm_stats.is_file():
-        raise ValueError("Native Comet serving normalization asset differs")
+    layout = getattr(args, "checkpoint_layout", "native")
+    if layout == "released":
+        profile = get_profile(getattr(args, "released_profile", "comet12"))
+        verify_checkpoint(args.checkpoint, profile)
+        task_identity(args.source_root, args.task_id, args.task_name, profile)
+        checkpoint = args.checkpoint
+    else:
+        checkpoint = args.checkpoint / str(args.manager_step)
+        asset_id = _canonical_asset_id(args.asset_id)
+        norm_stats = checkpoint.joinpath(
+            "assets", *PurePosixPath(asset_id).parts, "norm_stats.json"
+        )
+        if norm_stats.is_symlink() or not norm_stats.is_file():
+            raise ValueError("Native Comet serving normalization asset differs")
     policy = create_trained_policy(get_config(CONFIG_NAME), checkpoint)
     explicit = jax.random.key(args.case_seed)
     policy._rng = explicit
@@ -246,7 +270,7 @@ class ActionTrace:
         if self.path is None:
             return
         row = {
-            "schema": "npa.behavior.comet-native-action-trace-row.v1",
+            "schema": _schema(self.args, "action-trace-row"),
             "case_id": self.args.case_id,
             "task": self.args.task_name,
             "instance_id": self.args.instance_id,
@@ -315,7 +339,7 @@ def _process_receipt(
     action_count: int,
 ) -> dict:
     value = {
-        "schema": "npa.behavior.comet-native-serving-process.v1",
+        "schema": _schema(args, "serving-process"),
         "status": "ready" if action_count == 0 else "sent_action_recorded",
         "process_identity_sha256": args.process_identity_sha256,
         "case_id": args.case_id,
@@ -388,7 +412,11 @@ def validate_process_receipt(value: object, expected: dict | None = None) -> dic
     actions = value["action_count"]
     inferences = value["inference_count"]
     if (
-        value["schema"] != "npa.behavior.comet-native-serving-process.v1"
+        value["schema"]
+        not in {
+            "npa.behavior.comet-native-serving-process.v1",
+            "npa.behavior.comet-released-serving-process.v1",
+        }
         or isinstance(actions, bool)
         or not isinstance(actions, int)
         or actions < 0
@@ -412,8 +440,13 @@ def validate_process_receipt(value: object, expected: dict | None = None) -> dic
         or not 0 <= value["case_seed"] < 2**32
     ):
         raise ValueError("Native Comet process receipt chronology differs")
+    family = (
+        value["schema"]
+        .removeprefix("npa.behavior.")
+        .removesuffix("-serving-process.v1")
+    )
     identity_payload = {
-        "schema": "npa.behavior.comet-native-serving-process-identity.v1",
+        "schema": f"npa.behavior.{family}-serving-process-identity.v1",
         "case_id": value["case_id"],
         "task": value["task"],
         "instance_id": value["instance_id"],
@@ -445,7 +478,7 @@ def validate_process_receipt(value: object, expected: dict | None = None) -> dic
 
 def _load_qualification(args) -> dict:
     value = {
-        "schema": "npa.behavior.comet-native-serving-load-qualification.v1",
+        "schema": _schema(args, "serving-load-qualification"),
         "status": "checkpoint_loaded_with_explicit_case_rng",
         "case_id": args.case_id,
         "task": args.task_name,
@@ -530,8 +563,15 @@ def validate_load_qualification(value: object, expected: dict) -> dict:
             or re.fullmatch(r"[0-9a-f]{64}", value[name]) is None
         ):
             raise ValueError("Native Comet serving-load qualification identity differs")
+    family = (
+        value["schema"]
+        .removeprefix("npa.behavior.")
+        .removesuffix("-serving-load-qualification.v1")
+    )
+    if family not in {"comet-native", "comet-released"}:
+        raise ValueError("Comet serving-load qualification schema differs")
     identity_payload = {
-        "schema": "npa.behavior.comet-native-serving-process-identity.v1",
+        "schema": f"npa.behavior.{family}-serving-process-identity.v1",
         "case_id": value["case_id"],
         "task": value["task"],
         "instance_id": value["instance_id"],
@@ -597,7 +637,8 @@ def validate_trace_row(value: object, ready: dict, action_index: int) -> dict:
         "initial_rng_sha256",
     }
     if (
-        value["schema"] != "npa.behavior.comet-native-action-trace-row.v1"
+        value["schema"]
+        != ready["schema"].replace("serving-process", "action-trace-row")
         or value["action_index"] != action_index
         or any(value[name] != ready[name] for name in stable)
         or isinstance(value["inference_ordinal"], bool)
@@ -748,8 +789,14 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     value.add_argument("--source-root", type=Path, required=True)
     value.add_argument("--checkpoint", type=Path, required=True)
-    value.add_argument("--manager-step", type=int, required=True)
-    value.add_argument("--asset-id", required=True)
+    value.add_argument(
+        "--checkpoint-layout", choices=("native", "released"), default="native"
+    )
+    value.add_argument(
+        "--released-profile", choices=tuple(COMET_PROFILES), default="comet12"
+    )
+    value.add_argument("--manager-step", type=int)
+    value.add_argument("--asset-id")
     value.add_argument("--task-id", type=int, required=True)
     value.add_argument("--task-name", required=True)
     value.add_argument("--task-prompt-override")
@@ -776,6 +823,14 @@ def parser() -> argparse.ArgumentParser:
 def _main() -> None:
     args = parser().parse_args()
     args.task_prompt_override = _literal_prompt(args.task_prompt_override)
+    if args.checkpoint_layout == "native" and (
+        args.manager_step is None or args.asset_id is None
+    ):
+        raise ValueError("Native Comet checkpoint layout requires step and asset ID")
+    if args.checkpoint_layout == "released" and (
+        args.manager_step is not None or args.asset_id is not None
+    ):
+        raise ValueError("Released Comet checkpoint layout forbids native state fields")
     logging.basicConfig(level=logging.INFO)
     verify_source(args.source_root)
     with tempfile.TemporaryDirectory(prefix="npa-comet-native-source-") as temporary:

@@ -152,9 +152,10 @@ panels continue through their original validators and evaluator argv unchanged.
 
 `train_evaluator_argv()` renders one declared instance with literal
 `--mode train`, one rollout, video enabled, and no max-step override. TRAIN
-execution accepts only the `comet-native` policy kind. Existing Comet and RLC
-policy kinds retain their development/report split restrictions and fail before
-simulator startup or case claims.
+execution accepts the admitted `comet-native`, `comet-released`, and
+`comet-trained` policy kinds. Existing transfer and RLC policy kinds retain
+their development/report split restrictions and fail before simulator startup
+or case claims.
 
 The native adapter requires a provider-read
 `npa.behavior.comet-native-verified-checkpoint.v1`. That record comes from an
@@ -190,6 +191,15 @@ create one provider object per action. The immutable ready and final receipts
 bind that journal. Real model execution still requires an
 operator-qualified checkpoint bridge and runtime; the public adapter does not
 manufacture that evidence.
+
+The `comet-released` policy kind records TRAIN inference from the exact
+published Comet12 params release. Its binding joins the immutable archive and
+packaged 5948-member inventory to the one-case TRAIN panel and provider-read
+RNG, normalization, tokenizer, task mapping, evaluator argv/source/controller,
+and robot configuration bytes. The worker rechecks the extracted tree against
+the archive before startup, then performs a discarded explicit-RNG load. This
+policy kind makes no optimizer, TrainState, resume, update, DEV, or REPORT
+claim.
 
 The `comet-trained` policy kind serves a selected BF16 export after a separate
 two-process GPU parity qualification. Its admission binds the parity terminal,
@@ -505,8 +515,9 @@ the override.
 
 The internal campaign worker can record reusable Comet TRAIN experience with
 `--train-experience`. The option is accepted only for a non-reporting TRAIN
-panel served by `--policy-kind comet-native` or a parity-qualified
-`--policy-kind comet-trained` export; development and report
+panel served by `--policy-kind comet-native`, a parity-qualified
+`--policy-kind comet-trained` export, or the params-only
+`--policy-kind comet-released`; development and report
 workers reject it before starting the policy or evaluator. Add
 `--train-experience-depth` to retain the three onboard depth arrays. Depth is
 off by default because the current Comet training sample does not consume it.

@@ -182,6 +182,14 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
         from .native_comet_policy import prepare_policy
 
         return prepare_policy(args, plan, output)
+    if getattr(args, "policy_kind", "official") == "comet-released":
+        if _healthy(args.port):
+            raise ValueError(
+                "Policy port is already serving; refusing an unrelated endpoint"
+            )
+        from .released_comet_policy import prepare_policy
+
+        return prepare_policy(args, plan, output)
     if getattr(args, "policy_kind", "official") == "comet-trained":
         if _healthy(args.port):
             raise ValueError(
@@ -292,12 +300,17 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         "comet12": {"native"},
         "comet50": {"native"},
         "comet-native": {"native"},
+        "comet-released": {"native"},
         "comet-trained": {"native"},
     }
     policy_kind = getattr(args, "policy_kind", "official")
     experience = getattr(args, "train_experience", False)
     experience_depth = getattr(args, "train_experience_depth", False)
-    if experience and policy_kind not in {"comet-native", "comet-trained"}:
+    if experience and policy_kind not in {
+        "comet-native",
+        "comet-released",
+        "comet-trained",
+    }:
         raise ValueError("TRAIN experience recording requires an admitted Comet policy")
     if experience_depth and not experience:
         raise ValueError("TRAIN experience depth requires recording to be enabled")
@@ -306,6 +319,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         "comet12",
         "comet50",
         "comet-native",
+        "comet-released",
         "comet-trained",
     }
     if comet_kind and not task_name:
@@ -313,13 +327,14 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             "comet12": "Comet12",
             "comet50": "Comet50",
             "comet-native": "Native Comet",
+            "comet-released": "Released Comet",
             "comet-trained": "Trained Comet",
         }[policy_kind]
         raise ValueError(f"{label} policy requires --policy-task-name")
     if not comet_kind and task_name:
         raise ValueError(
             "--policy-task-name requires --policy-kind comet12, comet50, "
-            "comet-native, or comet-trained"
+            "comet-native, comet-released, or comet-trained"
         )
     if execution_variant not in variants[policy_kind]:
         raise ValueError(f"Unsupported {policy_kind} execution variant")
@@ -342,11 +357,20 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             "comet12": "Comet12",
             "comet50": "Comet50",
             "comet-native": "Native Comet",
+            "comet-released": "Released Comet",
             "comet-trained": "Trained Comet",
         }[policy_kind]
         raise ValueError(f"{label} policy requires all four policy paths")
     if execution_variant != "native" and not all(selected):
         raise ValueError("Execution variant requires all four managed policy paths")
+    released = (
+        getattr(args, "policy_released_binding", None),
+        getattr(args, "policy_released_input_root", None),
+    )
+    if policy_kind == "comet-released" and not all(released):
+        raise ValueError("Released Comet requires its binding and input root")
+    if policy_kind != "comet-released" and any(released):
+        raise ValueError("Released Comet inputs require --policy-kind comet-released")
     if not any(selected):
         yield
         return
@@ -374,9 +398,11 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             yield _train_experience_config_identity(output) if experience else None
         finally:
             _stop_policy(process)
-            if policy_kind in {"comet-native", "comet-trained"}:
+            if policy_kind in {"comet-native", "comet-released", "comet-trained"}:
                 if policy_kind == "comet-native":
                     from .native_comet_policy import finalize_process
+                elif policy_kind == "comet-released":
+                    from .released_comet_policy import finalize_process
                 else:
                     from .trained_comet_policy import finalize_process
 

@@ -745,13 +745,15 @@ def _validate_train_experience_scope(args, panel) -> None:
     from .policy_prompt import prompt_override
 
     experience = getattr(args, "train_experience", False)
-    train_policy_kinds = {"comet-native", "comet-trained"}
+    train_policy_kinds = {"comet-native", "comet-released", "comet-trained"}
     if (
         _is_train_panel(panel)
-        and args.policy_kind == "comet-trained"
+        and args.policy_kind in {"comet-released", "comet-trained"}
         and not experience
     ):
-        raise ValueError("Trained Comet TRAIN execution requires experience recording")
+        raise ValueError(
+            "Released or trained Comet TRAIN requires experience recording"
+        )
     if experience and (
         not _is_train_panel(panel) or args.policy_kind not in train_policy_kinds
     ):
@@ -770,6 +772,8 @@ def _execute_partition(args, panel, partition, storage, workspace):
     if _is_train_panel(panel):
         if args.policy_kind == "comet-native":
             _native_train_preclaim(args, panel, workspace)
+        elif args.policy_kind == "comet-released":
+            _released_comet_preclaim(args, panel, workspace)
         else:
             _trained_comet_preclaim(args, panel, workspace)
     elif getattr(args, "policy_kind", None) == "comet-trained":
@@ -882,6 +886,28 @@ def _trained_comet_preclaim(args, panel, workspace) -> None:
     args.policy_trained_panel = panel
     args.policy_trained_execution_admission = admission
     atomic_json(Path(workspace) / "trained-comet-admission.json", admission)
+
+
+def _released_comet_preclaim(args, panel, workspace) -> None:
+    from .native_training_checkpoint import atomic_json
+    from .released_comet_checkpoint import validate_released_comet_admission
+    from .serving_identity import serving_artifact
+
+    binding = getattr(args, "policy_released_binding", None)
+    input_root = getattr(args, "policy_released_input_root", None)
+    if binding is None or input_root is None:
+        raise ValueError("Released Comet requires its binding and input root")
+    admission = validate_released_comet_admission(
+        Path(binding),
+        Path(input_root),
+        Path(args.policy_archive),
+        Path(args.policy_checkpoint),
+        panel,
+        expected_serving_identity=serving_artifact(args),
+    )
+    args.policy_released_panel = panel
+    args.policy_released_admission = admission
+    atomic_json(Path(workspace) / "released-comet-admission.json", admission)
 
 
 def _specialist_preclaim(args, panel, storage, workspace) -> None:

@@ -18,6 +18,7 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
             "comet12",
             "comet50",
             "comet-native",
+            "comet-released",
             "comet-trained",
         ),
         default="official",
@@ -36,6 +37,8 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--policy-prompt-override")
     parser.add_argument("--policy-native-binding", type=Path)
     parser.add_argument("--policy-native-input-root", type=Path)
+    parser.add_argument("--policy-released-binding", type=Path)
+    parser.add_argument("--policy-released-input-root", type=Path)
     parser.add_argument("--policy-trained-input-root", type=Path)
     parser.add_argument("--train-experience", action="store_true")
     parser.add_argument("--train-experience-depth", action="store_true")

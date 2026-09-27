@@ -38,6 +38,8 @@ _OPTIONAL_POLICY_FLAGS = {
     "policy_stock_correlation_asset": "--policy-stock-correlation-asset",
     "policy_stock_correlation_sha256": "--policy-stock-correlation-sha256",
     "policy_trained_input_root": "--policy-trained-input-root",
+    "policy_released_binding": "--policy-released-binding",
+    "policy_released_input_root": "--policy-released-input-root",
     "policy_specialist_equivalence_receipt": "--policy-specialist-equivalence-receipt",
     "policy_specialist_equivalence_sha256": "--policy-specialist-equivalence-sha256",
     "policy_specialist_report_admission": "--policy-specialist-report-admission",
@@ -45,6 +47,10 @@ _OPTIONAL_POLICY_FLAGS = {
 }
 _OPTIONAL_RUNTIME_FLAGS = {
     "simulator_startup_spec": "--simulator-startup-spec",
+}
+_BOOLEAN_RUNTIME_FLAGS = {
+    "train_experience": "--train-experience",
+    "train_experience_depth": "--train-experience-depth",
 }
 
 
@@ -203,6 +209,7 @@ def _runtime_config(runtime: dict[str, Any]) -> dict[str, Any]:
         set(_BASE_RUNTIME_FIELDS)
         | set(_OPTIONAL_POLICY_FLAGS)
         | set(_OPTIONAL_RUNTIME_FLAGS)
+        | set(_BOOLEAN_RUNTIME_FLAGS)
     )
     if set(runtime) - allowed or any(
         field not in runtime for field in _BASE_RUNTIME_FIELDS
@@ -223,12 +230,20 @@ def _runtime_config(runtime: dict[str, Any]) -> dict[str, Any]:
         not isinstance(value, str) or not value.strip() for value in optional.values()
     ):
         raise ValueError("optional policy fields must be nonempty when supplied")
+    booleans = {key: runtime[key] for key in _BOOLEAN_RUNTIME_FLAGS if key in runtime}
+    if any(type(value) is not bool for value in booleans.values()):
+        raise ValueError("boolean runtime fields must be true or false")
+    if booleans.get("train_experience_depth", False) and not booleans.get(
+        "train_experience", False
+    ):
+        raise ValueError("TRAIN experience depth requires recording")
     stock = {"policy_stock_correlation_asset", "policy_stock_correlation_sha256"}
     if bool(stock & set(optional)) != stock.issubset(optional):
         raise ValueError("stock correlation artifact and SHA-256 must appear together")
     _validate_trained_policy_config(values["policy_kind"], optional)
+    _validate_released_policy_config(values["policy_kind"], optional, booleans)
     _validate_specialist_report_config(optional)
-    return {**values, **optional}
+    return {**values, **optional, **booleans}
 
 
 def _validate_trained_policy_config(policy_kind: str, optional: dict[str, str]) -> None:
@@ -237,6 +252,21 @@ def _validate_trained_policy_config(policy_kind: str, optional: dict[str, str]) 
         raise ValueError("comet-trained requires policy_trained_input_root")
     if policy_kind != "comet-trained" and supplied:
         raise ValueError("policy_trained_input_root requires comet-trained")
+
+
+def _validate_released_policy_config(
+    policy_kind: str, optional: dict[str, str], booleans: dict[str, bool]
+) -> None:
+    fields = {"policy_released_binding", "policy_released_input_root"}
+    supplied = fields & set(optional)
+    if supplied and supplied != fields:
+        raise ValueError("comet-released requires binding and input root")
+    if policy_kind == "comet-released" and supplied != fields:
+        raise ValueError("comet-released requires binding and input root")
+    if policy_kind == "comet-released" and not booleans.get("train_experience", False):
+        raise ValueError("comet-released requires TRAIN experience recording")
+    if policy_kind != "comet-released" and supplied:
+        raise ValueError("released policy inputs require comet-released")
 
 
 def _validate_specialist_report_config(optional: dict[str, str]) -> None:
@@ -514,6 +544,9 @@ def _worker_argv(
     for field, flag in _OPTIONAL_RUNTIME_FLAGS.items():
         if field in runtime:
             argv.extend((flag, f"{{{{config.{field}}}}}"))
+    for field, flag in _BOOLEAN_RUNTIME_FLAGS.items():
+        if runtime.get(field, False):
+            argv.append(flag)
     startup = slot.get("simulator_startup")
     if startup is not None:
         [kind] = startup

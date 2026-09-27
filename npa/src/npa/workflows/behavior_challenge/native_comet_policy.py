@@ -351,8 +351,13 @@ def finalize_process(output: Path, returncode: int | None) -> dict:
     ready_path = output / "native-process.json"
     final_path = output / "native-process-final.json"
     if not ready_path.exists():
+        family = (
+            "comet-released"
+            if (output / "released-load-qualification.json").is_file()
+            else "comet-native"
+        )
         result = {
-            "schema": "npa.behavior.comet-native-serving-final.v1",
+            "schema": f"npa.behavior.{family}-serving-final.v1",
             "status": "process_exited_before_ready",
             "inference_count": 0,
             "action_count": 0,
@@ -378,7 +383,7 @@ def finalize_process(output: Path, returncode: int | None) -> dict:
         latest = ready
     trace = _trace_receipt(output, ready, progress)
     result = {
-        "schema": "npa.behavior.comet-native-serving-final.v1",
+        "schema": ready["schema"].replace("serving-process", "serving-final"),
         "status": "supervisor_stopped_fresh_case_process",
         "case_id": ready["case_id"],
         "checkpoint_content_sha256": ready["checkpoint_content_sha256"],

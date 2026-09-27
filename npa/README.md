@@ -81,6 +81,14 @@ non-reporting TRAIN panel; omitting it uses the released task-mapping
 instruction. DEV and REPORT reject it. The campaign guide documents the
 serving-identity and recording contract.
 
+Released Comet12 params checkpoints use the distinct TRAIN-only
+`--policy-kind comet-released`. This admission requires
+`--policy-released-binding` and `--policy-released-input-root`, rechecks the
+complete public checkpoint inventory and archive, and binds the exact TRAIN
+panel, evaluator, RNG, normalization, tokenizer, task mapping, and serving
+sources before startup. It records inference experience and does not claim an
+optimizer or resumable TrainState.
+
 Fleet recovery can remove a failed CPU pool without charging unchanged reserved
 GPUs against free capacity again. The requested CPU count must be zero, every
 other rendered capacity setting must match, and fresh provider evidence must

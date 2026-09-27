@@ -41,6 +41,10 @@ _TRAINED_COMET_SERVING_FILES = (
     "trained_comet_policy.py",
     "trained_comet_producer.py",
 )
+_RELEASED_COMET_SERVING_FILES = (
+    "released_comet_checkpoint.py",
+    "released_comet_policy.py",
+)
 _TRAIN_EXPERIENCE_SERVING_FILES = (
     "train_experience.py",
     "train_experience_evaluator.py",
@@ -65,6 +69,8 @@ def _serving_source(args) -> dict[str, str]:
         source_names += _SPECIALIST_SERVING_FILES
     if args.policy_kind == "comet-trained":
         source_names += _TRAINED_COMET_SERVING_FILES
+    if args.policy_kind == "comet-released":
+        source_names += _RELEASED_COMET_SERVING_FILES
     if getattr(args, "train_experience", False):
         source_names += _TRAIN_EXPERIENCE_SERVING_FILES
     if getattr(args, "policy_prompt_override", None) is not None:
@@ -109,6 +115,11 @@ def serving_artifact(args) -> dict:
             if args.policy_kind == "comet-trained"
             else None
         ),
+        "released_configuration": (
+            _released_configuration(Path(args.policy_released_binding))
+            if args.policy_kind == "comet-released"
+            else None
+        ),
     }
     prompt = getattr(args, "policy_prompt_override", None)
     if prompt is not None:
@@ -147,6 +158,20 @@ def _trained_configuration(path: Path) -> dict:
         "rng_contract": value.get("rng_contract"),
         "trace": value.get("trace"),
         "serving_tree_sha256": value.get("serving_tree_sha256"),
+    }
+
+
+def _released_configuration(path: Path) -> dict:
+    value = json.loads(path.read_text())
+    return {
+        "schema": value.get("schema"),
+        "profile": value.get("profile"),
+        "source_commit": value.get("source_commit"),
+        "task": value.get("task"),
+        "task_id": value.get("task_id"),
+        "checkpoint": value.get("checkpoint"),
+        "evidence": value.get("evidence"),
+        "trace": value.get("trace"),
     }
 
 
