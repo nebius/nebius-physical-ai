@@ -16,6 +16,10 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_E2E_RUNTIME_STORAGE": (
+        "CPU control-storage execution requires an operator-selected project, "
+        "fresh science/control prefixes, and an owned isolated controller"
+    ),
     "NPA_BEHAVIOR_RUNTIME_CACHE_LIVE_CONFIG": (
         "CPU runtime cache transport checks write temporary objects in an operator-selected private storage prefix"
     ),

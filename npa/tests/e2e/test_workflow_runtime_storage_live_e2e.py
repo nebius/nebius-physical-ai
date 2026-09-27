@@ -169,6 +169,8 @@ def _secret_args() -> list[str]:
 
 def _sky_lifecycle_args(run: _LiveRun) -> list[str]:
     args = [
+        "--s3-bucket",
+        run.bucket,
         "--sky-bin",
         str(run.sky_bin),
         "--isolated-config-dir",

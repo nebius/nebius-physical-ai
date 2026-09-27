@@ -199,10 +199,12 @@ def test_plan_submit_argv_forwards_preset_and_config_vars() -> None:
     )
 
 
-def test_live_argv_forwards_runtime_storage_prefix_to_plan_and_run() -> None:
+def test_live_argv_forwards_runtime_storage_prefix_to_plan_and_run(
+    tmp_path: Path,
+) -> None:
     argv = _load_live_argv()
     common = {
-        "path": Path("/tmp/insights-smoke.yaml"),
+        "path": tmp_path / "insights-smoke.yaml",
         "run_id": "storage-location-live",
         "registry": "registry.example/workbench",
         "project": "operator-project",
