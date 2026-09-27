@@ -278,7 +278,7 @@ def test_train_execution_rejects_cli_policy_kinds_before_any_worker_effect(
     monkeypatch.setattr(campaign_runner, "CaseStore", unexpected("case-store"))
     monkeypatch.setattr(campaign_runner, "_prepared_evaluator", unexpected("policy"))
 
-    with pytest.raises(ValueError, match="reviewed comet-native adapter"):
+    with pytest.raises(ValueError, match="requires an admitted Comet adapter"):
         campaign_runner._execute_partition(
             SimpleNamespace(policy_kind=policy_kind),
             panel,
