@@ -19,6 +19,7 @@ from .native_comet_server import (
 from .native_training_checkpoint import atomic_json, file_identity
 from .serving_identity import serving_artifact
 from .train_experience import finalize_experience, write_experience_config
+from .train_prompt import effective_prompt_binding
 
 
 def case_seed(rng_identity: dict, case: dict) -> int:
@@ -53,7 +54,9 @@ def _stage_adapters(output: Path, *, train_experience: bool = False) -> dict[str
         "evaluator_wire.py",
     ]
     if train_experience:
-        names.extend(("train_experience.py", "train_experience_evaluator.py"))
+        names.extend(
+            ("train_experience.py", "train_experience_evaluator.py", "train_prompt.py")
+        )
     rows = {}
     for name in names:
         source = Path(__file__).with_name(name)
@@ -164,6 +167,14 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     binding = json.loads(Path(args.policy_native_binding).read_text())
     case = _validate_case_plan(args, plan, binding)
     _verify_task_mapping(args.policy_root, binding["task_id"], binding["task"])
+    experience = getattr(args, "train_experience", False)
+    prompt_binding = (
+        effective_prompt_binding(
+            args.policy_root, binding["task"], binding["task_id"], None
+        )
+        if experience
+        else None
+    )
     admission = validate_native_train_admission(
         Path(args.policy_native_binding),
         Path(args.policy_native_input_root),
@@ -183,15 +194,6 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
         case,
     )
     verified = json.loads(Path(args.policy_archive).read_text())
-    if getattr(args, "train_experience", False):
-        _write_experience_config(
-            args,
-            panel=args.policy_native_panel,
-            case=case,
-            output=output,
-            binding=binding,
-            verified=verified,
-        )
     command = _server_command(args, plan, output, seed)
     qualification = output / "native-load-qualification.json"
     qualifier = [
@@ -222,8 +224,19 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
             ],
             "trace_configuration_sha256": canonical_digest(binding["trace"]),
             "inference_count": 0,
+            **({"prompt_binding": prompt_binding} if prompt_binding else {}),
         },
     )
+    if experience:
+        _write_experience_config(
+            args,
+            panel=args.policy_native_panel,
+            case=case,
+            output=output,
+            binding=binding,
+            verified=verified,
+            prompt_binding=receipt["prompt_binding"],
+        )
     evidence = {
         "schema": "npa.behavior.comet-native-policy.v1",
         "status": "discarded_load_qualification_complete_serving_not_started",
@@ -238,9 +251,11 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     return command
 
 
-def _write_experience_config(args, *, panel, case, output, binding, verified) -> None:
+def _write_experience_config(
+    args, *, panel, case, output, binding, verified, prompt_binding
+) -> None:
     value = {
-        "schema": "npa.behavior.train-experience-config.v1",
+        "schema": "npa.behavior.train-experience-config.v2",
         "status": "train_only_recording_enabled",
         "split": "train",
         "cadence": "model_decision_observation_with_all_applied_actions",
@@ -257,6 +272,7 @@ def _write_experience_config(args, *, panel, case, output, binding, verified) ->
             "sha256"
         ],
         "source_commit": SOURCE_COMMIT,
+        "prompt_binding": prompt_binding,
     }
     write_experience_config(output / "train-experience", value)
 

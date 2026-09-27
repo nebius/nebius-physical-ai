@@ -14,6 +14,7 @@ from .native_comet_server import validate_load_qualification
 from .native_training_checkpoint import atomic_json, file_identity
 from .serving_identity import serving_artifact
 from .train_experience import write_experience_config
+from .train_prompt import effective_prompt_binding
 from .trained_comet_checkpoint import validate_trained_comet_admission
 
 
@@ -28,7 +29,9 @@ def _stage_adapters(output: Path, *, train_experience: bool = False) -> dict[str
         "evaluator_wire.py",
     ]
     if train_experience:
-        names.extend(("train_experience.py", "train_experience_evaluator.py"))
+        names.extend(
+            ("train_experience.py", "train_experience_evaluator.py", "train_prompt.py")
+        )
     rows = {}
     for name in names:
         source = Path(__file__).with_name(name)
@@ -94,9 +97,11 @@ def _server_command(args, plan: dict, output: Path, admission: dict) -> list[str
     return command
 
 
-def _write_experience_config(args, panel, case, output, admission) -> None:
+def _write_experience_config(
+    args, panel, case, output, admission, prompt_binding
+) -> None:
     value = {
-        "schema": "npa.behavior.train-experience-config.v1",
+        "schema": "npa.behavior.train-experience-config.v2",
         "status": "train_only_recording_enabled",
         "split": "train",
         "cadence": "model_decision_observation_with_all_applied_actions",
@@ -111,10 +116,8 @@ def _write_experience_config(args, panel, case, output, admission) -> None:
         "checkpoint_sha256": admission["serving_tree_sha256"],
         "rng_contract_sha256": admission["rng_contract"]["sha256"],
         "source_commit": SOURCE_COMMIT,
+        "prompt_binding": prompt_binding,
     }
-    prompt = getattr(args, "policy_prompt_override", None)
-    if prompt is not None:
-        value["policy_prompt_override"] = prompt
     write_experience_config(output / "train-experience", value)
 
 
@@ -164,7 +167,11 @@ def _server_identity_arguments(args, plan, output, admission, case, seed) -> lis
 
 
 def _expected_qualification(
-    admission: dict, case: dict, seed: int, prompt: str | None = None
+    admission: dict,
+    case: dict,
+    seed: int,
+    prompt_binding: dict | None = None,
+    prompt: str | None = None,
 ) -> dict[str, object]:
     value = {
         "schema": "npa.behavior.comet-native-serving-load-qualification.v1",
@@ -183,6 +190,8 @@ def _expected_qualification(
         "trace_configuration_sha256": canonical_digest(admission["trace"]),
         "inference_count": 0,
     }
+    if prompt_binding is not None:
+        value["prompt_binding"] = prompt_binding
     if prompt is not None:
         value["task_prompt_override"] = prompt
     return value
@@ -245,11 +254,17 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     _task_mapping(args.policy_root, admission["task_id"], admission["task"])
     output.mkdir(parents=True, exist_ok=True)
     experience = getattr(args, "train_experience", False)
-    adapters = _stage_adapters(output, train_experience=experience)
-    if experience:
-        _write_experience_config(
-            args, args.policy_trained_panel, case, output, admission
+    prompt_binding = (
+        effective_prompt_binding(
+            args.policy_root,
+            admission["task"],
+            admission["task_id"],
+            getattr(args, "policy_prompt_override", None),
         )
+        if experience
+        else None
+    )
+    adapters = _stage_adapters(output, train_experience=experience)
     command = _server_command(args, plan, output, admission)
     seed = case_seed(_rng_identity(admission), case)
     qualification = _qualify(
@@ -257,9 +272,23 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
         args,
         output,
         _expected_qualification(
-            admission, case, seed, getattr(args, "policy_prompt_override", None)
+            admission,
+            case,
+            seed,
+            prompt_binding,
+            getattr(args, "policy_prompt_override", None),
         ),
     )
+    if experience:
+        qualified_prompt = json.loads(qualification.read_text())["prompt_binding"]
+        _write_experience_config(
+            args,
+            args.policy_trained_panel,
+            case,
+            output,
+            admission,
+            qualified_prompt,
+        )
     _record_provenance(output, admission, case, seed, qualification, adapters, command)
     return command
 

@@ -20,6 +20,7 @@ from npa.workflows.behavior_challenge import serving_identity
 from npa.workflows.behavior_challenge import trained_comet_checkpoint as trained
 from npa.workflows.behavior_challenge import trained_comet_policy
 from npa.workflows.behavior_challenge import trained_comet_producer
+from npa.workflows.behavior_challenge import train_prompt
 from npa.workflows.behavior_challenge.native_training_checkpoint import file_identity
 
 ACTUAL_CHECKPOINT_SHA256 = (
@@ -31,6 +32,23 @@ SELECTED_STEP = 20_000
 def _write(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def _write_prompt_source(source: Path) -> dict:
+    _write(
+        source / "scripts/task_mapping.json",
+        {"picking_up_trash": {"task_index": 1, "task": "pick up the trash"}},
+    )
+    for relative in (
+        "src/openpi/shared/eval_b1k_wrapper.py",
+        "src/openpi/models/tokenizer.py",
+        "src/openpi/transforms.py",
+        "src/openpi/training/config.py",
+    ):
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {relative}\n")
+    return train_prompt.effective_prompt_binding(source, "picking_up_trash", 1, None)
 
 
 def _provider(path: Path, name: str) -> dict:
@@ -1160,11 +1178,7 @@ def test_real_policy_command_qualifies_selected_export_interface(
     workspace.mkdir()
     campaign_runner._trained_comet_preclaim(args, panel, workspace)
     source = tmp_path / "source"
-    (source / "scripts").mkdir(parents=True)
-    _write(
-        source / "scripts/task_mapping.json",
-        {"picking_up_trash": {"task_index": 1, "task": "pick up the trash"}},
-    )
+    prompt_binding = _write_prompt_source(source)
     args.policy_root = source
     args.policy_python = Path("/runtime/python")
     args.port = 8000
@@ -1180,6 +1194,7 @@ def test_real_policy_command_qualifies_selected_export_interface(
             args.policy_trained_execution_admission,
             plan["cases"][0],
             parsed.case_seed,
+            prompt_binding if args.train_experience else None,
         )
         expected["initial_rng_sha256"] = "d" * 64
         expected["process_identity_sha256"] = _canonical(
@@ -1299,11 +1314,7 @@ def test_trained_policy_stages_recorders_and_exact_train_config(
     workspace.mkdir()
     campaign_runner._trained_comet_preclaim(args, panel, workspace)
     source = tmp_path / "source"
-    (source / "scripts").mkdir(parents=True)
-    _write(
-        source / "scripts/task_mapping.json",
-        {"picking_up_trash": {"task_index": 1, "task": "pick up the trash"}},
-    )
+    prompt_binding = _write_prompt_source(source)
     args.policy_root = source
     args.policy_python = Path("/runtime/python")
     args.port = 8000
@@ -1317,6 +1328,7 @@ def test_trained_policy_stages_recorders_and_exact_train_config(
             args.policy_trained_execution_admission,
             plan["cases"][0],
             parsed.case_seed,
+            prompt_binding if args.train_experience else None,
         )
         expected["initial_rng_sha256"] = "d" * 64
         expected["process_identity_sha256"] = _canonical(

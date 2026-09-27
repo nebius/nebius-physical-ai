@@ -16,6 +16,29 @@ from .comet_training_data import (
     action_valid_mask,
 )
 from .train_experience import file_identity, validate_finalized_experience
+from .train_prompt import (
+    legacy_prompt_derivation_sha256,
+    validate_legacy_prompt_derivation,
+    validate_prompt_binding,
+)
+
+
+def _dataset_prompt_binding(
+    config: dict,
+    legacy: dict | None,
+    expected_legacy_sha256: str | None,
+    config_path: Path,
+) -> dict:
+    if config["schema"] == "npa.behavior.train-experience-config.v2":
+        if legacy is not None or expected_legacy_sha256 is not None:
+            raise ValueError("Legacy prompt binding supplied for config v2")
+        return validate_prompt_binding(config["prompt_binding"])
+    if legacy is None or expected_legacy_sha256 is None:
+        raise ValueError("Legacy TRAIN prompt requires pinned derivation")
+    if legacy_prompt_derivation_sha256(legacy) != expected_legacy_sha256:
+        raise ValueError("Legacy TRAIN prompt derivation identity differs")
+    derivation = validate_legacy_prompt_derivation(legacy, config_path)
+    return derivation["prompt_binding"]
 
 
 class AutonomousCometDataset:
@@ -23,16 +46,32 @@ class AutonomousCometDataset:
 
     Args:
         root: Finalized TRAIN experience root.
+        legacy_prompt_derivation: Explicit receipt joining a v1 recording to
+            its original qualification, source, and effective prompt.
+        legacy_prompt_derivation_sha256: Independently admitted canonical
+            identity of that receipt.
     Returns:
         None.
     Raises:
-        ValueError: Manifest, cadence, shards, or arrays differ.
+        ValueError: Manifest, prompt lineage, cadence, shards, or arrays differ.
     """
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        legacy_prompt_derivation: dict | None = None,
+        legacy_prompt_derivation_sha256: str | None = None,
+    ) -> None:
         self.root = Path(root)
         self.manifest = _manifest(self.root)
         self.config = self.manifest["config"]
+        self.prompt_binding = _dataset_prompt_binding(
+            self.config,
+            legacy_prompt_derivation,
+            legacy_prompt_derivation_sha256,
+            self.root / "config.json",
+        )
         self.decisions = _decision_locations(self.root)
         self.actions = _applied_actions(self.root)
         self.frame_count = self.manifest["frame_count"]
@@ -73,9 +112,7 @@ class AutonomousCometDataset:
             "action": actions,
             "action_valid_mask": valid,
             "action_is_pad": ~valid,
-            "prompt": self.config.get(
-                "policy_prompt_override", self.config["case"]["task"]
-            ),
+            "prompt": self.prompt_binding["effective_prompt"],
             "episode_index": np.asarray(0),
             "frame_index": np.asarray(frame),
         }

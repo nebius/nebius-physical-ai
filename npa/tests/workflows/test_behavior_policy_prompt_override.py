@@ -18,6 +18,7 @@ from npa.workflows.behavior_challenge import native_comet_server
 from npa.workflows.behavior_challenge import policy_prompt
 from npa.workflows.behavior_challenge import serving_identity
 from npa.workflows.behavior_challenge import train_experience
+from npa.workflows.behavior_challenge import train_prompt
 from npa.workflows.behavior_challenge import trained_comet_policy
 
 
@@ -26,6 +27,35 @@ RELEASED_PROMPT = (
     "Put the three can of soda from the living room inside the tash can in the kitchen."
 )
 DIGEST = "1" * 64
+
+
+def _prompt_binding(prompt: str = PROMPT, source_kind: str = "literal_override"):
+    payload = {
+        "schema": train_prompt.SCHEMA,
+        "task_name": "picking_up_trash",
+        "task_id": 1,
+        "effective_prompt": prompt,
+        "source_kind": source_kind,
+        "source_files": {
+            name: {"bytes": 1, "sha256": DIGEST}
+            for name in (
+                "task_mapping",
+                "wrapper",
+                "tokenizer",
+                "transforms",
+                "training_config",
+            )
+        },
+        "tokenizer_contract": {
+            "implementation": "PaligemmaTokenizer",
+            "model_uri": "gs://big_vision/paligemma_tokenizer.model",
+            "model_bytes_status": "not_observed_bind_at_training_projection",
+        },
+    }
+    return {
+        **payload,
+        "binding_sha256": native_comet_server._canonical_digest(payload),
+    }
 
 
 def _args(**changes):
@@ -156,6 +186,15 @@ def test_loader_keeps_slug_lookup_then_overrides_effective_prompt(
         }
     }
     (source / "scripts/task_mapping.json").write_text(json.dumps(mapping) + "\n")
+    for relative in (
+        "src/openpi/shared/eval_b1k_wrapper.py",
+        "src/openpi/models/tokenizer.py",
+        "src/openpi/transforms.py",
+        "src/openpi/training/config.py",
+    ):
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {relative}\n")
     (checkpoint / "20000/assets/asset/norm_stats.json").write_text("{}\n")
     policy = SimpleNamespace(_rng=None)
     observed = {}
@@ -197,6 +236,7 @@ def test_loader_keeps_slug_lookup_then_overrides_effective_prompt(
         manager_step=20000,
         asset_id="asset",
         case_seed=17,
+        train_experience_root=Path("/experience"),
     )
     wrapped, loaded = native_comet_server._load_policy(args, overlay)
     assert loaded is policy
@@ -210,12 +250,29 @@ def test_loader_keeps_slug_lookup_then_overrides_effective_prompt(
     }
 
 
+def test_default_binding_verifies_constructor_prompt_without_overwriting() -> None:
+    args = SimpleNamespace(task_name="picking_up_trash")
+    binding = _prompt_binding(RELEASED_PROMPT, "task_mapping_default")
+    wrapper = SimpleNamespace(task_name="picking_up_trash", task_prompt=RELEASED_PROMPT)
+    native_comet_server._apply_prompt_binding(wrapper, args, binding)
+    assert wrapper.task_prompt == RELEASED_PROMPT
+
+    mismatched = SimpleNamespace(
+        task_name="picking_up_trash", task_prompt="different constructor prompt"
+    )
+    with pytest.raises(ValueError, match="effective prompt differs"):
+        native_comet_server._apply_prompt_binding(mismatched, args, binding)
+    assert mismatched.task_prompt == "different constructor prompt"
+
+
 def test_load_qualification_rejects_changed_literal():
     args = _server_args(
         manager_step=20000,
         asset_id="asset",
         initial_rng_sha256="4" * 64,
         process_identity_sha256="5" * 64,
+        effective_prompt_binding=_prompt_binding(),
+        train_experience_root=Path("/experience"),
     )
     value = native_comet_server._load_qualification(args)
     expected = dict(value)
@@ -229,6 +286,18 @@ def test_load_qualification_rejects_changed_literal():
     changed = dict(value, task_prompt_override="different")
     with pytest.raises(ValueError, match="qualification differs"):
         native_comet_server.validate_load_qualification(changed, expected)
+
+
+def test_nonrecording_qualification_keeps_legacy_shape() -> None:
+    args = _server_args(
+        manager_step=20000,
+        asset_id="asset",
+        initial_rng_sha256="4" * 64,
+        process_identity_sha256="5" * 64,
+        effective_prompt_binding=_prompt_binding(),
+        train_experience_root=None,
+    )
+    assert "prompt_binding" not in native_comet_server._load_qualification(args)
 
 
 def test_experience_config_preserves_literal_and_default_shape():
@@ -251,11 +320,16 @@ def test_experience_config_preserves_literal_and_default_shape():
         "checkpoint_sha256": "3" * 64,
         "rng_contract_sha256": "4" * 64,
         "source_commit": "5" * 40,
+        "prompt_binding": _prompt_binding(),
     }
     assert train_experience.validate_experience_config(value) == value
-    override = dict(value, policy_prompt_override=PROMPT)
+    legacy = dict(value)
+    legacy["schema"] = train_experience.LEGACY_CONFIG_SCHEMA
+    legacy.pop("prompt_binding")
+    assert train_experience.validate_experience_config(legacy) == legacy
+    override = dict(legacy, policy_prompt_override=PROMPT)
     assert train_experience.validate_experience_config(override) == override
     with pytest.raises(ValueError, match="prompt override differs"):
         train_experience.validate_experience_config(
-            dict(value, policy_prompt_override=None)
+            dict(legacy, policy_prompt_override=None)
         )

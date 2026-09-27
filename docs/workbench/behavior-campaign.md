@@ -529,9 +529,27 @@ and verify every required experience member before it can complete the case; an
 interrupted experience upload remains incomplete instead of silently dropping
 the recording.
 
+New recordings bind the wrapper's effective prompt. Policy preparation resolves
+the admitted task slug through the exact `task_mapping.json`, applies any
+TRAIN-only literal override, and requires the discarded-load process to report
+the same `B1KPolicyWrapper.task_prompt`. The versioned experience config records
+the effective text plus task-mapping, wrapper, tokenizer, transform, and
+training-config source identities. The PaliGemma tokenizer model bytes remain a
+training-projection input and must be bound where tokenization runs; these
+source identities do not claim the downloaded tokenizer bytes were checked.
+
 `AutonomousCometDataset` projects a finalized recording into the existing
 Comet sample shape: float32 61-element state, three uint8 RGB images, a float32
 32-by-23 future applied-action target, and terminal validity/padding masks.
+It uses the recorded effective prompt and never substitutes the task slug.
+Legacy v1 recordings require an explicit, non-mutating derivation receipt bound
+to their original config, discarded-load qualification, clean source revision,
+and prompt-source bytes. A legacy default also requires a preserved runtime log
+containing the resolved prompt. Training projection also requires the
+independently admitted canonical identity of the derivation receipt, so a
+self-consistent replacement receipt cannot relabel an old recording.
+Inspection remains supported without this
+training-only derivation.
 Depth is preserved when requested but excluded from this projection. Unknown or
 privileged simulator leaves are excluded before recording and cannot enter the
 policy-side stream or default Comet projection. Privileged TRAIN annotations

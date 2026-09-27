@@ -126,12 +126,22 @@ def _literal_prompt(value: str | None) -> str | None:
     return value
 
 
-def _apply_prompt_override(wrapper, args, task: str) -> None:
+def _apply_prompt_override(wrapper, args, mapped_prompt: str) -> None:
     prompt = getattr(args, "task_prompt_override", None)
     wrapper.task_prompt = prompt or wrapper.task_prompt
-    expected = prompt or task
-    if wrapper.task_name != args.task_name or wrapper.task_prompt != expected:
+    if wrapper.task_name != args.task_name or wrapper.task_prompt != (
+        prompt or mapped_prompt
+    ):
         raise ValueError("Native Comet effective prompt differs")
+
+
+def _apply_prompt_binding(wrapper, args, binding: dict) -> None:
+    prompt = binding["effective_prompt"]
+    if binding["source_kind"] == "literal_override":
+        wrapper.task_prompt = prompt
+    if wrapper.task_name != args.task_name or wrapper.task_prompt != prompt:
+        raise ValueError("Native Comet effective prompt differs")
+    args.effective_prompt_binding = binding
 
 
 def _load_policy(args, overlay: Path):
@@ -170,7 +180,21 @@ def _load_policy(args, overlay: Path):
             max_len=32,
             fine_grained_level=0,
         )
-    _apply_prompt_override(wrapper, args, row["task"])
+    if args.train_experience_root is None:
+        _apply_prompt_override(wrapper, args, row["task"])
+    else:
+        try:
+            from train_prompt import effective_prompt_binding
+        except ModuleNotFoundError:
+            from .train_prompt import effective_prompt_binding
+
+        binding = effective_prompt_binding(
+            args.source_root,
+            args.task_name,
+            args.task_id,
+            getattr(args, "task_prompt_override", None),
+        )
+        _apply_prompt_binding(wrapper, args, binding)
     return wrapper, policy
 
 
@@ -439,6 +463,13 @@ def _load_qualification(args) -> dict:
         "process_identity_sha256": args.process_identity_sha256,
         "inference_count": 0,
     }
+    if args.train_experience_root is not None:
+        try:
+            from train_prompt import validate_prompt_binding
+        except ModuleNotFoundError:
+            from .train_prompt import validate_prompt_binding
+
+        value["prompt_binding"] = validate_prompt_binding(args.effective_prompt_binding)
     prompt_override = getattr(args, "task_prompt_override", None)
     if prompt_override is not None:
         value["task_prompt_override"] = prompt_override
@@ -475,14 +506,24 @@ def validate_load_qualification(value: object, expected: dict) -> dict:
         "process_identity_sha256",
         "inference_count",
     }
-    if not isinstance(value, dict) or set(value) not in {
+    allowed = {
         frozenset(keys),
         frozenset({*keys, "task_prompt_override"}),
-    }:
+        frozenset({*keys, "prompt_binding"}),
+        frozenset({*keys, "task_prompt_override", "prompt_binding"}),
+    }
+    if not isinstance(value, dict) or set(value) not in allowed:
         raise ValueError("Native Comet serving-load qualification fields differ")
     stable = set(value) - {"initial_rng_sha256", "process_identity_sha256"}
     if set(expected) != stable or any(value[name] != expected[name] for name in stable):
         raise ValueError("Native Comet serving-load qualification differs")
+    if "prompt_binding" in value:
+        try:
+            from train_prompt import validate_prompt_binding
+        except ModuleNotFoundError:
+            from .train_prompt import validate_prompt_binding
+
+        validate_prompt_binding(value["prompt_binding"])
     for name in ("initial_rng_sha256", "process_identity_sha256"):
         if (
             not isinstance(value[name], str)

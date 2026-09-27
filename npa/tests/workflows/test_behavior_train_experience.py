@@ -22,6 +22,7 @@ from npa.workflows.behavior_challenge import (
     train_experience,
     train_experience_evaluator,
     trained_comet_policy,
+    train_prompt,
 )
 from npa.workflows.behavior_challenge.campaign import canonical_digest
 from npa.workflows.behavior_challenge import policy as campaign_policy
@@ -58,6 +59,34 @@ from npa.workflows.behavior_challenge.train_experience_evaluator import (
 )
 
 DIGEST = "a" * 64
+
+
+def _prompt_binding(prompt: str = "pick up the trash") -> dict:
+    payload = {
+        "schema": train_prompt.SCHEMA,
+        "task_name": "picking_up_trash",
+        "task_id": 1,
+        "effective_prompt": prompt,
+        "source_kind": "task_mapping_default",
+        "source_files": {
+            name: {"bytes": 1, "sha256": DIGEST}
+            for name in (
+                "task_mapping",
+                "wrapper",
+                "tokenizer",
+                "transforms",
+                "training_config",
+            )
+        },
+        "tokenizer_contract": {
+            "implementation": "PaligemmaTokenizer",
+            "model_uri": "gs://big_vision/paligemma_tokenizer.model",
+            "model_bytes_status": "not_observed_bind_at_training_projection",
+        },
+    }
+    return {**payload, "binding_sha256": canonical_digest(payload)}
+
+
 COMMIT = "b" * 40
 
 
@@ -171,7 +200,7 @@ def _case() -> dict[str, object]:
 
 def _config(*, include_depth: bool = False) -> dict[str, object]:
     return {
-        "schema": "npa.behavior.train-experience-config.v1",
+        "schema": "npa.behavior.train-experience-config.v2",
         "status": "train_only_recording_enabled",
         "split": "train",
         "cadence": "model_decision_observation_with_all_applied_actions",
@@ -183,6 +212,7 @@ def _config(*, include_depth: bool = False) -> dict[str, object]:
         "checkpoint_sha256": DIGEST,
         "rng_contract_sha256": DIGEST,
         "source_commit": COMMIT,
+        "prompt_binding": _prompt_binding(),
     }
 
 
@@ -204,6 +234,7 @@ def test_recording_config_uses_the_declared_panel_id(tmp_path: Path) -> None:
         output=tmp_path,
         binding=binding,
         verified=verified,
+        prompt_binding=_prompt_binding(),
     )
 
     config = json.loads((tmp_path / "train-experience/config.json").read_text())
@@ -467,9 +498,11 @@ def test_disabled_recording_stages_no_recorder_modules(tmp_path: Path) -> None:
     enabled_rows = _stage_adapters(enabled, train_experience=True)
 
     assert "train_experience.py" not in disabled_rows
+    assert "train_prompt.py" not in disabled_rows
     assert not (disabled / "semantic_monitor").exists()
     assert "train_experience.py" in enabled_rows
     assert "train_experience_evaluator.py" in enabled_rows
+    assert "train_prompt.py" in enabled_rows
     assert "semantic_monitor/interface.py" in enabled_rows
 
 
@@ -486,11 +519,13 @@ sys.modules['jax'] = None
 sys.modules['npa'] = None
 import train_experience
 import train_experience_evaluator
+import train_prompt
+import native_comet_server
 import semantic_monitor.collector
 import semantic_monitor.schema
 
 for name, module in tuple(sys.modules.items()):
-    if name.startswith(('train_experience', 'semantic_monitor')):
+    if name.startswith(('native_comet_server', 'train_experience', 'train_prompt', 'semantic_monitor')):
         assert Path(module.__file__).resolve().is_relative_to(root), name
 """
     result = subprocess.run(
@@ -655,7 +690,79 @@ def test_complete_experience_projects_exact_comet_sample(tmp_path: Path) -> None
     assert np.array_equal(sample["action"][2:], terminal)
     assert sample["action_valid_mask"].tolist() == [True, True] + [False] * 30
     assert sample["action_is_pad"].tolist() == [False, False] + [True] * 30
+    assert sample["prompt"] == "pick up the trash"
     assert all(value.shape[-1] == 3 for key, value in sample.items() if "images" in key)
+
+
+def test_legacy_dataset_rejects_consistently_rehashed_prompt_receipt(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "experience"
+    _closed_two_step_experience(root, tmp_path)
+    finalize_experience(root, tmp_path)
+    config_path = root / "config.json"
+    config = json.loads(config_path.read_text())
+    binding = deepcopy(config.pop("prompt_binding"))
+    config["schema"] = "npa.behavior.train-experience-config.v1"
+    config["policy_prompt_override"] = binding["effective_prompt"]
+    binding["source_kind"] = "literal_override"
+    binding["binding_sha256"] = canonical_digest(
+        {name: value for name, value in binding.items() if name != "binding_sha256"}
+    )
+    config_path.write_text(json.dumps(config, sort_keys=True) + "\n")
+    manifest_path = root / "experience-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["config"] = config
+    for row in manifest["members"]:
+        if row["path"] == "config.json":
+            row.update(file_identity(config_path))
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+    receipt = _legacy_prompt_receipt(config_path, binding)
+    admitted = train_prompt.legacy_prompt_derivation_sha256(receipt)
+
+    assert (
+        AutonomousCometDataset(
+            root,
+            legacy_prompt_derivation=receipt,
+            legacy_prompt_derivation_sha256=admitted,
+        )[0]["prompt"]
+        == binding["effective_prompt"]
+    )
+    rewritten = deepcopy(receipt)
+    rewritten["prompt_binding"]["effective_prompt"] = "forged prompt"
+    rewritten["prompt_binding"]["binding_sha256"] = canonical_digest(
+        {
+            name: value
+            for name, value in rewritten["prompt_binding"].items()
+            if name != "binding_sha256"
+        }
+    )
+    rewritten["derivation_sha256"] = canonical_digest(
+        {
+            name: value
+            for name, value in rewritten.items()
+            if name != "derivation_sha256"
+        }
+    )
+    with pytest.raises(ValueError, match="identity differs"):
+        AutonomousCometDataset(
+            root,
+            legacy_prompt_derivation=rewritten,
+            legacy_prompt_derivation_sha256=admitted,
+        )
+
+
+def _legacy_prompt_receipt(config_path: Path, binding: dict) -> dict:
+    payload = {
+        "schema": "npa.behavior.legacy-train-prompt-derivation.v1",
+        "status": "legacy_recording_prompt_derived_without_mutation",
+        "config": file_identity(config_path),
+        "qualification": {"bytes": 1, "sha256": DIGEST},
+        "source_commit": COMMIT,
+        "observed_prompt_artifact": None,
+        "prompt_binding": binding,
+    }
+    return {**payload, "derivation_sha256": canonical_digest(payload)}
 
 
 def test_finalized_members_publish_before_success_manifest(tmp_path: Path) -> None:

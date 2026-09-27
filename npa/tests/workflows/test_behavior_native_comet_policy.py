@@ -17,6 +17,7 @@ from npa.workflows.behavior_challenge import native_comet_policy
 from npa.workflows.behavior_challenge import native_comet_server
 from npa.workflows.behavior_challenge import nonreporting_train as train
 from npa.workflows.behavior_challenge import serving_identity
+from npa.workflows.behavior_challenge import train_prompt
 from npa.workflows.behavior_challenge.native_training_checkpoint import (
     checkpoint_inventory,
     file_identity,
@@ -413,6 +414,18 @@ def test_prepare_native_policy_runs_discarded_loader_before_serving(
         source / "scripts/task_mapping.json",
         {"fixture_task": {"task_index": 7, "task": "do fixture"}},
     )
+    for relative in (
+        "src/openpi/shared/eval_b1k_wrapper.py",
+        "src/openpi/models/tokenizer.py",
+        "src/openpi/transforms.py",
+        "src/openpi/training/config.py",
+    ):
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {relative}\n")
+    prompt_binding = train_prompt.effective_prompt_binding(
+        source, "fixture_task", 7, None
+    )
     args.policy_native_input_root = inputs
     args.policy_checkpoint = checkpoint
     args.policy_archive = inputs / "verified_checkpoint"
@@ -482,6 +495,11 @@ def test_prepare_native_policy_runs_discarded_loader_before_serving(
                 "initial_rng_sha256": initial_rng,
                 "process_identity_sha256": process_identity,
                 "inference_count": 0,
+                **(
+                    {"prompt_binding": prompt_binding}
+                    if getattr(args, "train_experience", False)
+                    else {}
+                ),
             },
         )
 

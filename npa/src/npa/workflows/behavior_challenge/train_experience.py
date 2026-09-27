@@ -28,10 +28,16 @@ except ModuleNotFoundError:
         validate_evaluation_observation,
     )
 
+try:
+    from train_prompt import validate_prompt_binding
+except ModuleNotFoundError:
+    from .train_prompt import validate_prompt_binding
+
 ACTION_DIMENSION = 23
 ACTION_HORIZON = 32
 DECISION_CADENCE = "model_decision_observation_with_all_applied_actions"
-CONFIG_SCHEMA = "npa.behavior.train-experience-config.v1"
+CONFIG_SCHEMA = "npa.behavior.train-experience-config.v2"
+LEGACY_CONFIG_SCHEMA = "npa.behavior.train-experience-config.v1"
 MANIFEST_SCHEMA = "npa.behavior.train-experience-manifest.v1"
 GOAL_PROGRESS_SCHEMA = "npa.behavior.train-goal-progress.v1"
 GOAL_PROGRESS_SOURCE = {
@@ -363,7 +369,13 @@ def validate_experience_config(value: object) -> dict[str, Any]:
         "source_commit",
     }
     actual = set(value) if isinstance(value, dict) else set()
-    if actual not in {frozenset(keys), frozenset({*keys, "policy_prompt_override"})}:
+    legacy = isinstance(value, dict) and value.get("schema") == LEGACY_CONFIG_SCHEMA
+    allowed = (
+        {frozenset(keys), frozenset({*keys, "policy_prompt_override"})}
+        if legacy
+        else {frozenset({*keys, "prompt_binding"})}
+    )
+    if actual not in allowed:
         raise ValueError("TRAIN experience configuration fields differ")
     case = value["case"]
     if not isinstance(case, dict) or set(case) != {
@@ -375,7 +387,12 @@ def validate_experience_config(value: object) -> dict[str, Any]:
     }:
         raise ValueError("TRAIN experience case fields differ")
     _validate_config_values(value, case)
-    _validate_config_prompt(value)
+    if legacy:
+        _validate_config_prompt(value)
+    else:
+        prompt = validate_prompt_binding(value["prompt_binding"])
+        if prompt["task_name"] != case["task"]:
+            raise ValueError("TRAIN experience effective prompt task differs")
     return value
 
 
@@ -392,7 +409,7 @@ def _validate_config_values(value: dict, case: dict) -> None:
     ):
         raise ValueError("TRAIN experience identity differs")
     if (
-        value["schema"] != CONFIG_SCHEMA
+        value["schema"] not in {CONFIG_SCHEMA, LEGACY_CONFIG_SCHEMA}
         or value["status"] != "train_only_recording_enabled"
         or value["split"] != "train"
         or value["cadence"] != DECISION_CADENCE
