@@ -20,6 +20,7 @@ from npa.workflows.behavior_challenge import (
     native_comet_policy,
     native_comet_server,
     train_experience,
+    train_experience_evaluator,
     trained_comet_policy,
 )
 from npa.workflows.behavior_challenge.campaign import canonical_digest
@@ -33,10 +34,12 @@ from npa.workflows.behavior_challenge.campaign_runner import (
 from npa.workflows.behavior_challenge.case_store import CaseAlreadyStarted, CaseStore
 from npa.workflows.behavior_challenge.autonomous_training_data import (
     AutonomousCometDataset,
+    OfficialGoalProgressDataset,
 )
 from npa.workflows.behavior_challenge.native_comet_policy import _stage_adapters
 from npa.workflows.behavior_challenge.train_experience import (
     EvaluatorExperienceRecorder,
+    GOAL_PROGRESS_SOURCE,
     PolicyExperienceRecorder,
     RecordingPolicy,
     allowed_observation,
@@ -48,6 +51,8 @@ from npa.workflows.behavior_challenge.train_experience import (
 )
 from npa.workflows.behavior_challenge.train_experience_evaluator import (
     _apply_hook,
+    _official_goal_source,
+    _official_step,
     _recording_policy,
     _run_hook,
 )
@@ -354,6 +359,40 @@ def _closed_two_step_experience(root: Path, output: Path) -> None:
             raw[frame].astype(np.float32),
             4 * frame + 3,
             4 * frame + 4,
+        )
+    evaluator.close()
+    policy_recorder.close()
+    _metrics(output, 2)
+
+
+def _closed_progress_experience(root: Path, output: Path) -> None:
+    write_experience_config(root, _config())
+    raw = np.arange(32 * 23, dtype=np.float64).reshape(32, 23)
+    policy_recorder = PolicyExperienceRecorder(root)
+    policy = RecordingPolicy(_Policy(raw), policy_recorder)
+    policy.infer({"prompt": "pick up the trash"})
+    evaluator = EvaluatorExperienceRecorder(root, progress_source=GOAL_PROGRESS_SOURCE)
+    evaluator.reset()
+    statuses = (([], [0, 1]), ([0], [1]))
+    for frame, (satisfied, unsatisfied) in enumerate(statuses):
+        policy_recorder.record_action(raw[frame], 0)
+        action = raw[frame].astype(np.float32)
+        evaluator.record_policy(
+            _observation(frame), action, 4 * frame + 1, 4 * frame + 2
+        )
+        evaluator.record_applied(
+            _observation(frame + 1),
+            action,
+            4 * frame + 3,
+            4 * frame + 4,
+            official_step={
+                "goal_status": {
+                    "satisfied": list(satisfied),
+                    "unsatisfied": list(unsatisfied),
+                },
+                "terminated": False,
+                "truncated": frame == 1,
+            },
         )
     evaluator.close()
     policy_recorder.close()
@@ -844,6 +883,170 @@ def test_actual_evaluator_hooks_preserve_float32_apply_bytes(tmp_path: Path) -> 
     assert applied == [array_identity(returned)]
     terminal = recorder.close()
     assert terminal["frame_count"] == 1
+
+
+def test_official_goal_progress_is_separate_and_action_aligned(tmp_path: Path) -> None:
+    root = tmp_path / "experience"
+    _closed_progress_experience(root, tmp_path)
+
+    manifest = finalize_experience(root, tmp_path)
+    actions = AutonomousCometDataset(root)
+    progress = OfficialGoalProgressDataset(root)
+
+    assert len(actions) == 1
+    assert len(progress) == manifest["frame_count"] == 2
+    assert "goal_status" not in actions[0]
+    assert progress[0]["delta_satisfied"] is None
+    assert progress[0]["potential"] == np.float32(0.0)
+    assert progress[1]["delta_satisfied"] == 1
+    assert progress[1]["potential"] == np.float32(0.5)
+    annotation = manifest["training_annotations"]["official_goal_status"]
+    assert annotation["default_comet_projection_includes_annotation"] is False
+    assert annotation["source"] == GOAL_PROGRESS_SOURCE
+
+
+def test_actual_apply_hook_records_official_done_goal_status(tmp_path: Path) -> None:
+    root = tmp_path / "experience"
+    write_experience_config(root, _config())
+    recorder = EvaluatorExperienceRecorder(root, progress_source=GOAL_PROGRESS_SOURCE)
+    recorder.reset()
+    action = np.zeros((1, 23), dtype=np.float32)
+    recorder.record_policy(_observation(0), action, 1, 2)
+    evaluator = _fake_evaluator(recorder)
+
+    def original(_evaluator, actions, active_env_indices):
+        assert active_env_indices == [0]
+        assert actions is action
+        return (
+            np.asarray([False]),
+            np.asarray([True]),
+            [{"done": {"goal_status": {"satisfied": [0], "unsatisfied": [1]}}}],
+        )
+
+    result = _apply_hook(original)(evaluator, action, [0])
+    terminal = recorder.close()
+    rows = [
+        json.loads(line)
+        for line in (root / "evaluator/goal-progress.jsonl").read_text().splitlines()
+    ]
+    assert result[2][0]["done"]["goal_status"]["satisfied"] == [0]
+    assert rows[0]["frame_index"] == 0
+    assert rows[0]["truncated"] is True
+    assert terminal["progress_source"] == GOAL_PROGRESS_SOURCE
+
+
+def test_official_step_rejects_non_v393_info_shape() -> None:
+    with pytest.raises(ValueError, match="done info"):
+        _official_step((np.asarray([False]), np.asarray([False]), [{}]))
+    with pytest.raises(ValueError, match="termination array"):
+        _official_step((np.asarray([0]), np.asarray([False]), [{"done": {}}]))
+
+
+def test_goal_progress_source_is_checked_before_install(tmp_path, monkeypatch) -> None:
+    classes = [
+        type(name, (), {})
+        for name in (
+            "Evaluator",
+            "BehaviorTask",
+            "BaseTask",
+            "Environment",
+            "Predicate",
+            "Evaluate",
+        )
+    ]
+    modules = (
+        ("omnigibson.eval.evaluator", "BatchedEvaluator"),
+        ("omnigibson.tasks.behavior_task", "BehaviorTask"),
+        ("omnigibson.tasks.task_base", "BaseTask"),
+        ("omnigibson.envs.env_base", "Environment"),
+        ("omnigibson.termination_conditions.predicate_goal", "PredicateGoal"),
+        ("bddl.condition_evaluation", "evaluate_state"),
+    )
+    for (module, attribute), cls in zip(modules, classes, strict=True):
+        monkeypatch.setitem(sys.modules, module, SimpleNamespace(**{attribute: cls}))
+    paths = {}
+    for cls, suffix in zip(classes, GOAL_PROGRESS_SOURCE["files"], strict=True):
+        path = tmp_path / suffix
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture")
+        paths[cls] = path
+    monkeypatch.setattr(train_experience_evaluator.inspect, "getsourcefile", paths.get)
+    monkeypatch.setattr(
+        train_experience_evaluator,
+        "file_identity",
+        lambda path: GOAL_PROGRESS_SOURCE["files"][
+            path.relative_to(tmp_path).as_posix()
+        ],
+    )
+    assert _official_goal_source() == GOAL_PROGRESS_SOURCE
+
+    for changed in (
+        "OmniGibson/omnigibson/tasks/task_base.py",
+        "OmniGibson/omnigibson/envs/env_base.py",
+    ):
+        monkeypatch.setattr(
+            train_experience_evaluator,
+            "file_identity",
+            lambda path, changed=changed: (
+                {"bytes": 1, "sha256": "0" * 64}
+                if path.relative_to(tmp_path).as_posix() == changed
+                else GOAL_PROGRESS_SOURCE["files"][
+                    path.relative_to(tmp_path).as_posix()
+                ]
+            ),
+        )
+        with pytest.raises(ValueError, match="source bytes"):
+            _official_goal_source()
+
+    monkeypatch.setattr(
+        train_experience_evaluator,
+        "file_identity",
+        lambda _path: {"bytes": 1, "sha256": "0" * 64},
+    )
+    with pytest.raises(ValueError, match="source bytes"):
+        _official_goal_source()
+
+
+@pytest.mark.parametrize("mutation", ["partition", "missing", "source", "outcome"])
+def test_goal_progress_consistent_rehash_mutants_reject(
+    tmp_path: Path, mutation: str
+) -> None:
+    root = tmp_path / "experience"
+    _closed_progress_experience(root, tmp_path)
+    terminal_path = root / "evaluator/terminal.json"
+    terminal = json.loads(terminal_path.read_text())
+    if mutation == "source":
+        terminal["progress_source"]["upstream_commit"] = "a" * 40
+        terminal_path.write_text(json.dumps(terminal))
+    elif mutation == "outcome":
+        metrics_path = tmp_path / "json/picking_up_trash_0_0.json"
+        metrics = json.loads(metrics_path.read_text())
+        metrics["success"] = True
+        metrics_path.write_text(json.dumps(metrics))
+    else:
+        progress_path = root / "evaluator/goal-progress.jsonl"
+        rows = [json.loads(line) for line in progress_path.read_text().splitlines()]
+        if mutation == "missing":
+            rows.pop()
+        else:
+            rows[1]["goal_status"] = {"satisfied": [0], "unsatisfied": [0]}
+        progress_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+        terminal["progress_records"] = file_identity(progress_path)
+        terminal_path.write_text(json.dumps(terminal))
+
+    with pytest.raises(ValueError, match="goal progress|goal status"):
+        finalize_experience(root, tmp_path)
+
+
+def test_legacy_experience_has_no_progress_annotation(tmp_path: Path) -> None:
+    root = tmp_path / "experience"
+    _closed_two_step_experience(root, tmp_path)
+    manifest = finalize_experience(root, tmp_path)
+
+    assert "training_annotations" not in manifest
+    assert len(AutonomousCometDataset(root)) == 1
+    with pytest.raises(ValueError, match="no official goal progress"):
+        OfficialGoalProgressDataset(root)
 
 
 def _fake_evaluator(recorder):

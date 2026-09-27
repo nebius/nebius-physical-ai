@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import os
+import inspect
 import json
 from pathlib import Path
 import time
 from typing import Any
 
+import numpy as np
+
 try:
-    from train_experience import EvaluatorExperienceRecorder
+    from train_experience import (
+        GOAL_PROGRESS_SOURCE,
+        EvaluatorExperienceRecorder,
+        file_identity,
+    )
 except ModuleNotFoundError:
-    from .train_experience import EvaluatorExperienceRecorder
+    from .train_experience import (
+        GOAL_PROGRESS_SOURCE,
+        EvaluatorExperienceRecorder,
+        file_identity,
+    )
 
 _ROOT_ENV = "NPA_TRAIN_EXPERIENCE_ROOT"
 
@@ -29,16 +40,19 @@ def install() -> None:
     """
     from omnigibson.eval.evaluator import BatchedEvaluator
 
-    BatchedEvaluator.__init__ = _initialize_hook(BatchedEvaluator.__init__)
+    source = _official_goal_source()
+    BatchedEvaluator.__init__ = _initialize_hook(BatchedEvaluator.__init__, source)
     BatchedEvaluator._apply_actions = _apply_hook(BatchedEvaluator._apply_actions)
     BatchedEvaluator.run = _run_hook(BatchedEvaluator.run)
 
 
-def _initialize_hook(original):
+def _initialize_hook(original, progress_source=None):
     def initialize(evaluator, config):
         _validate_config(config)
         original(evaluator, config)
-        recorder = EvaluatorExperienceRecorder(Path(os.environ[_ROOT_ENV]))
+        recorder = EvaluatorExperienceRecorder(
+            Path(os.environ[_ROOT_ENV]), progress_source=progress_source
+        )
         evaluator.policy = _recording_policy(evaluator.policy, recorder)
         evaluator._npa_train_experience = recorder
 
@@ -51,12 +65,71 @@ def _apply_hook(original):
         started = time.monotonic_ns()
         result = original(evaluator, actions, active_indices)
         completed = time.monotonic_ns()
-        evaluator._npa_train_experience.record_applied(
-            evaluator._batch_obs(), actions[0], started, completed
+        recorder = evaluator._npa_train_experience
+        step = _official_step(result) if recorder.progress_enabled else None
+        recorder.record_applied(
+            evaluator._batch_obs(),
+            actions[0],
+            started,
+            completed,
+            official_step=step,
         )
         return result
 
     return apply
+
+
+def _official_goal_source() -> dict[str, Any]:
+    from bddl.condition_evaluation import evaluate_state
+    from omnigibson.envs.env_base import Environment
+    from omnigibson.eval.evaluator import BatchedEvaluator
+    from omnigibson.tasks.behavior_task import BehaviorTask
+    from omnigibson.tasks.task_base import BaseTask
+    from omnigibson.termination_conditions.predicate_goal import PredicateGoal
+
+    classes = (
+        BatchedEvaluator,
+        BehaviorTask,
+        BaseTask,
+        Environment,
+        PredicateGoal,
+        evaluate_state,
+    )
+    suffixes = tuple(GOAL_PROGRESS_SOURCE["files"])
+    observed = {}
+    for cls, suffix in zip(classes, suffixes, strict=True):
+        path = Path(inspect.getsourcefile(cls) or "")
+        if not path.as_posix().endswith(suffix):
+            raise ValueError("Official goal-status source path differs")
+        observed[suffix] = file_identity(path)
+    if observed != GOAL_PROGRESS_SOURCE["files"]:
+        raise ValueError("Official goal-status source bytes differ")
+    return json.loads(json.dumps(GOAL_PROGRESS_SOURCE))
+
+
+def _official_step(result: Any) -> dict[str, Any]:
+    if not isinstance(result, tuple) or len(result) != 3:
+        raise ValueError("Official evaluator step result differs")
+    terminated, truncated, info = result
+    if not isinstance(info, list) or len(info) != 1:
+        raise ValueError("Official evaluator step info differs")
+    done = info[0].get("done") if isinstance(info[0], dict) else None
+    if not isinstance(done, dict):
+        raise ValueError("Official evaluator done info differs")
+    return {
+        "goal_status": done.get("goal_status"),
+        "terminated": _single_bool(terminated),
+        "truncated": _single_bool(truncated),
+    }
+
+
+def _single_bool(value: Any) -> bool:
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    array = np.asarray(value)
+    if array.shape != (1,) or array.dtype != np.bool_:
+        raise ValueError("Official evaluator termination array differs")
+    return bool(array[0])
 
 
 def _run_hook(original):

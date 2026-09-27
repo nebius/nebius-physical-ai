@@ -105,8 +105,76 @@ class AutonomousCometDataset:
         return result
 
 
+class OfficialGoalProgressDataset:
+    """Read post-action official TRAIN progress without changing policy inputs.
+
+    Args:
+        root: Finalized TRAIN experience root with v3.9.3 progress records.
+    Returns:
+        None.
+    Raises:
+        ValueError: Progress evidence is absent, invalid, or misaligned.
+    """
+
+    def __init__(self, root: str | Path) -> None:
+        """Validate and open one official TRAIN goal-progress recording.
+
+        Args:
+            root: Finalized TRAIN experience root with v3.9.3 progress records.
+        Returns:
+            None.
+        Raises:
+            ValueError: Progress evidence is absent, invalid, or misaligned.
+        """
+        self.root = Path(root)
+        self.manifest = validate_finalized_experience(self.root)
+        annotations = self.manifest.get("training_annotations", {})
+        if "official_goal_status" not in annotations:
+            raise ValueError("TRAIN experience has no official goal progress")
+        self.rows = _progress_rows(self.root)
+        if len(self.rows) != self.manifest["frame_count"]:
+            raise ValueError("TRAIN goal progress action alignment differs")
+
+    def __len__(self) -> int:
+        """Return the number of officially applied actions.
+
+        Args:
+            None.
+        Returns:
+            Number of action-aligned post-step labels.
+        Raises:
+            None.
+        """
+        return len(self.rows)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        """Return one exact post-action label and derived potential target.
+
+        Args:
+            index: Zero-based officially applied action index.
+        Returns:
+            Exact official status plus its satisfied-goal fraction.
+        Raises:
+            IndexError: The index is outside the recorded rollout.
+        """
+        row = self.rows[index]
+        result = json.loads(json.dumps(row))
+        result["potential"] = np.float32(row["satisfied_count"] / row["goal_count"])
+        return result
+
+
 def _manifest(root: Path) -> dict[str, Any]:
     return validate_finalized_experience(root)
+
+
+def _progress_rows(root: Path) -> list[dict[str, Any]]:
+    path = root / "evaluator/goal-progress.jsonl"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("TRAIN goal progress records differ")
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    if not rows or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("TRAIN goal progress records differ")
+    return rows
 
 
 def _index(root: Path) -> list[dict[str, Any]]:
@@ -207,4 +275,4 @@ def _rgb_arrays(observation: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     return result
 
 
-__all__ = ["AutonomousCometDataset"]
+__all__ = ["AutonomousCometDataset", "OfficialGoalProgressDataset"]

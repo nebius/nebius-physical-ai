@@ -530,6 +530,25 @@ privileged simulator leaves are excluded before recording and cannot enter the
 policy-side stream or default Comet projection. Privileged TRAIN annotations
 remain a separate optional offline-labeling boundary.
 
+For v3.9.3 TRAIN recordings, the evaluator also preserves the official
+post-step `goal_status` partition in `evaluator/goal-progress.jsonl`. Each row
+is aligned to one officially applied action and records the satisfied and
+unsatisfied goal-condition indices, integer counts and count delta, and the
+official terminated/truncated flags. The first delta is `null` because the
+evaluator does not evaluate a pre-action goal status. Before this annotation is
+enabled, the terminal pins the exact upstream evaluator, behavior task, base
+task, environment, predicate-goal, and condition-evaluation source bytes that
+compute, nest, and return those fields.
+
+`OfficialGoalProgressDataset` exposes these post-action labels and a derived
+fractional potential for TRAIN-only progress or advantage modeling. The labels
+never enter the evaluator observation, policy request, or default
+`AutonomousCometDataset` projection. Older finalized recordings without this
+optional annotation remain valid. Task 1 currently exposes goal-condition
+satisfaction rather than an authored sequence of manipulation stages, so this
+is a source-bound progress target and not a ForesightFlow reproduction or a
+claim of improved task performance.
+
 ## TRAIN semantic labels
 
 The [task-1 semantic monitor](../../npa/src/npa/workflows/behavior_challenge/semantic_monitor/README.md)

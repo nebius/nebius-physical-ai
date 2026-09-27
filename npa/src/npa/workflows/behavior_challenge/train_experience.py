@@ -33,6 +33,38 @@ ACTION_HORIZON = 32
 DECISION_CADENCE = "model_decision_observation_with_all_applied_actions"
 CONFIG_SCHEMA = "npa.behavior.train-experience-config.v1"
 MANIFEST_SCHEMA = "npa.behavior.train-experience-manifest.v1"
+GOAL_PROGRESS_SCHEMA = "npa.behavior.train-goal-progress.v1"
+GOAL_PROGRESS_SOURCE = {
+    "schema": "npa.behavior.official-goal-status-source.v1",
+    "status": "exact_behavior_v393_goal_status_source",
+    "upstream_commit": "6cbf70b075816096e9be53958780769f3264d25d",
+    "files": {
+        "OmniGibson/omnigibson/eval/evaluator.py": {
+            "bytes": 34580,
+            "sha256": "7c66958717945b7c2f618cb6d779828ebcd945c4c4968193360d787f576cb4e5",
+        },
+        "OmniGibson/omnigibson/tasks/behavior_task.py": {
+            "bytes": 43560,
+            "sha256": "0daeda0263295b84ac703fdd7561571c0fd65661c090c9ebae9f9f802aca58c7",
+        },
+        "OmniGibson/omnigibson/tasks/task_base.py": {
+            "bytes": 18832,
+            "sha256": "99b01d5beede8944ddea83c5817cb0d566f202a1c49aea1932720f7c2fbe63dc",
+        },
+        "OmniGibson/omnigibson/envs/env_base.py": {
+            "bytes": 45225,
+            "sha256": "f5808829c218b92310b1dfbcc5e561afd75de379ef152275e6c33bc017620cae",
+        },
+        "OmniGibson/omnigibson/termination_conditions/predicate_goal.py": {
+            "bytes": 1805,
+            "sha256": "f0c7e87e06bf3b3fe17b505638be944c7f69b8e6eac73b6792bac58fd7440b8e",
+        },
+        "bddl3/bddl/condition_evaluation.py": {
+            "bytes": 31046,
+            "sha256": "e4e7c236f49a871b576666ccada4bc6e31b18c50f25361364de56bd7de013cb8",
+        },
+    },
+}
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _TERMINAL_CONTRACTS = {
     "all_official_actions_applied": (
@@ -60,6 +92,11 @@ _TERMINAL_CONTRACTS = {
             "events",
         },
     ),
+}
+
+_EVALUATOR_V2_KEYS = _TERMINAL_CONTRACTS["all_official_actions_applied"][1] | {
+    "progress_records",
+    "progress_source",
 }
 
 
@@ -374,7 +411,9 @@ def _validate_config_values(value: dict, case: dict) -> None:
 class EvaluatorExperienceRecorder:
     """Record model-decision observations and all official applied actions."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, *, progress_source: Mapping[str, Any] | None = None
+    ) -> None:
         self.root = root
         self.config = validate_experience_config(
             json.loads((root / "config.json").read_text())
@@ -385,6 +424,10 @@ class EvaluatorExperienceRecorder:
         self.directory.mkdir()
         self.events = self.directory / "events.jsonl"
         self.events.open("xb").close()
+        self.progress_source = _validated_progress_source(progress_source)
+        self.progress = self.directory / "goal-progress.jsonl"
+        if self.progress_source is not None:
+            self.progress.open("xb").close()
         self.decisions = LosslessShardWriter(
             self.directory / "decisions", records_per_shard=8
         )
@@ -398,6 +441,20 @@ class EvaluatorExperienceRecorder:
         self.episodes = 0
         self.pending: tuple[dict[str, np.ndarray], np.ndarray] | None = None
         self.last_observation: dict[str, np.ndarray] | None = None
+        self.previous_satisfied: int | None = None
+
+    @property
+    def progress_enabled(self) -> bool:
+        """Return whether exact official TRAIN annotations are enabled.
+
+        Args:
+            None.
+        Returns:
+            True when the exact goal-progress source was admitted.
+        Raises:
+            None.
+        """
+        return self.progress_source is not None
 
     def reset(self) -> None:
         """Record a fresh official evaluator episode boundary.
@@ -454,7 +511,13 @@ class EvaluatorExperienceRecorder:
         self.pending = allowed, action_array
 
     def record_applied(
-        self, observation: Mapping[str, Any], action: Any, started: int, completed: int
+        self,
+        observation: Mapping[str, Any],
+        action: Any,
+        started: int,
+        completed: int,
+        *,
+        official_step: Mapping[str, Any] | None = None,
     ) -> None:
         """Record one action after the official evaluator accepts it.
 
@@ -463,6 +526,7 @@ class EvaluatorExperienceRecorder:
             action: Action passed to the official evaluator.
             started: Monotonic time before the original apply call.
             completed: Monotonic time after it returned.
+            official_step: Optional official goal-status and termination annotation.
         Returns:
             None.
         Raises:
@@ -477,6 +541,16 @@ class EvaluatorExperienceRecorder:
         after = allowed_observation(
             observation, include_depth=self.config["include_depth"]
         )
+        self._append_transition(before, applied, after)
+        _append_json(
+            self.events, _applied_event(self.frame, applied, after, started, completed)
+        )
+        self._record_progress(official_step)
+        self.pending = None
+        self.frame += 1
+        self.last_observation = after
+
+    def _append_transition(self, before, applied, after) -> None:
         self.transitions.append(
             {
                 "frame_index": np.asarray(self.frame, dtype=np.int64),
@@ -485,12 +559,15 @@ class EvaluatorExperienceRecorder:
                 "post_proprio": after[PROPRIO_KEY],
             }
         )
-        _append_json(
-            self.events, _applied_event(self.frame, applied, after, started, completed)
-        )
-        self.pending = None
-        self.frame += 1
-        self.last_observation = after
+
+    def _record_progress(self, official_step: Mapping[str, Any] | None) -> None:
+        if self.progress_enabled != (official_step is not None):
+            raise ValueError("TRAIN goal progress cadence differs")
+        if official_step is None:
+            return
+        row = _goal_progress_row(self.frame, official_step, self.previous_satisfied)
+        _append_json(self.progress, row)
+        self.previous_satisfied = row["satisfied_count"]
 
     def close(self) -> dict[str, Any]:
         """Flush all shards and write the evaluator terminal.
@@ -515,7 +592,18 @@ class EvaluatorExperienceRecorder:
                 **self.last_observation,
             }
         )
-        value = {
+        value = self._terminal_value()
+        if self.progress_source is not None:
+            value.update(
+                schema="npa.behavior.train-experience-evaluator.v2",
+                progress_records=file_identity(self.progress),
+                progress_source=self.progress_source,
+            )
+        _atomic_json(self.directory / "terminal.json", value)
+        return value
+
+    def _terminal_value(self) -> dict[str, Any]:
+        return {
             "schema": "npa.behavior.train-experience-evaluator.v1",
             "status": "all_official_actions_applied",
             "episode_count": self.episodes,
@@ -525,8 +613,6 @@ class EvaluatorExperienceRecorder:
             "final_observation_shards": self.final_observation.close(),
             "events": file_identity(self.events),
         }
-        _atomic_json(self.directory / "terminal.json", value)
-        return value
 
 
 def _action(value: Any) -> np.ndarray:
@@ -536,6 +622,56 @@ def _action(value: Any) -> np.ndarray:
     if action.shape != (ACTION_DIMENSION,):
         raise ValueError("TRAIN experience action shape differs")
     return np.array(action, copy=True)
+
+
+def _validated_progress_source(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    copied = json.loads(json.dumps(value))
+    if copied != GOAL_PROGRESS_SOURCE:
+        raise ValueError("TRAIN goal progress source identity differs")
+    return copied
+
+
+def _goal_indices(value: object, name: str) -> list[int]:
+    if not isinstance(value, list) or any(type(index) is not int for index in value):
+        raise ValueError("TRAIN goal progress indices differ")
+    if value != sorted(value) or len(set(value)) != len(value):
+        raise ValueError("TRAIN goal progress indices differ")
+    return list(value)
+
+
+def _goal_progress_row(
+    frame: int, step: Mapping[str, Any], previous: int | None
+) -> dict[str, Any]:
+    if set(step) != {"goal_status", "terminated", "truncated"}:
+        raise ValueError("TRAIN goal progress step fields differ")
+    status = step["goal_status"]
+    if not isinstance(status, dict) or set(status) != {"satisfied", "unsatisfied"}:
+        raise ValueError("TRAIN goal status fields differ")
+    satisfied = _goal_indices(status["satisfied"], "satisfied")
+    unsatisfied = _goal_indices(status["unsatisfied"], "unsatisfied")
+    indices = satisfied + unsatisfied
+    if set(satisfied) & set(unsatisfied) or sorted(indices) != list(
+        range(len(indices))
+    ):
+        raise ValueError("TRAIN goal status is not a complete partition")
+    terminated, truncated = step["terminated"], step["truncated"]
+    if type(terminated) is not bool or type(truncated) is not bool or not indices:
+        raise ValueError("TRAIN goal progress termination differs")
+    count = len(satisfied)
+    return {
+        "schema": GOAL_PROGRESS_SCHEMA,
+        "frame_index": frame,
+        "goal_status": {"satisfied": satisfied, "unsatisfied": unsatisfied},
+        "satisfied_count": count,
+        "goal_count": len(indices),
+        "delta_satisfied": None if previous is None else count - previous,
+        "terminated": terminated,
+        "truncated": truncated,
+    }
 
 
 def _official_transport_matches(raw: np.ndarray, returned: dict) -> bool:
@@ -805,6 +941,7 @@ def finalize_experience(root: Path, output: Path) -> dict[str, Any]:
     metrics_path, metrics = _official_metrics(output, config["case"])
     if metrics["steps"] != evaluator["frame_count"]:
         raise ValueError("TRAIN experience frame count differs from official steps")
+    _validate_progress_outcome(root, evaluator, metrics)
     metrics_copy = root / "official-metrics.json"
     _copy_exact_file(metrics_path, metrics_copy)
     members = _member_inventory(root)
@@ -843,6 +980,7 @@ def validate_finalized_experience(
     _validate_chronology(config, evaluator, policy, evaluator_events, policy_events)
     _validate_recorded_arrays(root, evaluator_events, policy_events)
     metrics = _metrics_member(root, config["case"])
+    _validate_progress_outcome(root, evaluator, metrics)
     if official_output is not None:
         _validate_official_metrics_source(root, official_output, config["case"])
     _validate_manifest_summary(root, manifest, config, evaluator, policy, metrics)
@@ -881,7 +1019,7 @@ def _terminal_manifest(path: Path) -> dict[str, Any]:
 
 
 def _experience_manifest(config, evaluator, policy, metrics_path, metrics, members):
-    return {
+    value = {
         "schema": MANIFEST_SCHEMA,
         "status": "complete_exact_train_experience",
         "config": config,
@@ -897,6 +1035,9 @@ def _experience_manifest(config, evaluator, policy, metrics_path, metrics, membe
         "privileged_state_entered_policy_inputs": False,
         "development_or_report_used": False,
     }
+    if evaluator["schema"].endswith("evaluator.v2"):
+        value["training_annotations"] = _progress_manifest(evaluator)
+    return value
 
 
 def _terminal(path: Path, status: str) -> dict[str, Any]:
@@ -904,6 +1045,10 @@ def _terminal(path: Path, status: str) -> dict[str, Any]:
         raise ValueError("TRAIN experience recorder terminal differs")
     value = json.loads(path.read_text())
     schema, keys = _TERMINAL_CONTRACTS[status]
+    if status == "all_official_actions_applied" and value.get("schema", "").endswith(
+        "evaluator.v2"
+    ):
+        schema, keys = "npa.behavior.train-experience-evaluator.v2", _EVALUATOR_V2_KEYS
     if (
         not isinstance(value, dict)
         or set(value) != keys
@@ -954,6 +1099,64 @@ def _validate_terminal_artifacts(root: Path, evaluator: dict, policy: dict) -> N
         raise ValueError("TRAIN experience evaluator events identity differs")
     if policy.get("events") != file_identity(root / "policy/events.jsonl"):
         raise ValueError("TRAIN experience policy events identity differs")
+    _validate_progress_artifact(root, evaluator)
+
+
+def _progress_manifest(evaluator: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "official_goal_status": {
+            "schema": GOAL_PROGRESS_SCHEMA,
+            "records": evaluator["progress_records"],
+            "source": evaluator["progress_source"],
+            "alignment": "one_post_apply_label_per_official_action",
+            "default_comet_projection_includes_annotation": False,
+        }
+    }
+
+
+def _validate_progress_artifact(root: Path, evaluator: Mapping[str, Any]) -> None:
+    path = root / "evaluator/goal-progress.jsonl"
+    if evaluator["schema"].endswith("evaluator.v1"):
+        if path.exists() or path.is_symlink():
+            raise ValueError("Legacy TRAIN experience has unexpected goal progress")
+        return
+    if evaluator.get("progress_source") != GOAL_PROGRESS_SOURCE:
+        raise ValueError("TRAIN goal progress source identity differs")
+    if evaluator.get("progress_records") != file_identity(path):
+        raise ValueError("TRAIN goal progress record identity differs")
+    _validate_progress_rows(_json_lines(path), evaluator["frame_count"])
+
+
+def _validate_progress_rows(rows: list[dict[str, Any]], frames: int) -> None:
+    previous = None
+    goal_count = None
+    for frame, row in enumerate(rows):
+        expected = _goal_progress_row(
+            frame,
+            {
+                "goal_status": row.get("goal_status"),
+                "terminated": row.get("terminated"),
+                "truncated": row.get("truncated"),
+            },
+            previous,
+        )
+        if row != expected:
+            raise ValueError("TRAIN goal progress row differs")
+        if goal_count is not None and row["goal_count"] != goal_count:
+            raise ValueError("TRAIN goal count changed within a rollout")
+        previous, goal_count = row["satisfied_count"], row["goal_count"]
+    if len(rows) != frames:
+        raise ValueError("TRAIN goal progress action alignment differs")
+
+
+def _validate_progress_outcome(root: Path, evaluator: dict, metrics: dict) -> None:
+    if evaluator["schema"].endswith("evaluator.v1"):
+        return
+    rows = _json_lines(root / "evaluator/goal-progress.jsonl")
+    final = rows[-1]
+    complete = final["satisfied_count"] == final["goal_count"]
+    if complete is not metrics["success"]:
+        raise ValueError("TRAIN goal progress differs from official outcome")
 
 
 def _validate_chronology(
@@ -1278,6 +1481,8 @@ def _validate_manifest_summary(
         "privileged_state_entered_policy_inputs": False,
         "development_or_report_used": False,
     }
+    if evaluator["schema"].endswith("evaluator.v2"):
+        expected["training_annotations"] = _progress_manifest(evaluator)
     if set(manifest) != set(expected) | {"members"} or any(
         manifest.get(name) != value for name, value in expected.items()
     ):
@@ -1303,6 +1508,8 @@ def _member_inventory(root: Path) -> list[dict[str, object]]:
 __all__ = [
     "ACTION_HORIZON",
     "EvaluatorExperienceRecorder",
+    "GOAL_PROGRESS_SCHEMA",
+    "GOAL_PROGRESS_SOURCE",
     "PolicyExperienceRecorder",
     "RecordingPolicy",
     "allowed_observation",
