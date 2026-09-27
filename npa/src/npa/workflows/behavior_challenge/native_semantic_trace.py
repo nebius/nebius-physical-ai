@@ -297,6 +297,26 @@ class EvaluatorSemanticObserver:
         }
 
 
+def _logit_summary(logits: np.ndarray) -> str:
+    """Describe only structural logit facts for a rejection message."""
+    counts: dict[str, int | str] = {}
+    for name, check in (
+        ("finite", np.isfinite),
+        ("nan", np.isnan),
+        ("posinf", np.isposinf),
+        ("neginf", np.isneginf),
+    ):
+        try:
+            counts[name] = int(np.count_nonzero(check(logits)))
+        except TypeError:
+            counts[name] = "unavailable"
+    return (
+        f"shape={logits.shape}, dtype={logits.dtype.name}, "
+        f"finite={counts['finite']}, nan={counts['nan']}, "
+        f"posinf={counts['posinf']}, neginf={counts['neginf']}"
+    )
+
+
 class StageTrace:
     """Record raw native stage state and model proposal for returned actions."""
 
@@ -315,16 +335,22 @@ class StageTrace:
         logits = np.asarray(result.get("subtask_logits"))
         if before.shape != () or not np.issubdtype(before.dtype, np.integer):
             raise ValueError("native stage input differs")
+        floating = np.issubdtype(logits.dtype, np.floating) or (
+            logits.dtype.name == "bfloat16"
+            and logits.dtype.type.__module__ == "ml_dtypes"
+        )
         valid_logits = (
             logits.ndim == 1
             and logits.size >= 1
-            and np.issubdtype(logits.dtype, np.floating)
+            and floating
             and not np.isnan(logits).any()
             and not np.isposinf(logits).any()
             and np.isfinite(logits).any()
         )
         if not valid_logits:
-            raise ValueError("native raw stage proposal differs")
+            raise ValueError(
+                f"native raw stage proposal differs ({_logit_summary(logits)})"
+            )
         self.pending = {
             "stage_before": int(before),
             "raw_predicted_stage": int(np.argmax(logits)),

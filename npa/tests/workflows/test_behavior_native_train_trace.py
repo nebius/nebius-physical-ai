@@ -110,6 +110,41 @@ def test_native_stage_observer_accepts_exact_masked_first_inference(tmp_path):
     assert trace.rows[0]["stage_after"] == 2
 
 
+def test_native_stage_trace_accepts_runtime_bfloat16_masked_logits() -> None:
+    ml_dtypes = pytest.importorskip("ml_dtypes")
+    values = [0.1, 0.2, 0.9, 0.3, 0.0, 0.4] + [float("-inf")] * 9
+    logits = np.asarray(values, dtype=ml_dtypes.bfloat16)
+    assert logits.dtype.name == "bfloat16"
+    assert np.issubdtype(logits.dtype, np.floating) is False
+    assert int(np.isfinite(logits).sum()) == 6
+    trace = StageTrace({"runtime_wrapper": {}})
+
+    trace.record_inference(
+        {"subtask_state": np.asarray(0, dtype=np.int32)},
+        {"subtask_logits": logits},
+    )
+
+    assert trace.pending == {"stage_before": 0, "raw_predicted_stage": 2}
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [float("-inf"), float("-inf")],
+        [0.0, float("inf")],
+        [0.0, float("nan")],
+    ],
+)
+def test_native_stage_trace_rejects_invalid_bfloat16_logits(values) -> None:
+    ml_dtypes = pytest.importorskip("ml_dtypes")
+    trace = StageTrace({"runtime_wrapper": {}})
+    with pytest.raises(ValueError, match=r"raw stage proposal differs .*bfloat16"):
+        trace.record_inference(
+            {"subtask_state": np.asarray(0, dtype=np.int32)},
+            {"subtask_logits": np.asarray(values, dtype=ml_dtypes.bfloat16)},
+        )
+
+
 @pytest.mark.parametrize(
     "logits",
     [
@@ -122,7 +157,10 @@ def test_native_stage_observer_accepts_exact_masked_first_inference(tmp_path):
 )
 def test_native_stage_trace_rejects_non_model_logit_contract(logits):
     trace = StageTrace({"runtime_wrapper": {}})
-    with pytest.raises(ValueError, match="raw stage proposal"):
+    with pytest.raises(
+        ValueError,
+        match=r"raw stage proposal differs \(shape=.*dtype=.*finite=.*neginf=",
+    ):
         trace.record_inference(
             {"subtask_state": np.asarray(0, dtype=np.int32)},
             {"subtask_logits": logits},
@@ -771,8 +809,8 @@ def test_native_admission_binds_lossless_recorder_source():
             "bytes": 1539,
             "sha256": "bb2c1fa8ad87a952a4709fa22ec2f9bdf4de25cf07d8301c637729d5a74547f8",
         },
-        "module": {"bytes": 20594, "sha256": "0" * 64},
-        "raw_stage_fix": {"bytes": 1920, "sha256": "0" * 64},
+        "module": {"bytes": 21464, "sha256": "0" * 64},
+        "raw_stage_fix": {"bytes": 3335, "sha256": "0" * 64},
         "scope": "audit_only",
     }
     semantic["independent_go"]["sha256"] = native_train_admission.EXACT_FILES[

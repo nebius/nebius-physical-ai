@@ -79,13 +79,13 @@ EXACT_FILES = {
     },
     "raw_stage_go": {
         "path": "evidence/NATIVE-RAW-STAGE-FIX-GO.json",
-        "bytes": 1920,
-        "sha256": "356c1f4e328b3aea054979c78c4a656557c3e8efe1cde7b4a91cca3367ba35c7",
+        "bytes": 3335,
+        "sha256": "9a7bf8beeaa406c2ba5c655ef01f60189de17097a2cd2f4e688024c2d3804495",
     },
     "semantic_module": {
         "path": "native_semantic_trace.py",
-        "bytes": 20594,
-        "sha256": "675afdf3499d2919c58d05e279fa8a60ec5a373fe464f245fcb14ef0831ef234",
+        "bytes": 21464,
+        "sha256": "4616a0653d54109c96d618cd1855d8ebd4f0b6f090ceeceaff86c5ea33642f59",
     },
     "official_q": {
         "path": "train_official_q.py",
