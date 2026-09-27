@@ -153,6 +153,47 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Native LIBERO policy SFT, matching simulator evaluation, failure feedback, and guarded video candidates. Requires eight GPUs by default and runtime training dependency fetch.",
     ),
     SubmitLiveCase(
+        "flex-pi-b200-public-training.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="flex-pi",
+        notes="Four-GPU public YAM training with runtime-only immutable inputs, complete validation and fresh checkpoint resume; requires current NPA source overlay.",
+    ),
+    SubmitLiveCase(
+        "flex-pi-b300-multinode-public-training.yaml",
+        "multi",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="flex-pi",
+        notes="Four one-B300 hosts, one global four-rank workload, original normalization supplied by the operator, full validation and independently restored per-rank checkpoint state.",
+    ),
+    SubmitLiveCase(
+        "flex-pi-b200-inference.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="flex-pi",
+        notes=(
+            "Real single-B200 flex-pi action-only inference on a pinned public "
+            "RoboTwin observation; publishes action/provenance artifacts."
+        ),
+    ),
+    SubmitLiveCase(
+        "flex-pi-b300-inference.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="flex-pi",
+        notes="Real compiled single-B300 inference with the current NPA source overlay and hash-pinned runtime CUDA 12.9 assembler.",
+    ),
+    SubmitLiveCase(
+        "flex-pi-rtxpro-inference.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="flex-pi",
+        notes=(
+            "Real single-RTX PRO 6000 flex-pi action-only inference on a pinned "
+            "public RoboTwin observation; publishes action/provenance artifacts."
+        ),
+    ),
+    SubmitLiveCase(
         "curobo-benchmark.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

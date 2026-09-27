@@ -2407,7 +2407,6 @@ def main(argv: list[str] | None = None) -> int:
                 registry=registry,
                 skip_build=skip_build,
                 skip_push=skip_push,
-                lifetime_stack=secret_stack,
             )
     except Exception as exc:
         message = _redact_text(str(exc), redactions)
@@ -2507,8 +2506,8 @@ def _run_byof(
     registry: str,
     skip_build: bool,
     skip_push: bool,
-    lifetime_stack: ExitStack,
 ) -> int:
+    lifetime_stack = ExitStack()
     try:
         postprocess_key = _required_postprocess_key(
             args, base_image=base_image, base_profile=base_profile
@@ -2796,6 +2795,8 @@ def _run_byof(
         # Do not retain an unsanitized exception as ``__cause__``: callers may
         # serialize the exception chain even though the top-level message is safe.
         raise RuntimeError(_redact_text(str(exc), redactions)) from None
+    finally:
+        lifetime_stack.close()
 
 
 if __name__ == "__main__":

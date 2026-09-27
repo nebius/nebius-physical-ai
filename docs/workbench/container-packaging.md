@@ -642,7 +642,7 @@ producer-bound development image passed its publication gates, anonymous blob
 readback, and managed B200 smoke. Its separately declared supplemental runtime
 also completed full Lift training and rollout evaluation on RTX PRO 6000; this
 does not replace the committed standard runtime contract. See the
-[development qualification and immutable digest](container-image-catalog.md#images-outside-the-supported-public-release-inventory).
+[development qualification and immutable digest](container-image-catalog.md#intentionally-not-published-as-separate-images).
 The tool remains in `UNVALIDATED_PUBLICATION_TOOLS` and
 `PUBLICATION_QUARANTINE_TOOLS` until a supported release is explicitly accepted;
 it has no supported public release row or default-image promotion.

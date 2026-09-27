@@ -210,6 +210,67 @@ def _byof_runner_module():
     return module
 
 
+@pytest.mark.parametrize("launch_fails", [False, True])
+def test_robomimic_launch_profile_lives_through_run_and_always_cleans_up(
+    monkeypatch: pytest.MonkeyPatch, launch_fails: bool
+) -> None:
+    module = _byof_runner_module()
+    materialized: list[Path] = []
+
+    def materialize(destination: Path, **_kwargs: object) -> Path:
+        destination.write_text("name: attested-test-profile\n", encoding="utf-8")
+        materialized.append(destination)
+        return destination
+
+    def launch(command: list[str], **_kwargs: object):
+        profile = Path(command[command.index("--yaml") + 1])
+        assert materialized == [profile]
+        assert profile.read_text(encoding="utf-8") == "name: attested-test-profile\n"
+        if launch_fails:
+            raise RuntimeError("synthetic launch failure")
+        return subprocess.CompletedProcess(
+            command, 0, stdout='{"status":"succeeded"}\n', stderr=""
+        )
+
+    monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        module, "_handle_robomimic_entitlement_action", lambda *_a: None
+    )
+    monkeypatch.setattr(
+        module, "_require_robomimic_execution_context", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        module,
+        "_base_image_candidates",
+        lambda **_k: ["example.invalid/image:qualified"],
+    )
+    monkeypatch.setattr(module, "in_workflow_worker", lambda: False)
+    monkeypatch.setattr(module, "_live_runner_env", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module, "_materialize_robomimic_profile_for_launch", materialize
+    )
+    monkeypatch.setattr(module, "_run", launch)
+    result = module.main(
+        [
+            "--solution-name",
+            "robomimic",
+            "--workload",
+            "solution-smoke",
+            "--base-profile",
+            "prebuilt",
+            "--registry",
+            "example.invalid",
+            "--image",
+            "example.invalid/image:qualified",
+            "--skip-build",
+            "--skip-push",
+        ]
+    )
+    assert result == (1 if launch_fails else 0)
+    assert len(materialized) == 1
+    assert not materialized[0].parent.exists()
+
+
 def _serialized_entitlement_refusal(error: BaseException) -> str:
     """Render every ordinary exception diagnostic surface for marker checks."""
 
