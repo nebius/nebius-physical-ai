@@ -2184,8 +2184,9 @@ def _run_byof(
                 ]
             if args.yaml:
                 cmd.extend(["--yaml", args.yaml])
-            if args.output_root and authorization is None:
-                cmd.extend(["--output-root", args.output_root])
+            if args.output_root:
+                if authorization is None:
+                    cmd.extend(["--output-root", args.output_root])
             if args.sky_bin:
                 cmd.extend(["--sky-bin", args.sky_bin])
             if args.config_path and authorization is None:

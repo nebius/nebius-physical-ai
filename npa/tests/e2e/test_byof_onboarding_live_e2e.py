@@ -1,9 +1,6 @@
 """Live infra checks for generic BYOF solution onboarding (workflow + optional agent chat)."""
 
 from __future__ import annotations
-from npa.orchestration.npa_workflow.robotwin_preflight import (
-    read_owner_context,
-)
 
 import base64
 import hashlib
@@ -32,6 +29,7 @@ from npa.execution_preflight import (
     validate_gymnasium_task_configuration,
 )
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.robotwin_preflight import read_owner_context
 from npa.workflows.byof.live import (
     byof_ubuntu_validation_repo,
     byof_validation_repo,
