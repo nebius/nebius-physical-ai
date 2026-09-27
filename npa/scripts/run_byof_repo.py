@@ -16,9 +16,10 @@ import sys
 import tempfile
 from contextlib import ExitStack
 from datetime import datetime, timezone
+from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
 
