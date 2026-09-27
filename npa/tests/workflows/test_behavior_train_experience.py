@@ -11,7 +11,6 @@ import sys
 import time
 from types import SimpleNamespace
 
-import jax
 import numpy as np
 import pytest
 
@@ -54,6 +53,37 @@ from npa.workflows.behavior_challenge.train_experience_evaluator import (
 
 DIGEST = "a" * 64
 COMMIT = "b" * 40
+
+
+class _Random:
+    """Track key identity and advancement without the model's JAX runtime."""
+
+    @staticmethod
+    def key(seed):
+        return np.array([0, seed], dtype=np.uint32)
+
+    @staticmethod
+    def split(value):
+        return value + _Random.key(1), value + _Random.key(2)
+
+    key_data = staticmethod(np.asarray)
+
+
+@pytest.fixture(autouse=True)
+def _rng_double(monkeypatch):
+    monkeypatch.setitem(sys.modules, "jax", SimpleNamespace(random=_Random))
+
+
+def test_module_collection_does_not_require_jax():
+    code = "import runpy,sys; sys.modules['jax']=None; runpy.run_path(sys.argv[1])"
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code, str(Path(__file__).resolve())],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 _POLICY_CHILD = """
 import asyncio
 from pathlib import Path
@@ -202,13 +232,13 @@ def _observation(state_value: float) -> dict[str, np.ndarray]:
 class _Policy:
     def __init__(self, actions: np.ndarray) -> None:
         self.actions = actions
-        self._rng = jax.random.key(7)
+        self._rng = _Random.key(7)
         self.calls = 0
 
     def infer(self, inputs: dict) -> dict[str, np.ndarray]:
         assert inputs == {"prompt": "pick up the trash"}
         self.calls += 1
-        self._rng, _ = jax.random.split(self._rng)
+        self._rng, _ = _Random.split(self._rng)
         return {"actions": self.actions}
 
 
@@ -252,7 +282,7 @@ def _official_transport(action: np.ndarray) -> np.ndarray:
 
 
 def _native_args(root: Path) -> SimpleNamespace:
-    initial = native_comet_server._key_identity(jax.random.key(7))
+    initial = native_comet_server._key_identity(_Random.key(7))
     args = SimpleNamespace(
         upstream_commit="fixture",
         case_id="train-case-0",
@@ -442,9 +472,7 @@ def test_recording_on_off_preserves_actions_rng_and_inference_sequence(
     assert array_identity(plain_result["actions"]) == array_identity(
         wrapped_result["actions"]
     )
-    assert np.array_equal(
-        jax.random.key_data(plain._rng), jax.random.key_data(recorded._rng)
-    )
+    assert np.array_equal(_Random.key_data(plain._rng), _Random.key_data(recorded._rng))
 
 
 def test_native_server_recording_preserves_wire_actions_and_rng(
@@ -465,9 +493,7 @@ def test_native_server_recording_preserves_wire_actions_and_rng(
     ]
     assert plain.calls == recorded.calls == terminal["emission_count"] == 1
     assert terminal["action_count"] == 2
-    assert np.array_equal(
-        jax.random.key_data(plain._rng), jax.random.key_data(recorded._rng)
-    )
+    assert np.array_equal(_Random.key_data(plain._rng), _Random.key_data(recorded._rng))
 
 
 def test_production_supervisor_stop_finalizes_experience(tmp_path: Path) -> None:
