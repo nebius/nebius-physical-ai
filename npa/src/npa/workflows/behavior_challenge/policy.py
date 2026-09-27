@@ -294,8 +294,8 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
     policy_kind = getattr(args, "policy_kind", "official")
     experience = getattr(args, "train_experience", False)
     experience_depth = getattr(args, "train_experience_depth", False)
-    if experience and policy_kind != "comet-native":
-        raise ValueError("TRAIN experience recording requires comet-native")
+    if experience and policy_kind not in {"comet-native", "comet-trained"}:
+        raise ValueError("TRAIN experience recording requires an admitted Comet policy")
     if experience_depth and not experience:
         raise ValueError("TRAIN experience depth requires recording to be enabled")
     task_name = getattr(args, "policy_task_name", None)

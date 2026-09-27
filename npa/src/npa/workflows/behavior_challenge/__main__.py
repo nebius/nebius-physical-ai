@@ -107,6 +107,17 @@ def _simulator_startup_child(args):
     return {"status": "shutdown_returned"}
 
 
+def _simulator_source_inspect(args):
+    from .simulator_source_inspect import inspect_isaac_source
+
+    return inspect_isaac_source(
+        args.isaac_root,
+        args.owner_root,
+        args.view_root,
+        version_file=args.version_file,
+    )
+
+
 def _campaign_worker(args):
     from .campaign_runner import evaluate_partition
 
@@ -140,6 +151,15 @@ def _plan(args):
 
 
 def _add_simulator_startup_commands(commands) -> None:
+    inspect = commands.add_parser(
+        "simulator-source-inspect",
+        help="Inspect retained Isaac apps without starting a simulator",
+    )
+    inspect.add_argument("--isaac-root", type=Path, required=True)
+    inspect.add_argument("--owner-root", type=Path, required=True)
+    inspect.add_argument("--view-root", type=Path, required=True)
+    inspect.add_argument("--version-file", default="VERSION")
+    inspect.set_defaults(handler=_simulator_source_inspect)
     startup = commands.add_parser(
         "simulator-startup", help="Qualify a writable empty-scene simulator startup"
     )

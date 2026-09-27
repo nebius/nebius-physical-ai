@@ -13,11 +13,12 @@ from .native_comet_policy import case_seed, finalize_process
 from .native_comet_server import validate_load_qualification
 from .native_training_checkpoint import atomic_json, file_identity
 from .serving_identity import serving_artifact
+from .train_experience import write_experience_config
 from .trained_comet_checkpoint import validate_trained_comet_admission
 
 
-def _stage_adapters(output: Path) -> dict[str, dict]:
-    names = (
+def _stage_adapters(output: Path, *, train_experience: bool = False) -> dict[str, dict]:
+    names = [
         "trained_comet_checkpoint.py",
         "trained_comet_policy.py",
         "trained_comet_producer.py",
@@ -25,19 +26,32 @@ def _stage_adapters(output: Path) -> dict[str, dict]:
         "comet_policy.py",
         "evaluator_versions.py",
         "evaluator_wire.py",
-    )
+    ]
+    if train_experience:
+        names.extend(("train_experience.py", "train_experience_evaluator.py"))
     rows = {}
     for name in names:
         source = Path(__file__).with_name(name)
         target = output / name
         shutil.copyfile(source, target)
         rows[name] = file_identity(target)
+    if train_experience:
+        monitor = output / "semantic_monitor"
+        monitor.mkdir()
+        for name in ("__init__.py", "interface.py"):
+            source = Path(__file__).with_name("semantic_monitor") / name
+            target = monitor / name
+            shutil.copyfile(source, target)
+            rows[f"semantic_monitor/{name}"] = file_identity(target)
     return rows
 
 
 def _case(args, plan: dict, admission: dict) -> dict:
-    if plan.get("recipe", {}).get("split") not in {"development", "report"}:
-        raise ValueError("Trained Comet policy requires DEV or REPORT split")
+    split = plan.get("recipe", {}).get("split")
+    if split not in {"train", "development", "report"}:
+        raise ValueError("Trained Comet policy split differs")
+    if split == "train" and not getattr(args, "train_experience", False):
+        raise ValueError("Trained Comet TRAIN requires experience recording")
     cases = plan.get("cases")
     if not isinstance(cases, list) or len(cases) != 1:
         raise ValueError("Trained Comet policy requires one case")
@@ -75,7 +89,30 @@ def _server_command(args, plan: dict, output: Path, admission: dict) -> list[str
     command = _server_identity_arguments(args, plan, output, admission, case, seed)
     if admission["trace"]["enabled"]:
         command.extend(("--action-trace", str(output / "native-actions.jsonl")))
+    if getattr(args, "train_experience", False):
+        command.extend(("--train-experience-root", str(output / "train-experience")))
     return command
+
+
+def _write_experience_config(args, panel, case, output, admission) -> None:
+    value = {
+        "schema": "npa.behavior.train-experience-config.v1",
+        "status": "train_only_recording_enabled",
+        "split": "train",
+        "cadence": "model_decision_observation_with_all_applied_actions",
+        "action_horizon": 32,
+        "include_depth": getattr(args, "train_experience_depth", False),
+        "case": {
+            name: case[name]
+            for name in ("case_id", "task", "instance_id", "rollout_id", "split")
+        },
+        "panel_sha256": panel["panel_id"],
+        "policy_identity_sha256": panel["policy_binding_sha256"],
+        "checkpoint_sha256": admission["serving_tree_sha256"],
+        "rng_contract_sha256": admission["rng_contract"]["sha256"],
+        "source_commit": SOURCE_COMMIT,
+    }
+    write_experience_config(output / "train-experience", value)
 
 
 def _server_identity_arguments(args, plan, output, admission, case, seed) -> list[str]:
@@ -184,7 +221,7 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
 
     Args:
         args: Managed-policy runtime paths and settings.
-        plan: One-case frozen DEV or REPORT execution plan.
+        plan: One-case frozen DEV, REPORT, or recorded TRAIN execution plan.
         output: Fresh case evidence directory.
     Returns:
         Serving-process argv for the managed supervisor.
@@ -197,7 +234,12 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     case = _case(args, plan, admission)
     _task_mapping(args.policy_root, admission["task_id"], admission["task"])
     output.mkdir(parents=True, exist_ok=True)
-    adapters = _stage_adapters(output)
+    experience = getattr(args, "train_experience", False)
+    adapters = _stage_adapters(output, train_experience=experience)
+    if experience:
+        _write_experience_config(
+            args, args.policy_trained_panel, case, output, admission
+        )
     command = _server_command(args, plan, output, admission)
     seed = case_seed(_rng_identity(admission), case)
     qualification = _qualify(

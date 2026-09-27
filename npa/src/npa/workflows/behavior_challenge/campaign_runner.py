@@ -741,22 +741,34 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
             _put_original(storage, path.read_bytes(), f"{prefix}/{path.name}")
 
 
-def _execute_partition(args, panel, partition, storage, workspace):
-    _validate_worker_startup_binding(args, workspace)
+def _validate_train_experience_scope(args, panel) -> None:
     experience = getattr(args, "train_experience", False)
-    if experience and (
-        not _is_train_panel(panel) or args.policy_kind != "comet-native"
+    train_policy_kinds = {"comet-native", "comet-trained"}
+    if (
+        _is_train_panel(panel)
+        and args.policy_kind == "comet-trained"
+        and not experience
     ):
-        raise ValueError("TRAIN experience requires a native Comet TRAIN panel")
+        raise ValueError("Trained Comet TRAIN execution requires experience recording")
+    if experience and (
+        not _is_train_panel(panel) or args.policy_kind not in train_policy_kinds
+    ):
+        raise ValueError("TRAIN experience requires an admitted Comet TRAIN panel")
     if getattr(args, "train_experience_depth", False) and not experience:
         raise ValueError("TRAIN experience depth requires recording")
-    if _is_train_panel(panel) and getattr(args, "policy_kind", None) != "comet-native":
-        raise ValueError(
-            "TRAIN campaign execution requires the reviewed comet-native adapter"
-        )
+    if _is_train_panel(panel) and args.policy_kind not in train_policy_kinds:
+        raise ValueError("TRAIN campaign execution requires an admitted Comet adapter")
+
+
+def _execute_partition(args, panel, partition, storage, workspace):
+    _validate_train_experience_scope(args, panel)
+    _validate_worker_startup_binding(args, workspace)
     if _is_train_panel(panel):
-        _native_train_preclaim(args, panel, workspace)
-    if getattr(args, "policy_kind", None) == "comet-trained":
+        if args.policy_kind == "comet-native":
+            _native_train_preclaim(args, panel, workspace)
+        else:
+            _trained_comet_preclaim(args, panel, workspace)
+    elif getattr(args, "policy_kind", None) == "comet-trained":
         _trained_comet_preclaim(args, panel, workspace)
     try:
         _prepare_worker_startup(args, workspace)

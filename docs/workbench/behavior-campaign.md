@@ -176,13 +176,16 @@ provider-read bytes. The operator materializes those admitted params under
 `<checkpoint>/<manager-step>/params/` and the normalization file under
 `<checkpoint>/<manager-step>/assets/<asset-id>/norm_stats.json`, then supplies the
 provider-read parity originals with `--policy-trained-input-root`. Before
-simulator startup or case claims, the worker checks the complete tree and
-frozen DEV or REPORT panel. Each case performs a discarded real checkpoint load
-before starting a fresh selected-policy process.
+simulator startup or case claims, the worker checks the complete tree and the
+frozen panel. DEV and REPORT retain their existing panels. TRAIN recording uses
+a distinct non-reporting panel and binds the recorder sources into a new serving
+identity. Each case performs a discarded real checkpoint load before starting a
+fresh selected-policy process.
 
 This serving tree is a derivative inference artifact. It is not a complete
 training-manager checkpoint and does not claim optimizer state, `train_state`,
-or resumability. It cannot be passed to the `comet-native` TRAIN admission path.
+or resumability. It cannot be passed to the `comet-native` TRAIN admission path;
+TRAIN recording reuses only its qualified inference admission.
 Parity admission also does not claim rollout quality: candidate identity and
 the exact panel must be frozen before any DEV case is read.
 
@@ -305,6 +308,12 @@ context must name that worker's workspace. The worker checks this binding before
 reading campaign inputs or preparing a policy. Pin the specification and receipt
 identities in the enclosing workflow inputs. See the
 [startup qualification contract](behavior-challenge.md) for creation and reuse.
+
+Before scheduling simulator GPUs, use the CPU-only
+[simulator source inspector](behavior-simulator-source-inspect.md) to observe
+the retained installation's exact application files and extension directories.
+Its JSON output supplies the startup spec's `apps` object and validates it with
+the same source checker used by simulator startup.
 
 The per-case ledger uses atomic conditional S3 writes:
 
@@ -451,9 +460,10 @@ creates a case receipt. A self-declared digest is not verified evidence.
 
 ## TRAIN autonomous experience
 
-The internal campaign worker can record reusable native-Comet TRAIN experience
-with `--train-experience`. The option is accepted only for a non-reporting
-TRAIN panel served by `--policy-kind comet-native`; development and report
+The internal campaign worker can record reusable Comet TRAIN experience with
+`--train-experience`. The option is accepted only for a non-reporting TRAIN
+panel served by `--policy-kind comet-native` or a parity-qualified
+`--policy-kind comet-trained` export; development and report
 workers reject it before starting the policy or evaluator. Add
 `--train-experience-depth` to retain the three onboard depth arrays. Depth is
 off by default because the current Comet training sample does not consume it.

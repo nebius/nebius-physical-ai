@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ import pytest
 from npa.workflows.behavior_challenge import campaign
 from npa.workflows.behavior_challenge import campaign_runner
 from npa.workflows.behavior_challenge import native_comet_server
+from npa.workflows.behavior_challenge import nonreporting_train
 from npa.workflows.behavior_challenge import serving_identity
 from npa.workflows.behavior_challenge import trained_comet_checkpoint as trained
 from npa.workflows.behavior_challenge import trained_comet_policy
@@ -654,7 +656,72 @@ def _args(admission: Path, checkpoint: Path, inputs: Path) -> SimpleNamespace:
         policy_validation_receipt=None,
         policy_stock_correlation_asset=None,
         policy_stock_correlation_sha256=None,
+        train_experience=False,
+        train_experience_depth=False,
     )
+
+
+def _artifact(marker: str) -> dict:
+    return {"bytes": 1, "sha256": marker * 64}
+
+
+def _train_panel(args, admission: Path) -> dict:
+    admitted = json.loads(admission.read_text())
+    normalization = {
+        name: admitted["normalization"]["provider"][name]
+        for name in ("bytes", "sha256")
+    }
+    rng_contract = {
+        name: admitted["rng_contract"]["provider"][name] for name in ("bytes", "sha256")
+    }
+    protocol = nonreporting_train.declare_train_protocol(
+        "picking_up_trash",
+        {
+            "schema": "npa.behavior.nonreporting-train-task-mapping.v1",
+            "split": "train",
+            "task": "picking_up_trash",
+            "data_namespace": "behavior_1k",
+            "data_task_id": 1,
+            "source_manifest": _artifact("1"),
+            "split_manifest": _artifact("2"),
+            "mapping_artifact": _artifact("3"),
+        },
+        [{"instance_id": 0, "rollout_id": 0}],
+        {
+            "behavior_upstream_commit": "6cbf70b075816096e9be53958780769f3264d25d",
+            "task_registry": _artifact("4"),
+            "dataset": _artifact("5"),
+            "dataset_view": _artifact("6"),
+            "normalization": normalization,
+            "tokenizer": _artifact("8"),
+            "action_semantics": _artifact("9"),
+        },
+        {
+            "argv_contract": _artifact("a"),
+            "evaluator_source": _artifact("b"),
+            "controller_source": _artifact("c"),
+            "robot_config": _artifact("d"),
+            "rng_contract": rng_contract,
+            "wrapper": "omnigibson.evaluator.Evaluator",
+            "mode": "train",
+            "num_envs": 1,
+            "num_rollouts": 1,
+            "write_video": True,
+            "max_steps_argument": None,
+            "model_prediction_horizon": 32,
+            "executed_prefix": 32,
+            "fresh_policy_process_per_case": True,
+            "qualification_process_discarded": True,
+        },
+    )
+    policy = campaign.freeze_policy_identity(
+        "dp4-action-expert-20k-train-recorder",
+        {
+            "checkpoint": file_identity(admission),
+            "serving": serving_identity.serving_artifact(args),
+        },
+    )
+    return nonreporting_train.declare_train_panel(protocol, policy)
 
 
 def _fixture(tmp_path: Path, monkeypatch):
@@ -1148,6 +1215,224 @@ def test_train_panel_cannot_relabel_selected_export(
             checkpoint,
             train,
             expected_serving_identity=serving_identity.serving_artifact(args),
+        )
+
+
+def test_selected_export_composes_with_distinct_train_recording_panel(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admission, checkpoint, inputs, _dev_panel, args = _fixture(tmp_path, monkeypatch)
+    args.train_experience = True
+    panel = _train_panel(args, admission)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    campaign_runner._trained_comet_preclaim(args, panel, workspace)
+    assert args.policy_trained_execution_admission["selected_step"] == 20_000
+    assert panel["cases"] == [
+        {
+            "split": "train",
+            "task": "picking_up_trash",
+            "instance_id": 0,
+            "rollout_id": 0,
+            "case_id": panel["cases"][0]["case_id"],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("task_id", 2, "task ID differs"),
+        ("model_prediction_horizon", 31, "action horizon differs"),
+        ("executed_prefix", 31, "action horizon differs"),
+        ("rng_contract", _artifact("f"), "RNG contract differs"),
+        ("normalization", _artifact("0"), "normalization differs"),
+    ],
+)
+def test_train_protocol_runtime_values_must_match_selected_admission(
+    tmp_path: Path, monkeypatch, field: str, value: object, message: str
+) -> None:
+    admission, checkpoint, inputs, _dev_panel, args = _fixture(tmp_path, monkeypatch)
+    args.train_experience = True
+    panel = _train_panel(args, admission)
+    protocol = copy.deepcopy(panel["protocol"])
+    if field == "task_id":
+        protocol["task_mapping"]["data_task_id"] = value
+    elif field == "normalization":
+        protocol["science_lineage"][field] = value
+    else:
+        protocol["evaluator_contract"][field] = value
+        if field == "model_prediction_horizon":
+            protocol["evaluator_contract"]["executed_prefix"] = value
+    protocol = nonreporting_train.declare_train_protocol(
+        protocol["task"],
+        protocol["task_mapping"],
+        protocol["prescribed_cases"],
+        protocol["science_lineage"],
+        protocol["evaluator_contract"],
+    )
+    changed = nonreporting_train.declare_train_panel(protocol, panel["policy_binding"])
+    with pytest.raises(ValueError, match=message):
+        trained.validate_trained_comet_admission(
+            admission,
+            inputs,
+            checkpoint,
+            changed,
+            expected_serving_identity=serving_identity.serving_artifact(args),
+        )
+
+
+def test_trained_policy_stages_recorders_and_exact_train_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admission, checkpoint, inputs, _dev_panel, args = _fixture(tmp_path, monkeypatch)
+    args.train_experience = True
+    panel = _train_panel(args, admission)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    campaign_runner._trained_comet_preclaim(args, panel, workspace)
+    source = tmp_path / "source"
+    (source / "scripts").mkdir(parents=True)
+    _write(
+        source / "scripts/task_mapping.json",
+        {"picking_up_trash": {"task_index": 1, "task": "pick up the trash"}},
+    )
+    args.policy_root = source
+    args.policy_python = Path("/runtime/python")
+    args.port = 8000
+    plan = campaign_runner._managed_plan(panel, panel["cases"][0])
+    output = tmp_path / "case"
+    monkeypatch.setattr(trained_comet_policy, "verify_source", lambda _root: None)
+
+    def qualify(command, *, cwd, check):
+        parsed = native_comet_server.parser().parse_args(command[2:])
+        expected = trained_comet_policy._expected_qualification(
+            args.policy_trained_execution_admission,
+            plan["cases"][0],
+            parsed.case_seed,
+        )
+        expected["initial_rng_sha256"] = "d" * 64
+        expected["process_identity_sha256"] = _canonical(
+            {
+                "schema": "npa.behavior.comet-native-serving-process-identity.v1",
+                "case_id": expected["case_id"],
+                "task": expected["task"],
+                "instance_id": expected["instance_id"],
+                "rollout_id": expected["rollout_id"],
+                "case_seed": expected["case_seed"],
+                "checkpoint_content_sha256": expected["checkpoint_content_sha256"],
+                "rng_contract_sha256": expected["rng_contract_sha256"],
+                "trace_configuration_sha256": expected["trace_configuration_sha256"],
+                "initial_rng_sha256": expected["initial_rng_sha256"],
+            }
+        )
+        _write(parsed.qualification_output, expected)
+
+    monkeypatch.setattr(trained_comet_policy.subprocess, "run", qualify)
+    command = trained_comet_policy.prepare_policy(args, plan, output)
+    parsed = native_comet_server.parser().parse_args(command[2:])
+    config = json.loads((output / "train-experience/config.json").read_text())
+
+    assert parsed.train_experience_root == output / "train-experience"
+    assert config["panel_sha256"] == panel["panel_id"]
+    assert (
+        config["checkpoint_sha256"]
+        == args.policy_trained_execution_admission["serving_tree_sha256"]
+    )
+    assert (
+        config["rng_contract_sha256"]
+        == args.policy_trained_execution_admission["rng_contract"]["sha256"]
+    )
+    assert (output / "train_experience_evaluator.py").is_file()
+    assert (output / "semantic_monitor/interface.py").is_file()
+
+
+def test_trained_export_train_requires_recording(tmp_path: Path, monkeypatch) -> None:
+    admission, _checkpoint, _inputs, _dev_panel, args = _fixture(tmp_path, monkeypatch)
+    args.train_experience = True
+    panel = _train_panel(args, admission)
+    plan = campaign_runner._managed_plan(panel, panel["cases"][0])
+    args.train_experience = False
+    with pytest.raises(ValueError, match="requires experience recording"):
+        trained_comet_policy._case(
+            args,
+            plan,
+            {"task": "picking_up_trash"},
+        )
+
+
+def test_trained_train_admission_precedes_startup_and_case_claim(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admission, checkpoint, inputs, _dev_panel, args = _fixture(tmp_path, monkeypatch)
+    args.train_experience = True
+    args.policy_root = tmp_path / "source"
+    args.policy_python = Path("/runtime/python")
+    args.policy_checkpoint = checkpoint
+    args.policy_archive = admission
+    args.workspace = tmp_path / "workspace"
+    args.workspace.mkdir()
+    args.worker_index = 0
+    args.output_path = "s3://fixture-bucket/train"
+    args.worker_receipt_uri = "s3://fixture-bucket/train/worker.json"
+    panel = _train_panel(args, admission)
+    partition = nonreporting_train.partition_train_panel(panel, 1)
+    events = []
+    original = campaign_runner._trained_comet_preclaim
+
+    def preclaim(*values):
+        original(*values)
+        events.append("admission")
+
+    def startup(*_values):
+        events.append("startup")
+        raise RuntimeError("stop before claim")
+
+    monkeypatch.setattr(campaign_runner, "_trained_comet_preclaim", preclaim)
+    monkeypatch.setattr(campaign_runner, "_prepare_worker_startup", startup)
+    monkeypatch.setattr(campaign_runner, "_publish_worker_provenance", lambda *_: None)
+    monkeypatch.setattr(
+        campaign_runner,
+        "CaseStore",
+        lambda *_: pytest.fail("case store opened before TRAIN admission"),
+    )
+
+    with pytest.raises(RuntimeError, match="stop before claim"):
+        campaign_runner._execute_partition(
+            args, panel, partition, object(), args.workspace
+        )
+    assert events == ["admission", "startup"]
+
+
+def test_trained_train_without_recording_rejects_before_any_runtime_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admission, checkpoint, inputs, _dev_panel, args = _fixture(tmp_path, monkeypatch)
+    args.train_experience = True
+    panel = _train_panel(args, admission)
+    args.train_experience = False
+    args.workspace = tmp_path / "workspace"
+    args.workspace.mkdir()
+    partition = nonreporting_train.partition_train_panel(panel, 1)
+    monkeypatch.setattr(
+        campaign_runner,
+        "_validate_worker_startup_binding",
+        lambda *_: pytest.fail("startup binding checked before recording gate"),
+    )
+    monkeypatch.setattr(
+        campaign_runner,
+        "_trained_comet_preclaim",
+        lambda *_: pytest.fail("admission checked before recording gate"),
+    )
+    monkeypatch.setattr(
+        campaign_runner,
+        "CaseStore",
+        lambda *_: pytest.fail("case store opened before recording gate"),
+    )
+    with pytest.raises(ValueError, match="requires experience recording"):
+        campaign_runner._execute_partition(
+            args, panel, partition, object(), args.workspace
         )
 
 

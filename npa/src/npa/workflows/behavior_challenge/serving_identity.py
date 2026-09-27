@@ -41,12 +41,30 @@ _TRAINED_COMET_SERVING_FILES = (
     "trained_comet_policy.py",
     "trained_comet_producer.py",
 )
+_TRAIN_EXPERIENCE_SERVING_FILES = (
+    "train_experience.py",
+    "train_experience_evaluator.py",
+    "semantic_monitor/__init__.py",
+    "semantic_monitor/interface.py",
+)
 _INPUT_FIELDS = (
     "policy_selected_export_receipt",
     "policy_correlation_manifest",
     "policy_validation_receipt",
     "policy_stock_correlation_asset",
 )
+
+
+def _serving_source(args) -> dict[str, str]:
+    source_names = _SERVING_FILES
+    if args.policy_kind == "rlc-specialist":
+        source_names += _SPECIALIST_SERVING_FILES
+    if args.policy_kind == "comet-trained":
+        source_names += _TRAINED_COMET_SERVING_FILES
+    if getattr(args, "train_experience", False):
+        source_names += _TRAIN_EXPERIENCE_SERVING_FILES
+    root = Path(__file__).parent
+    return {name: file_digest(root / name) for name in source_names}
 
 
 def serving_artifact(args) -> dict:
@@ -60,18 +78,12 @@ def serving_artifact(args) -> dict:
     Raises:
         OSError: Serving code or a declared auxiliary input cannot be read.
     """
-    root = Path(__file__).parent
-    source_names = _SERVING_FILES
-    if args.policy_kind == "rlc-specialist":
-        source_names += _SPECIALIST_SERVING_FILES
-    if args.policy_kind == "comet-trained":
-        source_names += _TRAINED_COMET_SERVING_FILES
     payload = {
         "schema": "npa.behavior.serving-identity.v1",
         "kind": args.policy_kind,
         "execution_variant": args.policy_execution_variant,
         "episode_lifecycle": "fresh-managed-process-per-case-v1",
-        "source": {name: file_digest(root / name) for name in source_names},
+        "source": _serving_source(args),
         "inputs": {
             field: file_digest(Path(getattr(args, field)))
             for field in _INPUT_FIELDS

@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from .campaign import canonical_digest, validate_panel
+from .nonreporting_train import TRAIN_PANEL_SCHEMA, validate_train_panel
 from .native_comet_checkpoint import canonical_asset_id, canonical_provider_row
 from .native_training_checkpoint import file_identity
 from . import trained_comet_producer as producer
@@ -651,19 +652,51 @@ def _admitted_file(
 
 
 def _panel_binding(panel: dict, admission_path: Path, serving: dict) -> None:
-    valid = validate_panel(panel)
-    if (
-        valid.get("split") not in {"development", "report"}
-        or valid.get("selected_tasks") is None
-        or len(valid["selected_tasks"]) != 1
-    ):
-        raise ValueError("Trained Comet requires one DEV or REPORT task panel")
-    policy = valid["policy"]
+    if panel.get("schema") == TRAIN_PANEL_SCHEMA:
+        valid = validate_train_panel(panel)
+        _train_protocol_binding(valid["protocol"], _admission(admission_path))
+        policy = valid["policy_binding"]
+    else:
+        valid = validate_panel(panel)
+        if (
+            valid.get("split") not in {"development", "report"}
+            or valid.get("selected_tasks") is None
+            or len(valid["selected_tasks"]) != 1
+        ):
+            raise ValueError("Trained Comet requires one DEV or REPORT task panel")
+        policy = valid["policy"]
     if (
         policy["artifacts"]["checkpoint"] != file_identity(admission_path)
         or policy["artifacts"]["serving"] != serving
     ):
         raise ValueError("Trained Comet panel policy identity differs")
+
+
+def _train_protocol_binding(protocol: dict, admission: dict) -> None:
+    mapping = protocol["task_mapping"]
+    evaluator = protocol["evaluator_contract"]
+    science = protocol["science_lineage"]
+    normalization = canonical_provider_row(
+        admission["normalization"]["provider"], "trained normalization"
+    )
+    rng = canonical_provider_row(
+        admission["rng_contract"]["provider"], "trained RNG contract"
+    )
+    if protocol["task"] != admission["task"]:
+        raise ValueError("Trained Comet TRAIN task differs")
+    if mapping["data_task_id"] != admission["task_id"]:
+        raise ValueError("Trained Comet TRAIN task ID differs")
+    if (
+        evaluator["model_prediction_horizon"] != 32
+        or evaluator["executed_prefix"] != 32
+    ):
+        raise ValueError("Trained Comet TRAIN action horizon differs")
+    if evaluator["rng_contract"] != {name: rng[name] for name in ("bytes", "sha256")}:
+        raise ValueError("Trained Comet TRAIN RNG contract differs")
+    if science["normalization"] != {
+        name: normalization[name] for name in ("bytes", "sha256")
+    }:
+        raise ValueError("Trained Comet TRAIN normalization differs")
 
 
 def _verify_checkpoint_tree(
@@ -765,7 +798,7 @@ def validate_trained_comet_admission(
         admission_path: Frozen trained-serving admission JSON.
         input_root: Root containing the provider-read parity manifest and RNG record.
         checkpoint_root: Pre-materialized BF16 params plus normalization tree.
-        panel: Frozen candidate DEV or REPORT panel.
+        panel: Frozen candidate DEV, REPORT, or recorded TRAIN panel.
         expected_serving_identity: Identity of the executing adapter and settings.
     Returns:
         Canonical execution admission projected from validated inputs.
