@@ -309,11 +309,15 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
 # Compatibility view used by publication callers and public imports. Derive it
-# from the two canonical validation-state inventories; never maintain it
+# from the canonical validation-state inventories; never maintain it
 # independently.
 PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
-    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+    UNVALIDATED_PUBLICATION_TOOLS
+    | VALIDATION_CANDIDATE_TOOLS
+    | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
 )
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
@@ -2616,13 +2620,15 @@ def _public_registry_refusals() -> frozenset[str]:
         RESTRICTED_PUBLICATION_TOOLS
         | RESTRICTED_DERIVED_IMAGES
         | PENDING_REDISTRIBUTION_TOOLS
+        | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     )
 
 
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
-    ``False`` while exact redistribution/source delivery is pending, or for any
+    ``False`` while redistribution or source delivery is pending, including
+    neutral candidates without exact-byte eligibility, or for any
     tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
     build-your-own use only. See the set's comment for current membership.

@@ -4,9 +4,9 @@
 different guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
-* the supported or quarantined-candidate version inventory — a tag ending
-  ``-unbuilt``, so a tag that has never been produced cannot be mistaken for
-  one that has;
+* the supported or quarantined-candidate version inventory — normally a tag
+  ending ``-unbuilt``; neutral bootstrap display sentinels stay outside the
+  accepted ``SUPPORTED_TOOL_VERSIONS`` inventory;
 * ``blackwell-dc-images.json`` — ``validation: pending-build``;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
