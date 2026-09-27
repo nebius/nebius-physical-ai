@@ -8,15 +8,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from npa.cli.workbench.gemini_robotics import (
     EvalResult,
     PlanResult,
 )
 from npa.workflows.byof.gemini_robotics_pipeline import (
     GeminiRoboticsPipelineConfig,
-    GeminiRoboticsPipelineError,
     run_er_planning_stage,
     run_eval_stage,
     run_pipeline,
