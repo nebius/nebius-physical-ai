@@ -54,12 +54,11 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **58 packaging entries** (49 redistribution-eligible
-and nine restricted) and **49 mapped tools**: 38 public-release members, two
-restricted tools, and nine quarantined tools (`antioch`, `curobo`, `libero`, `mjlab`, `ncore`,
-`openpi`, `robocasa`, `robotwin` and `sam3`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
-the seven restricted PAIDF images have no mapped tool entry. These counts do not
-constitute acceptance of the quarantined images.
+The current build inventory is maintained in `packaging-contract.yaml`, and
+the tool map in `npa.deploy.images`. `publicly_publishable_tools()` selects the
+public release inventory; `PUBLICATION_QUARANTINE_TOOLS` identifies candidates
+awaiting acceptance. The seven restricted PAIDF images have no mapped tool entry.
+Inventory membership does not constitute acceptance of a quarantined image.
 
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU

@@ -69,6 +69,7 @@ status and evidence recorded in their own rows and catalog records.
 | `npa-cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | 2.7.0+cu128 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-alpamayo2-super` | `0.1.0-cu128-r3` (index `sha256:17a3966a6e74…`) | 2.8.0+cu128 | `sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-flex-pi` | `0.1.0-cu128-r2` (`sha256:e27978b68205…`) | 2.7.1+cu128 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
+| `npa-robotwin` (supported release candidate; quarantined) | pending build; not routed or validated | blocked (no RT cores) | pending build; exact-digest qualification not run | blocked (renderer contract is RTX-only) | blocked (renderer contract is RTX-only) |
 | `npa-paidf-anomalygen-sky` | operator-private child `sha256:5aff3f4b40a4…` | 2.13.0+cu132 / CUDA 13.2 | full wheel architecture list not separately recorded; native CUDA and attention executed on B200 | yes; measured on B200 |
 | `npa-paidf-image-edit-sky` | operator-private child `sha256:ef7450cfc12e…` | 2.11.0+cu130 / CUDA 13.0 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes; measured on B200 |
 | `npa-paidf-event-video-sky` | operator-private child `sha256:277a255e8bce…` | 2.11.0+cu130 / CUDA 13.0 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes; measured on B200 |
@@ -135,7 +136,6 @@ likewise predates its current coherent release.
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
-| `npa-robotwin` (supported release candidate; quarantined) | pending build; not routed or validated | blocked (no RT cores) | pending build; exact-digest qualification not run | blocked (renderer contract is RTX-only) | blocked (renderer contract is RTX-only) |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [78] | **verified** [77] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-flex-pi` | supported | supported | **verified** [87] | **verified** [86] | supported (same-major `sm_100` coverage; not measured) |
@@ -175,6 +175,12 @@ likewise predates its current coherent release.
 **CPU** — CPU-only image. It runs on a host with any of these GPUs; only node-pool scheduling matters.
 **not built** — no retained candidate artifact or complete current byte-scan proof exists, so no cell has image evidence behind it. Reading the Dockerfile or a reference-build graph is not evidence.
 
+`npa-ncore` packages CPU-only COLMAP ingestion, not NRE or a CUDA runtime.
+Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separate,
+proprietary NRE consumer on RTX PRO 6000; CPU compatibility does not make that
+rendering workflow portable to B200/B300. Public release and full live-workflow
+acceptance remain pending for the ingestion candidate.
+
 `npa-robotwin`'s `unknown` / `pending-build` inventory record and the row above
 describe its quarantined supported-release candidate. Supported release and
 normal-submit worker qualification remain unverified. A separate immutable
@@ -184,12 +190,6 @@ RTX PRO 6000 operator collection/replay workload; see the
 and [container catalog](container-image-catalog.md). That evidence does not
 establish supported customer or agent worker acceptance. Rendering remains
 RTX-only and must not route to B200 or B300.
-
-`npa-ncore` packages CPU-only COLMAP ingestion, not NRE or a CUDA runtime.
-Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separate,
-proprietary NRE consumer on RTX PRO 6000; CPU compatibility does not make that
-rendering workflow portable to B200/B300. Public release and full live-workflow
-acceptance remain pending for the ingestion candidate.
 
 ### Rendering is not portable across these columns
 

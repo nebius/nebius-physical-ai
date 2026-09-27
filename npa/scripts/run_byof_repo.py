@@ -1674,9 +1674,9 @@ def _run_authorized_robotwin(
         require_runtime_lock_complete(authorization)
         _validate_robotwin_invocation(args)
         _apply_runtime_authorization(args, authorization)
+        return _run_parsed(args, authorization=authorization, redactions=redactions)
     except Exception as exc:
         return _authorization_failure(args, exc, redactions)
-    return _run_parsed(args, authorization=authorization, redactions=redactions)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1752,10 +1752,43 @@ def _run_parsed(
                 )
             )
             return 1
+    explicit_base = _normalize_optional(args.base_image)
+    if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+        explicit_base = _libero_qualified_candidate(
+            args.libero_qualified_candidate_image, args._libero_qualification
+        )
+    base_profile = _normalize_optional(args.base_profile) or "ubuntu"
+    registry = args.registry.strip() or resolve_container_registry(args.project or None)
+    image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
+    base_candidates = _base_image_candidates(
+        profile=base_profile,
+        image=image,
+        registry=registry,
+        explicit_base=explicit_base,
+    )
+    if not base_candidates:
+        raise RuntimeError("unable to resolve a BYOF base image candidate")
+    base_image = base_candidates[0]
+    if base_profile == "prebuilt":
+        if args.build_command.strip():
+            raise ValueError(
+                "prebuilt profile forbids --build-command; image bytes are immutable"
+            )
+        image = base_image
+    skip_build = args.skip_build or base_profile == "prebuilt"
+    skip_push = args.skip_push or base_profile == "prebuilt"
+    base_registry = _registry_path(base_image) or (_registry_path(image) or registry)
+
     summary: dict[str, Any] = {
         "repo_url": "<private-repository>" if private_source else args.repo_url,
         "repo_ref": "<private-ref>" if private_source else args.repo_ref,
         "repo_auth": args.repo_auth,
+        "registry": registry,
+        "base_profile": base_profile,
+        "base_registry": base_registry,
+        "image": image,
+        "base_image": base_image,
+        "base_image_candidates": base_candidates,
         "run_id": args.run_id,
         "workload": args.workload,
         "build_command": args.build_command,
@@ -1775,44 +1808,6 @@ def _run_parsed(
     # registry tokens or creates a hidden registry-specific credential directory.
     docker_env: dict[str, str] = {}
     try:
-        explicit_base = _normalize_optional(args.base_image)
-        if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
-            explicit_base = _libero_qualified_candidate(
-                args.libero_qualified_candidate_image, args._libero_qualification
-            )
-        base_profile = _normalize_optional(args.base_profile) or "ubuntu"
-        registry = args.registry.strip() or resolve_container_registry(
-            args.project or None
-        )
-        image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
-        base_candidates = _base_image_candidates(
-            profile=base_profile,
-            image=image,
-            registry=registry,
-            explicit_base=explicit_base,
-        )
-        if not base_candidates:
-            raise RuntimeError("unable to resolve a BYOF base image candidate")
-        base_image = base_candidates[0]
-        if base_profile == "prebuilt":
-            if args.build_command.strip():
-                raise ValueError(
-                    "prebuilt profile forbids --build-command; image bytes are immutable"
-                )
-            image = base_image
-        skip_build = args.skip_build or base_profile == "prebuilt"
-        skip_push = args.skip_push or base_profile == "prebuilt"
-        summary.update(
-            {
-                "registry": registry,
-                "base_profile": base_profile,
-                "base_registry": _registry_path(base_image)
-                or (_registry_path(image) or registry),
-                "image": image,
-                "base_image": base_image,
-                "base_image_candidates": base_candidates,
-            }
-        )
         with ExitStack() as secret_stack:
             source_secrets: RepositorySecretFiles | None = None
             if private_source:

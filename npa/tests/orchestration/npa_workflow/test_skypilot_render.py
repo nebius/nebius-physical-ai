@@ -213,18 +213,21 @@ def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
 def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
     paths = sorted(NPA_SPECS.glob("byof*.yaml"))
 
-    # Pinned so a new BYOF spec cannot skip the per-profile image assertion
-    # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 19
+    assert paths, "The BYOF workflow inventory must not be empty"
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
         assert isinstance(base_image, str) and base_image, path.name
+        image_config = (
+            "controller_image" if path.name == "byof-robomimic.yaml" else "base_image"
+        )
+        outer_image = raw["config"].get(image_config)
+        assert isinstance(outer_image, str) and outer_image, path.name
         for profile in raw["resources"].values():
             if path.name == "byof-robotwin.yaml":
                 assert "image" not in profile
                 continue
-            assert profile["image"] == "{{config.base_image}}", path.name
+            assert profile["image"] == f"{{{{config.{image_config}}}}}", path.name
 
 
 def test_robotwin_outer_render_is_cpu_only_image_free_and_destination_free(

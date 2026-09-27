@@ -920,6 +920,49 @@ def test_robotwin_authorized_profile_is_environment_only(monkeypatch, tmp_path) 
     assert _run_authorized_robotwin(module, _robotwin_args(module)) == 0
 
 
+@pytest.mark.parametrize("resolver", ("_normalize_optional", "_base_image_candidates"))
+def test_robotwin_initialization_failure_stays_private(
+    monkeypatch, capsys, tmp_path, resolver
+) -> None:
+    module = _load_module()
+    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    argv = _robotwin_args(module)
+    authorization = _authorized_stub(payload)
+    private_image = authorization.bootstrap_image
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError(f"cannot resolve private input {private_image}")
+
+    monkeypatch.setattr(module, resolver, fail)
+    monkeypatch.setattr(
+        module,
+        "_run_byof",
+        lambda *_a, **_k: pytest.fail("initialization failure reached BYOF work"),
+    )
+    assert module._run_authorized_robotwin(argv, authorization=authorization) == 1
+    captured = capsys.readouterr()
+    assert private_image not in captured.out + captured.err
+    assert json.loads(captured.out) == {
+        "status": "failed",
+        "solution_name": "robotwin",
+        "error": "cannot resolve private input <redacted>",
+    }
+
+
+def test_generic_registry_failure_retains_original_exception_boundary(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(module, "resolve_container_registry", fail)
+    with pytest.raises(RuntimeError, match="registry unavailable"):
+        module.main(["--registry", "", "--skip-run"])
+    assert capsys.readouterr().out == ""
+
+
 def test_robotwin_authorized_verifier_failure_is_not_reported_success(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
