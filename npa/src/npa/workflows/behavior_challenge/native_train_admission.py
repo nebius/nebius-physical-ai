@@ -54,6 +54,11 @@ EXACT_FILES = {
         "bytes": 2886,
         "sha256": "048b2e55dca91a2b359e42d5b46ca1f1883f0249abbb62dece8ef5103243fc82",
     },
+    "raw_stage_go": {
+        "path": "evidence/NATIVE-RAW-STAGE-FIX-GO.json",
+        "bytes": 1920,
+        "sha256": "356c1f4e328b3aea054979c78c4a656557c3e8efe1cde7b4a91cca3367ba35c7",
+    },
     "semantic_module": {
         "path": "native_semantic_trace.py",
         "bytes": 20594,
@@ -292,6 +297,7 @@ def _validate_semantic_authority(value: dict[str, Any]) -> None:
             "lossless_arrays",
             "manifest",
             "module",
+            "raw_stage_fix",
             "scope",
         }
         or semantic.get("scope") != "audit_only"
@@ -300,6 +306,8 @@ def _validate_semantic_authority(value: dict[str, Any]) -> None:
         != {name: EXACT_FILES["semantic_module"][name] for name in ("bytes", "sha256")}
         or semantic.get("independent_go")
         != {name: EXACT_FILES["semantic_go"][name] for name in ("bytes", "sha256")}
+        or semantic.get("raw_stage_fix")
+        != {name: EXACT_FILES["raw_stage_go"][name] for name in ("bytes", "sha256")}
         or semantic.get("archive")
         != {
             "bytes": 12190,
@@ -347,7 +355,13 @@ def validate(admission_path: Path, *, source_root: Path) -> dict[str, Any]:
     _validate_envelope(value)
     _validate_semantic_authority(value)
     _validate_panel(root)
-    for name in ("semantic_go", "semantic_module", "official_q", "lossless_arrays"):
+    for name in (
+        "semantic_go",
+        "raw_stage_go",
+        "semantic_module",
+        "official_q",
+        "lossless_arrays",
+    ):
         row = EXACT_FILES[name]
         if identity(root / row["path"]) != {
             key: row[key] for key in ("bytes", "sha256")

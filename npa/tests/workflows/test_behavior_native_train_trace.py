@@ -767,6 +767,7 @@ def test_native_admission_binds_lossless_recorder_source():
             "sha256": "bb2c1fa8ad87a952a4709fa22ec2f9bdf4de25cf07d8301c637729d5a74547f8",
         },
         "module": {"bytes": 20594, "sha256": "0" * 64},
+        "raw_stage_fix": {"bytes": 1920, "sha256": "0" * 64},
         "scope": "audit_only",
     }
     semantic["independent_go"]["sha256"] = native_train_admission.EXACT_FILES[
@@ -774,6 +775,9 @@ def test_native_admission_binds_lossless_recorder_source():
     ]["sha256"]
     semantic["module"]["sha256"] = native_train_admission.EXACT_FILES[
         "semantic_module"
+    ]["sha256"]
+    semantic["raw_stage_fix"]["sha256"] = native_train_admission.EXACT_FILES[
+        "raw_stage_go"
     ]["sha256"]
     native_train_admission._validate_semantic_authority({"semantic_trace": semantic})
     semantic["lossless_arrays"]["sha256"] = "f" * 64
