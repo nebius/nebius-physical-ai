@@ -14,9 +14,9 @@ from npa.workflows.behavior_challenge.nonreporting_train import (
     validate_train_partition,
 )
 
-PANEL_ID = "2b393fbb512dc450eea3175bdf66e81e7c21c36bb02521215c48b89fdf76b27b"
-CASE_ID = "bfeea8d63390d7c063561077d0d23f190f0ee3208974a33da8c72690d3d62269"
-POLICY_ID = "85c7cd7cd5231979660c4469969c83cc646683ba2736add208676f9c419758fb"
+PANEL_ID = "4d871670192fed6941251e5e4d290c45df684c24dbedea21cf6f09dec69beef9"
+CASE_ID = "030daf5bf852b976df5dd4e47a31ff0a20152b1bf514845fbb8cc703345e344b"
+POLICY_ID = "ea0debacc6233a3081bf6cd827e330a3ef4ce87b7bb3a481c13e80e15352db5e"
 CHECKPOINT = {
     "sha256": "9e7e078a721e5a0db60ca180e8ed6ace57d66da03d9884923b5d88304b5f98ea",
     "bytes": 12645726756,
@@ -32,12 +32,12 @@ EXACT_FILES = {
     "panel": {
         "path": "frozen/native-train-panel.json",
         "bytes": 4335,
-        "sha256": "194677c926d67014fce41df1d0f7694d1f6b9e6537d3b6bda506c83eef91a308",
+        "sha256": "a63155faeeb6f69da0fa862076704dff50c236c73e0b72e196c80e333f89ad39",
     },
     "partition": {
         "path": "frozen/native-train-partition.json",
         "bytes": 416,
-        "sha256": "c38dde96ddd040176d38526c478bb87cd5c3cb0608d90238e64e21d82fa0f60d",
+        "sha256": "cefb60fdf39f3175b35c1a0eeb33e66e44d554d6c363e6ecb2b01ef199290ecf",
     },
     "qualification": {
         "path": "evidence/ACTUAL-RENDER3-NATIVE-QUALIFICATION.json",
