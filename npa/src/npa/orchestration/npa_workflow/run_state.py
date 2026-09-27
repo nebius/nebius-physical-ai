@@ -238,6 +238,7 @@ class RuntimeRunState:
                 return None
             recovery = str(record.get("recovery_decision") or "")
             unresolved = recovery in {
+                "block_relaunch",
                 "block_indeterminate",
                 "block_after_uncertain_success",
                 "recovery_deadline_exhausted_verified_absent",
@@ -571,6 +572,82 @@ def status_key(prefix: str) -> str:
     return f"{base}/npa-workflow/status.json"
 
 
+def _prefix_page_has_content(response: Mapping[str, Any], prefix: str) -> bool:
+    contents = response.get("Contents", [])
+    if not isinstance(contents, list):
+        raise RuntimeError("S3 prefix listing returned malformed object records")
+    for item in contents:
+        if not isinstance(item, Mapping):
+            raise RuntimeError(
+                "S3 prefix listing returned an object without a valid Size"
+            )
+        object_key = item.get("Key")
+        if not isinstance(object_key, str) or not object_key.startswith(prefix):
+            raise RuntimeError(
+                "S3 prefix listing returned an object outside the requested prefix"
+            )
+        size = item.get("Size")
+        if type(size) is not int or size < 0:
+            raise RuntimeError(
+                "S3 prefix listing returned an object without a valid Size"
+            )
+        if size > 0:
+            return True
+    return False
+
+
+def _prefix_next_token(response: Mapping[str, Any], seen_tokens: set[str]) -> str:
+    truncated = response.get("IsTruncated")
+    if not isinstance(truncated, bool):
+        raise RuntimeError("S3 prefix listing returned malformed pagination")
+    token = response.get("NextContinuationToken")
+    if not truncated:
+        if token is not None and token != "":
+            raise RuntimeError("S3 prefix listing returned malformed pagination")
+        return ""
+    if not isinstance(token, str) or not token or token in seen_tokens:
+        raise RuntimeError(
+            "S3 prefix listing returned a truncated page without a new continuation token"
+        )
+    seen_tokens.add(token)
+    return token
+
+
+def s3_prefix_has_nonempty_object(client: Any, *, bucket: str, prefix: str) -> bool:
+    """Inspect every S3 page for nonempty content below an exact prefix.
+
+    Args:
+        client: S3 client used for the requested run's object store.
+        bucket: Exact bucket containing the declared output.
+        prefix: Exact directory-style output prefix, including its trailing slash.
+
+    Returns:
+        Whether a nonempty object exists; zero-byte markers are not evidence.
+
+    Raises:
+        RuntimeError: Object records or pagination cannot prove presence or absence.
+        Exception: The object store cannot complete the listing.
+    """
+    continuation_token = ""
+    seen_tokens: set[str] = set()
+    while True:
+        request: dict[str, object] = {
+            "Bucket": bucket,
+            "Prefix": prefix,
+            "MaxKeys": 1000,
+        }
+        if continuation_token:
+            request["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**request)
+        if not isinstance(response, Mapping):
+            raise RuntimeError("S3 prefix listing returned a malformed response")
+        if _prefix_page_has_content(response, prefix):
+            return True
+        continuation_token = _prefix_next_token(response, seen_tokens)
+        if not continuation_token:
+            return False
+
+
 def _corrupt_runtime_state(key: str, reason: str) -> NpaWorkflowError:
     return NpaWorkflowError(
         f"durable runtime state is corrupt at {key}: {reason}; "
@@ -626,12 +703,10 @@ class RunStateStore:
         )._s3
         try:
             if uri.endswith("/"):
-                response = client.list_objects_v2(
-                    Bucket=parsed.netloc, Prefix=key, MaxKeys=1
-                )
-                return any(
-                    int(item.get("Size") or 0) > 0
-                    for item in response.get("Contents", [])
+                return s3_prefix_has_nonempty_object(
+                    client,
+                    bucket=parsed.netloc,
+                    prefix=key,
                 )
             response = client.head_object(Bucket=parsed.netloc, Key=key)
             return int(response.get("ContentLength") or 0) > 0

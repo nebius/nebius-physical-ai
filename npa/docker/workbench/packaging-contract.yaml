@@ -150,6 +150,25 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  libero:
+    dockerfile: libero/Dockerfile
+    tier: job
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot may start or restart only the preinstalled SSH daemon. The
+      runtime user is non-root, package acquisition is bypassed only after the
+      complete package contract verifies, and no general passwordless sudo is
+      granted.
+    redistribution: public
+    notes: >-
+      Zero-payload neutral bootstrap. LIBERO, robomimic, MuJoCo, PyTorch,
+      CUDA/cuDNN/NCCL/NVIDIA packages, demonstrations, BERT, task/render
+      assets, populated caches, checkpoints, credentials, and outputs are not
+      baked. Runtime materialization requires a short-lived customer/run
+      authorization bound to the exact manifest and uses a non-root atomic
+      cache. Customer credentials prove upstream access, not acceptance. The image remains
+      unbuilt, quarantined, and unvalidated until complete-byte, anonymous-pull,
+      and exact-digest B200 evidence is accepted.
   antioch:
     dockerfile: antioch/Dockerfile
     tier: service
@@ -471,6 +490,21 @@ images:
       mandatory before publication. The supported release must resolve to the
       exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
       runtime fetch and real GPU generation evidence are bound to the same bytes.
+  mjlab:
+    dockerfile: mjlab/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot bootstrap only; service deployment disables privilege escalation, no default SSH daemon or credentials."
+    redistribution: public
+    notes: >-
+      Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
+      No checkpoints, motion datasets, credentials or populated runtime caches.
+      Historical CUDA 12.8 operator image passed native B200 and RTX PRO 6000
+      train/eval/export and service qualification. The CUDA 13.0 candidate has
+      separate RTX PRO 6000 G1 training/resume, evaluation, MP4/HTML and ONNX
+      evidence in docs/workbench/validation/mjlab-trained-g1-20260925.json.
+      Public promotion still requires built-layer license/security and bootstrap
+      gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
   curobo:
     dockerfile: curobo/Dockerfile
     tier: service
@@ -502,6 +536,29 @@ images:
       vulnerability/secret/license scan, and both independent real-inference
       gates on 2026-09-16; the accepted OCI index digest is
       sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07.
+  flex-pi:
+    dockerfile: flex-pi/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes immutable MIT flex-pi source and its CUDA/PyTorch inference runtime.
+      The checkpoint, Wan/T5/DINOv3 assets, public RoboTwin observation bytes,
+      operator credentials, and populated caches are absent and fetched only at
+      runtime. The RoboTwin dataset card declares no license, so sample bytes
+      are never redistributed. The supported 0.1.0-cu128-r2 release passed built-layer,
+      vulnerability/secret/license, SBOM/provenance, anonymous-pull, and independent
+      B200 and RTX PRO 6000 inference gates. Its accepted digest is
+      sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6,
+      recorded in the publication inventories. Replacement development bytes must
+      pass every publication gate and both GPU targets before release acceptance;
+      the existing release evidence does not validate changed source or patches.
+      B300 training-profile source overlays fetch hash-pinned CUPTI 13, CUPTI
+      Python and CUDA Python into a private runtime directory under their NVIDIA
+      software terms, with Apache-2.0 cuda-pathfinder and all package licenses
+      retained. These diagnostic SDKs and populated caches are not baked into
+      the public image; the training compute stack remains unchanged.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
@@ -681,6 +738,35 @@ images:
       identifies the committed NPA tree. Public-eligible but quarantined until
       exact built-image scans and real conversion evidence are accepted;
       no supported public release is declared. See ncore/REDISTRIBUTION.md.
+  gymnasium-robotics:
+    dockerfile: gymnasium-robotics/Dockerfile
+    tier: interactive
+    redistribution: public
+    final_user: ubuntu
+    phase: development-build-quarantine
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only. The final workload runs as uid 1000;
+      SSH host keys are generated per container and no credentials are baked.
+    notes: >-
+      Neutral zero-Shadow-payload development bootstrap for the future Farama
+      Gymnasium-Robotics 1.4.2 / MuJoCo 3.12.0 runtime cache. Candidate layers
+      exclude the upstream solution, Shadow assets, MuJoCo/Python workload,
+      populated cache, vendor runtime, credentials, datasets, checkpoints, and
+      outputs. Exact Ubuntu/Python inputs, corresponding-source metadata and the
+      runtime-fetch manifest are content-locked for a payload-free public
+      development build; the Dockerfile verifies those reviewed bytes before
+      package network access. Restricted source, assets and workload wheels
+      remain operator-owned runtime fetches after the customer's existing
+      upstream notice and acceptance process.
+      Runtime fetch changes delivery only and grants no use, derivative, output,
+      or service rights. An owner-only reference build produced the exact config
+      and 20-DiffID graph pinned by the product scanner, but that transaction
+      stopped before a complete product scan, SBOM, push, or immutable digest and
+      its artifact was cleaned. The graph is scanner input, not accepted or
+      current-head image evidence. Shadow public-rights closure remains
+      incomplete, and no supported release tag, accepted manifest, public pull,
+      current-byte GPU qualification, or SM120 claim exists.
   content-agents:
     dockerfile: content-agents/Dockerfile
     ovrtx_runtime_fetch: true

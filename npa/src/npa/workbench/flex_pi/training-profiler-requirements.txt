@@ -1,0 +1,5 @@
+# Private B300 profiling only; inherit vendor Torch, CUDA compute libraries and NumPy.
+cupti-python @ https://files.pythonhosted.org/packages/b1/86/891acdebe9ba14727ecb93f472ffdda09d62b32e4252fe424fc03d45e26e/cupti_python-13.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl --hash=sha256:614a91d90f2162556098b1abef3cb63d7022565b3aff1b6cf8e32c44fffcc4ba
+cuda-bindings @ https://files.pythonhosted.org/packages/89/ad/dfba84a1f5259584c7aed9fba93acf74ebcc6cfc608345bd6a27fef76c34/cuda_bindings-13.0.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl --hash=sha256:d74f0f6de5006a4ffd2dd30544b10359488d9af71d1cb755205cb3094102a2d9
+cuda-pathfinder @ https://files.pythonhosted.org/packages/22/54/6231878f6fc490f222c87190ce12196b67b7700b30818882a87f478e4944/cuda_pathfinder-1.2.1-py3-none-any.whl --hash=sha256:d4fba3a8f6a01bbc72753d69bc7f6bcf8078a91a73adeea0f0c9adf917461d7b
+nvidia-cuda-cupti @ https://files.pythonhosted.org/packages/33/6d/737d164b4837a9bbd202f5ae3078975f0525a55730fe871d8ed4e3b952b0/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_x86_64.whl --hash=sha256:4eb01c08e859bf924d222250d2e8f8b8ff6d3db4721288cf35d14252a4d933c8

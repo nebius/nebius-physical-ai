@@ -179,6 +179,11 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("LEISAAC_ASSETS_ROOT", "leisaac/assets/runtime"),
     ("WAN22_CACHE_DIR", "wan2.2"),
     ("NPA_LTX_MODEL_CACHE", "ltx-2.5"),
+    # flex-pi keeps converted Wan/T5 assets in the DiffSynth tree while the
+    # ModelScope client maintains its own metadata/cache. Both must survive a
+    # pod retry or the 12+ GiB text encoder is downloaded again.
+    ("DIFFSYNTH_MODEL_BASE_PATH", "flex-pi/diffsynth"),
+    ("MODELSCOPE_CACHE", "flex-pi/modelscope"),
     ("NPA_SAM3_CACHE", "sam3"),
     ("NPA_CONTENT_AGENTS_RUNTIME_CACHE", "runtimes/content-agents"),
 )

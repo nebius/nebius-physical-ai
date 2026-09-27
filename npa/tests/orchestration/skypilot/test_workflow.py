@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -182,6 +183,37 @@ def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
     )
 
 
+def test_recovery_preflight_preserves_authorization_identity(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: recovery\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    observed = {}
+    cleaned = []
+
+    def preflight(_documents, **kwargs):
+        observed["run_id"] = kwargs["run_id"]
+        return None, {}, {}
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(
+        workflow_module,
+        "_cleanup_owned_submission_dir",
+        lambda path: cleaned.append(path),
+    )
+
+    digest = workflow_module._refresh_workflow_preflight(
+        yaml_path, "authorized-run", sky_bin=sky_bin
+    )
+
+    prepared = cleaned[0] / "workflow.yaml"
+    assert digest == hashlib.sha256(prepared.read_bytes()).hexdigest()
+    assert observed["run_id"] == "authorized-run"
+    assert len(cleaned) == 1
+    assert cleaned[0].name.startswith("npa-skypilot-authorized-run-recovery-preflight-")
+
+
 def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> None:
     from npa.execution_preflight import ExecutionPreflightError
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
@@ -212,6 +244,446 @@ def test_submit_capacity_preflight_proves_no_launch(monkeypatch, tmp_path) -> No
     assert caught.value.launch_attempted is False
     assert caught.value.transaction is None
     assert caught.value.__cause__.__cause__ is capacity
+
+
+def test_libero_submit_uses_one_identity_for_unchanged_noncanonical_yaml(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_bytes = (
+        b"# Representation differences must not look like executable drift.\n"
+        b"name: 'exact-source-profile'\nresources: {cloud: kubernetes}\n"
+    )
+    yaml_path.write_bytes(yaml_bytes)
+    executable_bytes = yaml.safe_dump_all(
+        list(yaml.safe_load_all(yaml_bytes.decode())), sort_keys=False
+    ).encode()
+    assert executable_bytes != yaml_bytes
+    sky_bin = _fake_sky(tmp_path)
+    observed: dict[str, object] = {}
+
+    def preflight(documents, **kwargs):
+        observed["documents"] = documents
+        observed.update(kwargs)
+        return (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        )
+
+    def fake_run(command, **_kwargs):
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = submit_workflow(
+        yaml_path,
+        "libero-exact-profile-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+    )
+
+    assert observed["run_id"] == "libero-exact-profile-0001"
+    assert "authorization_global_config" not in observed
+    assert observed["submission_backend"] == "kubernetes"
+    from npa.execution_preflight import libero_executable_profile_sha256
+
+    assert observed["executable_profile_sha256"] == libero_executable_profile_sha256(
+        observed["documents"]
+    )
+    binding = result.launch_transaction["libero_owner_binding"]
+    assert binding["schema"] == workflow_module.LIBERO_OWNER_BINDING_SCHEMA
+    assert binding["run_id"] == "libero-exact-profile-0001"
+    assert binding["job_name"] == "libero-exact-profile-0001"
+    assert binding["job_id"] == "42"
+    assert binding["profile_sha256"] == observed["executable_profile_sha256"]
+    assert binding["state"] == "candidate"
+    prepared = (
+        tmp_path
+        / "sky-state"
+        / "submissions"
+        / "libero-exact-profile-0001"
+        / "workflow.yaml"
+    )
+    assert prepared.read_bytes() == executable_bytes
+
+
+def test_libero_reconciliation_promotes_candidate_atomically(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: byof-solution-smoke-libero-b200-gpu\n"
+        "envs:\n  BYOF_SOLUTION_NAME: libero\n"
+        "run: true\n",
+        encoding="utf-8",
+    )
+    sky_bin = _fake_sky(tmp_path)
+
+    def preflight(documents, **_kwargs):
+        return (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(
+        workflow_module,
+        "_libero_launch_binding_candidates",
+        lambda *_args, **_kwargs: (
+            "",
+            ("42",),
+            "candidate binding awaits exact reconciliation",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_reconcile_managed_job_env",
+        lambda *_args, **_kwargs: workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="42",
+            status="PENDING",
+            workload_observable=True,
+            workload_evidence="scheduler_state",
+        ),
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    def one_reconcile_transaction(**kwargs):
+        launch_pair = kwargs["launch"]()
+        evidence = kwargs["reconcile"]()
+        return LaunchTransactionResult(
+            LaunchState.SUBMITTED,
+            kwargs["logical_id"],
+            job_id=evidence.job_id,
+            launch_sequence=1,
+            launch_result=launch_pair,
+        )
+
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", one_reconcile_transaction
+    )
+    result = submit_workflow(
+        yaml_path,
+        "libero-atomic-promotion",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+    )
+
+    binding = result.launch_transaction["libero_owner_binding"]
+    assert binding["job_id"] == "42"
+    assert binding["state"] == "verified"
+    assert result.launch_transaction["libero_candidate_job_id"] == "42"
+    assert "libero_unverified_candidate_job_id" not in result.launch_transaction
+    assert "libero_binding_error" not in result.launch_transaction
+
+
+@pytest.mark.parametrize("outcome", ["ready", "conflict", "competing", "still_pending"])
+def test_libero_pending_timestamp_keeps_one_launch_and_journals_candidate(
+    monkeypatch, tmp_path, outcome
+) -> None:
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        RecoveryPolicy,
+        StabilityResult,
+    )
+
+    yaml_path = tmp_path / "libero.yaml"
+    yaml_path.write_text("name: libero\nrun: 'true'\n")
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_a, **_k: (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "wait_for_api_stability",
+        lambda *_a, **_k: StabilityResult(EvidenceState.READY, FailureCategory.NONE),
+    )
+    monkeypatch.setattr(workflow_module.time, "time", lambda: 100.0)
+    clock = [0.0]
+    records, sleeps, launches = [], [], []
+    observations = 0
+
+    def sleep(delay):
+        # The exact candidate must already be durable when waiting begins.
+        assert records[-1]["libero_owner_binding"]["job_id"] == "42"
+        assert records[-1]["libero_owner_binding"]["state"] == "candidate"
+        sleeps.append(delay)
+        clock[0] += delay
+
+    def fake_run(command, **_kwargs):
+        nonlocal observations
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        if command[1:3] == ["jobs", "launch"]:
+            launches.append(command)
+            return subprocess.CompletedProcess(
+                command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+            )
+        assert command[1:3] == ["jobs", "queue"]
+        rows = []
+        if launches:
+            observations += 1
+            row = {
+                "job_id": 42,
+                "job_name": "libero-timestamp-unit",
+                "status": "PENDING",
+                "submitted_at": None,
+            }
+            rows.append(row)
+            if observations > 1:
+                if outcome == "ready":
+                    row["submitted_at"] = 101.0
+                elif outcome == "conflict":
+                    row["metadata"] = {"executable_profile_sha256": "b" * 64}
+                elif outcome == "competing":
+                    rows.append({**row, "job_id": 43})
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(rows), stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    kwargs = dict(
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        launch_lock_root=tmp_path / "locks",
+        transaction_recorder=records.append,
+        transaction_clock=lambda: clock[0],
+        transaction_sleeper=sleep,
+        transaction_random=lambda: 0.5,
+        recovery_policy=RecoveryPolicy(
+            deadline_seconds=2, initial_backoff_seconds=1, cap_backoff_seconds=1
+        ),
+    )
+    if outcome == "ready":
+        result = submit_workflow(yaml_path, "libero-timestamp-unit", **kwargs)
+        assert result.job_id == "42"
+        assert result.launch_transaction["libero_owner_binding"]["state"] == "verified"
+        assert records[-1]["libero_owner_binding"]["state"] == "verified"
+    else:
+        with pytest.raises(SkyPilotSubmitError) as caught:
+            submit_workflow(yaml_path, "libero-timestamp-unit", **kwargs)
+        assert caught.value.transaction.state is LaunchState.INDETERMINATE
+        assert (
+            records[-1]["libero_owner_binding"] == records[-2]["libero_owner_binding"]
+        )
+        assert records[-1]["libero_owner_binding"]["state"] == "candidate"
+    assert len(launches) == 1
+    assert sleeps == ([1, 1] if outcome == "still_pending" else [1])
+
+
+def test_libero_submit_refuses_any_post_preflight_profile_change(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "libero.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "byof-solution-smoke-libero-b200-gpu",
+                    "envs": {"BYOF_SOLUTION_NAME": "libero"},
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def mutate_after_preflight(documents, **_kwargs):
+        documents[0]["run"] = "unreviewed-command"
+        return (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", mutate_after_preflight)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "controller or job command ran after profile drift"
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="changed after preflight"):
+        submit_workflow(
+            yaml_path,
+            "libero-exact-profile-0001",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/unit-context",
+        )
+
+
+def test_libero_denial_creates_no_submission_artifacts(monkeypatch, tmp_path) -> None:
+    yaml_path = tmp_path / "libero.yaml"
+    yaml_path.write_text(
+        "name: byof-solution-smoke-libero-b200-gpu\nrun: 'true'\n",
+        encoding="utf-8",
+    )
+    isolated = tmp_path / "sky-state"
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_a, **_k: (_ for _ in ()).throw(ValueError("authorization denied")),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="authorization denied"):
+        submit_workflow(
+            yaml_path,
+            "libero-denied-profile-0001",
+            isolated_config_dir=isolated,
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/unit-context",
+        )
+
+    assert not (isolated / "submissions").exists()
+
+
+def test_libero_submit_revalidates_exact_artifact_bytes_at_launch(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "libero.yaml"
+    yaml_path.write_text(
+        "name: byof-solution-smoke-libero-b200-gpu\nrun: 'true'\n",
+        encoding="utf-8",
+    )
+    isolated = tmp_path / "sky-state"
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_a, **_k: (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        ),
+    )
+    real_identity = workflow_module._private_file_identity
+    calls = 0
+
+    def tamper_before_consuming(path):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            path.chmod(0o600)
+            path.write_text("name: replaced\nrun: unreviewed\n", encoding="utf-8")
+            path.chmod(0o400)
+        return real_identity(path)
+
+    monkeypatch.setattr(
+        workflow_module, "_private_file_identity", tamper_before_consuming
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: (
+            _healthy_status(command)
+            if _is_status_cmd(command)
+            else pytest.fail("changed artifact reached the SkyPilot client")
+        ),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="artifacts changed before launch"):
+        submit_workflow(
+            yaml_path,
+            "libero-tamper-profile-0001",
+            isolated_config_dir=isolated,
+            sky_bin=_fake_sky(tmp_path),
+            infra="k8s/unit-context",
+        )
+
+
+def test_submit_uses_shared_libero_classification_for_secret_channel(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
+
+    yaml_path = tmp_path / "renamed-candidate.yaml"
+    yaml_path.write_bytes(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "renamed",
+                    "resources": {"cloud": "kubernetes"},
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ).encode()
+    )
+    sky_bin = _fake_sky(tmp_path)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        ),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    secret_values = {
+        name: f"unit-{index}"
+        for index, name in enumerate(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+    }
+
+    submit_workflow(
+        yaml_path,
+        "libero-exact-profile-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        extra_env=secret_values,
+    )
+
+    launch = next(command for command in calls if "launch" in command)
+    selected = {
+        launch[index + 1] for index, value in enumerate(launch) if value == "--secret"
+    }
+    assert selected == set(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+    prepared = (
+        tmp_path
+        / "sky-state"
+        / "submissions"
+        / "libero-exact-profile-0001"
+        / "workflow.yaml"
+    )
+    assert not any(value in prepared.read_text() for value in secret_values.values())
 
 
 def test_load_base_config_distinguishes_omitted_from_explicit_missing(
@@ -2184,6 +2656,1049 @@ def test_reconciliation_prefers_viable_job_over_cancelled_history(monkeypatch) -
     assert evidence.state.value == "found"
     assert evidence.job_id == "126"
     assert evidence.status == "PENDING"
+
+
+def test_libero_reconciliation_refuses_unbound_existing_job(monkeypatch) -> None:
+    row = {"job_id": 126, "job_name": "exact-run", "status": "PENDING"}
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        require_owner_binding=True,
+    )
+    assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert "owner-controlled immutable job binding" in evidence.error
+
+
+def test_libero_reconciliation_requires_exact_profile_digest(monkeypatch) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+
+
+def test_libero_owner_ledger_binding_reconciles_without_queue_profile_field(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "schedule_state": "WAITING",
+        "controller_pid": 4321,
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        owner_ledger_binding=True,
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+    assert evidence.workload_observable is True
+
+
+def test_libero_launch_binding_reconciles_without_optional_queue_profile_field(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "schedule_state": "WAITING",
+        "controller_pid": 4321,
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        allow_omitted_profile=True,
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+    assert evidence.workload_observable is True
+
+
+def test_libero_owner_ledger_binding_validates_run_and_digest(monkeypatch) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "candidate",
+                },
+                "libero_binding_error": "queue profile field unavailable",
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == "126"
+    assert owner_binding is False
+    assert error == "queue profile field unavailable"
+
+
+def test_libero_persisted_candidate_promotes_without_optional_queue_profile(
+    monkeypatch,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "candidate",
+                }
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                [
+                    {
+                        "job_id": 126,
+                        "job_name": "exact-run",
+                        "status": "PENDING",
+                        "schedule_state": "WAITING",
+                    }
+                ]
+            ),
+            stderr="",
+        ),
+    )
+
+    job_id, error, owner_binding, persisted_candidate = (
+        workflow_module._load_libero_owner_binding_details(
+            project="project",
+            run_id="exact-run",
+            expected_profile_sha256="a" * 64,
+        )
+    )
+    assert persisted_candidate is True
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id=job_id,
+        require_owner_binding=True,
+        owner_ledger_binding=owner_binding,
+        allow_omitted_profile=persisted_candidate,
+    )
+    assert observed.state is workflow_module.ReconciliationState.FOUND
+    promoted = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id=job_id,
+        binding_error=error,
+        binding_verified=(
+            bool(error)
+            and not owner_binding
+            and observed.state is workflow_module.ReconciliationState.FOUND
+        ),
+    )
+    assert promoted.state is workflow_module.ReconciliationState.FOUND
+    assert promoted.job_id == "126"
+    assert promoted.error == ""
+
+
+def test_libero_stale_unverified_candidate_cannot_promote_during_reconciliation(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "SUCCEEDED",
+        "submitted_at": 50.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        launch_started_at=100.0,
+    )
+
+    assert observed.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert "current-attempt queue correlation" in observed.error
+    preserved = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding lacked current-attempt correlation",
+        binding_verified=(observed.state is workflow_module.ReconciliationState.FOUND),
+    )
+    assert preserved.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert preserved.job_id == "126"
+    assert "lacked current-attempt correlation" in preserved.error
+
+
+@pytest.mark.parametrize("state", ["", "unknown", "CANDIDATE"])
+def test_libero_owner_binding_rejects_unsupported_state(monkeypatch, state) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": state,
+                }
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == ""
+    assert owner_binding is False
+    assert "unsupported owner-binding state" in error
+
+
+def test_libero_verified_owner_binding_requires_queue_evidence(monkeypatch) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "verified",
+                },
+                "libero_candidate_job_id": "126",
+                "libero_profile_sha256": "a" * 64,
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == ""
+    assert owner_binding is False
+    assert "exact queue evidence" in error
+
+
+def test_libero_verified_owner_binding_requires_matching_launch_evidence(
+    monkeypatch,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "verified",
+                    "evidence": "queue_exact_id_name_profile",
+                },
+                "libero_candidate_job_id": "126",
+                "libero_profile_sha256": "a" * 64,
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == "126"
+    assert error == ""
+    assert owner_binding is True
+
+
+@pytest.mark.parametrize("candidate_job_id", [None, "127"])
+def test_libero_verified_owner_binding_rejects_absent_or_mismatched_candidate(
+    monkeypatch, candidate_job_id
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    launch = {
+        "libero_owner_binding": {
+            "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+            "run_id": "exact-run",
+            "job_name": "exact-run",
+            "job_id": "126",
+            "profile_sha256": "a" * 64,
+            "state": "verified",
+            "evidence": "queue_exact_id_name_profile",
+        },
+        "libero_profile_sha256": "a" * 64,
+    }
+    if candidate_job_id is not None:
+        launch["libero_candidate_job_id"] = candidate_job_id
+
+    class Receipt:
+        outcome = "found"
+        payload = {"launch": launch}
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == ""
+    assert owner_binding is False
+    assert error == "existing LIBERO verified owner binding lacks exact queue evidence"
+
+
+def test_libero_unverified_candidate_missing_from_queue_is_indeterminate(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]", stderr=""
+        ),
+    )
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+
+    assert observed.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert "without authoritative terminal evidence" in observed.error
+    evidence = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding could not be verified",
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert evidence.job_id == "126"
+    assert "could not be verified" in evidence.error
+
+
+def test_libero_unverified_candidate_never_adopts_without_explicit_verification(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "schedule_state": "WAITING",
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+    evidence = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding was initially unverified",
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert evidence.job_id == "126"
+    assert evidence.workload_observable is True
+    assert "initially unverified" in evidence.error
+
+    verified = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding was initially unverified",
+        binding_verified=True,
+    )
+    assert verified.state is workflow_module.ReconciliationState.FOUND
+    assert verified.job_id == "126"
+    assert verified.workload_observable is True
+    assert verified.error == ""
+
+
+def test_libero_persisted_unverified_candidate_preserves_binding_error(monkeypatch):
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_unverified_candidate_job_id": "126",
+                "libero_binding_error": "queue binding unavailable",
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error = workflow_module._load_libero_bound_job_id(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+    evidence = workflow_module._preserve_unverified_libero_candidate(
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.ABSENT
+        ),
+        expected_job_id=job_id,
+        binding_error=error,
+    )
+
+    assert job_id == "126"
+    assert "unverified candidate" in error
+    assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert evidence.job_id == "126"
+    assert "must not be treated as absence" in evidence.error
+
+
+def test_non_libero_reconciliation_ignores_ambient_libero_digest(monkeypatch) -> None:
+    row = {"job_id": 126, "job_name": "exact-run", "status": "PENDING"}
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={"NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256": "a" * 64},
+        sky_executable="sky",
+        cwd="/durable",
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+
+
+def test_libero_reconciliation_ignores_terminal_profile_history_for_bound_job(
+    monkeypatch,
+) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "status": "CANCELLED",
+            "metadata": {"executable_profile_sha256": "b" * 64},
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "status": "PENDING",
+            "metadata": {"executable_profile_sha256": "a" * 64},
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+
+
+def test_libero_launch_binding_accepts_omitted_optional_queue_profile(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "submitted_at": 101.0,
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    assert (
+        workflow_module._verified_libero_job_id(
+            "126",
+            "exact-run",
+            env={},
+            sky_executable="sky",
+            cwd="/durable",
+            expected_profile_sha256="a" * 64,
+            launch_started_at=100.0,
+        )
+        == "126"
+    )
+    assert (
+        workflow_module._verified_libero_job_id(
+            "126",
+            "exact-run",
+            env={},
+            sky_executable="sky",
+            cwd="/durable",
+            expected_profile_sha256="",
+        )
+        == ""
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "conflict",
+        "competing",
+        "invalid_time",
+        "stale_time",
+        "wrong_name",
+        "no_id",
+    ],
+)
+def test_libero_only_polls_unique_pending_id_without_provider_time(
+    monkeypatch, mutation
+):
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "submitted_at": None,
+    }
+    rows = [row]
+    if mutation == "conflict":
+        row["metadata"] = {"executable_profile_sha256": "b" * 64}
+    elif mutation == "competing":
+        rows.append({**row, "job_id": 127})
+    elif mutation == "invalid_time":
+        row["submitted_at"] = "malformed"
+    elif mutation == "stale_time":
+        row["submitted_at"] = 50.0
+    elif mutation == "wrong_name":
+        row["job_name"] = "different-run"
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_k: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "" if mutation == "no_id" else "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+    assert verified == ""
+    assert (error == workflow_module.LIBERO_PENDING_SUBMISSION_TIME) is (
+        mutation == "none"
+    )
+    if mutation == "none":
+        assert plausible == ("126",)
+
+
+def test_libero_launch_binding_groups_task_rows_by_unique_job_id(monkeypatch) -> None:
+    rows = [
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "PENDING",
+            "submitted_at": 101.0,
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "task_id": "task-1",
+            "status": "STARTING",
+            "submitted_at": 101.0,
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+
+    assert verified == "126"
+    assert plausible == ()
+    assert error == ""
+
+
+@pytest.mark.parametrize(
+    "active_status", ["RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"]
+)
+def test_libero_launch_binding_blocks_mixed_failed_active_job(
+    monkeypatch, active_status
+) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "SUCCEEDED",
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-1",
+            "status": active_status,
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-2",
+            "status": "FAILED",
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "PENDING",
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert verified == ""
+    assert plausible == ("125", "126")
+    assert "multiple or missing viable" in error
+
+
+@pytest.mark.parametrize(
+    "active_status", ["RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"]
+)
+def test_libero_reconciliation_blocks_mixed_failed_active_competitor(
+    monkeypatch, active_status
+) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "SUCCEEDED",
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-1",
+            "status": active_status,
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-2",
+            "status": "FAILED",
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "status": "PENDING",
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        allow_omitted_profile=True,
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
+    assert "another viable" in evidence.error
+
+
+def test_libero_launch_binding_rejects_mismatched_optional_queue_profile(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "metadata": {"executable_profile_sha256": "b" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert verified == ""
+    assert plausible == ("126",)
+    assert "queue/name/profile" in error
+
+    assert (
+        workflow_module._verified_libero_job_id(
+            "126",
+            "exact-run",
+            env={},
+            sky_executable="sky",
+            cwd="/durable",
+            expected_profile_sha256="a" * 64,
+        )
+        == ""
+    )
+
+
+def test_libero_launch_binding_rejects_stale_historical_id(monkeypatch) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "status": "PENDING",
+            "metadata": {"executable_profile_sha256": "a" * 64},
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "status": "PENDING",
+            "metadata": {"executable_profile_sha256": "a" * 64},
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "125",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert verified == ""
+    assert plausible == ("125", "126")
+    assert "multiple" in error
+    assert (
+        workflow_module._verified_libero_job_id(
+            "125",
+            "exact-run",
+            env={},
+            sky_executable="sky",
+            cwd="/durable",
+            expected_profile_sha256="a" * 64,
+        )
+        == ""
+    )
+
+
+def test_libero_launch_binding_rejects_preexisting_succeeded_id_without_correlation(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 125,
+        "job_name": "exact-run",
+        "status": "SUCCEEDED",
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "125",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert verified == ""
+    assert plausible == ("125",)
+    assert "current-attempt correlation" in error
+
+
+def test_libero_launch_binding_accepts_succeeded_id_after_launch_started(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 125,
+        "job_name": "exact-run",
+        "status": "SUCCEEDED",
+        "submitted_at": 101.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "125",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+
+    assert verified == "125"
+    assert plausible == ()
+    assert error == ""
+
+
+def test_libero_success_without_parseable_id_persists_indeterminate_marker(
+    monkeypatch,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_launch_succeeded": True,
+                "libero_binding_error": (
+                    "LIBERO launch returned success without a parseable job ID"
+                ),
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == ""
+    assert owner_binding is False
+    assert "successful submission" in error
+    assert "refusing retry" in error
 
 
 def test_reconciliation_selects_latest_when_all_named_jobs_failed(monkeypatch) -> None:

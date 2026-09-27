@@ -319,6 +319,21 @@ def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in runtime_base_layer
 
 
+def test_mjlab_removes_bundled_ffmpeg_before_the_dependency_layer_commits() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "mjlab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    dependency_layer = dockerfile.split("COPY pyproject.toml", 1)[0].rsplit("RUN ", 1)[
+        1
+    ]
+    assert "pip install --no-cache-dir --require-hashes" in dependency_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*' -delete" in dependency_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dependency_layer
+    assert "imageio_ffmpeg.write_frames" in dependency_layer
+    assert "imageio_ffmpeg.read_frames" in dependency_layer
+
+
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
 def test_scanner_flags_real_kit_payload(path: str) -> None:
     why = scanner.classify_path(path)

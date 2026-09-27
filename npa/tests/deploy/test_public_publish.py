@@ -315,7 +315,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore", "sam3"}
+        {"openpi", "curobo", "ncore", "libero", "sam3"}
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
@@ -328,6 +328,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         "detection-training",
         "isaac-arena",
         "openarm",
+        "flex-pi",
         "sonic-mujoco",
     }
 
@@ -368,6 +369,17 @@ def test_public_set_includes_the_oss_tools() -> None:
         set(CONTAINER_IMAGE_NAMES)
         - RESTRICTED_PUBLICATION_TOOLS
         - PUBLICATION_QUARANTINE_TOOLS
+    )
+
+
+def test_libero_neutral_candidate_remains_unvalidated_and_out_of_release_plan() -> None:
+    assert is_publicly_redistributable("libero") is True
+    assert "libero" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "libero" in images.PUBLICATION_QUARANTINE_TOOLS
+    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
+    assert "libero" not in {item.tool for item in plan}
+    assert images.SUPPORTED_TOOL_VERSIONS["libero"] == (
+        "public-neutral-bootstrap-unbuilt"
     )
 
 
@@ -441,8 +453,8 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     }
     assert accepted_shas
     # Five Sim2Real roles share a source, as do the three native model images.
-    # Arena and the other accepted images retain their distinct exact sources.
-    assert len(set(accepted_shas.values())) == 13
+    # Arena, flex-pi, and the other accepted images retain distinct exact sources.
+    assert len(set(accepted_shas.values())) == 14
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -474,6 +486,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "sam2",
         "openarm",
         "alpamayo2-super",
+        "flex-pi",
     ):
         entry = manifest[tool]
         assert by_tool[tool].source_ref.endswith(f":dev-{entry['development_sha']}")

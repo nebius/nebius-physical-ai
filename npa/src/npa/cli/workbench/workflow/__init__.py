@@ -121,15 +121,83 @@ def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
         )
 
 
-def _fail(msg: str, code: int = 1) -> None:
+def _workflow_log_attempt(record: Mapping[str, object]) -> int:
+    """Read a positive whole-number attempt, preserving missing legacy values.
+
+    Historical ledgers may encode integral numbers as strings or floats. Reject
+    booleans and fractional numbers instead of silently attributing another attempt.
+    """
+
+    raw_attempt = record.get("attempt")
+    if raw_attempt is None:
+        return 1
+    try:
+        attempt = int(raw_attempt)
+        if (
+            isinstance(raw_attempt, bool)
+            or (isinstance(raw_attempt, float) and raw_attempt != attempt)
+            or attempt < 1
+        ):
+            raise ValueError("attempt must be a positive whole number")
+        return attempt
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("persisted workflow attempt metadata is invalid") from exc
+
+
+def _invalid_log_attempt_payload(
+    *, run_id: str, stage: str, available: list[str], manifest: Mapping[str, object]
+) -> dict[str, object]:
+    """Build a sanitized failure when durable log attribution is malformed."""
+
+    from npa.verification import VERIFICATION_UNAVAILABLE, apply_verification
+
+    reason = (
+        "persisted attempt metadata is invalid; live logs cannot be attributed safely"
+    )
+    payload = apply_verification(
+        {
+            "run_id": run_id,
+            "stage": stage,
+            "manifest_state": "available",
+            "persisted_stages": available,
+            "stage_ledger_state": "invalid",
+            "live_log_state": "unavailable",
+            "cached_log_state": "unknown",
+            "error_code": "STAGE_ATTEMPT_INVALID",
+            "reason": reason,
+        },
+        status=VERIFICATION_UNAVAILABLE,
+        target=run_id,
+        last_known_state=str(manifest.get("status") or "UNKNOWN"),
+        last_known_at=str(manifest.get("updated_at") or ""),
+        last_known_source="stage_ledger_or_manifest",
+        reason=reason,
+        retry_command=f"npa workbench workflow status {run_id}",
+    )
+    live_verification = payload["live_verification"]
+    assert isinstance(live_verification, dict)
+    live_verification["error_code"] = "STAGE_ATTEMPT_INVALID"
+    live_verification["category"] = "ATTRIBUTION"
+    return payload
+
+
+def _fail(
+    msg: str,
+    code: int = 1,
+    *,
+    secrets: Sequence[str] = (),
+) -> None:
     # Operational recovery commands and status phrases must remain copyable and
     # machine-observable even when Rich detects a narrow non-interactive console.
+    from npa.verification import redact_failure_text
+
+    safe_message = redact_failure_text(msg, secrets=secrets)
     error = Text("Error:", style="red")
     error.append(" ")
     # Exception messages can legitimately contain bracketed values (for example,
     # a malformed URI such as ``[/foo]``).  Keep them literal so Rich does not
     # replace the original failure with a MarkupError while reporting it.
-    error.append(str(msg))
+    error.append(safe_message)
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
 
@@ -1356,7 +1424,10 @@ def submit_cmd(
                 infra=infra,
             )
         except Exception as exc:  # noqa: BLE001 - fail before any mutation
-            _fail(f"deployIfAbsent target resolution failed: {exc}")
+            _fail(
+                f"deployIfAbsent target resolution failed: {exc}",
+                secrets=submission_redaction_secrets,
+            )
             return
         if is_paidf_spec and not infra_context:
             declared_contexts = sorted(
@@ -1435,7 +1506,10 @@ def submit_cmd(
                 ),
             )
         except Exception as exc:
-            _fail(f"cannot resolve the workflow's source requirement: {exc}")
+            _fail(
+                f"cannot resolve the workflow's source requirement: {exc}",
+                secrets=submission_redaction_secrets,
+            )
             return
         bucket_for_source = str(
             s3_bucket or spec_config.get("bucket", "") or ""
@@ -1465,7 +1539,10 @@ def submit_cmd(
                 local_source_fingerprint = _local_source_fingerprint()
             except Exception as exc:
                 if stage_src is not False and not existing_source_uri:
-                    _fail(f"npa source staging is not feasible: {exc}")
+                    _fail(
+                        f"npa source staging is not feasible: {exc}",
+                        secrets=submission_redaction_secrets,
+                    )
                     return
         existing_fingerprint = existing_source_uri.rstrip("/").rsplit("/", 1)[-1]
         persisted_source_is_stale = bool(
@@ -1481,7 +1558,7 @@ def submit_cmd(
             and (not existing_source_uri or persisted_source_is_stale)
         )
         stage_source_planned = stage_src is True or auto_stage_source
-        if image_pins_all_tasks:
+        if image_pins_all_tasks and not requires_npa_source:
             source_action = "image-override"
         elif stage_source_planned:
             source_action = "planned"
@@ -1521,7 +1598,10 @@ def submit_cmd(
                     deploy_targets, mutation=not plan_only
                 )
             except Exception as exc:  # noqa: BLE001 - normalized before all mutation
-                _fail(f"deployIfAbsent preflight failed: {exc}")
+                _fail(
+                    f"deployIfAbsent preflight failed: {exc}",
+                    secrets=submission_redaction_secrets,
+                )
                 return
         if not skip_preflight:
             missing = _submit_prerequisites(
@@ -1639,7 +1719,11 @@ def submit_cmd(
                     )
                 )
             except (RuntimeError, ValueError) as exc:
-                _fail(str(exc), code=_submit_failure_code(exc))
+                _fail(
+                    str(exc),
+                    code=_submit_failure_code(exc),
+                    secrets=submission_redaction_secrets,
+                )
                 return
 
         if not plan_only:
@@ -1687,7 +1771,7 @@ def submit_cmd(
                         ),
                     )
             except CosmosCheckpointAccessError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         # Image reachability and the complete cumulative infrastructure plan are
@@ -1763,7 +1847,7 @@ def submit_cmd(
                             err=True,
                         )
             except NpaWorkflowError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         if infra_context and not plan_only and not _adopt_npa_kubeconfig(infra_context):
@@ -1794,7 +1878,7 @@ def submit_cmd(
                 RuntimeError,
                 ValueError,
             ) as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         if not skip_preflight and not plan_only:
@@ -1812,7 +1896,7 @@ def submit_cmd(
             try:
                 verify_execution_scope(execution_target)
             except RuntimeError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         if not plan_only:
@@ -1929,7 +2013,7 @@ def submit_cmd(
                         conditioning_policy=paidf_conditioning_policy,
                     )
             except PaidfInputError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
             prepared_overrides = prepared_input.config_overrides()
 
@@ -1987,7 +2071,7 @@ def submit_cmd(
                     expected_fingerprint=existing_fingerprint,
                 )
             except Exception as exc:  # noqa: BLE001
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
         if stage_source_planned and not plan_only:
             staged_uri = _stage_npa_src_for_submit(
@@ -2027,6 +2111,8 @@ def submit_cmd(
                 run_id=resolved_run_id,
                 secret_env_values=extra_env,
                 endpoint=render_endpoint,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if runtime and not plan_only
             else None
@@ -2053,6 +2139,7 @@ def submit_cmd(
                 assume_decision=assume_decision,
                 enabled=resolve_accelerators and not plan_only,
                 environment=runtime_environment,
+                diagnostic_secrets=submission_redaction_secrets,
                 config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
@@ -2079,6 +2166,7 @@ def submit_cmd(
                 _fail(
                     f"multi-node GPU capacity preflight failed: {exc}",
                     code=_submit_failure_code(exc),
+                    secrets=submission_redaction_secrets,
                 )
                 return
 
@@ -2128,6 +2216,7 @@ def submit_cmd(
                     sky_bin=sky_bin,
                     assume_decision=assume_decision,
                     enabled=resolve_accelerators,
+                    diagnostic_secrets=submission_redaction_secrets,
                     config_path=config_path,
                     isolated_config_dir=isolated_config_dir,
                     readiness_timeout=gpu_readiness_timeout,
@@ -2190,7 +2279,7 @@ def submit_cmd(
                 allow_runtime_required=plan_only,
             )
         except NpaWorkflowError as exc:
-            _fail(str(exc))
+            _fail(str(exc), secrets=submission_redaction_secrets)
             return
 
         if plan_only:
@@ -2371,7 +2460,7 @@ def submit_cmd(
                     accept_eula=accept_eula,
                 )
             except ValueError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
             unresolved = unresolved_submit_placeholders(plan.yaml_text)
             if unresolved:
@@ -2434,7 +2523,7 @@ def submit_cmd(
                     )
                 )
             except (ExecutionPreflightError, ValueError, RuntimeError) as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
             extra_env.update(injected)
             if json.dumps(documents, sort_keys=True) != original_documents:
@@ -2487,7 +2576,7 @@ def submit_cmd(
                     if name not in secret_env:
                         secret_env.append(name)
             except (WorkflowStateError, ExecutionPreflightError) as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         ledger_project = project or "default"
@@ -2861,6 +2950,8 @@ def _runtime_submit_environment(
     run_id: str,
     secret_env_values: Mapping[str, str],
     endpoint: str,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> dict[str, str]:
     """Resolve the same private environment before API readiness and runtime."""
     from npa.orchestration.npa_workflow.interpreter import _make_context
@@ -2875,6 +2966,14 @@ def _runtime_submit_environment(
             environment[f"NPA_S3_{key.upper()}"] = str(resolved_config[key] or "")
     if endpoint.strip():
         environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
+    if isolated_config_dir is not None:
+        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
     return environment
 
 
@@ -2941,7 +3040,7 @@ def _run_npa_workflow_runtime(
     try:
         spec = load_spec_for_submit(yaml_path, config_overrides=config_overrides)
     except NpaWorkflowError as exc:
-        _fail(str(exc))
+        _fail(str(exc), secrets=tuple(secret_env_values.values()))
         return
 
     submitted_yaml = yaml_path.read_bytes()
@@ -3009,6 +3108,8 @@ def _run_npa_workflow_runtime(
         run_id=run_id,
         secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
     )
     with _temporary_runtime_environment(runtime_env):
         # Record entry into the runtime before it can launch a wave. A runtime
@@ -3029,7 +3130,7 @@ def _run_npa_workflow_runtime(
                 logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
             )
         except NpaWorkflowError as exc:
-            _fail(str(exc))
+            _fail(str(exc), secrets=tuple(secret_env_values.values()))
             return
     artifact_load: dict[str, object] | None = None
     from npa.orchestration.npa_workflow.run_state import (
@@ -3316,12 +3417,13 @@ def _plan_requires_npa_source(
     config_overrides: Mapping[str, str] | None = None,
     options: SkypilotRenderOptions,
 ) -> bool:
-    """Return whether any fully configured planned step lacks a container image."""
+    """Return whether the merged plan needs source, including an explicit overlay."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
+        source_overlay_requested,
         tool_requires_staged_npa_source,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
@@ -3331,6 +3433,10 @@ def _plan_requires_npa_source(
     # otherwise a fully digest-pinned workflow is incorrectly forced to stage an
     # unused source tree (and ``--no-stage-src`` cannot submit it at all).
     spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
+    # An image supplies the base runtime, but an explicit overlay must still
+    # stage the selected checkout. Otherwise the worker silently runs baked code.
+    if source_overlay_requested(spec.config):
+        return True
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
@@ -3728,6 +3834,7 @@ def _resolve_submit_accelerators(
     config_path: Path | None = None,
     isolated_config_dir: Path | None = None,
     environment: Mapping[str, str] | None = None,
+    diagnostic_secrets: Sequence[str] = (),
     readiness_timeout: float = 600.0,
     readiness_poll_interval: float = 10.0,
 ) -> dict[str, str]:
@@ -3779,7 +3886,22 @@ def _resolve_submit_accelerators(
     if not requested:
         return {}
 
-    with _temporary_runtime_environment(environment):
+    # GPU discovery calls into k8s_gpu_catalog, which resolves its isolated
+    # directory and base config from the process environment.  Bind the same
+    # explicit CLI selections used by ensure_local_api_daemon_health; otherwise
+    # a saved directory can win during catalog discovery and be rejected as a
+    # different executing identity.
+    readiness_environment = dict(environment or {})
+    if isolated_config_dir is not None:
+        readiness_environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
+            Path(isolated_config_dir).expanduser().resolve()
+        )
+    if config_path is not None:
+        readiness_environment["SKYPILOT_GLOBAL_CONFIG"] = str(
+            Path(config_path).expanduser().resolve()
+        )
+
+    with _temporary_runtime_environment(readiness_environment):
         try:
             ensure_local_api_daemon_health(
                 sky_bin=sky_bin or None,
@@ -3787,7 +3909,10 @@ def _resolve_submit_accelerators(
                 config_path=config_path,
             )
         except (SkyPilotSubmitError, SkyPilotNotInstalledError, ValueError) as exc:
-            _fail(f"SkyPilot API daemon preflight failed: {exc}")
+            _fail(
+                f"SkyPilot API daemon preflight failed: {exc}",
+                secrets=diagnostic_secrets,
+            )
             return {}
 
         context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
@@ -3806,7 +3931,10 @@ def _resolve_submit_accelerators(
             UnsatisfiableAcceleratorError,
             ValueError,
         ) as exc:
-            _fail(f"accelerator readiness failed: {exc}")
+            _fail(
+                f"accelerator readiness failed: {exc}",
+                secrets=diagnostic_secrets,
+            )
             return {}
 
     overrides: dict[str, str] = {}
@@ -4271,7 +4399,10 @@ def _stage_npa_src_for_submit(
             persist_workflow_src_s3_uri(uri, project or None)
         return uri
     except (ConfigError, SrcStagingError) as exc:
-        _fail(str(exc))
+        _fail(
+            str(exc),
+            secrets=tuple((credential_values or {}).values()),
+        )
         return ""
 
 
@@ -4886,7 +5017,10 @@ def _durable_workflow_status(
         resolution_diagnostics,
         resolve_run,
     )
-    from npa.orchestration.skypilot.workflow_state import read_stage_status
+    from npa.orchestration.skypilot.workflow_state import (
+        WorkflowStateError,
+        read_stage_status,
+    )
 
     resolution = resolve_run(
         run_id,
@@ -5332,16 +5466,22 @@ def _durable_workflow_status(
             attempted_at=attempted_at,
         )
     stages: dict[str, dict[str, object]] = {}
+    legacy_verification_errors: list[str] = []
     for stage, info in (manifest.get("stages", {}) or {}).items():
         stage_info = dict(info) if isinstance(info, dict) else {"name": str(stage)}
-        stage_status = read_stage_status(state, str(stage))
-        if stage_status:
-            stage_info.update(stage_status)
+        try:
+            stage_status = read_stage_status(state, str(stage))
+        except WorkflowStateError as exc:
+            legacy_verification_errors.append(
+                f"stage {stage} status verification failed: {exc}"
+            )
+        else:
+            if stage_status:
+                stage_info.update(stage_status)
         stages[str(stage)] = stage_info
 
     job_id = str(manifest.get("sky_job_id") or "")
     live_status = ""
-    legacy_verification_errors: list[str] = []
     if job_id and not cached:
         try:
             live = workflow_status(job_id, sky_bin=sky_bin or None)
@@ -5375,7 +5515,8 @@ def _durable_workflow_status(
     blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
     if blockers:
         legacy_payload["blockers"] = blockers
-    last_known = str(status or manifest.get("status") or "UNKNOWN")
+    manifest_status = str(manifest.get("status") or manifest.get("state") or "")
+    last_known = status if status and status != "UNKNOWN" else manifest_status or status
     if cached:
         verification_status = CACHED
         reason = "live controller query intentionally skipped (--cached)"
@@ -6272,7 +6413,7 @@ def _matching_stage_log_waves(
 
     job_id = str(stage_attempt.get("managed_job_id") or "")
     stage_key = str(stage_attempt.get("wave_key") or "")
-    attempt = int(stage_attempt.get("attempt") or 1)
+    attempt = _workflow_log_attempt(stage_attempt)
     if not stage_key and not job_id:
         return []
     matches: list[dict[str, object]] = []
@@ -6281,15 +6422,11 @@ def _matching_stage_log_waves(
             continue
         if stage not in list(raw_wave.get("states") or []):
             continue
-        try:
-            wave_attempt = int(raw_wave.get("attempt") or 1)
-        except (TypeError, ValueError):
-            continue
-        if wave_attempt != attempt:
-            continue
         if stage_key and str(raw_wave.get("key") or "") != stage_key:
             continue
         if job_id and str(raw_wave.get("job_id") or "") != job_id:
+            continue
+        if _workflow_log_attempt(raw_wave) != attempt:
             continue
         matches.append(raw_wave)
     return matches
@@ -6561,7 +6698,7 @@ def logs_cmd(
                         for index, state_name in enumerate(wave_states):
                             reconstructed = {
                                 "stage": str(state_name),
-                                "attempt": int(wave.get("attempt") or 1),
+                                "attempt": wave.get("attempt"),
                                 "managed_job_id": str(wave.get("job_id") or ""),
                                 "logical_state": str(wave.get("status") or "unknown"),
                                 "provenance": "legacy_runtime_wave_reconstruction",
@@ -6599,19 +6736,39 @@ def logs_cmd(
                     for item in runtime_stages
                     if str(item.get("stage") or "") == selected_stage
                 ]
-                stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
-                selected_attempt = stage_attempts[-1] if stage_attempts else {}
-                attribution_error = ""
-                if cached:
-                    job_id = str(selected_attempt.get("managed_job_id") or "")
-                else:
-                    selected_attempt, job_id, attribution_error = (
-                        _recover_stage_log_wave_attribution(
-                            resolution.runtime_state,
-                            selected_attempt,
-                            selected_stage,
+                try:
+                    stage_attempts.sort(key=_workflow_log_attempt)
+                    selected_attempt = stage_attempts[-1] if stage_attempts else {}
+                    selected_attempt_number = _workflow_log_attempt(selected_attempt)
+                    attribution_error = ""
+                    if cached:
+                        job_id = str(selected_attempt.get("managed_job_id") or "")
+                    else:
+                        selected_attempt, job_id, attribution_error = (
+                            _recover_stage_log_wave_attribution(
+                                resolution.runtime_state,
+                                selected_attempt,
+                                selected_stage,
+                            )
                         )
+                except ValueError:
+                    source_payload = _invalid_log_attempt_payload(
+                        run_id=resolution.run_id,
+                        stage=selected_stage,
+                        available=available,
+                        manifest=manifest,
                     )
+                    if json_output:
+                        typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
+                    else:
+                        typer.echo("VERIFICATION_UNAVAILABLE")
+                        typer.echo("manifest_state: available")
+                        typer.echo(f"persisted stages: {', '.join(available)}")
+                        typer.echo(f"cause: {source_payload['reason']}")
+                        live_verification = source_payload["live_verification"]
+                        assert isinstance(live_verification, dict)
+                        typer.echo(f"retry: {live_verification['retry_command']}")
+                    raise typer.Exit(code=2)
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
@@ -6619,7 +6776,7 @@ def logs_cmd(
                 source_payload: dict[str, object] = {
                     "run_id": resolution.run_id,
                     "stage": selected_stage,
-                    "attempt": int(selected_attempt.get("attempt") or 1),
+                    "attempt": selected_attempt_number,
                     "managed_job_id": job_id,
                     "manifest_state": "available",
                     "persisted_stages": available,
@@ -8155,6 +8312,7 @@ def preflight_images_cmd(
     the actual manifest fetch a worker performs.
     """
 
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
@@ -8184,12 +8342,16 @@ def preflight_images_cmd(
     if resolved_registry:
         typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
-    images, pull_secrets_by_image = _plan_preflight_image_requirements(
-        spec,
-        run_id=run_id,
-        options=options,
-        assume_decision=assume_decision,
-    )
+    try:
+        images, pull_secrets_by_image = _plan_preflight_image_requirements(
+            spec,
+            run_id=run_id,
+            options=options,
+            assume_decision=assume_decision,
+        )
+    except (NpaWorkflowError, ValueError) as exc:
+        _fail(f"image preflight planning failed: {exc}")
+        return
     if image_pull_secret:
         explicit = tuple(
             dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())

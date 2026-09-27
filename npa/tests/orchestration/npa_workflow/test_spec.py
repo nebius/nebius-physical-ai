@@ -194,7 +194,7 @@ def test_loop_max_accepts_braced_config_ref() -> None:
     )
 
 
-def test_bdd100k_pipeline_plan_expands_eleven_stages() -> None:
+def test_bdd100k_pipeline_plan_expands_ten_real_stages() -> None:
     spec = load_spec(SPECS / "bdd100k-pipeline.yaml")
     plan = build_plan(spec, run_id="bdd100k-plan")
     states = [step.state for step in plan.steps]
@@ -209,8 +209,25 @@ def test_bdd100k_pipeline_plan_expands_eleven_stages() -> None:
         "eval-rider",
         "eval-nighttime",
         "eval-distant",
-        "review",
     ]
+
+
+@pytest.mark.parametrize(
+    ("name", "terminal_group"),
+    [
+        ("bdd100k-pipeline.yaml", "evaluate-models"),
+        ("av-night-scene-hardening.yaml", "detectors"),
+    ],
+)
+def test_detector_workflows_end_at_real_evaluation_groups(
+    name: str, terminal_group: str
+) -> None:
+    spec = load_spec(SPECS / name)
+    plan = build_plan(spec, run_id="detector-evaluation-plan")
+
+    assert spec.states[terminal_group].terminal
+    assert not spec.states[terminal_group].next
+    assert all(step.tool_ref != "workbench.fiftyone.launch_app" for step in plan.steps)
 
 
 def test_build_plan_omits_assume_decision_for_loop_free_spec() -> None:

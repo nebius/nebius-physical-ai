@@ -106,6 +106,7 @@ Use the project's own vocabulary. Examples of good ids:
   `pi05_droid_jointpos_polaris_cross_pod_serve`,
   `pi05_droid_jointpos_polaris_lora_optimizer_smoke`,
   `pi05_droid_jointpos_polaris_heldout_evaluate`
+- LIBERO: `libero_spatial_bc_rnn_train_reload_heldout`
 - DROID: `rlds_config_generator_contract`, `droid_100_config_gen`
 
 ### 2. Choose a golden hello-world per accepted claim
@@ -194,6 +195,64 @@ Keep each solution's capability list and smoke command unique. When promoting a
 deferred capability, change that solution's smoke (or add a second workflow
 spec) rather than mapping it onto a generic family label.
 
+### LIBERO (`byof-libero.yaml`)
+
+Pinned: `Lifelong-Robot-Learning/LIBERO`
+`8f1084e3132a39270c3a13ebe37270a43ece2a01`.
+
+Hard-gate capability: `libero_spatial_bc_rnn_train_reload_heldout`.
+
+The public candidate is a quarantined, unbuilt neutral bootstrap: it contains
+only the pinned Python/Debian base, snapshot-locked bootstrap packages, NPA
+scripts, and immutable manifests. It must contain no LIBERO, GPU runtime,
+model, demonstration, task/render asset, cache, checkpoint, credential, or
+output bytes. Do not add it to the public table or release manifest until a
+trusted exact-SHA build passes complete-byte and independent base-provenance
+scans, anonymous pull, and the exact-digest hard gate.
+The neutral development build does not require customer authorization or prior
+runtime qualification. Its local complete-byte scan records the ordered-layer,
+flattened-rootfs, and config identity from the inspected build; post-publication
+scanning must reproduce that identity and an anonymous pull must fetch the
+actual image layers. Customer acknowledgement remains mandatory before runtime
+fetch, and real exact-digest B200 evidence is required for supported release
+promotion and public catalog validation.
+
+The qualifying smoke must runtime-fetch and SHA-256-verify the exact official
+LIBERO-Spatial demonstration pinned in the spec, bind it to the reviewed BDDL
+and initial-state hashes, split whole trajectories into disjoint train and
+held-out partitions, execute exactly eight nonzero upstream
+`Sequential.observe` optimizer steps with `BCRNNPolicy`, record and validate
+that exact count, save and strictly reload an upstream checkpoint, and report
+finite held-out loss plus finite reloaded actions. It
+must run headlessly on exactly one STRICT-bound B200 (`sm_100`) and record the
+Pod-observed immutable digest of the qualified candidate, matching the
+anonymously resolved public-development digest; private or historical image
+digests are not qualification evidence. Imports, BDDL parsing, dataset
+inventory, or zero-step training are not acceptance evidence.
+
+The source is MIT and the upstream LIBERO publisher declares its datasets CC BY
+4.0. Preserve the publisher's license when a mirror card conflicts. Keep the
+demonstration in a run-scoped runtime cache outside `$NPA_SMOKE_OUTPUT_DIR` and
+never bake it. The selected task names Google Scanned Objects and a HOPE
+distractor; the headless qualification's runtime sparse checkout never fetches
+the unused render-asset tree while retaining the hash-bound MIT task
+definitions. Require a short-lived authorization signed directly by the
+customer-controlled key, bound to the customer, run, exact terms, runtime
+manifest, and immutable qualified image when available, before any cache or
+network mutation. The manager/control plane may authenticate, transport, and
+validate that evidence but never accept, acknowledge, issue, or sign the
+customer's terms decision. An optional transported copy of the signer public key
+is owner-private; when supplied, it must byte-match the customer-signed evidence.
+The authenticated caller assertion remains the required signer-fingerprint binding.
+No customer signer trust root or fingerprint is baked into the neutral image. Keep the payload on its
+pods/get-only account and require the separately precreated, non-wildcard
+controller Role to pass exact namespaced and no-ClusterRoleBinding checks
+before submission.
+Never invent an `ACCEPT_*` variable, automate a vendor acceptance action, or
+treat fetch/authentication as permission.
+Rendered closed-loop sweeps, all 130
+tasks, lifelong-algorithm comparison, and physical-robot use remain deferred.
+
 ### ManiSkill (`byof-maniskill.yaml`)
 
 Pinned: `mani-skill/ManiSkill` `v3.0.1` · base `maniskill/base:latest`
@@ -216,6 +275,44 @@ Required smoke capabilities:
 - `mjx_cartpole_step`
 - `mjx_cheetah_run_step`
 - `train_jax_ppo_cartpole_smoke` (live-accepted; brax PPO train API, jax&lt;0.8.1)
+
+### Gymnasium-Robotics (`byof-gymnasium-robotics.yaml`)
+
+Pinned: `Farama-Foundation/Gymnasium-Robotics`
+`4d1ebecbc6436806cfbc0e42ebc36f594d05844e` · MuJoCo `3.12.0` · base
+`ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61`
+
+The single hard gate is the upstream registered
+`HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` environment. One
+strictly reserved RTX PRO 6000 Blackwell must exercise all of:
+
+- `registered_shadow_hand_environment`
+- `mujoco_physics_steps`
+- `continuous_touch_sensor_response`
+- `mujoco_contacts`
+- `egl_rgb_rendering`
+- `rtx_pro_6000_blackwell_execution`
+
+The smoke must write exactly `gymnasium-robotics-smoke.json`, prove real
+MuJoCo steps, contacts or touch response, state/orientation change, distinct
+RGB frame hashes, NVIDIA EGL, and equality between the immutable image digest
+and the pod-observed digest. The public candidate is a neutral bootstrap with
+an empty workflow build command: upstream source, Shadow assets, MuJoCo/Python
+workload, and populated caches are fetched only into an operator-owned runtime
+cache after complete hash locks. Fetch changes delivery only, not use,
+derivative, output, or service rights. The image has an immutable payload-free
+development-build path but remains release-quarantined until every exact
+publication and capability gate passes. Historical private evidence never
+qualifies redesigned or public bytes. This is not a first-class tool. It uses
+no model, external dataset, gated asset, or terms acceptance. RL sweeps, expert
+scores, other environment families, and physical-robot transfer remain
+deferred. The operator qualification contract requires exactly one strictly
+reserved RTX PRO 6000 Blackwell; never route this task to B200. Other hardware,
+including B200/B300, is unqualified/deferred for this capability, not proven
+incapable solely by the absence of RT cores. MuJoCo's EGL raster rendering is
+distinct from ray tracing; any future qualification needs exact driver/EGL,
+image and real-workload evidence. This rationale does not relax placement or
+publication exclusions and makes no new hardware-support claim.
 
 ### RoboCasa (`byof-robocasa.yaml`)
 
