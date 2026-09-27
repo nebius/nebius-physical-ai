@@ -117,7 +117,8 @@ in `scan_base_images.py`; Docker with the Buildx plugin is required for patched
 entries. The tool image may remain cached, but completed base-image build state
 is not retained. Concurrent active images still require disk space: per-entry
 cleanup prevents accumulated old images, not arbitrary image-size exhaustion.
-The workflow records actual runner free space before and after each scan.
+The workflow concurrently removes four disjoint preinstalled hosted-runner SDK
+trees before scanning, then records actual free space before and after each scan.
 Per-image isolation removes contention between inventory entries; it does not
 prove that any arbitrarily large image fits a standard runner. No vulnerability
 threshold, preparation flag, or inventory entry is removed.
