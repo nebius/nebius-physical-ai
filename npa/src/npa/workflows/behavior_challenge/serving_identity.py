@@ -45,7 +45,9 @@ _TRAIN_EXPERIENCE_SERVING_FILES = (
     "train_experience.py",
     "train_experience_evaluator.py",
     "semantic_monitor/__init__.py",
+    "semantic_monitor/collector.py",
     "semantic_monitor/interface.py",
+    "semantic_monitor/schema.py",
 )
 _INPUT_FIELDS = (
     "policy_selected_export_receipt",

@@ -20,6 +20,7 @@ from npa.workflows.behavior_challenge import (
     native_comet_policy,
     native_comet_server,
     train_experience,
+    trained_comet_policy,
 )
 from npa.workflows.behavior_challenge.campaign import canonical_digest
 from npa.workflows.behavior_challenge import policy as campaign_policy
@@ -431,6 +432,35 @@ def test_disabled_recording_stages_no_recorder_modules(tmp_path: Path) -> None:
     assert "train_experience.py" in enabled_rows
     assert "train_experience_evaluator.py" in enabled_rows
     assert "semantic_monitor/interface.py" in enabled_rows
+
+
+@pytest.mark.parametrize("adapter", [native_comet_policy, trained_comet_policy])
+def test_staged_recorders_import_without_repository(tmp_path: Path, adapter) -> None:
+    adapter._stage_adapters(tmp_path, train_experience=True)
+    code = """
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root))
+sys.modules['jax'] = None
+sys.modules['npa'] = None
+import train_experience
+import train_experience_evaluator
+import semantic_monitor.collector
+import semantic_monitor.schema
+
+for name, module in tuple(sys.modules.items()):
+    if name.startswith(('train_experience', 'semantic_monitor')):
+        assert Path(module.__file__).resolve().is_relative_to(root), name
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", code, str(tmp_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_policy_recorder_preserves_one_inference_and_chunk_bytes(

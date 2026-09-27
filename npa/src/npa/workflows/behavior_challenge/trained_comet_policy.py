@@ -38,7 +38,7 @@ def _stage_adapters(output: Path, *, train_experience: bool = False) -> dict[str
     if train_experience:
         monitor = output / "semantic_monitor"
         monitor.mkdir()
-        for name in ("__init__.py", "interface.py"):
+        for name in ("__init__.py", "collector.py", "interface.py", "schema.py"):
             source = Path(__file__).with_name("semantic_monitor") / name
             target = monitor / name
             shutil.copyfile(source, target)
