@@ -23,7 +23,17 @@ def preview_groups(args, final):
     """
     with tempfile.TemporaryDirectory(prefix="npa-rl-preview-") as temporary:
         root = Path(temporary)
-        groups = []
+        observation = materialize(
+            args.output_root + "/failure-observation", root / "observation"
+        )
+        observed = _preview(
+            observation, "baseline", "Training-route failure observation"
+        )
+        observed["note"] += (
+            " Capture admission uses every office training episode; this focal route "
+            "alone does not establish an observed failure."
+        )
+        groups = [observed]
         for arm in ("baseline", "candidate"):
             source = (
                 materialize(args.output_root + "/development/" + arm, root / arm)

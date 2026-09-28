@@ -135,6 +135,7 @@ def test_published_standalone_html_retains_verified_public_credit(
     from npa.workflows.field_failure import reference_demo_report as report
     from npa.workflows.field_failure import reference_demo_media as media
     from npa.workflows.field_failure import reference_demo_publication as publication
+    from npa.workflows.field_failure import reference_demo_admission_report as admission
 
     sealed_sample.plan.update(num_envs=2, baseline_iterations=1, candidate_iterations=1)
     sealed_sample.objects[ROOT + "/reference-plan.json"] = artifacts._encode(
@@ -150,6 +151,15 @@ def test_published_standalone_html_retains_verified_public_credit(
     for module in (publication, artifacts):
         monkeypatch.setattr(module, "_storage", lambda: storage)
     monkeypatch.setattr(media, "preview_groups", lambda *_: _preview())
+    monkeypatch.setattr(
+        admission,
+        "bound_admission_summary",
+        lambda *_: {
+            "admitted": True,
+            "episodes": 2,
+            "observed_failures": 1,
+        },
+    )
     result = report.publish_report(
         SimpleNamespace(output_root=ROOT, run_id="unit"), selection=_selection()
     )

@@ -61,7 +61,14 @@ repairing initial parking placement. Initial CPU support evidence does not
 replace native control and full training/evaluation qualification.
 
 For `field-failure-reference-demo.yaml`, freeze training, development and final
-cohorts before learning. Before admitting final evaluation, development selection
+cohorts and the simulation-failure admission rule before learning. Evaluate the
+exact baseline on every frozen office training route before admitting its public
+capture; recompute complete native outcomes, bind admission into the public bundle
+reference, and reverify it before reconstruction and training. A crashed or
+control-failed observation cannot admit a capture; zero failures publish an honest
+terminal report without continuation or final evaluation. Preserve the distinction
+between these observed simulation failures and operator-supplied physical logs.
+Before admitting final evaluation, development selection
 must pair the exact case IDs and seeds and apply every per-case regression bound
 from the frozen `plan.metrics`, using the final comparator's strict boundary.
 Compute success gain as the mean paired success delta so an improvement of exactly

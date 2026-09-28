@@ -202,7 +202,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Spec | Notes |
 | --- | --- |
-| [`field-failure-reference-demo.yaml`](testing/field-failure-reference-demo.yaml) | Automatic public inputs → baseline training → mixed-scene replay → development gate → independently held-out comparison and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
+| [`field-failure-reference-demo.yaml`](testing/field-failure-reference-demo.yaml) | Public inputs → baseline training → observed simulation failures → capture admission and reconstruction → mixed-scene replay → development gate → independently held-out comparison and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
 
 | [`behavior-comet-native-full-training.yaml`](testing/behavior-comet-native-full-training.yaml) | Portable real OpenPI native training reference: same-entrypoint CPU input preflight → direct native GPU updates → complete FP32 TrainState/optimizer milestones with provider readback and durable resume ([guide](../docs/workbench/comet-native-full-training.md)); exact private inputs remain operator supplied |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |

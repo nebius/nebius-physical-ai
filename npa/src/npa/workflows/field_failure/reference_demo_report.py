@@ -36,6 +36,11 @@ def publish_report(args, *, selection=None):
     from npa.workflows.field_failure.reference_demo_attribution import sample_credit
 
     report["public_sample"] = sample_credit(args.output_root, plan)
+    from npa.workflows.field_failure.reference_demo_admission_report import (
+        bound_admission_summary,
+    )
+
+    report["failure_admission"] = bound_admission_summary(args)
     from npa.workflows.field_failure.reference_demo_media import preview_groups
 
     groups = preview_groups(args, final)
@@ -83,7 +88,7 @@ def result_summary(plan, selection, final, regional=None):
         "candidate_iterations": plan["candidate_iterations"],
         "scope": "Balanced office adaptation and warehouse retention: new routes in both known public layouts. The focal rendered episode is an office route; aggregate scores cover both regions.",
         "limitations": [
-            "Prepared public adaptation inputs: baseline failures are measured after scene preparation. The generic workflow accepts operator-prepared recorded-failure capture bundles; automatic failure mining is not implemented.",
+            "Actual baseline simulation failures admit the public capture for reconstruction and continuation. Initial scene preparation supports observation; physical field-log ingestion and private robot integration remain operator-supplied.",
             "Range observations; camera-conditioned navigation is not qualified.",
             "New-site transfer and private robot integration are not established.",
             "The earlier scan-to-unseen-warehouse failure and original observation gap remain historical evidence.",
@@ -174,6 +179,14 @@ def _display_metrics(report):
         "Continuation PPO iterations": report["candidate_iterations"],
         "Development paired checks": _paired_status(report["development"]["paired"]),
     }
+    if "failure_admission" in report:
+        admission = report["failure_admission"]
+        metrics["Observed baseline simulation failures"] = (
+            f"{admission['observed_failures']} / {admission['episodes']} office training routes"
+        )
+        metrics["Public capture admitted from measured failures"] = admission[
+            "admitted"
+        ]
     for name in ("development", "final"):
         values = report[name]
         if values is None:

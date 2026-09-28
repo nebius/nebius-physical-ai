@@ -80,6 +80,33 @@ def test_reconstruction_cannot_change_the_frozen_collision_surface(tmp_path):
         apply_replay(capture, prepared, recipe)
 
 
+def test_failure_observation_keeps_frozen_training_cases_and_never_changes_cohorts(
+    tmp_path,
+):
+    from npa.workflows.field_failure.reference_demo_observation import (
+        observation_bundle,
+    )
+    from npa.workflows.navigation.artifacts import _files
+    from npa.workflows.navigation.reference_replay import translated_cases
+
+    baseline, scan, frozen = _balanced(tmp_path, count=4)
+    capture = tmp_path / "capture"
+    capture.mkdir()
+    capture_recipe(capture, scan, baseline)
+    original = _files(baseline), _files(capture)
+    recipe = observation_bundle(baseline, capture, tmp_path / "observation")
+    assert recipe["eval_cases"] == translated_cases(
+        scan["train_cases"], [50.0, 0.0, 0.0]
+    )
+    actual = {case["seed"] for case in recipe["eval_cases"]}
+    assert len(actual) == 4
+    for cohort in ("development", "final"):
+        for region in frozen["regions"][cohort].values():
+            assert not actual.intersection(region["seeds"])
+    assert (_files(baseline), _files(capture)) == original
+    assert recipe["iterations"] == 1500 and recipe["episode_steps"] == 300
+
+
 def test_geometry_identity_ignores_triangle_order_but_keeps_winding_and_position(
     tmp_path,
 ):

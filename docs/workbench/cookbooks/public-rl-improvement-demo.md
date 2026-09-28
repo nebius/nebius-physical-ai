@@ -1,7 +1,8 @@
 # Public RL improvement demo
 
 The reference prepares its own public RGB-D scan, trains a real navigation
-baseline, reconstructs the capture, continues PPO with baseline replay, and
+baseline, observes actual failures on office training routes, admits the capture
+for reconstruction, continues PPO with baseline replay, and
 compares checkpoints on frozen cases. There is no pre-trained demo baseline to
 find or operator adapter to write. On a configured RTX Workbench environment:
 
@@ -54,6 +55,28 @@ implemented mitigation, not proof that transfer has been fixed. The original
 negative result and missing observation remain historical evidence.
 
 ## Development and final evaluation
+
+Before adaptation, a separate native GPU stage evaluates the exact fresh baseline
+on every one of the 4,000 frozen office **training** routes. It uses the full
+300-step horizon and unchanged physical controls. The admission rule is frozen
+before learning: at least one completed episode must be unsuccessful, including
+a timeout or measured physical/contact failure. An incomplete rollout, crashed
+process, or failed physical control cannot admit the capture.
+
+The CPU admission stage recomputes all outcomes from native trajectories and
+seals `observed-failures.json`: failed case IDs and seeds, ordered reset hash,
+baseline checkpoint, raw outcome and native after-load evidence hashes, and
+the exact public capture and scene identities. The public bundle reference
+binds this admission's URI and SHA. Reconstruction and training reverify that
+same evidence before accepting the capture or baseline. The whole admitted
+capture and all original training routes remain in the experiment; the failure
+count never changes route populations, training budgets, or quality gates.
+
+If no failures were observed, `reports/index.html` says so and the workflow stops
+without continuation or final evaluation. A zero-failure observation is not a
+policy-improvement result. The initial prepared scene is observation scaffolding;
+after admission, the actual capture is reconstructed again by the generic native
+adapter before training.
 
 Both development and final evaluation contain 4,000 routes: 2,000 measured
 office routes and 2,000 warehouse routes each. Continuation retains all 4,000
@@ -116,8 +139,8 @@ telemetry. Native baseline replays measure actual failures on the derived
 navigation task before continuation. Fresh GPU results, including failed
 quality, must accompany any readiness claim.
 
-These are prepared public adaptation inputs: observed baseline failures do not
-select the capture or generate the scene. The generic
+This public demo admits a prepared capture based on actual **simulation**
+failures; it does not mine recorded physical robot failures. The generic
 [field-failure workflow](field-failure-policy-improvement.md) accepts
 operator-prepared recorded-failure capture bundles, but does not mine raw logs
 or require evidence that a selected capture contains a measured failure.

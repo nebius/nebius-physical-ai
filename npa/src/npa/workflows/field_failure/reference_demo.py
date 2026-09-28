@@ -17,22 +17,20 @@ def run_reference_stage(args):
         RuntimeError: Native execution or policy quality gates fail.
         OSError: Required local or remote artifacts are unavailable.
     """
-    from npa.workflows.field_failure.reference_demo_prepare import (
-        prepare_reference,
-        seal_bundle,
-    )
     from npa.workflows.field_failure.reference_demo_evaluate import (
         evaluate_development,
         select_candidate,
     )
     from npa.workflows.field_failure.reference_demo_report import publish_report
 
-    if args.stage == "prepare":
-        return prepare_reference(args)
-    if args.stage == "baseline":
-        return _baseline(args)
-    if args.stage == "seal":
-        return seal_bundle(args)
+    if args.stage in {
+        "prepare",
+        "baseline",
+        "observe-failures",
+        "admit-capture",
+        "seal",
+    }:
+        return _preparation_stage(args)
     if args.stage.startswith("development-"):
         return evaluate_development(args, args.stage.removeprefix("development-"))
     if args.stage == "select":
@@ -45,6 +43,24 @@ def run_reference_stage(args):
             )
         return report
     return _loop_stage(args)
+
+
+def _preparation_stage(args):
+    from npa.workflows.field_failure.reference_demo_prepare import (
+        prepare_reference,
+        seal_bundle,
+    )
+    from npa.workflows.field_failure.reference_demo_observation import observe_failures
+    from npa.workflows.field_failure.reference_demo_admission import admit_capture
+
+    handlers = {
+        "prepare": prepare_reference,
+        "baseline": _baseline,
+        "observe-failures": observe_failures,
+        "admit-capture": admit_capture,
+        "seal": seal_bundle,
+    }
+    return handlers[args.stage](args)
 
 
 def _baseline(args):
@@ -67,6 +83,12 @@ def _loop_stage(args):
 
     artifact, _ = _read(args.output_root + "/bundle-reference.json")
     bundle, _ = _read(artifact["uri"], artifact["sha256"])
+    if args.stage in {"reconstruct", "train"}:
+        from npa.workflows.field_failure.reference_demo_admission import (
+            verify_admission,
+        )
+
+        verify_admission(args, descriptor=artifact["admission"], bundle=bundle)
     if args.stage in {"baseline-evaluate", "candidate-evaluate", "compare"}:
         selection, _ = _read(args.output_root + "/selection.json")
         training, _ = _read(
@@ -93,6 +115,25 @@ def _loop_stage(args):
     )
 
 
+_STAGES = (
+    "prepare",
+    "baseline",
+    "observe-failures",
+    "admit-capture",
+    "seal",
+    "validate",
+    "reconstruct",
+    "train",
+    "development-baseline",
+    "development-candidate",
+    "select",
+    "baseline-evaluate",
+    "candidate-evaluate",
+    "compare",
+    "report",
+)
+
+
 def main(argv=None):
     """Parse workflow-owned arguments for a single real public reference stage.
 
@@ -107,21 +148,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "stage",
-        choices=[
-            "prepare",
-            "baseline",
-            "seal",
-            "validate",
-            "reconstruct",
-            "train",
-            "development-baseline",
-            "development-candidate",
-            "select",
-            "baseline-evaluate",
-            "candidate-evaluate",
-            "compare",
-            "report",
-        ],
+        choices=_STAGES,
     )
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--run-id", required=True)

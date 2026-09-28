@@ -1,0 +1,48 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "88e491cddd844cee0d6ba88efff6aa7457e29c52760f48b5d9a767b0952ab127",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec --run-id preview --check-render pass with19 executable states.",
+      "evidence": [
+        "npa/tests/workflows/field_failure/test_reference_admission_pipeline.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Real native observation of every frozen office training route gates capture admission; raw outcomes and bound admission are reverified before reconstruction and training. Thresholds, cohorts and full budgets remain unchanged. Synthetic contract tests are not GPU qualification.",
+      "evidence": [
+        "docs/workbench/cookbooks/public-rl-improvement-demo.md",
+        "npa/tests/workflows/field_failure/test_reference_admission.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    }
+  }
+}

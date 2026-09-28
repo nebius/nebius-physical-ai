@@ -120,10 +120,33 @@ def _publish_inputs(args, root, baseline, capture, protocol):
     plan["protocol"] = _upload_json(
         protocol, root / "protocol.json", prefix + "protocol.json"
     )
+    plan["failure_observation"] = _observation_input(args, root, baseline, capture)
     # Keep final cases outside the learner's input directory after freezing them.
     (baseline / "final-cases.json").unlink()
     publish(baseline, args.output_root + "/baseline-input")
     return plan
+
+
+def _observation_input(args, root, baseline, capture):
+    from npa.workflows.field_failure.reference_demo_observation import (
+        observation_bundle,
+    )
+    from npa.workflows.field_failure.reference_demo_failure_evidence import (
+        FAILURE_RULE,
+        observation_recipe_digest,
+    )
+    from npa.workflows.navigation.contract import read_recipe
+
+    target = root / "failure-observation"
+    observation_bundle(baseline, capture, target)
+    return {
+        "input": _archive_upload(
+            target, args.output_root + "/inputs/failure-observation.tar"
+        ),
+        "rule": FAILURE_RULE,
+        "episode_steps": args.episode_steps,
+        "recipe_sha256": observation_recipe_digest(read_recipe(target)),
+    }
 
 
 def _archive_upload(source, uri):
@@ -144,8 +167,12 @@ def seal_bundle(args):
         OSError: Baseline staging or conditional publication fails.
     """
     from npa.workflows.field_failure.contracts import _Bundle
+    from npa.workflows.field_failure.reference_demo_admission import verify_admission
 
-    plan, _ = _read(args.output_root + "/reference-plan.json")
+    plan, plan_sha = _read(args.output_root + "/reference-plan.json")
+    admission, admission_descriptor = verify_admission(args)
+    if plan_sha != admission["plan"]["sha256"]:
+        raise ValueError("reference plan changed during capture admission verification")
     with tempfile.TemporaryDirectory(prefix="npa-baseline-seal-") as temporary:
         root = Path(temporary)
         training = materialize(
@@ -156,12 +183,18 @@ def seal_bundle(args):
             training / "policy.pt", args.output_root + "/inputs/baseline.pt"
         )
         value = _bundle(plan, checkpoint)
+        from npa.workflows.field_failure.reference_demo_admission import (
+            _verify_bundle_admission,
+        )
+
+        _verify_bundle_admission(value, admission)
         _Bundle.model_validate(value)
         artifact = _upload_json(
             value, root / "bundle.json", args.output_root + "/inputs/bundle.json"
         )
-    _publish(args.output_root + "/bundle-reference.json", artifact)
-    return artifact
+    reference = {**artifact, "admission": admission_descriptor}
+    _publish(args.output_root + "/bundle-reference.json", reference)
+    return reference
 
 
 def _verify_baseline(training, plan):

@@ -123,6 +123,7 @@ def selection_flow(monkeypatch, storage):
     from npa.workflows.field_failure import reference_demo_report as report
     from npa.workflows.field_failure import reference_demo_media as media
     from npa.workflows.field_failure import reference_demo_attribution as attribution
+    from npa.workflows.field_failure import reference_demo_admission_report as admission
 
     args = SimpleNamespace(output_root="s3://example-bucket/run", run_id="run")
     records = _selection_records()
@@ -135,6 +136,7 @@ def selection_flow(monkeypatch, storage):
     for module in (evaluate, report):
         monkeypatch.setattr(module, "_read", read)
     monkeypatch.setattr(attribution, "sample_credit", lambda *_: None)
+    monkeypatch.setattr(admission, "bound_admission_summary", lambda *_: {})
     monkeypatch.setattr(media, "preview_groups", lambda *_: [])
     monkeypatch.setattr(
         report,

@@ -3,8 +3,9 @@ kind: Workflow
 metadata:
   name: field-failure-reference-demo
   executionMode: runtime
-  description: Public scan reconstruction, native baseline training, mixed warehouse/office replay,
-    development-only selection and sealed final route comparison. Real PPO and GPU physical controls;
+  description: Public scan preparation, native baseline training, observed simulation-failure capture
+    admission, reconstruction, mixed warehouse/office replay, development-only selection and sealed final
+    route comparison. Real PPO and GPU physical controls;
     quality failure retains the baseline and publishes an HTML report. No deployment or unseen-layout
     transfer claim.
 config:
@@ -209,11 +210,61 @@ states:
       - '{{config.navigation_image}}'
     outputs:
     - uri: '{{config.output_root}}/baseline-training/completion.json'
-    next: seal
+    next: observe-failures
     inputs:
     - uri: '{{config.output_root}}/baseline-input/completion.json'
+  observe-failures:
+    description: Observe the exact fresh baseline on every frozen office training route with unchanged
+      native physical controls; never read development or final outcomes.
+    resources: isaac
+    run:
+      argv:
+      - python3
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - observe-failures
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    inputs:
+    - uri: '{{config.output_root}}/baseline-training/completion.json'
+    - uri: '{{config.output_root}}/reference-plan.json'
+    outputs:
+    - uri: '{{config.output_root}}/failure-observation/completion.json'
+    next: admit-capture
+  admit-capture:
+    description: Recompute actual training-route failures and admit the bound public capture only when
+      at least one completed episode failed; zero failures publish terminal HTML without continuation.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - admit-capture
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    inputs:
+    - uri: '{{config.output_root}}/failure-observation/completion.json'
+    - uri: '{{config.output_root}}/baseline-training/completion.json'
+    - uri: '{{config.output_root}}/reference-plan.json'
+    outputs:
+    - uri: '{{config.output_root}}/observed-failures.json'
+    next: seal
   seal:
-    description: Bind the fresh baseline checkpoint to the sealed full public replay bundle.
+    description: Bind the fresh baseline and verified failure admission to the immutable public bundle
+      reference.
     resources: cpu
     run:
       argv:
@@ -239,6 +290,7 @@ states:
     inputs:
     - uri: '{{config.output_root}}/baseline-training/completion.json'
     - uri: '{{config.output_root}}/reference-plan.json'
+    - uri: '{{config.output_root}}/observed-failures.json'
   validate:
     description: Verify public captures, exact baseline bytes and held-out separation.
     resources: cpu
@@ -266,7 +318,8 @@ states:
     inputs:
     - uri: '{{config.output_root}}/bundle-reference.json'
   reconstruct:
-    description: Reconstruct public scan geometry and compose separated baseline replay regions.
+    description: Reverify the bound actual simulation failures before reconstructing the admitted public
+      capture and composing separated baseline replay regions.
     resources: cpu
     run:
       argv:
@@ -291,6 +344,8 @@ states:
     next: train
     inputs:
     - uri: '{{config.output_root}}/loop/{{run.id}}/validated.json'
+    - uri: '{{config.output_root}}/bundle-reference.json'
+    - uri: '{{config.output_root}}/observed-failures.json'
   train:
     description: Continue real PPO on every baseline route and office route with before/after diagnostic
       replays.
@@ -310,6 +365,8 @@ states:
     next: development-baseline
     inputs:
     - uri: '{{config.output_root}}/loop/{{run.id}}/reconstruction.json'
+    - uri: '{{config.output_root}}/bundle-reference.json'
+    - uri: '{{config.output_root}}/observed-failures.json'
   development-baseline:
     description: Measure baseline on frozen development cases only.
     resources: isaac
