@@ -168,6 +168,13 @@ Expect `PSNR ≈ 31`, `SSIM ≈ 0.83`, `LPIPS ≈ 0.27` on the default scene.
 
 ## Promotion evidence
 
+The [September 28 public demo qualification](../evidence/public-demos/README.md)
+completed the current pinned-input workflow through `workflow demo run`: 30,000
+verified training steps, 38 novel views, decoded Rerun output, and a working
+offline report. Its receipt distinguishes the original native report from the
+subsequent CPU correction of its metric display. The earlier evidence below is
+preserved for its own source revision.
+
 The main workflow preserves the parsed YAML from the completed September 8,
 2026 multi-pod run; the move changes only the quickstart path comment. The saved
 testing YAML had SHA-256

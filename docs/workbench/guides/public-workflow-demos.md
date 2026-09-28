@@ -12,7 +12,10 @@ synthetic-data experiment is a separate sensor-generation workflow.
 ## Configure once
 
 Follow [Workbench setup](../getting-started.md) to configure a project, its
-object-storage credentials, and an RTX PRO 6000 or L40S Kubernetes target.
+object-storage credentials, and an RTX PRO 6000 Kubernetes target. The shipped
+demo presets select RTX PRO 6000; the recorded native qualification uses that
+GPU. An L40S target requires an explicit accelerator override and its own
+qualification.
 NuRec additionally requires NVIDIA NGC access. Isaac runtime downloads use the
 existing Workbench EULA policy; optional telemetry remains off.
 
@@ -128,9 +131,14 @@ cases must remain separate from training and development selection.
 
 The earlier scan-trained candidate scored 0/4,000 on the held-out warehouse;
 that negative result remains historical evidence. The new replay experiment
-must establish its own result before being described as effective. This demo
-packaging change is pending fresh full GPU qualification; earlier recordings
-do not validate the new launcher or training protocol.
+must establish its own result before being described as effective.
+
+The complete SDG and NuRec demo commands have now passed fresh full GPU
+qualification, complete artifact readback, and offline report checks. See the
+[source-bound measurements](../evidence/public-demos/README.md), including the
+NuRec report's documented metric-display correction. The scan-to-policy and RL
+improvement demos remain under qualification; their latest full attempts stopped
+before learning and do not establish policy quality.
 
 To stop a run, use `npa workbench workflow cancel '<run-id>' --project '<project>'`.
 Cancel and verify terminal status before removing dedicated infrastructure.

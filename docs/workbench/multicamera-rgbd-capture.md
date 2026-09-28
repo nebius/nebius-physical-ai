@@ -301,6 +301,13 @@ rig on the recorded RTX target. Different inputs still need their own acceptance
 
 ## Native acceptance
 
+The [September 28 public demo qualification](evidence/public-demos/README.md)
+freshly completed preparation, capture, and validation through the common demo
+command at one recorded source revision. Its complete artifact readback verified
+all 1,060 views and 976,895,672 fused colored points, and its actual `demo view`
+report passed offline desktop and mobile checks. The September 25 evidence below
+remains unchanged and applies to its earlier component revisions.
+
 On September 25, 2026, the standard managed workflow captured the complete public
 warehouse route and a separate CPU worker downloaded and validated every object.
 The [sanitized measured summary](evidence/multicamera-rgbd/native-validation.json)

@@ -11,13 +11,14 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "The historical capture/validate run measured 265 poses and 1,060 RGB-D views with independent decoded validation, as recorded in native-validation.json. The added offline preview and current source distribution require a fresh complete run before this workflow revision is qualified.",
+      "status": "verified",
+      "reason": "Fresh preparation, capture and validation completed through the common demo command at source 2eb77537d3b09374b8c31457c634d8c1ab036c12. Independent full readback verified 4505 capture artifacts, 1060 views and 976895672 metric-depth pixels and fused colored points. The actual demo view downloaded the canonical HTML and offline desktop/mobile checks passed. This establishes calibrated sensor capture along a scripted route, not autonomous navigation.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd.py",
         "npa/tests/workflows/test_isaac_rgbd_runtime.py",
         "npa/tests/workflows/test_isaac_rgbd_usd.py",
-        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
+        "docs/workbench/evidence/public-demos/synthetic-data.json"
       ]
     }
   },
@@ -26,35 +27,40 @@
       "status": "unverified",
       "reason": "The completed reference proved immutable publication and independent readback of 4,506 objects. A new run must replace the example bucket with operator-owned writable storage and a fresh prefix.",
       "evidence": [
-        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
+        "docs/workbench/evidence/public-demos/synthetic-data.json"
       ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Historical native collection published 2,034 hashed public warehouse files and an exact Kit MDL descriptor. The current self-preparing workflow must freshly verify its collected inputs; those historical artifacts remain evidence for the earlier run only.",
+      "reason": "The pinned public sample was freshly prepared and consumed by the full demo at source 2eb77537d. Its hashes and decoded outputs are qualified in the receipt. Future sample overrides require their own input checks.",
       "evidence": [
-        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
+        "docs/workbench/evidence/public-demos/synthetic-data.json"
       ]
     },
     "credentials": {
       "status": "unverified",
       "reason": "Storage credentials and bootstrap use requirements worked for the completed reference. Each future operator must pass their own credential and software-access preflight.",
       "evidence": [
-        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
+        "docs/workbench/evidence/public-demos/synthetic-data.json"
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The completed reference bound capture/validator payload ab3180aa4, the requested immutable image and actual worker imageID; native preparation at 58021a3bd was reused unchanged. A future run must stage its intended source and verify its selected image and native material contract.",
+      "reason": "The receipt binds actual native worker image digests and staged source to revision 2eb77537d. Each future run must verify its selected image and intended source before execution.",
       "evidence": [
-        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
+        "docs/workbench/evidence/public-demos/synthetic-data.json"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "All 265 poses and 1,060 views passed on one RTX PRO 6000 Blackwell Server Edition with Isaac Sim 6.0.1.0, followed by independent CPU validation. A future target needs its own GPU/runtime/scratch health checks; L40S and the procedural known-wall-depth check were not qualified here.",
+      "reason": "The full demo completed on RTX PRO 6000 Blackwell; process-bound GPU observations and complete output checks are recorded in the receipt. Every new target still needs its own GPU/runtime/scratch health checks; L40S was not qualified by this run.",
       "evidence": [
-        "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
+        "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
+        "docs/workbench/evidence/public-demos/synthetic-data.json"
       ]
     }
   }

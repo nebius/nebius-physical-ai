@@ -11,10 +11,11 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "This revision adds source staging, a pinned public dataset revision and an offline preview stage. Historical reconstruction, rig-offset rendering and decoded artifact evidence is retained in the guide, but does not qualify the complete changed workflow until a fresh run finishes.",
+      "status": "verified",
+      "reason": "The full public demo completed at source 2eb77537d3b09374b8c31457c634d8c1ab036c12: pinned NCore input, 30000 checkpoint steps, USDZ, 38 rig-offset novel views, native metrics and decoded Rerun. Complete native readback and actual demo view passed. The receipt preserves the original HTML and identifies the subsequent CPU metric-display correction. Collision geometry and navigation readiness are outside this Gaussian reconstruction qualification.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
       ]
     }
   },
@@ -23,35 +24,40 @@
       "status": "unverified",
       "reason": "The catalog uses example-bucket. A new run must supply a writable bucket and unique run prefix; historical S3 handoffs are proven only for the completed run.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
       ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Historical runs consumed the public PhysicalAI-NuRec-PPISP struktur28 capture. The current workflow pins the dataset revision; fresh cross-pod fetch and complete reconstruction of this exact revision remain required.",
+      "reason": "The pinned public sample was freshly prepared and consumed by the full demo at source 2eb77537d. Its hashes and decoded outputs are qualified in the receipt. Future sample overrides require their own input checks.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
       ]
     },
     "credentials": {
       "status": "unverified",
       "reason": "Each operator must supply S3 credentials, NGC image access and the matching Kubernetes pull secret. HF access is needed only for gated or private dataset overrides; historical authorization does not verify a future operator.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Historical runs used the NRE image identity recorded in the guide. This workflow still selects the vendor 26.04 tag and now stages source; verify the actual image and staged revision for each fresh run.",
+      "reason": "The receipt binds actual native worker image digests and staged source to revision 2eb77537d. Each future run must verify its selected image and intended source before execution.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Historical RTX PRO 6000 Blackwell runs are documented in the guide. This changed workflow still requires a fresh healthy RTX target with its declared shared-memory and bootstrap configuration; those past runs do not validate this revision or an L40S target.",
+      "reason": "The full demo completed on RTX PRO 6000 Blackwell; process-bound GPU observations and complete output checks are recorded in the receipt. Every new target still needs its own GPU/runtime/scratch health checks; L40S was not qualified by this run.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
       ]
     }
   }
