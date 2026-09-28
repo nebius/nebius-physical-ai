@@ -96,6 +96,13 @@ def _prepare_registry_workflow(spec_path):
     }
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
     image_overrides = {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
+    if spec_path.name == "byof-gymnasium-robotics.yaml":
+        # This neutral BYOF candidate intentionally keeps no-new-privileges;
+        # the ownership guard must not reclassify it as a trusted first-party
+        # image whose SkyPilot bootstrap requires passwordless sudo.
+        image_overrides["workbench.byof.repo"] = (
+            "registry.example.invalid/gymnasium-robotics@sha256:" + "0" * 64
+        )
     if spec_path.name == "nurec-colmap-reconstruct.yaml":
         # This validation workflow documents a required per-tool override
         # until genuine exact-image acceptance permits default selection.
