@@ -90,6 +90,33 @@ image gets one exact, bounded capability probe in the selected context, whose po
 must be deleted successfully. Results are cached by digest plus contract version.
 First-party images cannot replace their declared user with `runAsUser: 0`.
 
+Image identity binds the render registry, GPU target, image variant, and every
+image override selector to its reference, then binds each preflight reference
+to its resolved immutable image. Mapping order does not matter; reassigning the
+same references or digest values changes identity. Direct immutable image
+overrides are included even when the preflight pin map is empty. Older
+value-only or pin-only identities cannot prove this complete selection and
+require a new run ID.
+
+For each wave with rendered images, a versioned composite binds that v3
+selection fingerprint to each state's tool and exact resolved reference. The
+ledger retains those bindings, the references and their separate set hash, and
+whether every reference is content addressed. Swapping selector assignments or
+catalog defaults cannot hide behind an unchanged set of resolved images.
+
+**Upgrade note:** earlier value-only, pin-only, and reference-set-only records,
+as well as unversioned v3 selection-only records for waves with images, cannot
+prove this binding in completed replay, durable output reuse, or supervised
+recovery. Those identity checks reject weaker records; they do not migrate saved
+identities in place. Ordinary in-flight provider adoption is a separate legacy
+path and is not made into an input-identity fence by this change. Before deploying this
+controller version, let existing runs finish,
+or keep their original controller/source/image version available to resume
+them. Start new-version work under a new run ID only after the old attempt is
+terminal or its exact cancellation is verified. Merging source does not require
+replacing an in-flight driver. Accelerator-name overrides remain outside image
+identity because they select cluster resources rather than container images.
+
 Multi-tool workflows can pin distinct validated images with repeatable
 `--image-override TOOL_REF=IMAGE`. An exact tool override beats the optional
 global `--image` fallback, and the rendered task uses the digest that preflight
