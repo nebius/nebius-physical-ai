@@ -74,6 +74,15 @@ Office gains cannot conceal warehouse regression. Failure publishes
 evaluation. Change the training recipe and run a new development experiment;
 do not adjust final cases or lower quality gates to produce a passing demo.
 
+Development also applies the final comparison's identical per-case regression
+guards using the frozen `reference-plan.json` metrics. Exact case IDs and seeds
+pair the checkpoints: no case may lose success or increase contact or physical
+failure steps, and no case may worsen goal distance by more than 0.25 metres.
+Success gain is the mean of paired episode changes, so exactly 40 additional
+successes among 4,000 cases meets the unchanged one-percentage-point gate.
+The HTML report shows violation counts and every affected case when selection
+is blocked; final cases remain unevaluated.
+
 An eligible candidate and baseline run on all 4,000 frozen final routes. The
 existing comparison requires actual success improvement and enforces its
 per-case safety and goal-distance regression limits. Final promotion also

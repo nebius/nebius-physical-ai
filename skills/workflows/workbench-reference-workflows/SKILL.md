@@ -51,6 +51,15 @@ promotion; valid losing baseline episodes must not be discarded by a standalone
 success threshold. Public reference results do not establish compatibility with
 an undisclosed proprietary policy or calibration.
 
+For `field-failure-reference-demo.yaml`, freeze training, development and final
+cohorts before learning. Before admitting final evaluation, development selection
+must pair the exact case IDs and seeds and apply every per-case regression bound
+from the frozen `plan.metrics`, using the final comparator's strict boundary.
+Compute success gain as the mean paired success delta so an improvement of exactly
+one percentage point passes without an epsilon or a weakened threshold. Failed
+development selection must publish the measured violations in the HTML report
+and leave final evaluation untouched.
+
 ## Current Reference YAMLs
 
 The retired catalog path is machine-checked by

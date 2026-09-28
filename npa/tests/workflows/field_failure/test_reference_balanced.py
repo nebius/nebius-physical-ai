@@ -10,6 +10,7 @@ from npa.workflows.field_failure.reference_demo_inputs import (
     capture_recipe,
     evaluation_bundle,
     prepare_warehouse,
+    reference_metrics,
 )
 from npa.workflows.field_failure.reference_demo_evaluate import development_decision
 from npa.workflows.field_failure.reference_demo_regions import region_comparison
@@ -141,7 +142,7 @@ def test_improved_overall_success_cannot_hide_warehouse_regression():
         }
         for rows, identity in ((before, "a"), (after, "b"))
     ]
-    decision = development_decision(*reports, regions)
+    decision = development_decision(*reports, regions, reference_metrics(300))
     assert decision["success_rate_gain"] > 0.01
     assert decision["candidate_success_rate"] >= 0.8
     assert not decision["eligible"]
@@ -163,6 +164,9 @@ def test_region_checks_reject_missing_duplicate_or_reassigned_episodes():
 
 def test_final_html_summary_cannot_promote_when_warehouse_retention_fails():
     from npa.workflows.field_failure.reference_demo_report import result_summary
+    from npa.workflows.field_failure.reference_demo_paired import (
+        paired_development_regressions,
+    )
 
     before, after, regions = _evaluations()
     regional = region_comparison(before, after, regions)
@@ -174,6 +178,9 @@ def test_final_html_summary_cannot_promote_when_warehouse_retention_fails():
         "reasons": [],
         "final_cohort_consumed": False,
         "regional": regional,
+        "paired": paired_development_regressions(
+            before, after, regions, reference_metrics(300)
+        ),
     }
     final = {
         "promote_checkpoint": True,

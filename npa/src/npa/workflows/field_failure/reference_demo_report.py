@@ -70,18 +70,7 @@ def result_summary(plan, selection, final, regional=None):
         "final_evaluated": final is not None,
         "deployment_authorized": False,
         "recommendation": "promote" if quality else "retain_baseline",
-        "development": {
-            key: selection[key]
-            for key in (
-                "eligible",
-                "baseline_success_rate",
-                "candidate_success_rate",
-                "success_rate_gain",
-                "reasons",
-                "final_cohort_consumed",
-                "regional",
-            )
-        },
+        "development": _development_summary(selection),
         "final": _final_summary(final, scores, regional),
         "cohorts": plan["cohorts"],
         "robots": plan["num_envs"],
@@ -93,6 +82,22 @@ def result_summary(plan, selection, final, regional=None):
             "New-site transfer and private robot integration are not established.",
             "The earlier scan-to-unseen-warehouse failure and original observation gap remain historical evidence.",
         ],
+    }
+
+
+def _development_summary(selection):
+    return {
+        key: selection[key]
+        for key in (
+            "eligible",
+            "baseline_success_rate",
+            "candidate_success_rate",
+            "success_rate_gain",
+            "reasons",
+            "final_cohort_consumed",
+            "regional",
+            "paired",
+        )
     }
 
 
@@ -143,7 +148,8 @@ def render_html(report, groups):
         )
         contents = path.read_text()
     details = f"<details><summary>Measured results and frozen cohort identities</summary><pre>{data}</pre></details>"
-    return contents.replace("</body>", details + "</body>")
+    diagnostics = _development_diagnostics(report["development"])
+    return contents.replace("</body>", diagnostics + details + "</body>")
 
 
 def _display_metrics(report):
@@ -157,6 +163,7 @@ def _display_metrics(report):
         "Parallel robots": report["robots"],
         "Baseline PPO iterations": report["baseline_iterations"],
         "Continuation PPO iterations": report["candidate_iterations"],
+        "Development paired checks": _paired_status(report["development"]["paired"]),
     }
     for name in ("development", "final"):
         values = report[name]
@@ -172,6 +179,56 @@ def _display_metrics(report):
         )
         _display_regions(metrics, name, values["regional"])
     return metrics
+
+
+def _paired_status(paired):
+    if paired["passed"]:
+        return f"Passed · {paired['paired_cases']:,} paired cases · no per-case regressions"
+    return (
+        f"Blocked · {paired['violation_count']:,} metric violations "
+        f"across {paired['regressed_cases']:,} cases"
+    )
+
+
+def _development_diagnostics(development):
+    if development["eligible"]:
+        return ""
+    reasons = "".join(
+        f"<li>{html.escape(reason)}</li>" for reason in development["reasons"]
+    )
+    paired = development["paired"]
+    contents = (
+        "<section><h2>Development selection blocked</h2>"
+        "<p>The candidate was not selected. Final evaluation remains untouched.</p>"
+        f"<ul>{reasons}</ul>"
+    )
+    if paired["violations"]:
+        rows = "".join(_violation_row(row) for row in paired["violations"])
+        contents += (
+            f"<details><summary>View all {paired['violation_count']:,} paired metric violations</summary>"
+            '<div style="overflow-x:auto"><table><caption>Development cases only; limits come from the frozen plan.</caption>'
+            "<thead><tr><th>Region</th><th>Case</th><th>Seed</th><th>Metric</th>"
+            "<th>Baseline</th><th>Candidate</th><th>Regression</th><th>Allowed</th></tr></thead>"
+            f"<tbody>{rows}</tbody></table></div></details>"
+        )
+    return contents + "</section>"
+
+
+def _violation_row(row):
+    values = [row["region"], row["case_id"], row["seed"], row["metric"]]
+    values.extend(
+        str(value)
+        for value in (
+            row["baseline"],
+            row["candidate"],
+            -row["improvement"],
+            row["maximum_regression"],
+        )
+    )
+    cells = "".join(
+        f'<td style="padding:8px">{html.escape(str(value))}</td>' for value in values
+    )
+    return f"<tr>{cells}</tr>"
 
 
 def _display_regions(metrics, cohort, regional):

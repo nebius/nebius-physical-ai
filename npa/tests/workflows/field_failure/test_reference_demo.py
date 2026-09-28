@@ -10,6 +10,7 @@ from npa.workflows.field_failure.reference_demo_inputs import (
     capture_recipe,
     cohort_manifest,
     prepare_warehouse,
+    reference_metrics,
 )
 from npa.workflows.field_failure.reference_demo_evaluate import development_decision
 from npa.workflows.field_failure.reference_demo_cohorts import freeze_balanced_cohorts
@@ -139,7 +140,10 @@ def test_development_selection_never_treats_runtime_completion_as_quality(
     rate, contacts
 ):
     result = development_decision(
-        _report("a", 0.7), _report("b", rate, contacts), _regions()
+        _report("a", 0.7),
+        _report("b", rate, contacts),
+        _regions(),
+        reference_metrics(300),
     )
     assert result["runtime_completed"] is True
     assert result["eligible"] is False
@@ -149,10 +153,12 @@ def test_development_selection_never_treats_runtime_completion_as_quality(
 
 def test_development_pass_requires_matching_cohort_and_changed_checkpoint():
     before, after = _report("a", 0.7), _report("b", 0.85)
-    assert development_decision(before, after, _regions())["eligible"]
+    assert development_decision(before, after, _regions(), reference_metrics(300))[
+        "eligible"
+    ]
     after["evaluation_inputs_sha256"] = "f" * 64
     with pytest.raises(ValueError, match="different evaluation"):
-        development_decision(before, after, _regions())
+        development_decision(before, after, _regions(), reference_metrics(300))
 
 
 def test_diagnostic_replay_runs_all_batches_without_losing_cases(tmp_path, monkeypatch):
@@ -189,7 +195,10 @@ def test_failed_development_publishes_html_before_refusing_final(tmp_path, monke
         evaluate,
         "_read",
         lambda uri: (
-            {"cohorts": {"regions": {"development": _regions()}}}
+            {
+                "cohorts": {"regions": {"development": _regions()}},
+                "metrics": reference_metrics(300),
+            }
             if uri.endswith("reference-plan.json")
             else _report("a" if "baseline" in uri else "b", 0.1),
             "d",
@@ -219,7 +228,9 @@ def test_offline_report_keeps_quality_and_promotion_separate():
         "baseline_iterations": 1500,
         "candidate_iterations": 1500,
     }
-    selection = development_decision(_report("a", 0.7), _report("b", 0.85), _regions())
+    selection = development_decision(
+        _report("a", 0.7), _report("b", 0.85), _regions(), reference_metrics(300)
+    )
     final = {
         "promote_checkpoint": True,
         "recommendation": "promote",

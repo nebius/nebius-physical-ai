@@ -69,13 +69,14 @@ def _verify_development(report, plan, policy):
         raise ValueError("development case bytes differ from the pre-learning freeze")
 
 
-def development_decision(baseline, candidate, regions):
+def development_decision(baseline, candidate, regions, metrics):
     """Separate development eligibility from final policy promotion and runtime success.
 
     Args:
         baseline: Native baseline development report.
         candidate: Native candidate report on the identical cohort.
         regions: Precommitted balanced region identities from the reference plan.
+        metrics: Frozen reference-plan metric contracts shared with final comparison.
     Returns:
         Eligibility, actual quality measurements and failure explanations.
     Raises:
@@ -86,10 +87,36 @@ def development_decision(baseline, candidate, regions):
     if baseline["checkpoint_sha256"] == candidate["checkpoint_sha256"]:
         raise ValueError("development candidate is the unchanged baseline")
     from npa.workflows.field_failure.reference_demo_regions import region_comparison
+    from npa.workflows.field_failure.reference_demo_paired import (
+        paired_development_regressions,
+    )
 
     regional = region_comparison(baseline["episodes"], candidate["episodes"], regions)
+    paired = paired_development_regressions(
+        baseline["episodes"], candidate["episodes"], regions, metrics
+    )
     _verify_success_rates(baseline, candidate)
-    gain = candidate["success_rate"] - baseline["success_rate"]
+    gain = paired["success_rate_gain"]
+    reasons = _selection_reasons(baseline, candidate, regional, paired, gain)
+    return {
+        "schema": "npa.field-failure.development-selection.v1",
+        "eligible": not reasons,
+        "runtime_completed": True,
+        "baseline_success_rate": baseline["success_rate"],
+        "candidate_success_rate": candidate["success_rate"],
+        "success_rate_gain": gain,
+        "regional": regional,
+        "paired": paired,
+        "reasons": reasons,
+        "selected_checkpoint_sha256": candidate["checkpoint_sha256"]
+        if not reasons
+        else None,
+        "final_cohort_consumed": False,
+        "deployment_authorized": False,
+    }
+
+
+def _selection_reasons(baseline, candidate, regional, paired, gain):
     reasons = list(regional["reasons"])
     if candidate["success_rate"] < 0.8:
         reasons.append("candidate development success is below 80%")
@@ -100,21 +127,12 @@ def development_decision(baseline, candidate, regions):
         after = sum(row[metric] for row in candidate["episodes"])
         if after > before:
             reasons.append("candidate increased development " + metric)
-    return {
-        "schema": "npa.field-failure.development-selection.v1",
-        "eligible": not reasons,
-        "runtime_completed": True,
-        "baseline_success_rate": baseline["success_rate"],
-        "candidate_success_rate": candidate["success_rate"],
-        "success_rate_gain": gain,
-        "regional": regional,
-        "reasons": reasons,
-        "selected_checkpoint_sha256": candidate["checkpoint_sha256"]
-        if not reasons
-        else None,
-        "final_cohort_consumed": False,
-        "deployment_authorized": False,
-    }
+    if not paired["passed"]:
+        reasons.append(
+            f"candidate has {paired['violation_count']} paired development metric violations "
+            f"across {paired['regressed_cases']} cases; final cohort remains untouched"
+        )
+    return reasons
 
 
 def _verify_success_rates(*reports):
@@ -144,7 +162,7 @@ def select_candidate(args):
     after, _ = _read(args.output_root + "/development-candidate.json")
     plan, _ = _read(args.output_root + "/reference-plan.json")
     decision = development_decision(
-        before, after, plan["cohorts"]["regions"]["development"]
+        before, after, plan["cohorts"]["regions"]["development"], plan["metrics"]
     )
     _publish(args.output_root + "/selection.json", decision)
     if not decision["eligible"]:
