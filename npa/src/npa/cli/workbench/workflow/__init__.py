@@ -1451,7 +1451,10 @@ def submit_cmd(
     _SUBMIT_PRIVATE_REDACTIONS.set(())
     from npa.orchestration.npa_workflow.detect import is_npa_workflow_spec
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        validate_image_override_selectors,
+    )
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
     from npa.orchestration.npa_workflow.run_state import (
         is_paidf_input_workflow_name,
@@ -1518,6 +1521,13 @@ def submit_cmd(
             # staging, provisioning, or accelerator discovery.
             merged_npa_spec = load_spec_for_submit(
                 yaml_path, config_overrides=substitutions
+            )
+            validate_image_override_selectors(
+                merged_npa_spec,
+                SkypilotRenderOptions(
+                    image_overrides=specific_image_overrides,
+                    materialize_registry_secrets=False,
+                ),
             )
             if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
                 _refuse_dedicated_live_gate_execution(merged_npa_spec)

@@ -67,6 +67,16 @@ run instead of as an `ImagePullBackOff` on the cluster. If complete-path
 planning itself fails, `preflight-images` exits before any registry or
 Kubernetes probe; it never reports that failure as `images: none`.
 
+### Image override compatibility
+
+**Compatibility note:** an `--image-override` selector that matches no toolRef
+now fails before preparation, credential resolution, or staging, including with
+preflight disabled. Older versions silently ignored it. Scope shared override
+sets to each workflow; use an exact toolRef, a family prefix such as
+`workbench.fiftyone` (without glob characters), or bare `*`. Selectors for
+unselected decision branches remain valid because matching uses every state in
+the workflow. Library rendering and planning enforce the same contract.
+
 ### Quota is arithmetic, and it is checked first
 
 The plan treats `compute.disk.size.network-ssd` as a **byte allowance**,
@@ -233,6 +243,11 @@ Directory-style output evidence scans every S3 list page for a non-empty
 descendant. Zero-byte directory markers do not prove completion or absence,
 and malformed/truncated pagination blocks recovery rather than authorizing
 duplicate work.
+
+Image override selectors must be an exact toolRef, a boundary-safe family
+prefix such as `workbench.fiftyone`, or the bare `*`. Glob-like and unmatched
+selectors fail before run preparation, provisioning, or source staging, even
+when image preflight is disabled. Validation considers every workflow branch.
 
 ## Reading status
 
