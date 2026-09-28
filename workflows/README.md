@@ -6,10 +6,14 @@ These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state
 graph. NPA validates the graph, renders SkyPilot tasks, and manages run-scoped
 artifacts. Start with a runbook that matches the result you want.
 
+For automatic public sample setup and a common launch/view command, start with
+[the four public workflow demos](../docs/workbench/guides/public-workflow-demos.md).
+
 ## Choose a starting point
 
 | Goal | Spec and runbook |
 | --- | --- |
+| Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
@@ -138,6 +142,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
 | [`scan-to-isaac-navigation.yaml`](testing/scan-to-isaac-navigation.yaml) | Existing NuRec visual scene + operator collision USD mesh and measured transforms → portable USDZ/provenance → actual Isaac PhysX ray probes; live qualification pending, no navigation-policy claim ([guide](../docs/workbench/guides/scan-to-isaac-navigation.md), [readiness](testing/scan-to-isaac-navigation.readiness.json)) |
 | [`rgbd-scan-to-isaac.yaml`](testing/rgbd-scan-to-isaac.yaml) | Metric RGB-D with poses → real Open3D TSDF and held-out depth gate → derived colored USDZ and exact triangle colliders → native Isaac PhysX; complete managed public capture qualified, with a verified navigation-input handoff ([guide](../docs/workbench/guides/rgbd-scan-to-isaac.md)) |
+| [`rgbd-scan-to-policy-demo.yaml`](testing/rgbd-scan-to-policy-demo.yaml) | Automatic public RGB-D sample → measured collision scene → native navigation training → held-out goals and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
 | [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
 | [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
 | [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
@@ -148,6 +153,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Spec | Notes |
 | --- | --- |
+| [`field-failure-reference-demo.yaml`](testing/field-failure-reference-demo.yaml) | Automatic public inputs → baseline training → mixed-scene replay → development gate → independently held-out comparison and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |

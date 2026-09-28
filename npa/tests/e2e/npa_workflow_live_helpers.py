@@ -303,6 +303,15 @@ def seed_live_workflow_inputs(
 
     from npa.clients.project_credentials import s3_client_for_project
 
+    if spec_name in {
+        "rgbd-scan-to-policy-demo.yaml",
+        "field-failure-reference-demo.yaml",
+        "multicamera-rgbd-warehouse.yaml",
+        "nurec-reconstruct.yaml",
+    }:
+        # The production sample stages own fetching and immutable publication.
+        return
+
     if spec_name == "field-failure-policy-improvement.yaml":
         pytest.skip(
             "Navigation requires operator failure data and sealed adapters. Use "

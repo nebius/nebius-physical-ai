@@ -72,6 +72,20 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "rgbd-scan-to-policy-demo.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Full public RGB-D sample download, measured scene, 4,000-case native training/evaluation, and HTML evidence.",
+    ),
+    SubmitLiveCase(
+        "field-failure-reference-demo.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Public baseline training and office/warehouse replay; disjoint development/final evaluation and measured HTML evidence.",
+    ),
+    SubmitLiveCase(
         "shared-scene-navigation.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -96,8 +110,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multicamera-rgbd-warehouse.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        rotation_skip=True,
-        skip_reason="Native warehouse collection and 265-pose rendering still need live qualification.",
+        runtime=True,
         notes="Public runtime-fetched warehouse with full USD/MDL dependencies; four 1280x720 RGB-D streams and independently verified fused clouds.",
     ),
     SubmitLiveCase(
@@ -960,15 +973,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
             "NGC_API_KEY",
         ),
         # No image_tool: the runtime is NVIDIA's vendor NRE container supplied via
         # resources.image / image_id, not an NPA-built workbench image.
-        # A ~14 GB NGC image pull on a cold node, then 30k 3DGUT steps and a
-        # novel-view render pass. Far slower than the rest of the gpu tier, so it
-        # carries its own deadline instead of forcing it on every case.
-        max_wait_seconds=5400,
+        runtime=True,
         notes=(
             "NuRec/NRE reconstruction on an RT-core GPU: real NCore V4 capture -> "
             "3DGUT Gaussians -> renderable USDZ -> rig-offset novel views -> "

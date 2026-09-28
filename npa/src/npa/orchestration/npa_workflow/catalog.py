@@ -976,6 +976,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "authorization, and that the GPU has RT cores, before any GPU work."
         ),
         access_capabilities=("nurec",),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -985,6 +987,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.nurec_image}}",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",
@@ -1043,6 +1047,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "Download and unpack real NCore V4 shards and derive the rig->world "
             "pose edge NRE requires for object-centric captures."
         ),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -1050,6 +1056,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "fetch",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",

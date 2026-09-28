@@ -25,6 +25,8 @@ from rich.console import Console
 from rich.text import Text
 
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.cli._typer_defaults import resolve_typer_defaults
+from npa.cli.workbench.workflow.demo import app as demo_app
 from npa.cli.workbench.workflow.controller_recovery import (
     register as register_controller_recovery,
 )
@@ -769,6 +771,7 @@ def _workflow_submit_recovery_argv(
 
 
 @app.command("submit")
+@resolve_typer_defaults
 def submit_cmd(
     yaml_path: Path = typer.Argument(
         help="Workflow YAML path (SkyPilot or npa.workflow/v0.0.1)."
@@ -9075,4 +9078,5 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 
 app.add_typer(trigger_app, name="trigger")
+app.add_typer(demo_app, name="demo")
 register_controller_recovery(app)
