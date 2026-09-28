@@ -2,14 +2,16 @@
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {EventEmitter} from 'node:events';
+import {fileURLToPath} from 'node:url';
 
 /** Run the installed Codex app-server for new or unowned conversations.
- * Args: binary is the local Codex executable; codexHome is the account directory.
+ * Args: binary is the preferred Codex executable; codexHome is the account
+ * directory; python runs the installed executable-discovery launcher when set.
  * Returns: An EventEmitter carrying app-server notifications and pending approvals.
  * Raises: Requests reject on protocol errors or process failure.
  */
 export class AppServer extends EventEmitter {
-  constructor(binary, codexHome) { super(); this.binary = binary; this.codexHome = codexHome; this.pending = new Map(); this.nextId = 0; }
+  constructor(binary, codexHome, python) { super(); this.binary = binary; this.codexHome = codexHome; this.python = python; this.pending = new Map(); this.nextId = 0; }
   /** Start or reuse the account app-server.
    * Args: None.
    * Returns: The shared initialization promise.
@@ -25,7 +27,9 @@ export class AppServer extends EventEmitter {
    * Raises: A startup or protocol error.
    */
   async initialize() {
-    this.child = spawn(this.binary, ['app-server'], {stdio: ['pipe', 'pipe', 'pipe'], env: {...process.env, ...(this.codexHome ? {CODEX_HOME: this.codexHome} : {})}});
+    const command = this.python ? [this.python,
+      fileURLToPath(new URL('../codex_executable.py', import.meta.url)), this.binary] : [this.binary];
+    this.child = spawn(command[0], [...command.slice(1), 'app-server'], {stdio: ['pipe', 'pipe', 'pipe'], env: {...process.env, ...(this.codexHome ? {CODEX_HOME: this.codexHome} : {})}});
     this.child.stderr.on('data', () => {});
     createInterface({input: this.child.stdout}).on('line', line => {
       try { this.dispatch(JSON.parse(line)); } catch { /* Non-protocol output is ignored. */ }

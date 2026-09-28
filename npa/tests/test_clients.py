@@ -2382,30 +2382,108 @@ def test_nebius_get_project_name_best_effort(mocker) -> None:
     assert nebius.get_project_name("project-abc") == ""
 
 
-def test_nebius_set_profile_project_writes_both_ids(mocker) -> None:
-    run = mocker.patch("npa.clients.nebius._run", return_value="")
+def _profile_config_runner(mocker, initial, failures=()):
+    values = dict(initial)
+    remaining_failures = list(failures)
+    calls = []
 
-    assert nebius.set_profile_project("project-abc", "tenant-xyz") is True
-    assert [call.args[0] for call in run.call_args_list] == [
-        ["config", "set", "parent-id", "project-abc"],
-        ["config", "set", "tenant-id", "tenant-xyz"],
-    ]
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if args in remaining_failures:
+            remaining_failures.remove(args)
+            raise NebiusError("synthetic profile write failure")
+        operation, key = args[1:3]
+        if operation == "get":
+            return values.get(key, "")
+        if operation == "set":
+            values[key] = args[3]
+        elif operation == "unset":
+            values.pop(key, None)
+        return ""
+
+    mocker.patch("npa.clients.nebius._run", side_effect=fake_run)
+    return values, calls
+
+
+def test_nebius_set_profile_project_writes_both_ids(mocker) -> None:
+    values, _calls = _profile_config_runner(
+        mocker, {"parent-id": "project-old", "tenant-id": "tenant-old"}
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.UPDATED
+    assert values == {"parent-id": "project-new", "tenant-id": "tenant-new"}
 
 
 def test_nebius_set_profile_project_skips_empty_tenant(mocker) -> None:
-    run = mocker.patch("npa.clients.nebius._run", return_value="")
+    values, calls = _profile_config_runner(
+        mocker, {"parent-id": "project-old", "tenant-id": "tenant-old"}
+    )
 
-    assert nebius.set_profile_project("project-abc") is True
-    assert [call.args[0] for call in run.call_args_list] == [
-        ["config", "set", "parent-id", "project-abc"]
-    ]
+    result = nebius.set_profile_project("project-new")
+
+    assert result is nebius.ProfileMutationResult.UPDATED
+    assert values == {"parent-id": "project-new", "tenant-id": "tenant-old"}
+    assert not any(call[1:3] == ["set", "tenant-id"] for call in calls)
 
 
-def test_nebius_set_profile_project_is_best_effort(mocker) -> None:
+def test_nebius_set_profile_project_first_write_failure_is_unchanged(mocker) -> None:
+    initial = {"parent-id": "project-old", "tenant-id": "tenant-old"}
+    values, _calls = _profile_config_runner(
+        mocker,
+        initial,
+        failures=(["config", "set", "parent-id", "project-new"],),
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.UNCHANGED
+    assert values == initial
+
+
+def test_nebius_set_profile_project_second_write_failure_restores_unset(mocker) -> None:
+    initial = {"tenant-id": "tenant-old"}
+    values, calls = _profile_config_runner(
+        mocker,
+        initial,
+        failures=(["config", "set", "tenant-id", "tenant-new"],),
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.RESTORED
+    assert values == initial
+    assert ["config", "unset", "parent-id"] in calls
+
+
+def test_nebius_set_profile_project_rollback_failure_is_partial(mocker) -> None:
+    initial = {"tenant-id": "tenant-old"}
+    values, _calls = _profile_config_runner(
+        mocker,
+        initial,
+        failures=(
+            ["config", "set", "tenant-id", "tenant-new"],
+            ["config", "unset", "parent-id"],
+        ),
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.PARTIAL
+    assert values["parent-id"] == "project-new"
+
+
+def test_nebius_set_profile_project_unreadable_or_empty_input_is_unchanged(
+    mocker,
+) -> None:
     mocker.patch("npa.clients.nebius._run", side_effect=NebiusError("no cli"))
 
-    assert nebius.set_profile_project("project-abc", "tenant-xyz") is False
-    assert nebius.set_profile_project("") is False
+    assert (
+        nebius.set_profile_project("project-new", "tenant-new")
+        is nebius.ProfileMutationResult.UNCHANGED
+    )
+    assert nebius.set_profile_project("") is nebius.ProfileMutationResult.UNCHANGED
 
 
 def _public_ip_quota_items() -> dict:

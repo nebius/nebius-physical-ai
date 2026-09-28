@@ -155,6 +155,7 @@ def _install_assets(root):
         "chat_session.py",
         "chat_pwa.py",
         "chat_native.py",
+        "codex_executable.py",
         "chat.html",
         "chat.css",
         "chat.js",
@@ -262,13 +263,16 @@ def _apply_local(root, gateway_host, port, gateway_port):
 
 
 def _prepare_engine(config, runtime):
+    config["native_python"] = sys.executable
     contents = [
         path.read_bytes()
         for path in sorted((runtime / "native").iterdir())
         if path.is_file()
     ]
+    contents.append((runtime / "codex_executable.py").read_bytes())
     settings = {
-        key: config.get(key) for key in ("binary", "node", "codexHome", "defaultCwd")
+        key: config.get(key)
+        for key in ("binary", "node", "native_python", "codexHome", "defaultCwd")
     }
     digest = hashlib.sha256(
         b"".join(contents) + json.dumps(settings, sort_keys=True).encode()
