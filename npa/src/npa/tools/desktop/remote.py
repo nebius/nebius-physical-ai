@@ -737,6 +737,7 @@ def _chat_setup(config):
         raise RuntimeError("Configure authenticated public-access before mobile chat.")
     names = {
         "chat_setup.py",
+        "codex_executable.py",
         "chat_auth.py",
         "chat_login.html",
         "chat_login.css",

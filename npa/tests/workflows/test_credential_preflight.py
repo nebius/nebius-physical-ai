@@ -10,6 +10,7 @@ from npa.workflows.credential_preflight import (
     SUPPORTED_CREDENTIAL_CHECKS,
     CredentialProbes,
     check_hf,
+    check_encord,
     check_nebius,
     check_ngc,
     check_s3,
@@ -29,6 +30,7 @@ class _Creds:
     s3_secret_access_key: str = ""
     s3_endpoint: str = ""
     s3_bucket: str = ""
+    tokens: dict[str, str] | None = None
 
 
 @dataclass
@@ -186,6 +188,17 @@ def test_token_factory_fail_when_verifier_raises() -> None:
     assert result.status == FAIL
 
 
+def test_encord_presence_and_live_probe() -> None:
+    missing = check_encord(_Creds(tokens={}), CredentialProbes())
+    assert missing.status == WARN
+    present = check_encord(
+        _Creds(tokens={"ENCORD_SSH_KEY_B64": "encoded-key"}),
+        CredentialProbes(encord_verifier=lambda: "storage folders listable"),
+    )
+    assert present.status == PASS
+    assert "authenticated" in present.summary
+
+
 @dataclass
 class _ProfileVerification:
     identity_verified: bool
@@ -270,7 +283,7 @@ def test_run_credential_preflight_default_order() -> None:
 
 def test_supported_checks_add_nebius_without_changing_defaults() -> None:
     assert CREDENTIAL_CHECKS == ("hf", "ngc", "s3", "token_factory")
-    assert SUPPORTED_CREDENTIAL_CHECKS == (*CREDENTIAL_CHECKS, "nebius")
+    assert SUPPORTED_CREDENTIAL_CHECKS == (*CREDENTIAL_CHECKS, "encord", "nebius")
 
 
 def test_run_credential_preflight_rejects_unknown_check() -> None:

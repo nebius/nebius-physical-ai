@@ -58,6 +58,34 @@ def _request_digest(request: SubmitRequest) -> str:
     return sha256_bytes(canonical_json(request.model_dump(mode="json")))
 
 
+def _replay_submission(record: OperationRecord) -> SubmitRequest:
+    """Recover the exact request without silently discarding scenario overrides."""
+
+    request = SubmitRequest(
+        input_path=record.input_path,
+        output_path=record.output_path,
+        workflow_run=record.workflow_run,
+        state_id=record.state_id,
+        robot_type=record.robot_type,
+        task=record.task,
+        scenario_case=record.scenario_case,
+        parameters=record.parameters,
+        expected_cli_version=record.expected_cli_version,
+        **(
+            {"suite": record.selection}
+            if record.remote_kind == "suite"
+            else {"scenario": record.selection}
+        ),
+    )
+    if _request_digest(request) != record.request_sha256:
+        raise AntiochOperationError(
+            "stored operation cannot reconstruct its original submission; "
+            "retry submit with the original case, parameters, and CLI version",
+            error_type="submission_request_unavailable",
+        )
+    return request
+
+
 def _phase(payload: dict[str, Any]) -> tuple[str, str]:
     phase = str(payload.get("phase") or payload.get("status") or "").lower()
     outcome = str(payload.get("outcome") or payload.get("result") or "").lower()
@@ -67,10 +95,15 @@ def _phase(payload: dict[str, Any]) -> tuple[str, str]:
 def _local_status(phase: str, outcome: str) -> str:
     if phase in {"cancelled", "canceled"} or outcome in {"cancelled", "canceled"}:
         return "cancelled"
-    if phase in {"failed", "error"} or outcome in {"failed", "error", "failure"}:
+    if phase in {"failed", "error", "errored"} or outcome in {
+        "failed",
+        "error",
+        "errored",
+        "failure",
+    }:
         return "failed"
     if phase in {"complete", "completed", "finished", "succeeded", "passed"}:
-        return "failed" if outcome in {"failed", "failure", "error"} else "completed"
+        return "completed"
     if outcome in {"passed", "success", "succeeded"}:
         return "completed"
     if phase in {"running", "executing", "finishing"}:
@@ -227,6 +260,9 @@ class AntiochManager:
                 ),
                 remote_kind=kind,
                 selection=request.suite or request.scenario,
+                scenario_case=request.scenario_case,
+                parameters=request.parameters,
+                expected_cli_version=request.expected_cli_version,
                 terms_name=str(acceptance["name"]),
                 terms_url=str(acceptance["url"]),
                 terms_version=str(acceptance["version"]),
@@ -306,20 +342,7 @@ class AntiochManager:
         if record.status in {"completed", "collecting", "failed", "cancelled"}:
             return record
         if not record.remote_id:
-            replay = SubmitRequest(
-                input_path=record.input_path,
-                output_path=record.output_path,
-                workflow_run=record.workflow_run,
-                state_id=record.state_id,
-                robot_type=record.robot_type,
-                task=record.task,
-                **(
-                    {"suite": record.selection}
-                    if record.remote_kind == "suite"
-                    else {"scenario": record.selection}
-                ),
-            )
-            return self.submit(replay)
+            return self.submit(_replay_submission(record))
         try:
             with tempfile.TemporaryDirectory(prefix="npa-antioch-status-") as temp_name:
                 project, _manifest, _digest = stage_project(
