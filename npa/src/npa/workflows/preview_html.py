@@ -80,6 +80,7 @@ input[type=range]{flex:1;min-width:180px}button{background:#334155;color:white;p
 figure{margin:0}img{width:100%;height:auto;border-radius:6px;object-fit:contain}figcaption{padding:6px;color:#cbd5e1}
 canvas{width:100%;max-width:800px;aspect-ratio:2/1;background:#0b1020;touch-action:none;border-radius:6px}
 small{color:#cbd5e1}footer{margin:32px 0;font-size:.85rem;color:#94a3b8}
+pre{white-space:pre-wrap;overflow-wrap:anywhere}dd{overflow-wrap:anywhere}
 </style></head><body><h1>@@TITLE@@</h1><p>@@SUMMARY@@</p><dl>@@METRICS@@</dl>
 <main id="timelines"></main><footer>Compact previews derived from this run's outputs. Full resolution data, calibration, provenance and reports remain in the run artifacts. This file works offline and makes no network requests.</footer>
 <script id="preview-data" type="application/json">@@DATA@@</script><script>
