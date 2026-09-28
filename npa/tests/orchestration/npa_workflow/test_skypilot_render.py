@@ -2070,3 +2070,36 @@ def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:
     qualification = next(task for task in tasks if "qualify_full_droid" in task["name"])
     assert prepare["envs"]["JAX_PLATFORMS"] == "cpu"
     assert "JAX_PLATFORMS" not in qualification.get("envs", {})
+
+
+def test_single_task_builder_rejects_unmatched_image_selector() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import build_skypilot_task_doc
+
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="single-task-selector")
+    with pytest.raises(NpaWorkflowRenderError, match="matched no workflow toolRef"):
+        build_skypilot_task_doc(
+            spec,
+            plan.steps[0],
+            run_id="single-task-selector",
+            options=SkypilotRenderOptions(
+                image_overrides={"workbench.vlm_eval.rnu": "cr.example/custom:1"}
+            ),
+        )
+
+
+def test_render_validates_complete_selector_set_once_per_batch(mocker) -> None:
+    from npa.orchestration.npa_workflow import skypilot_render
+
+    spec = load_spec(NPA_SPECS / "bdd100k-pipeline.yaml")
+    plan = build_plan(spec, run_id="selector-scan")
+    validate = mocker.spy(skypilot_render, "validate_image_override_selectors")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="selector-scan",
+        options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+    )
+    assert len(list(yaml.safe_load_all(rendered))) == len(plan.steps) + 1
+    assert len(plan.steps) >= 10
+    validate.assert_called_once()

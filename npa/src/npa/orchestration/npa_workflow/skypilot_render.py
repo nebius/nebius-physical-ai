@@ -2102,9 +2102,30 @@ def build_skypilot_task_doc(
     run_id: str,
     options: SkypilotRenderOptions,
 ) -> dict[str, Any]:
-    """Build one SkyPilot task document from a planned step."""
+    """Validate image selectors and build one SkyPilot task document.
 
+    Args:
+        spec: Complete workflow, including unselected decision branches.
+        step: Planned step to render.
+        run_id: Identity shared by the workflow's tasks.
+        options: Container selection and rendering options.
+    Returns:
+        The SkyPilot task document for the selected step.
+    Raises:
+        NpaWorkflowRenderError: Selectors or task resources cannot be rendered.
+    """
     validate_image_override_selectors(spec, options)
+    return _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+
+
+def _build_skypilot_task_doc(
+    spec: NpaWorkflowSpec,
+    step: PlanStep,
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> dict[str, Any]:
+    """Render a step after its caller validates the complete workflow selectors."""
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
     tool_ref = str(scheduler_task.get("tool_ref") or "")
     immutable_narrow_image = tool_ref == HABITAT_SIM_TOOL_REF
@@ -2597,6 +2618,7 @@ def _render_docs(
     execution: str,
     name: str = "",
 ) -> str:
+    validate_image_override_selectors(spec, options)
     header = {
         "name": name or spec.name,
         "execution": execution,
@@ -2604,7 +2626,7 @@ def _render_docs(
     docs: list[dict[str, Any]] = [header]
     seen: set[str] = set()
     for step in steps:
-        doc = build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+        doc = _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
         task_name = str(doc.get("name") or "")
         # Serial pipelines may legitimately repeat a task name (an unrolled loop
         # body re-runs the same state), so only JobGroups — whose tasks run at the
