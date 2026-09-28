@@ -2,6 +2,11 @@
 
 [Workbench docs](README.md) · [GPU compatibility matrix](image-gpu-compatibility-matrix.md)
 
+**Start here: [Use FA4 in your own RTX PRO 6000 container](guides/rtx6000-fa4.md).**
+The adoption guide explains the historical `cuda13-b300` name and walks through
+the base build, application image, model integration, validation and deployment.
+This page records the dependency pins, restrictions and measured evidence.
+
 The CUDA 13 base recipe includes upstream FA4 fixes for RTX PRO 6000 Blackwell
 Server Edition (`sm_120`). Its qualification checks real attention outputs and
 Q/K/V gradients. All 24 cases passed on a reserved Nebius RTX PRO 6000 on

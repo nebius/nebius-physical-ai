@@ -60,6 +60,11 @@ the locally built candidate does not replace any release listed here. On
 2026-09-28, anonymous verification confirmed all 38 current accepted release
 digests still matched. Historical aliases were not re-audited in that check.
 
+To adopt that stack in your own application, start with the
+[RTX PRO 6000 FA4 guide](guides/rtx6000-fa4.md). The guide distinguishes the
+historical `cuda13-b300` base name, a local build and your deployed application
+image; it does not introduce a new published catalog row.
+
 The current build inventory is maintained in `packaging-contract.yaml`, and
 the tool map in `npa.deploy.images`. `publicly_publishable_tools()` selects the
 public release inventory; `PUBLICATION_QUARANTINE_TOOLS` identifies candidates

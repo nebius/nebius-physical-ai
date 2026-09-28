@@ -8,6 +8,12 @@ channel; rebuilds may target an operator-controlled registry via `NPA_REGISTRY`.
 
 Manifest source: `npa/docker/workbench/sm120-images.json`.
 
+For **FlashAttention 4 on RTX PRO 6000**, use the
+[application-image adoption guide](guides/rtx6000-fa4.md). It explains why the
+shared base is still named `cuda13-b300` and how to build the updated FA4 stack.
+The historical tags below do not establish that they contain the FA4 update;
+use the exact source/image identities in the [FA4 evidence](flash-attention.md).
+
 ## Required Images
 
 | Image | Tag | Purpose |
