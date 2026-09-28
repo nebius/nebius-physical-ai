@@ -374,7 +374,7 @@ epilogue. The source now includes upstream SM120 dispatch/backward fixes and
 varlen guards. See [FA4 on RTX PRO 6000](flash-attention.md) for pinned sources,
 feature restrictions and the exact scope of hardware evidence.
 
-The current baked [`gpu_capability_smoke.py`](../../npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py)
+The current baked [`gpu_capability_smoke.py`](../../npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py)
 uses `flash_attn.cute` explicitly and checks outputs and dQ/dK/dV against FP64
 attention for 24 cases. A kernel failure fails the job on every architecture;
 the old RTX waiver has been removed. A source update does not requalify any

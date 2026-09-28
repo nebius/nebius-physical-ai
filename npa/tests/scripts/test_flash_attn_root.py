@@ -11,7 +11,7 @@ import pytest
 
 SCRIPT = (
     Path(__file__).resolve().parents[2]
-    / "docker/workbench/base/cuda13-b300/scripts/flash_attn_root.py"
+    / "docker/workbench/base/cuda13-blackwell/scripts/flash_attn_root.py"
 )
 SEQUENCES = dict(
     cu_seqlens_q=object(), cu_seqlens_k=object(), max_seqlen_q=129, max_seqlen_k=193

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the legacy directory symlink to the single canonical build context.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 REGISTRY=""
 TAG="${TS:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -24,8 +25,11 @@ Usage: build.sh [--registry REGISTRY] [--tag TAG] [--push]
                 [--arch-list "8.0 9.0 10.0 10.3 12.0"]
                 [--require-archs "sm_80 sm_90 sm_100 sm_120"]
 
-Builds npa-base:cuda13-b300-${TAG}. Set DOCKER_CONTEXT to build on a remote
-Docker context, for example an SSH-accessible B300 VM.
+Builds npa-base:cuda13-blackwell-${TAG} for RTX PRO 6000 and B200/B300 targets.
+The same image also receives cuda13-b300-${TAG} for existing consumers.
+--registry tags both names; --push pushes both. No published tag is changed
+unless you explicitly build/push that exact suffix. Set DOCKER_CONTEXT to use
+a remote Docker daemon. GPU capability still requires per-image validation.
 
 --arch-list sets TORCH_CUDA_ARCH_LIST for source-compiled CUDA extensions in
 this image and every child image that inherits the env. --require-archs fails
@@ -87,7 +91,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-LOCAL_IMAGE="npa-base:cuda13-b300-${TAG}"
+if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
+  echo "ERROR: --push requires --registry" >&2
+  exit 2
+fi
+
+LOCAL_IMAGE="npa-base:cuda13-blackwell-${TAG}"
+LEGACY_IMAGE="npa-base:cuda13-b300-${TAG}"
 BUILD_ARGS=(
   build
   --build-arg "BUILD_TS=${TAG}"
@@ -98,13 +108,16 @@ BUILD_ARGS=(
   --build-arg "TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
   --build-arg "REQUIRE_TORCH_ARCHS=${REQUIRE_TORCH_ARCHS}"
   -t "$LOCAL_IMAGE"
+  -t "$LEGACY_IMAGE"
 )
 
 if [ -n "$REGISTRY" ]; then
-  REGISTRY_IMAGE="${REGISTRY}/npa-base:cuda13-b300-${TAG}"
-  BUILD_ARGS+=(-t "$REGISTRY_IMAGE")
+  REGISTRY_IMAGE="${REGISTRY}/npa-base:cuda13-blackwell-${TAG}"
+  LEGACY_REGISTRY_IMAGE="${REGISTRY}/npa-base:cuda13-b300-${TAG}"
+  BUILD_ARGS+=(-t "$REGISTRY_IMAGE" -t "$LEGACY_REGISTRY_IMAGE")
 else
   REGISTRY_IMAGE=""
+  LEGACY_REGISTRY_IMAGE=""
 fi
 
 if [ -n "$DOCKER_CONTEXT" ]; then
@@ -114,18 +127,18 @@ else
 fi
 
 echo "Built: $LOCAL_IMAGE"
+echo "Compatibility alias: $LEGACY_IMAGE"
 if [ -n "$REGISTRY_IMAGE" ]; then
   echo "Tagged: $REGISTRY_IMAGE"
+  echo "Compatibility alias: $LEGACY_REGISTRY_IMAGE"
 fi
 
 if [ "$PUSH" -eq 1 ]; then
-  if [ -z "$REGISTRY_IMAGE" ]; then
-    echo "ERROR: --push requires --registry" >&2
-    exit 2
-  fi
-  if [ -n "$DOCKER_CONTEXT" ]; then
-    docker --context "$DOCKER_CONTEXT" push "$REGISTRY_IMAGE"
-  else
-    docker push "$REGISTRY_IMAGE"
-  fi
+  for IMAGE in "$REGISTRY_IMAGE" "$LEGACY_REGISTRY_IMAGE"; do
+    if [ -n "$DOCKER_CONTEXT" ]; then
+      docker --context "$DOCKER_CONTEXT" push "$IMAGE"
+    else
+      docker push "$IMAGE"
+    fi
+  done
 fi

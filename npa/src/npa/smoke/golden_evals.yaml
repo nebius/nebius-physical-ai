@@ -184,10 +184,11 @@ containers:
       status: gpu-gated
       artifact: /workspace/openpi-golden-eval/direct.json
 
+  # Preserve the existing golden-eval ID; the canonical recipe is cuda13-blackwell.
   base-cuda13-b300:
     image: npa-base
     foundation: true
-    dockerfile: npa/docker/workbench/base/cuda13-b300/Dockerfile
+    dockerfile: npa/docker/workbench/base/cuda13-blackwell/Dockerfile
     physical_ai:
       useful: true
       role: >-
@@ -208,7 +209,7 @@ containers:
       # Use --expect-capability explicitly when qualifying one specific SKU.
       kind: container-smoke
       command: 'python /npa/gpu_capability_smoke.py'
-      script: npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py
+      script: npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py
       serverless_gpu: b300
       gpu: required
       timeout_seconds: 300

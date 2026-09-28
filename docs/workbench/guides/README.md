@@ -68,8 +68,8 @@ when adapting it:
 ## Use your own data, policy, or robot
 
 For a custom transformer workload, follow the
-[RTX PRO 6000 FlashAttention 4 adoption guide](rtx6000-fa4.md): understand the
-historical `cuda13-b300` base name, rebuild your application image, integrate
+[RTX PRO 6000 FlashAttention 4 adoption guide](rtx6000-fa4.md): build the shared
+`cuda13-blackwell` base, rebuild your application image, integrate
 FA4 explicitly, and validate before changing its deployed image digest.
 
 Match the selected tool's dataset format, observation/action schema, runtime,

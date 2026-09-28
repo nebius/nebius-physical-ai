@@ -15,7 +15,7 @@ WORKBENCH = ROOT / "npa" / "docker" / "workbench"
 def test_generic_torch_images_require_patched_versions_and_complete_dependency_checks():
     for relative, floors in (
         (
-            "base/cuda13-b300/Dockerfile",
+            "base/cuda13-blackwell/Dockerfile",
             {
                 "TORCH_VERSION": "2.13.0",
                 "TORCHVISION_VERSION": "0.28.0",

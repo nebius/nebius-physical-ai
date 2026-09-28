@@ -28,7 +28,7 @@ ARG TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3 12.0"
 # report for the build to succeed. Empty disables the assertion.
 ARG REQUIRE_TORCH_ARCHS="sm_80 sm_90 sm_100 sm_120"
 
-LABEL npa.image="cuda13-b300" \
+LABEL npa.image="cuda13-blackwell" \
       npa.cuda.base="${CUDA_BASE_TAG}" \
       npa.torch.version="${TORCH_VERSION}+cu130" \
       npa.flash_attn_4.commit="${FLASH_ATTN_COMMIT}" \

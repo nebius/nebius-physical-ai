@@ -132,8 +132,8 @@
     },
     {
       "name": "npa-base",
-      "dockerfile": "base/cuda13-b300/Dockerfile",
-      "build_script": "base/cuda13-b300/build.sh",
+      "dockerfile": "base/cuda13-blackwell/Dockerfile",
+      "build_script": "base/cuda13-blackwell/build.sh",
       "verdict": "ready",
       "validation": "pending-hardware",
       "torch": "2.9.0+cu130",

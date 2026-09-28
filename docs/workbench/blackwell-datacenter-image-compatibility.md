@@ -34,7 +34,7 @@ Floor: R570+ driver, CUDA 12.8 or 13.0.
 
 ### `npa-base` sets the arch list for the tree
 
-`npa/docker/workbench/base/cuda13-b300/Dockerfile` previously pinned `TORCH_CUDA_ARCH_LIST=10.3`, which meant every source-compiled extension inheriting the base carried B300 SASS only. It now defaults to `8.0 9.0 10.0 10.3 12.0` (A100, Hopper, B200, B300, RTX PRO 6000) as a build arg, and the build asserts the wheel reports `sm_80 sm_90 sm_100 sm_120`.
+`npa/docker/workbench/base/cuda13-blackwell/Dockerfile` previously pinned `TORCH_CUDA_ARCH_LIST=10.3`, which meant every source-compiled extension inheriting the base carried B300 SASS only. It now defaults to `8.0 9.0 10.0 10.3 12.0` (A100, Hopper, B200, B300, RTX PRO 6000) as a build arg, and the build asserts the wheel reports `sm_80 sm_90 sm_100 sm_120`.
 
 `sm_103` is deliberately absent from that assertion: stock cu130 wheels ship `sm_100` SASS, and B300 is reached by forward compatibility. Asserting `sm_103` would fail a perfectly good wheel.
 
@@ -62,15 +62,20 @@ remain in `known_gaps.flash_attn_sm120` in the machine-readable inventory.
 **Additive tags only.** Never overwrite an existing tag; this mirrors the `sm_120` rollout and the SONIC catalog rule. Encode the architectures in the tag so routing is auditable:
 
 ```
-cuda13-b300-sm80-sm90-sm100-sm103-sm120-<UTC>
+cuda13-blackwell-sm80-sm90-sm100-sm103-sm120-<UTC>
 ```
 
-The `cuda13-b300` prefix is required — `npa/docker/workbench/check_tag_consistency.py` rejects tags outside the families declared in `npa/docker/workbench/tags.yaml`.
+Use the `cuda13-blackwell` prefix for new base builds. The build script also
+tags the same image with the legacy `cuda13-b300` prefix for existing consumers.
+Published references and validation records retain their original names.
+`npa/docker/workbench/check_tag_consistency.py` accepts the canonical families
+and declared legacy aliases in `npa/docker/workbench/tags.yaml`. A family name
+does not replace per-image, per-GPU qualification.
 
-Reuse the existing build scripts rather than inventing a detached build. `base/cuda13-b300/build.sh` now takes the arch knobs directly:
+Reuse the existing build scripts rather than inventing a detached build. `base/cuda13-blackwell/build.sh` now takes the arch knobs directly:
 
 ```bash
-npa/docker/workbench/base/cuda13-b300/build.sh \
+npa/docker/workbench/base/cuda13-blackwell/build.sh \
   --tag "sm80-sm90-sm100-sm103-sm120-$(date -u +%Y%m%dT%H%M%SZ)" \
   --arch-list "8.0 9.0 10.0 10.3 12.0" \
   --require-archs "sm_80 sm_90 sm_100 sm_120" \
@@ -118,7 +123,7 @@ python -c "import torch; cap=torch.cuda.get_device_capability(); \
 
 **A real capability smoke, not a CUDA probe.** Run the image's golden/functional smoke so the custom kernels actually execute: flash-attn / natten for cosmos and lerobot-b300, `gs.init(gpu)` plus a `FrankaPickPlaceEnv` step for genesis and loop-eval, a real video-to-video transfer for cosmos2-transfer, a CLIP embed for lancedb, a detector training step for detection-training. This caught both the `loop-eval:0.1.1` `sm_120` regression and the historical FA4 dispatch failure: imports passed before the first real kernel failed.
 
-For the base image that smoke is committed as `npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py`. To run it on an already-deployed Kubernetes GPU pool rather than provisioning a node, use `npa/scripts/blackwell-gpu-validation-job.yaml`; it runs the arch check positively for the target architecture, negatively for a different CUDA major (so a pass on the wrong GPU family cannot be mistaken for success), and then the capability smoke.
+For the base image that smoke is committed as `npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py`. To run it on an already-deployed Kubernetes GPU pool rather than provisioning a node, use `npa/scripts/blackwell-gpu-validation-job.yaml`; it runs the arch check positively for the target architecture, negatively for a different CUDA major (so a pass on the wrong GPU family cannot be mistaken for success), and then the capability smoke.
 
 **Provisioning.** `--gpu-type b300` resolves to `gpu-b300-sxm` (presets `1gpu-24vcpu-346gb` / `8gpu-192vcpu-2768gb`, uk-south1); `--gpu-type b200` resolves to `gpu-b200-sxm` (`1gpu-20vcpu-224gb` / `8gpu-160vcpu-1792gb`, us-central1). Both platform ids and their presets were confirmed against `nebius compute platform list`. `npa/benchmark_b300_h200.sh` is a working deploy invocation. For host-mounted-driver images, use a Managed K8s pool with the NVIDIA GPU Operator.
 

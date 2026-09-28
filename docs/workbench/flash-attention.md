@@ -3,7 +3,7 @@
 [Workbench docs](README.md) · [GPU compatibility matrix](image-gpu-compatibility-matrix.md)
 
 **Start here: [Use FA4 in your own RTX PRO 6000 container](guides/rtx6000-fa4.md).**
-The adoption guide explains the historical `cuda13-b300` name and walks through
+The adoption guide explains the shared `cuda13-blackwell` base and walks through
 the base build, application image, model integration, validation and deployment.
 This page records the dependency pins, restrictions and measured evidence.
 
@@ -22,7 +22,7 @@ it is not proof of a general FA4 speedup or customer training convergence.
 
 ## Default behavior
 
-New builds of the `cuda13-b300` base use the updated FA4 pin by default. The
+New builds of the `cuda13-blackwell` base use the updated FA4 pin by default. The
 recipe already selected FA4; this change fixes that dependency set and its RTX
 qualification. Its legacy `flash_attn` root adapter also dispatches to FA4,
 with the restricted argument contract described below.
@@ -56,8 +56,11 @@ smoke fails on any kernel or numerical error on every architecture. The
 
 ## Pinned recipe and integration
 
-Build the checked-in [`cuda13-b300` recipe](../../npa/docker/workbench/base/cuda13-b300/Dockerfile).
-The directory name is historical; its Torch wheel includes `sm_120`.
+Build the checked-in [`cuda13-blackwell` recipe](../../npa/docker/workbench/base/cuda13-blackwell/Dockerfile).
+Its Torch wheel includes `sm_120`. The old `cuda13-b300` source path and tag
+prefix remain compatibility aliases; new base builds receive both names.
+Recorded GPU evidence below identifies the original tested images, not a newly
+built or published artifact under the new name.
 
 | Component | Source recipe |
 | --- | --- |
@@ -159,8 +162,8 @@ commands below create a local candidate, with no registry publication:
 
 ```bash
 FA4_SOURCE_SHA=$(git rev-parse HEAD)
-npa/docker/workbench/base/cuda13-b300/build.sh --tag "dev-${FA4_SOURCE_SHA}"
-FA4_IMAGE="npa-base:cuda13-b300-dev-${FA4_SOURCE_SHA}"
+npa/docker/workbench/base/cuda13-blackwell/build.sh --tag "dev-${FA4_SOURCE_SHA}"
+FA4_IMAGE="npa-base:cuda13-blackwell-dev-${FA4_SOURCE_SHA}"
 
 mkdir -p fa4-results
 docker run --rm --gpus all --network none \

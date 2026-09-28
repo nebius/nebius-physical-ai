@@ -11,7 +11,7 @@ import pytest
 
 SCRIPT = (
     Path(__file__).resolve().parents[2]
-    / "docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py"
+    / "docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py"
 )
 
 
@@ -197,5 +197,5 @@ def test_golden_eval_runs_strict_smoke_on_selected_gpu():
     assert entry["command"] == "python /npa/gpu_capability_smoke.py"
     assert (
         entry["script"]
-        == "npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py"
+        == "npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py"
     )

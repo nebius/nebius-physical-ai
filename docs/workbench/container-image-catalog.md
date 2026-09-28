@@ -61,9 +61,10 @@ the locally built candidate does not replace any release listed here. On
 digests still matched. Historical aliases were not re-audited in that check.
 
 To adopt that stack in your own application, start with the
-[RTX PRO 6000 FA4 guide](guides/rtx6000-fa4.md). The guide distinguishes the
-historical `cuda13-b300` base name, a local build and your deployed application
-image; it does not introduce a new published catalog row.
+[RTX PRO 6000 FA4 guide](guides/rtx6000-fa4.md). New base builds use the shared
+`cuda13-blackwell` family and receive a `cuda13-b300` compatibility alias for the
+same image. This naming change introduces no new published catalog row and
+does not change the accepted release tags or digests below.
 
 The current build inventory is maintained in `packaging-contract.yaml`, and
 the tool map in `npa.deploy.images`. `publicly_publishable_tools()` selects the
