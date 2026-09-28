@@ -116,8 +116,10 @@ catalog defaults cannot hide behind an unchanged set of resolved images.
 
 **Upgrade note:** earlier value-only, pin-only, and reference-set-only records,
 as well as unversioned v3 selection-only records for waves with images, cannot
-prove this binding and deliberately fail with `IMMUTABLE_IDENTITY_MISMATCH`.
-The controller does not migrate their identity in place. Before deploying this
+prove this binding in completed replay, durable output reuse, or supervised
+recovery. Those identity checks reject weaker records; they do not migrate saved
+identities in place. Ordinary in-flight provider adoption is a separate legacy
+path and is not made into an input-identity fence by this change. Before deploying this
 controller version, let existing runs finish,
 or keep their original controller/source/image version available to resume
 them. Start new-version work under a new run ID only after the old attempt is
