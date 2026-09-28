@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -1291,11 +1292,35 @@ def test_runtime_readiness_uses_resolved_environment(
     assert {name: os.environ.get(name) for name in names} == before
 
 
+def _isolated_test_kubeconfig(tmp_path):
+    """Provide a real local target document while network readiness stays mocked."""
+    path = tmp_path / "kubeconfig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "unit-context",
+                "contexts": [{"name": "unit-context", "context": {"cluster": "unit"}}],
+                "clusters": [
+                    {"name": "unit", "cluster": {"server": "https://cluster.invalid"}}
+                ],
+            }
+        )
+    )
+    return path
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="isolated SkyPilot ownership checks require Linux"
+)
 def test_runtime_readiness_uses_explicit_isolated_state_and_config(
     runtime_api_environment,
     tmp_path,
+    monkeypatch,
 ):
     snapshots, driver, _ = runtime_api_environment
+    monkeypatch.setenv("KUBECONFIG", str(_isolated_test_kubeconfig(tmp_path)))
     isolated = tmp_path / "isolated"
     config = tmp_path / "sky.yaml"
     config.write_text("kubernetes: {}\n", encoding="utf-8")
