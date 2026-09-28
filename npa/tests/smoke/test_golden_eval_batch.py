@@ -168,6 +168,44 @@ def test_run_all_cli_dry_run() -> None:
     assert '"passed"' in output
 
 
+@pytest.mark.parametrize("command", ["run", "run-all"])
+@pytest.mark.parametrize(
+    ("detail", "expected_exit_code"),
+    [
+        ({"ok": True}, 0),
+        ({"ok": False}, 1),
+        ({}, 1),
+        ({"ok": "false"}, 1),
+        ({"ok": "true"}, 1),
+        ({"ok": 1}, 1),
+        ({"ok": None}, 1),
+    ],
+)
+def test_serverless_cli_requires_literal_true(
+    monkeypatch, tmp_path, command, detail, expected_exit_code
+) -> None:
+    from typer.testing import CliRunner
+
+    from npa.cli.main import app
+
+    monkeypatch.setattr(
+        "npa.smoke.serverless_runner.submit_golden_eval", lambda *_a, **_kw: detail
+    )
+    args = ["workbench", "golden-eval", command, "retargeting", "--serverless"]
+    report_path = tmp_path / "results.json"
+    if command == "run-all":
+        args.extend(["--json-out", str(report_path)])
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == expected_exit_code, result.output
+    if command == "run-all":
+        report = json.loads(report_path.read_text())
+        assert report["ok"] is (expected_exit_code == 0)
+        assert report["failed"] == expected_exit_code
+        assert report["results"][0]["detail"] == detail
+
+
 def test_run_all_script_dry_run() -> None:
     import subprocess
     from pathlib import Path
