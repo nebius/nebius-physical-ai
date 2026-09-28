@@ -25,6 +25,8 @@ import yaml
 from rich.console import Console
 from rich.text import Text
 
+from npa.orchestration.skypilot.storage_context import call_with_workflow_storage
+
 from npa.cli.workbench.trigger import app as trigger_app
 from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.cli.workbench.workflow.demo import app as demo_app
@@ -6120,7 +6122,9 @@ def _durable_workflow_status(
             verification_errors.append(controller_route_error)
         for managed_job_id in job_ids if live_controller_queries else []:
             try:
-                live = workflow_status(
+                live = call_with_workflow_storage(
+                    resolution.state,
+                    workflow_status,
                     managed_job_id,
                     sky_bin=sky_bin or None,
                     isolated_config_dir=isolated_config_dir,
@@ -6140,7 +6144,9 @@ def _durable_workflow_status(
                     )
                 else:
                     observed_status = live.status
-                observed_rows = workflow_task_statuses(
+                observed_rows = call_with_workflow_storage(
+                    resolution.state,
+                    workflow_task_statuses,
                     managed_job_id,
                     sky_bin=sky_bin or None,
                     isolated_config_dir=isolated_config_dir,
@@ -6161,7 +6167,9 @@ def _durable_workflow_status(
                 } and not str(
                     observed_status or run_manifest.status
                 ).upper().startswith("FAILED"):
-                    controller_logs = workflow_controller_logs(
+                    controller_logs = call_with_workflow_storage(
+                        resolution.state,
+                        workflow_controller_logs,
                         managed_job_id,
                         sky_bin=sky_bin or None,
                         isolated_config_dir=isolated_config_dir,
@@ -6296,7 +6304,9 @@ def _durable_workflow_status(
         blockers = [
             blocker
             for managed_job_id, observation in job_observations.items()
-            for blocker in _stalled_job_blockers(
+            for blocker in call_with_workflow_storage(
+                resolution.state,
+                _stalled_job_blockers,
                 managed_job_id,
                 str(observation.get("status") or ""),
                 sky_bin=sky_bin,
@@ -6388,7 +6398,9 @@ def _durable_workflow_status(
         legacy_verification_errors.append(controller_route_error)
     if job_id and live_controller_queries:
         try:
-            live = workflow_status(
+            live = call_with_workflow_storage(
+                resolution.state,
+                workflow_status,
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
@@ -6420,7 +6432,9 @@ def _durable_workflow_status(
         "verification": "found",
         "stages": stages,
     }
-    blockers = _stalled_job_blockers(
+    blockers = call_with_workflow_storage(
+        resolution.state,
+        _stalled_job_blockers,
         job_id,
         live_status,
         sky_bin=sky_bin,
@@ -6596,7 +6610,9 @@ def _manifest_pending_status(
         task_rows = [dict(item) for item in resolution.managed_job.task_rows]
     elif job_id and live_controller_queries:
         try:
-            live = workflow_status(
+            live = call_with_workflow_storage(
+                resolution.state,
+                workflow_status,
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
@@ -6614,7 +6630,9 @@ def _manifest_pending_status(
                 )
             else:
                 live_status = live.status
-            task_rows = workflow_task_statuses(
+            task_rows = call_with_workflow_storage(
+                resolution.state,
+                workflow_task_statuses,
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
@@ -6676,7 +6694,9 @@ def _manifest_pending_status(
         and not str(live_status).upper().startswith("FAILED")
     ):
         try:
-            controller_logs = workflow_controller_logs(
+            controller_logs = call_with_workflow_storage(
+                resolution.state,
+                workflow_controller_logs,
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
@@ -6775,7 +6795,9 @@ def _manifest_pending_status(
             ],
         }
     )
-    blockers = _stalled_job_blockers(
+    blockers = call_with_workflow_storage(
+        resolution.state,
+        _stalled_job_blockers,
         job_id,
         live_status,
         sky_bin=sky_bin,
@@ -7786,7 +7808,9 @@ def logs_cmd(
                     _emit_pending_logs(payload, json_output=json_output)
                     return
                 _require_live_controller_route(resolution)
-                live = tail_live_job_logs(
+                live = call_with_workflow_storage(
+                    state,
+                    tail_live_job_logs,
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
                     stage=selected_stage,
@@ -7900,7 +7924,9 @@ def logs_cmd(
                         job_id = str(selected_attempt.get("managed_job_id") or "")
                     else:
                         selected_attempt, job_id, attribution_error = (
-                            _recover_stage_log_wave_attribution(
+                            call_with_workflow_storage(
+                                state,
+                                _recover_stage_log_wave_attribution,
                                 resolution.runtime_state,
                                 selected_attempt,
                                 selected_stage,
@@ -8064,7 +8090,9 @@ def logs_cmd(
                 prestart = (
                     None
                     if follow
-                    else _verified_prestart_log_status(
+                    else call_with_workflow_storage(
+                        state,
+                        _verified_prestart_log_status,
                         job_id,
                         project=project,
                         sky_bin=sky_bin,
@@ -8091,7 +8119,9 @@ def logs_cmd(
                     )
                     _emit_pending_logs(payload, json_output=json_output)
                     return
-                live = tail_live_job_logs(
+                live = call_with_workflow_storage(
+                    state,
+                    tail_live_job_logs,
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
                     stage=live_stage,
@@ -8175,7 +8205,9 @@ def logs_cmd(
             job_id = str(manifest.get("sky_job_id") or "")
             if follow and job_id:
                 _require_live_controller_route(resolution)
-                live = tail_live_job_logs(
+                live = call_with_workflow_storage(
+                    state,
+                    tail_live_job_logs,
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
                     stage=selected_stage,
@@ -8667,7 +8699,9 @@ def cancel_cmd(
                 ),
             }
         else:
-            assessment = assess_run_cancellation(
+            assessment = call_with_workflow_storage(
+                resolution.state,
+                assess_run_cancellation,
                 resolution,
                 sky_bin=sky_bin,
                 exact_job_id=str(job_id or identity.get("sky_job_id") or ""),
@@ -8732,7 +8766,9 @@ def cancel_cmd(
                     cleanup_launched_workflows,
                 )
 
-                reverify_errors = reverify_active_cancellation(
+                reverify_errors = call_with_workflow_storage(
+                    resolution.state,
+                    reverify_active_cancellation,
                     assessment,
                     sky_bin=sky_bin,
                     isolated_config_dir=isolated_config_dir,
@@ -8758,7 +8794,9 @@ def cancel_cmd(
                         ),
                     }
                 else:
-                    cleanup = cleanup_launched_workflows(
+                    cleanup = call_with_workflow_storage(
+                        resolution.state,
+                        cleanup_launched_workflows,
                         [
                             (item.job_id, item.job_name or resolved_run_id)
                             for item in assessment.active_jobs

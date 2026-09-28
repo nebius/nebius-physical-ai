@@ -214,6 +214,7 @@ def demo_storage_environment(selection: dict) -> dict[str, str]:
         AWS_SECRET_ACCESS_KEY=storage.aws_secret_access_key,
         AWS_SESSION_TOKEN="",
         AWS_SECURITY_TOKEN="",
+        NPA_SKYPILOT_PROJECT=selection["project"],
         NPA_S3_BUCKET=bucket,
         NEBIUS_S3_BUCKET=bucket,
         NPA_CHECKPOINT_BUCKET=f"s3://{bucket}",

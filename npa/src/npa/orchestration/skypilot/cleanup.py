@@ -1973,7 +1973,11 @@ def sky_environment(
 ) -> dict[str, str]:
     """Return an environment that keeps SkyPilot state inside a run directory."""
 
+    from npa.orchestration.skypilot.storage_context import _apply_storage_context
+
     env = dict(os.environ if environment is None else environment)
+    if environment is None:
+        env = _apply_storage_context(env)
     if isolated_config_dir is None:
         return env
     transaction = _TRANSACTION_ENVIRONMENTS.get().get(

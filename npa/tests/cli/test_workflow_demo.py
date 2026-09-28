@@ -155,6 +155,7 @@ def test_demo_launch_uses_saved_project_pair_and_restores_caller_environment(
         "AWS_SESSION_TOKEN",
         "AWS_ENDPOINT_URL_S3",
         "NPA_SRC_S3_URI",
+        "NPA_SKYPILOT_PROJECT",
     ):
         monkeypatch.setenv(name, "unrelated-value")
     monkeypatch.setenv("NGC_API_KEY", "retained-ngc")
@@ -173,6 +174,7 @@ def test_demo_launch_uses_saved_project_pair_and_restores_caller_environment(
         ) == ("saved-key", "saved-secret", "")
         assert context.endpoint_url == "https://example.invalid"
         assert os.environ["NPA_SRC_S3_URI"] == ""
+        assert os.environ["NPA_SKYPILOT_PROJECT"] == "example"
         assert os.environ["NGC_API_KEY"] == "retained-ngc"
         if fail:
             raise typer.Exit(1)

@@ -86,6 +86,12 @@ temporarily ignored during demo submission; the command restores the shell
 environment afterward. Report downloads are kept separately for each project
 and storage destination.
 
+Standard workflow status, live logs, and cancellation use the resolved run's
+project and storage credentials for controller queries too. After an owned local controller
+stops, these commands recover it with the same storage identity used to read the
+run. They leave your shell credentials unchanged; a controller already running
+under a different identity still fails verification.
+
 Append `--plan-only` to inspect the standard submission plan without launching.
 Each execution receives a fresh run ID and its own output prefix. Record the run
 ID printed by the command. The launcher does not add a per-stage time limit.
