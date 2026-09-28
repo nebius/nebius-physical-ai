@@ -29,6 +29,13 @@ and native collision queries inside the RTX Isaac runtime. Learned navigation
 remains a separate qualification. See the
 [readiness record](../../../workflows/testing/rgbd-scan-to-isaac.readiness.json).
 
+## Run the complete public sample
+
+For automatic download, calibration, measured reset generation, native policy
+training, and an HTML results page, use the
+[scan-to-policy sample demo](rgbd-scan-to-policy-demo.md). The generic workflow
+below still accepts an explicitly prepared capture for other sensors.
+
 ## Measured public reference
 
 On September 25, 2026, the complete associated TUM RGB-D

@@ -1,0 +1,50 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "5d93b86e1316610507e059bd4ca0827d758bb36cb8d44114d797dcb20c40c166",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec --run-id preview pass; eight executable states.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_scan_to_policy_demo.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Graph fetches the complete public capture, reconstructs measured surfaces, derives supported resets, verifies native physics, trains, evaluates and writes HTML. Native success is separately unverified.",
+      "evidence": [
+        "docs/workbench/guides/rgbd-scan-to-policy-demo.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "A configured project and writable run-scoped bucket must pass submission preflight.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Fresh official archive downloaded with the expected hash; complete conversion, TSDF reconstruction, measured cases and USDZ assembly completed locally. 1984 integration frames,501 held-out frames,80703 depth rays,99.903% coverage,94.118% within10cm,15941 supported reset pairs. This is CPU input qualification.",
+      "evidence": [
+        "npa/tests/workbench/test_nurec_navigation_sample.py",
+        "docs/workbench/guides/rgbd-scan-to-policy-demo.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Runtime requires configured object-storage credentials and access to the pinned Isaac image. Public TUM sample needs no model token.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Digest-pinned existing SONIC and Isaac images with staged source; the new combined graph has not yet been qualified on native workers.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "RTX PRO6000 native physics,4000-robot PPO and held-out evaluation must run through this combined workflow. Existing component results do not qualify a fresh revision.",
+      "evidence": []
+    }
+  }
+}
