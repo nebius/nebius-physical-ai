@@ -691,7 +691,7 @@ def test_legacy_input_pagination_failure_never_returns_partial_source() -> None:
             class Paginator:
                 def paginate(self, *, Bucket: str, Prefix: str):
                     yield {"Contents": [{"Key": Prefix + "capture.mp4"}]}
-                    raise RuntimeError("later page unavailable")
+                    raise RuntimeError("later page unavailable: private/capture.mp4")
 
             return Paginator()
 
@@ -704,7 +704,8 @@ def test_legacy_input_pagination_failure_never_returns_partial_source() -> None:
         dfi._legacy_staged_video(storage, f"s3://artifacts/{prefix}")
 
     assert "capture.mp4" not in str(error.value)
-    assert "later page unavailable" in str(error.value)
+    assert "RuntimeError" in str(error.value)
+    assert "later page unavailable" not in str(error.value)
 
 
 def test_local_video_staging_records_lineage_and_is_idempotent(
@@ -1447,7 +1448,7 @@ def test_native_legacy_listing_rejects_token_cycles(native_listing_storage, toke
             dfi.PaidfInputError, match="could not inspect every object"
         ) as raised:
             dfi._legacy_staged_video(native_listing_storage, "s3://artifacts/" + prefix)
-        assert "repeated continuation token" in str(raised.value.__cause__)
+        assert "repeated continuation token" in str(raised.value)
         stubber.assert_no_pending_responses()
 
 
@@ -1664,3 +1665,91 @@ def test_implicit_retry_rejects_changed_derived_bytes(
 
     assert storage.s3.objects == before
     assert len(storage.s3.uploads) == prior_uploads
+
+
+@pytest.fixture(params=["legacy", "lerobot"])
+def inspect_input_listing(request, tmp_path):
+    def inspect(storage):
+        if request.param == "legacy":
+            return dfi._legacy_staged_video(storage, "s3://artifacts/private/input/")
+        return dfi._read_lerobot_episode_record(
+            storage,
+            bucket="artifacts",
+            prefix="private/input/",
+            episode=0,
+            chunks_size=1000,
+            destination_dir=tmp_path,
+        )
+
+    return inspect
+
+
+@pytest.mark.parametrize("code", ["AccessDenied", "NoSuchBucket", "SlowDown"])
+def test_listing_error_keeps_provider_code_without_private_details(
+    native_listing_storage, inspect_input_listing, code
+):
+    with Stubber(native_listing_storage.s3) as stubber:
+        stubber.add_client_error(
+            "list_objects_v2",
+            service_error_code=code,
+            service_message="private/capture.mp4 at https://private.example.invalid/",
+            expected_params=None,
+        )
+        with pytest.raises(dfi.PaidfInputError) as raised:
+            inspect_input_listing(native_listing_storage)
+        error_class = type(raised.value.__cause__).__name__
+        assert str(raised.value).endswith(f"{error_class} ({code})")
+        assert "private" not in str(raised.value)
+        assert isinstance(raised.value.__cause__, ClientError)
+        stubber.assert_no_pending_responses()
+
+
+def test_listing_error_omits_malformed_provider_code(
+    native_listing_storage, inspect_input_listing
+):
+    with Stubber(native_listing_storage.s3) as stubber:
+        stubber.add_client_error(
+            "list_objects_v2",
+            service_error_code="AccessDenied/private/capture.mp4",
+            expected_params=None,
+        )
+        with pytest.raises(dfi.PaidfInputError) as raised:
+            inspect_input_listing(native_listing_storage)
+        assert str(raised.value).endswith(": ClientError")
+        assert "private" not in str(raised.value)
+        stubber.assert_no_pending_responses()
+
+
+@pytest.mark.parametrize("failure", ["missing-token", "cycle", "no-paginator"])
+def test_listing_contract_diagnosis_survives_both_caller_wrappers(
+    inspect_input_listing, failure
+):
+    storage = FakeStorage()
+    page = {"IsTruncated": True, "Contents": []}
+    message = "truncated input listing has no continuation token"
+    if failure != "missing-token":
+        page["NextContinuationToken"] = "private-token"
+        message = "input listing repeated continuation token"
+    storage.s3 = PaginatedS3([page, page])
+    if failure == "no-paginator":
+        storage.s3 = FakeS3()
+        storage.s3.list_objects_v2 = lambda **kwargs: page
+        message = "storage client cannot complete a truncated input listing"
+    with pytest.raises(dfi.PaidfInputError) as raised:
+        inspect_input_listing(storage)
+    assert str(raised.value).endswith(message)
+    assert "private-token" not in str(raised.value)
+    assert storage.s3.downloads == storage.s3.uploads == []
+
+
+@pytest.mark.parametrize("truncated", [None, 0, 1, "false", "true", [], {}])
+def test_listing_rejects_non_boolean_completion_before_adopting_input(
+    inspect_input_listing, truncated
+):
+    storage = FakeStorage()
+    storage.s3 = PaginatedS3(
+        [{"IsTruncated": truncated, "Contents": [{"Key": "private/input/source.mp4"}]}]
+    )
+    with pytest.raises(dfi.PaidfInputError, match="IsTruncated must be a boolean"):
+        inspect_input_listing(storage)
+    assert storage.s3.downloads == storage.s3.uploads == []

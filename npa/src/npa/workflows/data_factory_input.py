@@ -33,6 +33,10 @@ class PaidfInputError(RuntimeError):
     """An input cannot be selected, verified, normalized, or staged safely."""
 
 
+class _InputListingError(PaidfInputError):
+    """A pagination contract failed with a fixed, non-sensitive diagnosis."""
+
+
 PROVENANCE_SCHEMA = "npa.paidf.input-provenance.v1"
 CONDITIONING_FRAMES = 8
 CONDITIONING_FRAME_COUNT = 93
@@ -1940,7 +1944,8 @@ def _read_lerobot_episode_record(
         )
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            "could not inspect the selected LeRobot episode-metadata shard"
+            "could not inspect the selected LeRobot episode-metadata shard: "
+            f"{_input_listing_diagnostic(exc)}"
         ) from exc
     if not candidates:
         raise PaidfInputError(
@@ -2133,18 +2138,37 @@ def _trim_lerobot_episode(
 def _validate_s3_listing_page(
     page: dict[str, Any], seen_tokens: set[str], *, has_paginator: bool
 ) -> None:
-    if not page.get("IsTruncated"):
+    # Minimal storage adapters may omit the flag; explicit values must be booleans.
+    truncated = page.get("IsTruncated", False)
+    if type(truncated) is not bool:
+        raise _InputListingError(
+            "input listing IsTruncated must be a boolean when present"
+        )
+    if not truncated:
         return
     token = page.get("NextContinuationToken")
     if not isinstance(token, str) or not token:
-        raise PaidfInputError("truncated input listing has no continuation token")
+        raise _InputListingError("truncated input listing has no continuation token")
     if token in seen_tokens:
-        raise PaidfInputError("input listing repeated continuation token")
+        raise _InputListingError("input listing repeated continuation token")
     if not has_paginator:
-        raise PaidfInputError(
+        raise _InputListingError(
             "storage client cannot complete a truncated input listing"
         )
     seen_tokens.add(token)
+
+
+def _input_listing_diagnostic(exc: Exception) -> str:
+    """Retain failure categories without exposing provider messages or object keys."""
+    if isinstance(exc, _InputListingError):
+        return str(exc)
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, dict) else None
+    code = error.get("Code") if isinstance(error, dict) else None
+    name = type(exc).__name__
+    if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9]+", code):
+        return f"{name} ({code})"
+    return name
 
 
 def _list_s3_keys(client: Any, *, bucket: str, prefix: str) -> list[str]:
@@ -2347,7 +2371,8 @@ def _legacy_staged_video(client: Any, base_uri: str) -> str:
         keys = _list_s3_keys(client, bucket=bucket, prefix=prefix)
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            f"could not inspect every object in the canonical PAIDF input prefix: {exc}"
+            "could not inspect every object in the canonical PAIDF input prefix: "
+            f"{_input_listing_diagnostic(exc)}"
         ) from exc
     videos = [
         key
