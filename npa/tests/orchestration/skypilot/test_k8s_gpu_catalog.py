@@ -522,6 +522,24 @@ def test_spec_accelerators_reads_only_kubernetes_profiles() -> None:
     assert spec_accelerators(resources) == ["RTXPRO6000:1", "RTXPRO6000:8"]
 
 
+def test_spec_accelerators_preserves_single_mapping_quantity() -> None:
+    resources = {"gpu": {"cloud": "kubernetes", "accelerators": {"RTXPRO6000": 2}}}
+
+    assert spec_accelerators(resources) == ["RTXPRO6000:2"]
+
+
+def test_spec_accelerators_rejects_unselected_mapping_alternatives() -> None:
+    resources = {
+        "gpu": {
+            "cloud": "kubernetes",
+            "accelerators": {"RTXPRO6000": 1, "H100": 1},
+        }
+    }
+
+    with pytest.raises(ValueError, match="SkyPilot alternatives"):
+        spec_accelerators(resources)
+
+
 def test_spec_accelerators_tolerates_a_missing_block() -> None:
     assert spec_accelerators(None) == []
     assert spec_accelerators({}) == []
@@ -1263,6 +1281,7 @@ def test_validation_environment_recovers_stale_identity_raised_before_api_ensure
 
     def fake_recover(scope: Path, **kwargs: object) -> bool:
         recovered.append({"scope": str(scope), "user_id": str(kwargs["user_id"])})
+        (scope / "client-config.yaml").rename(scope / "retired-client-config.yaml")
         return True
 
     monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)

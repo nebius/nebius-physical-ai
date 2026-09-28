@@ -1403,7 +1403,7 @@ def test_live_sim_image_contains_only_protocol_dependencies() -> None:
     assert dockerfile.startswith("FROM antioch-engine/isaac-sim-6.0.1:0.4.236\n")
     assert 'npa.antioch.live-transport="declared-port-double-wss-v1"' in dockerfile
     assert '"msgpack==1.1.1"' in dockerfile
-    assert '"websockets==15.0.1"' in dockerfile
+    assert '"websockets==16.1.1"' in dockerfile
     assert "/workspace/project" in dockerfile
     # These assertions verify the isolated image's writable cache contract.
     scratch_home = str(PurePosixPath("/") / "tmp" / "npa-home")

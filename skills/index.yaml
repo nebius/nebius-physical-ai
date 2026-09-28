@@ -547,6 +547,25 @@ skills:
         path: npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
       - type: file_exists
         path: npa/src/npa/cli/agent_foxglove.py
+  - name: encord
+    category: tools
+    when_to_use: "Register S3 media with Encord SaaS, pull curated media with exact lineage, or verify a fail-closed roundtrip."
+    path: skills/tools/encord/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "encord", "push", "--help"]
+        contains: "identity-sidecar"
+      - type: cli_help
+        args: ["workbench", "encord", "pull", "--help"]
+        contains: "label-export"
+      - type: cli_help
+        args: ["workbench", "encord", "verify-roundtrip", "--help"]
+        contains: "receipt-uri"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/encord-push.yaml
+          - workflows/testing/encord-pull.yaml
+          - workflows/testing/encord-roundtrip-smoke.yaml
   - name: insights
     category: tools
     when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."
@@ -697,7 +716,7 @@ skills:
         path: npa/docker/workbench/leisaac/REDISTRIBUTION.md
   - name: mjlab
     category: tools
-    when_to_use: "MJLab locomotion evaluation, SONIC checkpoint scoring, SkyPilot MJLab YAMLs, or CLI behavior."
+    when_to_use: "Native MJLab training, resume, measured evaluation, ONNX export, service deployment and GPU workflows."
     path: skills/tools/mjlab/SKILL.md
     smoke:
       - type: cli_help
@@ -706,6 +725,8 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/mjlab-eval.yaml
+          - workflows/testing/mjlab-train-eval.yaml
+          - workflows/testing/mjlab-render.yaml
   - name: development-desktop
     category: tools
     when_to_use: "Set up and operate an Ubuntu development desktop through npa tools desktop, with readable Retina rendering and authenticated public HTTPS access."
@@ -828,6 +849,20 @@ skills:
           - workflows/testing/alpamayo2-ray-hardcases.yaml
       - type: file_exists
         path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
+  - name: flex-pi
+    category: tools
+    when_to_use: "Run, package, validate, or troubleshoot flex-pi world-action policy inference, its runtime-fetched assets, B200 or RTX PRO 6000 workflow, and action artifacts."
+    path: skills/tools/flex-pi/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "flex-pi", "infer", "--help"]
+        contains: "output-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/flex-pi-b200-inference.yaml
+          - workflows/testing/flex-pi-rtxpro-inference.yaml
+      - type: file_exists
+        path: npa/docker/workbench/flex-pi/REDISTRIBUTION.md
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."
@@ -1244,6 +1279,7 @@ skills:
           - workflows/testing/isaac-lab-rl-sweep.yaml
           - workflows/testing/cosmos3-reason.yaml
           - workflows/testing/mjlab-eval.yaml
+          - workflows/testing/mjlab-train-eval.yaml
           - workflows/testing/token-factory-caption.yaml
           - workflows/testing/token-factory-generate.yaml
           - workflows/testing/token-factory-cosmos-reason.yaml

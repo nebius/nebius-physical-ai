@@ -13,15 +13,17 @@ determine scene extent::
 Object-centric photographic captures do not have a vehicle rig, so NVIDIA's own
 COLMAP -> NCore converter stores per-camera ``("<camera>", "world")`` poses and no
 rig node at all (``tools/data_converter/colmap/converter.py``: ``reference_frame
-= "world"``). Every such sequence - including the NCore export shipped in
-``nvidia/PhysicalAI-NuRec-PPISP`` - therefore fails to load in NRE 26.04.
+= "world"``). Other captures store the same transforms as per-frame camera
+``T_sensor_worlds`` values. Every such sequence without a rig edge therefore
+fails to load in NRE 26.04.
 
 For a **single-camera** capture the fix is exact rather than approximate: the
 rig *is* the camera, so ``rig -> world`` is precisely that camera's pose
 trajectory. This module reads an existing NCore V4 sequence with the public
 ``nvidia-ncore`` library, writes ONE extra component store holding that derived
 edge, and emits a new sequence meta-file that references the original stores plus
-the new one. The source data is never modified.
+the new one. Dynamic pose edges remain preferred; frame data is only the fallback.
+The source data is never modified and no multi-camera extrinsics are inferred.
 
 Requires ``nvidia-ncore`` (Apache-2.0, https://github.com/NVIDIA/ncore); the
 import is local to each function so the rest of the workbench tool stays
@@ -35,6 +37,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from npa.workbench.nurec.nurec import NurecError
 
@@ -58,6 +62,9 @@ DERIVED_GROUP_NAME = "npa_rig"
 #: nvidia-ncore installed. ``publish_ncore_sequence`` uploads it automatically
 #: because it lives in the sequence directory.
 RIG_SIDECAR_NAME = "npa-rig.json"
+FRAME_POSE_FIELD = "T_sensor_worlds"
+DYNAMIC_POSE_SOURCE = "dynamic_pose_edge"
+FRAME_POSE_SOURCE = "camera_frame_T_sensor_worlds"
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,7 @@ class RigPoseResult:
     pose_count: int
     cameras: tuple[str, ...] = ()
     already_present: bool = False
+    pose_source: str = ""
     poses_component_group: str = ""
     copied_dynamic_edges: tuple[str, ...] = ()
     copied_static_edges: tuple[str, ...] = ()
@@ -88,6 +96,7 @@ class RigPoseResult:
             "pose_count": self.pose_count,
             "cameras": list(self.cameras),
             "already_present": self.already_present,
+            "pose_source": self.pose_source,
             "poses_component_group": self.poses_component_group,
             "copied_dynamic_edges": list(self.copied_dynamic_edges),
             "copied_static_edges": list(self.copied_static_edges),
@@ -96,21 +105,116 @@ class RigPoseResult:
         }
 
 
-def camera_world_trajectories(ncore_json: Path | str) -> dict[str, tuple[Any, Any]]:
-    """Return ``{camera_id: (poses[N,4,4], timestamps_us[N])}`` for ``<cam> -> world``.
-
-    Reads the sequence's ``poses`` components and keeps every dynamic edge whose
-    target frame is ``world``, which is how the COLMAP converter stores camera
-    extrinsics.
-    """
-    reader = _open_reader(ncore_json)
-    trajectories: dict[str, tuple[Any, Any]] = {}
+def _dynamic_camera_world_trajectories(reader: Any) -> dict[str, tuple[Any, Any]]:
+    """Read camera-to-world trajectories from NCore pose components."""
     from ncore.data.v4 import PosesComponent
 
+    trajectories: dict[str, tuple[Any, Any]] = {}
     for poses_reader in reader.open_component_readers(PosesComponent.Reader).values():
         for (source, target), (poses, timestamps) in poses_reader.get_dynamic_poses():
             if target == WORLD_FRAME and source != RIG_FRAME:
                 trajectories[str(source)] = (poses, timestamps)
+    return trajectories
+
+
+def _frame_timestamps(camera_id: str, camera: Any) -> np.ndarray:
+    """Validate one camera's frame timeline and return its end timestamps."""
+    timestamps = np.asarray(camera.frames_timestamps_us)
+    if timestamps.ndim != 2 or timestamps.shape[1:] != (2,):
+        raise NurecError(
+            f"camera {camera_id!r} has malformed frame timestamps; expected N x 2"
+        )
+    if int(camera.frames_count) != len(timestamps):
+        raise NurecError(
+            f"camera {camera_id!r} frame count disagrees with its timestamp table"
+        )
+    if not np.issubdtype(timestamps.dtype, np.integer):
+        raise NurecError(f"camera {camera_id!r} has non-integer frame timestamps")
+    try:
+        finite = np.all(np.isfinite(timestamps))
+    except TypeError as exc:
+        raise NurecError(
+            f"camera {camera_id!r} has non-numeric frame timestamps"
+        ) from exc
+    if not finite:
+        raise NurecError(f"camera {camera_id!r} has non-finite frame timestamps")
+    if np.any(timestamps[:, 0] > timestamps[:, 1]):
+        raise NurecError(f"camera {camera_id!r} has an invalid frame time interval")
+    if len(timestamps) > 1 and (
+        np.any(timestamps[1:, 0] <= timestamps[:-1, 0])
+        or np.any(timestamps[1:, 1] <= timestamps[:-1, 1])
+    ):
+        raise NurecError(
+            f"camera {camera_id!r} frame timestamps are duplicate or not increasing"
+        )
+    return timestamps[:, 1]
+
+
+def _frame_camera_trajectory(camera_id: str, camera: Any) -> tuple[Any, Any]:
+    """Read and validate one camera's per-frame sensor-to-world transforms."""
+    timestamps = _frame_timestamps(camera_id, camera)
+    poses: list[np.ndarray] = []
+    for timestamp in timestamps:
+        timestamp_us = int(timestamp)
+        names = camera.get_frame_generic_data_names(timestamp_us)
+        if FRAME_POSE_FIELD not in names:
+            raise NurecError(
+                f"camera {camera_id!r} frame {timestamp_us} is missing "
+                f"{FRAME_POSE_FIELD!r}"
+            )
+        pose = np.asarray(camera.get_frame_generic_data(timestamp_us, FRAME_POSE_FIELD))
+        if pose.shape != (4, 4):
+            raise NurecError(
+                f"camera {camera_id!r} frame {timestamp_us} has malformed "
+                f"{FRAME_POSE_FIELD}; expected a 4 x 4 transform"
+            )
+        try:
+            finite = np.all(np.isfinite(pose))
+        except TypeError as exc:
+            raise NurecError(
+                f"camera {camera_id!r} frame {timestamp_us} has a non-numeric "
+                f"{FRAME_POSE_FIELD} transform"
+            ) from exc
+        if not finite:
+            raise NurecError(
+                f"camera {camera_id!r} frame {timestamp_us} has a non-finite "
+                f"{FRAME_POSE_FIELD} transform"
+            )
+        poses.append(pose)
+    if not poses:
+        raise NurecError(f"camera {camera_id!r} has no frames with {FRAME_POSE_FIELD}")
+    return np.stack(poses), timestamps
+
+
+def _frame_camera_world_trajectories(reader: Any) -> dict[str, tuple[Any, Any]]:
+    """Read validated per-frame camera-to-world trajectories."""
+    from ncore.data.v4 import CameraSensorComponent
+
+    cameras = reader.open_component_readers(CameraSensorComponent.Reader)
+    if not cameras:
+        raise NurecError("sequence has no NCore camera components")
+    return {
+        str(camera_id): _frame_camera_trajectory(str(camera_id), camera)
+        for camera_id, camera in cameras.items()
+    }
+
+
+def _camera_world_trajectories(reader: Any) -> tuple[dict[str, tuple[Any, Any]], str]:
+    """Prefer dynamic pose edges, falling back to camera frame transforms."""
+    trajectories = _dynamic_camera_world_trajectories(reader)
+    if trajectories:
+        return trajectories, DYNAMIC_POSE_SOURCE
+    return _frame_camera_world_trajectories(reader), FRAME_POSE_SOURCE
+
+
+def camera_world_trajectories(ncore_json: Path | str) -> dict[str, tuple[Any, Any]]:
+    """Return ``{camera_id: (poses[N,4,4], timestamps_us[N])}`` for ``<cam> -> world``.
+
+    Dynamic pose edges remain preferred. When none exist, validated per-frame
+    ``T_sensor_worlds`` values from NCore camera components are used.
+    """
+    reader = _open_reader(ncore_json)
+    trajectories, _pose_source = _camera_world_trajectories(reader)
     return trajectories
 
 
@@ -140,13 +244,14 @@ def select_reference_camera(
     """
     if not trajectories:
         raise NurecError(
-            "sequence has no '<camera> -> world' dynamic poses; cannot derive a rig frame"
+            "sequence has no '<camera> -> world' dynamic poses or camera-frame "
+            f"{FRAME_POSE_FIELD}; cannot derive a rig frame"
         )
     if preferred:
         if preferred not in trajectories:
             raise NurecError(
                 f"reference camera {preferred!r} has no '-> world' poses "
-                f"(available: {sorted(trajectories)})"
+                f"or frame {FRAME_POSE_FIELD} (available: {sorted(trajectories)})"
             )
         return preferred
     return sorted(trajectories, key=lambda name: (-len(trajectories[name][1]), name))[0]
@@ -181,8 +286,8 @@ def derive_rig_poses(
     try:
         reader = _open_reader(source)
         sequence_id = str(reader.sequence_id)
-        trajectories = camera_world_trajectories(source)
         if has_rig_edge(source):
+            trajectories = _dynamic_camera_world_trajectories(reader)
             return RigPoseResult(
                 ok=True,
                 sequence_id=sequence_id,
@@ -193,6 +298,7 @@ def derive_rig_poses(
                 cameras=tuple(sorted(trajectories)),
                 already_present=True,
             )
+        trajectories, pose_source = _camera_world_trajectories(reader)
         chosen = select_reference_camera(trajectories, preferred=reference_camera)
         poses, timestamps = trajectories[chosen]
     except NurecError:
@@ -217,6 +323,7 @@ def derive_rig_poses(
             reference_camera=chosen,
             pose_count=int(len(timestamps)),
             cameras=tuple(sorted(trajectories)),
+            pose_source=pose_source,
             errors=(
                 "a rig trajectory needs at least two poses to be interpolatable; "
                 f"camera {chosen!r} has {len(timestamps)}",
@@ -248,6 +355,7 @@ def derive_rig_poses(
                     "sensor-to-world trajectory"
                 ),
                 "reference_camera": chosen,
+                "pose_source": pose_source,
             },
         )
         # Selecting a poses component group REPLACES the pose set, so every original
@@ -323,6 +431,7 @@ def derive_rig_poses(
             reference_camera=chosen,
             pose_count=int(len(timestamps)),
             cameras=tuple(sorted(trajectories)),
+            pose_source=pose_source,
             errors=(f"failed to write derived rig poses: {exc}",),
         )
 
@@ -347,6 +456,7 @@ def derive_rig_poses(
                 "derived_by": "npa.workbench.nurec.ncore_rig",
                 "sequence_id": sequence_id,
                 "reference_camera": chosen,
+                "pose_source": pose_source,
                 "poses_component_group": DERIVED_POSES_GROUP,
                 "pose_count": int(len(timestamps)),
                 "cameras": sorted(trajectories),
@@ -365,6 +475,7 @@ def derive_rig_poses(
         reference_camera=chosen,
         pose_count=int(len(timestamps)),
         cameras=tuple(sorted(trajectories)),
+        pose_source=pose_source,
         poses_component_group=DERIVED_POSES_GROUP,
         copied_dynamic_edges=tuple(copied_dynamic),
         copied_static_edges=tuple(copied_static),
