@@ -121,6 +121,51 @@ def test_metadata_formatting_only_does_not_rebuild(repository):
     assert _selection(repository) == []
 
 
+@pytest.mark.parametrize(
+    "field", ["as_of", "registry_note", "verdicts", "validation_states"]
+)
+def test_catalog_description_changes_preserve_recipe_scope(repository, field):
+    root, _ = repository
+    catalog = json.loads((root / _CATALOG).read_text())
+    glossary = field in {"verdicts", "validation_states"}
+    catalog[field] = {"pending-build": "Original wording"} if glossary else "Original"
+    _write(root, _CATALOG, json.dumps(catalog))
+    before = _commit(root)
+    catalog[field] = {"pending-build": "Clarified wording"} if glossary else "Updated"
+    _write(root, _CATALOG, json.dumps(catalog))
+    _write(root, "npa/docker/workbench/sam3/runtime.py", "# Updated\n")
+    assert _selection((root, before)) == ["sam3"]
+
+
+def test_catalog_descriptions_still_rebuild_images_that_copy_catalog_bytes(repository):
+    root, _ = repository
+    path = "npa/docker/workbench/sam2/Dockerfile"
+    _write(
+        root,
+        path,
+        "FROM scratch\nCOPY docker/workbench/blackwell-dc-images.json /catalog.json\n",
+    )
+    before = _commit(root)
+    catalog = json.loads((root / _CATALOG).read_text())
+    catalog["as_of"] = "2026-09-25T00:00:00Z"
+    _write(root, _CATALOG, json.dumps(catalog))
+    assert _selection((root, before)) == ["sam2"]
+
+
+@pytest.mark.parametrize("value", [{"new-state": "New meaning"}, {"pending-build": []}])
+def test_changed_catalog_states_or_invalid_glossaries_keep_full_rebuild(
+    repository, value
+):
+    root, _ = repository
+    catalog = json.loads((root / _CATALOG).read_text())
+    catalog["validation_states"] = {"pending-build": "Original wording"}
+    _write(root, _CATALOG, json.dumps(catalog))
+    before = _commit(root)
+    catalog["validation_states"] = value
+    _write(root, _CATALOG, json.dumps(catalog))
+    assert _selection((root, before)) == _PUBLIC
+
+
 @pytest.mark.parametrize("metadata", [_CONTRACT, _CATALOG])
 def test_global_metadata_changes_keep_full_rebuild(repository, metadata):
     root, _ = repository
@@ -312,3 +357,20 @@ def test_copy_through_symbolic_directory_uses_full_fallback(repository):
     before = _commit(root)
     _write(root, "npa/src/npa/workbench/runtime.py", "# Updated target\n")
     assert _selection((root, before)) == _PUBLIC
+
+
+def test_new_development_candidate_is_selected_without_release_registration(repository):
+    root, before = repository
+    contract = yaml.safe_load((root / _CONTRACT).read_text())
+    contract["images"]["gymnasium-robotics"] = {
+        "dockerfile": "gymnasium-robotics/Dockerfile",
+        "redistribution": "public",
+    }
+    _write(root, _CONTRACT, yaml.safe_dump(contract))
+    _write(root, "npa/docker/workbench/gymnasium-robotics/Dockerfile", "FROM scratch\n")
+    assert _selection((root, before)) == ["gymnasium-robotics"]
+    head = _git(root, "rev-parse", "HEAD")
+    assert select_public_image_builds(root, "", head) == [
+        "gymnasium-robotics",
+        *_PUBLIC,
+    ]

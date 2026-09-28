@@ -17,6 +17,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -689,6 +690,8 @@ def _scan_nested_archive(
                             )
     except (
         EOFError,
+        lzma.LZMAError,
+        zlib.error,
         OSError,
         RuntimeError,
         ValueError,

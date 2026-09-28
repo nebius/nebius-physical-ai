@@ -6,6 +6,8 @@ process.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -444,6 +446,43 @@ def test_shipped_fanout_spec_wave_shape() -> None:
     assert all(f"/images/shard-{letter}/" in argv for letter, argv in zip("abc", argvs))
 
 
+def test_cosmos_synth_fanout_has_one_parallel_wave_then_serial_stubs() -> None:
+    spec = load_spec(SHIPPED / "cosmos-synth-fanout-curation.yaml")
+    waves = build_wave_plan(spec, run_id="cosmos-fanout").waves
+
+    assert [(wave.kind, wave.name, len(wave.steps)) for wave in waves] == [
+        (WAVE_PARALLEL, "synth-fanout", 2),
+        (WAVE_SERIAL, "merge-index", 1),
+        (WAVE_SERIAL, "curate", 1),
+    ]
+    assert waves[0].max_concurrency == 2
+
+    rendered = render_skypilot_job_group_yaml(
+        spec,
+        waves[0].steps,
+        run_id="cosmos-fanout",
+        options=_render_options(),
+        name="cosmos-synth-shards",
+    )
+    assert_no_unresolved_placeholders(rendered)
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc is not None]
+    assert docs[0] == {"name": "cosmos-synth-shards", "execution": "parallel"}
+    assert [doc["name"] for doc in docs[1:]] == ["synth-shard-a", "synth-shard-b"]
+    for task, shard, other in ((docs[1], "a", "b"), (docs[2], "b", "a")):
+        assert f"/synthetic/shard-{shard}/" in task["run"]
+        assert f"/synthetic/shard-{other}/" not in task["run"]
+
+
+def test_cosmos_synth_fanout_rejects_mismatched_shard_override() -> None:
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    with pytest.raises(NpaWorkflowError, match="parallelCount resolves to 3"):
+        merge_config_overrides(
+            load_spec(SHIPPED / "cosmos-synth-fanout-curation.yaml"),
+            {"synth_shards": "3"},
+        )
+
+
 def test_shipped_sweep_spec_wave_shape() -> None:
     spec = load_spec(SHIPPED / "isaac-lab-rl-sweep.yaml")
     waves = build_wave_plan(spec, run_id="shape-2").waves
@@ -640,11 +679,46 @@ def test_setup_uses_uv_when_the_selected_environment_has_no_pip() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
 
     setup = default_npa_setup()
-    pip_probe = setup.index('"$npa_install_python" -m pip --version')
-    uv_fallback = setup.index('uv pip install -q --python "$npa_install_python"')
+    pip_probe = setup.index('"$npa_setup_python" -m pip --version')
+    uv_fallback = setup.index('uv pip install -q --python "$npa_setup_python"')
     assert pip_probe < uv_fallback
-    assert 'npa_install_python="$(command -v python3)"' in setup
-    assert "python3 has no pip and uv is unavailable" in setup
+    assert 'npa_setup_python="${NPA_BAKED_PYTHON:-}"' in setup
+    assert 'npa_setup_python="$(command -v python3)"' in setup
+    assert "selected python has no pip and uv is unavailable" in setup
+
+
+def test_setup_pip_uses_a_working_baked_interpreter(tmp_path: Path) -> None:
+    """Isaac setup must not probe or mutate externally managed system Python."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    trace = tmp_path / "trace"
+    interpreter = '#!/bin/sh\nprintf \'%s:%s\\n\' "$0" "$*" >> "$TRACE"\nexit 0\n'
+    baked = binaries / "baked-python"
+    system = binaries / "python3"
+    baked.write_text(interpreter)
+    system.write_text(interpreter)
+    baked.chmod(0o700)
+    system.chmod(0o700)
+
+    setup = default_npa_setup()
+    start = setup.index('npa_setup_python="')
+    end = setup.index("if ! command -v npa")
+    script = "set -e\n" + setup[start:end] + "npa_pip_install example\n"
+    environment = {
+        **os.environ,
+        "NPA_BAKED_PYTHON": str(baked),
+        "PATH": str(binaries),
+        "TRACE": str(trace),
+    }
+    subprocess.run(["/bin/bash", "-c", script], env=environment, check=True)
+
+    calls = trace.read_text().splitlines()
+    assert calls
+    assert all(line.startswith(f"{baked}:") for line in calls)
+    assert not any(line.startswith(f"{system}:") for line in calls)
 
 
 def test_shipped_trigger_spec_reads_its_knobs_from_config() -> None:
