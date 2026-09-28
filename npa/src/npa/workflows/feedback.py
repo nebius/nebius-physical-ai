@@ -434,20 +434,27 @@ def parse_source_payload(
     source: str,
     feedback_type: FeedbackType,
 ) -> FeedbackPayload:
-    """Interpret a source response using its declared feedback type."""
+    """Interpret a source response using its declared feedback type.
 
-    declared_type = parse_feedback_type(
-        str(payload.get("feedback_type") or feedback_type.value)
-    )
-    if declared_type != feedback_type:
-        raise FeedbackSourceError(
-            f"feedback source declared '{declared_type.value}', expected '{feedback_type.value}'"
-        )
+    Args:
+        payload: Source response with optional success and score fields.
+        source: Source name when the response omits it.
+        feedback_type: Expected response type.
+    Returns:
+        Parsed feedback; explicit success controls the pass/fail value, while
+        omission preserves the original value and score-based success inference.
+    Raises:
+        FeedbackSourceError: The response type or success flag is invalid.
+    """
+
+    _validate_declared_feedback_type(payload, feedback_type)
     value = payload.get("value")
     if value is None:
         value = _fallback_value(payload, feedback_type)
     score = _score_from_payload(payload, value, feedback_type)
     success = _success_from_payload(payload, score)
+    if feedback_type == FeedbackType.PASS_FAIL and "success" in payload:
+        value = success
     rationale = str(payload.get("rationale") or payload.get("critique") or "")
     return FeedbackPayload(
         source=str(payload.get("source") or source),
@@ -458,6 +465,18 @@ def parse_source_payload(
         rationale=rationale,
         metadata=dict(payload.get("metadata") or {}),
     )
+
+
+def _validate_declared_feedback_type(
+    payload: dict[str, Any], feedback_type: FeedbackType
+) -> None:
+    declared_type = parse_feedback_type(
+        str(payload.get("feedback_type") or feedback_type.value)
+    )
+    if declared_type != feedback_type:
+        raise FeedbackSourceError(
+            f"feedback source declared '{declared_type.value}', expected '{feedback_type.value}'"
+        )
 
 
 def _success_from_payload(payload: dict[str, Any], score: float) -> bool:
