@@ -2265,17 +2265,106 @@ def _completed_replay_case(
     return spec, store
 
 
+def _completed_replay_with_provider_traps(spec, store, mocker, render_options=None):
+    submitter = FakeSubmitter()
+    provider = mocker.Mock(side_effect=AssertionError("unexpected provider call"))
+    checker = mocker.Mock(return_value=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        status_fn=provider,
+        reconcile_fn=provider,
+        name_lookup_fn=provider,
+        options=RuntimeOptions(poll_seconds=0, resume=True),
+        output_checker=checker,
+        store=store,
+        render_options=render_options,
+    )
+    resumed._cancel = provider
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=resumed.options,
+    )
+    provider.assert_not_called()
+    assert submitter.calls == []
+    return report, checker
+
+
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_completed_replay_validates_current_rendered_image(
+    tmp_path, mocker, changed_image
+):
+    spec, store = _completed_replay_case(tmp_path)
+    wave = store.read_runtime_state().waves[-1]
+    assert wave["image_identity"]["version"] == IMAGE_IDENTITY_VERSION
+    assert wave["image_identity"]["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    options = SkypilotRenderOptions(
+        image_overrides={
+            "*": "cr.example/x@sha256:" + ("d" if changed_image else "c") * 64
+        }
+    )
+    assert not options.image_digest_pins
+    report, checker = _completed_replay_with_provider_traps(
+        spec, store, mocker, options
+    )
+    if changed_image:
+        assert report.status == "failed"
+        assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+        checker.assert_not_called()
+    else:
+        assert report.status == "succeeded"
+        checker.assert_called()
+        assert report.waves[-1]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing",
+        "malformed",
+        "unknown-version",
+        "missing-references",
+        "changed-reference",
+    ],
+)
+def test_completed_replay_rejects_invalid_image_metadata_before_outputs(
+    tmp_path, mocker, corruption
+):
+    spec, store = _completed_replay_case(tmp_path)
+    state = store.read_runtime_state()
+    wave = state.waves[-1]
+    if corruption == "missing":
+        wave.pop("image_identity")
+    elif corruption == "malformed":
+        wave["image_identity"] = ["invalid"]
+    elif corruption == "unknown-version":
+        wave["image_identity"]["version"] = "unsupported-image-protocol"
+    elif corruption == "missing-references":
+        wave["image_identity"].pop("references")
+    else:
+        wave["image_identity"]["references"] = ["cr.example/x@sha256:" + "d" * 64]
+    store.write_runtime_state(state)
+    report, checker = _completed_replay_with_provider_traps(spec, store, mocker)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+    checker.assert_not_called()
+    assert store.read_runtime_state().waves == state.waves
+
+
 @pytest.mark.parametrize(
     ("identity_field", "identity_function"),
     [
         ("workflow_sha256", "_workflow_identity"),
         ("source_sha256", "_source_identity"),
-        ("image_digest", "_image_identity"),
+        ("image_digest", "_expected_image_identity"),
     ],
 )
 @pytest.mark.parametrize(
     ("recorded_identity", "expected_identity_missing"),
-    [("changed", False), ("", False), ("", True), ("changed", True)],
+    [("changed", False), ("", False), ("", True), ("changed", True), ("same", True)],
 )
 @pytest.mark.parametrize("outputs_exist", [True, False])
 def test_completed_replay_requires_current_immutable_identity(
@@ -2292,9 +2381,10 @@ def test_completed_replay_requires_current_immutable_identity(
     spec, store = _completed_replay_case(tmp_path)
     persisted = store.read_runtime_state()
     assert persisted is not None
-    persisted.waves[-1]["immutable_identity"][identity_field] = (
-        "d" * 64 if recorded_identity else ""
-    )
+    if recorded_identity != "same":
+        persisted.waves[-1]["immutable_identity"][identity_field] = (
+            "d" * 64 if recorded_identity else ""
+        )
     store.write_runtime_state(persisted)
     if expected_identity_missing:
         monkeypatch.setattr(runtime_module, identity_function, lambda *_args: "")
@@ -5960,6 +6050,35 @@ def _assert_reuse_blocked(case, executor, match="output-reuse", *, decision=None
     return blocked
 
 
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_crashed_output_reuse_validates_current_rendered_image(
+    tmp_path, mocker, runtime_sdk_submission, changed_image
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    identity = case[3]["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    legacy_digest = _image_identity(resumed.render_options)
+    assert case[3]["immutable_identity"]["image_digest"] != legacy_digest
+    if changed_image:
+        resumed.render_options = SkypilotRenderOptions(
+            image_overrides={"*": "cr.example/x@sha256:" + "d" * 64}
+        )
+        assert not resumed.render_options.image_digest_pins
+        _assert_reuse_blocked(case, resumed, match="identity")
+        checker.assert_not_called()
+    else:
+        assert resumed.execute(case[1])["status"] == "ok"
+        checker.assert_called()
+        assert resumed.attempts[-1].sky_status == "CANCELLED"
+        assert resumed.attempts[-1].cancellation_state == "verified"
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
+
+
 @pytest.mark.parametrize("crash_before_runtime_record", [True, False])
 @pytest.mark.parametrize("terminal_status", ["CANCELLED", "FAILED", "SUCCEEDED"])
 def test_resume_reuses_output_complete_wave_after_driver_crash(
@@ -6189,7 +6308,18 @@ def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
     state = case[2].read_runtime_state()
     state.waves[-1]["immutable_identity"][field] = "d" * 64
     case[2].write_runtime_state(state)
-    _assert_reuse_blocked(case, _reuse_executor(case), "runtime output-reuse identity")
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    if field == "image_digest":
+        with pytest.raises(NpaWorkflowError, match="versioned image.*identity"):
+            resumed.execute(case[1])
+        assert resumed.attempts == []
+        assert case[2].read_runtime_state().waves == state.waves
+    else:
+        _assert_reuse_blocked(case, resumed, "runtime output-reuse identity")
+    checker.assert_not_called()
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
 
 
 def test_resume_skips_well_formed_nonreuse_cancellation_event(
@@ -6216,7 +6346,7 @@ def test_resume_skips_well_formed_nonreuse_cancellation_event(
     attempt = resumed._attempt_from_record(
         record, steps=[case[1]], kind="serial", group=""
     )
-    assert not resumed._resume_durable_output_reuse(attempt)
+    assert not resumed._resume_durable_output_reuse(attempt, [case[1]])
 
 
 @pytest.mark.parametrize("unrelated_suffix", ["unrelated", "same-prefix"])
