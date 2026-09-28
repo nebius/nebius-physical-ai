@@ -1,0 +1,215 @@
+{
+  "case_count": 9,
+  "cases": [
+    {
+      "case_id": "a43c8fc0dd4d0cc7cf352f3bcd5a6049e7c1d2b5d9dde25bed824472666ab1a6",
+      "instance_id": 202,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "9c6d8514619a8d3d54858a1ee321541f2cbccaf142b95734a7aa4ec924d9b363",
+      "instance_id": 204,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "61fa66269bcc306b94f7bdb23f2502891132fa0849c90cf02a224bf240d6f9f5",
+      "instance_id": 205,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "97d2b7d89c0302347b4ac16fc367a3e2e7d7e2109899a6fa3af07f1e5cc34b33",
+      "instance_id": 207,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "fa6f915a445f6503e092a44bffcc404caa5e94ec985d197810e40532ccf2f5eb",
+      "instance_id": 209,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "9a68cef7fb0e7c8ed359e8d7de028c7dbca8f08a64a5b77cc90e89caf2d608b4",
+      "instance_id": 210,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "a6b49e3a24f884b2a5c9a6cdd539d1efcfd85bc66c7385b20157714f7a426c8a",
+      "instance_id": 211,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "07e0c838c01f9b1f6cef7a73fc253c793101ab3eeb35b7532b1c9ba239f07cc6",
+      "instance_id": 212,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    },
+    {
+      "case_id": "002ee418f1e56667117163eff3d6b4cc74fc1d25ef7d02a2266ddd8fb17675ef",
+      "instance_id": 213,
+      "rollout_id": 0,
+      "split": "train",
+      "task": "picking_up_trash"
+    }
+  ],
+  "development_or_report_allowed": false,
+  "panel_id": "d4ca853f4ba343347a388f61698a8057e835dddb7de566c89203146a10683f25",
+  "policy_binding": {
+    "artifacts": {
+      "checkpoint": {
+        "bytes": 12645726756,
+        "sha256": "9e7e078a721e5a0db60ca180e8ed6ace57d66da03d9884923b5d88304b5f98ea"
+      },
+      "serving": {
+        "bytes": 2243,
+        "sha256": "f4777067d3850e6341865d14e47a7f6ac390cb6d5fb1595f56d8f333501cd5c0"
+      }
+    },
+    "identity_sha256": "ea0debacc6233a3081bf6cd827e330a3ef4ce87b7bb3a481c13e80e15352db5e",
+    "policy_id": "rlc-native-v393",
+    "schema": "npa.behavior.policy-identity.v1"
+  },
+  "policy_binding_sha256": "ea0debacc6233a3081bf6cd827e330a3ef4ce87b7bb3a481c13e80e15352db5e",
+  "protocol": {
+    "case_count": 9,
+    "development_or_report_allowed": false,
+    "evaluator_contract": {
+      "argv_contract": {
+        "bytes": 2069,
+        "sha256": "a4d7d9b1956b4028f1968b732564cd923f90639f462d5cd13d355240c6daceda"
+      },
+      "controller_source": {
+        "bytes": 38789,
+        "sha256": "7d1f70619fe1e5971bfac933e018928e0ed62f1c9bda0aa0142c6dd4a871deae"
+      },
+      "evaluator_source": {
+        "bytes": 6565,
+        "sha256": "6872a90e02e71dfec8c52fc84206d30dc88c0ee7269716930bed2b924b74129c"
+      },
+      "executed_prefix": 20,
+      "fresh_policy_process_per_case": true,
+      "max_steps_argument": null,
+      "mode": "train",
+      "model_prediction_horizon": 30,
+      "num_envs": 1,
+      "num_rollouts": 1,
+      "qualification_process_discarded": true,
+      "rng_contract": {
+        "bytes": 3986,
+        "sha256": "f63a73ff6f73d3cb4398978f39162683e09753e01eb5f8470d493c37aa76faa2"
+      },
+      "robot_config": {
+        "bytes": 2733,
+        "sha256": "a98fa8a81472adfecfb642778d4d7a01e20131be7f70824e0ae095d665cdbb93"
+      },
+      "wrapper": "omnigibson.eval.wrappers.RGBDFullResWrapper",
+      "write_video": true
+    },
+    "mode": "train",
+    "prescribed_cases": [
+      {
+        "instance_id": 202,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 204,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 205,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 207,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 209,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 210,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 211,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 212,
+        "rollout_id": 0
+      },
+      {
+        "instance_id": 213,
+        "rollout_id": 0
+      }
+    ],
+    "protocol_sha256": "cf79389873b71cd5c3b235b1b3da333206d97903cffdca30783613c5e34e5bda",
+    "reporting_claim_allowed": false,
+    "schema": "npa.behavior.nonreporting-train-protocol.v1",
+    "science_lineage": {
+      "action_semantics": {
+        "bytes": 21654,
+        "sha256": "c3604b1c3b3f1914b5c5a7ef2e2be8f0f145d77d8969c3d675651d774a8c3d3c"
+      },
+      "behavior_upstream_commit": "6cbf70b075816096e9be53958780769f3264d25d",
+      "dataset": {
+        "bytes": 67014,
+        "sha256": "e7610329a274501b1c53d033f12a5ed61900f3121f4e5ec2a236af862bf7aeb3"
+      },
+      "dataset_view": {
+        "bytes": 54285,
+        "sha256": "df65574339258b00b204db71738b8df3f792401e9131b403c46159424268846a"
+      },
+      "normalization": {
+        "bytes": 6368,
+        "sha256": "d66ed16830a98f90dde8a315058b4a0df59f5e05734c1686d8b3f66787d0a929"
+      },
+      "task_registry": {
+        "bytes": 8397,
+        "sha256": "1ecc443b9590079fd1a7837d794773be5fe524ab9e9d56e0c14eeae493da2fcc"
+      },
+      "tokenizer": {
+        "bytes": 4264023,
+        "sha256": "8986bb4f423f07f8c7f70d0dbe3526fb2316056c17bae71b1ea975e77a168fc6"
+      }
+    },
+    "split": "train",
+    "task": "picking_up_trash",
+    "task_mapping": {
+      "data_namespace": "behavior_1k_2025_challenge_demos",
+      "data_task_id": 1,
+      "mapping_artifact": {
+        "bytes": 437,
+        "sha256": "0f716b293f9c9dbe626be14695c32af0506bc00f2d0dcfd8772c1ae07f29426d"
+      },
+      "schema": "npa.behavior.nonreporting-train-task-mapping.v1",
+      "source_manifest": {
+        "bytes": 67014,
+        "sha256": "e7610329a274501b1c53d033f12a5ed61900f3121f4e5ec2a236af862bf7aeb3"
+      },
+      "split": "train",
+      "split_manifest": {
+        "bytes": 8397,
+        "sha256": "1ecc443b9590079fd1a7837d794773be5fe524ab9e9d56e0c14eeae493da2fcc"
+      },
+      "task": "picking_up_trash"
+    }
+  },
+  "protocol_sha256": "cf79389873b71cd5c3b235b1b3da333206d97903cffdca30783613c5e34e5bda",
+  "reporting_claim_allowed": false,
+  "schema": "npa.behavior.nonreporting-train-panel.v1"
+}
