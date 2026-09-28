@@ -130,6 +130,30 @@ def test_false_string_cannot_enable_validation_bypass(
         _load_manifest_text(monkeypatch, text)
 
 
+@pytest.mark.parametrize("field_name", ["foundation", "external_build", "internal"])
+def test_cli_rejects_malformed_classification_before_execution(
+    monkeypatch: pytest.MonkeyPatch, field_name: str
+) -> None:
+    text = _manifest_payload(flags_by_container={"malformed": {field_name: "false"}})
+    monkeypatch.setattr(manifest_module, "_manifest_text", lambda: text)
+
+    def forbidden_execution(*_args, **_kwargs):
+        pytest.fail("malformed manifest reached eval execution")
+
+    monkeypatch.setattr("npa.smoke.batch.subprocess.run", forbidden_execution)
+    manifest_module.load_manifest.cache_clear()
+    try:
+        result = runner.invoke(
+            app, ["workbench", "golden-eval", "run-all", "--execute"]
+        )
+    finally:
+        manifest_module.load_manifest.cache_clear()
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert f"field '{field_name}' must be a boolean" in str(result.exception)
+
+
 def test_manifest_loads_and_is_valid() -> None:
     report = validate_manifest(expected_tools=set(CONTAINER_IMAGE_NAMES))
     assert report.ok, "\n".join(str(issue) for issue in report.issues)
