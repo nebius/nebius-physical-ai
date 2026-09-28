@@ -56,6 +56,7 @@ def _input_mounts(config, root):
 def _environment():
     values = {
         "HOME": "/home/worker",
+        "TMPDIR": "/scratch",
         "PATH": "/usr/bin:/bin",
         "PYTHONPATH": "/workbench/npa/src",
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -78,7 +79,7 @@ def _writable_runtime(root):
         "--dev",
         "/dev",
         "--tmpfs",
-        "/tmp",
+        "/scratch",
         "--dir",
         "/home/worker",
         "--chdir",
