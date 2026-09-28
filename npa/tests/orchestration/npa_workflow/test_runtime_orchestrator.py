@@ -1423,45 +1423,6 @@ def test_completed_replay_rejects_legacy_image_identity(
     assert submitter.calls == []
 
 
-@pytest.mark.parametrize("selector", ["*", "workbench.train", "workbench.train.export"])
-def test_image_identity_tracks_effective_override_precedence(selector):
-    from npa.orchestration.npa_workflow.runtime import _image_identity
-    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
-
-    pins = _image_pin_bindings()
-    references = list(pins)
-    overrides = {"*": references[0], selector: references[0]}
-    initial = _image_selection_options(overrides, pins=pins)
-    changed = _image_selection_options(
-        {**overrides, selector: references[1]}, pins=pins
-    )
-    assert (
-        resolve_task_image("workbench.train.export", {}, options=initial)
-        == pins[references[0]]
-    )
-    assert (
-        resolve_task_image("workbench.train.export", {}, options=changed)
-        == pins[references[1]]
-    )
-    assert _image_identity(initial) != _image_identity(changed)
-
-
-@pytest.mark.parametrize("field", ["image", "image_id"])
-def test_workflow_identity_binds_resource_image_selection(tmp_path, field):
-    from dataclasses import replace
-    from npa.orchestration.npa_workflow.runtime import _workflow_identity
-
-    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
-    images = list(_image_pin_bindings().values())
-    initial = replace(
-        spec, resources={"cpu": {**spec.resources["cpu"], field: images[0]}}
-    )
-    changed = replace(
-        spec, resources={"cpu": {**spec.resources["cpu"], field: images[1]}}
-    )
-    assert _workflow_identity(initial) != _workflow_identity(changed)
-
-
 def test_runtime_branch_follows_transition_goto(tmp_path: Path) -> None:
     """A promote decision routes straight to the transition target (data-dependent goto)."""
 
@@ -5981,3 +5942,42 @@ def test_output_reuse_error_type_restores_legacy_and_current_records(error_type)
     )
     assert restored.output_reuse_error_type == (error_type or "")
     assert restored.to_dict()["output_reuse_error_type"] == (error_type or "")
+
+
+@pytest.mark.parametrize("selector", ["*", "workbench.train", "workbench.train.export"])
+def test_image_identity_tracks_effective_override_precedence(selector):
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"*": references[0], selector: references[0]}
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(
+        {**overrides, selector: references[1]}, pins=pins
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=initial)
+        == pins[references[0]]
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=changed)
+        == pins[references[1]]
+    )
+    assert _image_identity(initial) != _image_identity(changed)
+
+
+@pytest.mark.parametrize("field", ["image", "image_id"])
+def test_workflow_identity_binds_resource_image_selection(tmp_path, field):
+    from dataclasses import replace
+    from npa.orchestration.npa_workflow.runtime import _workflow_identity
+
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    images = list(_image_pin_bindings().values())
+    initial = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[0]}}
+    )
+    changed = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[1]}}
+    )
+    assert _workflow_identity(initial) != _workflow_identity(changed)
