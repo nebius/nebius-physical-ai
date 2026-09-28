@@ -212,6 +212,23 @@ def test_verified_terminal_block_relaunch_wave_is_not_in_flight() -> None:
     assert state.in_flight_wave(record["key"]) is None
 
 
+@pytest.mark.parametrize("cancellation", [None, {}, {"state": "requested"}])
+def test_terminal_block_relaunch_requires_verified_cancellation(cancellation):
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "sky_status": "CANCELLED",
+        "job_id": "job-2",
+        "recovery_decision": "block_relaunch",
+        "cancellation": cancellation,
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
 @pytest.mark.parametrize("sky_status", ["PENDING", "RUNNING", "", None])
 def test_verified_cancellation_without_terminality_remains_in_flight(
     sky_status: str | None,
