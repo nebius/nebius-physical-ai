@@ -115,3 +115,11 @@ The capture is public reference RGB-D data, not recorded robot failure
 telemetry. Native baseline replays measure actual failures on the derived
 navigation task before continuation. Fresh GPU results, including failed
 quality, must accompany any readiness claim.
+
+These are prepared public adaptation inputs: observed baseline failures do not
+select the capture or generate the scene. The generic
+[field-failure workflow](field-failure-policy-improvement.md) accepts
+operator-prepared recorded-failure capture bundles, but does not mine raw logs
+or require evidence that a selected capture contains a measured failure.
+The operator supplies capture selection, calibration, task/reset recipes,
+baseline checkpoint, and separate held-out inputs.

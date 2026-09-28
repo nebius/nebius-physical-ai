@@ -83,6 +83,7 @@ def result_summary(plan, selection, final, regional=None):
         "candidate_iterations": plan["candidate_iterations"],
         "scope": "Balanced office adaptation and warehouse retention: new routes in both known public layouts. The focal rendered episode is an office route; aggregate scores cover both regions.",
         "limitations": [
+            "Prepared public adaptation inputs: baseline failures are measured after scene preparation. The generic workflow accepts operator-prepared recorded-failure capture bundles; automatic failure mining is not implemented.",
             "Range observations; camera-conditioned navigation is not qualified.",
             "New-site transfer and private robot integration are not established.",
             "The earlier scan-to-unseen-warehouse failure and original observation gap remain historical evidence.",
