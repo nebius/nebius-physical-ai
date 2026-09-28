@@ -12,6 +12,15 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
+and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
+download public sample data automatically and publish compact, offline
+`reports/index.html` previews beside their complete artifacts. NuRec's public
+PPISP sample is pinned; `nurec check --revision` and `nurec fetch --revision`
+select another revision, with `NPA_NUREC_DATASET_REVISION` as the direct CLI/SDK
+default and `config.dataset_revision` as the workflow setting. Stage the
+reviewed checkout so GPU and CPU viewer stages execute the same source.
+
 [flex-pi inference](../docs/workbench/flex-pi.md#cli-and-sdk) emits one JSON
 document on stdout (`--output-format json`, the default); runtime diagnostics
 go to stderr.

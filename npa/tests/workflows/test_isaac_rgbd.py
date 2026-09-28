@@ -463,7 +463,7 @@ class _MemoryStorage:
         return (self.objects[uri], "etag") if uri in self.objects else None
 
     def put_bytes_conditional(self, payload, uri, *, if_none_match, content_type):
-        assert if_none_match and content_type == "application/json"
+        assert if_none_match and content_type in {"application/json", "text/html"}
         if uri in self.objects:
             raise ValueError("already committed")
         self.objects[uri] = payload
@@ -494,6 +494,12 @@ def test_s3_roundtrip_decodes_remote_bytes_and_commits_manifest_last(
     )
     assert report["views"] == 12 and report["valid_depth_pixels"] == 240
     assert len(report["manifest_sha256"]) == 64
+    preview = storage.objects[report["preview"]["uri"]]
+    assert report["preview"]["sha256"] == hashlib.sha256(preview).hexdigest()
+    assert report["preview"]["poses"] == 3
+    assert b"data:image/jpeg;base64," in preview
+    assert b"s3://" not in preview
+    assert storage.writes[-1] == "s3://test-bucket/run/validation.json"
     with pytest.raises(ValueError, match="fresh run"):
         transport._publish(root, manifest, prefix, storage)
 
@@ -509,6 +515,29 @@ def test_failed_upload_never_commits_success(captured, monkeypatch):
     with pytest.raises(OSError, match="denied"):
         transport._publish(root, manifest, "s3://test-bucket/run/capture", storage)
     assert not storage.writes
+
+
+def test_failed_html_publication_does_not_commit_validation(
+    captured, tmp_path, monkeypatch
+):
+    root, manifest = captured
+    storage = _MemoryStorage()
+    prefix = "s3://test-bucket/run/capture"
+    transport._publish(root, manifest, prefix, storage)
+    original = storage.put_bytes_conditional
+
+    def fail_preview(payload, uri, **kwargs):
+        if kwargs["content_type"] == "text/html":
+            raise OSError("simulated storage failure")
+        return original(payload, uri, **kwargs)
+
+    monkeypatch.setattr(storage, "put_bytes_conditional", fail_preview)
+    report_uri = "s3://test-bucket/run/validation.json"
+    with pytest.raises(OSError, match="storage failure"):
+        transport.validate_s3(
+            prefix + "/manifest.json", report_uri, tmp_path / "staged", storage
+        )
+    assert report_uri not in storage.objects
 
 
 def test_input_bundle_download_is_hashed_and_never_falls_back(rig_request, tmp_path):

@@ -10,6 +10,32 @@ decoded validation: **265 poses, four 1280×720 cameras, 1,060 RGB-D views and
 [measured summary](evidence/multicamera-rgbd/native-validation.json).
 The default procedural room's known-wall-depth live test remains unrun.
 
+For a substantial public-data demo, use
+[`multicamera-rgbd-warehouse.yaml`](../../workflows/testing/multicamera-rgbd-warehouse.yaml).
+Its first stage downloads the public warehouse and collects its textures and
+materials automatically. No local sample bundle is required. The complete run
+uses 265 poses and four 1280×720 cameras; the separate validation stage checks
+all full-resolution bytes before publishing `reports/index.html`.
+
+Download that HTML file and open it in a browser. It works offline and includes
+synchronized RGB/depth thumbnails, a pose slider and sampled colored points
+that rotate by dragging. Up to 32 evenly spaced poses and 2,048 points per pose
+are embedded to keep the report portable. This affects only the display; all
+1,060 views and complete point clouds remain in the dataset. `validation.json`
+records the report URI, SHA256 and display sampling counts. Full capture output
+can be tens of GB, while opening the report does not download that dataset.
+
+```bash
+npa workbench workflow demo run synthetic-data \
+  --project '<project>' --infra 'k8s/<rtx-context>'
+npa workbench workflow demo view synthetic-data '<run-id>' --project '<project>'
+```
+
+Use the run ID printed by `run` after completion. The launcher resolves storage
+from the selected project and stages the reviewed checkout. See
+[public workflow demos](guides/public-workflow-demos.md) for setup and the four
+presets. The lower-level workflow commands below support custom inputs.
+
 The default `procedural://four-camera-room` input creates a repository-authored
 room with four walls, a floor, a crate, lighting, four outward-facing calibrated
 cameras, and three sampled rig poses. It contains no vendor or proprietary
@@ -57,6 +83,8 @@ the same source URI. A baked image alone does not prove the new module exists.
 The only workflow-specific configuration keys are `capture_input_uri`,
 `capture_uri` (default run-scoped capture prefix), and `validation_uri` (default
 run-scoped report object). `bucket` and `prefix` select the usual S3 destination.
+The HTML report is written under `reports/index.html` beside the validation
+object; both shipped specs declare that path as `preview_uri`.
 Use a fresh run prefix for every capture; committed captures and validation
 reports cannot be overwritten.
 

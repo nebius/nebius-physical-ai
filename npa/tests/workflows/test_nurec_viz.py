@@ -102,6 +102,58 @@ def test_build_run_rrd_logs_nurec_entities(tmp_path: Path) -> None:
     assert out.is_file() and out.stat().st_size > 0
 
 
+def test_nurec_preview_embeds_actual_media_and_metric_scope(tmp_path: Path) -> None:
+    import hashlib
+
+    run = _nurec_run(tmp_path / "run")
+    output = tmp_path / "report" / "sim2real.rrd"
+    result = build_run_rrd(
+        str(run), str(output), app_id="neural-reconstruction", html_preview=True
+    )
+    preview = Path(result["html_preview_uri"])
+    assert preview == output.with_name("index.html")
+    assert (
+        result["html_preview_sha256"]
+        == hashlib.sha256(preview.read_bytes()).hexdigest()
+    )
+    content = preview.read_text()
+    assert "data:image/jpeg;base64," in content
+    assert "test/psnr" in content and "31.2" in content
+    assert "not paired with source image indices" in content
+    assert "collision geometry" in content
+    assert str(run) not in content
+
+
+def test_nurec_preview_fails_without_actual_novel_renders(tmp_path: Path) -> None:
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    for path in (run / "novel_views").rglob("*.png"):
+        path.unlink()
+    with pytest.raises(ValueError, match="actual capture and novel-view"):
+        write_nurec_preview(run, tmp_path / "index.html")
+
+
+def test_nurec_preview_refuses_to_replace_existing_report():
+    from types import SimpleNamespace
+    from npa.workflows.data_factory_viz import (
+        DataFactoryVizError,
+        _publish_nurec_preview,
+    )
+
+    storage = SimpleNamespace(read_bytes_with_etag=lambda _uri: (b"existing", "etag"))
+    with pytest.raises(
+        DataFactoryVizError, match="existing NuRec HTML preview differs"
+    ):
+        _publish_nurec_preview(
+            b"replacement", "s3://example-bucket/run/reports/sim2real.rrd", storage
+        )
+    result = _publish_nurec_preview(
+        b"existing", "s3://example-bucket/run/reports/sim2real.rrd", storage
+    )
+    assert result["html_preview_uri"] == "s3://example-bucket/run/reports/index.html"
+
+
 def test_recording_bytes_carry_the_nurec_run_entities(tmp_path: Path) -> None:
     pytest.importorskip("rerun")
     run = _nurec_run(tmp_path / "neural-reconstruction-toro-20260731t170500z")

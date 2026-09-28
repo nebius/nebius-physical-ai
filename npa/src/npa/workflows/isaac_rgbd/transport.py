@@ -113,6 +113,7 @@ def validate_s3(input_path, output_path, root, storage=None):
     _download_files(storage, source.rsplit("/", 1)[0], root, manifest["files"])
     report = validate_dataset(root, manifest)
     report["manifest_sha256"] = _sha256(root / "manifest.json")
+    report["preview"] = _publish_preview(root, manifest, report, destination, storage)
     storage.put_bytes_conditional(
         _json_bytes(report),
         destination,
@@ -120,3 +121,16 @@ def validate_s3(input_path, output_path, root, storage=None):
         content_type="application/json",
     )
     return report
+
+
+def _publish_preview(root, manifest, report, destination, storage):
+    from .contract import _sha256
+    from .preview import write_capture_preview
+
+    path = root / "preview.html"
+    sampling = write_capture_preview(root, manifest, report, path)
+    uri = destination.rsplit("/", 1)[0] + "/reports/index.html"
+    storage.put_bytes_conditional(
+        path.read_bytes(), uri, if_none_match=True, content_type="text/html"
+    )
+    return {"uri": uri, "sha256": _sha256(path), **sampling}

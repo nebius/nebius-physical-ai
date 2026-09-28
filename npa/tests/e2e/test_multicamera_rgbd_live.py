@@ -9,6 +9,7 @@ provisioned by this test. The matrix separately covers workflow submission.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 
 import numpy as np
@@ -47,3 +48,42 @@ def test_four_camera_capture_decodes_and_matches_known_metric_room(tmp_path):
     assert manifest["provenance"]["replicator_version"] != "unit-test"
     assert manifest["request"]["pointcloud"] is True
     _qualified_fixture_geometry(tmp_path, manifest)
+
+
+def test_warehouse_run_publishes_full_validation_and_portable_preview(tmp_path):
+    if os.environ.get("NPA_INTEGRATION_E2E") != "1":
+        pytest.skip("set NPA_INTEGRATION_E2E=1 for live S3 readback")
+    prefix = os.environ.get("NPA_RGBD_WAREHOUSE_RUN_URI", "").rstrip("/")
+    if not prefix:
+        pytest.skip("set NPA_RGBD_WAREHOUSE_RUN_URI to a completed warehouse run")
+    from npa.clients.storage import StorageClient
+
+    storage = StorageClient.from_environment()
+    for name in ("validation.json", "capture/manifest.json", "reports/index.html"):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        storage.download_file(prefix + "/" + name, str(target))
+    validation = json.loads((tmp_path / "validation.json").read_text())
+    manifest_path = tmp_path / "capture/manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    html = (tmp_path / "reports/index.html").read_bytes()
+    assert validation["validated"] is True
+    assert (validation["frames"], validation["cameras"], validation["views"]) == (
+        265,
+        4,
+        1060,
+    )
+    assert (
+        validation["manifest_sha256"]
+        == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    )
+    assert validation["preview"]["sha256"] == hashlib.sha256(html).hexdigest()
+    assert validation["preview"]["poses"] == 32
+    assert b"data:image/jpeg;base64," in html and b"connect-src 'none'" in html
+    assert validation["fused_points"] == validation["valid_depth_pixels"] > 0
+    assert manifest["provenance"]["scope"] == "supplied-usd"
+    assert manifest["provenance"]["replicator_version"] != "unit-test"
+    assert all(
+        (camera["width"], camera["height"]) == (1280, 720)
+        for camera in manifest["request"]["cameras"]
+    )

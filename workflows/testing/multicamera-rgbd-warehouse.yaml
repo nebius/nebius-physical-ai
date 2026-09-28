@@ -7,7 +7,8 @@ metadata:
     Collect NVIDIA's public full warehouse with native USD/MDL dependency
     resolution, render four calibrated 1280x720 RGB-D streams at 265 sampled
     poses over a 66-meter reference route, and verify every decoded artifact
-    including fused world colored point clouds. GPU acceptance remains pending.
+    including fused world colored point clouds. Publish a compact offline HTML
+    preview after every full-resolution artifact passes validation.
 
 config:
   bucket: example-bucket
@@ -17,6 +18,7 @@ config:
   capture_input_uri: "{{config.capture_input_prefix}}/request.json"
   capture_uri: "s3://{{config.bucket}}/{{config.prefix}}/capture"
   validation_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation.json"
+  preview_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/index.html"
 
 resources:
   rtx:
@@ -61,4 +63,6 @@ states:
     outputs:
       - uri: "{{config.validation_uri}}"
         schema: npa.isaac.rgbd.validation.v1
+      - uri: "{{config.preview_uri}}"
+        schema: npa.preview.html.v1
     terminal: true
