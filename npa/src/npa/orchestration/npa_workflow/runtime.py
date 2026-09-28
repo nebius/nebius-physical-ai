@@ -868,7 +868,7 @@ class SkyPilotWaveExecutor:
 
         replayed = self.ledger.completed(key) if self.options.resume else None
         identity_mismatches = (
-            self._completed_replay_identity_mismatches(replayed)
+            self._completed_replay_identity_mismatches(replayed, steps)
             if replayed is not None
             else []
         )
@@ -1996,16 +1996,23 @@ class SkyPilotWaveExecutor:
         return True
 
     def _completed_replay_identity_mismatches(
-        self, record: Mapping[str, Any]
+        self, record: Mapping[str, Any], steps: Sequence[PlanStep]
     ) -> list[str]:
         identity = record.get("immutable_identity")
         if not isinstance(identity, Mapping):
-            identity = {}
+            return ["workflow_sha256", "source_sha256", "image_digest"]
         expected = {
             "workflow_sha256": _workflow_identity(self.spec),
             "source_sha256": _source_identity(),
-            "image_digest": _image_identity(self.render_options),
         }
+        try:
+            version, _ = _loaded_image_identity(record)
+            expected["image_digest"] = _expected_image_identity(
+                self.spec, steps, self.render_options, version, self.run_id
+            )
+        except NpaWorkflowError:
+            # Invalid stored image evidence uses the same fail-closed replay error.
+            expected["image_digest"] = ""
         return [
             name
             for name, value in expected.items()
