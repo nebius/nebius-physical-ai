@@ -264,6 +264,14 @@ restore the saved `chatgpt.cliExecutable` setting from the private chat state an
 reload the window after work finishes. Stop the shared engine only after its
 active conversations have finished.
 
+Both chat runtimes discover an installed replacement if a VS Code extension
+update removes the configured Codex executable. Discovery happens when Codex
+starts; an existing engine keeps running. The launcher preserves an available
+configured executable, otherwise selects the newest installed executable for
+the host's platform and architecture, then tries Codex on `PATH`. Rerun
+`chat-setup` to install this recovery behavior on older setups. Local updates
+still wait for mobile-owned turns to finish before replacing their engine.
+
 ## Local Mac sessions
 
 Use the same mobile interface with Codex running on your Mac:
