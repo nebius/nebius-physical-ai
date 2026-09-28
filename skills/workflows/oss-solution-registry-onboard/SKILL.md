@@ -195,6 +195,65 @@ Keep each solution's capability list and smoke command unique. When promoting a
 deferred capability, change that solution's smoke (or add a second workflow
 spec) rather than mapping it onto a generic family label.
 
+### Habitat-Sim (`habitat-sim-smoke.yaml`)
+
+Pinned: `facebookresearch/habitat-sim`
+`57ee4941dc4765240f0f91f70b2c97a919bf9038` (MIT). Upstream explicitly warns
+that beyond v0.3.4, Meta internal teams do not officially maintain releases or
+provide active development.
+
+The public `npa/docker/workbench/habitat-sim/Dockerfile.bootstrap` ships a neutral
+runtime-fetch launcher. Its retained development proof is recorded in
+[`habitat-sim-development-image-manifest.json`](../../../docs/workbench/validation/habitat-sim-development-image-manifest.json):
+19 RGB/depth frame pairs, 19 Bullet steps and 2.2466 metres of traversal on
+one RTX PRO 6000 Blackwell. Supported release selection remains quarantined.
+The result is scoped to that historical producer/digest and does not qualify
+the separate baked recipe or prove a long benchmark or policy-training result.
+
+The separate legacy `npa/docker/workbench/habitat-sim/Dockerfile` recipe pins linux/amd64 Ubuntu
+22.04 by digest and a signed immutable package snapshot. It materializes only
+the source projection required by the headless RGB-D, pathfinding, Bullet, and
+EGL build. The unused `rlr-audio-propagation` gitlink is CC BY-NC 4.0 and is
+excluded with audio; GUI and docs gitlinks are excluded too. Install the exact
+hash-locked build and runtime wheel closures with dependency resolution and
+build isolation disabled. Keep the candidate unbuilt and publication-
+quarantined until actual OCI bytes pass the complete byte, layer, license,
+SBOM, provenance, vulnerability, payload-absence, and non-root checks.
+
+Hard-gate capabilities (all must pass in one live pod for the selected digest):
+
+- `skokloster_castle_rgb_depth_bullet_traversal`: actual upstream greedy-follower
+  agent actions, saved RGB/depth observations, and nonzero displacement
+- `headless_nvidia_egl_rgb_depth_render`: live NVIDIA GL strings and NVIDIA EGL
+  libraries loaded by the renderer process
+- `bullet_physics_world_step`: Bullet-enabled backend with advancing world time
+- `greedy_geodesic_agent_traversal`: a real pathfinder/navmesh traversal rather
+  than direct state teleportation
+
+Fetch only the official Meta `habitat-test-scenes.zip` archive referenced by the
+pinned Habitat-Sim `examples/settings.py`. Treat its URL as mutable: require the
+94,590,970-byte archive SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+then extract only `skokloster-castle.glb` and `skokloster-castle.navmesh` after
+their exact member names, sizes, CRC32 values, and SHA-256 hashes pass. Delete
+the archive before simulator creation and never bake or extract another member.
+The pinned source README and original asset record identify The King's Hall
+under CC BY 4.0. Preserve creator/scan attribution, license and original-asset
+links, and the Habitat-ready modification provenance in the proof.
+
+Use `workflows/testing/habitat-sim-smoke.yaml` on exactly one RTX PRO 6000
+Blackwell (`sm_120`). The owner-only runtime evidence must prove
+that cluster's Capacity Block is bound `STRICT`; the resource profile alone is
+not that proof. The live gate requires an owner-only, run-bound manager receipt,
+verifies a hashed provider reservation readback, rejects the public registry
+default, and compares Kubernetes `containerStatuses[].imageID` with the pushed
+digest before exact-run teardown. It also downloads and re-hashes every declared
+RGB/depth and inventory object. This renderer must never use B200. A future
+trusted public workflow must rebuild the exact reviewed full Git SHA; that new
+digest requires complete repeated byte scans and genuine RTX qualification, and
+must not transport privately built OCI bytes.
+Defer proprietary/gated datasets, semantic annotations, and distributed
+Habitat-Lab training.
 ### LIBERO (`byof-libero.yaml`)
 
 Pinned: `Lifelong-Robot-Learning/LIBERO`
@@ -326,6 +385,52 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 - `kitchen_egl_env_reset` (post-download subprocess so `OBJ_CATEGORIES` sees mjcf paths)
 - `kitchen_random_rollout` (`run_random_rollouts` with mp4; pin `gymnasium==0.29.1` and bind `env.sim`)
 
+### RoboTwin 2.0 (`byof-robotwin.yaml`)
+
+Pinned source: `RoboTwin-Platform/RoboTwin`
+`96c1feab536306b50c26af200044fcdf126e8904`. Pinned runtime assets:
+`TianxingChen/RoboTwin2.0`
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`.
+
+Hard-gate capability:
+`beat_block_hammer_successful_seed_replay_collection`. It is accepted only when
+the official `demo_clean` path searches for one successful seed, replays that
+seed through SAPIEN/Vulkan on exactly one RTX PRO 6000 Blackwell (`sm_120`), and
+emits native RoboTwin HDF5 plus decoded MP4 evidence with hashes, sizes, action
+and frame counts, observed GPU/image identity, task success, and exit status.
+Renderer startup or task registration alone is not evidence.
+
+The image is a zero-vendor-payload public-bootstrap candidate. A full-SHA
+development image completed one operator-run RTX collection/replay workload;
+see [the operator evidence scope](../../../docs/workbench/byof-robotwin.md#retained-operator-evidence-and-readiness).
+The public BYOF CLI and normal-submit worker bridge remain blocked, so registry
+admission and supported-release publication remain quarantined. CuRobo v0.7.8
+stays runtime-only and its
+noncommercial research/evaluation field-of-use restriction remains binding on
+use and service claims. Official assets remain a
+runtime fetch. The standalone operator path requires an explicit customer-terminal
+decision; the existing hosted authorization boundary remains a separate interface.
+Both bind the customer, run, manifest, terms, activity, issuance, expiry, nonce,
+and assertion. Manager context alone is not customer authentication, and an
+operator result does not attest the blocked worker bridge. The repository MIT
+card classifies the two exact
+locked runtime members, `embodiments.zip` and `objects.zip`, at revision
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. No additional restriction was
+found in the inspected authoritative terms for the five declared output
+classes: native HDF5 action/state data, decoded MP4, rendered frames, smoke
+JSON, and summary JSON. CuRobo's noncommercial research/evaluation limit still
+binds their generating workload and all use/service claims; hosted service is
+not approved. Exact provider/artifact/revision payload probes remain required
+before provisioning, with the customer's runtime-only credential when an
+artifact is gated and no generic NPA terms boolean. The harness must scan the
+pushed exact digest's rootfs and every layer for asset/cache/output bytes and
+launch only that scanned digest. Runtime fetch, a credential, a private
+registry, or a passing byte scan does not grant permission. Trusted full-SHA
+development publication is separate from admission to the supported public
+image catalog; keep the latter excluded. Other embodiments, unselected
+future task assets, the full 50-task sweep, policy training/evaluation, physical
+deployment, and their outputs remain independently deferred.
+
 ### OpenPI (`byof-openpi.yaml` + `openpi-pi05-four-mode.yaml`)
 
 Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac`
@@ -383,6 +488,48 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 - `droid_100_config_gen`
 
 Follow-up: full / debug `train.py` once data is staged.
+
+### robomimic (`byof-robomimic.yaml`)
+
+Pinned: `ARISE-Initiative/robomimic`
+`d309eaecc18acf4152a830a895a6984b8ac71b05` · official Lift PH low-dimensional
+dataset revision `robomimic/robomimic_datasets`
+`74fa018461f479cd9fd15b924a16103012096203`.
+
+The Phase A image is a quarantined neutral candidate only: bake the pinned MIT
+source and exact non-CUDA lock, with no torch, NVIDIA/CUDA runtime, weights,
+dataset, populated cache, credential, or output. Consume CUDA/PyTorch only from
+an independently prepared exact-inventory read-only operator mount after the
+customer creates an unexpired noncommercial-use record bound to its identity,
+run, exact runtime lock and inventory, and official terms. The bootstrap verifies
+or refuses; it must not fetch, install, warm, populate, or accept terms. An
+environment flag, credential, manager signature, private registry, or runtime
+fetch never supplies permission.
+
+The hard gate must pass all three solution-specific capabilities on exactly one
+STRICT-reserved B200 (`sm_100`):
+
+- `lift_ph_lowdim_bc_train` — the upstream `scripts/train.py` BC entrypoint must
+  perform nonzero optimizer work and serialize the Adam step state;
+- `lift_ph_lowdim_heldout_validate` — upstream HDF5 train/valid masks must be
+  nonempty and disjoint, and validation must produce a finite loss;
+- `lift_ph_lowdim_checkpoint_reload_action` — reload the exact saved checkpoint
+  with `policy_from_checkpoint` and infer a finite, in-range action from a
+  held-out trajectory.
+
+Require `robomimic-smoke.json`, the immutable source and dataset identities, the
+dataset file hash and trajectory/sample counts, split hashes/counts, losses,
+checkpoint hash, action proof, observed B200 identity, pod-observed image digest,
+and exit status. Dataset inspection, imports, CPU fallback, a mutable image, or a
+zero-step training config fails the gate. CUDA and cuDNN remain governed by the
+NVIDIA CUDA Toolkit EULA, NVIDIA Software License Agreement, and cuDNN Software
+License Agreement. They have no vendor token probe, so present the exact notice
+and offer customer-controlled accept, decline, and resume actions. Acceptance
+must be time-limited and bind customer, run, runtime lock, and inventory; reject
+missing, declined, stale, or mismatched records before external action. It is
+not a redistribution/publication grant. Keep the dependent capability private;
+download the official dataset at runtime only after every separate gate passes.
+Defer image-policy sweeps, simulator rollouts, and the full algorithm matrix.
 
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 

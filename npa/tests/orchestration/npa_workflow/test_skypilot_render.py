@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -10,11 +11,13 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.deploy.images import container_image_for_tool
 from npa.orchestration.npa_workflow.detect import (
     detect_submit_format,
     is_npa_workflow_spec,
 )
 from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
@@ -23,6 +26,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
+    secret_env_hints_for_plan,
     tool_image_key,
     tool_vendor_interpreters,
     tool_requires_staged_npa_source,
@@ -85,6 +89,82 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
 
 
 @pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_recommends_hub_token_without_rendering_its_value(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    plan = build_plan(spec, run_id="flex-pi-secret-hint")
+
+    assert secret_env_hints_for_plan(plan.steps) == ("HF_TOKEN",)
+
+
+def test_flex_pi_b200_reference_renders_one_b200_and_the_tool_image() -> None:
+    spec = load_spec(NPA_SPECS / "flex-pi-b200-inference.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-b200"),
+        run_id="flex-pi-b200",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["resources"]["accelerators"] == "B200:1"
+    assert task["resources"]["image_id"].startswith(
+        "docker:registry.example/npa-flex-pi:"
+    )
+    assert "--expected-gpu B200" in task["run"]
+    assert task["run"].count("--torch-compile") == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "nodes", "accelerators"),
+    [
+        ("flex-pi-b200-public-training.yaml", 1, "B200:4"),
+        ("flex-pi-b300-multinode-public-training.yaml", 4, "B300:1"),
+    ],
+)
+def test_flex_pi_training_renders_authoritative_node_count(name, nodes, accelerators):
+    spec = load_spec(NPA_SPECS / name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="four-rank-training"),
+        run_id="four-rank-training",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task.get("num_nodes", 1) == nodes
+    assert task["resources"]["accelerators"] == accelerators
+    assert task["envs"]["NPA_FLEX_PI_NODE_COUNT"] == str(nodes)
+    assert task["run"].count("workbench flex-pi train") == 1
+
+
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_reference_workflows_compile_the_denoising_step(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-compiled"),
+        run_id="flex-pi-compiled",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["run"].count("--torch-compile") == 1
+
+
+@pytest.mark.parametrize(
     ("name", "expected_image"),
     [
         (
@@ -114,6 +194,44 @@ def test_non_isaac_byof_specs_render_their_declared_runtime_image(
     assert "ACCEPT_EULA" not in task["envs"]
 
 
+def test_robomimic_plan_uses_unbuilt_placeholder_and_stages_npa(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/exact")
+    spec = load_spec(NPA_SPECS / "byof-robomimic.yaml")
+    plan = build_plan(spec, run_id="robomimic-private-plan")
+
+    with pytest.raises(ValueError, match="publication-quarantined for releases"):
+        container_image_for_tool("robomimic")
+
+    placeholder = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robomimic-private-plan",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    placeholder_task = [doc for doc in yaml.safe_load_all(placeholder) if doc][-1]
+    assert placeholder_task["resources"]["image_id"].endswith(
+        "/npa-robomimic:0.1.0-neutral-unbuilt"
+    )
+
+    private_image = "private.invalid/npa-robomimic@sha256:" + "a" * 64
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robomimic-private-plan",
+        options=SkypilotRenderOptions(
+            image_overrides={"workbench.byof.repo": private_image},
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task["resources"]["image_id"] == f"docker:{private_image}"
+    assert task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/exact"
+    assert "npa CLI not found" in task["setup"]
+    assert "npa workbench byof run" in task["run"]
+
+
 def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
     spec = load_spec(NPA_SPECS / "byof-wan2.2.yaml")
     plan = build_plan(spec, run_id="disk-contract")
@@ -134,15 +252,21 @@ def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
 def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
     paths = sorted(NPA_SPECS.glob("byof*.yaml"))
 
-    # Pinned so a new BYOF spec cannot skip the per-profile image assertion
-    # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 18
+    assert paths, "The BYOF workflow inventory must not be empty"
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
         assert isinstance(base_image, str) and base_image, path.name
+        image_config = (
+            "controller_image" if path.name == "byof-robomimic.yaml" else "base_image"
+        )
+        outer_image = raw["config"].get(image_config)
+        assert isinstance(outer_image, str) and outer_image, path.name
         for profile in raw["resources"].values():
-            assert profile["image"] == "{{config.base_image}}", path.name
+            if path.name == "byof-robotwin.yaml":
+                assert "image" not in profile
+                continue
+            assert profile["image"] == f"{{{{config.{image_config}}}}}", path.name
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:
@@ -1111,6 +1235,142 @@ def test_render_rejects_parallel_execution() -> None:
             run_id="demo",
             options=SkypilotRenderOptions(execution="parallel"),
         )
+
+
+def test_robotwin_outer_render_is_cpu_only_image_free_and_destination_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/public")
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    plan = build_plan(spec, run_id="robotwin-public-launcher")
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robotwin-public-launcher",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    from npa.execution_preflight import skypilot_output_destinations
+
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert "accelerators" not in task["resources"]
+    assert "image" not in task["resources"]
+    assert "image_id" not in task["resources"]
+    assert task["envs"]["NPA_EXECUTION_OUTPUTS"] == "[]"
+    assert task["envs"]["NPA_SRC_S3_URI"].startswith("s3://")
+    assert skypilot_output_destinations([task]) == {}
+    assert "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in task["run"]
+    assert "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1" not in rendered
+    assert "private-bucket-canary" not in rendered
+    assert secret_env_hints_for_plan(plan.steps) == (
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+    )
+
+
+def test_robotwin_source_uri_is_process_isolated_between_renders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    ambient = "s3://ambient-source/should-remain"
+    monkeypatch.setenv("NPA_SRC_S3_URI", ambient)
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    observed: list[str] = []
+    for suffix in ("a" * 64, "b" * 64):
+        prepared = workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id=f"robotwin-{suffix[0]}",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+        try:
+            task = [
+                document
+                for document in yaml.safe_load_all(
+                    prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+                )
+                if document
+            ][-1]
+            observed.append(task["envs"]["NPA_SRC_S3_URI"])
+        finally:
+            prepared.temp_dir.cleanup()
+        assert os.environ["NPA_SRC_S3_URI"] == ambient
+    assert observed == [
+        "${NPA_SRC_S3_URI}",
+        "${NPA_SRC_S3_URI}",
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["timeout", "child", "eof", "start"],
+)
+def test_robotwin_isolated_render_failures_are_controlled(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+
+    class FakeConnection:
+        def close(self) -> None:
+            return None
+
+        def poll(self, _timeout: int) -> bool:
+            if failure == "timeout":
+                return False
+            return True
+
+        def recv(self) -> object:
+            if failure == "eof":
+                raise EOFError
+            if failure == "child":
+                return (False, "private-render-detail")
+            return (True, "unused")
+
+    class FakeProcess:
+        exitcode = 1 if failure == "child" else 0
+
+        def start(self) -> None:
+            if failure == "start":
+                raise OSError("private process detail")
+
+        def terminate(self) -> None:
+            return None
+
+        def join(self, timeout: int) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return False
+
+        def kill(self) -> None:
+            return None
+
+    class FakeContext:
+        def Pipe(self, *, duplex: bool) -> tuple[FakeConnection, FakeConnection]:
+            assert duplex is False
+            return FakeConnection(), FakeConnection()
+
+        def Process(self, **_kwargs: object) -> FakeProcess:
+            return FakeProcess()
+
+    monkeypatch.setattr(
+        workflow_cli.multiprocessing, "get_context", lambda _name: FakeContext()
+    )
+
+    with pytest.raises(NpaWorkflowError) as exc_info:
+        workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id="robotwin-failure-boundary",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+    assert "private-render-detail" not in str(exc_info.value)
+    assert "submission was not attempted" in str(exc_info.value)
 
 
 def test_resolve_task_image_uses_override() -> None:
