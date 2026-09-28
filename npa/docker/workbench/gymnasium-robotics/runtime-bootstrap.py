@@ -1,0 +1,2035 @@
+#!/usr/bin/env python3
+"""Populate an operator-owned Gymnasium-Robotics runtime cache safely.
+
+The public image contains this neutral bootstrap, not Gymnasium-Robotics,
+Shadow Hand assets, MuJoCo, Python wheels, or a populated runtime cache.  A
+complete repository-pinned manifest is required before this module opens a
+network connection.  Acquisition changes delivery only: it grants no use,
+derivative-work, output, or hosted-service rights.
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections.abc import Callable, Iterator
+import contextlib
+import ctypes
+from dataclasses import dataclass
+import errno
+import fcntl
+import hashlib
+import http.client
+import ipaddress
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import select
+import shutil
+import signal
+import socket
+import stat
+import sys
+import tarfile
+import tempfile
+from typing import Any, BinaryIO, NoReturn
+import urllib.error
+import urllib.parse
+import urllib.request
+import venv
+import zipfile
+
+MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-fetch-lock.v2"
+PUBLIC_RUNTIME_CONTRACT_SCHEMA = (
+    "npa.gymnasium-robotics.public-runtime-fetch-manifest.v1"
+)
+RECEIPT_SCHEMA = "npa.gymnasium-robotics.runtime-cache-receipt.v1"
+TREE_MANIFEST_SCHEMA = "npa.gymnasium-robotics.runtime-tree-manifest.v1"
+EXPECTED_SOURCE_COMMIT = "4d1ebecbc6436806cfbc0e42ebc36f594d05844e"
+EXPECTED_MUJOCO_VERSION = "3.12.0"
+EXPECTED_DECISION_SHA256 = (
+    "758a29a6fae55075dc4ba879907e81f949b7a4e23fa726b790fd4361241697a3"
+)
+EXPECTED_WHEEL_COUNT = 19
+ALLOWED_HOSTS = frozenset(
+    {"github.com", "codeload.github.com", "files.pythonhosted.org"}
+)
+REQUIRED_ROLES = frozenset({"solution-source", "python-wheel"})
+SHA256 = re.compile(r"[0-9a-f]{64}")
+REQUIREMENT = re.compile(
+    r"[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s]+"
+    r"(?:\s+--hash=sha256:[0-9a-f]{64})+"
+)
+MAX_ARTIFACTS = 256
+MAX_ARCHIVE_MEMBERS = 100_000
+MAX_RUNTIME_ENTRIES = 200_000
+SHA256_CHUNK_BYTES = 1024 * 1024
+PR_GET_DUMPABLE = 3
+PR_SET_DUMPABLE = 4
+PR_SET_NO_NEW_PRIVS = 38
+PR_SET_SECCOMP = 22
+PR_SET_CHILD_SUBREAPER = 36
+PR_GET_CHILD_SUBREAPER = 37
+SECCOMP_MODE_FILTER = 2
+SECCOMP_RET_ERRNO = 0x00050000
+SECCOMP_RET_ALLOW = 0x7FFF0000
+AUDIT_ARCH_X86_64 = 0xC000003E
+SYS_SOCKET_X86_64 = 41
+SYS_SOCKETPAIR_X86_64 = 53
+SYS_IO_URING_SETUP_X86_64 = 425
+SYS_IO_URING_ENTER_X86_64 = 426
+SYS_IO_URING_REGISTER_X86_64 = 427
+X32_SYSCALL_BIT = 0x40000000
+AF_UNIX = 1
+RUNTIME_ENVIRONMENT_ALLOWLIST = frozenset(
+    {
+        "BYOF_IMAGE",
+        "MUJOCO_GL",
+        "NPA_BYOF_POD_IMAGE_ID",
+        "NPA_GYMNASIUM_RUNTIME_CACHE",
+        "NPA_SMOKE_OUTPUT_DIR",
+        "NVIDIA_DRIVER_CAPABILITIES",
+        "PYOPENGL_PLATFORM",
+    }
+)
+RUNTIME_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+INOTIFY_CHANGE_MASK = (
+    0x00000002  # IN_MODIFY
+    | 0x00000004  # IN_ATTRIB
+    | 0x00000008  # IN_CLOSE_WRITE
+    | 0x00000040  # IN_MOVED_FROM
+    | 0x00000080  # IN_MOVED_TO
+    | 0x00000100  # IN_CREATE
+    | 0x00000200  # IN_DELETE
+    | 0x00000400  # IN_DELETE_SELF
+    | 0x00000800  # IN_MOVE_SELF
+    | 0x00002000  # IN_UNMOUNT
+)
+INOTIFY_DONT_FOLLOW = 0x02000000
+INOTIFY_EXCLUDE_UNLINKED = 0x04000000
+RIGHTS_BOUNDARY = (
+    "Runtime fetch changes delivery only; it does not grant or resolve use, "
+    "derivative-work, output, or hosted-service rights."
+)
+PUBLIC_RUNTIME_CONTRACT_RIGHTS = RIGHTS_BOUNDARY
+PUBLIC_RUNTIME_CONTRACT_EXCLUDED = frozenset(
+    {
+        "gymnasium-robotics-source",
+        "shadow-hand-assets",
+        "mujoco-and-python-wheels",
+        "operator-runtime-cache",
+        "customer-credentials",
+        "customer-data",
+        "vendor-runtimes",
+        "checkpoints",
+    }
+)
+_ApprovedAddress = tuple[int, str]
+
+
+class BootstrapRefusal(RuntimeError):
+    """A fail-closed refusal that must occur without publishing partial state."""
+
+
+@dataclass(frozen=True)
+class Artifact:
+    name: str
+    role: str
+    url: str
+    final_url: str
+    sha256: str
+    size_bytes: int
+    filename: str
+    archive: str
+    strip_prefix: str | None
+    max_unpacked_bytes: int | None
+
+
+@dataclass(frozen=True)
+class RuntimeLock:
+    raw: bytes
+    digest: str
+    artifacts: tuple[Artifact, ...]
+    requirements_raw: bytes
+    requirements_sha256: str
+
+
+@dataclass(frozen=True)
+class _CacheDirectories:
+    """Hold descriptor-bound cache directories for one preparation transaction."""
+
+    root_path: Path
+    root_fd: int
+    versions_fd: int
+
+    @property
+    def bound_root(self) -> Path:
+        return Path(f"/proc/self/fd/{self.root_fd}")
+
+    @property
+    def bound_versions(self) -> Path:
+        return Path(f"/proc/self/fd/{self.versions_fd}")
+
+
+class _SockFilter(ctypes.Structure):
+    _fields_ = [
+        ("code", ctypes.c_ushort),
+        ("jt", ctypes.c_ubyte),
+        ("jf", ctypes.c_ubyte),
+        ("k", ctypes.c_uint32),
+    ]
+
+
+class _SockFprog(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_SockFilter))]
+
+
+def _refuse(message: str) -> NoReturn:
+    raise BootstrapRefusal(message)
+
+
+def _refuse_root_runtime(operation: str) -> None:
+    """Keep runtime acquisition and execution outside uid 0."""
+
+    if os.geteuid() == 0:
+        _refuse(f"{operation} must run as the non-root runtime user")
+
+
+def _stream_sha256(stream: BinaryIO) -> str:
+    digest = hashlib.sha256()
+    while chunk := stream.read(SHA256_CHUNK_BYTES):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return _stream_sha256(stream)
+
+
+def _read_trusted_input(path: Path, *, label: str) -> bytes:
+    """Read one stable trusted input through a no-follow descriptor."""
+
+    try:
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as error:
+        _refuse(f"{label} is unsafe or unavailable: {error}")
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        identity = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size)
+        expected = (before.st_dev, before.st_ino, before.st_mode, before.st_size)
+        if (
+            identity != expected
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid not in {0, os.geteuid()}
+            or stat.S_IMODE(opened.st_mode) & 0o022
+        ):
+            _refuse(f"{label} is not a trusted stable regular file")
+        content = stream.read()
+        after_descriptor = os.fstat(stream.fileno())
+    try:
+        after = path.lstat()
+    except OSError as error:
+        _refuse(f"{label} changed while being read: {error}")
+    final_identity = (
+        after_descriptor.st_dev,
+        after_descriptor.st_ino,
+        after_descriptor.st_mode,
+        after_descriptor.st_size,
+    )
+    path_identity = (after.st_dev, after.st_ino, after.st_mode, after.st_size)
+    if (
+        identity != final_identity
+        or identity != path_identity
+        or len(content) != opened.st_size
+    ):
+        _refuse(f"{label} changed while being read")
+    return content
+
+
+def _safe_url(value: object, *, field: str) -> str:
+    if not isinstance(value, str):
+        _refuse(f"{field} must be a string")
+    parsed = urllib.parse.urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError:
+        _refuse(f"{field} has an invalid port")
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.hostname.lower() not in ALLOWED_HOSTS
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        _refuse(f"{field} is not an approved credential-free immutable HTTPS URL")
+    return value
+
+
+def _safe_relative(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value or "\\" in value:
+        _refuse(f"{field} must be a non-empty POSIX relative path")
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or "." in path.parts:
+        _refuse(f"{field} is unsafe")
+    return str(path)
+
+
+def _positive_int(value: object, *, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        _refuse(f"{field} must be a positive integer")
+    return value
+
+
+def _reject_control_proxies(value: object, *, path: str = "runtime lock") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if any(
+                token in normalized
+                for token in (
+                    "accepteula",
+                    "acceptterms",
+                    "consent",
+                    "credential",
+                    "password",
+                    "secrettoken",
+                    "authorization",
+                )
+            ):
+                _refuse(f"{path} contains a credential or consent proxy")
+            _reject_control_proxies(child, path=f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_control_proxies(child, path=f"{path}[{index}]")
+
+
+def _requirements_hashes(text: str) -> set[str]:
+    logical: list[str] = []
+    pending = ""
+    for source_line in text.splitlines():
+        line = source_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        pending = f"{pending} {line}".strip()
+        if pending.endswith("\\"):
+            pending = pending[:-1].rstrip()
+            continue
+        logical.append(pending)
+        pending = ""
+    if pending:
+        _refuse("runtime requirements lock ends with an incomplete continuation")
+    names: set[str] = set()
+    hashes: set[str] = set()
+    for requirement in logical:
+        if REQUIREMENT.fullmatch(requirement) is None:
+            _refuse(f"unhashed or malformed runtime requirement: {requirement}")
+        raw_name = requirement.split("==", 1)[0].split("[", 1)[0]
+        name = re.sub(r"[-_.]+", "-", raw_name).lower()
+        selected = re.findall(r"--hash=sha256:([0-9a-f]{64})", requirement)
+        if name in names or len(selected) != 1 or selected[0] in hashes:
+            _refuse("runtime requirements must bind one unique wheel per distribution")
+        names.add(name)
+        hashes.add(selected[0])
+    if len(names) != EXPECTED_WHEEL_COUNT:
+        _refuse("runtime Python wheel closure is incomplete")
+    return hashes
+
+
+def _validate_public_runtime_contract(contract: Path, source_lock: Path) -> None:
+    """Bind runtime preparation to the payload-free public-image contract."""
+
+    raw = _read_trusted_input(contract, label="public runtime-fetch contract")
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        _refuse(f"public runtime-fetch contract is malformed: {error}")
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != PUBLIC_RUNTIME_CONTRACT_SCHEMA
+    ):
+        _refuse("public runtime-fetch contract schema is unsupported")
+    if (
+        payload.get("status") != "complete"
+        or payload.get("tool") != "gymnasium-robotics"
+    ):
+        _refuse("public runtime-fetch contract is incomplete")
+    if payload.get("rights_boundary") != PUBLIC_RUNTIME_CONTRACT_RIGHTS:
+        _refuse("public runtime-fetch rights boundary changed")
+    if payload.get("image") != {
+        "redistribution": "public",
+        "payload_policy": "neutral-bootstrap-only",
+        "restricted_payloads_baked": False,
+    }:
+        _refuse("public runtime image is not payload-free")
+    runtime = payload.get("runtime_fetch")
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("delivery") != "operator-owned-runtime-cache"
+    ):
+        _refuse("public runtime-fetch delivery is not operator-owned")
+    if (
+        runtime.get("customer_gate")
+        != "operator-owned-official-access-after-notice-and-acceptance"
+    ):
+        _refuse("customer notice/acceptance gate is missing")
+    if runtime.get("acceptance_record") != "customer-run-external":
+        _refuse("customer acceptance must remain external")
+    if runtime.get("credential_storage") != "never-in-image-or-repository":
+        _refuse("runtime credential storage boundary changed")
+    if (
+        set(payload.get("excluded_from_public_image", []))
+        != PUBLIC_RUNTIME_CONTRACT_EXCLUDED
+    ):
+        _refuse("public runtime exclusion set changed")
+    source_raw = _read_trusted_input(source_lock, label="runtime lock")
+    if (
+        runtime.get("source_lock") != source_lock.name
+        or runtime.get("source_lock_sha256") != hashlib.sha256(source_raw).hexdigest()
+    ):
+        _refuse("public runtime source-lock binding changed")
+    corresponding = source_lock.with_name("corresponding-source.lock.json")
+    corresponding_raw = _read_trusted_input(
+        corresponding, label="corresponding-source lock"
+    )
+    if (
+        runtime.get("corresponding_source_lock") != corresponding.name
+        or runtime.get("corresponding_source_lock_sha256")
+        != hashlib.sha256(corresponding_raw).hexdigest()
+    ):
+        _refuse("public runtime corresponding-source binding changed")
+    try:
+        corresponding_payload = json.loads(corresponding_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        _refuse(f"corresponding-source lock is malformed: {error}")
+    if (
+        not isinstance(corresponding_payload, dict)
+        or corresponding_payload.get("public_corresponding_source_delivery")
+        != "runtime-fetch-operator-owned"
+    ):
+        _refuse("corresponding-source delivery is not runtime-fetch-only")
+
+
+def load_lock(manifest: Path, requirements: Path) -> RuntimeLock:
+    """Validate every trust field before any caller can fetch an artifact."""
+
+    try:
+        raw = _read_trusted_input(manifest, label="runtime lock")
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        _refuse(f"runtime lock is unavailable or malformed: {error}")
+    if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
+        _refuse("runtime lock schema is unsupported")
+    _reject_control_proxies(payload)
+    if payload.get("status") != "complete":
+        _refuse("runtime lock is incomplete; refusing before network access")
+    if payload.get("source_commit") != EXPECTED_SOURCE_COMMIT:
+        _refuse("runtime lock source commit changed")
+    if payload.get("mujoco_version") != EXPECTED_MUJOCO_VERSION:
+        _refuse("runtime lock MuJoCo version changed")
+    if payload.get("decision_sha256") != EXPECTED_DECISION_SHA256:
+        _refuse("runtime lock manager decision binding changed")
+    if payload.get("rights_boundary") != RIGHTS_BOUNDARY:
+        _refuse("runtime lock rights boundary is absent or changed")
+    if (
+        payload.get("expected_python_distribution_count") != EXPECTED_WHEEL_COUNT
+        or payload.get("resolved_python_artifact_count") != EXPECTED_WHEEL_COUNT
+    ):
+        _refuse("runtime Python wheel closure is incomplete")
+    requirements_sha256 = payload.get("requirements_lock_sha256")
+    if not isinstance(requirements_sha256, str) or not SHA256.fullmatch(
+        requirements_sha256
+    ):
+        _refuse("runtime lock has no exact requirements digest")
+    try:
+        requirements_raw = _read_trusted_input(
+            requirements, label="runtime requirements lock"
+        )
+        if hashlib.sha256(requirements_raw).hexdigest() != requirements_sha256:
+            _refuse("runtime requirements lock bytes changed")
+        requirements_text = requirements_raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        _refuse(f"runtime requirements lock is unavailable: {error}")
+    if (
+        "# status: complete" not in requirements_text
+        or "--hash=sha256:" not in requirements_text
+        or "--require-hashes" in requirements_text
+    ):
+        _refuse("runtime requirements lock is incomplete or malformed")
+    requirement_hashes = _requirements_hashes(requirements_text)
+
+    records = payload.get("artifacts")
+    if not isinstance(records, list) or not records or len(records) > MAX_ARTIFACTS:
+        _refuse("runtime artifact inventory is absent or too large")
+    artifacts: list[Artifact] = []
+    names: set[str] = set()
+    filenames: set[str] = set()
+    roles: set[str] = set()
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            _refuse(f"artifact {index} is not an object")
+        name = _safe_relative(record.get("name"), field=f"artifact {index} name")
+        filename = _safe_relative(
+            record.get("filename"), field=f"artifact {index} filename"
+        )
+        if "/" in name or "/" in filename or name in names or filename in filenames:
+            _refuse(f"artifact {index} name or filename is duplicated or nested")
+        role = record.get("role")
+        if role not in REQUIRED_ROLES:
+            _refuse(f"artifact {index} has an unsupported role")
+        digest = record.get("sha256")
+        if not isinstance(digest, str) or not SHA256.fullmatch(digest):
+            _refuse(f"artifact {index} has no exact SHA-256")
+        archive = record.get("archive")
+        if archive not in {"tar.gz", "wheel"}:
+            _refuse(f"artifact {index} has an unsupported archive format")
+        strip_prefix = record.get("strip_prefix")
+        max_unpacked = record.get("max_unpacked_bytes")
+        if archive == "tar.gz":
+            strip_prefix = _safe_relative(
+                strip_prefix, field=f"artifact {index} strip_prefix"
+            )
+            max_unpacked = _positive_int(
+                max_unpacked, field=f"artifact {index} max_unpacked_bytes"
+            )
+        else:
+            if strip_prefix is not None:
+                _refuse(f"wheel artifact {index} may not declare strip_prefix")
+            max_unpacked = _positive_int(
+                max_unpacked, field=f"artifact {index} max_unpacked_bytes"
+            )
+        artifacts.append(
+            Artifact(
+                name=name,
+                role=role,
+                url=_safe_url(record.get("url"), field=f"artifact {index} url"),
+                final_url=_safe_url(
+                    record.get("final_url"), field=f"artifact {index} final_url"
+                ),
+                sha256=digest,
+                size_bytes=_positive_int(
+                    record.get("size_bytes"), field=f"artifact {index} size_bytes"
+                ),
+                filename=filename,
+                archive=archive,
+                strip_prefix=strip_prefix,
+                max_unpacked_bytes=max_unpacked,
+            )
+        )
+        names.add(name)
+        filenames.add(filename)
+        roles.add(role)
+    if not REQUIRED_ROLES.issubset(roles):
+        _refuse("runtime artifact inventory lacks source or wheel roles")
+    if sum(item.role == "solution-source" for item in artifacts) != 1:
+        _refuse("runtime artifact inventory must contain one solution source")
+    if sum(item.role == "python-wheel" for item in artifacts) != EXPECTED_WHEEL_COUNT:
+        _refuse("runtime Python wheel closure is incomplete")
+    wheel_hashes = {item.sha256 for item in artifacts if item.role == "python-wheel"}
+    if wheel_hashes != requirement_hashes:
+        _refuse("runtime wheel artifacts do not match requirements hashes")
+    by_name = {item.name: item for item in artifacts}
+    source_artifact = by_name.get("gymnasium-robotics-source")
+    mujoco_artifact = by_name.get("mujoco-3.12.0-cp312-linux-x86_64")
+    components = payload.get("components")
+    if not isinstance(components, dict):
+        _refuse("runtime component identity inventory is absent")
+    try:
+        expected_source_archive = components["farama_gymnasium_robotics"][
+            "archive_sha256"
+        ]
+        expected_mujoco_wheel = components["mujoco"]["wheel_sha256"]
+    except (KeyError, TypeError):
+        _refuse("runtime component identity inventory is incomplete")
+    if (
+        source_artifact is None
+        or source_artifact.role != "solution-source"
+        or source_artifact.sha256 != expected_source_archive
+        or mujoco_artifact is None
+        or mujoco_artifact.role != "python-wheel"
+        or mujoco_artifact.sha256 != expected_mujoco_wheel
+    ):
+        _refuse("runtime source or MuJoCo artifact identity changed")
+    return RuntimeLock(
+        raw=raw,
+        digest=hashlib.sha256(raw).hexdigest(),
+        artifacts=tuple(artifacts),
+        requirements_raw=requirements_raw,
+        requirements_sha256=requirements_sha256,
+    )
+
+
+def _validate_cache_directory(
+    metadata: os.stat_result, *, operator_owned: bool
+) -> None:
+    """Validate one descriptor-opened cache directory."""
+
+    if not stat.S_ISDIR(metadata.st_mode):
+        _refuse("runtime cache path component is not a directory")
+    allowed_owners = {os.geteuid()} if operator_owned else {0, os.geteuid()}
+    if metadata.st_uid not in allowed_owners:
+        _refuse("runtime cache path component has an untrusted owner")
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        _refuse("runtime cache path component is group/world writable")
+
+
+def _open_cache_component(parent_fd: int, name: str, *, operator_owned: bool) -> int:
+    """Create if needed and bind one no-follow directory below a trusted fd."""
+
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except OSError as error:
+            _refuse(f"runtime cache cannot be created safely: {error}")
+        try:
+            descriptor = os.open(name, flags, dir_fd=parent_fd)
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                _refuse(
+                    "runtime cache path may not traverse a symlink or "
+                    "non-directory component"
+                )
+            _refuse(f"runtime cache path cannot be opened safely: {error}")
+    except OSError as error:
+        if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+            _refuse(
+                "runtime cache path may not traverse a symlink or "
+                "non-directory component"
+            )
+        _refuse(f"runtime cache path cannot be opened safely: {error}")
+    opened = os.fstat(descriptor)
+    try:
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as error:
+        os.close(descriptor)
+        _refuse(f"runtime cache path changed while being opened: {error}")
+    if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+        os.close(descriptor)
+        _refuse("runtime cache path changed while being opened")
+    try:
+        _validate_cache_directory(opened, operator_owned=operator_owned)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _open_cache_root(cache_root: Path) -> tuple[Path, int]:
+    """Resolve and create the cache root beneath descriptor-bound ancestors."""
+
+    cache_root = Path(os.path.abspath(cache_root))
+    forbidden = (Path("/"), Path("/opt"), Path("/usr"), Path("/var"))
+    if any(cache_root == item or item in cache_root.parents for item in forbidden[1:]):
+        _refuse("runtime cache must be an operator-owned external path")
+    if cache_root == forbidden[0]:
+        _refuse("runtime cache may not be the filesystem root")
+    try:
+        descriptor = os.open(
+            "/", os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
+    except OSError as error:
+        _refuse(f"runtime cache root cannot be opened safely: {error}")
+    try:
+        for index, name in enumerate(cache_root.parts[1:]):
+            child = _open_cache_component(
+                descriptor,
+                name,
+                operator_owned=index == len(cache_root.parts[1:]) - 1,
+            )
+            os.close(descriptor)
+            descriptor = child
+        return cache_root, descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _require_directory_identity(path: Path, descriptor: int, *, label: str) -> None:
+    """Require an external path to retain the descriptor-bound directory identity."""
+
+    try:
+        named = path.lstat()
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        _refuse(f"{label} identity cannot be verified: {error}")
+    if (
+        stat.S_ISLNK(named.st_mode)
+        or not stat.S_ISDIR(named.st_mode)
+        or (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        _refuse(f"{label} identity changed during runtime preparation")
+    _validate_cache_directory(opened, operator_owned=True)
+
+
+def _require_cache_identities(cache: _CacheDirectories) -> None:
+    """Reject replacement of either descriptor-bound cache directory."""
+
+    _require_directory_identity(
+        cache.root_path, cache.root_fd, label="runtime cache root"
+    )
+    _require_directory_identity(
+        cache.root_path / "versions",
+        cache.versions_fd,
+        label="runtime cache versions directory",
+    )
+
+
+@contextlib.contextmanager
+def _open_cache_directories(cache_root: Path) -> Iterator[_CacheDirectories]:
+    """Keep the validated root and versions descriptors live for one transaction."""
+
+    root_path, root_fd = _open_cache_root(cache_root)
+    versions_fd: int | None = None
+    try:
+        versions_fd = _open_cache_component(root_fd, "versions", operator_owned=True)
+        cache = _CacheDirectories(root_path, root_fd, versions_fd)
+        _require_cache_identities(cache)
+        if not cache.bound_root.is_dir() or not cache.bound_versions.is_dir():
+            _refuse("descriptor-bound runtime cache traversal is unavailable")
+        yield cache
+    finally:
+        if versions_fd is not None:
+            os.close(versions_fd)
+        os.close(root_fd)
+
+
+class _RestrictedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: BinaryIO,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        _safe_url(newurl, field="runtime artifact redirect")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _resolved_address(answer: Any) -> _ApprovedAddress:
+    try:
+        family = answer[0]
+        raw_address = answer[4][0]
+        address = ipaddress.ip_address(str(raw_address).split("%", 1)[0])
+    except (IndexError, KeyError, TypeError, ValueError) as error:
+        _refuse(f"runtime artifact hostname resolution is malformed: {error}")
+    expected = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    if family != expected:
+        _refuse("runtime artifact hostname resolution is malformed")
+    return int(family), str(address)
+
+
+def _globally_routable(address: str) -> bool:
+    parsed = ipaddress.ip_address(address)
+    return (
+        parsed.is_global
+        and not parsed.is_loopback
+        and not parsed.is_private
+        and not parsed.is_link_local
+        and not parsed.is_reserved
+        and not parsed.is_multicast
+        and not parsed.is_unspecified
+    )
+
+
+def _approved_addresses(
+    hostname: str,
+    resolver: Callable[..., list[tuple[Any, ...]]],
+) -> tuple[_ApprovedAddress, ...]:
+    try:
+        answers = resolver(hostname, 443, type=socket.SOCK_STREAM)
+    except OSError as error:
+        _refuse(f"runtime artifact hostname resolution failed: {error}")
+    if not answers:
+        _refuse("runtime artifact hostname resolution failed")
+    addresses = tuple(dict.fromkeys(_resolved_address(answer) for answer in answers))
+    if not all(_globally_routable(address) for _family, address in addresses):
+        _refuse("runtime artifact destination is not globally routable")
+    return addresses
+
+
+def _connect_approved_address(
+    approved_address: _ApprovedAddress,
+    port: int,
+    timeout: object,
+    source_address: tuple[str, int] | None,
+) -> socket.socket:
+    family, address = approved_address
+    connection = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+            connection.settimeout(timeout)  # type: ignore[arg-type]
+        if source_address:
+            connection.bind(source_address)
+        destination = (
+            (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
+        )
+        connection.connect(destination)
+        return connection
+    except OSError:
+        connection.close()
+        raise
+
+
+def _connect_approved_addresses(
+    approved_addresses: tuple[_ApprovedAddress, ...],
+    port: int,
+    timeout: object,
+    source_address: tuple[str, int] | None,
+) -> socket.socket:
+    last_error: OSError | None = None
+    for approved_address in approved_addresses:
+        try:
+            return _connect_approved_address(
+                approved_address, port, timeout, source_address
+            )
+        except OSError as error:
+            last_error = error
+    raise OSError("all approved runtime artifact addresses failed") from last_error
+
+
+def _close_failed_connection(connection: socket.socket | None) -> None:
+    if connection is None:
+        return
+    with contextlib.suppress(OSError):
+        connection.close()
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(
+        self,
+        host: str,
+        *,
+        approved_addresses: tuple[_ApprovedAddress, ...],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(host, **kwargs)
+        self._approved_addresses = approved_addresses
+        self._reviewed_destination = (self.host, self.port)
+        self._create_connection = self._connect_approved
+
+    def _connect_approved(
+        self,
+        address: tuple[str, int],
+        timeout: object = socket._GLOBAL_DEFAULT_TIMEOUT,
+        source_address: tuple[str, int] | None = None,
+    ) -> socket.socket:
+        if self._tunnel_host is not None:
+            _refuse("runtime artifact HTTPS tunneling is not allowed")
+        if (
+            address != self._reviewed_destination
+            or (self.host, self.port) != self._reviewed_destination
+        ):
+            _refuse("runtime artifact HTTPS destination changed")
+        return _connect_approved_addresses(
+            self._approved_addresses, self.port, timeout, source_address
+        )
+
+    def connect(self) -> None:
+        try:
+            super().connect()
+        except (BootstrapRefusal, OSError, ValueError):
+            failed_connection = self.sock
+            self.sock = None
+            _close_failed_connection(failed_connection)
+            raise
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, resolver: Callable[..., list[tuple[Any, ...]]]) -> None:
+        super().__init__()
+        self._resolver = resolver
+
+    def https_open(self, request: urllib.request.Request) -> BinaryIO:
+        url = _safe_url(request.full_url, field="runtime artifact request")
+        hostname = urllib.parse.urlsplit(url).hostname
+        assert hostname is not None
+        approved_addresses = _approved_addresses(hostname, self._resolver)
+
+        def connection(host: str, **kwargs: Any) -> _PinnedHTTPSConnection:
+            return _PinnedHTTPSConnection(
+                host, approved_addresses=approved_addresses, **kwargs
+            )
+
+        return self.do_open(connection, request, context=self._context)
+
+
+def _open_url(url: str) -> contextlib.AbstractContextManager[BinaryIO]:
+    _safe_url(url, field="runtime artifact URL")
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "npa-gymnasium-robotics-bootstrap/1"},
+        method="GET",
+    )
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _PinnedHTTPSHandler(socket.getaddrinfo),
+        _RestrictedRedirectHandler(),
+    )
+    return opener.open(request, timeout=60)  # noqa: S310
+
+
+def _download(
+    artifact: Artifact,
+    destination: Path,
+    *,
+    opener: Callable[[str], contextlib.AbstractContextManager[BinaryIO]],
+) -> None:
+    digest = hashlib.sha256()
+    observed = 0
+    try:
+        with opener(artifact.url) as response, destination.open("xb") as output:
+            final_url = getattr(response, "geturl", lambda: artifact.url)()
+            if final_url != artifact.final_url:
+                _refuse(f"redirect target changed for {artifact.name}")
+            _safe_url(final_url, field=f"artifact {artifact.name} resolved URL")
+            while chunk := response.read(1024 * 1024):
+                observed += len(chunk)
+                if observed > artifact.size_bytes:
+                    _refuse(f"size mismatch for {artifact.name}")
+                digest.update(chunk)
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+    except BootstrapRefusal:
+        raise
+    except (OSError, urllib.error.URLError) as error:
+        _refuse(f"runtime artifact access failed for {artifact.name}: {error}")
+    if observed != artifact.size_bytes:
+        _refuse(f"size mismatch for {artifact.name}")
+    if digest.hexdigest() != artifact.sha256:
+        _refuse(f"SHA-256 mismatch for {artifact.name}")
+    destination.chmod(0o400)
+
+
+def _member_destination(name: str, *, strip_prefix: str) -> PurePosixPath | None:
+    if "\\" in name:
+        _refuse("archive member contains a non-POSIX separator")
+    source = PurePosixPath(name)
+    if source.is_absolute() or ".." in source.parts:
+        _refuse(f"unsafe archive member: {name}")
+    prefix = PurePosixPath(strip_prefix)
+    if source == prefix:
+        return None
+    try:
+        relative = source.relative_to(prefix)
+    except ValueError:
+        _refuse(f"archive member escapes required prefix: {name}")
+    if not relative.parts or "." in relative.parts or ".." in relative.parts:
+        _refuse(f"unsafe archive member: {name}")
+    return relative
+
+
+def _extract_source(artifact: Artifact, archive_path: Path, destination: Path) -> None:
+    assert artifact.strip_prefix is not None
+    assert artifact.max_unpacked_bytes is not None
+    destination.mkdir(mode=0o700)
+    observed: set[str] = set()
+    expanded = 0
+    try:
+        archive = tarfile.open(archive_path, mode="r:gz")
+    except (OSError, tarfile.TarError) as error:
+        _refuse(f"source archive is malformed: {error}")
+    with archive:
+        members = archive.getmembers()
+        if not members or len(members) > MAX_ARCHIVE_MEMBERS:
+            _refuse("source archive member count is invalid")
+        for member in members:
+            relative = _member_destination(
+                member.name, strip_prefix=artifact.strip_prefix
+            )
+            if relative is None:
+                if not member.isdir():
+                    _refuse("source archive prefix is not a directory")
+                continue
+            normalized = str(relative)
+            folded = normalized.casefold()
+            if folded in observed:
+                _refuse(f"source archive has a duplicate path: {normalized}")
+            observed.add(folded)
+            target = destination.joinpath(*relative.parts)
+            if member.isdir():
+                target.mkdir(mode=0o700, parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                _refuse(f"source archive contains a link or special file: {normalized}")
+            expanded += member.size
+            if expanded > artifact.max_unpacked_bytes:
+                _refuse("source archive exceeds its expansion limit")
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            stream = archive.extractfile(member)
+            if stream is None:
+                _refuse(f"source archive member is unreadable: {normalized}")
+            with target.open("xb") as output:
+                shutil.copyfileobj(stream, output, length=1024 * 1024)
+            target.chmod(0o600 | (member.mode & 0o100))
+    if not observed:
+        _refuse("source archive contains no materialized content")
+
+
+def _validate_wheel(path: Path, *, max_unpacked_bytes: int) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            infos = archive.infolist()
+            if not infos:
+                _refuse(f"wheel is empty: {path.name}")
+            if len(infos) > MAX_ARCHIVE_MEMBERS:
+                _refuse(f"wheel exceeds its expansion limit: {path.name}")
+            folded: set[str] = set()
+            expanded = 0
+            for info in infos:
+                name = _safe_relative(info.filename, field=f"wheel {path.name} member")
+                key = name.casefold()
+                if key in folded:
+                    _refuse(f"wheel contains a duplicate path: {path.name}")
+                folded.add(key)
+                if info.flag_bits & 1:
+                    _refuse(f"wheel contains an encrypted member: {path.name}")
+                mode = info.external_attr >> 16
+                if stat.S_ISLNK(mode):
+                    _refuse(f"wheel contains a symbolic link: {path.name}")
+                if info.is_dir():
+                    continue
+                with archive.open(info) as member:
+                    while chunk := member.read(1024 * 1024):
+                        expanded += len(chunk)
+                        if expanded > max_unpacked_bytes:
+                            _refuse(f"wheel exceeds its expansion limit: {path.name}")
+    except (OSError, RuntimeError, zipfile.BadZipFile) as error:
+        _refuse(f"wheel is malformed: {path.name}: {error}")
+
+
+def _remove_venv_compatibility_link(runtime: Path) -> None:
+    lib64 = runtime / "lib64"
+    if not lib64.is_symlink():
+        return
+    if os.readlink(lib64) != "lib":
+        _refuse("virtual environment contains an unexpected compatibility link")
+    lib64.unlink()
+
+
+def _install_runtime(stage: Path, requirements: Path) -> None:
+    stage_fd: int | None = None
+    try:
+        stage_fd = os.open(
+            stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        _require_directory_identity(stage, stage_fd, label="runtime installation stage")
+        bound_stage = Path(f"/proc/self/fd/{stage_fd}")
+        runtime = bound_stage / "runtime"
+        if requirements.parent == stage:
+            requirements = bound_stage / requirements.name
+        # EnvBuilder's implicit ensurepip subprocess closes the descriptor in
+        # this path. Bootstrap pip through the same isolated handoff as installs.
+        venv.EnvBuilder(with_pip=False, clear=False, symlinks=False).create(runtime)
+        _remove_venv_compatibility_link(runtime)
+        pip_install = [
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-index",
+            "--no-deps",
+        ]
+        commands = (
+            ("pip bootstrap", ["ensurepip", "--upgrade", "--default-pip"]),
+            (
+                "wheel installation",
+                [
+                    *pip_install,
+                    "--require-hashes",
+                    "--find-links",
+                    str(bound_stage / "wheelhouse"),
+                    "--requirement",
+                    str(requirements),
+                ],
+            ),
+            (
+                "source installation",
+                [*pip_install, "--no-build-isolation", str(bound_stage / "source")],
+            ),
+        )
+        for label, arguments in commands:
+            _require_directory_identity(
+                stage, stage_fd, label="runtime installation stage"
+            )
+            status = _execute_isolated_command(
+                [str(runtime / "bin/python"), "-I", "-m", *arguments],
+                installation_directory_fd=stage_fd,
+            )
+            _require_directory_identity(
+                stage, stage_fd, label="runtime installation stage"
+            )
+            if status != 0:
+                _refuse(f"offline {label} failed")
+    except OSError as error:
+        _refuse(f"offline runtime installation failed: {error}")
+    finally:
+        if stage_fd is not None:
+            os.close(stage_fd)
+
+
+@contextlib.contextmanager
+def _exclusive_lock(cache_root_fd: int) -> Iterator[None]:
+    try:
+        descriptor = os.open(
+            ".bootstrap.lock",
+            os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=cache_root_fd,
+        )
+    except OSError as error:
+        _refuse(f"runtime cache lock is unsafe or unavailable: {error}")
+    with os.fdopen(descriptor, "a+b") as lock:
+        os.fchmod(lock.fileno(), 0o600)
+        metadata = os.fstat(lock.fileno())
+        if metadata.st_uid != os.geteuid() or not stat.S_ISREG(metadata.st_mode):
+            _refuse("runtime cache lock is not an operator-owned regular file")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        named = os.stat(".bootstrap.lock", dir_fd=cache_root_fd, follow_symlinks=False)
+        if (named.st_dev, named.st_ino) != (metadata.st_dev, metadata.st_ino):
+            _refuse("runtime cache lock identity changed while being acquired")
+        yield
+
+
+def _replace_current_link(cache_root_fd: int, runtime_digest: str) -> None:
+    """Atomically select one version relative to the bound cache-root descriptor."""
+
+    temporary_name = f".current-{os.getpid()}"
+    try:
+        os.stat(temporary_name, dir_fd=cache_root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        _refuse(f"runtime current-link staging name is unsafe: {error}")
+    else:
+        _refuse("runtime current-link staging name already exists")
+    try:
+        os.symlink(f"versions/{runtime_digest}", temporary_name, dir_fd=cache_root_fd)
+        os.replace(
+            temporary_name,
+            "current",
+            src_dir_fd=cache_root_fd,
+            dst_dir_fd=cache_root_fd,
+        )
+    except OSError as error:
+        _refuse(f"runtime current link cannot be published safely: {error}")
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary_name, dir_fd=cache_root_fd)
+    try:
+        current = os.stat("current", dir_fd=cache_root_fd, follow_symlinks=False)
+        destination = os.readlink("current", dir_fd=cache_root_fd)
+    except OSError as error:
+        _refuse(f"runtime current link cannot be verified: {error}")
+    if not stat.S_ISLNK(current.st_mode) or destination != f"versions/{runtime_digest}":
+        _refuse("runtime current link changed during publication")
+
+
+def _read_owned_control(path: Path) -> bytes:
+    try:
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as error:
+        _refuse(f"runtime cache control file is unsafe or unavailable: {error}")
+    with os.fdopen(descriptor, "rb") as stream:
+        observed = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(observed.st_mode)
+            or before.st_dev != observed.st_dev
+            or before.st_ino != observed.st_ino
+            or observed.st_uid != os.geteuid()
+            or stat.S_IMODE(observed.st_mode) & 0o222
+        ):
+            _refuse("runtime cache control file is not sealed and operator-owned")
+        return stream.read()
+
+
+def _write_control(path: Path, content: bytes) -> None:
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+    except OSError as error:
+        _refuse(f"runtime cache control file cannot be created safely: {error}")
+    with os.fdopen(descriptor, "wb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            _refuse("runtime cache control file is not operator-owned")
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+        os.fchmod(stream.fileno(), 0o400)
+
+
+def _write_new_control(path: Path, content: bytes) -> None:
+    """Create one sealed staging control file from already validated bytes."""
+
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o400,
+        )
+    except OSError as error:
+        _refuse(f"runtime staging control file cannot be created safely: {error}")
+    with os.fdopen(descriptor, "wb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            _refuse("runtime staging control file is not operator-owned")
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+        os.fchmod(stream.fileno(), 0o400)
+
+
+def _seal_runtime_tree(root: Path) -> None:
+    paths = sorted(root.rglob("*"), key=lambda path: len(path.parts), reverse=True)
+    for path in paths:
+        metadata = path.lstat()
+        if metadata.st_uid != os.geteuid() or metadata.st_gid != os.getegid():
+            _refuse("runtime cache contains an unowned entry")
+        if stat.S_ISLNK(metadata.st_mode):
+            _refuse("runtime cache contains a symbolic link")
+        if stat.S_ISREG(metadata.st_mode):
+            if path.parent == root and path.name in {
+                "receipt.json",
+                "tree-manifest.json",
+            }:
+                path.chmod(0o600)
+            else:
+                path.chmod(0o500 if metadata.st_mode & 0o111 else 0o400)
+        elif stat.S_ISDIR(metadata.st_mode):
+            path.chmod(0o500)
+        else:
+            _refuse("runtime cache contains a special file")
+    metadata = root.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != os.getegid()
+    ):
+        _refuse("runtime cache staging root is unsafe or unowned")
+    root.chmod(0o500)
+
+
+def _discard_stage(stage: Path) -> None:
+    try:
+        metadata = stage.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        _refuse(f"runtime staging cleanup cannot inspect its target: {error}")
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+    ):
+        _refuse("runtime staging cleanup target is unsafe or unowned")
+    cleanup_errors = 0
+    try:
+        stage.chmod(0o700)
+    except OSError:
+        cleanup_errors += 1
+    for directory, directories, files in os.walk(stage, followlinks=False):
+        for name in [*directories, *files]:
+            path = Path(directory) / name
+            try:
+                entry = path.lstat()
+                if not stat.S_ISLNK(entry.st_mode):
+                    path.chmod(0o700 if stat.S_ISDIR(entry.st_mode) else 0o600)
+            except OSError:
+                cleanup_errors += 1
+    try:
+        shutil.rmtree(stage)
+    except OSError:
+        cleanup_errors += 1
+    try:
+        stage.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        _refuse(f"runtime staging cleanup cannot verify absence: {error}")
+    _refuse(
+        f"runtime staging cleanup failed; target remains after {cleanup_errors} errors"
+    )
+
+
+def _discard_published(
+    target: Path,
+    versions: Path,
+    *,
+    expected_device: int,
+    expected_inode: int,
+) -> None:
+    """Quarantine and remove only the exact version directory just published."""
+
+    try:
+        metadata = target.lstat()
+    except FileNotFoundError:
+        return
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_dev != expected_device
+        or metadata.st_ino != expected_inode
+    ):
+        _refuse("refusing to remove a changed published runtime target")
+    quarantine = versions / f".rejected-{os.getpid()}-{expected_inode}"
+    if quarantine.exists() or quarantine.is_symlink():
+        _refuse("runtime cache quarantine target already exists")
+    target.rename(quarantine)
+    moved = quarantine.lstat()
+    if moved.st_dev != expected_device or moved.st_ino != expected_inode:
+        _refuse("published runtime changed while it was quarantined")
+    _discard_stage(quarantine)
+
+
+def _runtime_tree_entries(root: Path) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    pending: list[tuple[Path, str]] = [(root, "")]
+    excluded = {"receipt.json", "tree-manifest.json"}
+    while pending:
+        directory, prefix = pending.pop()
+        try:
+            children = sorted(os.scandir(directory), key=lambda item: item.name)
+        except OSError as error:
+            _refuse(f"runtime cache tree cannot be traversed safely: {error}")
+        for child in children:
+            relative = f"{prefix}/{child.name}".lstrip("/")
+            if not prefix and child.name in excluded:
+                continue
+            try:
+                metadata = child.stat(follow_symlinks=False)
+            except OSError as error:
+                _refuse(f"runtime cache entry cannot be inspected: {error}")
+            if metadata.st_uid != os.geteuid() or metadata.st_gid != os.getegid():
+                _refuse(f"runtime cache entry is unowned: {relative}")
+            mode = stat.S_IMODE(metadata.st_mode)
+            if mode & 0o222:
+                _refuse(f"runtime cache entry is writable: {relative}")
+            if stat.S_ISDIR(metadata.st_mode):
+                entries.append({"path": relative, "kind": "directory", "mode": mode})
+                pending.append((Path(child.path), relative))
+            elif stat.S_ISREG(metadata.st_mode):
+                try:
+                    descriptor = os.open(child.path, os.O_RDONLY | os.O_NOFOLLOW)
+                except OSError as error:
+                    _refuse(f"runtime cache file cannot be opened safely: {error}")
+                with os.fdopen(descriptor, "rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    if (
+                        opened.st_dev != metadata.st_dev
+                        or opened.st_ino != metadata.st_ino
+                        or not stat.S_ISREG(opened.st_mode)
+                    ):
+                        _refuse(
+                            f"runtime cache file changed during validation: {relative}"
+                        )
+                    digest = _stream_sha256(stream)
+                entries.append(
+                    {
+                        "path": relative,
+                        "kind": "regular",
+                        "mode": mode,
+                        "size_bytes": metadata.st_size,
+                        "sha256": digest,
+                    }
+                )
+            else:
+                _refuse(f"runtime cache entry has an unsupported type: {relative}")
+            if len(entries) > MAX_RUNTIME_ENTRIES:
+                _refuse("runtime cache entry count exceeds its validation bound")
+    return sorted(entries, key=lambda entry: str(entry["path"]))
+
+
+def _validated_existing(
+    target: Path,
+    runtime_lock: RuntimeLock,
+    *,
+    root_metadata: os.stat_result | None = None,
+) -> dict[str, object]:
+    metadata = root_metadata if root_metadata is not None else target.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != os.getegid()
+        or stat.S_IMODE(metadata.st_mode) & 0o222
+    ):
+        _refuse("existing runtime cache version is not sealed and operator-owned")
+    try:
+        receipt_raw = _read_owned_control(target / "receipt.json")
+        tree_raw = _read_owned_control(target / "tree-manifest.json")
+        receipt = json.loads(receipt_raw)
+        tree = json.loads(tree_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        _refuse(f"existing runtime cache is incomplete or malformed: {error}")
+    expected_receipt_keys = {
+        "schema",
+        "status",
+        "manifest_sha256",
+        "requirements_lock_sha256",
+        "source_commit",
+        "mujoco_version",
+        "artifact_sha256",
+        "rights_boundary",
+        "tree_manifest_sha256",
+    }
+    expected_artifacts = {item.name: item.sha256 for item in runtime_lock.artifacts}
+    if (
+        set(receipt) != expected_receipt_keys
+        or receipt.get("schema") != RECEIPT_SCHEMA
+        or receipt.get("status") != "ready"
+        or receipt.get("manifest_sha256") != runtime_lock.digest
+        or receipt.get("requirements_lock_sha256") != runtime_lock.requirements_sha256
+        or receipt.get("source_commit") != EXPECTED_SOURCE_COMMIT
+        or receipt.get("mujoco_version") != EXPECTED_MUJOCO_VERSION
+        or receipt.get("artifact_sha256") != expected_artifacts
+        or receipt.get("rights_boundary") != RIGHTS_BOUNDARY
+        or receipt.get("tree_manifest_sha256") != hashlib.sha256(tree_raw).hexdigest()
+    ):
+        _refuse("existing runtime cache receipt does not match the pinned runtime")
+    if (
+        not isinstance(tree, dict)
+        or set(tree) != {"schema", "entries"}
+        or tree.get("schema") != TREE_MANIFEST_SCHEMA
+        or tree.get("entries") != _runtime_tree_entries(target)
+    ):
+        _refuse("existing runtime cache tree differs from its sealed manifest")
+    python = target / "runtime/bin/python"
+    if not python.is_file() or not os.access(python, os.X_OK):
+        _refuse("existing runtime cache has no executable Python runtime")
+    return receipt
+
+
+def _add_runtime_watch(
+    add_watch: Callable[[int, bytes, int], int],
+    monitor_fd: int,
+    path: Path,
+    *,
+    no_follow: bool,
+) -> None:
+    flags = INOTIFY_CHANGE_MASK | INOTIFY_EXCLUDE_UNLINKED
+    if no_follow:
+        flags |= INOTIFY_DONT_FOLLOW
+    result = add_watch(monitor_fd, os.fsencode(path), flags)
+    if result < 0:
+        error = OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        _refuse(f"runtime integrity watch cannot bind a descendant: {error}")
+
+
+def _open_runtime_monitor(root: Path) -> int:
+    """Watch every validated runtime inode until its workload exits."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    initialize = libc.inotify_init1
+    initialize.argtypes = [ctypes.c_int]
+    initialize.restype = ctypes.c_int
+    add_watch = libc.inotify_add_watch
+    add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+    add_watch.restype = ctypes.c_int
+    monitor_fd = initialize(os.O_CLOEXEC | os.O_NONBLOCK)
+    if monitor_fd < 0:
+        error = OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        _refuse(f"runtime integrity monitor is unavailable: {error}")
+    watched = 0
+    try:
+        for directory, directories, files in os.walk(root, followlinks=False):
+            current = Path(directory)
+            _add_runtime_watch(
+                add_watch, monitor_fd, current, no_follow=current != root
+            )
+            for name in files:
+                _add_runtime_watch(
+                    add_watch, monitor_fd, current / name, no_follow=True
+                )
+            watched += 1 + len(files)
+            if watched > MAX_RUNTIME_ENTRIES + 1:
+                _refuse("runtime integrity watch count exceeds its bound")
+        return monitor_fd
+    except BaseException:
+        os.close(monitor_fd)
+        raise
+
+
+def _runtime_monitor_changed(monitor_fd: int) -> bool:
+    try:
+        return bool(os.read(monitor_fd, 64 * 1024))
+    except BlockingIOError:
+        return False
+    except OSError as error:
+        _refuse(f"runtime integrity monitor failed: {error}")
+
+
+def _open_validated_runtime(
+    target: Path, runtime_lock: RuntimeLock
+) -> tuple[dict[str, object], int, int, int]:
+    """Bind validation and execution to one directory and interpreter inode."""
+
+    try:
+        before = target.lstat()
+        directory_fd = os.open(
+            target,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+    except OSError as error:
+        _refuse(f"runtime target cannot be opened safely: {error}")
+    python_fd: int | None = None
+    monitor_fd: int | None = None
+    try:
+        opened = os.fstat(directory_fd)
+        if (
+            before.st_dev != opened.st_dev
+            or before.st_ino != opened.st_ino
+            or not stat.S_ISDIR(opened.st_mode)
+        ):
+            _refuse("runtime target changed while its directory was opened")
+        bound_root = Path(f"/proc/self/fd/{directory_fd}")
+        if not bound_root.exists():
+            _refuse("descriptor-bound runtime traversal is unavailable")
+        receipt = _validated_existing(
+            bound_root,
+            runtime_lock,
+            root_metadata=opened,
+        )
+        after = target.lstat()
+        if after.st_dev != opened.st_dev or after.st_ino != opened.st_ino:
+            _refuse("runtime target changed while it was validated")
+        python_fd = os.open(
+            "runtime/bin/python",
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+        python_metadata = os.fstat(python_fd)
+        if (
+            not stat.S_ISREG(python_metadata.st_mode)
+            or python_metadata.st_uid != os.geteuid()
+            or python_metadata.st_gid != os.getegid()
+            or stat.S_IMODE(python_metadata.st_mode) & 0o222
+            or not stat.S_IMODE(python_metadata.st_mode) & 0o111
+        ):
+            _refuse("runtime Python is not a sealed operator-owned executable")
+        try:
+            tree = json.loads(_read_owned_control(bound_root / "tree-manifest.json"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            _refuse(f"runtime tree manifest changed before execution: {error}")
+        if not isinstance(tree, dict) or not isinstance(tree.get("entries"), list):
+            _refuse("runtime tree manifest changed before execution")
+        expected_python = [
+            entry
+            for entry in tree.get("entries", [])
+            if isinstance(entry, dict) and entry.get("path") == "runtime/bin/python"
+        ]
+        with os.fdopen(os.dup(python_fd), "rb") as stream:
+            python_sha256 = _stream_sha256(stream)
+        os.lseek(python_fd, 0, os.SEEK_SET)
+        if expected_python != [
+            {
+                "path": "runtime/bin/python",
+                "kind": "regular",
+                "mode": stat.S_IMODE(python_metadata.st_mode),
+                "size_bytes": python_metadata.st_size,
+                "sha256": python_sha256,
+            }
+        ]:
+            _refuse("runtime Python differs from the validated tree manifest")
+        monitor_fd = _open_runtime_monitor(bound_root)
+        receipt = _validated_existing(
+            bound_root,
+            runtime_lock,
+            root_metadata=opened,
+        )
+        if _runtime_monitor_changed(monitor_fd):
+            _refuse("runtime cache changed while its integrity monitor was armed")
+        os.set_inheritable(directory_fd, True)
+        os.set_inheritable(python_fd, True)
+        return receipt, directory_fd, python_fd, monitor_fd
+    except BaseException:
+        if monitor_fd is not None:
+            os.close(monitor_fd)
+        if python_fd is not None:
+            os.close(python_fd)
+        os.close(directory_fd)
+        raise
+
+
+def prepare(
+    manifest: Path,
+    requirements: Path,
+    cache_root: Path,
+    *,
+    opener: Callable[[str], contextlib.AbstractContextManager[BinaryIO]] = _open_url,
+    installer: Callable[[Path, Path], None] = _install_runtime,
+    retain_runtime_handles: bool = False,
+) -> dict[str, object]:
+    """Fetch, validate, materialize, and atomically select one runtime version."""
+
+    _refuse_root_runtime("runtime preparation")
+    # Parse and validate the immutable runtime lock before consulting the
+    # publication contract.  This preserves the lock's precise refusal
+    # diagnostics while still requiring the contract before any network access.
+    runtime_lock = load_lock(manifest, requirements)
+    contract = manifest.with_name("runtime-fetch-manifest.json")
+    if not contract.is_file():
+        _refuse(
+            "public runtime-fetch contract is missing; refusing before network access"
+        )
+    _validate_public_runtime_contract(contract, manifest)
+    handles: tuple[int, int, int] | None = None
+    with _open_cache_directories(cache_root) as cache:
+        cache_root = cache.root_path
+        versions = cache.bound_versions
+        target_name = runtime_lock.digest
+        target = versions / target_name
+        with _exclusive_lock(cache.root_fd):
+            _require_cache_identities(cache)
+            partials = [
+                entry.name
+                for entry in os.scandir(cache.versions_fd)
+                if entry.name.startswith((".staging-", ".rejected-"))
+            ]
+            _require_cache_identities(cache)
+            if partials:
+                _refuse("runtime cache contains an unreviewed partial publication")
+            try:
+                os.stat(
+                    target_name,
+                    dir_fd=cache.versions_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                cache_reused = False
+            except OSError as error:
+                _refuse(f"runtime cache target cannot be inspected safely: {error}")
+            else:
+                cache_reused = True
+            if cache_reused:
+                receipt = _validated_existing(target, runtime_lock)
+                _require_cache_identities(cache)
+            else:
+                # The proc descriptor path keeps all staged writes below the opened
+                # versions inode even if its external name is replaced concurrently.
+                stage = Path(
+                    tempfile.mkdtemp(
+                        prefix=".staging-runtime-", dir=cache.bound_versions
+                    )
+                )
+                try:
+                    _require_cache_identities(cache)
+                    downloads = stage / "downloads"
+                    wheelhouse = stage / "wheelhouse"
+                    downloads.mkdir(mode=0o700)
+                    wheelhouse.mkdir(mode=0o700)
+                    for artifact in runtime_lock.artifacts:
+                        fetched = downloads / artifact.filename
+                        _download(artifact, fetched, opener=opener)
+                        if artifact.archive == "tar.gz":
+                            _extract_source(artifact, fetched, stage / "source")
+                        else:
+                            assert artifact.max_unpacked_bytes is not None
+                            _validate_wheel(
+                                fetched,
+                                max_unpacked_bytes=artifact.max_unpacked_bytes,
+                            )
+                            os.replace(fetched, wheelhouse / artifact.filename)
+                    locked_requirements = stage / "requirements.lock"
+                    _write_new_control(
+                        locked_requirements, runtime_lock.requirements_raw
+                    )
+                    if (
+                        hashlib.sha256(
+                            _read_owned_control(locked_requirements)
+                        ).hexdigest()
+                        != runtime_lock.requirements_sha256
+                    ):
+                        _refuse("staged runtime requirements digest changed")
+                    installer(stage, locked_requirements)
+                    python = stage / "runtime/bin/python"
+                    if not python.is_file() or not os.access(python, os.X_OK):
+                        _refuse(
+                            "offline installer produced no executable Python runtime"
+                        )
+                    tree_path = stage / "tree-manifest.json"
+                    receipt_path = stage / "receipt.json"
+                    tree_path.touch(mode=0o600, exist_ok=False)
+                    receipt_path.touch(mode=0o600, exist_ok=False)
+                    _seal_runtime_tree(stage)
+                    tree = {
+                        "schema": TREE_MANIFEST_SCHEMA,
+                        "entries": _runtime_tree_entries(stage),
+                    }
+                    tree_raw = (
+                        json.dumps(tree, separators=(",", ":"), sort_keys=True) + "\n"
+                    ).encode()
+                    _write_control(tree_path, tree_raw)
+                    receipt = {
+                        "schema": RECEIPT_SCHEMA,
+                        "status": "ready",
+                        "manifest_sha256": runtime_lock.digest,
+                        "requirements_lock_sha256": runtime_lock.requirements_sha256,
+                        "source_commit": EXPECTED_SOURCE_COMMIT,
+                        "mujoco_version": EXPECTED_MUJOCO_VERSION,
+                        "artifact_sha256": {
+                            item.name: item.sha256 for item in runtime_lock.artifacts
+                        },
+                        "rights_boundary": RIGHTS_BOUNDARY,
+                        "tree_manifest_sha256": hashlib.sha256(tree_raw).hexdigest(),
+                    }
+                    _write_control(
+                        receipt_path,
+                        (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(),
+                    )
+                    staged = stage.lstat()
+                    if stat.S_IMODE(staged.st_mode) & 0o222:
+                        _refuse(
+                            "runtime staging root was not sealed before publication"
+                        )
+                    _require_cache_identities(cache)
+                    os.replace(
+                        stage.name,
+                        target_name,
+                        src_dir_fd=cache.versions_fd,
+                        dst_dir_fd=cache.versions_fd,
+                    )
+                    try:
+                        _require_cache_identities(cache)
+                        receipt = _validated_existing(target, runtime_lock)
+                    except BaseException:
+                        _discard_published(
+                            target,
+                            versions,
+                            expected_device=staged.st_dev,
+                            expected_inode=staged.st_ino,
+                        )
+                        raise
+                except BaseException:
+                    _discard_stage(stage)
+                    raise
+            _require_cache_identities(cache)
+            _replace_current_link(cache.root_fd, runtime_lock.digest)
+            _require_cache_identities(cache)
+            if retain_runtime_handles:
+                receipt, directory_fd, python_fd, monitor_fd = _open_validated_runtime(
+                    target, runtime_lock
+                )
+                handles = (directory_fd, python_fd, monitor_fd)
+            try:
+                _require_cache_identities(cache)
+            except BaseException:
+                if handles is not None:
+                    for descriptor in handles:
+                        os.close(descriptor)
+                    handles = None
+                raise
+    result: dict[str, object] = {
+        **receipt,
+        "runtime_root": str(cache_root / "versions" / runtime_lock.digest),
+        "cache_root": str(cache_root),
+        "cache_reused": cache_reused,
+    }
+    if handles is not None:
+        result["_runtime_directory_fd"] = handles[0]
+        result["_runtime_python_fd"] = handles[1]
+        result["_runtime_monitor_fd"] = handles[2]
+    return result
+
+
+def _terminate_runtime_child(process_id: int) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(process_id, signal.SIGKILL)
+    while True:
+        try:
+            os.waitpid(process_id, 0)
+            return
+        except InterruptedError:
+            continue
+        except ChildProcessError:
+            return
+
+
+def _prctl(option: int, argument: object = 0, argument2: object = 0) -> int:
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = libc.prctl(option, argument, argument2, 0, 0)
+    if result < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+def _runtime_environment(directory_fd: int | None = None) -> dict[str, str]:
+    """Expose only the non-secret inputs required by the reviewed capability."""
+
+    environment = {
+        name: os.environ[name]
+        for name in RUNTIME_ENVIRONMENT_ALLOWLIST
+        if name in os.environ
+    }
+    environment["PATH"] = RUNTIME_PATH
+    if directory_fd is not None:
+        environment["NPA_GYMNASIUM_RUNTIME_ROOT"] = (
+            f"/proc/{os.getpid()}/fd/{directory_fd}"
+        )
+    return environment
+
+
+def _runtime_network_policy() -> tuple[tuple[int, int, int, int], ...]:
+    """Return the native-amd64 filter; Unix IPC is the only socket family.
+
+    Each tuple is (BPF opcode, true jump, false jump, constant). This policy
+    excludes alternate syscall ABIs and asynchronous ring interfaces. It is
+    not a general syscall allowlist or proof of live kernel containment.
+    """
+
+    return (
+        (0x20, 0, 0, 4),  # Load seccomp_data.arch.
+        (0x15, 0, 10, AUDIT_ARCH_X86_64),  # Other architectures -> deny.
+        (0x20, 0, 0, 0),  # Load seccomp_data.nr.
+        (0x35, 8, 0, X32_SYSCALL_BIT),  # Non-native/high-bit numbers -> deny.
+        (0x15, 7, 0, SYS_IO_URING_SETUP_X86_64),
+        (0x15, 6, 0, SYS_IO_URING_ENTER_X86_64),
+        (0x15, 5, 0, SYS_IO_URING_REGISTER_X86_64),
+        (0x15, 2, 0, SYS_SOCKET_X86_64),
+        (0x15, 1, 0, SYS_SOCKETPAIR_X86_64),
+        (0x06, 0, 0, SECCOMP_RET_ALLOW),  # Ordinary EGL/file/process syscalls.
+        (0x20, 0, 0, 16),  # Socket domain is the low word of argument zero.
+        (0x15, 1, 0, AF_UNIX),
+        (0x06, 0, 0, SECCOMP_RET_ERRNO | errno.EPERM),
+        (0x06, 0, 0, SECCOMP_RET_ALLOW),  # Local Unix sockets/socket pairs.
+    )
+
+
+def _install_runtime_network_filter() -> None:
+    """Install the restrictive socket policy, retaining local EGL/Unix IPC."""
+
+    if os.uname().machine != "x86_64":
+        _refuse("runtime network isolation supports only the reviewed amd64 target")
+    policy = _runtime_network_policy()
+    filters = (_SockFilter * len(policy))(*(_SockFilter(*row) for row in policy))
+    program = _SockFprog(len=len(filters), filter=filters)
+    _prctl(PR_SET_NO_NEW_PRIVS, 1)
+    _prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(program))
+
+
+def _runtime_children() -> set[int]:
+    """Return direct children adopted by this single-threaded supervisor."""
+
+    try:
+        raw = Path(f"/proc/self/task/{os.getpid()}/children").read_text(
+            encoding="ascii"
+        )
+    except OSError as error:
+        _refuse(f"runtime descendant accounting is unavailable: {error}")
+    try:
+        return {int(value) for value in raw.split()}
+    except ValueError as error:
+        _refuse(f"runtime descendant accounting is malformed: {error}")
+
+
+def _remove_runtime_descendants(baseline: set[int]) -> None:
+    survivors = _runtime_children() - baseline
+    if not survivors:
+        return
+    while survivors:
+        for process_id in survivors:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(process_id, signal.SIGKILL)
+        for process_id in survivors:
+            while True:
+                try:
+                    os.waitpid(process_id, 0)
+                    break
+                except InterruptedError:
+                    continue
+                except ChildProcessError:
+                    break
+        survivors = _runtime_children() - baseline
+    _refuse("runtime command left a surviving descendant")
+
+
+def _execute_isolated_command(
+    command: list[str], *, installation_directory_fd: int | None = None
+) -> int:
+    """Run fetched installation code without authority or surviving children."""
+
+    previous_dumpable = _prctl(PR_GET_DUMPABLE)
+    previous_subreaper = ctypes.c_int()
+    _prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(previous_subreaper))
+    _prctl(PR_SET_DUMPABLE, 0)
+    _prctl(PR_SET_CHILD_SUBREAPER, 1)
+    baseline = _runtime_children()
+    try:
+        process_id = os.fork()
+        if process_id == 0:
+            try:
+                os.setsid()
+                if installation_directory_fd is not None:
+                    # cwd holds only the stage inode after the descriptor closes.
+                    # Its PID-qualified proc path also survives nested installers'
+                    # close_fds and cwd changes without exposing the cache parent.
+                    os.fchdir(installation_directory_fd)
+                    os.close(installation_directory_fd)
+                    prefix = f"/proc/self/fd/{installation_directory_fd}/"
+                    bound = f"/proc/{os.getpid()}/cwd/"
+                    command = [
+                        bound + argument[len(prefix) :]
+                        if argument.startswith(prefix)
+                        else argument
+                        for argument in command
+                    ]
+                _install_runtime_network_filter()
+                os.execve(command[0], command, _runtime_environment())
+            except (BootstrapRefusal, OSError) as error:
+                os.write(2, f"isolated runtime install failed: {error}\n".encode())
+                os._exit(65)
+        while True:
+            try:
+                _finished, status = os.waitpid(process_id, 0)
+                break
+            except InterruptedError:
+                continue
+        _remove_runtime_descendants(baseline)
+        return os.waitstatus_to_exitcode(status)
+    except BaseException:
+        if "process_id" in locals():
+            _terminate_runtime_child(process_id)
+        _remove_runtime_descendants(baseline)
+        raise
+    finally:
+        _prctl(PR_SET_CHILD_SUBREAPER, previous_subreaper.value)
+        _prctl(PR_SET_DUMPABLE, previous_dumpable)
+
+
+def _wait_for_runtime_child(process_id: int, monitor_fd: int) -> int:
+    while True:
+        try:
+            readable, _, _ = select.select([monitor_fd], [], [], 0.05)
+        except OSError as error:
+            _terminate_runtime_child(process_id)
+            _refuse(f"runtime integrity monitor failed: {error}")
+        if readable and _runtime_monitor_changed(monitor_fd):
+            _terminate_runtime_child(process_id)
+            _refuse("runtime cache changed during descriptor-bound execution")
+        try:
+            finished, status = os.waitpid(process_id, os.WNOHANG)
+        except InterruptedError:
+            continue
+        if finished:
+            if _runtime_monitor_changed(monitor_fd):
+                _refuse("runtime cache changed during descriptor-bound execution")
+            return os.waitstatus_to_exitcode(status)
+
+
+def _execute_validated_runtime(
+    directory_fd: int, python_fd: int, monitor_fd: int, command: list[str]
+) -> int:
+    previous_dumpable = _prctl(PR_GET_DUMPABLE)
+    previous_subreaper = ctypes.c_int()
+    _prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(previous_subreaper))
+    _prctl(PR_SET_DUMPABLE, 0)
+    _prctl(PR_SET_CHILD_SUBREAPER, 1)
+    baseline = _runtime_children()
+    try:
+        process_id = os.fork()
+    except OSError as error:
+        os.close(monitor_fd)
+        os.close(python_fd)
+        os.close(directory_fd)
+        _refuse(f"descriptor-bound runtime process cannot start: {error}")
+    if process_id == 0:
+        os.close(monitor_fd)
+        try:
+            os.setsid()
+            # Nested Python probes close their own inherited descriptors. Keep
+            # their executable/runtime paths bound to this monitored child's
+            # verified directory descriptor, which remains open until it exits.
+            environment = _runtime_environment(directory_fd)
+            python_name = f"/proc/{os.getpid()}/fd/{directory_fd}/runtime/bin/python"
+            _install_runtime_network_filter()
+            os.execve(python_fd, [python_name, "-I", "-B", *command], environment)
+        except (BootstrapRefusal, OSError) as error:
+            message = f"descriptor-bound runtime execution failed: {error}\n"
+            os.write(2, message.encode())
+            os._exit(65)
+    try:
+        status = _wait_for_runtime_child(process_id, monitor_fd)
+        _remove_runtime_descendants(baseline)
+        return status
+    except BaseException:
+        _terminate_runtime_child(process_id)
+        _remove_runtime_descendants(baseline)
+        raise
+    finally:
+        _prctl(PR_SET_CHILD_SUBREAPER, previous_subreaper.value)
+        _prctl(PR_SET_DUMPABLE, previous_dumpable)
+        os.close(monitor_fd)
+        os.close(python_fd)
+        os.close(directory_fd)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--requirements", type=Path, required=True)
+    parser.add_argument("--cache-root", type=Path, required=True)
+    parser.add_argument("--json", type=Path)
+    parser.add_argument("command", choices=("prepare", "exec"))
+    parser.add_argument("args", nargs=argparse.REMAINDER)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        operation = (
+            "runtime preparation"
+            if args.command == "prepare"
+            else "runtime run-smoke execution"
+        )
+        _refuse_root_runtime(operation)
+        receipt = prepare(
+            args.manifest,
+            args.requirements,
+            args.cache_root,
+            retain_runtime_handles=args.command == "exec",
+        )
+        directory_fd = receipt.pop("_runtime_directory_fd", None)
+        python_fd = receipt.pop("_runtime_python_fd", None)
+        monitor_fd = receipt.pop("_runtime_monitor_fd", None)
+        rendered = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+        if args.json:
+            args.json.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            args.json.write_text(rendered, encoding="utf-8")
+            args.json.chmod(0o600)
+        if args.command == "exec":
+            command = list(args.args)
+            if command[:1] == ["--"]:
+                command.pop(0)
+            if not command:
+                _refuse("exec requires a script or module argument")
+            if not all(
+                isinstance(descriptor, int)
+                for descriptor in (directory_fd, python_fd, monitor_fd)
+            ):
+                _refuse("exec did not retain descriptor-bound runtime handles")
+            if os.execve not in os.supports_fd:
+                _refuse("this platform cannot execute a descriptor-bound runtime")
+            return _execute_validated_runtime(
+                directory_fd, python_fd, monitor_fd, command
+            )
+        print(rendered, end="")
+        return 0
+    except BootstrapRefusal as error:
+        print(f"Gymnasium-Robotics runtime bootstrap refused: {error}", file=sys.stderr)
+        return 65
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

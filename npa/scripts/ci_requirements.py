@@ -19,6 +19,7 @@ else:
 _ROOT = Path(__file__).resolve().parents[2]
 _UV_VERSION = "0.12.5"
 _FINGERPRINT_PREFIX = "# CI dependency inputs SHA256: "
+_PINSET_PREFIX = "# CI generated pins SHA256: "
 
 
 def _fingerprint(root: Path) -> str:
@@ -36,11 +37,32 @@ def _fingerprint(root: Path) -> str:
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
+def _render_requirements(root: Path, generated: str) -> str:
+    input_digest = _fingerprint(root)
+    pin_digest = hashlib.sha256(generated.encode()).hexdigest()
+    return (
+        f"{_FINGERPRINT_PREFIX}{input_digest}\n"
+        f"{_PINSET_PREFIX}{pin_digest}\n"
+        f"{generated}"
+    )
+
+
 def _check(root: Path) -> None:
-    header = (root / "npa/ci/requirements.txt").read_text().splitlines()[0]
-    if header != _FINGERPRINT_PREFIX + _fingerprint(root):
+    lines = (root / "npa/ci/requirements.txt").read_text().splitlines(keepends=True)
+    input_header = lines[0].rstrip("\r\n") if lines else ""
+    if input_header != _FINGERPRINT_PREFIX + _fingerprint(root):
         raise ValueError(
             "CI dependencies changed; run npa/.venv/bin/python "
+            "npa/scripts/ci_requirements.py --update"
+        )
+    pin_header = lines[1].rstrip("\r\n") if len(lines) > 1 else ""
+    generated = "".join(lines[2:])
+    expected_pin_header = (
+        _PINSET_PREFIX + hashlib.sha256(generated.encode()).hexdigest()
+    )
+    if pin_header != expected_pin_header:
+        raise ValueError(
+            "CI generated pins changed; run npa/.venv/bin/python "
             "npa/scripts/ci_requirements.py --update"
         )
 
@@ -80,7 +102,7 @@ def _update(root: Path, upgrade: bool) -> None:
     subprocess.run(command, cwd=root, check=True)
     _validate_linux_wheels(root)
     path = root / "npa/ci/requirements.txt"
-    path.write_text(_FINGERPRINT_PREFIX + _fingerprint(root) + "\n" + path.read_text())
+    path.write_text(_render_requirements(root, path.read_text()))
 
 
 def _validate_linux_wheels(root: Path) -> None:

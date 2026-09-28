@@ -69,6 +69,8 @@ def _services(config):
         _UNITS / "npa-codex-server.service",
         _unit(
             [
+                str(_ROOT / "venv/bin/python"),
+                str(_ROOT / "codex_executable.py"),
                 config["binary"],
                 "-c",
                 "features.code_mode_host=true",
@@ -191,7 +193,7 @@ def main(connect_vscode=False):
     config = _runtime_config()
     _write(_ROOT / "config.json", json.dumps(config))
     _run("/usr/bin/python3", "-m", "venv", str(_ROOT / "venv"))
-    _run(str(_ROOT / "venv/bin/pip"), "install", "websockets==15.0.1")
+    _run(str(_ROOT / "venv/bin/pip"), "install", "websockets==16.1.1")
     _authentication(config)
     _services(config)
     if connect_vscode:

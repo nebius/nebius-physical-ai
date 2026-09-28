@@ -1,0 +1,16 @@
+diff --git a/experiments/robotwin/flexpi_policy/deploy_policy.py b/experiments/robotwin/flexpi_policy/deploy_policy.py
+--- a/experiments/robotwin/flexpi_policy/deploy_policy.py
++++ b/experiments/robotwin/flexpi_policy/deploy_policy.py
+@@ -253,5 +253,12 @@ class WorldActionRobotWinPolicy:
+         else:
+             model_cfg_copy.load_text_encoder = True
++        # Deployment loads the complete trained checkpoint immediately below.
++        # Do not first fetch/load the Wan VideoDiT initialization or require the
++        # training-only ActionDiT initialization file: both experts are fully
++        # replaced by the released checkpoint. Upstream already implements this
++        # checkpoint-override path behind this flag, but saved training configs
++        # correctly retain their original false value.
++        model_cfg_copy.skip_dit_load_from_pretrain = True
+         self.model = instantiate(model_cfg_copy, model_dtype=model_dtype, device=device)
+         self.model.load_checkpoint(checkpoint_path)
+         if offload_text_encoder:

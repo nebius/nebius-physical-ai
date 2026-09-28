@@ -1,0 +1,32 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: encord-pull
+  description: Materialize curated Encord media to S3 with an exact lineage manifest.
+
+config:
+  bucket: example-bucket
+  prefix: "encord/{{run.id}}"
+  encord_source: "collection"
+  encord_source_id: "<encord-source-id>"
+  encord_label_export: "none"
+  encord_pull_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+
+initial: pull
+
+states:
+  pull:
+    description: Materialize Encord media without initializing labels by default.
+    toolRef: workbench.encord.pull
+    resources: cpu
+    outputs:
+      - uri: "{{config.encord_pull_uri}}/manifest.json"
+        schema: npa.encord.pull_manifest.v1
+    terminal: true
