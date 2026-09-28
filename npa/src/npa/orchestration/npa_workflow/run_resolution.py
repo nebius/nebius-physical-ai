@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import re
 from typing import Any, Literal, Mapping, cast
 from urllib.parse import urlparse
@@ -69,6 +70,10 @@ class RunResolution:
     manifest_uri: str = ""
     workflow_name: str = ""
     durable_terminal_state: str = ""
+    sky_bin: str = ""
+    isolated_config_dir: Path | None = None
+    controller_route_recorded: bool = False
+    controller_route_error: str = ""
     checks: list[ResolutionCheck] = field(default_factory=list)
 
     def checks_payload(self) -> list[dict[str, str]]:
@@ -325,6 +330,87 @@ def _receipt_launch(receipt: Mapping[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _receipt_controller_route(
+    receipt: Mapping[str, Any],
+) -> tuple[Path | None, str] | None:
+    """Parse the exact controller route recorded at submission."""
+    value = receipt.get("controller")
+    if value is None:
+        return None
+    expected = {"schema", "isolated", "isolated_config_dir", "sky_bin"}
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise ValueError("submission controller route schema differs")
+    isolated = value.get("isolated")
+    raw_dir = value.get("isolated_config_dir")
+    raw_bin = value.get("sky_bin")
+    if (
+        type(isolated) is not bool
+        or not isinstance(raw_dir, str)
+        or not isinstance(raw_bin, str)
+        or value.get("schema") != "npa.workflow.controller-route.v1"
+        or any(ord(char) < 32 for char in raw_dir + raw_bin)
+    ):
+        raise ValueError("submission controller route values differ")
+    recorded_dir = Path(raw_dir) if raw_dir else None
+    if (
+        isolated != bool(recorded_dir)
+        or (recorded_dir is not None and not recorded_dir.is_absolute())
+        or (
+            recorded_dir is not None
+            and recorded_dir.expanduser().resolve() != recorded_dir
+        )
+        or not raw_bin
+        or not Path(raw_bin).is_absolute()
+        or Path(raw_bin).expanduser().resolve() != Path(raw_bin)
+    ):
+        raise ValueError("submission controller isolation route differs")
+    return recorded_dir, raw_bin
+
+
+def _apply_receipt_controller_route(
+    result: RunResolution,
+    receipt: Mapping[str, Any],
+    *,
+    explicit_sky_bin: str,
+    explicit_isolated_config_dir: Path | None,
+) -> None:
+    """Bind live queries to the controller route recorded at submission."""
+    try:
+        route = _receipt_controller_route(receipt)
+    except ValueError as exc:
+        result.controller_route_error = str(exc)
+        return
+    if route is None:
+        return
+    recorded_dir, raw_bin = route
+    if explicit_isolated_config_dir is not None:
+        explicit_dir = Path(explicit_isolated_config_dir).expanduser().resolve()
+        if recorded_dir is None or explicit_dir != recorded_dir:
+            result.controller_route_error = (
+                "explicit controller state root conflicts with submission receipt"
+            )
+            return
+        recorded_dir = explicit_dir
+    elif recorded_dir is None:
+        from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+        active_dir = resolve_isolated_config_dir(None)
+        if active_dir is not None:
+            result.controller_route_error = "recorded shared controller conflicts with active isolated SkyPilot state"
+            return
+    normalized_explicit_bin = (
+        str(Path(explicit_sky_bin).expanduser().resolve()) if explicit_sky_bin else ""
+    )
+    if normalized_explicit_bin and normalized_explicit_bin != raw_bin:
+        result.controller_route_error = (
+            "explicit SkyPilot executable conflicts with submission receipt"
+        )
+        return
+    result.sky_bin = normalized_explicit_bin or raw_bin
+    result.isolated_config_dir = recorded_dir
+    result.controller_route_recorded = True
+
+
 def _mark_manifest(
     result: RunResolution,
     *,
@@ -348,6 +434,17 @@ def _mark_manifest(
     ) or state.uri.removesuffix("/npa-workflow")
     result.manifest_uri = f"{state.uri.rstrip('/')}/manifest.json"
     _attach_runtime_state(result, state)
+    if result.job_id and not (
+        result.controller_route_recorded
+        or result.sky_bin
+        or result.isolated_config_dir is not None
+    ):
+        result.controller_route_error = (
+            "durable managed-job identity has no recorded controller route; "
+            "supply the exact --sky-bin and, for isolated state, the exact "
+            "--isolated-config-dir used at submission"
+        )
+        result.verification_unavailable = True
     return result
 
 
@@ -360,6 +457,7 @@ def resolve_run(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    isolated_config_dir: Path | None = None,
     exact_job_id: str = "",
     allow_local_not_submitted: bool = False,
 ) -> RunResolution:
@@ -367,13 +465,31 @@ def resolve_run(
 
     resolved_id = run_id_from_locator(run_id, workflow_s3_uri)
     ledger_project = project or "default"
+    effective_isolated_config_dir = isolated_config_dir
+    if sky_bin and isolated_config_dir is None:
+        from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+        effective_isolated_config_dir = resolve_isolated_config_dir(None)
     result = RunResolution(
-        run_id=resolved_id, project=project, job_id=exact_job_id.strip()
+        run_id=resolved_id,
+        project=project,
+        job_id=exact_job_id.strip(),
+        sky_bin=str(Path(sky_bin).expanduser().resolve()) if sky_bin else "",
+        isolated_config_dir=effective_isolated_config_dir,
     )
     explicit_uri = workflow_s3_uri or (
         run_id if str(run_id).startswith("s3://") else ""
     )
     planned_only_candidate = False
+    receipt_read = inspect_submission_state(ledger_project, resolved_id)
+    if receipt_read.outcome == "found":
+        result.receipt = receipt_read.payload
+        _apply_receipt_controller_route(
+            result,
+            result.receipt,
+            explicit_sky_bin=sky_bin,
+            explicit_isolated_config_dir=effective_isolated_config_dir,
+        )
 
     if explicit_uri:
         try:
@@ -426,7 +542,6 @@ def resolve_run(
             )
         )
 
-    receipt_read = inspect_submission_state(ledger_project, resolved_id)
     result.checks.append(
         ResolutionCheck(
             "durable_submission_receipt", receipt_read.outcome, receipt_read.error
@@ -435,7 +550,6 @@ def resolve_run(
     if receipt_read.outcome == "unavailable":
         result.verification_unavailable = True
     elif receipt_read.outcome == "found":
-        result.receipt = receipt_read.payload
         workflow = _receipt_workflow(result.receipt)
         launch = _receipt_launch(result.receipt)
         if (
@@ -615,11 +729,27 @@ def resolve_run(
             )
         )
 
-    managed = lookup_managed_job(
-        result.job_name or resolved_id,
-        job_id=result.job_id,
-        sky_bin=sky_bin or None,
+    explicit_route = bool(result.sky_bin or result.isolated_config_dir is not None)
+    route_missing = bool(result.job_id) and not (
+        result.controller_route_recorded or explicit_route
     )
+    if result.controller_route_error:
+        managed = ManagedJobEvidence("unavailable", error=result.controller_route_error)
+    elif route_missing:
+        result.controller_route_error = (
+            "durable managed-job identity has no recorded controller route; "
+            "supply the exact --sky-bin and, for isolated state, the exact "
+            "--isolated-config-dir used at submission"
+        )
+        result.verification_unavailable = True
+        managed = ManagedJobEvidence("unavailable", error=result.controller_route_error)
+    else:
+        managed = lookup_managed_job(
+            result.job_name or resolved_id,
+            job_id=result.job_id,
+            sky_bin=result.sky_bin or None,
+            isolated_config_dir=result.isolated_config_dir,
+        )
     result.managed_job = managed
     managed_outcome: ResolutionOutcome = (
         cast(ResolutionOutcome, managed.outcome)

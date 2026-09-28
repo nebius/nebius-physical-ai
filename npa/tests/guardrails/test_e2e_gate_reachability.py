@@ -20,6 +20,17 @@ MANUAL_GATES = {
         "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
         "run the restart and workflow-repair proof in docs/workbench/specialists.md"
     ),
+    "NPA_E2E_RUNTIME_STORAGE": (
+        "CPU control-storage execution requires an operator-selected project, "
+        "fresh science/control prefixes, and an owned isolated controller"
+    ),
+    "NPA_BEHAVIOR_RUNTIME_CACHE_LIVE_CONFIG": (
+        "CPU runtime cache transport checks write temporary objects in an operator-selected private storage prefix"
+    ),
+    "NPA_LIVE_MANAGED_JOB_POD_DIAGNOSTICS": (
+        "read-only pod identity checks require an operator-selected existing controller, "
+        "job, task, context, kubeconfig, and SkyPilot binary"
+    ),
     "NPA_NAMESPACE_LIVE_E2E": (
         "requires an explicitly selected disposable cluster with administrator access; "
         "creates namespaces, temporary client contexts, and CPU pods"

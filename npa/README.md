@@ -57,6 +57,49 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For resumable contest evaluations, see the [BEHAVIOR campaign guide](../docs/workbench/behavior-campaign.md).
+It documents case ownership, verified results, and workflow task activity. The
+guide also documents the CPU-only `policy-identity-inspect` internal command for
+checking checkpoint and serving digests before simulator allocation. The
+optional `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` environment variable points to
+private JSON settings for the read-only live status regression; it is unset by
+default and submits no work.
+
+Campaign workers can serve a parity-qualified selected Comet export with
+`--policy-kind comet-trained`. This kind requires the four managed policy paths,
+`--policy-task-name`, and `--policy-trained-input-root`; the input root contains
+the provider-read parity originals and selected-reader record. The checkpoint
+path contains the admitted BF16 `params/` tree and its exact normalization asset.
+The execution variant defaults to `native`, which is the only accepted value for
+this policy kind. See the
+[selected trained-Comet contract](../docs/workbench/behavior-campaign.md#prescribed-non-reporting-train-panels)
+for the admission boundary and derivative-checkpoint limitations.
+Recorded `comet-trained` TRAIN runs may use `--policy-prompt-override` to test
+one frozen literal prompt while retaining the admitted task slug as the wrapper
+metadata lookup key. The option requires `--train-experience` and a
+non-reporting TRAIN panel; omitting it uses the released task-mapping
+instruction. DEV and REPORT reject it. The campaign guide documents the
+serving-identity and recording contract.
+
+Released Comet12 params checkpoints use the distinct TRAIN-only
+`--policy-kind comet-released`. This admission requires
+`--policy-released-binding` and `--policy-released-input-root`, rechecks the
+complete public checkpoint inventory and archive, and binds the exact TRAIN
+panel, evaluator, RNG, normalization, tokenizer, task mapping, and serving
+sources before startup. It records inference experience and does not claim an
+optimizer or resumable TrainState.
+
+The unchanged Native RLC policy has a separate audit-only TRAIN recorder.
+Pass `--native-train-trace --native-train-admission PATH` with
+`--policy-kind rlc` and the `native` execution variant. The admission is
+required and binds the frozen TRAIN panel, Native checkpoint/source, and
+official semantic-label implementation. This mode records lossless allowed
+decision observations, raw 30-action model chunks, raw post-wrapper 20-action
+chunks, every float32 returned/applied action, and the final allowed observation. It
+keeps Native stage, grasp, inside, and official-Q labels separate from policy
+inputs. It cannot be combined with Comet `--train-experience`, DEV, or REPORT.
+See the [Native RLC TRAIN trace contract](../docs/workbench/behavior-campaign.md#native-rlc-train-semantic-traces).
+
 Fleet recovery can remove a failed CPU pool without charging unchanged reserved
 GPUs against free capacity again. The requested CPU count must be zero, every
 other rendered capacity setting must match, and fresh provider evidence must
@@ -175,6 +218,11 @@ chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
+
+Custom workflow stages receive `NPA_CONTROL_PYTHON`, the executable interpreter
+recorded by setup, or an empty value when none is available. Use it for NPA
+storage operations alongside a separate policy environment; see
+[Python environments in custom stages](../docs/workbench/npa-workflow-guide.md#python-environments-in-custom-stages).
 
 The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
 retains invalid hosted visual judgments as failed audit evidence. Its
@@ -484,6 +532,15 @@ to an operator-owned S3 prefix; it has no default. The check requires an existin
 authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
+
+The negative BEHAVIOR specialist-report admission check uses
+`NPA_BEHAVIOR_SPECIALIST_ADMISSION_LIVE_CONFIG` to select an owner-only JSON
+file containing real panel and partition URIs, a fresh empty output prefix, and
+the pinned BEHAVIOR source root. It downloads only those declarations and proves
+missing or malformed authorization exits before runtime identity, case claims,
+or policy startup. See the
+[campaign evidence instructions](../docs/workbench/behavior-campaign.md) for the
+config schema and focused command.
 
 For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
 plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
