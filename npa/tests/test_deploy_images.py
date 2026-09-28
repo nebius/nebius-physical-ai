@@ -111,6 +111,16 @@ def test_unbuilt_public_planning_sentinel_is_not_a_consumable_release(
         container_image_for_tool(tool, tag=display_tag)
 
 
+@pytest.mark.parametrize("tool", ["ncore", "robomimic", "robotwin"])
+def test_unaccepted_default_stays_blocked_without_quarantine_membership(
+    monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    monkeypatch.setattr("npa.deploy.images.PUBLICATION_QUARANTINE_TOOLS", frozenset())
+
+    with pytest.raises(ValueError, match="no accepted release image"):
+        container_image_for_tool(tool)
+
+
 def test_sonic_public_resolution_uses_active_variant_manifest() -> None:
     expected_tag = (
         "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"

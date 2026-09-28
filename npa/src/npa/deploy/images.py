@@ -2421,11 +2421,7 @@ def container_image_for_tool(
             "robomimic remains publication-quarantined for releases; "
             "select an explicit dev-<full-source-sha> for validation"
         )
-    if (
-        tool in {"ncore", "robomimic"}
-        and tool in PUBLICATION_QUARANTINE_TOOLS
-        and not tag
-    ):
+    if tool in {"ncore", "robomimic"} and not tag:
         display_tool = "NCore" if tool == "ncore" else tool
         raise ValueError(
             f"{display_tool} has no accepted release image. Supply the validated immutable "
@@ -2433,7 +2429,7 @@ def container_image_for_tool(
             "explicitly select a dev-<full-source-sha> tag in an operator-private "
             "registry for validation."
         )
-    if tool == "robotwin" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+    if tool == "robotwin" and not tag:
         raise ValueError(
             f"{tool!r} has no accepted release image. Supply a validated immutable "
             "image or explicitly select a dev-<full-source-sha> tag for validation."
