@@ -1,0 +1,725 @@
+{
+  "schema": "npa.cursor-batch-review-followup.v1",
+  "date": "2026-09-28",
+  "base_sha": "ad8872894176de795f93b2056c7af570c62a73ce",
+  "integration_sha": "178354dd6f21e104983ab41d35ca1a93cd416716",
+  "merge_order": [
+    {
+      "pr": 635,
+      "head": "b8f3f7e7d969d6f35dd0009fa370897f27468a95",
+      "squash": "d288eb4d166eda94abc694132bcc701bd5681c41",
+      "tree": "e708bb4dad05df02247b8e6b9589cad8cbd401b8"
+    },
+    {
+      "pr": 637,
+      "head": "350d31bbf77c1805907a1bf61b6939ff56453160",
+      "squash": "fb4238b5ec5ced178e7d1b18f54bdd67d95cfe69",
+      "tree": "ea6650ab04e522011e292a2d52c2a1f405284aed"
+    },
+    {
+      "pr": 638,
+      "head": "30cd9716f67c04aad9357348d8ee63601844e402",
+      "squash": "dd0879b1a82028b136892f67e879549abb903fb7",
+      "tree": "de178f792aa9a995e82f27956151c2fb5e04b5b4"
+    },
+    {
+      "pr": 639,
+      "head": "ab65493c28419acee6af5bf693ae2c04b23b9c16",
+      "squash": "6333f6cb98e5d93879d7c486da936b7ff7c34da6",
+      "tree": "12894374984d203b5b0964569d57020f015e7835"
+    },
+    {
+      "pr": 641,
+      "head": "3cec22701c14651412c68dd146a8fe344ecd3d53",
+      "squash": "b3c4df6e6456bb9e0045fac48c74c7552a42e600",
+      "tree": "8e7b2e353dc5b134f632ed7fb0fdee3dcd5541a4"
+    },
+    {
+      "pr": 643,
+      "head": "c15a2aeb9a1eb6e66765143340a26f13ed08e3d4",
+      "squash": "44da12fbfe64ba1b29469c0aa1233f194c0b6713",
+      "tree": "1929670d3865842eb2be0df0592e3f203e7379a2"
+    },
+    {
+      "pr": 644,
+      "head": "791cb1bac0fa92f79e72690c912217c18ee32c82",
+      "squash": "178354dd6f21e104983ab41d35ca1a93cd416716",
+      "tree": "6b9175c14472383bd5021b980c176efe4c248018"
+    }
+  ],
+  "findings": {
+    "a": "producer-owned SupervisorEventPhase and shared accepted-phase set",
+    "b": "sanitized structured output_reuse_error_type, durable round-trip and recovery clearing",
+    "c": "selector compatibility note explains strict matching and workflow-scoped overrides",
+    "d": "Explicit versioned selection and per-state resolved-image binding; guarded recovery paths reject weaker records. Retain original controller/source/image for unfinished runs; no saved identity rewrites.",
+    "e": "One full-workflow selector validation per rendered batch and per resource snapshot batch; direct single-task API still validates.",
+    "f": "accelerator-name overrides explicitly excluded from image-selection identity",
+    "g": "AI review attribution; no second human GitHub approval claimed"
+  },
+  "review": {
+    "review_kind": "Independent Claude Code AI architecture review, not GitHub human approval",
+    "reviewed_head": "edea6a99994209b47968b37637998979f5defed4",
+    "reviewed_tree": "3b90d7532daeb89cd7972e2b81f3411ba67e1b2f",
+    "base": "ad8872894176de795f93b2056c7af570c62a73ce",
+    "final_pr644_head": "791cb1bac0fa92f79e72690c912217c18ee32c82",
+    "final_pr644_tree": "74fbc46a591ad33b700c6813db68c659dbf29016",
+    "final_integrated_head": "178354dd6f21e104983ab41d35ca1a93cd416716",
+    "final_integrated_tree": "6b9175c14472383bd5021b980c176efe4c248018",
+    "final_production_byte_equivalent": true,
+    "requested_model": "claude-opus-5",
+    "models_reported": [
+      "claude-haiku-4-5-20251001",
+      "claude-opus-5"
+    ],
+    "effort": "high",
+    "cli_returncode": 0,
+    "duration_ms": 911526,
+    "turns": 68,
+    "tool_audit": {
+      "available_allowlist": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "used": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "calls": 67,
+      "all_paths_within_frozen_review_scope": true,
+      "permission_denials": []
+    },
+    "claude_verdict": "No concrete safety blockers found.",
+    "claude_blocker_count": 0,
+    "nonblocking_triage": [
+      {
+        "id": "N1",
+        "topic": "No-image v3 selection-only records retain legacy provenance label.",
+        "disposition": "Low auditability follow-up; current consumers do not use the kind label. No production edit in review phase."
+      },
+      {
+        "id": "N2",
+        "topic": "Workflow-wide map identity can invalidate earlier waves after unrelated pin drift.",
+        "disposition": "Intentional conservative full-input binding documented and tested; do not weaken the fence."
+      },
+      {
+        "id": "N3",
+        "topic": "Decision-only absent-provider path with zero launch sequence.",
+        "disposition": "Nonblocking edge for custom/legacy submission records per reviewer; current SDK production launch records have positive sequence."
+      },
+      {
+        "id": "N4",
+        "topic": "Plain ValueError from current image catalog resolution uses raw catalog error rather than canonical identity wording.",
+        "disposition": "Fail-closed error-message consistency follow-up; malformed stored metadata already uses canonical mismatch."
+      },
+      {
+        "id": "N5",
+        "topic": "Empty selection guard looks unreachable for current hash function.",
+        "disposition": "Retain explicit nonempty-identity guard and its fault-injection contract; no change recommended."
+      },
+      {
+        "id": "N6",
+        "topic": "Mixed nonreuse/reuse cancellation history claimed untested.",
+        "disposition": "Coverage already exists in test_resume_blocks_conflicting_output_reuse_history, conflict=nonreuse, both event orderings. Strict ambiguity rejection is intentional."
+      },
+      {
+        "id": "N7",
+        "topic": "Render error ordering, deliberate exception boundary, transient history availability, no-image replay coverage.",
+        "disposition": "Optional maintainability/coverage notes; no safety blocker."
+      }
+    ],
+    "separate_preexisting_limitation": {
+      "behavior": "Ordinary in-flight exact-provider SUCCEEDED adoption does not compare current image options before accepting outputs.",
+      "same_behavior_on_base_and_candidate": true,
+      "no_new_composite_regression": true,
+      "classification": "Bounded follow-up outside completed-ledger/durable-output-reuse scope.",
+      "documentation": "Final upgrade note explicitly identifies this separate legacy path.",
+      "claude_did_not_classify_as_blocker": true
+    },
+    "fixture_limitations_closed_by_local_supplement": {
+      "matrix_cases": 5,
+      "selector_bindings_checked": 17,
+      "all_match": true,
+      "bdd_plan_steps": 10,
+      "negative_selectors_rejected": 4,
+      "registry_provider_calls": false,
+      "note": "Production local validation against final repository YAML, separate from Claude source-reading evidence."
+    },
+    "limitations": [
+      "Claude did not execute tests, linters or commands.",
+      "This review does not establish live GPU/cloud behavior.",
+      "Normal in-flight provider adoption remains outside the new input identity fences.",
+      "Final documentation and five independent listener test additions were reviewed by Codex; production is byte-identical to Claude snapshot."
+    ],
+    "source_edits_by_reviewer": false,
+    "push_or_cloud_actions": false,
+    "artifact_sha256": {
+      "main550-review-transcript.private.jsonl": "774a3b1c99fd405caf7503758c22fd690aea450a3d5ff1764d0ec75d7b8338d2",
+      "main550-review-result.private.json": "a3bc76701f3f44e102d00d91994d1de9ff4322c68a2c032e8d12a7d02f3c9079",
+      "main550-review-result.private.md": "a7bf5a4313dc524cd8db8cc9d0a3995b2520bef6365a986130c0b041e4d1268e",
+      "main550-review-stderr.private.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "main550-review-invocation.private.json": "5b9ee01abcf707651a622230b135f50101e65ffcdeb6fd2b28045f791b055a79",
+      "main550-review-prompt.private.txt": "c3c7f0008b5497de847e8889133184c98caa3e9340c20683cb4b1caa6024ae54",
+      "main550-review-scope.private.json": "7f8767cccb07a41b67906f8201f95cdeb88197fc1e986d2a32942251d175ea31",
+      "main550-review-against-main.private.diff": "2dbe5140a0c4e458ad585d74e51635d8f73b8b4ba7628cb4887450c4099ee969",
+      "main550-review-v5-equivalence.private.json": "7fa59b7eaf488f0d5e294425527f32677cc904cd0a10ec100a7e0f2f76f31e1a",
+      "main550-review-v5-final_pr644-delta.private.diff": "d433b1c0feeb206e6f993cbe00f393263678a17f8f436b9d9b2ec22dcfd3e8a2",
+      "main550-review-v5-final_integration-delta.private.diff": "4405dcef495cf8bba0a7590c99e0b9f9b7f80bf683155e20b7c3d3741060e0a4",
+      "main550-review-adoption-comparison.private.json": "85bf7ae249c41513fb07294369cfd12971010363c7c09416fce95a25bc75aa4e",
+      "main550-review-fixture-verification.private.json": "fe22c204da2b6d164d95106b23aa344de32c5be4ea9659dfc644ef3defb580b4"
+    },
+    "assistant_message_models": [
+      "claude-opus-5"
+    ],
+    "additional_cli_usage_models": [
+      "claude-haiku-4-5-20251001"
+    ],
+    "post_review_test_isolation_fix": {
+      "path": "npa/tests/cli/test_workflow_runtime_cli.py",
+      "production_change": false,
+      "change": "Use one mocker teardown stack to restore real preflight after denial test.",
+      "upstream_reproduction": "Same 1 passed / 3 failed sequence reproduced on ad887 and pre-fix candidate; fixed sequence 4 passed locally."
+    },
+    "post_review_portable_fixture_fix": {
+      "path": "npa/tests/workflows/test_comet_native_training_public.py",
+      "production_change": false,
+      "change": "Supply matching stdlib only inside the copied-executable test; no global runner PYTHONHOME.",
+      "verification": "Complete module 28 passed on base and candidate with the two-line test patch."
+    },
+    "post_review_permissions_fixture_fix": {
+      "path": "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py",
+      "production_change": false,
+      "change": "Explicitly chmod the intentionally unsafe directory so inherited umask cannot turn it private.",
+      "verification": "Before fix exact node fails under umask077; after fix entire module passes 66 tests under umask077."
+    }
+  },
+  "historical_gpu_proof": {
+    "url": "https://github.com/nebius/nebius-physical-ai/blob/6c045f21503387f49d2181a40f9532f640fdf0c3/docs/testing/evidence/cursor-batch-five-seven-20260925/README.md",
+    "workload_source_sha": "4602cc392b7725513cf963c96b05b63d817d8cb7",
+    "new_gpu_execution": false,
+    "scope": "Prior real B200 optimizer workload, numeric CPU oracle, explicitly injected recovery at both writes, terminal cleanup. Not a GPU rerun on the revised heads.",
+    "fresh_control_plane_gpu_rerun": false
+  },
+  "initial_local_validation": {
+    "platform": "macOS Python 3.12.12",
+    "guardrails_passed": 4722,
+    "affected_passed": 2274,
+    "affected_failed": 119,
+    "affected_skipped": 11,
+    "collection_errors": 1,
+    "all_failures_reproduced_on_base": true,
+    "causes": {
+      "rerun_sdk_version_mismatch": 97,
+      "macos_local_api_limitations": 22,
+      "missing_h5py_collection_error": 1
+    },
+    "scope": "Earlier candidate before current-main integration; diagnostic history only, not a test of final heads."
+  },
+  "linux_validation": {
+    "head": "178354dd6f21e104983ab41d35ca1a93cd416716",
+    "gates": [
+      {
+        "gate": "precheck",
+        "exit_code": 0,
+        "seconds": 2.83,
+        "command": [
+          "make",
+          "precheck",
+          "PYTHON=<checkout>/npa/.venv/bin/python"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+      },
+      {
+        "gate": "smoke",
+        "exit_code": 0,
+        "seconds": 8.89,
+        "command": [
+          "make",
+          "test-smoke",
+          "PYTHON=<checkout>/npa/.venv/bin/python"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+      },
+      {
+        "gate": "guardrails",
+        "exit_code": 0,
+        "seconds": 78.13,
+        "command": [
+          "<checkout>/npa/.venv/bin/python",
+          "-m",
+          "pytest",
+          "npa/tests/guardrails",
+          "-q"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+      },
+      {
+        "gate": "affected",
+        "exit_code": 0,
+        "seconds": 304.82,
+        "command": [
+          "<checkout>/npa/.venv/bin/python",
+          "-m",
+          "pytest",
+          "npa/tests/orchestration/npa_workflow",
+          "npa/tests/orchestration/skypilot/test_local_api.py",
+          "npa/tests/cli/test_workflow_runtime_cli.py",
+          "npa/tests/cli/test_workflow_submit_preflight.py",
+          "-q"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716",
+        "execution_mode": "serial"
+      },
+      {
+        "gate": "hostile",
+        "exit_code": 0,
+        "seconds": 128.01,
+        "command": [
+          "<checkout>/npa/.venv/bin/python",
+          "-m",
+          "pytest",
+          "npa/tests/guardrails/test_image_security_gate.py",
+          "npa/tests/clients/test_download_containment.py",
+          "npa/tests/clients/test_ssh_private_staging.py",
+          "npa/tests/cli/test_agent_source_archive.py",
+          "npa/tests/cli/test_service_credential_security.py",
+          "npa/tests/cli/test_fiftyone_env_security.py",
+          "npa/tests/cli/test_fiftyone_private_access.py",
+          "npa/tests/workbench/test_checkpoint_security.py",
+          "npa/tests/workbench/test_s3_tree_security.py",
+          "npa/tests/workbench/test_storage_scope.py",
+          "npa/tests/workbench/test_policy_container_security.py",
+          "npa/tests/workbench/test_alpamayo2_super_service_security.py",
+          "npa/tests/workbench/test_cosmos3_ray_inputs.py",
+          "npa/tests/workbench/test_cosmos3_ray_serve.py",
+          "npa/tests/workbench/test_cosmos3_nano_video_server.py",
+          "npa/tests/workflows/test_paidf_download_security.py",
+          "npa/tests/workflows/test_openpi_gcs.py",
+          "npa/tests/workflows/test_rerun_serve_auth.py",
+          "npa/tests/orchestration/skypilot/test_controller_clone.py",
+          "npa/tests/orchestration/skypilot/test_local_api.py",
+          "npa/tests/orchestration/skypilot/test_controller_identity_transaction.py",
+          "-q"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+      },
+      {
+        "gate": "full",
+        "exit_code": 0,
+        "seconds": 889.26,
+        "command": [
+          "make",
+          "test",
+          "PYTHON=<checkout>/npa/.venv/bin/python"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+      },
+      {
+        "gate": "docs",
+        "exit_code": 0,
+        "seconds": 84.7,
+        "command": [
+          "make",
+          "docs-check",
+          "PYTHON=<checkout>/npa/.venv/bin/python"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+      },
+      {
+        "gate": "confidentiality",
+        "exit_code": 0,
+        "seconds": 0.09,
+        "command": [
+          "<checkout>/npa/.venv/bin/python",
+          "-m",
+          "npa.guardrails.confidentiality",
+          "--repo-root",
+          ".",
+          "--diff-range",
+          "origin/main..HEAD",
+          "--built-in-nebius-infra"
+        ],
+        "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+      }
+    ],
+    "base": "ad8872894176de795f93b2056c7af570c62a73ce",
+    "final_successful_gate_parallelism": {
+      "smoke": "8 pytest workers",
+      "guardrails": "8 pytest workers",
+      "affected": "serial",
+      "hostile": "serial",
+      "full": "8 pytest workers, --dist=loadfile"
+    },
+    "prior_parallel_affected_attempt": "On the prior integration, one procfs ownership inspection failed closed under parallel execution. The unchanged suite passed serially; final affected/security validation uses serial execution. This is diagnostic history, not a failure on the final head.",
+    "canonical_interpreter": "Owned npa/.venv/bin/python, Python 3.12.14",
+    "torch": "2.14.0+cpu",
+    "cuda_runtime": null,
+    "full_suite_scope": "Repository make test; standard live/GPU marker exclusions and 180-second per-test timeout. No added test exclusions.",
+    "coverage_claim": "No local coverage percentage claimed; GitHub CI is checked separately.",
+    "log_summaries": {
+      "precheck": [
+        "All checks passed!",
+        "============================= 266 passed in 2.21s =============================="
+      ],
+      "smoke": [
+        "============================= 118 passed in 8.41s =============================="
+      ],
+      "guardrails": [
+        "================== 4934 passed, 1 warning in 77.58s (0:01:17) =================="
+      ],
+      "affected": [
+        "================= 2637 passed, 10 skipped in 303.61s (0:05:03) ================="
+      ],
+      "hostile": [
+        "================= 883 passed, 2 warnings in 126.69s (0:02:06) =================="
+      ],
+      "full": [
+        "=== 33823 passed, 156 skipped, 1 xpassed, 456 warnings in 886.66s (0:14:46) ===="
+      ],
+      "docs": [],
+      "confidentiality": []
+    },
+    "logs": {
+      "logs/precheck.log": {
+        "raw_sha256": "924920e3215bad744a138a2199765ecb0fd0bd67f1c2f52c90551f1d4dafb1c5",
+        "sanitized_sha256": "81d5c81f6b2829bc5fd02131162ab6bca4655f5f9b9f1e9a66ee60ffe0da4528",
+        "bytes": 1569
+      },
+      "logs/smoke.log": {
+        "raw_sha256": "482f7480a43d823ada73f16c60c7f17cf7092f1443559ad4842e1d4b689b88aa",
+        "sanitized_sha256": "f1ce3634f1dcdcf86f8bb098221099de81cbf0bcb3b0878a4f1997573e7934b9",
+        "bytes": 759
+      },
+      "logs/guardrails.log": {
+        "raw_sha256": "effac44bdbc5a13d8eaed908d3b62918f15a5f9a08f5059e2777921cc529aa13",
+        "sanitized_sha256": "b884c51727ddbdca53f784a977fbb05f721ffca2a4374434ea3496e219686ab2",
+        "bytes": 6353
+      },
+      "logs/affected.log": {
+        "raw_sha256": "c024a56b3be1db015ab853192880e4090aced88a0553ae6704156bcdaea95d30",
+        "sanitized_sha256": "f0d8c8879a6575522afe534497b46eee0dc8f480d6c9af6d960f87a6b9a0c75c",
+        "bytes": 10626
+      },
+      "logs/hostile.log": {
+        "raw_sha256": "b4624c2aff9f00dee63cb2ad3712472a8c9103394eb344386b4f38a935adcd18",
+        "sanitized_sha256": "47cba4f698f2f0b68fea0c3c252a777dc46a5176ce202d63836e5dca3a88f0f0",
+        "bytes": 4079
+      },
+      "logs/full.log": {
+        "raw_sha256": "661109c249b78129661d3ebfa749223470f0ebb0aa2413b626c98cc11b8c9763",
+        "sanitized_sha256": "ec72b9f57371684fc19f29d615e363c3cfcb93680de3f8323d42d01fb0c36f05",
+        "bytes": 98538
+      },
+      "logs/docs.log": {
+        "raw_sha256": "dfcc204093e4ee7330cccf410fad6e1bb328daf84e77120d5f189acf2bcd7729",
+        "sanitized_sha256": "93cf3c8ed9460b2e1d4961e834b0abac573255298b57eccb3d9c7ef90c03b212",
+        "bytes": 227
+      },
+      "logs/confidentiality.log": {
+        "raw_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+        "sanitized_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+        "bytes": 64
+      }
+    }
+  },
+  "github_checks": [
+    {
+      "pr": 635,
+      "head": "b8f3f7e7d969d6f35dd0009fa370897f27468a95",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 25,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 637,
+      "head": "350d31bbf77c1805907a1bf61b6939ff56453160",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 25,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 638,
+      "head": "30cd9716f67c04aad9357348d8ee63601844e402",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 25,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 639,
+      "head": "ab65493c28419acee6af5bf693ae2c04b23b9c16",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 25,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 641,
+      "head": "3cec22701c14651412c68dd146a8fe344ecd3d53",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 25,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 643,
+      "head": "c15a2aeb9a1eb6e66765143340a26f13ed08e3d4",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 25,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 644,
+      "head": "791cb1bac0fa92f79e72690c912217c18ee32c82",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 25,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    }
+  ],
+  "merged_or_enqueued": false,
+  "integration_tree": "6b9175c14472383bd5021b980c176efe4c248018",
+  "scope_limitations": [
+    "Historical B200 evidence is attributed to its original source, not a GPU rerun of these updated heads.",
+    "Ordinary in-flight provider adoption is a pre-existing separate path outside the completed-ledger/durable-output-reuse identity fences; reproduced unchanged on main and candidate.",
+    "Claude review did not execute tests or inspect cloud state; test and matrix evidence is recorded separately."
+  ],
+  "preflight_test_isolation": {
+    "same_three_order_dependent_failures_on_main_and_candidate": true,
+    "cause": "Two patch managers restore the same callable in the wrong teardown order.",
+    "fix": "One mocker stack restores the real preflight. Assertions unchanged.",
+    "original_isolated_module_passed": 185,
+    "original_ordered_four_tests": {
+      "passed": 1,
+      "failed": 3
+    },
+    "fixed_ordered_four_tests_local": {
+      "passed": 4,
+      "failed": 0
+    }
+  },
+  "attribution_corrections": [
+    {
+      "id": 5751458519,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/635#issuecomment-5751458519",
+      "changed": "Attribution heading only"
+    },
+    {
+      "id": 5751582445,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751582445",
+      "changed": "Attribution heading only"
+    },
+    {
+      "id": 5751713509,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751713509",
+      "changed": "Attribution heading only"
+    },
+    {
+      "id": 5751748381,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751748381",
+      "changed": "Attribution heading only"
+    },
+    {
+      "comment_id": 5751617922,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751617922",
+      "author": "timothy-le7",
+      "historical_evidence_preserved": true
+    },
+    {
+      "comment_id": 5751641094,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751641094",
+      "author": "timothy-le7",
+      "historical_evidence_preserved": true
+    },
+    {
+      "comment_id": 5751854319,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751854319",
+      "author": "timothy-le7",
+      "historical_evidence_preserved": true
+    }
+  ],
+  "signature_verification": {
+    "scope": "Distinct commits in the seven PR branch ranges since the recorded main base",
+    "commits": 121,
+    "all_valid": true
+  },
+  "github_checks_scope": "Current PR heads, checked individually; integrated Linux suite separately binds the ordered squash tree.",
+  "ci_retry_history": {
+    "final_outcome": "all_seven_exact_heads_clean_with_25_completed_success_or_skipped_checks_each",
+    "generated_at": "2026-09-28T20:42:57.457368Z",
+    "pull_requests": [
+      {
+        "check_count": 25,
+        "head_sha": "b8f3f7e7d969d6f35dd0009fa370897f27468a95",
+        "merge_state": "CLEAN",
+        "nonpassing_check_count": 0,
+        "pr": 635,
+        "workflow_attempt": 1,
+        "workflow_conclusion": "success",
+        "workflow_run_id": 36478528378,
+        "workflow_status": "completed"
+      },
+      {
+        "check_count": 25,
+        "head_sha": "350d31bbf77c1805907a1bf61b6939ff56453160",
+        "merge_state": "CLEAN",
+        "nonpassing_check_count": 0,
+        "pr": 637,
+        "workflow_attempt": 1,
+        "workflow_conclusion": "success",
+        "workflow_run_id": 36478530686,
+        "workflow_status": "completed"
+      },
+      {
+        "check_count": 25,
+        "head_sha": "30cd9716f67c04aad9357348d8ee63601844e402",
+        "merge_state": "CLEAN",
+        "nonpassing_check_count": 0,
+        "pr": 638,
+        "workflow_attempt": 1,
+        "workflow_conclusion": "success",
+        "workflow_run_id": 36478528561,
+        "workflow_status": "completed"
+      },
+      {
+        "check_count": 25,
+        "head_sha": "ab65493c28419acee6af5bf693ae2c04b23b9c16",
+        "merge_state": "CLEAN",
+        "nonpassing_check_count": 0,
+        "pr": 639,
+        "workflow_attempt": 1,
+        "workflow_conclusion": "success",
+        "workflow_run_id": 36478528726,
+        "workflow_status": "completed"
+      },
+      {
+        "check_count": 25,
+        "head_sha": "3cec22701c14651412c68dd146a8fe344ecd3d53",
+        "merge_state": "CLEAN",
+        "nonpassing_check_count": 0,
+        "pr": 641,
+        "workflow_attempt": 2,
+        "workflow_conclusion": "success",
+        "workflow_run_id": 36478530548,
+        "workflow_status": "completed"
+      },
+      {
+        "check_count": 25,
+        "head_sha": "c15a2aeb9a1eb6e66765143340a26f13ed08e3d4",
+        "merge_state": "CLEAN",
+        "nonpassing_check_count": 0,
+        "pr": 643,
+        "workflow_attempt": 1,
+        "workflow_conclusion": "success",
+        "workflow_run_id": 36478529766,
+        "workflow_status": "completed"
+      },
+      {
+        "check_count": 25,
+        "head_sha": "791cb1bac0fa92f79e72690c912217c18ee32c82",
+        "merge_state": "CLEAN",
+        "nonpassing_check_count": 0,
+        "pr": 644,
+        "workflow_attempt": 1,
+        "workflow_conclusion": "success",
+        "workflow_run_id": 36478529489,
+        "workflow_status": "completed"
+      }
+    ],
+    "repository": "nebius/nebius-physical-ai",
+    "retry": {
+      "head_sha": "3cec22701c14651412c68dd146a8fe344ecd3d53",
+      "original_attempt": 1,
+      "original_cause": "existing five-minute job timeout after tests and collection completed; no assertion failure observed",
+      "original_collected_tests": 34538,
+      "original_job_conclusion": "cancelled",
+      "original_job_id": 109118179348,
+      "original_observed_tests": {
+        "passed": 5613,
+        "skipped": 6
+      },
+      "pr": 641,
+      "rerun_attempt": 2,
+      "rerun_collected_tests": 34538,
+      "rerun_job_conclusion": "success",
+      "rerun_job_id": 109124092677,
+      "rerun_observed_tests": {
+        "passed": 5613,
+        "skipped": 6
+      },
+      "rerun_workflow_conclusion": "success",
+      "retry_request_exit_code": 0,
+      "retry_scope": "specific cancelled job and dependencies",
+      "workflow_run_id": 36478530548
+    },
+    "schema_version": 1,
+    "scope": "read-only current-head CI monitoring plus one authorized transient-job retry; no merge, enqueue, source edit, push, setting change, healthy-job cancellation, or check weakening"
+  },
+  "source_url": "https://github.com/nebius/nebius-physical-ai/tree/178354dd6f21e104983ab41d35ca1a93cd416716",
+  "validation_cleanup": {
+    "all_descendants_reaped": true,
+    "driver_exit_code": 0,
+    "raw_driver_log_sha256": "53b751f0b8ba6f9c29446cc7a935cef03fc1a12251a0142ed4f28464f39024ae",
+    "tested_checkout_clean_after": true
+  }
+}

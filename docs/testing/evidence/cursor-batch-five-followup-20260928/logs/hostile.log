@@ -1,0 +1,55 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: <checkout>/npa
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1, cov-7.1.0, mock-3.15.1, xdist-3.8.0
+collected 883 items
+
+npa/tests/guardrails/test_image_security_gate.py ....................... [  2%]
+.........................................                                [  7%]
+npa/tests/clients/test_download_containment.py ...............           [  8%]
+npa/tests/clients/test_ssh_private_staging.py .............              [ 10%]
+npa/tests/cli/test_agent_source_archive.py .............                 [ 11%]
+npa/tests/cli/test_service_credential_security.py ...................... [ 14%]
+...                                                                      [ 14%]
+npa/tests/cli/test_fiftyone_env_security.py .....                        [ 15%]
+npa/tests/cli/test_fiftyone_private_access.py ............               [ 16%]
+npa/tests/workbench/test_checkpoint_security.py ........                 [ 17%]
+npa/tests/workbench/test_s3_tree_security.py ........................... [ 20%]
+............                                                             [ 21%]
+npa/tests/workbench/test_storage_scope.py ........................       [ 24%]
+npa/tests/workbench/test_policy_container_security.py .....              [ 25%]
+npa/tests/workbench/test_alpamayo2_super_service_security.py ........... [ 26%]
+...................                                                      [ 28%]
+npa/tests/workbench/test_cosmos3_ray_inputs.py ......................... [ 31%]
+.....................                                                    [ 33%]
+npa/tests/workbench/test_cosmos3_ray_serve.py .......................... [ 36%]
+........................................................................ [ 44%]
+........................................................................ [ 53%]
+........................................................................ [ 61%]
+.................                                                        [ 63%]
+npa/tests/workbench/test_cosmos3_nano_video_server.py .................. [ 65%]
+..........                                                               [ 66%]
+npa/tests/workflows/test_paidf_download_security.py .......              [ 67%]
+npa/tests/workflows/test_openpi_gcs.py ...............................   [ 70%]
+npa/tests/workflows/test_rerun_serve_auth.py .................           [ 72%]
+npa/tests/orchestration/skypilot/test_controller_clone.py .............. [ 74%]
+.                                                                        [ 74%]
+npa/tests/orchestration/skypilot/test_local_api.py ..................... [ 76%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+..................................................                       [ 98%]
+npa/tests/orchestration/skypilot/test_controller_identity_transaction.py . [ 98%]
+...........                                                              [100%]
+
+=============================== warnings summary ===============================
+npa/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  <checkout>/npa/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+npa/.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  <checkout>/npa/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 883 passed, 2 warnings in 126.69s (0:02:06) ==================

@@ -1,0 +1,329 @@
+{
+  "preflight_test_fix": {
+    "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+    "tree": "6fe90eb6445c491315876cbbafafb0d340117c76",
+    "status": "pass",
+    "production_bytes_equal_prior_head": "180c2744191f5f17243359543a3d97587ec2885f",
+    "only_changed_path": "npa/tests/cli/test_workflow_runtime_cli.py",
+    "scope": "Exact reproduction followed by complete runtime CLI and execution-preflight modules in explicit order. Separate private PID/proc/network namespaces, UID1000/PID1 reaper, private HOME/XDG/Rerun analytics disabled; source unchanged, no skipped tests.",
+    "runs": {
+      "fixed-pair": {
+        "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+        "tree": "6fe90eb6445c491315876cbbafafb0d340117c76",
+        "label": "fixed-pair",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "7de6af91737a1bf63f08b2b39138b6b51f72c9a950c4a18356c3075bd17a4f36",
+        "source_hashes": {
+          "npa/tests/cli/test_workflow_runtime_cli.py": "6b2dd7f54b9ed338c2bfdc293a8b5385d85f0259f03e3cba3acc920725f33a78",
+          "npa/tests/unit/test_execution_preflight.py": "b30d0470373776f99942ea1007df021c79910fa99805da8575cf0c9ce96ebfa0",
+          "npa/src/npa/execution_preflight.py": "b317167f820bf4ab9ad9f5a329fb2e9802a1811596596ac8066b95c5e5769c61"
+        },
+        "returncode": 0,
+        "head_unchanged": true,
+        "git_clean_after": true,
+        "source_unchanged": true,
+        "log_sha256": "c66a24c1209da29d570cb8ff3e0aa4d80f7d06064ae282d39d3cb29e31a4a5e1",
+        "counts": {
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": []
+      },
+      "fixed-modules": {
+        "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+        "tree": "6fe90eb6445c491315876cbbafafb0d340117c76",
+        "label": "fixed-modules",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "679192fad31e78e81fd5e6599640ff66d1d337c4d646420ad8f0349dd40046eb",
+        "source_hashes": {
+          "npa/tests/cli/test_workflow_runtime_cli.py": "6b2dd7f54b9ed338c2bfdc293a8b5385d85f0259f03e3cba3acc920725f33a78",
+          "npa/tests/unit/test_execution_preflight.py": "b30d0470373776f99942ea1007df021c79910fa99805da8575cf0c9ce96ebfa0",
+          "npa/src/npa/execution_preflight.py": "b317167f820bf4ab9ad9f5a329fb2e9802a1811596596ac8066b95c5e5769c61"
+        },
+        "returncode": 0,
+        "head_unchanged": true,
+        "git_clean_after": true,
+        "source_unchanged": true,
+        "log_sha256": "6ab91b6ef2343f93433c3f440b1aa0dc3faf139304095c0ef9270135c117ffe7",
+        "counts": {
+          "tests": 251,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": []
+      }
+    },
+    "private_report_sha256": "d192e6c4092ca578735b006bc9ad9a3c4e4aefa2a79460b150e898bd605daf4d"
+  },
+  "copied_interpreter_fixture": {
+    "candidate": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+    "base": "ad8872894176de795f93b2056c7af570c62a73ce",
+    "failed_node": "npa/tests/workflows/test_comet_native_training_public.py::test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python",
+    "classification": "upstream fixture assumes copied interpreter binary can locate stdlib at compiled prefix; uv-managed relocatable Python requires explicit existing standard-library path",
+    "runs": {
+      "comet-candidate": {
+        "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+        "tree": "6fe90eb6445c491315876cbbafafb0d340117c76",
+        "label": "comet-candidate",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "d161100958e11c2142497f18da0dcb88b4b50add2031d0f1e296e67dfe9944b5",
+        "source_hashes": {
+          "npa/tests/workflows/test_comet_native_training_public.py": "9da306195132d882032abf69c189653a4fd48f17385a55c561f3023d0e7d9a1c",
+          "npa/src/npa/workflows/behavior_challenge/comet_native_workflow.py": "a16f94ab69f5510e9d54a1102a7cdb138b2f1b0241d4e21ed3ed871f4f53090b"
+        },
+        "returncode": 1,
+        "head_unchanged": true,
+        "git_clean_after": true,
+        "source_unchanged": true,
+        "log_sha256": "4450396e89ce5081891fc8742cdc8f39bc1168577fc7046b60b77ccfac370619",
+        "counts": {
+          "tests": 28,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": [
+          {
+            "classname": "tests.workflows.test_comet_native_training_public",
+            "name": "test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python",
+            "text": "npa/tests/workflows/test_comet_native_training_public.py:588: in test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python\n    result = workflow.run(args)\n             ^^^^^^^^^^^^^^^^^^\nnpa/src/npa/workflows/behavior_challenge/comet_native_workflow.py:913: in run\n    return execute(args)\n           ^^^^^^^^^^^^^\nnpa/src/npa/workflows/behavior_challenge/comet_native_workflow.py:866: in execute\n    _run(\nnpa/src/npa/workflows/behavior_challenge/comet_native_workflow.py:410: in _run\n    raise RuntimeError(f\"native-training child failed: {completed.returncode}\")\nE   RuntimeError: native-training child failed: 1"
+          }
+        ]
+      },
+      "comet-base": {
+        "head": "ad8872894176de795f93b2056c7af570c62a73ce",
+        "tree": "6653d0c68f5893cf5c5d98f850ac32a42ad12fea",
+        "label": "comet-base",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "d161100958e11c2142497f18da0dcb88b4b50add2031d0f1e296e67dfe9944b5",
+        "source_hashes": {
+          "npa/tests/workflows/test_comet_native_training_public.py": "9da306195132d882032abf69c189653a4fd48f17385a55c561f3023d0e7d9a1c",
+          "npa/src/npa/workflows/behavior_challenge/comet_native_workflow.py": "a16f94ab69f5510e9d54a1102a7cdb138b2f1b0241d4e21ed3ed871f4f53090b"
+        },
+        "returncode": 1,
+        "head_unchanged": true,
+        "git_clean_after": true,
+        "source_unchanged": true,
+        "log_sha256": "521239718dcc4d46059e62519f2e4e94c2c3cb1203b41b8a8a2f4ab56c1b874f",
+        "counts": {
+          "tests": 28,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": [
+          {
+            "classname": "tests.workflows.test_comet_native_training_public",
+            "name": "test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python",
+            "text": "npa/tests/workflows/test_comet_native_training_public.py:588: in test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python\n    result = workflow.run(args)\n             ^^^^^^^^^^^^^^^^^^\nnpa/src/npa/workflows/behavior_challenge/comet_native_workflow.py:913: in run\n    return execute(args)\n           ^^^^^^^^^^^^^\nnpa/src/npa/workflows/behavior_challenge/comet_native_workflow.py:866: in execute\n    _run(\nnpa/src/npa/workflows/behavior_challenge/comet_native_workflow.py:410: in _run\n    raise RuntimeError(f\"native-training child failed: {completed.returncode}\")\nE   RuntimeError: native-training child failed: 1"
+          }
+        ]
+      },
+      "comet-candidate-home": {
+        "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+        "tree": "6fe90eb6445c491315876cbbafafb0d340117c76",
+        "label": "comet-candidate-home",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "a8036ecf543a003b4c3e64161aba779d581b68938db9e55beceff6f4435d3fbf",
+        "source_hashes": {
+          "npa/tests/workflows/test_comet_native_training_public.py": "9da306195132d882032abf69c189653a4fd48f17385a55c561f3023d0e7d9a1c",
+          "npa/src/npa/workflows/behavior_challenge/comet_native_workflow.py": "a16f94ab69f5510e9d54a1102a7cdb138b2f1b0241d4e21ed3ed871f4f53090b"
+        },
+        "returncode": 0,
+        "head_unchanged": true,
+        "git_clean_after": true,
+        "source_unchanged": true,
+        "log_sha256": "03f5184fce14782e9d4468a6c720d1029936422372cbb3332ec8bb4d07824281",
+        "counts": {
+          "tests": 28,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": []
+      },
+      "comet-base-home": {
+        "head": "ad8872894176de795f93b2056c7af570c62a73ce",
+        "tree": "6653d0c68f5893cf5c5d98f850ac32a42ad12fea",
+        "label": "comet-base-home",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "a8036ecf543a003b4c3e64161aba779d581b68938db9e55beceff6f4435d3fbf",
+        "source_hashes": {
+          "npa/tests/workflows/test_comet_native_training_public.py": "9da306195132d882032abf69c189653a4fd48f17385a55c561f3023d0e7d9a1c",
+          "npa/src/npa/workflows/behavior_challenge/comet_native_workflow.py": "a16f94ab69f5510e9d54a1102a7cdb138b2f1b0241d4e21ed3ed871f4f53090b"
+        },
+        "returncode": 0,
+        "head_unchanged": true,
+        "git_clean_after": true,
+        "source_unchanged": true,
+        "log_sha256": "684db07b2c4709b1883b143556b0358870aee1ad8ce538d77792ac8f4efc4862",
+        "counts": {
+          "tests": 28,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": []
+      }
+    },
+    "private_report_sha256": "99f4555ad3ceb59a5badab6f08701eae70aab854263f80f16edf9ddce80537ba",
+    "diagnostic_scope": "The global PYTHONHOME experiment passed the single-version Comet module, but was rejected after it broke subprocesses using a different Python version. The final correction is test-local."
+  },
+  "serial_attempt_before_test_fix": {
+    "head": "180c2744191f5f17243359543a3d97587ec2885f",
+    "passed": 33818,
+    "failed": 5,
+    "skipped": 156,
+    "deselected": 14,
+    "xpassed": 1,
+    "seconds": 3856.64,
+    "failure_classes": {
+      "mixed_patch_manager_teardown": 3,
+      "restrictive_umask_changes_fixture_permissions": 1,
+      "copied_uv_interpreter_lacks_stdlib_location": 1
+    },
+    "raw_log_sha256": "f50e66aa03c464faa5b6251e241ce6174cedd3672c2b51a7ddc045490d656113"
+  },
+  "runner_corrections": {
+    "source_bytes_changed_by_environment_remedies": false,
+    "private_home_and_pid_mount_network_namespaces": true,
+    "unprivileged_tests": true,
+    "pid1_reaper": true,
+    "source_checkout_permissions": "Owner-only checkout created under umask077; prevents actual scanner configuration from becoming group writable.",
+    "test_process_umask": "022 initially; fixtures explicitly establish required permission modes independently of inherited process umask.",
+    "pythonhome": "Not exported by the final validation runner. The copied-executable fixture supplies its own matching stdlib inside a single monkeypatch context.",
+    "torch": "2.14.0+cpu",
+    "cuda_runtime": null
+  },
+  "rejected_global_pythonhome_attempt": {
+    "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+    "passed": 33804,
+    "failed": 19,
+    "skipped": 156,
+    "xpassed": 1,
+    "seconds": 899.11,
+    "cause": "A global Python3.12 stdlib prefix breaks subprocess tests using system Python3.10 and isolated interpreter discovery.",
+    "raw_log_sha256": "13dfd30af2a69a40ff95ea9e0546a60293cf432f3eb7cfe6c7d25a7c6c9588f1",
+    "remedy_verification": {
+      "global_pythonhome_removed": true,
+      "complete_affected_modules_passed": 180,
+      "failed": 0,
+      "seconds": 5.92,
+      "raw_log_sha256": "8ca590cf7657efa5c5f79db05432ce47c6b33aa4ef08c64b834c2f443851c5b0"
+    }
+  },
+  "final_portable_fixture_correction": {
+    "status": "pass",
+    "candidate_base_head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+    "upstream_base_head": "ad8872894176de795f93b2056c7af570c62a73ce",
+    "patch_sha256": "a650c487804124face53288d2af121ac7198ef58f90554a57387207fa8344f27",
+    "scope": "Task-owned clones have the two-line uncommitted fixture-only patch atop each base head. The existing final integration and upstream worktrees are unchanged. No production source changes.",
+    "supersedes_runner_remedy": "Do not apply PYTHONHOME globally to the full suite; original narrow environment control was insufficient for unrelated interpreter versions. Scope to the one fixture via monkeypatch.setenv; automatic teardown verified with real subsequent docs and Habitat modules.",
+    "runs": {
+      "comet-fixture-candidate": {
+        "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+        "tree": "6fe90eb6445c491315876cbbafafb0d340117c76",
+        "label": "comet-fixture-candidate",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "6a4621432ac7e78651009db2aabcfa8126f5b768bac0d77e2c5d3126664de243",
+        "runner_pythonhome_absent": true,
+        "source_hashes": {
+          "npa/tests/workflows/test_comet_native_training_public.py": "a86780e737748a17eeb6569a180f07e121828f426afaa57e494ce454bea5c843",
+          "npa/src/npa/workflows/behavior_challenge/comet_native_workflow.py": "a16f94ab69f5510e9d54a1102a7cdb138b2f1b0241d4e21ed3ed871f4f53090b"
+        },
+        "returncode": 0,
+        "head_unchanged": true,
+        "git_clean_after": false,
+        "source_unchanged": true,
+        "log_sha256": "95829242c38337ed0fe2f60eabf8101bec594ca7f122605c160a8bdb1f66e7dc",
+        "counts": {
+          "tests": 28,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": []
+      },
+      "comet-fixture-base": {
+        "head": "ad8872894176de795f93b2056c7af570c62a73ce",
+        "tree": "6653d0c68f5893cf5c5d98f850ac32a42ad12fea",
+        "label": "comet-fixture-base",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "6a4621432ac7e78651009db2aabcfa8126f5b768bac0d77e2c5d3126664de243",
+        "runner_pythonhome_absent": true,
+        "source_hashes": {
+          "npa/tests/workflows/test_comet_native_training_public.py": "a86780e737748a17eeb6569a180f07e121828f426afaa57e494ce454bea5c843",
+          "npa/src/npa/workflows/behavior_challenge/comet_native_workflow.py": "a16f94ab69f5510e9d54a1102a7cdb138b2f1b0241d4e21ed3ed871f4f53090b"
+        },
+        "returncode": 0,
+        "head_unchanged": true,
+        "git_clean_after": false,
+        "source_unchanged": true,
+        "log_sha256": "243d961201289827b1a31bbf5e0223bf818b0ac9d191cc1c94f7df3934e859cc",
+        "counts": {
+          "tests": 28,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": []
+      },
+      "comet-fixture-teardown": {
+        "head": "3d20101b1a62bbc0b53103b03f7246d929f67d76",
+        "tree": "6fe90eb6445c491315876cbbafafb0d340117c76",
+        "label": "comet-fixture-teardown",
+        "version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+        "runner_sha256": "be87bc0231c0b5cef967f325827a5f545280cad1f6bb0d0a0522bf8f8da96ac6",
+        "runner_pythonhome_absent": true,
+        "source_hashes": {
+          "npa/tests/scripts/test_build_docs.py": "195a22825ecef200b8b0be372f91f0dc517c6952e4c2306c776d51bdd8622dba",
+          "npa/tests/docker/test_habitat_sim_apt_locks.py": "34fde03010ee10328af4b4b49fa4181f5c0080cb19d488ec1395c9464d7f571b",
+          "npa/tests/workflows/test_comet_native_training_public.py": "a86780e737748a17eeb6569a180f07e121828f426afaa57e494ce454bea5c843",
+          "npa/src/npa/workflows/behavior_challenge/comet_native_workflow.py": "a16f94ab69f5510e9d54a1102a7cdb138b2f1b0241d4e21ed3ed871f4f53090b"
+        },
+        "returncode": 0,
+        "head_unchanged": true,
+        "git_clean_after": false,
+        "source_unchanged": true,
+        "log_sha256": "52e713012b3b783d2486dcb1b628b4ba4467253911f09bb94aa2dd372b352638",
+        "counts": {
+          "tests": 51,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "failures": []
+      }
+    },
+    "private_report_sha256": "fa7fe76d9766e55f7e22a2bc80ba766b212e0c80b4f324129454ad4952f892b3"
+  },
+  "permissions_fixture": {
+    "previous_head": "66f5e1a50c2d5e90c5ad326a4a2a4de1d0ff2e32",
+    "previous_full": {
+      "passed": 33822,
+      "failed": 1,
+      "skipped": 156,
+      "xpassed": 1,
+      "seconds": 894.75,
+      "raw_log_sha256": "137aae6abf25d6f379e85c5511ae6f0072a9b406e909dce64424a7798753e25d"
+    },
+    "failed_node": "tests/orchestration/npa_workflow/test_submit_live_matrix.py::test_runtime_storage_live_requires_fresh_owned_isolation_root",
+    "cause": "mkdir(mode=0755) is reduced by an inherited owner-only umask. The fixture must set its intentionally unsafe permissions explicitly.",
+    "fix": "permissive.chmod(0o755); production validation and test assertions unchanged",
+    "reproduced_before": {
+      "failed": 1,
+      "umask": "077"
+    },
+    "fixed_complete_module": {
+      "passed": 66,
+      "umask": "077"
+    },
+    "logs": {
+      "isolation-permissions-before.log": "cf5c3d65fe44139c2786e3fea5a60073a61d42c3f890274bd5cd88ccfc8d3329",
+      "isolation-permissions-after.log": "aba0f0c7f3e8bd72175cb9042e600b39a9bc8513510c74f24c174c7d7dd531c2"
+    }
+  }
+}

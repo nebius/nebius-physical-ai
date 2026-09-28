@@ -1,0 +1,83 @@
+{
+  "source_head": "055ac3b9d63f689daa1d8f59ead41d4aead88e3f",
+  "review_kind": "local static fixture validation supplement, not a live submission or Claude-executed test",
+  "matrix_cases_with_overrides": 5,
+  "matrix_selector_bindings": 17,
+  "cases": [
+    {
+      "spec": "workflows/partners/antioch/antioch-offline-policy-train.yaml",
+      "selectors": [
+        "workbench.lerobot.policy_train"
+      ],
+      "outcome": "all selectors match complete workflow",
+      "spec_sha256": "d1789891ea67c663402fe932df551ba78b2c9756bef8ef6268699cc8eddb0b00"
+    },
+    {
+      "spec": "workflows/testing/nurec-colmap-reconstruct.yaml",
+      "selectors": [
+        "workbench.nurec.convert_colmap",
+        "workbench.nurec.visualize"
+      ],
+      "outcome": "all selectors match complete workflow",
+      "spec_sha256": "3871a953e87d4f5274cda560d9ca9222859dd1adfc312c3f643c79d62749561b"
+    },
+    {
+      "spec": "workflows/testing/physical-ai-data-factory.yaml",
+      "selectors": [
+        "workbench.cosmos2.transfer_execute",
+        "workbench.cosmos_evaluator.evaluate",
+        "workbench.cosmos_curate.curate",
+        "workbench.fiftyone.curate_augmented"
+      ],
+      "outcome": "all selectors match complete workflow",
+      "spec_sha256": "2564065b08c1a35451d5f0c2cfcc6871a24e9de5b39ef522989809945d309c28"
+    },
+    {
+      "spec": "workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml",
+      "selectors": [
+        "workbench.cosmos2.transfer_execute",
+        "workbench.cosmos_evaluator.evaluate",
+        "workbench.cosmos_curate.curate",
+        "workbench.fiftyone.curate_augmented"
+      ],
+      "outcome": "all selectors match complete workflow",
+      "spec_sha256": "7033c5f566dcaa34aee5e6c46ebce86d284349a18a261fbd19ca1ecab3c9801b"
+    },
+    {
+      "spec": "workflows/main/paidf-cosmos3.yaml",
+      "selectors": [
+        "workbench.cosmos3.prepare_video_input",
+        "workbench.cosmos3.generate_variants",
+        "workbench.cosmos_evaluator.evaluate",
+        "workbench.cosmos_curate.curate",
+        "workbench.fiftyone.curate_augmented",
+        "workbench.nurec.visualize"
+      ],
+      "outcome": "all selectors match complete workflow",
+      "spec_sha256": "dc6bbbdb81639fac75a89e811a2875b41f54517e92d5f3a83fa20feb4bc430d9"
+    }
+  ],
+  "fixtures": [
+    {
+      "spec": "workflows/testing/bdd100k-pipeline.yaml",
+      "plan_steps": 10,
+      "rejected_selectors": [
+        "workbench.foreign.tool",
+        "workbench.*"
+      ],
+      "spec_sha256": "3ac5702c713e4843edf61b42fcc9e29e1ccaf202aa439ee2ed667ec258c5d3b6"
+    },
+    {
+      "spec": "workflows/testing/vlm-eval-single.yaml",
+      "plan_steps": 1,
+      "rejected_selectors": [
+        "workbench.vlm_eval.rnu",
+        "workbench.vlm_eval.ru"
+      ],
+      "spec_sha256": "c80c96ff2d1a5fb07218229a776ba69dc7f71edd3c756a8c714303339c34b09f"
+    }
+  ],
+  "registry_access": false,
+  "provider_calls": false,
+  "source_edits": false
+}

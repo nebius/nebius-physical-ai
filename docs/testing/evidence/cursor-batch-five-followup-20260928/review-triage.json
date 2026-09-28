@@ -1,0 +1,138 @@
+{
+  "review_kind": "Independent Claude Code AI architecture review, not GitHub human approval",
+  "reviewed_head": "edea6a99994209b47968b37637998979f5defed4",
+  "reviewed_tree": "3b90d7532daeb89cd7972e2b81f3411ba67e1b2f",
+  "base": "ad8872894176de795f93b2056c7af570c62a73ce",
+  "final_pr644_head": "791cb1bac0fa92f79e72690c912217c18ee32c82",
+  "final_pr644_tree": "74fbc46a591ad33b700c6813db68c659dbf29016",
+  "final_integrated_head": "178354dd6f21e104983ab41d35ca1a93cd416716",
+  "final_integrated_tree": "6b9175c14472383bd5021b980c176efe4c248018",
+  "final_production_byte_equivalent": true,
+  "requested_model": "claude-opus-5",
+  "models_reported": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "effort": "high",
+  "cli_returncode": 0,
+  "duration_ms": 911526,
+  "turns": 68,
+  "tool_audit": {
+    "available_allowlist": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "used": [
+      "Glob",
+      "Grep",
+      "Read"
+    ],
+    "calls": 67,
+    "all_paths_within_frozen_review_scope": true,
+    "permission_denials": []
+  },
+  "claude_verdict": "No concrete safety blockers found.",
+  "claude_blocker_count": 0,
+  "nonblocking_triage": [
+    {
+      "id": "N1",
+      "topic": "No-image v3 selection-only records retain legacy provenance label.",
+      "disposition": "Low auditability follow-up; current consumers do not use the kind label. No production edit in review phase."
+    },
+    {
+      "id": "N2",
+      "topic": "Workflow-wide map identity can invalidate earlier waves after unrelated pin drift.",
+      "disposition": "Intentional conservative full-input binding documented and tested; do not weaken the fence."
+    },
+    {
+      "id": "N3",
+      "topic": "Decision-only absent-provider path with zero launch sequence.",
+      "disposition": "Nonblocking edge for custom/legacy submission records per reviewer; current SDK production launch records have positive sequence."
+    },
+    {
+      "id": "N4",
+      "topic": "Plain ValueError from current image catalog resolution uses raw catalog error rather than canonical identity wording.",
+      "disposition": "Fail-closed error-message consistency follow-up; malformed stored metadata already uses canonical mismatch."
+    },
+    {
+      "id": "N5",
+      "topic": "Empty selection guard looks unreachable for current hash function.",
+      "disposition": "Retain explicit nonempty-identity guard and its fault-injection contract; no change recommended."
+    },
+    {
+      "id": "N6",
+      "topic": "Mixed nonreuse/reuse cancellation history claimed untested.",
+      "disposition": "Coverage already exists in test_resume_blocks_conflicting_output_reuse_history, conflict=nonreuse, both event orderings. Strict ambiguity rejection is intentional."
+    },
+    {
+      "id": "N7",
+      "topic": "Render error ordering, deliberate exception boundary, transient history availability, no-image replay coverage.",
+      "disposition": "Optional maintainability/coverage notes; no safety blocker."
+    }
+  ],
+  "separate_preexisting_limitation": {
+    "behavior": "Ordinary in-flight exact-provider SUCCEEDED adoption does not compare current image options before accepting outputs.",
+    "same_behavior_on_base_and_candidate": true,
+    "no_new_composite_regression": true,
+    "classification": "Bounded follow-up outside completed-ledger/durable-output-reuse scope.",
+    "documentation": "Final upgrade note explicitly identifies this separate legacy path.",
+    "claude_did_not_classify_as_blocker": true
+  },
+  "fixture_limitations_closed_by_local_supplement": {
+    "matrix_cases": 5,
+    "selector_bindings_checked": 17,
+    "all_match": true,
+    "bdd_plan_steps": 10,
+    "negative_selectors_rejected": 4,
+    "registry_provider_calls": false,
+    "note": "Production local validation against final repository YAML, separate from Claude source-reading evidence."
+  },
+  "limitations": [
+    "Claude did not execute tests, linters or commands.",
+    "This review does not establish live GPU/cloud behavior.",
+    "Normal in-flight provider adoption remains outside the new input identity fences.",
+    "Final documentation and five independent listener test additions were reviewed by Codex; production is byte-identical to Claude snapshot."
+  ],
+  "source_edits_by_reviewer": false,
+  "push_or_cloud_actions": false,
+  "artifact_sha256": {
+    "main550-review-transcript.private.jsonl": "774a3b1c99fd405caf7503758c22fd690aea450a3d5ff1764d0ec75d7b8338d2",
+    "main550-review-result.private.json": "a3bc76701f3f44e102d00d91994d1de9ff4322c68a2c032e8d12a7d02f3c9079",
+    "main550-review-result.private.md": "a7bf5a4313dc524cd8db8cc9d0a3995b2520bef6365a986130c0b041e4d1268e",
+    "main550-review-stderr.private.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "main550-review-invocation.private.json": "5b9ee01abcf707651a622230b135f50101e65ffcdeb6fd2b28045f791b055a79",
+    "main550-review-prompt.private.txt": "c3c7f0008b5497de847e8889133184c98caa3e9340c20683cb4b1caa6024ae54",
+    "main550-review-scope.private.json": "7f8767cccb07a41b67906f8201f95cdeb88197fc1e986d2a32942251d175ea31",
+    "main550-review-against-main.private.diff": "2dbe5140a0c4e458ad585d74e51635d8f73b8b4ba7628cb4887450c4099ee969",
+    "main550-review-v5-equivalence.private.json": "7fa59b7eaf488f0d5e294425527f32677cc904cd0a10ec100a7e0f2f76f31e1a",
+    "main550-review-v5-final_pr644-delta.private.diff": "d433b1c0feeb206e6f993cbe00f393263678a17f8f436b9d9b2ec22dcfd3e8a2",
+    "main550-review-v5-final_integration-delta.private.diff": "4405dcef495cf8bba0a7590c99e0b9f9b7f80bf683155e20b7c3d3741060e0a4",
+    "main550-review-adoption-comparison.private.json": "85bf7ae249c41513fb07294369cfd12971010363c7c09416fce95a25bc75aa4e",
+    "main550-review-fixture-verification.private.json": "fe22c204da2b6d164d95106b23aa344de32c5be4ea9659dfc644ef3defb580b4"
+  },
+  "assistant_message_models": [
+    "claude-opus-5"
+  ],
+  "additional_cli_usage_models": [
+    "claude-haiku-4-5-20251001"
+  ],
+  "post_review_test_isolation_fix": {
+    "path": "npa/tests/cli/test_workflow_runtime_cli.py",
+    "production_change": false,
+    "change": "Use one mocker teardown stack to restore real preflight after denial test.",
+    "upstream_reproduction": "Same 1 passed / 3 failed sequence reproduced on ad887 and pre-fix candidate; fixed sequence 4 passed locally."
+  },
+  "post_review_portable_fixture_fix": {
+    "path": "npa/tests/workflows/test_comet_native_training_public.py",
+    "production_change": false,
+    "change": "Supply matching stdlib only inside the copied-executable test; no global runner PYTHONHOME.",
+    "verification": "Complete module 28 passed on base and candidate with the two-line test patch."
+  },
+  "post_review_permissions_fixture_fix": {
+    "path": "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py",
+    "production_change": false,
+    "change": "Explicitly chmod the intentionally unsafe directory so inherited umask cannot turn it private.",
+    "verification": "Before fix exact node fails under umask077; after fix entire module passes 66 tests under umask077."
+  }
+}

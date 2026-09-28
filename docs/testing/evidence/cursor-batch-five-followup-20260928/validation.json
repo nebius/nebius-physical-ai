@@ -1,0 +1,207 @@
+{
+  "head": "178354dd6f21e104983ab41d35ca1a93cd416716",
+  "gates": [
+    {
+      "gate": "precheck",
+      "exit_code": 0,
+      "seconds": 2.83,
+      "command": [
+        "make",
+        "precheck",
+        "PYTHON=<checkout>/npa/.venv/bin/python"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+    },
+    {
+      "gate": "smoke",
+      "exit_code": 0,
+      "seconds": 8.89,
+      "command": [
+        "make",
+        "test-smoke",
+        "PYTHON=<checkout>/npa/.venv/bin/python"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+    },
+    {
+      "gate": "guardrails",
+      "exit_code": 0,
+      "seconds": 78.13,
+      "command": [
+        "<checkout>/npa/.venv/bin/python",
+        "-m",
+        "pytest",
+        "npa/tests/guardrails",
+        "-q"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+    },
+    {
+      "gate": "affected",
+      "exit_code": 0,
+      "seconds": 304.82,
+      "command": [
+        "<checkout>/npa/.venv/bin/python",
+        "-m",
+        "pytest",
+        "npa/tests/orchestration/npa_workflow",
+        "npa/tests/orchestration/skypilot/test_local_api.py",
+        "npa/tests/cli/test_workflow_runtime_cli.py",
+        "npa/tests/cli/test_workflow_submit_preflight.py",
+        "-q"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716",
+      "execution_mode": "serial"
+    },
+    {
+      "gate": "hostile",
+      "exit_code": 0,
+      "seconds": 128.01,
+      "command": [
+        "<checkout>/npa/.venv/bin/python",
+        "-m",
+        "pytest",
+        "npa/tests/guardrails/test_image_security_gate.py",
+        "npa/tests/clients/test_download_containment.py",
+        "npa/tests/clients/test_ssh_private_staging.py",
+        "npa/tests/cli/test_agent_source_archive.py",
+        "npa/tests/cli/test_service_credential_security.py",
+        "npa/tests/cli/test_fiftyone_env_security.py",
+        "npa/tests/cli/test_fiftyone_private_access.py",
+        "npa/tests/workbench/test_checkpoint_security.py",
+        "npa/tests/workbench/test_s3_tree_security.py",
+        "npa/tests/workbench/test_storage_scope.py",
+        "npa/tests/workbench/test_policy_container_security.py",
+        "npa/tests/workbench/test_alpamayo2_super_service_security.py",
+        "npa/tests/workbench/test_cosmos3_ray_inputs.py",
+        "npa/tests/workbench/test_cosmos3_ray_serve.py",
+        "npa/tests/workbench/test_cosmos3_nano_video_server.py",
+        "npa/tests/workflows/test_paidf_download_security.py",
+        "npa/tests/workflows/test_openpi_gcs.py",
+        "npa/tests/workflows/test_rerun_serve_auth.py",
+        "npa/tests/orchestration/skypilot/test_controller_clone.py",
+        "npa/tests/orchestration/skypilot/test_local_api.py",
+        "npa/tests/orchestration/skypilot/test_controller_identity_transaction.py",
+        "-q"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+    },
+    {
+      "gate": "full",
+      "exit_code": 0,
+      "seconds": 889.26,
+      "command": [
+        "make",
+        "test",
+        "PYTHON=<checkout>/npa/.venv/bin/python"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+    },
+    {
+      "gate": "docs",
+      "exit_code": 0,
+      "seconds": 84.7,
+      "command": [
+        "make",
+        "docs-check",
+        "PYTHON=<checkout>/npa/.venv/bin/python"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+    },
+    {
+      "gate": "confidentiality",
+      "exit_code": 0,
+      "seconds": 0.09,
+      "command": [
+        "<checkout>/npa/.venv/bin/python",
+        "-m",
+        "npa.guardrails.confidentiality",
+        "--repo-root",
+        ".",
+        "--diff-range",
+        "origin/main..HEAD",
+        "--built-in-nebius-infra"
+      ],
+      "tested_head": "178354dd6f21e104983ab41d35ca1a93cd416716"
+    }
+  ],
+  "base": "ad8872894176de795f93b2056c7af570c62a73ce",
+  "final_successful_gate_parallelism": {
+    "smoke": "8 pytest workers",
+    "guardrails": "8 pytest workers",
+    "affected": "serial",
+    "hostile": "serial",
+    "full": "8 pytest workers, --dist=loadfile"
+  },
+  "prior_parallel_affected_attempt": "On the prior integration, one procfs ownership inspection failed closed under parallel execution. The unchanged suite passed serially; final affected/security validation uses serial execution. This is diagnostic history, not a failure on the final head.",
+  "canonical_interpreter": "Owned npa/.venv/bin/python, Python 3.12.14",
+  "torch": "2.14.0+cpu",
+  "cuda_runtime": null,
+  "full_suite_scope": "Repository make test; standard live/GPU marker exclusions and 180-second per-test timeout. No added test exclusions.",
+  "coverage_claim": "No local coverage percentage claimed; GitHub CI is checked separately.",
+  "log_summaries": {
+    "precheck": [
+      "All checks passed!",
+      "============================= 266 passed in 2.21s =============================="
+    ],
+    "smoke": [
+      "============================= 118 passed in 8.41s =============================="
+    ],
+    "guardrails": [
+      "================== 4934 passed, 1 warning in 77.58s (0:01:17) =================="
+    ],
+    "affected": [
+      "================= 2637 passed, 10 skipped in 303.61s (0:05:03) ================="
+    ],
+    "hostile": [
+      "================= 883 passed, 2 warnings in 126.69s (0:02:06) =================="
+    ],
+    "full": [
+      "=== 33823 passed, 156 skipped, 1 xpassed, 456 warnings in 886.66s (0:14:46) ===="
+    ],
+    "docs": [],
+    "confidentiality": []
+  },
+  "logs": {
+    "logs/precheck.log": {
+      "raw_sha256": "924920e3215bad744a138a2199765ecb0fd0bd67f1c2f52c90551f1d4dafb1c5",
+      "sanitized_sha256": "81d5c81f6b2829bc5fd02131162ab6bca4655f5f9b9f1e9a66ee60ffe0da4528",
+      "bytes": 1569
+    },
+    "logs/smoke.log": {
+      "raw_sha256": "482f7480a43d823ada73f16c60c7f17cf7092f1443559ad4842e1d4b689b88aa",
+      "sanitized_sha256": "f1ce3634f1dcdcf86f8bb098221099de81cbf0bcb3b0878a4f1997573e7934b9",
+      "bytes": 759
+    },
+    "logs/guardrails.log": {
+      "raw_sha256": "effac44bdbc5a13d8eaed908d3b62918f15a5f9a08f5059e2777921cc529aa13",
+      "sanitized_sha256": "b884c51727ddbdca53f784a977fbb05f721ffca2a4374434ea3496e219686ab2",
+      "bytes": 6353
+    },
+    "logs/affected.log": {
+      "raw_sha256": "c024a56b3be1db015ab853192880e4090aced88a0553ae6704156bcdaea95d30",
+      "sanitized_sha256": "f0d8c8879a6575522afe534497b46eee0dc8f480d6c9af6d960f87a6b9a0c75c",
+      "bytes": 10626
+    },
+    "logs/hostile.log": {
+      "raw_sha256": "b4624c2aff9f00dee63cb2ad3712472a8c9103394eb344386b4f38a935adcd18",
+      "sanitized_sha256": "47cba4f698f2f0b68fea0c3c252a777dc46a5176ce202d63836e5dca3a88f0f0",
+      "bytes": 4079
+    },
+    "logs/full.log": {
+      "raw_sha256": "661109c249b78129661d3ebfa749223470f0ebb0aa2413b626c98cc11b8c9763",
+      "sanitized_sha256": "ec72b9f57371684fc19f29d615e363c3cfcb93680de3f8323d42d01fb0c36f05",
+      "bytes": 98538
+    },
+    "logs/docs.log": {
+      "raw_sha256": "dfcc204093e4ee7330cccf410fad6e1bb328daf84e77120d5f189acf2bcd7729",
+      "sanitized_sha256": "93cf3c8ed9460b2e1d4961e834b0abac573255298b57eccb3d9c7ef90c03b212",
+      "bytes": 227
+    },
+    "logs/confidentiality.log": {
+      "raw_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+      "sanitized_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+      "bytes": 64
+    }
+  }
+}

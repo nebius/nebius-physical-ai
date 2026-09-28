@@ -1,0 +1,111 @@
+{
+  "final_outcome": "all_seven_exact_heads_clean_with_25_completed_success_or_skipped_checks_each",
+  "generated_at": "2026-09-28T20:42:57.457368Z",
+  "pull_requests": [
+    {
+      "check_count": 25,
+      "head_sha": "b8f3f7e7d969d6f35dd0009fa370897f27468a95",
+      "merge_state": "CLEAN",
+      "nonpassing_check_count": 0,
+      "pr": 635,
+      "workflow_attempt": 1,
+      "workflow_conclusion": "success",
+      "workflow_run_id": 36478528378,
+      "workflow_status": "completed"
+    },
+    {
+      "check_count": 25,
+      "head_sha": "350d31bbf77c1805907a1bf61b6939ff56453160",
+      "merge_state": "CLEAN",
+      "nonpassing_check_count": 0,
+      "pr": 637,
+      "workflow_attempt": 1,
+      "workflow_conclusion": "success",
+      "workflow_run_id": 36478530686,
+      "workflow_status": "completed"
+    },
+    {
+      "check_count": 25,
+      "head_sha": "30cd9716f67c04aad9357348d8ee63601844e402",
+      "merge_state": "CLEAN",
+      "nonpassing_check_count": 0,
+      "pr": 638,
+      "workflow_attempt": 1,
+      "workflow_conclusion": "success",
+      "workflow_run_id": 36478528561,
+      "workflow_status": "completed"
+    },
+    {
+      "check_count": 25,
+      "head_sha": "ab65493c28419acee6af5bf693ae2c04b23b9c16",
+      "merge_state": "CLEAN",
+      "nonpassing_check_count": 0,
+      "pr": 639,
+      "workflow_attempt": 1,
+      "workflow_conclusion": "success",
+      "workflow_run_id": 36478528726,
+      "workflow_status": "completed"
+    },
+    {
+      "check_count": 25,
+      "head_sha": "3cec22701c14651412c68dd146a8fe344ecd3d53",
+      "merge_state": "CLEAN",
+      "nonpassing_check_count": 0,
+      "pr": 641,
+      "workflow_attempt": 2,
+      "workflow_conclusion": "success",
+      "workflow_run_id": 36478530548,
+      "workflow_status": "completed"
+    },
+    {
+      "check_count": 25,
+      "head_sha": "c15a2aeb9a1eb6e66765143340a26f13ed08e3d4",
+      "merge_state": "CLEAN",
+      "nonpassing_check_count": 0,
+      "pr": 643,
+      "workflow_attempt": 1,
+      "workflow_conclusion": "success",
+      "workflow_run_id": 36478529766,
+      "workflow_status": "completed"
+    },
+    {
+      "check_count": 25,
+      "head_sha": "791cb1bac0fa92f79e72690c912217c18ee32c82",
+      "merge_state": "CLEAN",
+      "nonpassing_check_count": 0,
+      "pr": 644,
+      "workflow_attempt": 1,
+      "workflow_conclusion": "success",
+      "workflow_run_id": 36478529489,
+      "workflow_status": "completed"
+    }
+  ],
+  "repository": "nebius/nebius-physical-ai",
+  "retry": {
+    "head_sha": "3cec22701c14651412c68dd146a8fe344ecd3d53",
+    "original_attempt": 1,
+    "original_cause": "existing five-minute job timeout after tests and collection completed; no assertion failure observed",
+    "original_collected_tests": 34538,
+    "original_job_conclusion": "cancelled",
+    "original_job_id": 109118179348,
+    "original_observed_tests": {
+      "passed": 5613,
+      "skipped": 6
+    },
+    "pr": 641,
+    "rerun_attempt": 2,
+    "rerun_collected_tests": 34538,
+    "rerun_job_conclusion": "success",
+    "rerun_job_id": 109124092677,
+    "rerun_observed_tests": {
+      "passed": 5613,
+      "skipped": 6
+    },
+    "rerun_workflow_conclusion": "success",
+    "retry_request_exit_code": 0,
+    "retry_scope": "specific cancelled job and dependencies",
+    "workflow_run_id": 36478530548
+  },
+  "schema_version": 1,
+  "scope": "read-only current-head CI monitoring plus one authorized transient-job retry; no merge, enqueue, source edit, push, setting change, healthy-job cancellation, or check weakening"
+}
