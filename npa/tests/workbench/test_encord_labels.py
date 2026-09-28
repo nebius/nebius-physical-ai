@@ -11,8 +11,12 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
-from npa.workbench.encord.label_import import _validate_sources
-from npa.workbench.encord.label_plan import LabelPlan
+from npa.workbench.encord.label_import import (
+    _validate_sources,
+    _ontology_structure,
+    _populate_row,
+)
+from npa.workbench.encord.label_plan import LabelPlan, PolygonAnnotation
 from npa.workbench.encord.label_render import (
     _encode_overlay,
     _render_one,
@@ -208,8 +212,8 @@ def test_failed_label_save_stops_before_next_video_and_records_intent(monkeypatc
 def test_export_is_bound_to_exact_object_track_and_frame_coordinates():
     video = LabelPlan.model_validate(label_payload()).videos[0]
     frames = _verify_export(video, identity(), label_export())
-    assert list(frames) == [0, 1]
-    assert frames[1][0][1].x == 0.5
+    assert list(frames.objects) == [0, 1]
+    assert frames.objects[1][0][1].x == 0.5
 
 
 @pytest.mark.parametrize(
@@ -315,7 +319,235 @@ def test_renderer_encodes_moving_exported_boxes_and_decodes_every_frame(tmp_path
     assert len(decoded) == 2
     for frame, left in zip(decoded, (16, 32)):
         red, green, blue = frame[40, left + 1].astype(int)
-        assert green > red + 50 and green > blue + 30
+        assert max(red, green, blue) - min(red, green, blue) > 90
     video.frame_count = 3
     with pytest.raises(EncordToolError, match="frame count"):
         _encode_overlay(source, tmp_path / "bad.mp4", video, frames)
+
+
+def _plan():
+    payload = label_payload()
+    payload["schema_version"] = "npa.encord.label_plan.v2"
+    video = payload["videos"][0]
+    second = copy.deepcopy(video["tracks"][0])
+    second["track_id"] = "bottle-2"
+    for box in second["boxes"]:
+        box["y"] = 0.1
+    video["tracks"].extend(
+        [
+            second,
+            {
+                "track_id": "basket-1",
+                "class_name": "basket",
+                "shape": "polygon",
+                "polygons": [
+                    {
+                        "frame": 0,
+                        "points": [
+                            {"x": 0.05, "y": 0.5},
+                            {"x": 0.2, "y": 0.5},
+                            {"x": 0.1, "y": 0.9},
+                        ],
+                    }
+                ],
+            },
+        ]
+    )
+    video["classifications"] = [
+        {
+            "name": "phase",
+            "segments": [
+                {"start_frame": 0, "end_frame": 0, "value": "approach"},
+                {"start_frame": 1, "end_frame": 1, "value": "contact"},
+            ],
+        }
+    ]
+    return payload
+
+
+def _sdk_export(payload=None):
+    pytest.importorskip("encord")
+    from encord.objects.frames import ranges_to_list
+
+    plan = LabelPlan.model_validate(payload or _plan())
+    objects, classifications = [], []
+    row = SimpleNamespace(
+        ontology_structure=_ontology_structure(plan),
+        backing_item_uuid="test-item",
+        data_hash="test-data",
+        label_hash="test-label",
+        add_object_instance=objects.append,
+        add_classification_instance=classifications.append,
+    )
+    saved = _populate_row(row, plan.videos[0])
+    labels = _sdk_objects(objects)
+    answers = {
+        c.classification_hash: {
+            "classificationHash": c.classification_hash,
+            "featureHash": c.feature_hash,
+            "range": ranges_to_list(c.range_list),
+            "manualAnnotation": c.manual_annotation,
+            "classifications": [a.to_encord_dict() for a in c.get_all_static_answers()],
+        }
+        for c in classifications
+    }
+    exported = {
+        "data_hash": row.data_hash,
+        "label_hash": row.label_hash,
+        "data_type": "video",
+        "data_units": {row.data_hash: {"labels": labels}},
+        "classification_answers": answers,
+    }
+    return plan.videos[0], saved, exported
+
+
+def _sdk_objects(objects):
+    from encord.objects.coordinates import PolygonCoordinates, PolygonCoordsToDict
+
+    labels = {}
+    for instance in objects:
+        for frame in instance.get_annotation_frames():
+            coords = instance.get_annotation(frame).coordinates
+            obj = {
+                "name": instance.ontology_item.name,
+                "objectHash": instance.object_hash,
+                "shape": instance.ontology_item.shape.value,
+            }
+            if isinstance(coords, PolygonCoordinates):
+                obj.update(
+                    polygon=coords.to_dict(),
+                    polygons=coords.to_dict(PolygonCoordsToDict.multiple_polygons),
+                )
+            else:
+                obj["boundingBox"] = coords.to_dict()
+            labels.setdefault(str(frame), {"objects": []})["objects"].append(obj)
+    return labels
+
+
+def test_real_sdk_keeps_same_class_instances_polygons_and_temporal_values_distinct(
+    tmp_path,
+):
+    import av
+
+    video, identity, exported = _sdk_export()
+    labels = _verify_export(video, identity, exported)
+    assert len({t["object_hash"] for t in identity["tracks"]}) == 3
+    assert len(labels.objects[0]) == 3
+    assert isinstance(labels.objects[0][2][1], PolygonAnnotation)
+    assert labels.scenes == {0: ["phase: approach"], 1: ["phase: contact"]}
+    assert labels.classification_segments == 2
+    source, output = tmp_path / "source.mp4", tmp_path / "result.mp4"
+    _write_video(source)
+    assert _encode_overlay(source, output, video, labels) == 2
+    with av.open(str(output)) as container:
+        assert sum(1 for _ in container.decode(video=0)) == 2
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "vertex",
+        "extra_ring",
+        "classification_value",
+        "classification_range",
+        "classification_identity",
+        "missing_classification",
+        "extra_classification",
+        "duplicate_track",
+    ],
+)
+def test_changed_exported_mixed_labels_fail_before_rendering(change):
+    video, identity, exported = _sdk_export()
+    polygon = exported["data_units"]["test-data"]["labels"]["0"]["objects"][2]
+    answer = next(iter(exported["classification_answers"].values()))
+    if change == "vertex":
+        polygon["polygon"]["0"]["x"] += 0.01
+    elif change == "extra_ring":
+        polygon["polygons"][0].append([0.1, 0.1, 0.2, 0.1, 0.15, 0.2])
+    elif change == "classification_value":
+        answer["classifications"][0]["answers"][0]["name"] = "wrong"
+    elif change == "classification_range":
+        answer["range"] = [[0, 1]]
+    elif change == "classification_identity":
+        answer["featureHash"] = "wrong-feature"
+    elif change == "missing_classification":
+        exported["classification_answers"].pop(
+            next(iter(exported["classification_answers"]))
+        )
+    elif change == "extra_classification":
+        exported["classification_answers"]["extra"] = copy.deepcopy(answer)
+    else:
+        identity["tracks"][1]["object_hash"] = identity["tracks"][0]["object_hash"]
+    with pytest.raises(EncordToolError):
+        _verify_export(video, identity, exported)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "outside",
+        "duplicate_vertex",
+        "zero_area",
+        "self_intersection",
+        "late_polygon",
+        "overlap",
+        "reversed",
+        "late_classification",
+        "v1",
+        "shape_conflict",
+    ],
+)
+def test_invalid_mixed_plan_is_rejected_before_remote_mutations(change):
+    payload = _plan()
+    video = payload["videos"][0]
+    polygon = video["tracks"][2]["polygons"][0]
+    segments = video["classifications"][0]["segments"]
+    if change == "outside":
+        polygon["points"][0]["x"] = -0.1
+    elif change == "duplicate_vertex":
+        polygon["points"].append(polygon["points"][0])
+    elif change == "zero_area":
+        for p in polygon["points"]:
+            p["y"] = 0.5
+    elif change == "self_intersection":
+        polygon["points"] = [
+            {"x": x, "y": y} for x, y in [(0, 0), (0.9, 0.9), (0, 0.8), (0.7, 0)]
+        ]
+    elif change == "late_polygon":
+        polygon["frame"] = 2
+    elif change == "overlap":
+        segments[0]["end_frame"] = 1
+    elif change == "reversed":
+        segments[1]["end_frame"] = 0
+    elif change == "late_classification":
+        segments[1]["end_frame"] = 2
+    elif change == "v1":
+        payload["schema_version"] = "npa.encord.label_plan.v1"
+    else:
+        video["tracks"][2]["class_name"] = "bottle"
+    with pytest.raises(ValidationError):
+        LabelPlan.model_validate(payload)
+
+
+def test_multiple_videos_share_ontology_and_allow_different_scene_options():
+    pytest.importorskip("encord")
+    payload = _plan()
+    second = copy.deepcopy(payload["videos"][0])
+    second["source_uri"] = "s3://test-bucket/input/second.mp4"
+    second["classifications"][0]["segments"][1]["value"] = "occluded"
+    payload["videos"].append(second)
+    plan = LabelPlan.model_validate(payload)
+    from encord.objects import Classification, Option
+
+    ontology = _ontology_structure(plan)
+    phase = ontology.get_child_by_title(title="phase", type_=Classification)
+    assert phase.get_child_by_title(title="occluded", type_=Option).label == "occluded"
+
+
+def test_sdk_export_manual_answer_metadata_does_not_imply_human_review():
+    video, identity, exported = _sdk_export()
+    for answer in exported["classification_answers"].values():
+        answer["classifications"][0]["manualAnnotation"] = True
+    labels = _verify_export(video, identity, exported)
+    assert labels.classification_segments == 2
+    assert labels.scenes[0] == ["phase: approach"]

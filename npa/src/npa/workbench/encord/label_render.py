@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import colorsys
 import hashlib
-import math
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from npa.clients.storage import StorageClient
 from npa.workbench.encord.label_plan import BoxAnnotation, LabelPlan
+from npa.workbench.encord.label_export import _verify_export
 from npa.workbench.encord.schemas import EncordToolError, PullManifest, RoundtripReport
 from npa.workbench.encord.storage import (
     ConditionalArtifactStore,
@@ -92,64 +93,6 @@ def _verified_exports(store, manifest, receipt, plan):
     return result
 
 
-def _verify_export(video, identity, exported):
-    if (
-        exported.get("data_hash") != identity["data_hash"]
-        or exported.get("label_hash") != identity["label_hash"]
-    ):
-        raise EncordToolError("Exported labels belong to a different data row")
-    units = list(exported.get("data_units", {}).values())
-    if len(units) != 1 or exported.get("data_type") != "video":
-        raise EncordToolError("Expected one video data unit in the Encord export")
-    objects = {track["track_id"]: track["object_hash"] for track in identity["tracks"]}
-    expected = {}
-    for track in video.tracks:
-        for box in track.boxes:
-            expected[(box.frame, objects[track.track_id])] = (track.class_name, box)
-    actual, frames = _exported_boxes(units[0])
-    if set(actual) != set(expected):
-        raise EncordToolError(
-            "Exported label frames or object identities differ from import"
-        )
-    for key, (name, box) in expected.items():
-        actual_name, actual_box = actual[key]
-        if actual_name != name or not _same_box(box, actual_box):
-            raise EncordToolError(
-                "Exported label classes or coordinates differ from import"
-            )
-    return frames
-
-
-def _exported_boxes(unit):
-    actual, frames = {}, {}
-    for frame_text, frame_labels in unit.get("labels", {}).items():
-        frame = int(frame_text)
-        for obj in frame_labels.get("objects", []):
-            if obj.get("shape") != "bounding_box" or obj.get("isDeleted"):
-                raise EncordToolError("Unsupported or deleted object in label export")
-            coords = obj["boundingBox"]
-            box = BoxAnnotation(
-                frame=frame,
-                x=coords["x"],
-                y=coords["y"],
-                width=coords["w"],
-                height=coords["h"],
-            )
-            key = (frame, obj["objectHash"])
-            if key in actual:
-                raise EncordToolError("Duplicate exported object at the same frame")
-            actual[key] = (obj["name"], box)
-            frames.setdefault(frame, []).append((obj["name"], box))
-    return actual, frames
-
-
-def _same_box(expected, actual):
-    return all(
-        math.isclose(getattr(expected, name), getattr(actual, name), abs_tol=1e-6)
-        for name in ("x", "y", "width", "height")
-    )
-
-
 def _render_outputs(storage, store, plan, exports, prefix):
     output_uri = prefix.rstrip("/") + "/demo.json"
     result = {
@@ -194,7 +137,18 @@ def _render_one(storage, directory, video, item, frames):
         "source_sha256": digest.sha256,
         "frames": count,
         "tracks": len(video.tracks),
-        "box_annotations": sum(len(v) for v in frames.values()),
+        "box_annotations": sum(
+            isinstance(a, BoxAnnotation)
+            for values in frames.objects.values()
+            for _, a, _ in values
+        ),
+        "polygon_annotations": sum(
+            not isinstance(a, BoxAnnotation)
+            for values in frames.objects.values()
+            for _, a, _ in values
+        ),
+        "classification_segments": frames.classification_segments,
+        "classified_frames": len(frames.scenes),
         "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
         "bytes": output.stat().st_size,
     }
@@ -218,7 +172,12 @@ def _encode_overlay(source, output, video, frames):
                 raise EncordToolError(
                     "Decoded video geometry differs from the label plan"
                 )
-            image = _draw_frame(frame.to_image(), frames.get(count, []), count)
+            image = _draw_frame(
+                frame.to_image(),
+                frames.objects.get(count, []),
+                count,
+                frames.scenes.get(count, []),
+            )
             painted = av.VideoFrame.from_image(image)
             painted.pts, painted.time_base = frame.pts, frame.time_base
             for packet in stream.encode(painted):
@@ -236,31 +195,51 @@ def _encode_overlay(source, output, video, frames):
     return count
 
 
-def _draw_frame(image, annotations, frame):
+def _draw_frame(image, annotations, frame, scenes=()):
     from PIL import Image, ImageDraw
 
     width, height = image.size
     canvas = Image.new("RGB", (width + width % 2, height + height % 2))
     canvas.paste(image)
     draw = ImageDraw.Draw(canvas)
-    for name, box in annotations:
-        left, top = box.x * width, box.y * height
-        draw.rectangle(
-            (left, top, left + box.width * width, top + box.height * height),
-            outline="#00ff80",
-            width=3,
-        )
-        draw.text(
-            (left + 3, max(24, top - 15)),
-            name,
-            fill="#00ff80",
-            stroke_width=1,
-            stroke_fill="black",
-        )
+    for name, annotation, track_id in annotations:
+        _draw_object(draw, width, height, name, annotation, track_id)
     draw.rectangle((0, 0, width, 21), fill="black")
     draw.text(
         (6, 4),
         f"Encord exported prelabels | frame {frame} | review pending",
         fill="white",
     )
+    for index, text in enumerate(scenes):
+        y = height - 20 * (len(scenes) - index)
+        draw.rectangle((0, y, width, y + 20), fill="black")
+        draw.text((6, y + 3), text, fill="white")
     return canvas
+
+
+def _draw_object(draw, width, height, name, annotation, track_id):
+    hue = int.from_bytes(hashlib.sha256(track_id.encode()).digest()[:4], "big") / 2**32
+    color = tuple(round(channel * 255) for channel in colorsys.hsv_to_rgb(hue, 0.65, 1))
+    if isinstance(annotation, BoxAnnotation):
+        left, top = annotation.x * width, annotation.y * height
+        draw.rectangle(
+            (
+                left,
+                top,
+                left + annotation.width * width,
+                top + annotation.height * height,
+            ),
+            outline=color,
+            width=3,
+        )
+    else:
+        points = [(p.x * width, p.y * height) for p in annotation.points]
+        draw.polygon(points, outline=color, width=3)
+        left, top = min(p[0] for p in points), min(p[1] for p in points)
+    draw.text(
+        (left + 3, max(24, top - 15)),
+        f"{track_id} | {name}",
+        fill=color,
+        stroke_width=1,
+        stroke_fill="black",
+    )

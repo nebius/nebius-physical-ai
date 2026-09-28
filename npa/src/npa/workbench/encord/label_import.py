@@ -32,17 +32,14 @@ def import_labels(
         workflow_run: Provenance identifier.
         user_client, storage_client: Optional injected provider clients.
     Returns:
-        A completed receipt with exact remote project, row, and object identities.
+        Completed receipt with exact project, row, object, and scene identities.
     Raises:
         EncordToolError: Inputs conflict or an SDK operation fails.
-        ArtifactConflict: The output already exists; retries never create duplicates.
+        ArtifactConflict: The output exists; retries never create duplicates.
     """
     storage = storage_client or StorageClient.from_environment()
     store = ConditionalArtifactStore(storage)
-    payload = store.read_json(input_path)
-    plan = LabelPlan.model_validate(payload)
-    push = PushReceipt.model_validate(store.read_json(receipt_uri))
-    _validate_sources(plan, push)
+    payload, plan, push = _import_inputs(store, input_path, receipt_uri)
     client = user_client or _default_user_client()
     if not project_title.strip() or list(client.get_projects(title_eq=project_title)):
         raise EncordToolError("Choose a unique, nonempty new project title")
@@ -54,6 +51,14 @@ def import_labels(
         version = store.replace_json(output_path, receipt, version)
 
     return _import_project(client, plan, push, project_title, receipt, checkpoint)
+
+
+def _import_inputs(store, input_path, receipt_uri):
+    payload = store.read_json(input_path)
+    plan = LabelPlan.model_validate(payload)
+    push = PushReceipt.model_validate(store.read_json(receipt_uri))
+    _validate_sources(plan, push)
+    return payload, plan, push
 
 
 def _validate_sources(plan, push):
@@ -129,11 +134,25 @@ def _import_project(client, plan, push, title, receipt, checkpoint):
 def _ontology_structure(plan):
     from encord.objects import OntologyStructure
     from encord.objects.ontology_labels_impl import Shape
+    from encord.objects.attributes import RadioAttribute
 
     structure = OntologyStructure()
-    classes = sorted({track.class_name for v in plan.videos for track in v.tracks})
-    for name in classes:
-        structure.add_object(name, Shape.BOUNDING_BOX)
+    classes = {
+        track.class_name: track.shape for video in plan.videos for track in video.tracks
+    }
+    for name, shape in sorted(classes.items()):
+        structure.add_object(name, Shape(shape))
+    options = {}
+    for video in plan.videos:
+        for classification in video.classifications:
+            options.setdefault(classification.name, set()).update(
+                segment.value for segment in classification.segments
+            )
+    for name, values in sorted(options.items()):
+        classification = structure.add_classification()
+        attribute = classification.add_attribute(RadioAttribute, name, required=True)
+        for value in sorted(values):
+            attribute.add_option(value)
     return structure
 
 
@@ -165,39 +184,92 @@ def _validate_geometry(row, video):
         raise EncordToolError(
             "Encord video dimensions or frame count differ from the plan"
         )
-    if list(row.get_object_instances()):
-        raise EncordToolError("New project unexpectedly contains object annotations")
+    if list(row.get_object_instances()) or list(row.get_classification_instances()):
+        raise EncordToolError("New project unexpectedly contains annotations")
 
 
 def _populate_row(row, video):
-    from encord.objects import Object
-    from encord.objects.coordinates import BoundingBoxCoordinates
-
-    tracks = []
-    for track in video.tracks:
-        ontology_object = row.ontology_structure.get_child_by_title(
-            title=track.class_name,
-            type_=Object,
-        )
-        instance = ontology_object.create_instance()
-        for box in track.boxes:
-            instance.set_for_frames(
-                coordinates=BoundingBoxCoordinates(
-                    height=box.height,
-                    width=box.width,
-                    top_left_x=box.x,
-                    top_left_y=box.y,
-                ),
-                frames=box.frame,
-                manual_annotation=False,
-            )
-        row.add_object_instance(instance)
-        tracks.append({"track_id": track.track_id, "object_hash": instance.object_hash})
     return {
         "source_uri": video.source_uri,
         "item_uuid": str(row.backing_item_uuid),
         "data_hash": row.data_hash,
         "label_hash": row.label_hash,
-        "tracks": tracks,
+        "tracks": [_save_track(row, track) for track in video.tracks],
+        "classifications": _save_classifications(row, video.classifications),
         "status": "saving",
     }
+
+
+def _save_track(row, track):
+    from encord.objects import Object
+
+    ontology_object = row.ontology_structure.get_child_by_title(
+        title=track.class_name, type_=Object
+    )
+    instance = ontology_object.create_instance()
+    for annotation in track.annotations:
+        instance.set_for_frames(
+            coordinates=_coordinates(annotation),
+            frames=annotation.frame,
+            manual_annotation=False,
+        )
+    row.add_object_instance(instance)
+    return {"track_id": track.track_id, "object_hash": instance.object_hash}
+
+
+def _coordinates(annotation):
+    from encord.objects.coordinates import (
+        BoundingBoxCoordinates,
+        PointCoordinate,
+        PolygonCoordinates,
+    )
+    from npa.workbench.encord.label_plan import BoxAnnotation
+
+    if isinstance(annotation, BoxAnnotation):
+        return BoundingBoxCoordinates(
+            height=annotation.height,
+            width=annotation.width,
+            top_left_x=annotation.x,
+            top_left_y=annotation.y,
+        )
+    return PolygonCoordinates(
+        [PointCoordinate(point.x, point.y) for point in annotation.points]
+    )
+
+
+def _save_classifications(row, classifications):
+    from encord.objects import Classification, Option
+    from encord.objects.frames import Range
+
+    saved = []
+    for classification in classifications:
+        ontology_class = row.ontology_structure.get_child_by_title(
+            title=classification.name, type_=Classification
+        )
+        for segment in classification.segments:
+            option = ontology_class.get_child_by_title(
+                title=segment.value, type_=Option
+            )
+            instance = ontology_class.create_instance()
+            instance.set_answer(option)
+            for answer in instance.get_all_static_answers():
+                answer.is_manual_annotation = False
+            instance.set_for_frames(
+                frames=Range(start=segment.start_frame, end=segment.end_frame),
+                manual_annotation=False,
+            )
+            row.add_classification_instance(instance)
+            saved.append(
+                {
+                    "name": classification.name,
+                    "start_frame": segment.start_frame,
+                    "end_frame": segment.end_frame,
+                    "classification_hash": instance.classification_hash,
+                    "feature_hash": instance.feature_hash,
+                    "answers": [
+                        answer.to_encord_dict()
+                        for answer in instance.get_all_static_answers()
+                    ],
+                }
+            )
+    return saved

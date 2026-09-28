@@ -138,7 +138,8 @@ initializes remote label state.
 The [Encord partner runbook](../../workflows/partners/encord/README.md) describes
 `encord-labeling-demo.yaml`: upload → import labels → pull project labels and
 media → verify → render. `npa workbench encord import-labels` creates a new
-ontology and project from a content-bound bounding-box plan. The matching
+ontology and project from a content-bound plan with any number of box/polygon
+tracks and temporal scene classifications. The matching
 `render-labels` command checks actual exported labels against that plan before
 rendering annotated MP4s. Both are exposed through `npa.sdk.workbench.encord`.
 Imported labels remain programmatic prelabels awaiting human review.

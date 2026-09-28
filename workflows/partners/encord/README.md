@@ -6,7 +6,7 @@ the standard NPA workflow runtime; they do not deploy an Encord service.
 
 | Workflow | Result |
 | --- | --- |
-| [Labeling demo](encord-labeling-demo.yaml) | Upload videos → create ontology/project → save bounding-box tracks → export labels/media → verify → render annotated MP4s. |
+| [Labeling demo](encord-labeling-demo.yaml) | Upload videos → create ontology/project → save box/polygon tracks and scene labels → export labels/media → verify → render annotated MP4s. |
 | [Roundtrip demo](encord-roundtrip-smoke.yaml) | Push → pull → verify exact media identity and bytes; no labeling. |
 | [Push](encord-push.yaml) | Register or explicitly upload media and write a durable receipt. |
 | [Pull](encord-pull.yaml) | Materialize an existing dataset, collection, or project into S3. |
@@ -56,7 +56,52 @@ Frames are **zero-based**. Coordinates are fractions of image dimensions and
 boxes must remain inside the image. Track IDs must be unique within a video,
 and frames unique within a track. Supply every desired frame explicitly;
 there is no implicit interpolation. Geometry and frame count must match
-Encord's decoded media. Each distinct `class_name` becomes an ontology object.
+Encord's decoded media. Each distinct `class_name` becomes an ontology object. There is no one-object
+limit: use distinct `track_id` values for multiple instances of the same class,
+and add videos to the `videos` list.
+
+### Polygons and temporal scene labels
+
+Use `npa.encord.label_plan.v2` for mixed shapes and classifications. Existing v1
+box plans remain supported. A box track may omit `shape` (default
+`bounding_box`). A polygon track requires `shape: polygon` and `polygons` in
+place of `boxes`:
+
+```json
+{
+  "track_id": "basket-1",
+  "class_name": "basket",
+  "shape": "polygon",
+  "polygons": [{
+    "frame": 0,
+    "points": [{"x": 0.4, "y": 0.1}, {"x": 0.7, "y": 0.1}, {"x": 0.6, "y": 0.35}, {"x": 0.45, "y": 0.3}]
+  }]
+}
+```
+
+Vertices are normalized, ordered, distinct, and implicitly closed. Polygons
+must have nonzero area and no crossing edges; holes and multiple rings are not
+supported. A class uses the same shape across all videos. A polygon follows
+its own persistent object identity just like a box.
+
+Add optional `classifications` beside each video's `tracks`. Each name becomes
+a radio classification in the shared ontology; values become its options:
+
+```json
+"classifications": [{
+  "name": "bottle visibility",
+  "segments": [
+    {"start_frame": 0, "end_frame": 96, "value": "detected"},
+    {"start_frame": 97, "end_frame": 168, "value": "not detected"}
+  ]
+}]
+```
+
+Intervals include both endpoints and must fit the video. Segments of the same
+classification cannot overlap; gaps remain unclassified. Names must be unique
+within each video and distinct from object class names. Multiple classifications
+can coexist, such as object visibility and lighting. A value changing over time
+creates separate Encord classification instances with exact frame ranges.
 
 ## Run and inspect
 
@@ -111,7 +156,11 @@ The graph is `push → import_labels → pull → verify → render_labels`.
 | `demo/demo.json`, `demo/annotated-*.mp4` | Verified exported-label counts, decoded frame counts, and output hashes. |
 
 The renderer compares exported row/object identities, classes, frames, and
-coordinates with the import plan. Missing, extra, or changed annotations fail.
+coordinates with the import plan, including polygon vertices and classification
+identities, options, and inclusive frame ranges. Missing, extra, or changed
+annotations fail. Overlays display stable track IDs and colors, polygon outlines,
+and the current scene values. `demo.json` reports box/polygon annotation counts,
+classification segment counts, and the number of frames with scene labels.
 Returned video bytes must match the plan's SHA-256, and the entire output MP4
 must decode. Overlays use **exported Encord labels**, not substitute local labels.
 Annotated MP4s are silent visual previews; original returned media is retained.
@@ -123,11 +172,19 @@ with new targets can create duplicates. Persistence failure immediately after
 an API mutation can leave the last remote change absent from the receipt.
 Failed runs do not automatically delete remote evidence.
 
-The initial live validation imported two tracks with 266 frame-level boxes,
-exported and compared every box, verified the source SHA-256, and rendered and
-decoded all 169 frames. These were simple color-based prelabels for a visible
-bottle and basket, not a trained model or human-approved ground truth. Exact
-account and storage evidence stays private.
+Live validation covers both the original two-track box demo and a richer
+three-clip run. The latter saved **nine video-local tracks, 346 boxes, 331 polygon
+annotations, and ten classification segments**, then exported and compared all
+of them. The clips show a bottle, basket, and moving gripper under neutral and
+warm lighting; scene labels record bottle color-cue detection and lighting.
+All 331 source frames and the resulting MP4s decoded successfully. The committed
+live test also completed the entire graph against fresh Encord/S3 targets.
+
+These demonstration prelabels use color/region heuristics, white balance, and
+convex hulls. They are approximate, especially around occlusion, and still need
+human review. The workflow accepts externally prepared plans, including model
+predictions; it does not implement a general-purpose object detector. Exact
+account/storage evidence, source clips, and the walkthrough MP4 stay private.
 
 See the [transport guide](../../../docs/workbench/encord.md) for the roundtrip
 demo, credentials, transfer modes, and standalone CLI/SDK usage.

@@ -54,7 +54,7 @@
     },
     "target_runtime": {
       "status": "verified",
-      "reason": "Local workflow execution against real Encord and S3 passed. The standalone push/pull specs share the exercised roundtrip stage commands. Cloud pod execution was not tested.",
+      "reason": "The committed live test executed the complete local graph against real Encord and S3: three videos, nine tracks, 346 boxes, 331 polygons, and ten scene-label segments were saved, exported, verified, and rendered. Cloud pod execution was not tested.",
       "evidence": [
         "README.md",
         "../../../npa/tests/workflows/test_encord_workflow.py"

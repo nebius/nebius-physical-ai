@@ -24,7 +24,9 @@ app = typer.Typer(
 @json_stdout_contract
 def import_labels_cmd(
     input_path: str = typer.Option(
-        ..., "--input-path", help="S3 bounding-box label plan."
+        ...,
+        "--input-path",
+        help="S3 label plan: box/polygon tracks and temporal scene labels.",
     ),
     receipt_uri: str = typer.Option(
         ..., "--receipt-uri", help="Completed S3 push receipt."

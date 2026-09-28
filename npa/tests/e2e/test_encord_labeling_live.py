@@ -16,6 +16,7 @@ from npa.clients.storage import StorageClient
 from npa.orchestration.npa_workflow import build_plan, load_spec, run_workflow
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
 from npa.workbench.encord.storage import ConditionalArtifactStore
+from npa.workbench.encord.label_plan import LabelPlan
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -40,19 +41,29 @@ def _live_spec():
     return merge_config_overrides(spec, overrides)
 
 
-def _check_videos(storage, demo, evidence):
+def _check_videos(storage, demo, evidence, label_plan):
     import av
 
     assert demo["status"] == "completed"
     assert demo["label_source"] == "encord_project_export"
-    assert demo["videos"]
+    assert len(demo["videos"]) == len(label_plan.videos)
     for index, item in enumerate(demo["videos"]):
         target = evidence / f"annotated-{index + 1}.mp4"
         target.touch(mode=0o600)
         storage.download_file(item["uri"], str(target))
         assert hashlib.sha256(target.read_bytes()).hexdigest() == item["sha256"]
         assert target.stat().st_size == item["bytes"]
-        assert item["box_annotations"] > 0 and item["tracks"] > 0
+        video = label_plan.videos[index]
+        assert item["tracks"] == len(video.tracks)
+        assert item["box_annotations"] == sum(
+            len(t.annotations) for t in video.tracks if t.shape == "bounding_box"
+        )
+        assert item["polygon_annotations"] == sum(
+            len(t.annotations) for t in video.tracks if t.shape == "polygon"
+        )
+        assert item["classification_segments"] == sum(
+            len(c.segments) for c in video.classifications
+        )
         with av.open(str(target)) as container:
             assert sum(1 for _ in container.decode(video=0)) == item["frames"] > 0
 
@@ -87,12 +98,7 @@ def test_live_labeling_workflow_saves_exports_and_renders_real_annotations(
         ]
         result = run_workflow(spec, run_id=run_id, execute=True, require_inputs=True)
         (evidence / "workflow.json").write_text(json.dumps(result, indent=2))
-        storage = StorageClient.from_environment()
-        demo = ConditionalArtifactStore(storage).read_json(
-            plan.steps[-1].outputs[0]["uri"]
-        )
-        (evidence / "demo.json").write_text(json.dumps(demo, indent=2))
-        _check_videos(storage, demo, evidence)
+        _collect_live_videos(plan, evidence)
     except Exception as exc:
         (evidence / "failure.txt").write_text(traceback.format_exc())
         pytest.fail(
@@ -102,3 +108,13 @@ def test_live_labeling_workflow_saves_exports_and_renders_real_annotations(
     finally:
         for artifact in evidence.iterdir():
             artifact.chmod(0o600)
+
+
+def _collect_live_videos(plan, evidence):
+    storage = StorageClient.from_environment()
+    demo = ConditionalArtifactStore(storage).read_json(plan.steps[-1].outputs[0]["uri"])
+    (evidence / "demo.json").write_text(json.dumps(demo, indent=2))
+    label_plan = LabelPlan.model_validate(
+        ConditionalArtifactStore(storage).read_json(plan.steps[1].inputs[1]["uri"])
+    )
+    _check_videos(storage, demo, evidence, label_plan)
