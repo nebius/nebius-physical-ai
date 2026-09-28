@@ -5658,6 +5658,35 @@ def _assert_reuse_blocked(case, executor, match="output-reuse", *, decision=None
     return blocked
 
 
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_crashed_output_reuse_validates_current_rendered_image(
+    tmp_path, mocker, runtime_sdk_submission, changed_image
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    identity = case[3]["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    legacy_digest = _image_identity(resumed.render_options)
+    assert case[3]["immutable_identity"]["image_digest"] != legacy_digest
+    if changed_image:
+        resumed.render_options = SkypilotRenderOptions(
+            image_overrides={"*": "cr.example/x@sha256:" + "d" * 64}
+        )
+        assert not resumed.render_options.image_digest_pins
+        _assert_reuse_blocked(case, resumed, match="identity")
+        checker.assert_not_called()
+    else:
+        assert resumed.execute(case[1])["status"] == "ok"
+        checker.assert_called()
+        assert resumed.attempts[-1].sky_status == "CANCELLED"
+        assert resumed.attempts[-1].cancellation_state == "verified"
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
+
+
 @pytest.mark.parametrize("crash_before_runtime_record", [True, False])
 @pytest.mark.parametrize("terminal_status", ["CANCELLED", "FAILED", "SUCCEEDED"])
 def test_resume_reuses_output_complete_wave_after_driver_crash(
@@ -5887,7 +5916,18 @@ def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
     state = case[2].read_runtime_state()
     state.waves[-1]["immutable_identity"][field] = "d" * 64
     case[2].write_runtime_state(state)
-    _assert_reuse_blocked(case, _reuse_executor(case), "runtime output-reuse identity")
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    if field == "image_digest":
+        with pytest.raises(NpaWorkflowError, match="versioned image.*identity"):
+            resumed.execute(case[1])
+        assert resumed.attempts == []
+        assert case[2].read_runtime_state().waves == state.waves
+    else:
+        _assert_reuse_blocked(case, resumed, "runtime output-reuse identity")
+    checker.assert_not_called()
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
 
 
 def test_resume_skips_well_formed_nonreuse_cancellation_event(
@@ -5914,7 +5954,7 @@ def test_resume_skips_well_formed_nonreuse_cancellation_event(
     attempt = resumed._attempt_from_record(
         record, steps=[case[1]], kind="serial", group=""
     )
-    assert not resumed._resume_durable_output_reuse(attempt)
+    assert not resumed._resume_durable_output_reuse(attempt, [case[1]])
 
 
 @pytest.mark.parametrize("unrelated_suffix", ["unrelated", "same-prefix"])
