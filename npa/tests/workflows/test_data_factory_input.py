@@ -661,7 +661,9 @@ def test_legacy_input_adopts_one_source_after_inspecting_every_page() -> None:
     [
         "second.mp4",
         "partial-upload.json",
-        "conditioning.mp4",
+        "README.txt",
+        "nested/conditioning-frame-0001.png",
+        "conditioning-frame-other.png",
     ],
 )
 def test_legacy_input_rejects_conflicts_on_later_pages(later_key: str) -> None:
@@ -702,6 +704,7 @@ def test_legacy_input_pagination_failure_never_returns_partial_source() -> None:
         dfi._legacy_staged_video(storage, f"s3://artifacts/{prefix}")
 
     assert "capture.mp4" not in str(error.value)
+    assert "later page unavailable" in str(error.value)
 
 
 def test_local_video_staging_records_lineage_and_is_idempotent(
@@ -1356,8 +1359,9 @@ def test_committed_retry_repairs_only_a_missing_verified_artifact(
     assert storage.s3.uploads[before:] == [("artifacts", prefix + missing_leaf)]
 
 
+@pytest.mark.parametrize("explicit_input", [True, False])
 def test_artifacts_without_commit_marker_gain_only_the_marker_on_same_byte_retry(
-    h264_video: Path, fake_media_pipeline: None
+    h264_video: Path, fake_media_pipeline: None, monkeypatch, explicit_input: bool
 ) -> None:
     storage = FakeStorage()
     run_id = "paidf-marker-repair"
@@ -1371,15 +1375,22 @@ def test_artifacts_without_commit_marker_gain_only_the_marker_on_same_byte_retry
     storage.s3.objects.pop(("artifacts", prefix + "provenance.json"))
     storage.s3.metadata.pop(("artifacts", prefix + "provenance.json"), None)
     before = len(storage.s3.uploads)
+    original_objects = dict(storage.s3.objects)
+    monkeypatch.setattr(
+        dfi, "_fetch_starter", lambda *args, **kwargs: pytest.fail("starter fetched")
+    )
 
     dfi.prepare_paidf_input(
         run_id=run_id,
         bucket="artifacts",
-        input_video=h264_video,
+        input_video=h264_video if explicit_input else None,
         storage_client=storage,
     )
 
     assert storage.s3.uploads[before:] == [("artifacts", prefix + "provenance.json")]
+    assert all(
+        storage.s3.objects[key] == value for key, value in original_objects.items()
+    )
 
 
 @pytest.fixture
@@ -1445,8 +1456,18 @@ def test_native_legacy_listing_adopts_complete_multi_page_source(
 ):
     prefix = "paidf-native/input/"
     pages = [
-        {"IsTruncated": True, "NextContinuationToken": "second", "Contents": []},
-        {"IsTruncated": False, "Contents": [{"Key": prefix + "capture.mp4"}]},
+        {
+            "IsTruncated": True,
+            "NextContinuationToken": "second",
+            "Contents": [{"Key": prefix + "capture.mp4"}],
+        },
+        {
+            "IsTruncated": False,
+            "Contents": [
+                {"Key": prefix + "conditioning.mp4"},
+                {"Key": prefix + "conditioning-frame-0001.png"},
+            ],
+        },
     ]
     with Stubber(native_listing_storage.s3) as stubber:
         _queue_native_listing(stubber, prefix, pages)
@@ -1524,3 +1545,122 @@ def test_legacy_listing_without_paginator_rejects_truncated_page():
     }
     with pytest.raises(dfi.PaidfInputError, match="could not inspect every object"):
         dfi._legacy_staged_video(storage, "s3://artifacts/paidf-native/input/")
+
+
+@pytest.mark.parametrize("derived", [False, True])
+def test_fixture_cannot_replace_uncommitted_video(derived: bool) -> None:
+    storage = FakeStorage()
+    prefix = "physical-ai-data-factory/fixture-uncommitted/input/"
+    storage.s3.objects[("artifacts", prefix + "source.mp4")] = b"source"
+    if derived:
+        storage.s3.objects[("artifacts", prefix + "conditioning.mp4")] = b"derived"
+    with pytest.raises(dfi.PaidfInputError, match="--seed-fixture cannot replace"):
+        dfi.prepare_paidf_input(
+            run_id="fixture-uncommitted",
+            bucket="artifacts",
+            seed_fixture=True,
+            storage_client=storage,
+        )
+    assert storage.s3.downloads == storage.s3.uploads == []
+
+
+@pytest.mark.parametrize("seed_fixture", [False, True])
+@pytest.mark.parametrize(
+    "leaves,message",
+    [
+        (
+            ["source.mp4", "README.txt"],
+            "source MP4 is present.*conflicting uncommitted",
+        ),
+        (
+            ["conditioning.mp4", "conditioning-frame-0001.png"],
+            "no source MP4 is present",
+        ),
+    ],
+)
+def test_uncommitted_input_errors_distinguish_conflicts_from_missing_source(
+    fake_media_pipeline, leaves, message, seed_fixture
+):
+    storage = FakeStorage()
+    prefix = "physical-ai-data-factory/ambiguous-input/input/"
+    for leaf in leaves:
+        storage.s3.objects[("artifacts", prefix + leaf)] = b"uncommitted"
+    with pytest.raises(dfi.PaidfInputError, match=message) as raised:
+        dfi.prepare_paidf_input(
+            run_id="ambiguous-input",
+            bucket="artifacts",
+            seed_fixture=seed_fixture,
+            storage_client=storage,
+        )
+    assert "--seed-fixture" not in str(raised.value)
+    assert "new run" not in str(raised.value)
+    assert storage.s3.downloads == storage.s3.uploads == []
+
+
+@pytest.mark.parametrize(
+    "interrupted_leaf", ["conditioning.mp4", "conditioning-frame-0004.png"]
+)
+def test_implicit_retry_completes_partial_staging_without_replacing_objects(
+    h264_video, fake_media_pipeline, monkeypatch, interrupted_leaf
+):
+    storage = FakeStorage()
+    upload = storage.s3.upload_file
+
+    def interrupt(path, bucket, key, **kwargs):
+        if key.endswith(interrupted_leaf):
+            raise RuntimeError("interrupted artifact upload")
+        upload(path, bucket, key, **kwargs)
+
+    monkeypatch.setattr(storage.s3, "upload_file", interrupt)
+    with pytest.raises(dfi.PaidfInputError, match="interrupted artifact upload"):
+        dfi.prepare_paidf_input(
+            run_id="partial-staging",
+            bucket="artifacts",
+            input_video=h264_video,
+            storage_client=storage,
+        )
+    before = dict(storage.s3.objects)
+    prior_uploads = len(storage.s3.uploads)
+    monkeypatch.setattr(storage.s3, "upload_file", upload)
+
+    dfi.prepare_paidf_input(
+        run_id="partial-staging", bucket="artifacts", storage_client=storage
+    )
+
+    assert all(storage.s3.objects[key] == value for key, value in before.items())
+    assert all(key not in before for key in storage.s3.uploads[prior_uploads:])
+    assert len(storage.s3.objects) == dfi.CONDITIONING_FRAMES + 3
+    assert storage.s3.uploads[-1][1].endswith("provenance.json")
+
+
+@pytest.mark.parametrize(
+    "changed_leaf", ["conditioning.mp4", "conditioning-frame-0001.png"]
+)
+def test_implicit_retry_rejects_changed_derived_bytes(
+    h264_video, fake_media_pipeline, changed_leaf
+):
+    storage = FakeStorage()
+    dfi.prepare_paidf_input(
+        run_id="changed-derivation",
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+    prefix = "physical-ai-data-factory/changed-derivation/input/"
+    storage.s3.objects.pop(("artifacts", prefix + "provenance.json"))
+    storage.s3.objects[("artifacts", prefix + changed_leaf)] = (
+        b"different derived bytes"
+    )
+    storage.s3.metadata.pop(("artifacts", prefix + changed_leaf))
+    before = dict(storage.s3.objects)
+    prior_uploads = len(storage.s3.uploads)
+
+    with pytest.raises(
+        dfi.PaidfInputError, match="refusing to overwrite.*derived artifact"
+    ):
+        dfi.prepare_paidf_input(
+            run_id="changed-derivation", bucket="artifacts", storage_client=storage
+        )
+
+    assert storage.s3.objects == before
+    assert len(storage.s3.uploads) == prior_uploads

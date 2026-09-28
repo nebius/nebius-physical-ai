@@ -2347,26 +2347,44 @@ def _legacy_staged_video(client: Any, base_uri: str) -> str:
         keys = _list_s3_keys(client, bucket=bucket, prefix=prefix)
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            "could not inspect every object in the canonical PAIDF input prefix"
+            f"could not inspect every object in the canonical PAIDF input prefix: {exc}"
         ) from exc
     videos = [
         key
         for key in keys
-        if key.lower().endswith(".mp4") and not key.lower().endswith("conditioning.mp4")
+        if key.lower().endswith(".mp4") and key != f"{prefix}conditioning.mp4"
     ]
     if len(videos) > 1:
         raise PaidfInputError(
             f"multiple uncommitted videos already exist under {base_uri}; pass one "
             "explicitly with --input-uri or use a new --run-id"
         )
-    if len(videos) == 1 and len(keys) == 1:
+    if videos:
+        _check_legacy_artifacts(keys, videos[0], prefix, base_uri)
         return f"s3://{bucket}/{videos[0]}"
     if keys:
         raise PaidfInputError(
             f"uncommitted input artifacts already exist under {base_uri}, but no source "
-            "MP4 can be adopted. Use --input-video/--input-uri, --seed-fixture, or a new run id."
+            "MP4 is present. Restore the original source with --input-video/--input-uri "
+            "to resume this run."
         )
     return ""
+
+
+def _check_legacy_artifacts(
+    keys: list[str], source: str, prefix: str, base_uri: str
+) -> None:
+    expected = {source, f"{prefix}conditioning.mp4"}
+    expected.update(
+        f"{prefix}conditioning-frame-{index:04d}.png"
+        for index in range(1, CONDITIONING_FRAMES + 1)
+    )
+    if set(keys) - expected:
+        raise PaidfInputError(
+            f"a source MP4 is present under {base_uri}, but conflicting uncommitted "
+            "artifacts exist. Pass the source explicitly with --input-uri to verify "
+            "and resume this run."
+        )
 
 
 def _download_staged_source(client: Any, base_uri: str, tmp: Path) -> Path:
