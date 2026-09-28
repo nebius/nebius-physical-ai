@@ -63,6 +63,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     assert_no_unresolved_placeholders,
     build_skypilot_task_doc,
     plan_images,
+    resolve_task_image,
     render_skypilot_steps_yaml,
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
@@ -268,8 +269,29 @@ def _reference_set_identity(references: Sequence[str]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _wave_image_bindings(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    render_options: SkypilotRenderOptions,
+    run_id: str,
+) -> list[list[str]]:
+    """Bind each state's tool to its exact selected image, including catalog defaults."""
+    from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
+
+    bindings = []
+    for step in steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        tool = str(task.get("tool_ref") or "")
+        image = resolve_task_image(
+            tool, task.get("resources") or {}, options=render_options
+        )
+        if image:
+            bindings.append([step.state, tool, image])
+    return sorted(bindings)
+
+
 def _selection_reference_identity(
-    selection_sha256: str, references: Sequence[str]
+    selection_sha256: str, references: Sequence[str], bindings: Sequence[Sequence[str]]
 ) -> str:
     """Bind complete v3 selection inputs to the effective images of one wave."""
     payload = json.dumps(
@@ -277,6 +299,7 @@ def _selection_reference_identity(
             "schema": IMAGE_IDENTITY_VERSION,
             "selection_sha256": selection_sha256,
             "references": sorted(set(references)),
+            "bindings": sorted(bindings),
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -308,6 +331,7 @@ def _image_identity_record(attempt: "WaveAttempt") -> dict[str, Any]:
         "selection_sha256": attempt.image_selection_sha256,
         "reference_set_sha256": _reference_set_identity(attempt.image_references),
         "references": list(attempt.image_references),
+        "bindings": [list(row) for row in attempt.image_bindings],
         "all_references_content_addressed": bool(attempt.image_references)
         and all(_is_content_addressed_image(item) for item in attempt.image_references),
     }
@@ -337,6 +361,30 @@ def _loaded_image_identity(
     if references != sorted(set(references)):
         raise NpaWorkflowError("versioned image references are not canonical")
     digest = str((record.get("immutable_identity") or {}).get("image_digest") or "")
+    _validate_image_binding_digest(identity, references, digest)
+    return version, references
+
+
+def _validate_image_binding_digest(
+    identity: Mapping[str, Any], references: list[str], digest: str
+) -> None:
+    """Reject incomplete or inconsistent saved selection and per-state bindings."""
+    bindings = identity.get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        raise NpaWorkflowError("versioned image identity requires bindings")
+    if any(
+        not isinstance(row, list)
+        or len(row) != 3
+        or any(not isinstance(value, str) for value in row)
+        or not row[0]
+        or not row[2]
+        for row in bindings
+    ):
+        raise NpaWorkflowError("versioned image bindings have invalid members")
+    if bindings != sorted(bindings) or references != sorted(
+        {row[2] for row in bindings}
+    ):
+        raise NpaWorkflowError("versioned image bindings differ from references")
     selection = identity.get("selection_sha256")
     if (
         not isinstance(selection, str)
@@ -348,9 +396,8 @@ def _loaded_image_identity(
         )
     if _reference_set_identity(references) != identity.get("reference_set_sha256"):
         raise NpaWorkflowError("versioned image reference-set identity differs")
-    if _selection_reference_identity(selection, references) != digest:
+    if _selection_reference_identity(selection, references, bindings) != digest:
         raise NpaWorkflowError("versioned image selection/reference identity differs")
-    return version, references
 
 
 def _expected_image_identity(
@@ -373,7 +420,8 @@ def _expected_image_identity(
             "version; resume with the original controller/source/image, or use "
             "a new run ID after the original attempt is terminal"
         )
-    return _selection_reference_identity(selection, references)
+    bindings = _wave_image_bindings(spec, steps, render_options, run_id)
+    return _selection_reference_identity(selection, references, bindings)
 
 
 @dataclass
@@ -498,6 +546,7 @@ class WaveAttempt:
     image_digest: str = ""
     image_identity_version: str = ""
     image_selection_sha256: str = ""
+    image_bindings: list[list[str]] = field(default_factory=list)
     image_references: list[str] = field(default_factory=list)
     infrastructure_recovery_count: int = 0
     infrastructure_recovery_limit: int = 1
@@ -982,6 +1031,9 @@ class SkyPilotWaveExecutor:
                 source_sha256=str(immutable.get("source_sha256") or ""),
                 image_digest=str(immutable.get("image_digest") or ""),
                 image_identity_version=image_version,
+                image_bindings=list(
+                    (replayed.get("image_identity") or {}).get("bindings") or []
+                ),
                 image_selection_sha256=str(
                     (replayed.get("image_identity") or {}).get("selection_sha256") or ""
                 ),
@@ -1341,6 +1393,9 @@ class SkyPilotWaveExecutor:
                 (record.get("immutable_identity") or {}).get("image_digest") or ""
             ),
             image_identity_version=image_version,
+            image_bindings=list(
+                (record.get("image_identity") or {}).get("bindings") or []
+            ),
             image_selection_sha256=str(
                 (record.get("image_identity") or {}).get("selection_sha256") or ""
             ),
@@ -2163,8 +2218,11 @@ class SkyPilotWaveExecutor:
             attempt.image_identity_version = IMAGE_IDENTITY_VERSION
             attempt.image_references = list(references)
             attempt.image_selection_sha256 = _image_identity(self.render_options)
+            attempt.image_bindings = _wave_image_bindings(
+                self.spec, steps, self.render_options, self.run_id
+            )
             attempt.image_digest = _selection_reference_identity(
-                attempt.image_selection_sha256, references
+                attempt.image_selection_sha256, references, attempt.image_bindings
             )
         else:
             attempt.image_digest = _image_identity(self.render_options)

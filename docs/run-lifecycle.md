@@ -99,14 +99,16 @@ value-only or pin-only identities cannot prove this complete selection and
 require a new run ID.
 
 For each wave with rendered images, a versioned composite binds that v3
-selection fingerprint to the exact resolved references. The ledger retains the
-references, their separate set hash, and whether every reference is content
-addressed. Swapping selector assignments cannot hide behind an unchanged set of
-resolved images; a catalog-image change also changes the composite identity.
+selection fingerprint to each state's tool and exact resolved reference. The
+ledger retains those bindings, the references and their separate set hash, and
+whether every reference is content addressed. Swapping selector assignments or
+catalog defaults cannot hide behind an unchanged set of resolved images.
 
-**Upgrade note:** earlier value-only, pin-only, and reference-set-only identity
-records cannot prove this binding and deliberately fail with `IMMUTABLE_IDENTITY_MISMATCH`; it does not migrate their identity
-in place. Before deploying this controller version, let existing runs finish,
+**Upgrade note:** earlier value-only, pin-only, and reference-set-only records,
+as well as unversioned v3 selection-only records for waves with images, cannot
+prove this binding and deliberately fail with `IMMUTABLE_IDENTITY_MISMATCH`.
+The controller does not migrate their identity in place. Before deploying this
+controller version, let existing runs finish,
 or keep their original controller/source/image version available to resume
 them. Start new-version work under a new run ID only after the old attempt is
 terminal or its exact cancellation is verified. Merging source does not require
