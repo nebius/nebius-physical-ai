@@ -55,9 +55,9 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The [FA4 RTX PRO 6000 recipe update](flash-attention.md) changes the CUDA 13
-foundation source. `npa-base` is outside the 37-image public tool release plan;
+foundation source. `npa-base` is outside the public tool release plan;
 the locally built candidate does not replace any release listed here. On
-2026-09-25, anonymous verification confirmed all 37 current accepted release
+2026-09-28, anonymous verification confirmed all 38 current accepted release
 digests still matched. Historical aliases were not re-audited in that check.
 
 The current build inventory is maintained in `packaging-contract.yaml`, and

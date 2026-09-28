@@ -184,6 +184,26 @@ Keep source SHA, exact local image ID or registry digest, package versions,
 driver, device capability and numerical results with each qualification. An
 RTX result does not qualify the new dependency set on B200, B300 or Hopper.
 
+## Root adapter safety qualification: 2026-09-28
+
+A fresh local image containing the guarded adapter passed **48/48** real RTX
+PRO 6000 cases: the same 24 output and Q/K/V gradient comparisons through each
+of `flash_attn.cute` and `flash_attn`. Both used FP64 references; the worst
+relative L2 error across all outputs and gradients was **0.002618**. The
+[measured API results](validation/fa4-root-rtx6000-20260928.json) record the
+source commit, exact local image ID, installed adapter hash, driver and packages.
+
+The installed adapter matched the committed source byte for byte. Fourteen
+additional boundary checks rejected positional options, dropout, packed GQA,
+split-KV, auxiliary returns, deterministic mode and windows. These rejection
+checks require no GPU; the separate GPU cases establish real forward/backward
+execution. Runs used UID 1000, read-only roots and no network. The candidate was
+not published, and its task-owned VM and disk were removed after collection.
+
+This requalifies the guarded root adapter and native API on the new local
+image. The earlier SDXL rendering report retains its own image and source
+identity; it used native FA4 and was not rerun for this adapter-only change.
+
 ## Applying this to an FA2 migration
 
 Rebuild the workload's own container with the qualified dependency set and
