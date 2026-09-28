@@ -533,8 +533,7 @@ def _manifest() -> dict:
     }
 
 
-def test_authenticated_episode_routes_stream_ranges_and_return_416() -> None:
-    s3, _commit, _version = _fixture(two_cameras=True, unknown=True)
+def _episode_client(s3: FakeS3) -> TestClient:
     manifest = _manifest()
     app = FastAPI()
     register_leisaac_routes(
@@ -549,7 +548,34 @@ def test_authenticated_episode_routes_stream_ranges_and_return_416() -> None:
             s3_buckets=lambda _client, _settings: ["bucket"],
         ),
     )
-    client = TestClient(app)
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("suffix", ["", "/timeline"])
+def test_episode_routes_reject_malformed_outcomes_without_partial_evidence(
+    suffix: str,
+) -> None:
+    s3, commit, _version = _fixture()
+    rows = [json.loads(line) for line in _records().splitlines()]
+    rows[-1]["success"] = "false"
+    _replace_timeline(s3, commit, rows)
+    objects_before = dict(s3.objects)
+
+    response = _episode_client(s3).get(
+        f"/leisaac/episodes/0{suffix}?run_id={RUN_ID}&version_id={VERSION_ID}",
+        headers={"x-forwarded-proto": "https", "sec-fetch-site": "same-origin"},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "episode timeline outcome flags are malformed"}
+    assert response.headers["cache-control"] == "private, no-store"
+    assert any(call["Key"].endswith("/records.jsonl") for call in s3.get_calls)
+    assert s3.objects == objects_before
+
+
+def test_authenticated_episode_routes_stream_ranges_and_return_416() -> None:
+    s3, _commit, _version = _fixture(two_cameras=True, unknown=True)
+    client = _episode_client(s3)
     headers = {"x-forwarded-proto": "https", "sec-fetch-site": "same-origin"}
 
     listed = client.get(f"/leisaac/episodes?run_id={RUN_ID}", headers=headers)
