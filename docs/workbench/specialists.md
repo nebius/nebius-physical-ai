@@ -1,5 +1,10 @@
 # Self-hosted Workbench specialists
 
+The [matched repair benchmark](../../npa/examples/specialists/repair_benchmark/README.md)
+compares Astra alone with Astra coordinating routed Token Factory specialists
+on the same three code repairs and native Workbench workflow. It retains all
+three pairs and accounts for coordinator, router, worker and recovery usage.
+
 The [multi-model repair campaign](specialists-multimodel-repair.md) shows Flash
 and full GLM making production code changes and verifying six-case MuJoCo/LeRobot
 runs. It preserves the router's all-Flash decisions and distinguishes the

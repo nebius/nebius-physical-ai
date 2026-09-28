@@ -80,6 +80,11 @@ tolerance increase.
 
 ## Comparing agents
 
+The [matched repair benchmark](../repair_benchmark/README.md) freezes three
+historical source repairs, runs three Astra/Astra+Token Factory pairs, combines
+their patches, and scores native correctness, end-to-end latency and all model
+usage. It reuses this example's independent verification and scene matrices.
+
 Use the [shared playbook](PLAYBOOK.md) and the
 [coordinator runner](../workflows/README.md). Both arms need identical task text,
 matrices, source grants, operation grants, verifier versions and fallback rules
