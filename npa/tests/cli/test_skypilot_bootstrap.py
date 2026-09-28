@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import base64
+import csv
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
+import zipfile
 
 import pytest
 from typer.testing import CliRunner
@@ -164,7 +170,15 @@ def test_skypilot_path_can_come_from_flag_or_env(
     assert env_result.output.strip() == str((env_venv / "bin" / "sky").resolve())
 
 
-def test_skypilot_bootstrap_reports_missing_python(tmp_path: Path) -> None:
+def _assert_missing_python_diagnostic(exit_code: int, output: str) -> None:
+    normalized = " ".join(output.split())
+    assert exit_code == 1
+    assert "Unable to create SkyPilot venv" in normalized
+    assert "install Python with venv support" in normalized
+
+
+@pytest.mark.parametrize("width", [40, 100])
+def test_skypilot_bootstrap_reports_missing_python(tmp_path: Path, width: int) -> None:
     missing_python = tmp_path / "missing-python"
 
     result = runner.invoke(
@@ -177,11 +191,34 @@ def test_skypilot_bootstrap_reports_missing_python(tmp_path: Path) -> None:
             "--python",
             str(missing_python),
         ],
+        env={"COLUMNS": str(width)},
+        terminal_width=width,
     )
 
-    assert result.exit_code == 1
-    assert "Unable to create SkyPilot venv" in result.output
-    assert "install Python with venv support" in result.output
+    _assert_missing_python_diagnostic(result.exit_code, result.output)
+
+
+@pytest.mark.parametrize("width", [40, 100])
+def test_missing_python_diagnostic_accepts_only_whitespace_wrapping(width: int) -> None:
+    output = textwrap.fill(
+        "Unable to create SkyPilot venv: install Python with venv support", width
+    )
+    _assert_missing_python_diagnostic(1, output)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "output"),
+    [
+        (0, "Unable to create SkyPilot venv: install Python with venv support"),
+        (1, "install Python with venv support"),
+        (1, "Unable to create SkyPilot venv"),
+    ],
+)
+def test_missing_python_diagnostic_rejects_incomplete_contract(
+    exit_code: int, output: str
+) -> None:
+    with pytest.raises(AssertionError):
+        _assert_missing_python_diagnostic(exit_code, output)
 
 
 def test_skypilot_bootstrap_reports_network_failure_from_pip(
@@ -235,51 +272,107 @@ def test_skypilot_install_package_pins_runtime_dependencies_after_install(
     )
 
 
-def test_skypilot_bootstrap_can_install_local_tiny_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Exercises venv-creation + install mechanics with the test interpreter; the
-    # SkyPilot Python-support policy is out of scope here (and the CI matrix runs
-    # this on Python versions outside SkyPilot's supported range), so treat the
-    # interpreter as supported.
-    monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
-    package_dir = tmp_path / "fake-skypilot"
-    sky_pkg = package_dir / "sky"
-    sky_pkg.mkdir(parents=True)
-    (package_dir / "setup.py").write_text(
-        "\n".join(
-            [
-                "from setuptools import setup",
-                "setup(",
-                "    name='fake-skypilot',",
-                "    version='0.12.2',",
-                "    packages=['sky'],",
-                "    entry_points={'console_scripts': ['sky=sky.cli:main']},",
-                ")",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sky_pkg / "__init__.py").write_text("__version__ = '0.12.2'\n", encoding="utf-8")
-    (sky_pkg / "cli.py").write_text(
-        "\n".join(
-            [
-                "def main():",
-                "    import sys",
-                "    if '--version' in sys.argv:",
-                "        print('SkyPilot 0.12.2')",
-                "    elif len(sys.argv) > 1 and sys.argv[1] == 'check':",
-                "        print('checks passed')",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+def _synthetic_wheel_record(members: dict[str, bytes], record_path: str) -> bytes:
+    """Encode the wheel RECORD with hashes of the synthetic fixture bytes."""
+    record = io.StringIO(newline="")
+    writer = csv.writer(record, lineterminator="\n")
+    for name, payload in members.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+        writer.writerow((name, "sha256=" + digest.rstrip(b"=").decode(), len(payload)))
+    writer.writerow((record_path, "", ""))
+    return record.getvalue().encode()
 
+
+def _write_synthetic_wheel(
+    directory: Path,
+    name: str,
+    version: str,
+    files: dict[str, str],
+) -> Path:
+    """Create a valid pure-Python test wheel, never actual vendor software."""
+    metadata = f"{name}-{version}.dist-info"
+    members = {path: content.encode() for path, content in files.items()}
+    members[f"{metadata}/METADATA"] = (
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+        "Summary: Synthetic bootstrap installation test fixture\n\n"
+    ).encode()
+    members[f"{metadata}/WHEEL"] = (
+        "Wheel-Version: 1.0\nGenerator: npa-test-fixture\n"
+        "Root-Is-Purelib: true\nTag: py3-none-any\n\n"
+    ).encode()
+    record_path = f"{metadata}/RECORD"
+    members[record_path] = _synthetic_wheel_record(members, record_path)
+    wheel = directory / f"{name}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for path, payload in members.items():
+            archive.writestr(path, payload)
+    return wheel
+
+
+@pytest.fixture
+def offline_bootstrap_wheels(tmp_path, monkeypatch):
+    """Keep real pip and both compatibility pins local to synthetic packages."""
+    directory = tmp_path / "synthetic-wheels"
+    directory.mkdir()
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("PIP_FIND_LINKS", str(directory))
+    monkeypatch.setenv("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+    # This test covers installation, not SkyPilot's supported-Python policy.
+    monkeypatch.setattr(skypilot_cli, "_is_supported_python", lambda _v: True)
+    wheels = {
+        name: _write_synthetic_wheel(
+            directory,
+            name,
+            version,
+            {
+                f"{name}/__init__.py": f"__version__ = {version!r}\n",
+            },
+        )
+        for name, version in (("click", "8.1.8"), ("kubernetes", "30.1.0"))
+    }
+    wheels["sky"] = _write_synthetic_wheel(
+        directory,
+        "fake_skypilot",
+        "0.12.2",
+        {
+            "sky/__init__.py": "__version__ = '0.12.2'\n",
+            "sky/cli.py": "def main():\n    print('SkyPilot 0.12.2')\n",
+            "fake_skypilot-0.12.2.dist-info/entry_points.txt": "[console_scripts]\nsky = sky.cli:main\n",
+        },
+    )
+    return wheels
+
+
+def _assert_bootstrap_distribution_metadata(venv_path: Path, marker_path: Path) -> None:
+    """Check installed package metadata and the bootstrap inspection record."""
+    state = skypilot_cli.inspect_venv(venv_path)
+    assert state.version == "0.12.2" and state.importable
+    assert state.kubernetes_version == "30.1.0" and state.kubernetes_compatible
+    installed = subprocess.run(
+        [
+            str(state.python_bin),
+            "-c",
+            "import importlib.metadata as m; "
+            "print(m.version('fake-skypilot'), m.version('click'), m.version('kubernetes'))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert installed.stdout.strip() == "0.12.2 8.1.8 30.1.0"
+    marker = json.loads(marker_path.read_text())
+    assert marker["version"] == "0.12.2" and marker["kubernetes_client"] == "30.1.0"
+
+
+def test_skypilot_bootstrap_can_install_local_tiny_package(
+    tmp_path: Path,
+    offline_bootstrap_wheels: dict[str, Path],
+) -> None:
     result = skypilot_cli.bootstrap_skypilot(
         venv_path=tmp_path / "sky-venv",
         python_bin=sys.executable,
-        package_spec=os.fspath(package_dir),
+        package_spec=os.fspath(offline_bootstrap_wheels["sky"]),
         extras=("test",),
     )
 
@@ -289,6 +382,74 @@ def test_skypilot_bootstrap_can_install_local_tiny_package(
     assert '"extras": [\n    "test"\n  ]' in result.marker_path.read_text(
         encoding="utf-8"
     )
+    _assert_bootstrap_distribution_metadata(result.path, result.marker_path)
+
+    versions = subprocess.check_output(
+        [
+            str(result.path / "bin/python"),
+            "-c",
+            "import click, kubernetes, sky; "
+            "print(click.__version__, kubernetes.__version__, sky.__version__)",
+        ],
+        text=True,
+    )
+    assert versions.strip() == "8.1.8 30.1.0 0.12.2"
+    assert (
+        subprocess.check_output([str(result.sky_bin), "--version"], text=True).strip()
+        == "SkyPilot 0.12.2"
+    )
+    marker = json.loads(result.marker_path.read_text())
+    assert marker["kubernetes_client"] == "30.1.0"
+    assert marker["kubernetes_client_spec"] == skypilot_cli.KUBERNETES_CLIENT_SPEC
+    state = skypilot_cli.inspect_venv(result.sky_bin.parent.parent)
+    assert (
+        state.importable and state.version == "0.12.2" and state.kubernetes_compatible
+    )
+    _assert_bootstrap_fixture_refuses_index(state.python_bin)
+
+
+@pytest.mark.parametrize("missing_package", ["click", "kubernetes"])
+def test_skypilot_bootstrap_refuses_unavailable_offline_dependency(
+    tmp_path: Path,
+    offline_bootstrap_wheels: dict[str, Path],
+    missing_package: str,
+) -> None:
+    offline_bootstrap_wheels[missing_package].unlink()
+    target = tmp_path / "sky-venv"
+    with pytest.raises(skypilot_cli.SkyPilotBootstrapError) as failure:
+        skypilot_cli.bootstrap_skypilot(
+            venv_path=target,
+            python_bin=sys.executable,
+            package_spec=os.fspath(offline_bootstrap_wheels["sky"]),
+        )
+    message = str(failure.value)
+    assert "pip failed while pinning" in message
+    assert f"No matching distribution found for {missing_package}" in message
+    assert "Retrying" not in message
+    assert "https://" not in message
+    assert not target.exists()
+
+
+def test_offline_bootstrap_refuses_unavailable_package(
+    tmp_path: Path,
+    offline_bootstrap_wheels: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert offline_bootstrap_wheels["sky"].is_file()
+    monkeypatch.setenv("PIP_INDEX_URL", "https://packages.example.invalid/simple")
+    destination = tmp_path / "unavailable-venv"
+    with pytest.raises(
+        skypilot_cli.SkyPilotBootstrapError, match="No matching distribution found"
+    ) as error:
+        skypilot_cli.bootstrap_skypilot(
+            venv_path=destination,
+            python_bin=sys.executable,
+            package_spec="npa-bootstrap-unavailable-fixture==0.0.1",
+        )
+    assert "packages.example.invalid" not in str(error.value)
+    assert "Retrying" not in str(error.value)
+    assert not destination.exists()
+    assert not (destination / skypilot_cli.MARKER_FILE).exists()
 
 
 @pytest.fixture
@@ -1106,3 +1267,30 @@ def test_bootstrap_lock_is_owner_only(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     lock = venv.with_name(f".{venv.name}{skypilot_cli.BOOTSTRAP_LOCK_SUFFIX}")
     assert lock.stat().st_mode & 0o777 == 0o600
+
+
+def _assert_bootstrap_fixture_refuses_index(python_bin: Path) -> None:
+    refused = subprocess.run(
+        [
+            str(python_bin),
+            "-m",
+            "pip",
+            "install",
+            "-vv",
+            "--index-url",
+            "https://index.invalid/simple",
+            "npa-missing-bootstrap-fixture==0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = refused.stdout + refused.stderr
+    assert refused.returncode != 0
+    assert "Ignoring indexes: https://index.invalid/simple" in combined
+    assert (
+        "No matching distribution found for npa-missing-bootstrap-fixture==0"
+        in combined
+    )
+    assert "Starting new HTTPS connection" not in combined
+    assert "Retrying" not in combined

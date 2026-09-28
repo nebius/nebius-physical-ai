@@ -312,3 +312,20 @@ def test_copy_through_symbolic_directory_uses_full_fallback(repository):
     before = _commit(root)
     _write(root, "npa/src/npa/workbench/runtime.py", "# Updated target\n")
     assert _selection((root, before)) == _PUBLIC
+
+
+def test_new_development_candidate_is_selected_without_release_registration(repository):
+    root, before = repository
+    contract = yaml.safe_load((root / _CONTRACT).read_text())
+    contract["images"]["gymnasium-robotics"] = {
+        "dockerfile": "gymnasium-robotics/Dockerfile",
+        "redistribution": "public",
+    }
+    _write(root, _CONTRACT, yaml.safe_dump(contract))
+    _write(root, "npa/docker/workbench/gymnasium-robotics/Dockerfile", "FROM scratch\n")
+    assert _selection((root, before)) == ["gymnasium-robotics"]
+    head = _git(root, "rev-parse", "HEAD")
+    assert select_public_image_builds(root, "", head) == [
+        "gymnasium-robotics",
+        *_PUBLIC,
+    ]

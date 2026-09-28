@@ -1,0 +1,18 @@
+diff --git a/experiments/robotwin/flexpi_policy/deploy_policy.py b/experiments/robotwin/flexpi_policy/deploy_policy.py
+--- a/experiments/robotwin/flexpi_policy/deploy_policy.py
++++ b/experiments/robotwin/flexpi_policy/deploy_policy.py
+@@ -154,7 +154,13 @@ def _find_trained_config(ckpt_path: Path) -> Optional[Path]:
+     typically lives at `<run_dir>/checkpoints/weights/step_XXXX.pt`, so we walk
+     up a few parents looking for it.
+     """
+-    for parent in list(ckpt_path.resolve().parents)[:5]:
++    # Hugging Face snapshots expose checkpoint files as symlinks into the Hub
++    # blob store. Resolve only after trying the lexical snapshot path, otherwise
++    # config.yaml beside checkpoints/ is skipped and eval builds the task-preset
++    # architecture instead of the architecture that produced the checkpoint.
++    lexical_parents = list(ckpt_path.expanduser().absolute().parents)[:5]
++    resolved_parents = list(ckpt_path.expanduser().resolve().parents)[:5]
++    for parent in dict.fromkeys((*lexical_parents, *resolved_parents)):
+         candidate = parent / "config.yaml"
+         if candidate.is_file():
+             return candidate

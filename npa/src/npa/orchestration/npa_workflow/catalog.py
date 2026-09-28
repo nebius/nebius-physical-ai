@@ -101,6 +101,8 @@ _BYOF_REPO_ARGV = [
     "{{config.capability_name}}",
     "--smoke-artifact-name",
     "{{config.smoke_artifact_name}}",
+    "--runtime-context-env",
+    "{{config.runtime_context_env}}",
     "--libero-qualified-candidate-image",
     "{{config.libero_qualified_candidate_image}}",
     "--yaml",
@@ -126,6 +128,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "runtime_context_env": "",
     "source_prune_path": "",
     "libero_qualified_candidate_image": "",
 }
@@ -153,7 +156,27 @@ _CONTENT_AGENTS_PIPELINE = [
 
 _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 
+_HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.habitat_sim.smoke": ToolEntry(
+        name="workflow.habitat_sim.smoke",
+        description=(
+            "Render the pinned official Skokloster scene with RGB, depth, Bullet, "
+            "and real navigation on one RTX PRO 6000 Blackwell."
+        ),
+        argv_template=[
+            *_HABITAT_SIM_SMOKE,
+            "--output-dir",
+            "{{config.output_dir}}",
+            "--output-uri",
+            "{{config.output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--plan-sha256",
+            "{{config.plan_sha256}}",
+        ],
+    ),
     "workbench.encord.push": ToolEntry(
         name="workbench.encord.push",
         description="Register S3 media with Encord SaaS or explicitly upload a copy.",
@@ -831,6 +854,76 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.workers}}",
             "--minimum-ade",
             "{{config.minimum_ade}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.flex_pi.train": ToolEntry(
+        name="workbench.flex_pi.train",
+        description="Train the immutable public YAM utensil workload with four GPUs, full validation and verified fresh checkpoint resume.",
+        multi_node_mode="sharded",
+        shard_activation_config="training_nodes",
+        shard_output_config="output_uri",
+        argv_template=[
+            "npa",
+            "workbench",
+            "flex-pi",
+            "train",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--mode",
+            "{{config.training_mode}}",
+            "--normalization-path",
+            "{{config.normalization_path}}",
+            "--normalization-sha256",
+            "{{config.normalization_sha256}}",
+            "--num-workers",
+            "{{config.num_workers}}",
+            "--prefetch-factor",
+            "{{config.prefetch_factor}}",
+            "--optimizer",
+            "{{config.optimizer}}",
+            "--memory-fill",
+            "{{config.memory_fill}}",
+            "--activation-checkpointing",
+            "{{config.activation_checkpointing}}",
+            "--microbatch-per-rank",
+            "{{config.microbatch_per_rank}}",
+            "--cuda-graphs",
+            "{{config.cuda_graphs}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.flex_pi.infer": ToolEntry(
+        name="workbench.flex_pi.infer",
+        description=(
+            "Run flex-pi's genuine action-only policy inference on a pinned "
+            "public RoboTwin observation. Model and observation bytes are "
+            "fetched at runtime and validated before artifact publication."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "flex-pi",
+            "infer",
+            "--input-path",
+            "{{config.input_uri}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--checkpoint-id",
+            "{{config.checkpoint_id}}",
+            "--checkpoint-revision",
+            "{{config.checkpoint_revision}}",
+            "--num-inference-steps",
+            "{{config.num_inference_steps}}",
+            "--seed",
+            "{{config.seed}}",
+            "--torch-compile",
+            "--expected-gpu",
+            "{{config.expected_gpu}}",
             "--run-id",
             "{{run.id}}",
         ],
@@ -1726,6 +1819,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
@@ -2164,6 +2258,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),

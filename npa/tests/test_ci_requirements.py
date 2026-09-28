@@ -71,6 +71,24 @@ def test_non_dependency_changes_do_not_require_refresh(tmp_path: Path) -> None:
     ci_requirements._check(tmp_path)
 
 
+def test_direct_generated_pin_changes_require_refresh(tmp_path: Path) -> None:
+    """Reject Dependabot-style edits to the generated constraints body.
+
+    Args:
+        tmp_path: Isolated input repository.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Edited pins retain a valid generated-content seal.
+    """
+    _copy_inputs(tmp_path)
+    path = tmp_path / "npa/ci/requirements.txt"
+    updated = path.read_text().replace("websockets==16.1.1", "websockets==17.1")
+    path.write_text(updated)
+    with pytest.raises(ValueError, match="CI generated pins changed"):
+        ci_requirements._check(tmp_path)
+
+
 def test_websockets_transport_pins_match_project_dependency() -> None:
     """Keep standalone transport environments aligned with the core pin.
 

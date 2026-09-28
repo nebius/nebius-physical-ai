@@ -45,6 +45,9 @@ jobs:
           validation_environment="$(mktemp -d "$RUNNER_TEMP/queue-validation.XXXXXXXX")"
           python -I -m venv "$validation_environment"
           ln -s "$validation_environment" npa/.venv
+      - name: Reject stale or directly edited CI requirements
+        if: github.event_name != 'push'
+        run: npa/.venv/bin/python npa/scripts/ci_requirements.py --check
       - name: Verify queue evidence using the trusted base policy
         id: plan
         env:
@@ -153,17 +156,19 @@ jobs:
           echo 'Dependency inputs, lint, formatting, guardrails, smoke tests and full test collection passed. Full tests and security checks must still pass before queue admission.' >> "$GITHUB_STEP_SUMMARY"
 
   # Independent validation jobs use available runners without shared job locks.
-  # The workflow-level group above owns cancellation of superseded PR work.
+  # The workflow-level group above owns cancellation of superseded PR work. The
+  # cheap gitleaks/dependency latch keeps invalid dependency PRs from starting
+  # these jobs while the broader PR precheck overlaps their execution.
   test-gate:
-    needs: [gitleaks, pr-precheck]
-    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
+    needs: gitleaks
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && github.event_name != 'push' }}
     uses: ./.github/workflows/test.yml
     with:
       prose_only: ${{ needs.gitleaks.outputs.prose_only == 'true' && needs.gitleaks.outputs.full_suite == 'false' && needs.gitleaks.outputs.browser == 'false' }}
 
   lint-gate:
-    needs: [gitleaks, pr-precheck]
-    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
+    needs: gitleaks
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && github.event_name != 'push' }}
     uses: ./.github/workflows/lint.yml
 
   queue-guardrails:
@@ -209,6 +214,10 @@ jobs:
           git rev-parse --verify "${BASE_SHA}^{commit}"
           scan_args=(--repo-root . --tree --diff-range "${BASE_SHA}..HEAD")
 
+          npa/.venv/bin/python -m npa.guardrails.confidentiality \
+            --repo-root . --diff-range "${BASE_SHA}..HEAD" \
+            --built-in-nebius-infra
+
           proof_directory="${RUNNER_TEMP}/ncore-source-attribution-proof"
           install -d -m 0700 "${proof_directory}"
           npa/.venv/bin/python -m npa.guardrails.confidentiality \
@@ -223,8 +232,8 @@ jobs:
           fi
 
   image-security:
-    needs: [gitleaks, pr-precheck]
-    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && needs.gitleaks.outputs.mode == 'full' && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
+    needs: gitleaks
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && needs.gitleaks.outputs.mode == 'full' }}
     uses: ./.github/workflows/image-security-scan.yml
     permissions:
       contents: read
@@ -285,8 +294,8 @@ jobs:
             --output-dir "$RUNNER_TEMP/security-report"
 
   security-runtime:
-    needs: [gitleaks, pr-precheck]
-    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
+    needs: gitleaks
+    if: ${{ !cancelled() && needs.gitleaks.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.gitleaks.outputs.mode) }}
     name: hostile-input-runtime
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     env:
