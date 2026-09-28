@@ -1,0 +1,19 @@
+{
+  "arm": "teacher",
+  "batch_size": 16,
+  "candidate": "stage_teacher_action_only_3600",
+  "decay_learning_rate": 1e-06,
+  "fast_loss_weight": 0.0,
+  "num_flow_samples": 4,
+  "num_workers": 12,
+  "peak_learning_rate": 5e-06,
+  "save_interval": 600,
+  "schema": "npa.behavior.rlc-matched-stage-training.v1",
+  "seed": 0,
+  "selection_rule": "minimum_equal_task_mean_action_loss_then_earliest_step",
+  "steps": 3600,
+  "subtask_loss_weight": 0.0,
+  "training_data": "released_2026_tasks_0_1_22_stride20_training_split_only",
+  "training_examples_per_task": 19200,
+  "warmup_steps": 600
+}
