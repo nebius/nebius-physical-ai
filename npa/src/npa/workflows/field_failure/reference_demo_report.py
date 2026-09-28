@@ -5,7 +5,11 @@ import json
 from pathlib import Path
 import tempfile
 
-from npa.workflows.field_failure.artifacts import _publish, _read, _storage
+from npa.workflows.field_failure.artifacts import _read
+from npa.workflows.field_failure.reference_demo_publication import (
+    publish_html,
+    publish_record,
+)
 
 
 def publish_report(args, *, selection=None):
@@ -35,12 +39,10 @@ def publish_report(args, *, selection=None):
     from npa.workflows.field_failure.reference_demo_media import preview_groups
 
     groups = preview_groups(args, final)
-    _publish(args.output_root + "/reports/result.json", report)
-    _storage().put_bytes_conditional(
-        render_html(report, groups).encode(),
+    publish_record(args.output_root + "/reports/result.json", report)
+    publish_html(
         args.output_root + "/reports/index.html",
-        if_none_match=True,
-        content_type="text/html; charset=utf-8",
+        render_html(report, groups),
     )
     return report
 

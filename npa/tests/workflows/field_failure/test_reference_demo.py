@@ -189,6 +189,7 @@ def test_diagnostic_replay_runs_all_batches_without_losing_cases(tmp_path, monke
 def test_failed_development_publishes_html_before_refusing_final(tmp_path, monkeypatch):
     from npa.workflows.field_failure import reference_demo_evaluate as evaluate
     from npa.workflows.field_failure import reference_demo_report as report
+    from npa.workflows.field_failure import reference_demo_publication as publication
 
     published = []
     monkeypatch.setattr(
@@ -205,7 +206,7 @@ def test_failed_development_publishes_html_before_refusing_final(tmp_path, monke
         ),
     )
     monkeypatch.setattr(
-        evaluate, "_publish", lambda uri, value: published.append(value)
+        publication, "publish_record", lambda uri, value: published.append(value)
     )
     monkeypatch.setattr(
         report, "publish_report", lambda args, selection: published.append("html")

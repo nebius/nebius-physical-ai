@@ -68,6 +68,9 @@ Compute success gain as the mean paired success delta so an improvement of exact
 one percentage point passes without an epsilon or a weakened threshold. Failed
 development selection must publish the measured violations in the HTML report
 and leave final evaluation untouched.
+Interrupted selection/report publication may accept identical retained bytes
+to finish missing report files. Reject different bytes without overwriting
+evidence; report recovery must not change eligibility or consume final cases.
 
 ## Current Reference YAMLs
 

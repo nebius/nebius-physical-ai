@@ -96,6 +96,10 @@ scores, warehouse retention, training settings, cohort hashes, and limitations.
 The first, focal episode is an office adaptation route; its embedded scored
 frames illustrate one route, while measured aggregate scores cover both regions.
 `reports/result.json` is its structured result.
+If report publication is interrupted, a retry can complete missing files only
+when the retained selection, result, and HTML bytes match the regenerated
+evidence exactly. Different retained bytes stop recovery without overwriting
+the earlier result. A blocked selection remains blocked after report recovery.
 Native baseline, diagnostic replay, development, and final artifacts retain
 rendered rollouts, checkpoints, learning curves, physical controls, and measured
 episode trajectories.

@@ -164,7 +164,9 @@ def select_candidate(args):
     decision = development_decision(
         before, after, plan["cohorts"]["regions"]["development"], plan["metrics"]
     )
-    _publish(args.output_root + "/selection.json", decision)
+    from npa.workflows.field_failure.reference_demo_publication import publish_record
+
+    publish_record(args.output_root + "/selection.json", decision)
     if not decision["eligible"]:
         from npa.workflows.field_failure.reference_demo_report import publish_report
 

@@ -1,6 +1,7 @@
 """Keep development eligibility aligned with final paired rules without reading final data."""
 
 import copy
+import json
 import math
 from types import SimpleNamespace
 
@@ -216,6 +217,7 @@ def _capture_selection(monkeypatch, records):
     from npa.workflows.field_failure import reference_demo_report as report
     from npa.workflows.field_failure import reference_demo_media as media
     from npa.workflows.field_failure import reference_demo_attribution as attribution
+    from npa.workflows.field_failure import reference_demo_publication as publication
 
     # This test isolates cohort reads; sealed attribution has dedicated tests.
     monkeypatch.setattr(attribution, "sample_credit", lambda *_: None)
@@ -233,16 +235,13 @@ def _capture_selection(monkeypatch, records):
 
     for module in (evaluate, report):
         monkeypatch.setattr(module, "_read", read)
-        monkeypatch.setattr(
-            module, "_publish", lambda uri, value: published.update({uri: value})
-        )
     monkeypatch.setattr(media, "preview_groups", preview)
     storage = SimpleNamespace(
         put_bytes_conditional=lambda data, uri, **_: published.update(
-            {uri: data.decode()}
+            {uri: data.decode() if uri.endswith(".html") else json.loads(data)}
         )
     )
-    monkeypatch.setattr(report, "_storage", lambda: storage)
+    monkeypatch.setattr(publication, "_storage", lambda: storage)
     return observed, published
 
 
