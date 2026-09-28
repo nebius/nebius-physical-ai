@@ -35,7 +35,8 @@ npa workbench encord push \
 Register mode retains S3 as the dataset of record. `--transfer upload` is an
 explicit alternative that creates an Encord-managed copy with separate
 retention and possible duplication. Never retry a registration failure as an
-upload.
+upload. If S3 has no full-object SHA-256, register reads every source byte
+through the NPA client and requires `s3:GetObject`; it has no hashing opt-out.
 
 Require exact source URI, complete object key or URL, namespaced metadata,
 stable item UUID, or a sidecar assertion. Never use a filename or basename as
@@ -46,7 +47,9 @@ identity. Stop when exact signals conflict.
 The default `--label-export none` avoids label initialization. Use
 `--label-export initialize` only when the operator explicitly selects and
 confirms that remote Encord label-state mutation. Retain the resulting manifest
-as evidence.
+as evidence. New pulls emit `npa.encord.pull_manifest.v2`, with exact transferred
+`source_size` and separate `provider_reported_size`. Verification and rendering
+continue to read v1 without rewriting its size fields.
 
 ## Labeling demo
 

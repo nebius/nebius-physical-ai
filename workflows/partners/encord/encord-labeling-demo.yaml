@@ -64,7 +64,7 @@ states:
     resources: cpu
     outputs:
     - uri: '{{config.encord_manifest_uri}}'
-      schema: npa.encord.pull_manifest.v1
+      schema: npa.encord.pull_manifest.v2
     next: verify
   verify:
     description: Verify exact identity, destination existence, size, and checksum.
@@ -76,7 +76,7 @@ states:
     - uri: '{{config.encord_receipt_uri}}'
       schema: npa.encord.push_receipt.v1
     - uri: '{{config.encord_manifest_uri}}'
-      schema: npa.encord.pull_manifest.v1
+      schema: npa.encord.pull_manifest.v2
     outputs:
     - uri: '{{config.encord_roundtrip_report_uri}}'
       schema: npa.encord.roundtrip_report.v1

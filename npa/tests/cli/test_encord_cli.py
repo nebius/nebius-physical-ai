@@ -151,7 +151,7 @@ def test_pull_defaults_to_no_label_initialization(
     def fake_pull(**kwargs):
         captured.update(kwargs)
         return Result(
-            payload={"schema": "npa.encord.pull_manifest.v1"},
+            payload={"schema": "npa.encord.pull_manifest.v2"},
             status="completed",
             counts=SimpleNamespace(successful=1, discovered=1),
             manifest_uri="s3://bucket/out/manifest.json",
@@ -245,3 +245,22 @@ def test_contract_error_exits_one_without_traceback(
     assert result.exit_code == 1
     assert "exact identity is unresolved" in result.output
     assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    "option", ["--input-path", "--label-receipt-uri", "--verification-uri"]
+)
+def test_label_path_error_names_the_invalid_option(option, monkeypatch):
+    from unittest.mock import Mock
+
+    operation = Mock()
+    monkeypatch.setattr("npa.sdk.workbench.encord.render_labels", operation)
+    arguments = ["workbench", "encord", "render-labels"]
+    for name in ("--input-path", "--label-receipt-uri", "--verification-uri"):
+        arguments.extend(
+            [name, "local.json" if name == option else "s3://test-bucket/evidence.json"]
+        )
+    arguments.extend(["--output-path", "s3://test-bucket/demo/"])
+    result = runner.invoke(app, arguments)
+    assert result.exit_code != 0 and option in result.output
+    operation.assert_not_called()

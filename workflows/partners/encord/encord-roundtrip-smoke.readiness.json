@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "9681212367d48be7a7369ae4706f51992cc885aa90e006addf77c905b3215c65",
+  "workflow_sha256": "d429fdabbef491839394d0bdfbd230ba6b78c3fcfa189c14d87cb5cdf368c07e",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation and plan construction passed for this exact spec.",
+      "reason": "Schema validation and plan construction passed for the exact spec with v2 pull manifests; readers retain v1 support.",
       "evidence": [
         "README.md",
         "../../../npa/tests/workflows/test_encord_workflow.py"

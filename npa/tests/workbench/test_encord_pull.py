@@ -606,6 +606,7 @@ def test_download_preserves_rounded_catalog_size_separately_from_verified_bytes(
     )
     assert row.outcome == "successful"
     assert row.source_size == row.destination_size == 5
+    assert row.provider_reported_size == 4
     # Revalidation is the checkpoint boundary that previously rejected the row.
     type(row).model_validate(row.model_dump())
     metadata = json.loads(

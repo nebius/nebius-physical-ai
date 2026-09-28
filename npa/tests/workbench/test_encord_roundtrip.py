@@ -322,3 +322,45 @@ def test_current_destination_head_overrides_conflicting_manifest_evidence() -> N
     assert (
         report["items"][0]["observed_checksum"] == hashlib.sha256(b"wrong").hexdigest()
     )
+
+
+@pytest.mark.parametrize(
+    "schema", ["npa.encord.pull_manifest.v1", "npa.encord.pull_manifest.v2"]
+)
+def test_roundtrip_reads_both_manifest_versions_without_rewriting(schema):
+    receipt, manifest = artifacts()
+    payload = manifest.model_dump(by_alias=True)
+    payload["schema"] = schema
+    if schema.endswith(".v1"):
+        payload["items"][0].pop("provider_reported_size")
+    else:
+        payload["items"][0]["provider_reported_size"] = 4
+    parsed = PullManifest.model_validate(payload)
+    assert parsed.schema_ == schema and parsed.items[0].source_size == 5
+    store, storage = setup(receipt, parsed)
+    store.payloads[MANIFEST_URI] = json.dumps(payload).encode()
+    before = store.payloads[MANIFEST_URI]
+    assert verify_roundtrip(
+        receipt_uri=RECEIPT_URI,
+        manifest_uri=MANIFEST_URI,
+        output_path=REPORT_URI,
+        artifact_store=store,
+        storage_client=storage,
+    ).passed
+    assert store.payloads[MANIFEST_URI] == before
+
+
+def test_v2_requires_measured_size_while_legacy_v1_can_omit_it():
+    from pydantic import ValidationError
+
+    _, manifest = artifacts()
+    assert manifest.schema_ == "npa.encord.pull_manifest.v2"
+    payload = manifest.model_dump(by_alias=True)
+    payload["items"][0]["source_size"] = 0
+    with pytest.raises(ValidationError, match="exact source byte count"):
+        PullManifest.model_validate(payload)
+    payload["schema"] = "npa.encord.pull_manifest.v1"
+    assert PullManifest.model_validate(payload).items[0].source_size == 0
+    payload["schema"] = "npa.encord.pull_manifest.v3"
+    with pytest.raises(ValidationError):
+        PullManifest.model_validate(payload)

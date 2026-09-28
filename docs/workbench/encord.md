@@ -14,7 +14,8 @@ Stew Tong authored the fail-closed transport, CLI, SDK, and workflows in
 
 `register` is the default. Encord receives object URLs and exact NPA identity
 metadata while the bytes remain in S3. This retains S3 as the governed dataset
-of record.
+of record. Registration can still transfer the entire source through the NPA
+client for integrity hashing; it is not a metadata-only operation.
 
 Select `upload` explicitly with `--transfer upload` to create an Encord-managed
 copy with an independent retention and deletion lifecycle.
@@ -65,9 +66,13 @@ lineage. A basename never establishes identity. Conflicting exact assertions
 remain unresolved and fail the completed receipt contract.
 
 When S3 does not expose a full-object SHA-256, registration reads and hashes
-the source before changing Encord state. This requires `GetObject` access and
-transfers the source bytes once. A conditional GET and a second HEAD reject
-objects that change during hashing. The receipt retains the opaque ETag
+the source before changing Encord state. This requires `s3:GetObject` access
+in the NPA client role and transfers the source bytes once. Roles that previously had only listing/metadata
+access must add read permission. Without it, discovery fails before any Encord
+mutation. The hashing requirement has no opt-out; a full-object S3
+`ChecksumSHA256` avoids this read. Budget bandwidth and latency for the entire
+input prefix when that checksum is absent. A conditional GET and a second HEAD
+reject objects that change during hashing. The receipt retains the opaque ETag
 separately from the computed SHA-256 used by roundtrip verification.
 
 Exact `npa.source_uri` metadata identifies the object even when its HTTP host
@@ -98,10 +103,18 @@ Project pulls do not initialize or export labels by default. The explicit
 `--label-export initialize` option may create a label row or change remote
 label status in Encord. Its manifest records that mutation posture.
 
-Downloaded media records use the exact streamed byte count for `source_size`.
-The Encord catalog may report a rounded file size; item metadata retains that
-value separately as `provider_reported_size`. Destination size and SHA-256
-verification still use the actual media bytes.
+New pulls emit `npa.encord.pull_manifest.v2`. In v2, `source_size` is zero until
+transfer and then records the exact streamed byte count (or the exact S3 source
+size for a server-side copy). `provider_reported_size` preserves Encord's catalog
+size in both the manifest item and its sidecar; it can be rounded. Destination
+size and SHA-256 verification use actual media bytes.
+
+Readers in `verify-roundtrip` and `render-labels` accept both v1 and v2. Existing
+v1 artifacts keep their original `source_size` value and meaning: provider/source
+metadata, with a streamed-size fallback when unavailable. They are not silently
+rewritten or relabeled as v2. Downstream schema allowlists must accept v2 before
+consuming new pulls; consumers needing the original catalog value should read
+`provider_reported_size` for v2. The partner specs now declare v2 handoffs.
 
 ## Verify a roundtrip
 

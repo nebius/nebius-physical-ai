@@ -409,7 +409,7 @@ def _preallocate_media(item: Any, output_uri: str) -> PullItem:
         mime_type=str(
             getattr(item, "mime_type", "") or getattr(item, "file_type", "") or ""
         ),
-        source_size=int(getattr(item, "file_size", 0) or 0),
+        provider_reported_size=int(getattr(item, "file_size", 0) or 0),
         destination_uri=destination,
         metadata_uri=(
             output_uri.rstrip("/") + f"/items/{item_uuid}.json" if item_uuid else ""
@@ -532,7 +532,7 @@ def _transfer_one(
                 "item_type": row.item_type,
                 "mime_type": row.mime_type,
                 "source_size": row.source_size,
-                "provider_reported_size": int(getattr(item, "file_size", 0) or 0),
+                "provider_reported_size": row.provider_reported_size,
                 "destination_uri": row.destination_uri,
             },
             filename=f"{row.item_uuid}.json",

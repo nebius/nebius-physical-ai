@@ -55,7 +55,7 @@ def test_roundtrip_consumes_artifacts_only_in_terminal_verifier() -> None:
     assert _value(verify.argv, "--output-path") == verify.outputs[0]["uri"]
     assert {item.schema for item in spec.states["verify"].inputs} == {
         "npa.encord.push_receipt.v1",
-        "npa.encord.pull_manifest.v1",
+        "npa.encord.pull_manifest.v2",
     }
 
 
@@ -99,3 +99,31 @@ def test_label_plan_override_changes_both_argv_and_required_input():
     step = build_plan(spec, run_id="override").steps[1]
     assert _value(step.argv, "--input-path") == selected
     assert selected in {item["uri"] for item in step.inputs}
+
+
+def test_cpu_pod_plan_installs_encord_extra_and_requests_forwardable_key(monkeypatch):
+    import yaml
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    prepared = prepare_npa_workflow_for_submit(
+        WORKFLOWS / "encord-labeling-demo.yaml",
+        run_id="pod-contract",
+        render_options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+    )
+    try:
+        assert "ENCORD_SSH_KEY_B64" in prepared.secret_env_hints
+        documents = [
+            doc
+            for doc in yaml.safe_load_all(prepared.skypilot_yaml_path.read_text())
+            if doc
+        ]
+        assert len(documents) == 6
+        for stage in documents[1:]:
+            assert stage["resources"]["cloud"] == "kubernetes"
+            assert "accelerators" not in stage["resources"]
+            assert "[encord]" in stage["setup"]
+            assert "ENCORD_SSH_KEY_B64" in stage["setup"]
+    finally:
+        prepared.temp_dir.cleanup()

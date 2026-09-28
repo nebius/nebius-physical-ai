@@ -73,7 +73,9 @@ def render_labels_cmd(
     label_receipt_uri: str = typer.Option(..., "--label-receipt-uri"),
     verification_uri: str = typer.Option(..., "--verification-uri"),
     output_path: str = typer.Option(
-        ..., "--output-path", help="New S3 MP4 and demo.json prefix."
+        ...,
+        "--output-path",
+        help="New S3 output directory prefix, e.g. s3://<bucket>/demo/.",
     ),
     output_json: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -106,7 +108,12 @@ def _label_command(operation, output_json, **kwargs):
     try:
         for name, value in kwargs.items():
             if name == "input_path" or name.endswith("_uri"):
-                validate_read_path(value, tool="encord labels", allow_hf=False)
+                validate_read_path(
+                    value,
+                    tool="encord labels",
+                    option="--" + name.replace("_", "-"),
+                    allow_hf=False,
+                )
         validate_write_path(kwargs["output_path"], tool="encord labels", required=True)
         result = operation(**kwargs)
     except (ValueError, EncordToolError) as exc:

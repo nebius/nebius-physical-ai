@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "a5c27c05e94df4dcb7a7f3dadf03a43c1b293d30569ddb89403f842c777ee9d5",
+  "workflow_sha256": "e315f49351c49e7b2ff7e0551c7e43860ac42887b145ad2e7134fb5b17d579b1",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation and plan construction passed for this exact spec.",
+      "reason": "Schema validation and plan construction passed for the exact spec with v2 pull manifests; readers retain v1 support.",
       "evidence": [
         "README.md",
         "../../../npa/tests/workflows/test_encord_workflow.py"
@@ -54,7 +54,7 @@
     },
     "target_runtime": {
       "status": "verified",
-      "reason": "The committed live test executed the complete local graph against real Encord and S3: three videos, nine tracks, 346 boxes, 331 polygons, and ten scene-label segments were saved, exported, verified, and rendered. Cloud pod execution was not tested.",
+      "reason": "The committed live test completed the local CPU graph against Encord/S3 with v2 manifests: three videos, nine tracks, 346 boxes, 331 polygons, and ten scene-label segments. CPU submit --plan-only passed; actual pod execution remains untested.",
       "evidence": [
         "README.md",
         "../../../npa/tests/workflows/test_encord_workflow.py"

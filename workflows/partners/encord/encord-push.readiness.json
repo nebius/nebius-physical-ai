@@ -54,7 +54,7 @@
     },
     "target_runtime": {
       "status": "verified",
-      "reason": "Local workflow execution against real Encord and S3 passed. The standalone push/pull specs share the exercised roundtrip stage commands. Cloud pod execution was not tested.",
+      "reason": "Local upload execution passed against real Encord/S3. A real-S3 register discovery test proved HEAD -> conditional GET -> second HEAD and exact SHA-256 without provider SHA-256. Full register submission needs an accessible Encord cloud integration and remains untested; cloud pod execution is also untested.",
       "evidence": [
         "README.md",
         "../../../npa/tests/workflows/test_encord_workflow.py"

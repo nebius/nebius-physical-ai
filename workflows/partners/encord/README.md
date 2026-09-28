@@ -11,9 +11,13 @@ the standard NPA workflow runtime; they do not deploy an Encord service.
 | [Push](encord-push.yaml) | Register or explicitly upload media and write a durable receipt. |
 | [Pull](encord-pull.yaml) | Materialize an existing dataset, collection, or project into S3. |
 
+Register mode requires source read permission and can read the full input
+prefix for SHA-256 hashing. See the [transfer and manifest migration notes](../../../docs/workbench/encord.md).
+New pull artifacts use `pull_manifest.v2`; readers retain v1 support.
+
 The three transport workflows moved here from `workflows/testing/`. Their file
-names and transport behavior are unchanged. Imported prelabels are real object
-annotations, with human review still pending.
+names are unchanged. The versioned pull manifest migration is described above.
+Imported prelabels are real object annotations, with human review still pending.
 
 ## Prepare inputs
 
@@ -188,3 +192,31 @@ account/storage evidence, source clips, and the walkthrough MP4 stay private.
 
 See the [transport guide](../../../docs/workbench/encord.md) for the roundtrip
 demo, credentials, transfer modes, and standalone CLI/SDK usage.
+
+## Additional live checks
+
+`submit --plan-only` renders the CPU stages without launching a pod. The renderer
+installs the `encord` extra from staged NPA source and forwards
+`ENCORD_SSH_KEY_B64`. This validates the generated configuration; a real CPU
+submission on a configured Linux operator and Kubernetes context is still needed
+to verify pod bootstrap and credential access together.
+
+The register discovery checksum fallback has a separate real-S3 test. Supply a
+private JSON file with `bucket` and a nonempty `prefix`; the test uploads a small
+repository MP4 under a fresh child prefix with a CRC32 checksum, proves there is
+no full-object SHA-256, and observes HEAD → conditional GET → second HEAD:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_E2E_ENCORD_HASH_CONFIG=/private/encord-hash-config.json \
+NPA_E2E_ENCORD_EVIDENCE_DIR=/private/encord-evidence \
+npa/.venv/bin/python -m pytest npa/tests/e2e/test_encord_register_live.py -q
+```
+
+The uploaded fixture remains available for inspection. This test passed against
+real S3; it exercises the register discovery path without making Encord mutations.
+A full register push still needs an accessible Encord cloud integration. To test
+that complete path, set `encord_transfer: register` and `encord_integration` in
+the private config for `test_encord_roundtrip_live.py`, with a source prefix
+containing objects without full-object SHA-256 metadata. Full register and CPU
+pod execution are distinct from the completed local upload/labeling run.
