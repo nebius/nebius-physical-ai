@@ -11,6 +11,7 @@ import typer
 from npa.clients.config import ConfigError
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 from npa.orchestration.npa_workflow.demos import (
+    demo_storage_environment,
     download_demo_report,
     list_demos,
     prepare_demo,
@@ -107,6 +108,7 @@ def run_cmd(
 def _submit(selection, infra, resume_run, plan_only, output_format):
     from npa.cli.workbench.workflow import (
         OutputFormat as WorkflowOutputFormat,
+        _temporary_runtime_environment,
         submit_cmd,
     )
 
@@ -127,9 +129,14 @@ def _submit(selection, infra, resume_run, plan_only, output_format):
     )
     if resume_run:
         options["run_id"] = ""
-    if not plan_only:
-        _show_run_identity(selection)
-    submit_cmd(**options)
+    try:
+        environment = demo_storage_environment(selection)
+    except ConfigError as exc:
+        _fail(str(exc), output_format)
+    with _temporary_runtime_environment(environment):
+        if not plan_only:
+            _show_run_identity(selection)
+        submit_cmd(**options)
 
 
 def _show_run_identity(selection):

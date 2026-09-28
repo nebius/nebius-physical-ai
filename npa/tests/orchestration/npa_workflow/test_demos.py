@@ -121,3 +121,53 @@ def test_partial_project_credentials_never_adopt_ambient_credentials(
     )
     with pytest.raises(ConfigError, match="complete S3 credential pair"):
         demos.download_demo_report("nurec", "test-run")
+
+
+def test_report_cache_preserves_same_run_identity_in_distinct_projects(
+    configured_project, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        demos,
+        "_storage",
+        lambda project: (project, configured_project, f"example-{project}", ""),
+    )
+
+    class Storage:
+        def __init__(self, **kwargs):
+            pass
+
+        def download_file(self, uri, path):
+            Path(path).write_text(uri)
+
+    monkeypatch.setattr(demos, "StorageClient", Storage)
+    first = demos.download_demo_report("nurec", "test-run", project="one")
+    second = demos.download_demo_report("nurec", "test-run", project="two")
+    assert first != second
+    assert "example-one/" in first.read_text()
+    assert "example-two/" in second.read_text()
+
+
+def test_failed_report_download_preserves_existing_complete_report(
+    configured_project, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path))
+
+    class Storage:
+        fail = False
+
+        def __init__(self, **kwargs):
+            pass
+
+        def download_file(self, uri, path):
+            Path(path).write_text("partial" if self.fail else "complete")
+            if self.fail:
+                raise OSError("interrupted download")
+
+    monkeypatch.setattr(demos, "StorageClient", Storage)
+    path = demos.download_demo_report("nurec", "test-run")
+    Storage.fail = True
+    with pytest.raises(OSError, match="interrupted"):
+        demos.download_demo_report("nurec", "test-run")
+    assert path.read_text() == "complete"
+    assert list(path.parent.iterdir()) == [path]

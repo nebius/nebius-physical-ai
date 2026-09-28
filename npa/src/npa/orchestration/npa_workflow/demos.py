@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path
 import re
+import tempfile
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -184,6 +186,44 @@ def prepare_demo(
     }
 
 
+def demo_storage_environment(selection: dict) -> dict[str, str]:
+    """Bind demo submission to the same saved project storage used for viewing.
+
+    Args:
+        selection: Non-secret prepare_demo result for this execution.
+    Returns:
+        Private environment values for a restoring submit context; never log them.
+    Raises:
+        ConfigError: Saved credentials are incomplete or routing changed.
+    """
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
+
+    _, storage, bucket, _ = _storage(selection["project"])
+    if not storage.aws_access_key_id or not storage.aws_secret_access_key:
+        raise ConfigError("The selected project needs a complete S3 credential pair.")
+    if (
+        bucket != selection["s3_bucket"]
+        or storage.endpoint_url != selection["s3_endpoint"]
+    ):
+        raise ConfigError("The selected project's storage changed during preparation.")
+    values = dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, storage.endpoint_url)
+    values.update(
+        AWS_ACCESS_KEY_ID=storage.aws_access_key_id,
+        AWS_SECRET_ACCESS_KEY=storage.aws_secret_access_key,
+        AWS_SESSION_TOKEN="",
+        AWS_SECURITY_TOKEN="",
+        NPA_S3_BUCKET=bucket,
+        NEBIUS_S3_BUCKET=bucket,
+        NPA_CHECKPOINT_BUCKET=f"s3://{bucket}",
+        NPA_S3_PREFIX=selection["s3_prefix"],
+        NPA_SRC_S3_URI="",
+        NPA_E2E_NPA_SRC_S3_URI="",
+    )
+    return values
+
+
 def download_demo_report(name: str, run_id: str, *, project: str = "") -> Path:
     """Download a completed compact HTML report using selected-project credentials.
 
@@ -201,7 +241,7 @@ def download_demo_report(name: str, run_id: str, *, project: str = "") -> Path:
     """
     select_demo(name)
     validate_demo_run_id(run_id)
-    _, storage, bucket, base = _storage(project)
+    selected, storage, bucket, base = _storage(project)
     if not storage.aws_access_key_id or not storage.aws_secret_access_key:
         raise ConfigError("The selected project needs a complete S3 credential pair.")
     client = StorageClient(
@@ -210,10 +250,15 @@ def download_demo_report(name: str, run_id: str, *, project: str = "") -> Path:
         aws_secret_access_key=storage.aws_secret_access_key,
     )
     root = Path(os.environ.get("NPA_CONFIG_DIR") or Path.home() / ".npa")
-    directory = root / "demo-reports" / name / run_id
+    identity = "\n".join((selected, storage.endpoint_url, bucket, base))
+    scope = hashlib.sha256(identity.encode()).hexdigest()
+    directory = root / "demo-reports" / scope / name / run_id
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     uri = f"s3://{bucket}/{_prefix(base, name, run_id)}/reports/index.html"
     destination = directory / "index.html"
-    client.download_file(uri, str(destination))
-    destination.chmod(0o600)
+    with tempfile.TemporaryDirectory(prefix=".download-", dir=directory) as scratch:
+        staged = Path(scratch) / "index.html"
+        client.download_file(uri, str(staged))
+        staged.chmod(0o600)
+        staged.replace(destination)
     return destination

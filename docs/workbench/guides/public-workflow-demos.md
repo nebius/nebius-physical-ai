@@ -44,6 +44,12 @@ baseline checkpoint, case file, source URL, or bucket substitution is required.
 The configured project supplies the storage destination. The native workflow
 specification owns the stages and full workload sizes.
 
+Demo launch and viewing both use that project's complete saved storage
+credentials. Unrelated shell storage credentials and source pointers are
+temporarily ignored during demo submission; the command restores the shell
+environment afterward. Report downloads are kept separately for each project
+and storage destination.
+
 Append `--plan-only` to inspect the standard submission plan without launching.
 Each execution receives a fresh run ID and its own output prefix. Record the run
 ID printed by the command. The launcher does not add a per-stage time limit.
