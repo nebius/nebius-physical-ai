@@ -200,6 +200,12 @@ completes the same attempt without submitting replacement work. Missing,
 malformed, conflicting, mismatched, or temporarily unreadable evidence remains
 blocked and retryable under the same run ID. The provider's verified terminal
 status remains factual even while output revalidation is blocked.
+The wave record and immutable terminal event retain `output_reuse_error_type`
+(for example, `PermissionError` or `ValueError`) beside the sanitized reason.
+This distinguishes access errors from rejected evidence without exposing raw
+credentials or changing the fail-closed recovery decision. The field clears
+after successful evidence recovery; exception type alone does not authorize
+a retry or a replacement job.
 
 An unreadable supervisor history blocks reconciliation without creating a reuse
 claim. Restoring access lets the same attempt reconcile its exact provider job.

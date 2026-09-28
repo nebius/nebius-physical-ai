@@ -7,7 +7,9 @@ source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
 PRs run browser and focused Python compatibility checks alongside the complete
 Python 3.12 coverage suite. `pr-precheck` provides an early five-minute signal;
-it does not replace required validation. Queue candidates reuse those successful
+it remains required but overlaps full validation after the secret-scan planner
+accepts the generated CI requirements. It does not replace required validation.
+Queue candidates reuse those successful
 results only after trusted-base code verifies the current PR head, latest
 attempt, all required jobs, receipt, tested merge parent, and an identical Git
 tree through GitHub APIs. Evidence must be less than 24 hours old; no downloaded
@@ -104,11 +106,10 @@ separate image validation requirements.
 The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
-`.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
-dependencies daily and proposes version updates in one cross-ecosystem
-`dependencies` PR, so overlapping manifests and generated locks are reviewed
-and tested together. After changing Python dependency declarations, regenerate
-the CI pins with
+`.github/dependabot.yml` checks application declarations, scanner, browser, and
+Actions dependencies daily and proposes version updates in one cross-ecosystem
+`dependencies` PR. The generated `npa/ci/requirements.txt` body is sealed against
+direct edits; after changing Python dependency declarations, regenerate it with
 `npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
 Dependabot security-update enablement is a separate repository setting; the
 version-update configuration does not enable it or merge its PRs automatically.
