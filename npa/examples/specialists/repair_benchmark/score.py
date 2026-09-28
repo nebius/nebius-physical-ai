@@ -7,6 +7,7 @@ from statistics import median
 
 from accounting import _account
 from operation import _digest
+from timing import _timing
 
 
 def _read(path):
@@ -47,6 +48,7 @@ def _arm(root, pair, arm, prices):
     report["source_patches"] = _patches(root, directory)
     report["all_operation_attempts"] = _attempts(directory)
     report["routing_decisions"] = _routes(directory)
+    report["timing"] = _timing(directory, outcome)
     report["host_load"] = {
         phase: outcome[phase] for phase in ("host_before", "host_after")
     }

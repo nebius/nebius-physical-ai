@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import threading
 
@@ -386,6 +387,56 @@ def test_failure_after_delegation_starts_never_claims_safe_retry(
     assert "safe_to_retry" not in result
     assert "submission_attempted" not in result
     assert bridge.team.status("task")["status"] == "queued"
+
+
+@contextmanager
+def _hold_profile_in_another_process(bridge, profile):
+    with bridge.team._ownership(profile):
+        path = bridge.team.store.directory / (profile + ".lock")
+    script = (
+        "import fcntl,sys; "
+        "lock=open(sys.argv[1], 'r+'); "
+        "fcntl.flock(lock, fcntl.LOCK_EX); "
+        "print('locked', flush=True); sys.stdin.readline()"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", script, str(path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as owner:
+        try:
+            assert owner.stdout.readline().strip() == "locked"
+            yield
+        finally:
+            owner.communicate("release\n")
+            assert owner.returncode == 0
+
+
+def test_process_lock_refusal_retries_one_durable_assignment(
+    workflow_experiment, prepared, tmp_path
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    arguments = {"specialist": "scene-a", "task_id": "stable", "goal": "Repair"}
+
+    async def delegate():
+        return await bridge._recorded(
+            "delegate",
+            arguments,
+            lambda: asyncio.to_thread(bridge._delegate, "scene-a", "stable", "Repair"),
+        )
+
+    with _hold_profile_in_another_process(bridge, "scene-a"):
+        refused = asyncio.run(delegate())
+        assert refused["submission_attempted"] is False
+        assert refused["safe_to_retry"] is True
+        assert bridge.team.store._list() == []
+    assert asyncio.run(delegate())["status"] == "queued"
+    assert asyncio.run(delegate())["status"] == "queued"
+    assert len(bridge.team.store._list()) == 1
+    calls = bridge.store._calls("supervisor")
+    assert len(calls) == 3
+    assert all(call["status"] == "completed" for call in calls)
 
 
 def test_async_wait_yields_and_returns_new_receipts(

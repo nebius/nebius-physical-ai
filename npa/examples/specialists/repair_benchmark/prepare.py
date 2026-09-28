@@ -109,7 +109,7 @@ def _operation_config(root, workspace, state, targets, options, combined=False):
     }
 
 
-def _operations(root, config):
+def _operations(root, config, native_failure_handoff=False):
     descriptions = {
         "diagnose": "Run all immutable regression checks against the current candidate snapshot.",
         "submit": "Submit real native simulation, conversion and independent replay/reader validation.",
@@ -139,6 +139,8 @@ def _operations(root, config):
         "failure_values": ["failed", "uncertain", "not_submitted"],
         "poll_interval": 1.0,
     }
+    if native_failure_handoff:
+        result["wait"]["handoff_on_failure"] = True
     return result
 
 
@@ -188,7 +190,9 @@ def _profile(root, directory, task, options, protocol):
             *[Path(p).name for p in CHECK_FILES],
         ],
         "write_paths": ["npa/src/" + target],
-        "operations": _operations(root, path),
+        "operations": _operations(
+            root, path, protocol.get("native_failure_handoff", False)
+        ),
         "required_operations": ["verify"],
         "compact_context": True,
     }
@@ -270,16 +274,27 @@ def _runtime_versions(options):
         )
 
 
-def _main():
+def _options():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--native-python", required=True, type=Path)
     parser.add_argument("--reader-python", required=True, type=Path)
-    options = parser.parse_args()
+    parser.add_argument(
+        "--native-failure-handoff",
+        action="store_true",
+        help="Hand a failed native wait to the next configured model; preserve receipts and do not replay effects.",
+    )
+    return parser.parse_args()
+
+
+def _main():
+    options = _options()
     _runtime_versions(options)
     root = options.output.resolve()
     root.mkdir(parents=True, mode=0o700, exist_ok=False)
     protocol = json.loads((HERE / "protocol.json").read_text())
+    if options.native_failure_handoff:
+        protocol["native_failure_handoff"] = True
     _copy_inputs(root)
     prompt = "Repair all three Workbench regression lanes and complete their required operations.\n"
     prompt += "\n".join(

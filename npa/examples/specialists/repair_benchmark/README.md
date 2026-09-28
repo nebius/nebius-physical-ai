@@ -122,3 +122,29 @@ diagnosis/native attempt, stdout/stderr, artifacts and content hashes. The
 scorer exports source diffs, numeric verification receipts and usage summaries.
 Review and scan that export before publication; model-authored diffs are still
 untrusted text. Keep exact host paths and credentials in private operator storage.
+
+## Explain coordination time
+
+The scorer also derives timing from the retained coordinator and worker receipts.
+Coordinator-process time and the subsequent combined verification partition total
+elapsed time. Nested measurements show Astra turns, host waiting without model
+calls, worker shutdown, classifier requests, model intervals and tool activity.
+Worker intervals overlap; their summed durations are work performed, not additional
+elapsed time. Model intervals run from context-view journaling to response
+journaling and include client preparation and validation, not just provider time.
+
+Delegation counts distinguish a confirmed pre-submission lock refusal from an
+uncertain or rejected call. A recovered refusal requires the same specialist,
+task ID and goal in the later accepted request. Missing boundaries remain
+incomplete, and missing receipts never imply zero overhead. This analysis can
+be applied to older retained runs without changing their frozen inputs or costs.
+
+For a separate routing-policy experiment, prepare a fresh root with
+`--native-failure-handoff`. This records the variant in the frozen protocol and
+enables the existing `handoff_on_failure` policy only on the native `wait`
+operation. Initial diagnosis failures are expected and do not change models.
+A failed native wait passes its receipts and current files to the next configured
+endpoint; the runtime does not replay the operation. Unresolved native effects
+still block resubmission. Include the first worker's failed attempt and the
+backup's usage in the comparison. If no failure triggers this policy, the run
+provides no evidence that escalation helped.

@@ -26,6 +26,7 @@ def modules(monkeypatch):
         "run",
         "score",
         "telemetry",
+        "timing",
     )
     previous = {name: sys.modules.get(name) for name in names}
     monkeypatch.syspath_prepend(str(EXAMPLE))
@@ -43,6 +44,16 @@ def modules(monkeypatch):
 @pytest.fixture
 def prices():
     return json.loads((EXAMPLE / "prices.json").read_text())
+
+
+def test_native_failure_handoff_does_not_escalate_initial_diagnosis(modules, tmp_path):
+    default = modules.prepare._operations(tmp_path, tmp_path / "operation.json")
+    opted_in = modules.prepare._operations(
+        tmp_path, tmp_path / "operation.json", native_failure_handoff=True
+    )
+    assert not any(value.get("handoff_on_failure") for value in default.values())
+    assert opted_in["wait"].pop("handoff_on_failure") is True
+    assert opted_in == default
 
 
 def _tokens(prompt=10000, output=100, cached=8000):
