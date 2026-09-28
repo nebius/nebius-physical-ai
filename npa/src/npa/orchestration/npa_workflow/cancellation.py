@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
@@ -124,6 +125,7 @@ def assess_run_cancellation(
     sky_bin: str = "",
     lookup: LookupFn | None = None,
     exact_job_id: str = "",
+    isolated_config_dir: Path | None = None,
 ) -> CancellationAssessment:
     """Inspect every durable job/stage record and identify only active jobs.
 
@@ -357,6 +359,7 @@ def assess_run_cancellation(
                 record.job_name or resolution.run_id,
                 job_id=record.job_id,
                 sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
             )
             if force_live_lookup
             else _cached_evidence(resolution, record.job_id)
@@ -381,6 +384,7 @@ def assess_run_cancellation(
                 record.job_name or resolution.run_id,
                 job_id=record.job_id,
                 sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
             )
         record.live_outcome = evidence.outcome
         record.live_status = normalize_workflow_state(evidence.status)
@@ -464,6 +468,7 @@ def reverify_active_cancellation(
     *,
     sky_bin: str = "",
     lookup: LookupFn | None = None,
+    isolated_config_dir: Path | None = None,
 ) -> list[str]:
     """Recheck every exact active identity immediately before cancellation."""
 
@@ -474,6 +479,7 @@ def reverify_active_cancellation(
             record.job_name or assessment.run_id,
             job_id=record.job_id,
             sky_bin=sky_bin or None,
+            isolated_config_dir=isolated_config_dir,
         )
         status = normalize_workflow_state(evidence.status)
         if evidence.outcome != "found":
