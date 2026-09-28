@@ -1282,6 +1282,8 @@ def test_validation_environment_recovers_stale_identity_raised_before_api_ensure
 
     assert calls == ["environment", "environment", "ensure"]
     assert env["SKYPILOT_USER_ID"] == "npa-test-validation"
+    assert client_configs[0] == client_configs[1]
+    assert Path(env["SKYPILOT_GLOBAL_CONFIG"]).stat().st_mode & 0o777 == 0o600
     assert all(config["allowed_clouds"] == ["kubernetes"] for config in client_configs)
     assert len(recovered) == 1
     expected_scope = (
