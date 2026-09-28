@@ -1,0 +1,30 @@
+{
+  "schema": "npa.cosmos3.wam-decoder-startup-failure.v1",
+  "recipe_commit": "f51f0f6e0fd86efa60b0e68bc93f8b395ecb4674",
+  "gpus": 16,
+  "nodes": 2,
+  "logs": [
+    {
+      "node_rank": 0,
+      "bytes": 674789,
+      "sha256": "c4a8ca3905a82596f7ba5bb5cd4dcae4ccb2dbedd3feb76dd33f7c8f0c4b475d",
+      "tracebacks": 521,
+      "completed_warmup_updates": 0,
+      "timed_updates": 0,
+      "saved_checkpoints": 0,
+      "missing_libavutil": true
+    },
+    {
+      "node_rank": 1,
+      "bytes": 154198,
+      "sha256": "9f07d2046196fecb26a45ee5d9982619c543355ee2e3fe656115f79bd8fb9ec0",
+      "tracebacks": 0,
+      "completed_warmup_updates": 0,
+      "timed_updates": 0,
+      "saved_checkpoints": 0,
+      "missing_libavutil": false
+    }
+  ],
+  "accounting": "FAILED|15:0|276",
+  "scope": "Excluded startup failure; not a training-performance or quality result."
+}

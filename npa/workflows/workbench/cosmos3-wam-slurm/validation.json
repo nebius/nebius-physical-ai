@@ -42,7 +42,7 @@
     "learned_policy_executed": false,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-simulation-runtime.json"
   },
-  "blocker": "Two-node measurement awaits sufficient free reserved B200 capacity.",
+  "blocker": null,
   "remaining_evidence": [
     "Complete comparable 16-GPU run",
     "Verified repeated 8/16-GPU timing comparison and 16-GPU profiling",
@@ -59,8 +59,8 @@
   "slurm_runtime": {
     "version": "23.11.4",
     "deployment": "Native Slurm on dedicated reserved B200 GPU VMs",
-    "nodes": 1,
-    "gpus": 8,
+    "nodes": 2,
+    "gpus": 16,
     "nccl_preflight": "passed",
     "soperator_execution_validated": false
   },
@@ -167,5 +167,29 @@
       },
       "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-quality-8/evidence.json"
     }
+  },
+  "sixteen_gpu_live_execution": {
+    "completed_full_schedule": false,
+    "native_training_updates_observed": true,
+    "processes_attributed": 16,
+    "nodes": 2,
+    "fixed_window_device_samples": 1920,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/evidence.json"
+  },
+  "sixteen_gpu_collective": {
+    "completed": true,
+    "ranks": 16,
+    "hosts": 2,
+    "all_reduce_sum": 136,
+    "ranks_reporting_infiniband": 16,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-collective-16/bandwidth.json",
+    "transport_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-collective-16/transport-proof.json",
+    "scope": "Custom PyTorch correctness and synchronized-host timing diagnostic; not nccl-tests or NIC line rate."
+  },
+  "per_node_video_preflight": {
+    "both_camera_streams_decoded_on_each_host": true,
+    "hosts": 2,
+    "initial_failure_excluded": true,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-decoder-preflight/README.md"
   }
 }

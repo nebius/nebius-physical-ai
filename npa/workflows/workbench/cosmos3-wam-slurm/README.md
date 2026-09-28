@@ -37,6 +37,11 @@ provides a trace-linked kernel timeline, excluded from scaling comparisons.
 The [three completed timing repetitions](../../../../docs/workbench/evidence/cosmos3-wam-timing-8/README.md)
 provide the eight-GPU baseline: 13.3080 s mean step, with 0.0136 s sample
 standard deviation across run means. The two-node comparison remains pending.
+The second reserved node has now joined the native Slurm cluster. The
+[sixteen-rank collective check](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md)
+passed over InfiniBand, and [process-attributed two-node telemetry](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md)
+shows the real sixteen-GPU trainer completing updates. The full schedule,
+matched repetitions, profile and quality evaluations remain in progress.
 The [final-checkpoint visual pass](../../../../docs/workbench/evidence/cosmos3-wam-final-visual/README.md)
 completed ten illustrative trials with nine successes, one failure and no
 infrastructure errors. Its videos, model hashes and eight-GPU process

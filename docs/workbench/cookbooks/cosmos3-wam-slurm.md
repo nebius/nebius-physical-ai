@@ -28,6 +28,14 @@ The [GPU evidence record](../evidence/cosmos3-wam-b200-runtime.json)
 includes runtime versions, hashes, and the memory failure.
 Consult the [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json).
 
+Two reserved nodes now pass the [sixteen-rank InfiniBand collective check](../evidence/cosmos3-wam-collective-16/README.md).
+The [actual two-node training trace](../evidence/cosmos3-wam-live-training-16/README.md)
+attributes all sixteen GPU processes to the Slurm job and shows a fixed
+two-minute activity window. Completed sixteen-GPU duration, repeated scaling,
+profile and quality measurements remain pending. Both bootstraps install
+FFmpeg, and the launcher checks actual front and wrist video decoding on each
+host before loading the model; see the [live decoder correction](../evidence/cosmos3-wam-decoder-preflight/README.md).
+
 For a visual look at the prepared setup, [play the actual B200 generation and
 source-data preview](../evidence/cosmos3-wam-b200-visual/README.md). That record
 contains the generated MP4, synchronized source cameras, reproduction settings

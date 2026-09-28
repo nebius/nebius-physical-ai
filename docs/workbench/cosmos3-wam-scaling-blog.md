@@ -92,8 +92,8 @@ it does not determine the minimum GPU count under other memory settings.
 The failed process lasted about 96 seconds. That is diagnostic startup and
 failure time, **not training duration or time to quality**. A dedicated
 eight-GPU worker passed the Slurm/NCCL preflight and completed the full
-2,000-step schedule. The two-node comparison awaits sufficient free reserved
-capacity; its performance is still unmeasured.
+2,000-step schedule. The two-node comparison is now running on sixteen
+reserved B200s; completed performance and quality results remain pending.
 
 ![Eight B200s executing the actual WAM training job](evidence/cosmos3-wam-live-training/training-snapshot.png)
 
@@ -127,6 +127,15 @@ the public recipe's probe both survived the full thirty-second observation
 window. Both worker bootstraps now apply this setting, and the reporter rejects
 thread tracebacks. The [before-and-after evidence](evidence/cosmos3-wam-slurm-ipc.json)
 records this operational failure separately from the fresh benchmark run.
+
+Adding the second node exposed a different dependency boundary: the shared
+Python environment could import TorchCodec, but its new host lacked FFmpeg's
+shared libraries. That attempt failed before any recorded optimizer update.
+The [decoder failure and corrected two-host proof](evidence/cosmos3-wam-decoder-preflight/README.md)
+show both camera streams decoding to identical frame hashes after installation.
+Both bootstrap scripts now install FFmpeg, and each node decodes real front
+and wrist frames before loading the model. The failed attempt is excluded;
+the retry starts from the same base weights.
 
 ## See what the prepared model generates
 
@@ -209,6 +218,23 @@ the recipe checks the device type, verifies rank placement and performs an
 actual NCCL all-reduce across the allocation. Reserved capacity is bound
 explicitly; an unavailable reservation does not silently become an on-demand
 run.
+
+The [separate sixteen-rank collective diagnostic](evidence/cosmos3-wam-collective-16/README.md)
+completed with correct results on every device and actual InfiniBand transport
+on all sixteen ranks. For a 1 GiB buffer per rank, the mean synchronized
+operation took 3.345 ms. This custom PyTorch check includes host dispatch and
+CUDA synchronization. Its bandwidth normalization is documented with every
+raw duration; it is not a NIC line-rate measurement or a training-speed result.
+
+![Actual sixteen-B200 training activity over a fixed observation window](evidence/cosmos3-wam-live-training-16/training-window.png)
+
+The [two-node live execution record](evidence/cosmos3-wam-live-training-16/README.md)
+attributes all sixteen GPU processes to the actual Slurm training job. A
+prospectively selected two-minute window contains 1,920 readings, with all
+sixteen devices reaching 100% utilization and sampled memory spanning
+57.56–59.01 GiB. The periodic low-utilization intervals remain visible. These
+readings establish execution and its sampled activity pattern; the completed
+timing runs determine scaling.
 
 ## Measure the whole run and the steady part
 

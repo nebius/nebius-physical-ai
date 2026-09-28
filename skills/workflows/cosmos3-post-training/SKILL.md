@@ -74,6 +74,14 @@ is pending. Current upstream
 LIBERO already describes two-node training; avoid the outdated blanket claim
 that all public Cosmos3 recipes stop at one node.
 
+The reserved two-node cluster now has real sixteen-rank NCCL/InfiniBand proof
+and process-attributed training telemetry. These establish native execution;
+completed multi-node timing, profiling and matched quality remain pending.
+The fresh-worker test also required FFmpeg host libraries despite the shared
+Python environment. Both bootstraps now install FFmpeg, and every node decodes
+both real camera streams before model loading. Retain the excluded failure
+and corrected decoder receipts with the live evidence.
+
 The separate eight-GPU profiling run has completed with a real CUDA timeline.
 The completed full training run also has sampled GPU telemetry. Kernel groups
 use linked CPU operators where available; host step markers exclude repeated GPU
