@@ -209,9 +209,24 @@ def _score(root):
         "price_snapshot": execution["prices"],
         "all_declared_arms": arms,
         "comparison": _comparison(arms),
+        "whole_experiment_model_cost": _experiment_cost(arms),
         "benchmark_development_conversation_cost_included": False,
         "benchmark_development_conversation_cost_usd": None,
         "cloud_or_gpu_workload": False,
+    }
+
+
+def _experiment_cost(arms):
+    complete = all(row["cost"]["complete"] for row in arms)
+    return {
+        "complete": complete,
+        "total_usd": {
+            bound: sum(row["cost"]["total_usd"][bound] for row in arms)
+            for bound in ("minimum", "maximum")
+        }
+        if complete
+        else None,
+        "basis": "All declared arms, including baseline and hybrid; standard API equivalents.",
     }
 
 

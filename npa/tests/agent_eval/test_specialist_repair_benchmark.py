@@ -146,6 +146,17 @@ def test_equal_quality_lower_total_cost_and_latency_support_claim(modules):
     assert result["elapsed_reduction_fraction"] == pytest.approx(0.3)
 
 
+def test_experiment_spend_includes_both_arms_and_refuses_partial_totals(modules):
+    arms = _arms()
+    result = modules.score._experiment_cost(arms)
+    assert result["total_usd"]["minimum"] == pytest.approx(3.9)
+    assert result["total_usd"]["maximum"] == pytest.approx(4.5)
+    arms[0]["cost"]["complete"] = False
+    result = modules.score._experiment_cost(arms)
+    assert not result["complete"]
+    assert result["total_usd"] is None
+
+
 @pytest.mark.parametrize(
     "change", ["failure", "unknown_usage", "missing_arm", "slow", "costly"]
 )
