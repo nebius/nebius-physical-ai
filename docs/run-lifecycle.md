@@ -75,6 +75,15 @@ overrides are included even when the preflight pin map is empty. Older
 value-only or pin-only identities cannot prove this complete selection and
 require a new run ID.
 
+**Upgrade note:** the v3 image-selection identity deliberately rejects v1/v2
+records with `IMMUTABLE_IDENTITY_MISMATCH`; it does not migrate their identity
+in place. Before deploying this controller version, let existing runs finish,
+or keep their original controller/source/image version available to resume
+them. Start new-version work under a new run ID only after the old attempt is
+terminal or its exact cancellation is verified. Merging source does not require
+replacing an in-flight driver. Accelerator-name overrides remain outside image
+identity because they select cluster resources rather than container images.
+
 Multi-tool workflows can pin distinct validated images with repeatable
 `--image-override TOOL_REF=IMAGE`. An exact tool override beats the optional
 global `--image` fallback, and the rendered task uses the digest that preflight
