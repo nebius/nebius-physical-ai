@@ -13,6 +13,11 @@ disposable copies. No private repository or routing service is required.
 The [September 27 measured report](../../../../docs/workbench/specialists-matched-repair-experiment.md)
 retains all six arms, including recovery costs and mixed timing results. It also
 records a delegation-lock fix made after the measured snapshot was frozen.
+The [September 28 coordination report](../../../../docs/workbench/specialists-coordination-experiment.md)
+adds two fresh cohorts, a real cross-process contention test and timing for
+coordinator turns, model-free waits, overlapping workers and final verification.
+It distinguishes the enabled native-failure handoff policy from actual usage:
+no failure triggered a model handoff in those runs.
 
 ## Fixed comparison
 
@@ -141,6 +146,16 @@ uncertain or rejected call. A recovered refusal requires the same specialist,
 task ID and goal in the later accepted request. Missing boundaries remain
 incomplete, and missing receipts never imply zero overhead. This analysis can
 be applied to older retained runs without changing their frozen inputs or costs.
+
+Reproduce the separate-process lock check without provider calls:
+
+```bash
+npa/.venv/bin/python -m pytest \
+  npa/tests/agent_eval/test_specialist_workflow_experiment.py::test_process_lock_refusal_retries_one_durable_assignment -q
+```
+
+It holds the real profile lock, verifies that refusal queues nothing, then
+releases ownership and verifies that identical retries create one durable task.
 
 For a separate routing-policy experiment, prepare a fresh root with
 `--native-failure-handoff`. This records the variant in the frozen protocol and

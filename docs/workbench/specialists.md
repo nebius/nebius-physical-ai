@@ -4,10 +4,15 @@ The [matched repair benchmark](../../npa/examples/specialists/repair_benchmark/R
 compares Astra alone with Astra coordinating routed Token Factory specialists
 on the same three code repairs and native Workbench workflow. It retains all
 three pairs and accounts for coordinator, router, worker and recovery usage.
-The [September 27 results](specialists-matched-repair-experiment.md) passed every
-arm and reduced median model cost by 74.8% conservatively. Speed was mixed:
-2.5% shorter median elapsed time, but a slower mean after a delegation failure.
-The same report describes the resulting ownership-receipt fix.
+The [September 28 coordination results](specialists-coordination-experiment.md)
+retain two new cohorts: all 12 arms passed, with 73.7% lower conservative median
+model cost and 2.5–4.2% shorter median elapsed time. The hybrid was faster in four
+of six pairs. No live lock refusal or model handoff occurred, so these runs do
+not establish a performance benefit from either recovery policy. A separate
+process-contention test proves that a refused delegation queues nothing and
+retrying after release creates exactly one durable task. The earlier
+[September 27 results](specialists-matched-repair-experiment.md) retain the
+delegation failure that motivated the fix.
 
 The [multi-model repair campaign](specialists-multimodel-repair.md) shows Flash
 and full GLM making production code changes and verifying six-case MuJoCo/LeRobot

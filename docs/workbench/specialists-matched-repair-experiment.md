@@ -1,5 +1,9 @@
 # Matched Workbench workflow repair benchmark
 
+The subsequent [September 28 coordination experiment](specialists-coordination-experiment.md)
+tests the resulting lock behavior and adds two fresh matched cohorts. The
+original September 27 results below remain unchanged.
+
 On September 27, 2026, we compared a single Astra agent with Astra delegating
 to three concurrent Token Factory specialists through Workbench and LangGraph.
 The benchmark replays known public regressions in physical-trace validation,
