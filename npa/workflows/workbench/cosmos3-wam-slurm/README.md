@@ -17,36 +17,40 @@ loading; the shared Python environment alone does not supply host libraries.
 and native fused-optimizer checks. Native checkpoint conversion and trainer
 configuration checks passed. A one-GPU WAM attempt exhausted memory at its first
 optimizer update with FP32 parameters and EMA, even with one sample per step.
-Actual eight-GPU Slurm execution and the eight-rank NCCL preflight have now
-passed. The full 2,000-update run completed in 7 h 50 m 33 s on eight B200s;
-the [verified report and numeric series](../../../../docs/workbench/evidence/cosmos3-wam-full-8/README.md)
-record its conditions and complete checkpoint hashes. The
-[complete quality curve](../../../../docs/workbench/evidence/cosmos3-wam-quality-8/README.md)
-records 45.4%, 85.6%, 92.8% and 95.0% success at updates 500, 1,000, 1,500 and
-2,000, respectively, with 500 trials per checkpoint and no infrastructure errors.
-The first passing scheduled checkpoint was saved after about 5 h 53 m of
-training. Multi-node scaling remains unmeasured. The measured deployment uses native Slurm
-23.11.4 on dedicated GPU VMs, with controller and accounting on the first
-worker. The Soperator path remains an unvalidated deployment alternative. See
-[validation.json](validation.json) and the [GPU evidence](../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json).
+Both native Slurm runs completed 2,000 updates: **7 h 50 m 33 s on eight
+B200s** and **4 h 23 m 33 s on sixteen**, using **62.74** and **70.28
+training-process GPU-hours**. Three matched timing repeats per topology measured
+**1.9334× speedup and 96.7% efficiency**; actual token work differed by 0.0108%.
+See the [scaling evidence](../../../../docs/workbench/evidence/cosmos3-wam-scaling/README.md)
+and [eight-GPU](../../../../docs/workbench/evidence/cosmos3-wam-full-8/README.md)
+and [sixteen-GPU full reports](../../../../docs/workbench/evidence/cosmos3-wam-full-16/README.md).
 
-The [full-run GPU telemetry](../../../../docs/workbench/evidence/cosmos3-wam-full-gpu-activity/README.md)
-contains 225,576 device samples. A separate completed
-[CUDA profiling run](../../../../docs/workbench/evidence/cosmos3-wam-profile-8/README.md)
-provides a trace-linked kernel timeline, excluded from scaling comparisons.
-The [three completed timing repetitions](../../../../docs/workbench/evidence/cosmos3-wam-timing-8/README.md)
-provide the eight-GPU baseline: 13.3080 s mean step, with 0.0136 s sample
-standard deviation across run means. The two-node comparison remains pending.
-The second reserved node has now joined the native Slurm cluster. The
-[sixteen-rank collective check](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md)
-passed over InfiniBand, and [process-attributed two-node telemetry](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md)
-shows the real sixteen-GPU trainer completing updates. The full schedule,
-matched repetitions, profile and quality evaluations remain in progress.
-The [final-checkpoint visual pass](../../../../docs/workbench/evidence/cosmos3-wam-final-visual/README.md)
-completed ten illustrative trials with nine successes, one failure and no
-infrastructure errors. Its videos, model hashes and eight-GPU process
-attribution establish execution. The separate full evaluations establish
-checkpoint-linked qualification; the ten-trial videos remain illustrative.
+Four 500-trial evaluations per topology completed without infrastructure errors.
+The [eight-GPU quality curve](../../../../docs/workbench/evidence/cosmos3-wam-quality-8/README.md)
+scored 45.4%, 85.6%, 92.8%, 95.0%; the
+[sixteen-GPU curve](../../../../docs/workbench/evidence/cosmos3-wam-quality-16/README.md)
+scored 49.0%, 81.4%, 94.2%, 95.8%. The first saved checkpoint above 90% was
+update 1,500, ready after about 5 h 53 m and 3 h 19 m respectively. Evaluation
+happened afterward; this does not establish exact threshold crossing or a
+quality improvement from GPU count with one training seed.
+
+The measured deployment uses native Slurm 23.11.4 on dedicated reserved GPU
+VMs, with controller, accounting and NFS on the first worker. Soperator remains
+an unvalidated alternative. Two/four GPUs were not measured; 32 GPUs remain a
+static plan. [validation.json](validation.json) records these boundaries.
+
+[Sixteen-rank InfiniBand proof](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md),
+[process-attributed live training](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md),
+[252,656 full-run GPU samples](../../../../docs/workbench/evidence/cosmos3-wam-full-gpu-activity-16/README.md)
+and [CUDA traces from both hosts](../../../../docs/workbench/evidence/cosmos3-wam-profile-16/README.md)
+establish actual execution. Profiled runs are separate from timing repetitions.
+The [final sixteen-GPU checkpoint videos](../../../../docs/workbench/evidence/cosmos3-wam-final-visual-16/README.md)
+retain a successful and an unsuccessful native rollout, all ten illustrative
+outcomes, checkpoint hashes and GPU telemetry. Their nine successes are a
+visual execution check; the separate 500-trial evaluation establishes quality.
+Historical raw training reports may say quality was unmeasured when they were
+written. Their original bytes are retained; the subsequent linked evaluations
+provide the final campaign status.
 
 ## Plan without cloud resources
 

@@ -1,6 +1,6 @@
 {
   "schema": "npa.cosmos3.wam-recipe-validation.v1",
-  "status": "experimental-eight-gpu-training-profile-timing-and-quality-measured",
+  "status": "experimental-eight-and-sixteen-gpu-training-scaling-profile-quality-measured",
   "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
   "upstream_toml_schema": {
     "checked": true,
@@ -33,7 +33,7 @@
   "visual_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-b200-visual/evidence.json",
   "single_gpu_wam_execution": "out-of-memory-at-first-optimizer-update",
   "gpu_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json",
-  "b200_scaling_measured": false,
+  "b200_scaling_measured": true,
   "policy_quality_measured": true,
   "simulation_readiness": {
     "fresh_bootstrap_reproduced": true,
@@ -43,11 +43,7 @@
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-simulation-runtime.json"
   },
   "blocker": null,
-  "remaining_evidence": [
-    "Complete comparable 16-GPU run",
-    "Verified repeated 8/16-GPU timing comparison and 16-GPU profiling",
-    "Matched complete 16-GPU checkpoint-linked LIBERO-10 quality curve"
-  ],
+  "remaining_evidence": [],
   "complete_training_run_measured": true,
   "slurm_ipc_cleanup": {
     "default_behavior_failure_reproduced": true,
@@ -89,6 +85,18 @@
       "train_process_seconds": 28233.476918021002,
       "training_gpu_hours": 62.74105981782445,
       "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-8/evidence.json"
+    },
+    "16": {
+      "steps": 2000,
+      "checkpoint_steps": [
+        500,
+        1000,
+        1500,
+        2000
+      ],
+      "train_process_seconds": 15813.01756922,
+      "training_gpu_hours": 70.28000112496889,
+      "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-16/evidence.json"
     }
   },
   "eight_gpu_profile": {
@@ -166,10 +174,49 @@
         "preceding_evaluated_step": 1000
       },
       "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-quality-8/evidence.json"
+    },
+    "16": {
+      "checkpoint_steps": [
+        500,
+        1000,
+        1500,
+        2000
+      ],
+      "trials_per_checkpoint": 500,
+      "total_trials": 2000,
+      "successes": [
+        245,
+        407,
+        471,
+        479
+      ],
+      "success_rates": [
+        0.49,
+        0.814,
+        0.942,
+        0.958
+      ],
+      "infrastructure_errors": 0,
+      "evaluation_contract": {
+        "workers": 8,
+        "envs": 8,
+        "trials": 50,
+        "seed": 42
+      },
+      "time_to_quality": {
+        "status": "observed_at_scheduled_checkpoint",
+        "step": 1500,
+        "train_seconds_interval": [
+          11925.653564214706,
+          11926.653564214706
+        ],
+        "preceding_evaluated_step": 1000
+      },
+      "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-quality-16/evidence.json"
     }
   },
   "sixteen_gpu_live_execution": {
-    "completed_full_schedule": false,
+    "completed_full_schedule": true,
     "native_training_updates_observed": true,
     "processes_attributed": 16,
     "nodes": 2,
@@ -191,5 +238,38 @@
     "hosts": 2,
     "initial_failure_excluded": true,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-decoder-preflight/README.md"
+  },
+  "sixteen_gpu_profile": {
+    "completed": true,
+    "steps": 110,
+    "observed_ranks": [
+      0,
+      8
+    ],
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-profile-16/evidence.json"
+  },
+  "sixteen_gpu_full_telemetry": {
+    "device_samples": 252656,
+    "gpus": 16,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-gpu-activity-16/evidence.json"
+  },
+  "repeated_scaling": {
+    "repetitions_per_topology": 3,
+    "updates_per_run": 200,
+    "step_speedup": 1.9333699509886768,
+    "scaling_efficiency": 0.9666849754943384,
+    "token_work_ratio_16_over_8": 1.000108197324829,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-scaling/evidence.json"
+  },
+  "sixteen_gpu_final_visual": {
+    "completed": true,
+    "checkpoint_step": 2000,
+    "training_gpus": 16,
+    "evaluation_gpus": 8,
+    "successes": 9,
+    "trials": 10,
+    "infrastructure_errors": 0,
+    "full_500_trial_evaluation": false,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-final-visual-16/evidence.json"
   }
 }

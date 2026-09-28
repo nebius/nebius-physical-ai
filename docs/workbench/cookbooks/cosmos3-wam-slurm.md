@@ -8,47 +8,37 @@ visual observations and action chunks from language and camera observations.
 It uses the actual `action_policy_libero_nano` experiment and its `mode="wam"`
 dataloader. Captioned-video generator SFT does not exercise this action pathway.
 
-**Current evidence:** actual reserved B200 CUDA attention forward/backward and
-native fused Adam checks, completed native checkpoint conversion, native trainer
-dryruns for 8/16/32 GPUs, and decoded public data. A separate one-GPU WAM attempt
-failed at its first optimizer update with FP32 parameters and EMA, even at one
-sample per step. The eight-GPU Slurm run completed all 2,000 updates in
-7 h 50 m 33 s, with an eight-rank NCCL check and complete checkpoint hashes.
-The [full-run evidence](../evidence/cosmos3-wam-full-8/README.md) records its
-conditions and timing scope. The [complete quality curve](../evidence/cosmos3-wam-quality-8/README.md)
-records 500 trials at each of four checkpoints: 45.4%, 85.6%, 92.8% and 95.0%
-success. Update 1,500 was the first scheduled checkpoint above the 90% target,
-saved after about 5 h 53 m of training and evaluated afterward. All 2,000
-trials completed without infrastructure errors. Scaling efficiency remains
-unmeasured. The [three measured timing repetitions](../evidence/cosmos3-wam-timing-8/README.md)
-establish the eight-GPU baseline: mean step 13.3080 s, with 0.0136 s sample
-standard deviation across the three run means. Their saved reports and all
-447 timed iterations reproduce the aggregate.
-The [GPU evidence record](../evidence/cosmos3-wam-b200-runtime.json)
-includes runtime versions, hashes, and the memory failure.
-Consult the [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json).
+**Completed measurements:** eight and sixteen reserved B200s ran the full
+2,000-update schedule in **7 h 50 m 33 s** and **4 h 23 m 33 s**, respectively.
+Three matched timing repeats per topology measured **1.9334× steady-step
+speedup and 96.7% efficiency**. Training-process GPU-hours were 62.74 and
+70.28. See the [full scaling comparison](../evidence/cosmos3-wam-scaling/README.md),
+which distinguishes complete-run duration from steady iteration time.
 
-Two reserved nodes now pass the [sixteen-rank InfiniBand collective check](../evidence/cosmos3-wam-collective-16/README.md).
-The [actual two-node training trace](../evidence/cosmos3-wam-live-training-16/README.md)
-attributes all sixteen GPU processes to the Slurm job and shows a fixed
-two-minute activity window. Completed sixteen-GPU duration, repeated scaling,
-profile and quality measurements remain pending. Both bootstraps install
-FFmpeg, and the launcher checks actual front and wrist video decoding on each
-host before loading the model; see the [live decoder correction](../evidence/cosmos3-wam-decoder-preflight/README.md).
+Each topology has four checkpoint-linked 500-trial evaluations with zero
+infrastructure errors. Final success was 475/500 (95.0%) on eight GPUs and
+479/500 (95.8%) on sixteen. Update 1,500 was the first saved checkpoint above
+90%, ready after about 5 h 53 m and 3 h 19 m respectively. Evaluation was
+retrospective; one training seed does not establish a quality improvement from
+GPU count. [Eight-GPU quality](../evidence/cosmos3-wam-quality-8/README.md) and
+[sixteen-GPU quality](../evidence/cosmos3-wam-quality-16/README.md) retain every trial.
 
-For a visual look at the prepared setup, [play the actual B200 generation and
-source-data preview](../evidence/cosmos3-wam-b200-visual/README.md). That record
-contains the generated MP4, synchronized source cameras, reproduction settings
-and GPU telemetry. It demonstrates base-model inference; it does not establish
-post-training success.
+The campaign also includes [real InfiniBand collectives](../evidence/cosmos3-wam-collective-16/README.md),
+[sixteen-process training attribution](../evidence/cosmos3-wam-live-training-16/README.md),
+[full GPU telemetry](../evidence/cosmos3-wam-full-gpu-activity-16/README.md),
+[separate CUDA profiles](../evidence/cosmos3-wam-profile-16/README.md), and
+[actual final-policy success and failure videos](../evidence/cosmos3-wam-final-visual-16/README.md).
+All numeric sources, hashes and figure reproduction commands are linked.
 
-The [final trained-policy visual check](../evidence/cosmos3-wam-final-visual/README.md)
-uses the actual update-2,000 checkpoint and completes one trial on each of ten
-tasks: nine successes, one failure and no infrastructure errors. It includes
-successful and unsuccessful rollouts, prediction-versus-simulator videos and
-GPU process attribution. These are illustrative trials, separate from the
-completed 500-trial quality measurements. The [earlier update-500 visual record](../evidence/cosmos3-wam-trained-visual/README.md)
-also retains every outcome.
+A one-GPU FP32-plus-EMA attempt exhausted memory before its first optimizer
+update even at one sample per step; this does not establish the minimum GPU
+count. Two and four GPUs were not tested. The
+[runtime evidence](../evidence/cosmos3-wam-b200-runtime.json) and
+[validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json)
+keep those limits explicit. Both bootstraps install FFmpeg and the launcher
+decodes real front/wrist frames on each host before loading the model; the
+[initial decoder failure](../evidence/cosmos3-wam-decoder-preflight/README.md)
+is retained and excluded from timings.
 
 ## What the experiment measures
 
@@ -62,7 +52,7 @@ gradient accumulation for the scaling comparison:
 | 2 | 16 | 8 | 2 | 64 | 2 | 2,048 |
 | 4 | 32 | 8 | 4 | 64 | 1 | 2,048 |
 
-These are candidate configurations, not measured capacity requirements. Native
+The 8/16-GPU configurations were measured; 32 GPUs are a static plan. Native
 upstream uses 128 samples/rank on two nodes; 64 permits the same nominal global
 batch across this entire comparison. The model retains its 74,000-token cap,
 selective activation checkpointing, BF16 compute, learning rate 5e-5, 500-step
@@ -78,7 +68,7 @@ steps alone cannot demonstrate equivalent policy quality.
 
 ## 1. Prepare a dedicated reserved-capacity cluster
 
-The ongoing campaign uses [native Slurm on dedicated GPU VMs](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md),
+The completed campaign used [native Slurm on dedicated GPU VMs](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md),
 with controller, accounting and NFS on the first worker. Follow that deployment
 guide to reproduce the measured setup. The Soperator commands below are an
 alternative deployment path and have not been validated by this campaign.

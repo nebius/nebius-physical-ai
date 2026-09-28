@@ -86,6 +86,9 @@ regexes = [
     # Public Hugging Face revision of nvidia/Cosmos3-Super. The custom Nebius
     # identifier rule matches it only because the Git SHA happens to start e02.
     '''e0262be9d8f7586bc24c069a2aed2b665bdff266''',
+    # SHA-256 of the committed sixteen-GPU WAM visual quality.json. Verified
+    # against those public bytes; its e00 prefix coincides with the ID rule.
+    '''e00752fa8ed6d27305f3eca3ad90f100ae18894dfc699e4f6cdae8ce81974202''',
 ]
 paths = [
     '''SECURITY\.md''',

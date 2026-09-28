@@ -1039,6 +1039,7 @@ def test_runtime_retries_an_unexpected_clean_simulator_exit(
     monkeypatch.setattr(runtime.subprocess, "Popen", popen)
     monkeypatch.setattr(runtime, "_simulation_launch", lambda: (["leisaac"], {}))
     monkeypatch.setattr(runtime, "detect_gpu", lambda: "RTX test GPU")
+    monkeypatch.setattr(runtime, "verify_runtime_nvenc", lambda: (True, ""))
 
     runtime.run_simulation()
 

@@ -59,35 +59,37 @@ For reserved B200 Slurm scaling, use the standalone application recipe at
 `npa/workflows/workbench/cosmos3-wam-slurm/` and
 `docs/workbench/cookbooks/cosmos3-wam-slurm.md`. It plans native LIBERO WAM runs
 with eight ranks per node, a fixed nominal batch and explicit HSDP topology.
-Its `validation.json` distinguishes the completed eight-GPU 2,000-update run
-and full quality curve from the pending two-node measurement. The
-eight-GPU report includes observed process duration and checkpoint hashes;
-preserve its warm-cache and shared-storage conditions when quoting it. Scaling
-efficiency requires the matched timing repetitions, and time to quality
-requires the full checkpoint-linked evaluation. A successful training run
-alone cannot qualify the policy. Four complete 500-trial evaluations scored
-45.4%, 85.6%, 92.8% and 95.0% at updates 500, 1,000, 1,500 and 2,000. The first
-passing scheduled checkpoint was available after about 5 h 53 m of training;
-quality was verified afterward, and an exact earlier crossing is not inferred.
-The linked blog remains an editorial draft while the multi-node comparison
-is pending. Current upstream
-LIBERO already describes two-node training; avoid the outdated blanket claim
+Its `validation.json` records completed 8/16-GPU 2,000-update schedules,
+three timing repeats per topology, separate CUDA profiles and four 500-trial
+checkpoint evaluations per topology. Full training took 7 h 50 m 33 s and
+4 h 23 m 33 s; repeated steady-step speedup was 1.9334×, efficiency 96.7%.
+Preserve the documented storage/cache conditions and small actual token-work
+difference (0.0108%) when quoting these results. Full-run and steady-step
+speedups differ; training GPU-hours exclude preparation, idle time and evaluation.
+
+Final benchmark success was 95.0% and 95.8%. The first saved checkpoint above
+90% was update 1,500, available after about 5 h 53 m and 3 h 19 m, respectively.
+Quality was verified afterward; do not infer exact threshold crossing, online
+early stopping, unseen-task generalization, or improved quality from GPU count
+with only one training seed. The blog and all original numeric/visual evidence
+are linked from the recipe. Historical raw reports retain their original
+measurement-time scope; the later checkpoint-linked quality records supersede
+pending campaign status without rewriting those bytes.
+
+The reserved two-node run has sixteen-rank NCCL/InfiniBand proof, attributed
+training processes and full-run telemetry. Native Slurm was tested; Soperator
+remains an unvalidated deployment alternative. One FP32-plus-EMA B200 failed
+before its first update; two/four GPUs were not measured and 32 GPUs are plan-only.
+Current upstream LIBERO already describes two-node training; avoid claiming
 that all public Cosmos3 recipes stop at one node.
 
-The reserved two-node cluster now has real sixteen-rank NCCL/InfiniBand proof
-and process-attributed training telemetry. These establish native execution;
-completed multi-node timing, profiling and matched quality remain pending.
-The fresh-worker test also required FFmpeg host libraries despite the shared
-Python environment. Both bootstraps now install FFmpeg, and every node decodes
-both real camera streams before model loading. Retain the excluded failure
-and corrected decoder receipts with the live evidence.
-
-The separate eight-GPU profiling run has completed with a real CUDA timeline.
-The completed full training run also has sampled GPU telemetry. Kernel groups
-use linked CPU operators where available; host step markers exclude repeated GPU
-annotations. Overlapping kernel durations are not a wall-time breakdown or
-exposed communication stalls. Use a fresh `profile_report.py --output-path`
-when reanalyzing archived traces, preserving the original report and trace hash.
+Both bootstraps install FFmpeg and every node decodes both camera streams
+before model loading. Keep the excluded failure and corrected receipts.
+CUDA profiles observe rank zero on eight GPUs and ranks zero/eight on sixteen;
+kernel groups use linked CPU operators where available. Overlapping kernel
+durations are not exposed communication stalls or a wall-time breakdown.
+Use a fresh `profile_report.py --output-path` when reanalyzing archived traces,
+preserving the original report and trace hashes.
 
 The Slurm recipe pins a newer framework than the experimental Workbench policy
 workflow. Keep each run's source/model/data/evaluation revisions coherent;
