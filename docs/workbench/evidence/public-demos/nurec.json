@@ -1,39 +1,18 @@
 {
   "demo": "nurec",
-  "native_source_revision": "2eb77537d3b09374b8c31457c634d8c1ab036c12",
+  "native_source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
   "native_artifacts_qualified": true,
-  "native_budget": {
-    "source_revision": "2eb77537d3b09374b8c31457c634d8c1ab036c12",
-    "checkpoint_global_step": 30000,
-    "checkpoint_epoch_zero_based": 0,
-    "checkpoint_counter_method": "Static pickle opcode inspection inside USDZ; checkpoint code was not executed.",
-    "checkpoint_sha256": "7914ee15faf2e33b1b78be752c72ba19cda8116888b6a2c1cf6a72c09c468d26",
-    "checkpoint_metadata_sha256": "7369922df20f03b7f51c6bbe956cd6d99383449825ed13d03c937d289184e1ed",
-    "configured_epochs": 1,
-    "configured_samples_per_epoch": 30000,
-    "embedded_and_published_training_config_equal": true,
-    "config_comparison_scope": "Published Hydra launcher metadata is absent from embedded config; all other sections match exactly.",
-    "parsed_config_sha256": "c3468471d8f5fc055be144356fe60a44acc839fb491548212677a72e66b6de06",
-    "rig_pose_count": 38,
-    "rendered_frame_count": 38,
-    "render_requested_camera_ids": [],
-    "render_output_camera_ids": [
-      "camera2"
+  "artifact_inventory": {
+    "demo": "nurec",
+    "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+    "objects": 216,
+    "bytes": 580340666,
+    "reports": [
+      "reports/final.json",
+      "reports/index.html",
+      "reports/sim2real.rrd"
     ],
-    "rig_translation_offset_m": [
-      0.0,
-      0.25,
-      0.0
-    ],
-    "rig_rotation_offset_deg": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "native_novel_view_flag": true,
-    "reconstruct_log_sha256": "8b467be8234ec318ee50b809dd2ba6116b1df7df5f6229f72cd51fe1db10876b",
-    "render_log_sha256": "e44c7711d165b98f1c3731ccb27ad7ee731ff6a657eecd26185bb7fc9846459f",
-    "scope": "Native image reconstruction and novel-view rendering; collision geometry and navigation readiness are not established."
+    "disk_free_bytes": 789872046080
   },
   "artifact_readback": {
     "image_counts": {
@@ -42,23 +21,30 @@
       "reconstruction/val": 114
     },
     "metrics": {
-      "test/psnr": 31.012008666992188,
-      "test/ssim": 0.8322374224662781,
-      "test/lpips": 0.2680250108242035
+      "test/psnr": 31.024574279785156,
+      "test/ssim": 0.8324196338653564,
+      "test/lpips": 0.2669185996055603
+    },
+    "canonical_html_metrics_verified": true,
+    "validation_modalities": {
+      "pred_rgb": 38,
+      "pred_distance": 38,
+      "pred_opacity": 38
     },
     "dataset_revision": "2521064a3af6ab1c1caa2ba1b01ddde7eecded69",
     "source_archive_sha256": "89e548419134697b97304104f393b94fe5ce7e533fa08bc38035418b2a742b63",
-    "usdz_sha256": "c2bf5371d3775bbae3c514ab8da557080df90c7177aaa579e272309e080bd88c",
+    "usdz_sha256": "69d30d2193164d5092fb49aa8bb92324f9c945a72044425b801149eef7d7f9aa",
     "usdz_bytes": 240542368,
     "rrd": {
-      "sha256": "a997627e919577b3e757eaa966fb0de2cb5b451e389a60f1862f33d54fcf9c08",
-      "bytes": 2418692,
+      "sha256": "f0ee3b16b576b4e3aaa2adcf0f58345707ab4da1ee3acfd605b3d0196c3d0e61",
+      "bytes": 2412343,
       "decoded_entities": 13,
       "decoded_rows": 110
     },
+    "training_step_and_render_pose_verification": "Requires native logs and parsed config review; this readback alone does not establish training budget or novel pose identity.",
     "preview": {
-      "sha256": "a2fbf8490938eae8b1c8f3a9edf656e9277240d23f2bb860a8ad0e0e927fb8d7",
-      "bytes": 2346763,
+      "sha256": "23bcc24c1ebcbe21afe6b857c51024a3ba3e92348694b7daed7cc3c1a4858339",
+      "bytes": 4136822,
       "timelines": [
         {
           "title": "Input capture",
@@ -69,7 +55,15 @@
           "frames": 32
         },
         {
-          "title": "Reconstruction validation",
+          "title": "Reconstruction validation \u00b7 Predicted RGB",
+          "frames": 32
+        },
+        {
+          "title": "Reconstruction validation \u00b7 Predicted distance",
+          "frames": 32
+        },
+        {
+          "title": "Reconstruction validation \u00b7 Predicted opacity",
           "frames": 32
         }
       ]
@@ -77,8 +71,8 @@
     "demo_view_identical_bytes": true
   },
   "gpu_witness": {
-    "source_revision": "2eb77537d3b09374b8c31457c634d8c1ab036c12",
-    "matched_record_sha256": "e74081477009943e98f2ea9417105964361fccf4997b148dbdc813cd10c4249a",
+    "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+    "matched_record_sha256": "94dfe0a00cb448e0f0e0c67d6a5bfc7b74044b03aa5a02685f57fbb2edd98fed",
     "stages": {
       "check": {
         "qualification": "matching process workflow run ID and recorded stage time interval",
@@ -89,13 +83,13 @@
         ],
         "peak_memory_used_mib": 0,
         "peak_utilization_percent": 0,
-        "first_observed_utc": "2026-09-28T04:04:39.613631+00:00",
-        "last_observed_utc": "2026-09-28T04:07:43.585746+00:00",
+        "first_observed_utc": "2026-09-28T18:39:16.431344+00:00",
+        "last_observed_utc": "2026-09-28T18:42:21.651516+00:00",
         "image_digests": [
           "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
         ],
-        "staged_source_sha256": "8c868eea66061d37c761cc4dc10fa89a69bd670b9a9d9569d65d7538484b53e5",
-        "workflow_sha256": "5d77bc5f1a586bb0497313f5aef5ffbb6d903e91d3d37503f1f2efb9a7277204"
+        "staged_source_sha256": "effcff30d6ea129e35a49c3dfe7b6409106f20042738071ed33dd9312a81e381",
+        "workflow_sha256": "e054513449ed1989af448fcb587190200f78cba7ac35294e390e06e2442c52d7"
       },
       "fetch": {
         "qualification": "matching process workflow run ID and recorded stage time interval",
@@ -106,13 +100,13 @@
         ],
         "peak_memory_used_mib": 0,
         "peak_utilization_percent": 0,
-        "first_observed_utc": "2026-09-28T04:10:52.509274+00:00",
-        "last_observed_utc": "2026-09-28T04:13:57.431141+00:00",
+        "first_observed_utc": "2026-09-28T18:45:25.884643+00:00",
+        "last_observed_utc": "2026-09-28T18:48:30.877105+00:00",
         "image_digests": [
           "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
         ],
-        "staged_source_sha256": "8c868eea66061d37c761cc4dc10fa89a69bd670b9a9d9569d65d7538484b53e5",
-        "workflow_sha256": "5d77bc5f1a586bb0497313f5aef5ffbb6d903e91d3d37503f1f2efb9a7277204"
+        "staged_source_sha256": "effcff30d6ea129e35a49c3dfe7b6409106f20042738071ed33dd9312a81e381",
+        "workflow_sha256": "e054513449ed1989af448fcb587190200f78cba7ac35294e390e06e2442c52d7"
       },
       "reconstruct": {
         "qualification": "matching process workflow run ID and recorded stage time interval",
@@ -121,37 +115,37 @@
         "gpu_models": [
           "NVIDIA RTX PRO 6000 Blackwell Server Edition"
         ],
-        "peak_memory_used_mib": 4289,
-        "peak_utilization_percent": 77,
-        "first_observed_utc": "2026-09-28T04:17:01.642083+00:00",
-        "last_observed_utc": "2026-09-28T04:40:56.756689+00:00",
+        "peak_memory_used_mib": 3849,
+        "peak_utilization_percent": 78,
+        "first_observed_utc": "2026-09-28T18:52:50.269796+00:00",
+        "last_observed_utc": "2026-09-28T19:16:44.465052+00:00",
         "image_digests": [
           "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
         ],
-        "staged_source_sha256": "8c868eea66061d37c761cc4dc10fa89a69bd670b9a9d9569d65d7538484b53e5",
-        "workflow_sha256": "5d77bc5f1a586bb0497313f5aef5ffbb6d903e91d3d37503f1f2efb9a7277204"
+        "staged_source_sha256": "effcff30d6ea129e35a49c3dfe7b6409106f20042738071ed33dd9312a81e381",
+        "workflow_sha256": "e054513449ed1989af448fcb587190200f78cba7ac35294e390e06e2442c52d7"
       },
       "render": {
         "qualification": "matching process workflow run ID and recorded stage time interval",
-        "qualified_samples": 9,
+        "qualified_samples": 11,
         "active_samples": 0,
         "gpu_models": [
           "NVIDIA RTX PRO 6000 Blackwell Server Edition"
         ],
         "peak_memory_used_mib": 1271,
         "peak_utilization_percent": 0,
-        "first_observed_utc": "2026-09-28T04:44:32.265740+00:00",
-        "last_observed_utc": "2026-09-28T04:48:40.985699+00:00",
+        "first_observed_utc": "2026-09-28T19:20:21.411595+00:00",
+        "last_observed_utc": "2026-09-28T19:25:32.686519+00:00",
         "image_digests": [
           "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
         ],
-        "staged_source_sha256": "8c868eea66061d37c761cc4dc10fa89a69bd670b9a9d9569d65d7538484b53e5",
-        "workflow_sha256": "5d77bc5f1a586bb0497313f5aef5ffbb6d903e91d3d37503f1f2efb9a7277204"
+        "staged_source_sha256": "effcff30d6ea129e35a49c3dfe7b6409106f20042738071ed33dd9312a81e381",
+        "workflow_sha256": "e054513449ed1989af448fcb587190200f78cba7ac35294e390e06e2442c52d7"
       }
     }
   },
   "native_browser": {
-    "report_sha256": "a2fbf8490938eae8b1c8f3a9edf656e9277240d23f2bb860a8ad0e0e927fb8d7",
+    "report_sha256": "23bcc24c1ebcbe21afe6b857c51024a3ba3e92348694b7daed7cc3c1a4858339",
     "browser_results": [
       {
         "width": 1440,
@@ -167,7 +161,17 @@
             "images": 32
           },
           {
-            "title": "Reconstruction validation",
+            "title": "Reconstruction validation \u00b7 Predicted RGB",
+            "frames": 32,
+            "images": 32
+          },
+          {
+            "title": "Reconstruction validation \u00b7 Predicted distance",
+            "frames": 32,
+            "images": 32
+          },
+          {
+            "title": "Reconstruction validation \u00b7 Predicted opacity",
             "frames": 32,
             "images": 32
           }
@@ -189,7 +193,17 @@
             "images": 32
           },
           {
-            "title": "Reconstruction validation",
+            "title": "Reconstruction validation \u00b7 Predicted RGB",
+            "frames": 32,
+            "images": 32
+          },
+          {
+            "title": "Reconstruction validation \u00b7 Predicted distance",
+            "frames": 32,
+            "images": 32
+          },
+          {
+            "title": "Reconstruction validation \u00b7 Predicted opacity",
             "frames": 32,
             "images": 32
           }
@@ -199,72 +213,73 @@
       }
     ]
   },
-  "presentation_correction": {
-    "native_report_preserved": true,
-    "reason": "Original HTML reader missed native aggregated metric schema; measured reconstruction metrics remain valid.",
-    "presentation_revision": "339aa463795746dcbefa928463d0922e3620ffb6",
-    "native_input_count": 169,
-    "native_report_sha256": "a2fbf8490938eae8b1c8f3a9edf656e9277240d23f2bb860a8ad0e0e927fb8d7",
-    "derived_report_sha256": "285334f9bad46e780afe2c121871916e60d7e532600fcea818afa256bd9d8b7f",
-    "provenance_sha256": "7343a98093ea9becc8dbf30289ce952d610b7a5f1107290eb55d389ad289ffe5",
-    "derived_browser": {
-      "report_sha256": "285334f9bad46e780afe2c121871916e60d7e532600fcea818afa256bd9d8b7f",
-      "browser_results": [
-        {
-          "width": 1440,
-          "timelines": [
-            {
-              "title": "Input capture",
-              "frames": 7,
-              "images": 7
-            },
-            {
-              "title": "Novel views",
-              "frames": 32,
-              "images": 32
-            },
-            {
-              "title": "Reconstruction validation",
-              "frames": 32,
-              "images": 32
-            }
-          ],
-          "javascript_errors": 0,
-          "network_requests": 0
-        },
-        {
-          "width": 390,
-          "timelines": [
-            {
-              "title": "Input capture",
-              "frames": 7,
-              "images": 7
-            },
-            {
-              "title": "Novel views",
-              "frames": 32,
-              "images": 32
-            },
-            {
-              "title": "Reconstruction validation",
-              "frames": 32,
-              "images": 32
-            }
-          ],
-          "javascript_errors": 0,
-          "network_requests": 0
-        }
-      ]
-    },
-    "original_demo_view_is_repaired": false
-  },
   "actual_demo_view_cli": {
     "command": "npa workbench workflow demo view",
-    "source_revision": "2eb77537d3b09374b8c31457c634d8c1ab036c12",
+    "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
     "exit_code": 0,
     "selected_project_credentials": true,
-    "report_sha256": "a2fbf8490938eae8b1c8f3a9edf656e9277240d23f2bb860a8ad0e0e927fb8d7",
+    "report_sha256": "23bcc24c1ebcbe21afe6b857c51024a3ba3e92348694b7daed7cc3c1a4858339",
     "canonical_report_identical_bytes": true,
     "browser_open": false
-  }
+  },
+  "native_stages": [
+    {
+      "stage": "check",
+      "status": "ok"
+    },
+    {
+      "stage": "fetch",
+      "status": "ok"
+    },
+    {
+      "stage": "reconstruct",
+      "status": "ok"
+    },
+    {
+      "stage": "render",
+      "status": "ok"
+    },
+    {
+      "stage": "visualize",
+      "status": "ok"
+    },
+    {
+      "stage": "finalize",
+      "status": "ok"
+    }
+  ],
+  "native_budget": {
+    "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+    "checkpoint_global_step": 30000,
+    "checkpoint_epoch_zero_based": 0,
+    "checkpoint_counter_method": "Static pickle opcode inspection inside USDZ; checkpoint code was not executed.",
+    "checkpoint_sha256": "826c7a217078af410f76645d82137cf1ec88d0b7baaae6cf9fd67f8cf29de21c",
+    "checkpoint_metadata_sha256": "fd4e92da8ab55db797085c23906ee810f93b4fbb021030a31a9edd8d5711009b",
+    "configured_epochs": 1,
+    "configured_samples_per_epoch": 30000,
+    "embedded_and_published_training_config_equal": true,
+    "config_comparison_scope": "Published Hydra launcher metadata is absent from embedded config; all other sections match exactly.",
+    "parsed_config_sha256": "2c43f0a4f52612d1513bab8e46c079d3db744d54a3b86326452fae5a2dd9b16e",
+    "rig_pose_count": 38,
+    "rendered_frame_count": 38,
+    "render_requested_camera_ids": [],
+    "render_output_camera_ids": [
+      "camera2"
+    ],
+    "rig_translation_offset_m": [
+      0.0,
+      0.25,
+      0.0
+    ],
+    "rig_rotation_offset_deg": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "native_novel_view_flag": true,
+    "reconstruct_log_sha256": "e2215859f6a4a22b648d0bca9395a9e2c674feb13525d119c8f72911cc04884f",
+    "render_log_sha256": "3da9b0139311ca034caad0b8f047ccc28e32fcc1475678852539914f7ab70a26",
+    "scope": "Native image reconstruction and novel-view rendering; collision geometry and navigation readiness are not established."
+  },
+  "scope": "Native image reconstruction and novel-view rendering; collision geometry and navigation readiness are not established."
 }

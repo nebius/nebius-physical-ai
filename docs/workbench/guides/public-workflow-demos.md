@@ -36,12 +36,13 @@ The NuRec GPU pod pulls its NVIDIA image using the operator-managed Kubernetes
 Secret `ngc-nvcr-imagepullsecret` in the workload namespace (`default` for these
 demos). Create it once on your chosen cluster after configuring your NGC key.
 Workbench submission checks this Secret but does not create it. From the
-installed checkout, this command sends the saved key directly to Kubernetes
-through stdin, without putting it in command arguments or a temporary file:
+installed checkout with its virtual environment activated, this command sends
+the saved key directly to Kubernetes through stdin, without putting it in
+command arguments or a temporary file:
 
 ```bash
 set -o pipefail
-npa/.venv/bin/python - <<'PY' | kubectl --kubeconfig '<kubeconfig-path>' --context '<rtx-context>' --namespace default create -f -
+python - <<'PY' | kubectl --kubeconfig '<kubeconfig-path>' --context '<rtx-context>' --namespace default create -f -
 import base64
 import json
 from npa.clients.config import resolve_credentials
@@ -100,7 +101,7 @@ ID printed by the command. The launcher does not add a per-stage time limit.
 | --- | --- | --- |
 | `real-to-sim` | Complete hash-verified TUM office RGB-D capture, calibration, poses, measured collision scene and supported reset cases | Reconstruction measurements, trained checkpoint, and scored navigation episodes |
 | `synthetic-data` | NVIDIA warehouse and calibrated four-camera route | 265 poses, 1,060 RGB-D views, colored point clouds, and independent geometry checks |
-| `rl-improvement` | Public office/warehouse navigation inputs and baseline training | Baseline/candidate evaluation on separate final cases, safety metrics, and a measured recommendation |
+| `rl-improvement` | Public office/warehouse inputs, baseline training, and measured baseline simulation failures | Failure-admitted reconstruction, continued training, development selection, and separate final comparison |
 | `nurec` | Pinned public PPISP NCore capture | Native Gaussian USDZ, novel views, image-quality metrics, and a Rerun recording |
 
 ## View, inspect, and resume
@@ -139,12 +140,12 @@ The earlier scan-trained candidate scored 0/4,000 on the held-out warehouse;
 that negative result remains historical evidence. The new replay experiment
 must establish its own result before being described as effective.
 
-The complete SDG and NuRec demo commands have now passed fresh full GPU
-qualification, complete artifact readback, and offline report checks. See the
-[source-bound measurements](../evidence/public-demos/README.md), including the
-NuRec report's documented metric-display correction. The scan-to-policy and RL
-improvement demos remain under qualification; their latest full attempts stopped
-before learning and do not establish policy quality.
+The SDG and NuRec demo commands have full GPU qualification, complete artifact
+readback, and offline report checks recorded in the
+[source-bound measurements](../evidence/public-demos/README.md). Each receipt
+identifies the exact native source revision and report bytes. Scan-to-policy and
+RL improvement still require qualifying policy results; execution and physics
+checks alone do not establish useful navigation or improvement over a baseline.
 
 To stop a run, use `npa workbench workflow cancel '<run-id>' --project '<project>'`.
 Cancel and verify terminal status before removing dedicated infrastructure.
