@@ -199,6 +199,29 @@ branch `npa` code into that interpreter at start from an S3 source tarball
 
 Architecture + licensing rationale: `docs/architecture/sim-backend-selection.md`.
 
+## Shared-scene navigation BYOF
+
+Use `workflows/testing/shared-scene-navigation.yaml` and
+`docs/workbench/guides/shared-scene-navigation.md` for an existing registered
+navigation task in an operator-owned Isaac image. The operator supplies a
+source-hashed task adapter, exact image digest, self-contained scene USDZ and
+deterministic train/evaluation/probe cases. Native RSL-RL trains and reloads an
+actual checkpoint; no stock task or CPU fallback proves this integration.
+GPU acceptance is unverified until the opt-in native test runs with those inputs.
+The development extra pins CPU OpenUSD so scene and visibility regressions run
+in CI; those checks do not substitute for native RTX sensor/physics acceptance.
+
+Validate peer-contact exclusion separately from observation isolation. The
+supported RGB-D mode is `all_robot_geometry_hidden`: hide every robot's render
+geometry, including self and attachments, without altering collision physics.
+Require live USD coverage, fresh paired RGB/depth invariance and a changing
+camera positive control. Reject unsupported proxies, effects and sensor modes.
+State/raycast support still requires real isolation and obstacle-contact probes.
+Use RT-core resources. Do not claim thousands-of-camera throughput from the
+focal-camera probe. Stage publications use immutable attempt objects and
+provider-conditional claim/completion records; failed claims require a new run
+prefix. Keep operator artifact locations and runtime logs private.
+
 ## Operational Safety
 
 Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
