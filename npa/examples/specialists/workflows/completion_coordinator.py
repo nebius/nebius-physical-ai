@@ -29,7 +29,10 @@ def _delegation_prompt(common, policies):
         + "\nDelegate each independent workspace task, including diagnosis, minimal edits, "
         "execution and all required verification, using stable task IDs. Pass the complete "
         "acceptance criteria to each worker. The configured router selects an endpoint "
-        "within that workspace's fixed grants. After submitting the assignments, end this "
+        "within that workspace's fixed grants. If delegation explicitly reports "
+        "submission_attempted=false and safe_to_retry=true, ownership was refused before "
+        "submission; retry that assignment with the same task ID and goal. Other failures "
+        "remain subject to the uncertainty rule. After submitting the assignments, end this "
         "turn with a short handoff. The host will wait without invoking you and start a "
         "fresh review when work completes or needs attention. Do not claim completion now."
     )

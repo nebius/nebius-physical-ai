@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -186,7 +187,19 @@ class _Bridge:
         if not self.hybrid:
             raise ValueError("delegation is unavailable in astra-only")
         self.team.config.profile(specialist)
-        with self.team._ownership(specialist):
+        with ExitStack() as ownership:
+            try:
+                ownership.enter_context(self.team._ownership(specialist))
+            except BlockingIOError:
+                return {
+                    "ok": False,
+                    "status": "busy",
+                    "task_id": task_id,
+                    "specialist": specialist,
+                    "submission_attempted": False,
+                    "safe_to_retry": True,
+                    "error": "Workspace ownership is busy; retry the same assignment after inspecting active work.",
+                }
             existing = {task["id"] for task in self.team.store._list()}
             if task_id not in existing:
                 self._require_idle(specialist)

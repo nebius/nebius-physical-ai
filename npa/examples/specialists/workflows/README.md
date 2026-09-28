@@ -158,6 +158,12 @@ the coordinator cannot act on that workspace. A host-local profile lock also
 excludes delegation during a direct coordinator operation. An uncertain tool
 effect blocks further effects, including a new delegated task, until externally
 reconciled. The bridge exposes no automatic replay tool.
+If delegation cannot acquire ownership, its receipt explicitly reports
+`submission_attempted: false` and `safe_to_retry: true`. The coordinator can
+retry the same task ID and goal after inspecting active work. This classification
+applies only before entering the submission path; a later failure never receives
+these flags, even when its exception type is also `BlockingIOError`. This avoids
+treating an idle worker's brief heartbeat lock as an uncertain paid submission.
 In completion mode, Astra initially delegates independent workspace tasks. After a
 specialist enters `needs_attention`, Astra may inspect its receipts and call
 `take_over`. This requires the profile lock and fully resolved tool effects,

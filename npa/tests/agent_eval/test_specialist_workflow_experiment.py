@@ -353,12 +353,39 @@ def test_profile_lock_excludes_delegate_during_direct_operation(
     worker.start()
     try:
         assert entered.wait(5)
-        with pytest.raises(BlockingIOError):
-            bridge._delegate("scene-a", "task", "Repair")
+        busy = bridge._delegate("scene-a", "task", "Repair")
+        assert busy["status"] == "busy"
+        assert busy["submission_attempted"] is False
+        assert busy["safe_to_retry"] is True
+        assert bridge.team.store._list() == []
     finally:
         release.set()
         worker.join()
     assert bridge._delegate("scene-a", "task", "Repair")["status"] == "queued"
+
+
+def test_failure_after_delegation_starts_never_claims_safe_retry(
+    workflow_experiment, prepared, tmp_path, monkeypatch
+):
+    bridge = _bridge(workflow_experiment, prepared, tmp_path / "evidence")
+    submit = bridge.team.submit
+
+    def lose_response(*args, **kwargs):
+        submit(*args, **kwargs)
+        raise BlockingIOError("response unavailable after durable submission")
+
+    monkeypatch.setattr(bridge.team, "submit", lose_response)
+    result = asyncio.run(
+        bridge._recorded(
+            "delegate",
+            {},
+            lambda: asyncio.to_thread(bridge._delegate, "scene-a", "task", "Repair"),
+        )
+    )
+    assert result["error_type"] == "BlockingIOError"
+    assert "safe_to_retry" not in result
+    assert "submission_attempted" not in result
+    assert bridge.team.status("task")["status"] == "queued"
 
 
 def test_async_wait_yields_and_returns_new_receipts(
