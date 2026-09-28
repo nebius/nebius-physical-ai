@@ -20,7 +20,17 @@ TESTS = (
 
 
 def _python_roots(interpreter):
-    return (interpreter.parent.parent.resolve(), interpreter.resolve().parent.parent)
+    roots, seen = [interpreter.resolve().parent.parent], set()
+    current = interpreter
+    while True:
+        if current in seen:
+            raise ValueError("Python interpreter symlink cycle")
+        seen.add(current)
+        roots.append(current.parent.parent)
+        if not current.is_symlink():
+            return tuple(dict.fromkeys(roots))
+        target = current.readlink()
+        current = target if target.is_absolute() else current.parent / target
 
 
 def _require_narrow_mounts(paths):

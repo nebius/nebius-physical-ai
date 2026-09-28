@@ -66,6 +66,24 @@ def test_system_python_mounts_its_prefix_instead_of_the_filesystem(
     assert "/" not in sources
 
 
+def test_virtualenv_keeps_version_alias_without_mounting_its_parent(modules, tmp_path):
+    runtime = tmp_path / "runtimes/python-3.12.14"
+    (runtime / "bin").mkdir(parents=True)
+    (runtime / "bin/python3.12").touch()
+    alias = runtime.with_name("python-3.12")
+    alias.symlink_to(runtime.name, target_is_directory=True)
+    environment = tmp_path / "environment"
+    (environment / "bin").mkdir(parents=True)
+    (environment / "bin/python").symlink_to(alias / "bin/python3.12")
+    interpreter = environment / "bin/python3"
+    interpreter.symlink_to("python")
+    mounts = modules.sandbox._runtime_mounts(interpreter)
+    sources = mounts[1::3]
+    assert {str(runtime), str(alias), str(environment)}.issubset(sources)
+    assert str(runtime.parent) not in sources
+    assert str(tmp_path) not in sources
+
+
 @pytest.mark.parametrize("interpreter", ["/bin/python3", "/operator/bin/python3"])
 def test_python_mounts_cannot_expose_root_or_account_home(
     modules, monkeypatch, interpreter
