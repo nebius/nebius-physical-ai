@@ -152,6 +152,7 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
 tzdata==2026.4 ; python_full_version < '3.11' or sys_platform == 'emscripten' or sys_platform == 'win32'
 urllib3==2.8.0
+usd-core==26.8
 uvicorn==0.53.0
 websocket-client==1.9.2
 websockets==16.1.1

@@ -207,6 +207,50 @@ the operator passes `--replace` and confirms with `--yes` for automation.
 
 ## Workflows
 
+### Calibrated RGB-D sensor rigs
+
+Use `workflows/testing/multicamera-rgbd-capture.yaml` for a supplied static USD
+scene plus calibrated camera rig and sampled trajectory. It calls
+`npa.workflows.isaac_rgbd.cli capture` in the supported Isaac interpreter and
+validates decoded S3 RGB/depth/masks/optional world points in a separate CPU
+stage. The graph stays in the standard workflow runtime; no robot is needed.
+The default four-camera procedural room is a sensor qualification fixture, not
+evidence of an industrial scan, navigation task, or encoder-training quality.
+GPU acceptance has not been run for this adapter.
+
+Keep `config.source_overlay: true` and submit with `--stage-src` (or a verified
+`NPA_SRC_S3_URI`) so both workers receive the new adapter even when the selected
+Isaac image already contains an older NPA package. Before opening any supplied
+stage in Kit, inspect every hashed USD layer through raw Sdf traversal, including
+inactive and unselected variants. Reject scripting APIs/properties, graph
+content, time samples and value clips, then reject composition errors after
+opening. Portable USDZ roots and nested packages are supported: inspect every
+archive member in private audit directories, including unused layers, and reject
+traversal, symlinks, duplicate/colliding names, compression and renamed packages.
+Explicit package-relative member paths remain unsupported. Author capture cameras
+into the writable session layer. Relative dependencies may use parent components
+only when the resolved path stays in the hashed bundle or package. Preserve ordinary
+textures. Do not describe these checks as a sandbox for arbitrary USD plugins.
+
+`workflows/testing/multicamera-rgbd-warehouse.yaml` runtime-collects the public
+NVIDIA full warehouse with native `omni.kit.usd.collect` (USD and MDL dependencies),
+then captures 265 poses over 66 meters using four 1280x720 cameras. Preparation is
+`npa.workflows.isaac_rgbd.cli prepare-reference --output-path <s3-prefix>` in the
+Isaac interpreter. Missing assets, native collection errors and content-audit
+failures stop preparation. Vendor assets stay in operator storage. This is a
+public authored reference, not a scan reconstruction or robot navigation result;
+GPU acceptance remains pending. Point-cloud output includes a per-frame fused
+world cloud retaining camera and pixel indices; validation recomputes it from
+the original RGB-D bytes rather than trusting cloud hashes alone.
+
+The contract requires Z-up meter scenes, finite rigid transforms, zero-skew
+pinhole calibration, and strictly increasing sampled timestamps. Depth is
+axial optical Z in meters; invalid values become zero with a boolean mask.
+Never publish successful capture evidence without decoding actual artifacts,
+matching all camera render reference times, and verifying calibration and
+backprojection. See `docs/workbench/multicamera-rgbd-capture.md` for S3 schemas,
+limits, pinned API references and opt-in live acceptance.
+
 - Single RL job: `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`.
 - Parameter sweep: `workflows/testing/isaac-lab-rl-sweep.yaml`.
 - Runner: `npa/scripts/run_isaac_lab_rl.py`.
