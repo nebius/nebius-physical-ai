@@ -2193,6 +2193,32 @@ def build_skypilot_task_doc(
     return _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
 
 
+def build_skypilot_task_docs(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> list[dict[str, Any]]:
+    """Validate all workflow image selectors once and render a batch of tasks.
+
+    Args:
+        spec: Complete workflow, including unselected decision branches.
+        steps: Planned steps in the required document order.
+        run_id: Identity shared by the workflow's tasks.
+        options: Container selection and rendering options.
+    Returns:
+        One SkyPilot task document for each selected step, in input order.
+    Raises:
+        NpaWorkflowRenderError: Selectors or task resources cannot be rendered.
+    """
+    validate_image_override_selectors(spec, options)
+    return [
+        _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+        for step in steps
+    ]
+
+
 def _build_skypilot_task_doc(
     spec: NpaWorkflowSpec,
     step: PlanStep,
@@ -2703,15 +2729,14 @@ def _render_docs(
     execution: str,
     name: str = "",
 ) -> str:
-    validate_image_override_selectors(spec, options)
+    task_docs = build_skypilot_task_docs(spec, steps, run_id=run_id, options=options)
     header = {
         "name": name or spec.name,
         "execution": execution,
     }
     docs: list[dict[str, Any]] = [header]
     seen: set[str] = set()
-    for step in steps:
-        doc = _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+    for doc in task_docs:
         task_name = str(doc.get("name") or "")
         # Serial pipelines may legitimately repeat a task name (an unrolled loop
         # body re-runs the same state), so only JobGroups — whose tasks run at the

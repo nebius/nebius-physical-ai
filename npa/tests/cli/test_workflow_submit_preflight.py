@@ -2582,6 +2582,8 @@ HARDENING_SPEC = (
 @pytest.fixture
 def image_selector_boundaries(mocker):
     targets = (
+        "npa.cli.workbench.workflow._refuse_dedicated_live_gate_execution",
+        "npa.orchestration.npa_workflow.robotwin_preflight.prepare_live_submit",
         "npa.orchestration.npa_workflow.first_run_state.prepare_run",
         "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
         "npa.cli.workbench.workflow._preflight_submit_images",
@@ -2598,6 +2600,7 @@ def image_selector_boundaries(mocker):
 
 
 @pytest.mark.parametrize("preflight", ["--preflight-images", "--no-preflight-images"])
+@pytest.mark.parametrize("dedicated_live_gate", [False, True])
 @pytest.mark.parametrize(
     ("selector", "message"),
     [
@@ -2607,8 +2610,12 @@ def image_selector_boundaries(mocker):
     ],
 )
 def test_submit_rejects_image_selector_before_mutations(
-    image_selector_boundaries, preflight, selector, message
+    image_selector_boundaries, mocker, preflight, selector, message, dedicated_live_gate
 ):
+    mocker.patch(
+        "npa.cli.workbench.workflow._is_dedicated_live_gate_spec",
+        return_value=dedicated_live_gate,
+    )
     result = runner.invoke(
         app,
         [

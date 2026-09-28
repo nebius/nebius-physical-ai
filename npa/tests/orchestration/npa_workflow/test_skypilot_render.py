@@ -1266,7 +1266,7 @@ def test_render_path_checks_literal_python_heredocs(mocker) -> None:  # noqa: AN
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     plan = build_plan(spec, run_id="invalid-python-heredoc")
     mocker.patch(
-        "npa.orchestration.npa_workflow.skypilot_render.build_skypilot_task_doc",
+        "npa.orchestration.npa_workflow.skypilot_render._build_skypilot_task_doc",
         return_value={
             "name": "invalid-python-heredoc",
             "run": _malformed_python_heredoc("python3 -B -"),
