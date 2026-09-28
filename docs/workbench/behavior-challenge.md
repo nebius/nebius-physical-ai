@@ -9,6 +9,9 @@ a fixed policy; policy serving uses pinned upstream implementations.
 
 ## Current scope
 
+New operators can start with the [one-file DEV setup guide](challenge-onboarding.md).
+It prepares this workflow and keeps local checks separate from GPU readiness.
+
 The [campaign guide](behavior-campaign.md#scope-and-validation-status) is the
 current entry point for reusable evaluation, training, and recording support.
 It distinguishes completed live validation from experimental components.
