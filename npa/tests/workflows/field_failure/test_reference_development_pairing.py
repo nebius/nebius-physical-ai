@@ -215,6 +215,10 @@ def _capture_selection(monkeypatch, records):
     from npa.workflows.field_failure import reference_demo_evaluate as evaluate
     from npa.workflows.field_failure import reference_demo_report as report
     from npa.workflows.field_failure import reference_demo_media as media
+    from npa.workflows.field_failure import reference_demo_attribution as attribution
+
+    # This test isolates cohort reads; sealed attribution has dedicated tests.
+    monkeypatch.setattr(attribution, "sample_credit", lambda *_: None)
 
     observed, published = [], {}
 

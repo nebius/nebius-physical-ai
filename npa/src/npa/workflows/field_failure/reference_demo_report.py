@@ -29,6 +29,9 @@ def publish_report(args, *, selection=None):
 
     regional = None if final is None else final_regions(args, plan, final)
     report = result_summary(plan, selection, final, regional)
+    from npa.workflows.field_failure.reference_demo_attribution import sample_credit
+
+    report["public_sample"] = sample_credit(args.output_root, plan)
     from npa.workflows.field_failure.reference_demo_media import preview_groups
 
     groups = preview_groups(args, final)
@@ -145,6 +148,9 @@ def render_html(report, groups):
             summary=summary,
             metrics=metrics,
             groups=groups,
+            details={"public_sample": report["public_sample"]}
+            if report.get("public_sample")
+            else None,
         )
         contents = path.read_text()
     details = f"<details><summary>Measured results and frozen cohort identities</summary><pre>{data}</pre></details>"
