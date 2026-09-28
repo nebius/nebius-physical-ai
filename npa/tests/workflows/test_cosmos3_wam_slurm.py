@@ -8,7 +8,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 import subprocess
+import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -84,6 +86,92 @@ def test_multinode_torchrun_uses_slurm_rank_and_shared_endpoint(tmp_path, monkey
     assert "--master_addr=rank-zero" in argv and "--master_port=29507" in argv
     assert "--standalone" not in argv
     assert "cosmos_framework.scripts.train" in argv
+
+
+def _camera_inputs(root):
+    paths = []
+    for camera in ("observation.images.image", "observation.images.wrist_image"):
+        path = root / "data/libero_10/videos" / camera / "chunk-000/file-000.mp4"
+        path.parent.mkdir(parents=True)
+        path.touch()
+        paths.append(path)
+    return paths
+
+
+@pytest.mark.parametrize("shape", [(3, 256, 256), (3, 128, 128)])
+def test_camera_runtime_checks_both_views_and_frame_dimensions(
+    tmp_path, monkeypatch, shape
+):
+    recipe = _load("recipe")
+    paths = _camera_inputs(tmp_path)
+    calls = []
+
+    def decoder(path, *, device):
+        calls.append((Path(path), device))
+        return {0: SimpleNamespace(shape=shape)}
+
+    monkeypatch.setitem(
+        sys.modules, "torchcodec.decoders", SimpleNamespace(VideoDecoder=decoder)
+    )
+    if shape != (3, 256, 256):
+        with pytest.raises(ValueError, match="incompatible decoded camera frame"):
+            recipe._verify_video_runtime(tmp_path)
+    else:
+        recipe._verify_video_runtime(tmp_path)
+        assert calls == [(path, "cpu") for path in paths]
+
+
+def _prepared_video_run(recipe, args):
+    recipe._plan(args)
+    settings = json.loads((args.run_dir / "run.json").read_text())
+    _camera_inputs(args.shared_root)
+    (args.shared_root / "prepared.json").write_text(
+        json.dumps({"sources": settings["sources"]})
+    )
+    for name in (
+        "base-dcp/model/.metadata",
+        "vae/Wan2.2_VAE.pth",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/vocab.json",
+        "tokenizer/merges.txt",
+        "data/libero_10/meta/info.json",
+    ):
+        path = args.shared_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    return settings
+
+
+def test_missing_decoder_runtime_stops_before_gpu_or_distributed_launch(
+    tmp_path, monkeypatch
+):
+    recipe = _load("recipe")
+    args = _args(tmp_path, nodes=2)
+    settings = _prepared_video_run(recipe, args)
+    monkeypatch.setattr(
+        recipe.subprocess,
+        "check_output",
+        lambda argv, **_: (
+            settings["sources"]["framework"] if "rev-parse" in argv else ""
+        ),
+    )
+    monkeypatch.setenv("SLURM_NODEID", "0")
+    monkeypatch.setenv("SLURM_NNODES", "2")
+    monkeypatch.setattr(
+        recipe, "_verify_gpus", lambda: pytest.fail("GPU startup must not run")
+    )
+
+    def unavailable_decoder(*_, **__):
+        raise RuntimeError("FFmpeg shared libraries are missing")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torchcodec.decoders",
+        SimpleNamespace(VideoDecoder=unavailable_decoder),
+    )
+    with pytest.raises(RuntimeError, match="FFmpeg shared libraries"):
+        recipe._run_node(args)
+    assert not (args.run_dir / "node-0.started.json").exists()
 
 
 def test_slurm_script_preserves_argv_and_worker_failure(tmp_path, monkeypatch):

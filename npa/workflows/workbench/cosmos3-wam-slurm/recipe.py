@@ -205,6 +205,20 @@ def _verify_inputs(settings, run):
     ):
         if not (root / item).is_file():
             raise ValueError(f"missing prepared input: {item}")
+    _verify_video_runtime(root)
+
+
+def _verify_video_runtime(root):
+    from torchcodec.decoders import VideoDecoder
+
+    for camera in ("observation.images.image", "observation.images.wrist_image"):
+        directory = root / "data/libero_10/videos" / camera
+        videos = sorted(directory.glob("chunk-*/*.mp4"))
+        if not videos:
+            raise ValueError(f"missing camera videos on this worker: {camera}")
+        frame = VideoDecoder(str(videos[0]), device="cpu")[0]
+        if tuple(frame.shape) != (3, 256, 256):
+            raise ValueError(f"incompatible decoded camera frame: {camera}")
 
 
 def _verify_gpus():

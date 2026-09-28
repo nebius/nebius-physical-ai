@@ -9,6 +9,10 @@ It is a standalone Slurm application recipe, alongside the existing
 It does not add a new `npa.workflow` toolRef or claim that the inference image is
 a training image.
 
+The native bootstraps install FFmpeg on every node. Each launcher checks real
+TorchCodec decoding of both camera streams before starting distributed model
+loading; the shared Python environment alone does not supply host libraries.
+
 **Validation:** experimental; a reserved B200 passed real CUDA forward/backward
 and native fused-optimizer checks. Native checkpoint conversion and trainer
 configuration checks passed. A one-GPU WAM attempt exhausted memory at its first

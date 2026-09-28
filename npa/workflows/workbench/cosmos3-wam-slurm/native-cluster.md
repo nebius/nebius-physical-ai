@@ -118,6 +118,10 @@ bash "$WAM_RECIPE/bootstrap-worker.sh"
 The worker installs Python 3.13.15 and 3.10.21 at the paths needed by the shared
 environments, preserves the controller's Slurm service UID/GID, installs the
 same Slurm version, verifies eight B200s and mounts NFS with hard TCP mounts.
+Both bootstraps install FFmpeg. Sharing the Python environment over NFS does
+not share host libraries: TorchCodec needs FFmpeg's shared libraries on every
+worker. Each training launcher decodes one actual frame from both camera
+streams on its own host before loading the model or starting torchrun.
 Munge uses the shared key; only the controller and worker private addresses
 are permitted to reach cluster services. Hostname resolution is recorded on
 both workers so torchrun's rendezvous address resolves consistently.

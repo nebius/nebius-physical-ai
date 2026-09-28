@@ -14,7 +14,7 @@ sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     slurm-wlm=23.11.4-1.2ubuntu5 slurmdbd=23.11.4-1.2ubuntu5 \
     munge mariadb-server nfs-kernel-server nfs-common libosmesa6 \
     libgl1 libglib2.0-0 cmake build-essential sysstat rdma-core \
-    infiniband-diags perftest libibverbs-dev
+    infiniband-diags perftest libibverbs-dev ffmpeg
 bash "$(dirname "$0")/preserve-slurm-ipc.sh"
 node_address=$(hostname -I | awk '{print $1}')
 sudo iptables -N WAM_INPUT 2>/dev/null || true
