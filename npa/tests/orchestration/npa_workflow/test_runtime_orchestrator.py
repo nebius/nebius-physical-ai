@@ -470,6 +470,29 @@ states:
     terminal: true
 """
 
+COMPLETED_REPLAY_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: completed-replay-identity
+config:
+  bucket: example-bucket
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 1
+initial: export
+states:
+  export:
+    run:
+      shell: "echo export"
+    resources: cpu
+    outputs:
+      - uri: "s3://example-bucket/completed-replay/result.json"
+        schema: npa.example.result.v1
+    terminal: true
+"""
+
 FANOUT_SPEC = """
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
@@ -757,6 +780,7 @@ def _executor(
     output_checker: Any | None = None,
     use_default_output_checker: bool = False,
     reconcile_fn: Any | None = None,
+    render_options: SkypilotRenderOptions | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
     ledger = RuntimeLedger(
@@ -782,7 +806,8 @@ def _executor(
     return SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
-        render_options=SkypilotRenderOptions(
+        render_options=render_options
+        or SkypilotRenderOptions(
             image_overrides={"*": "cr.example/x@sha256:" + "c" * 64}
         ),
         options=opts,
@@ -1909,6 +1934,214 @@ def test_resume_rejects_corrupt_ledger_before_executor_creation(
     assert store.objects[key] == corrupt_bytes
     assert key in str(error.value)
     assert "s3://unit-bucket" not in str(error.value)
+
+
+def _completed_replay_case(
+    tmp_path: Path,
+    *,
+    render_options: SkypilotRenderOptions | None = None,
+    spec_text: str = COMPLETED_REPLAY_SPEC,
+) -> tuple[Any, MemoryStore]:
+    spec = load_spec(_write_spec(tmp_path, spec_text))
+    store = MemoryStore()
+    first = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        output_checker=lambda _uri: True,
+        store=store,
+        render_options=render_options,
+    )
+    first_report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=first,
+        options=first.options,
+    )
+    assert first_report.status == "succeeded"
+    return spec, store
+
+
+def _completed_replay_with_provider_traps(spec, store, mocker, render_options=None):
+    submitter = FakeSubmitter()
+    provider = mocker.Mock(side_effect=AssertionError("unexpected provider call"))
+    checker = mocker.Mock(return_value=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        status_fn=provider,
+        reconcile_fn=provider,
+        name_lookup_fn=provider,
+        options=RuntimeOptions(poll_seconds=0, resume=True),
+        output_checker=checker,
+        store=store,
+        render_options=render_options,
+    )
+    resumed._cancel = provider
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=resumed.options,
+    )
+    provider.assert_not_called()
+    assert submitter.calls == []
+    return report, checker
+
+
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_completed_replay_validates_current_rendered_image(
+    tmp_path, mocker, changed_image
+):
+    spec, store = _completed_replay_case(tmp_path)
+    wave = store.read_runtime_state().waves[-1]
+    assert wave["image_identity"]["version"] == IMAGE_IDENTITY_VERSION
+    assert wave["image_identity"]["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    options = SkypilotRenderOptions(
+        image_overrides={
+            "*": "cr.example/x@sha256:" + ("d" if changed_image else "c") * 64
+        }
+    )
+    assert not options.image_digest_pins
+    report, checker = _completed_replay_with_provider_traps(
+        spec, store, mocker, options
+    )
+    if changed_image:
+        assert report.status == "failed"
+        assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+        checker.assert_not_called()
+    else:
+        assert report.status == "succeeded"
+        checker.assert_called()
+        assert report.waves[-1]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing",
+        "malformed",
+        "unknown-version",
+        "missing-references",
+        "changed-reference",
+    ],
+)
+def test_completed_replay_rejects_invalid_image_metadata_before_outputs(
+    tmp_path, mocker, corruption
+):
+    spec, store = _completed_replay_case(tmp_path)
+    state = store.read_runtime_state()
+    wave = state.waves[-1]
+    if corruption == "missing":
+        wave.pop("image_identity")
+    elif corruption == "malformed":
+        wave["image_identity"] = ["invalid"]
+    elif corruption == "unknown-version":
+        wave["image_identity"]["version"] = "unsupported-image-protocol"
+    elif corruption == "missing-references":
+        wave["image_identity"].pop("references")
+    else:
+        wave["image_identity"]["references"] = ["cr.example/x@sha256:" + "d" * 64]
+    store.write_runtime_state(state)
+    report, checker = _completed_replay_with_provider_traps(spec, store, mocker)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+    checker.assert_not_called()
+    assert store.read_runtime_state().waves == state.waves
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "identity_function"),
+    [
+        ("workflow_sha256", "_workflow_identity"),
+        ("source_sha256", "_source_identity"),
+        ("image_digest", "_expected_image_identity"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("recorded_identity", "expected_identity_missing"),
+    [("changed", False), ("", False), ("", True), ("changed", True), ("same", True)],
+)
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_requires_current_immutable_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity_field: str,
+    identity_function: str,
+    recorded_identity: str,
+    expected_identity_missing: bool,
+    outputs_exist: bool,
+) -> None:
+    from npa.orchestration.npa_workflow import runtime as runtime_module
+
+    spec, store = _completed_replay_case(tmp_path)
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    if recorded_identity != "same":
+        persisted.waves[-1]["immutable_identity"][identity_field] = (
+            "d" * 64 if recorded_identity else ""
+        )
+    store.write_runtime_state(persisted)
+    if expected_identity_missing:
+        monkeypatch.setattr(runtime_module, identity_function, lambda *_args: "")
+
+    report, submitter = _resume_completed_case(spec, store, outputs_exist)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert identity_field in report.error
+    assert "new run ID" in report.error
+    assert submitter.calls == []
+
+
+def _resume_completed_case(spec, store, outputs_exist: bool, *, render_options=None):
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=options,
+        output_checker=lambda _uri: outputs_exist,
+        store=store,
+        render_options=render_options,
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+    return report, submitter
+
+
+@pytest.mark.parametrize("identity", [None, {}, [], "invalid"])
+def test_completed_replay_rejects_unreadable_identity(
+    tmp_path: Path,
+    identity,
+) -> None:
+    spec, store = _completed_replay_case(tmp_path)
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    persisted.waves[-1]["immutable_identity"] = identity
+    store.write_runtime_state(persisted)
+    report, submitter = _resume_completed_case(spec, store, True)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_checks_missing_outputs_with_matching_identity(
+    tmp_path: Path,
+) -> None:
+    spec, store = _completed_replay_case(tmp_path)
+    report, submitter = _resume_completed_case(spec, store, False)
+    assert report.status == "failed"
+    assert "completed without declared durable output" in report.error
+    assert "IMMUTABLE_IDENTITY_MISMATCH" not in report.error
+    assert len(submitter.calls) == 1
 
 
 @pytest.mark.parametrize(
