@@ -112,10 +112,12 @@ def _splits(frames: list[dict]) -> None:
         if not selected:
             raise ValueError("integration and held-out validation frames are required")
         groups[split] = {
-            (frame["rgb_sha256"], frame["depth_sha256"]) for frame in selected
+            kind: {frame[f"{kind}_sha256"] for frame in selected}
+            for kind in ("rgb", "depth")
         }
-    if groups["integration"] & groups["validation"]:
-        raise ValueError("identical image pairs cannot cross the held-out split")
+    for kind in ("rgb", "depth"):
+        if groups["integration"][kind] & groups["validation"][kind]:
+            raise ValueError(f"identical {kind} images cannot cross the held-out split")
 
 
 def read_images(root: Path, capture: dict, frame: dict):

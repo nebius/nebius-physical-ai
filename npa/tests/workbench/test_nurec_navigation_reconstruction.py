@@ -19,11 +19,13 @@ def capture_bundle(tmp_path):
     frames = []
     for index in range(8):
         color = np.full((48, 64, 3), [80 + index, 120, 160], dtype=np.uint8)
-        depth = np.full((48, 64), 10000, dtype=np.uint16)
+        depth = np.full((48, 64), 10000 + index, dtype=np.uint16)
         Image.fromarray(color).save(root / f"rgb_{index}.png")
         Image.fromarray(depth).save(root / f"depth_{index}.png")
         pose = np.eye(4)
         pose[0, 3] = index * 0.005
+        # Distinct depth observations still describe the same world-space plane.
+        pose[2, 3] = -index / 5000
         frame = {
             "id": f"frame_{index}",
             "split": "validation" if index % 4 == 0 else "integration",
@@ -128,6 +130,27 @@ def test_capture_rejects_duplicate_pair_across_split(capture_bundle):
             original[key] = replacement[key]
 
     _update(capture_bundle, duplicate)
+    with pytest.raises(ValueError, match="held-out split"):
+        read_capture(capture_bundle)
+
+
+@pytest.mark.parametrize("kind", ["rgb", "depth"])
+@pytest.mark.parametrize("renamed", [False, True])
+def test_capture_rejects_one_modality_reused_across_split(
+    capture_bundle, kind, renamed
+):
+    def reuse(capture):
+        validation, integration = capture["frames"][:2]
+        name = integration[kind]
+        if renamed:
+            name = f"heldout_{kind}.png"
+            (capture_bundle / name).write_bytes(
+                (capture_bundle / integration[kind]).read_bytes()
+            )
+        validation[kind] = name
+        validation[f"{kind}_sha256"] = integration[f"{kind}_sha256"]
+
+    _update(capture_bundle, reuse)
     with pytest.raises(ValueError, match="held-out split"):
         read_capture(capture_bundle)
 

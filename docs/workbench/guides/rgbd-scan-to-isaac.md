@@ -94,8 +94,9 @@ The manifest schema is `npa.navigation.rgbd_capture.v1`:
 | `frames` | Complete selected input inventory; each record has `id`, `timestamp_s`, `split`, `camera_to_world`, `rgb`, `depth`, `rgb_sha256`, `depth_sha256` |
 
 Frame image paths are relative contained files. `split` is `integration` or
-`validation`; both are required. Identical RGB/depth pairs cannot cross the
-split. Select quality thresholds and split membership before running. The stage
+`validation`; both are required. Neither RGB nor depth image bytes may be reused
+across the split, even with a different filename or paired image. Select quality
+thresholds and split membership before running. The stage
 checks every hash, including held-out frames, before integrating. No frame-count
 limit or implicit subsampling is applied to integration frames. Keep capture
 license, attribution, calibration assumptions, temporal association errors, and
