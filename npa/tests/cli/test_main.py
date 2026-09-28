@@ -182,7 +182,7 @@ def _stub_nebius_defaults(
 
     def _set_profile_project(project_id, tenant_id=""):
         bound.append((project_id, tenant_id))
-        return True
+        return nebius_module.ProfileMutationResult.UPDATED
 
     monkeypatch.setattr(nebius_module, "set_profile_project", _set_profile_project)
     return bound
@@ -1084,6 +1084,108 @@ def test_configure_binds_nebius_profile_to_selected_project(
     assert result.exit_code == 0, result.output
     assert bound == [("project-x", "tenant-x")]
     assert "now points at project-x" in result.output
+
+
+@pytest.mark.parametrize(
+    ("mutation_result", "expected"),
+    [
+        (
+            "restored",
+            "The previous profile values were restored and verified.",
+        ),
+        ("partial", "may be partially updated and requires repair"),
+    ],
+)
+def test_interactive_profile_binding_reports_recovery_state(
+    monkeypatch, capsys, mutation_result, expected
+) -> None:
+    import npa.clients.nebius as nebius_module
+
+    client = SimpleNamespace(
+        current_project_id=lambda: "project-old",
+        current_tenant_id=lambda: "tenant-old",
+        set_profile_project=lambda *_args: nebius_module.ProfileMutationResult(
+            mutation_result
+        ),
+        ProfileMutationResult=nebius_module.ProfileMutationResult,
+    )
+
+    updated = cli_main._offer_profile_binding(
+        client,
+        lambda *_args, **_kwargs: "y",
+        project_id="project-new",
+        tenant_id="tenant-new",
+    )
+
+    assert updated is False
+    assert expected in capsys.readouterr().out
+
+
+def _stub_noninteractive_profile_binding(monkeypatch, tmp_path, mutation_result):
+    import npa.clients.nebius as nebius_module
+
+    _fresh_configure_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(nebius_module, "get_iam_token", lambda: "synthetic-token")
+    monkeypatch.setattr(
+        "npa.clients.project_credential_store.project_credential_record",
+        lambda _project_id: {},
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "_provision_object_storage",
+        lambda *_args, **_kwargs: {
+            "aws_access_key_id": "synthetic-access",
+            "aws_secret_access_key": "synthetic-secret",
+            "bucket": "s3://synthetic-bucket/",
+            "endpoint_url": "https://storage.example.invalid",
+            "_validated": "true",
+        },
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "set_profile_project",
+        lambda *_args: nebius_module.ProfileMutationResult(mutation_result),
+    )
+    monkeypatch.setattr(cli_main, "_saved_model_access_note", lambda: "access checked")
+
+
+@pytest.mark.parametrize(
+    ("mutation_result", "expected"),
+    [
+        (
+            "restored",
+            "The previous profile values were restored and verified.",
+        ),
+        ("partial", "may be partially updated and requires repair"),
+    ],
+)
+def test_noninteractive_profile_binding_reports_recovery_state(
+    monkeypatch, tmp_path, mutation_result, expected
+) -> None:
+    _stub_noninteractive_profile_binding(monkeypatch, tmp_path, mutation_result)
+
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--no-interactive",
+            "--provision",
+            "--tenant-id",
+            "tenant-synthetic",
+            "--project-id",
+            "project-synthetic",
+            "--region",
+            "eu-north1",
+            "--project-alias",
+            "synthetic",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert expected in result.output
+    assert "synthetic-token" not in result.output
+    assert "synthetic-access" not in result.output
+    assert "synthetic-secret" not in result.output
 
 
 def test_configure_declining_profile_binding_leaves_it_alone(

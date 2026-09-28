@@ -23,7 +23,7 @@ def _manifests(**overrides):
         "port": 8686,
         "image": "registry.example/npa-lancedb:1.2.3",
         "storage_path": "s3://bucket/lancedb/",
-        "service_env": {"LANCEDB_STORAGE_PATH": "s3://bucket/lancedb/"},
+        "service_env": {"LANCEDB_PORT": "8686"},
         "secret_name": "npa-lancedb-storage",
         "storage_endpoint_url": "https://storage.example.com",
     }
@@ -65,6 +65,53 @@ def test_credentials_come_from_a_secret_not_the_manifest() -> None:
         )
 
 
+def test_storage_path_matching_service_env_is_rendered_once() -> None:
+    storage_path = "s3://bucket/lancedb/"
+    deployment, _ = _manifests(
+        service_env={"LANCEDB_STORAGE_PATH": storage_path, "LANCEDB_PORT": "8686"}
+    )
+    env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    storage_entries = [
+        entry for entry in env if entry["name"] == "LANCEDB_STORAGE_PATH"
+    ]
+
+    assert storage_entries == [{"name": "LANCEDB_STORAGE_PATH", "value": storage_path}]
+
+
+def test_storage_path_is_injected_when_service_env_omits_it() -> None:
+    deployment, _ = _manifests(service_env={"LANCEDB_PORT": "8686"})
+    env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+
+    assert {entry["name"]: entry.get("value") for entry in env}[
+        "LANCEDB_STORAGE_PATH"
+    ] == "s3://bucket/lancedb/"
+
+
+def test_conflicting_storage_path_is_rejected() -> None:
+    with pytest.raises(k8s.ServiceKubernetesError, match="conflicts with storage_path"):
+        _manifests(
+            service_env={"LANCEDB_STORAGE_PATH": "s3://different-bucket/lancedb/"}
+        )
+
+
+@pytest.mark.parametrize("storage_path", ["", "   "])
+def test_empty_storage_path_is_rejected(storage_path: str) -> None:
+    with pytest.raises(k8s.ServiceKubernetesError, match="storage path is required"):
+        _manifests(storage_path=storage_path)
+
+
+def test_storage_credentials_are_never_serialized_as_values() -> None:
+    credentials = {
+        "AWS_ACCESS_KEY_ID": "literal-access-key",
+        "AWS_SECRET_ACCESS_KEY": "literal-secret-key",
+    }
+    deployment, _ = _manifests(service_env=credentials)
+    manifest = json.dumps(deployment)
+
+    assert "literal-access-key" not in manifest
+    assert "literal-secret-key" not in manifest
+
+
 def test_no_secret_env_when_storage_is_local() -> None:
     deployment, _ = _manifests(storage_path="/var/lib/lancedb", secret_name="")
     env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -97,11 +144,15 @@ def test_image_pull_secrets_are_wired_when_given() -> None:
     ]
 
 
-def test_build_rejects_a_missing_image_or_storage_path() -> None:
+def test_build_rejects_a_missing_image() -> None:
     with pytest.raises(k8s.ServiceKubernetesError, match="image reference"):
-        k8s.build_manifests(name="x", port=1, image="", service_env={})
+        k8s.build_manifests(
+            name="x", port=1, image="", storage_path="/data", service_env={}
+        )
     with pytest.raises(k8s.ServiceKubernetesError, match="image reference"):
-        k8s.build_manifests(name="x", port=1, image="   ", service_env={})
+        k8s.build_manifests(
+            name="x", port=1, image="   ", storage_path="/data", service_env={}
+        )
 
 
 def test_apply_sends_one_list_document_and_surfaces_failure() -> None:
