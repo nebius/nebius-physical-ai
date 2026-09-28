@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from npa.cli.workbench.workflow import app
@@ -78,6 +79,27 @@ def test_json_launch_separates_submit_diagnostics(monkeypatch):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"run_id": "sample", "result": "submitted"}
     assert "demo view nurec sample" in result.stderr
+
+
+def test_run_identity_and_view_command_survive_quality_failure(monkeypatch):
+    monkeypatch.setattr(
+        demo,
+        "prepare_demo",
+        lambda *a, **kw: {
+            "name": "real-to-sim",
+            "run_id": "sample",
+            "project": "example",
+        },
+    )
+
+    def failed_submission(**kwargs):
+        raise typer.Exit(1)
+
+    monkeypatch.setattr("npa.cli.workbench.workflow.submit_cmd", failed_submission)
+    result = CliRunner().invoke(app, ["demo", "run", "real-to-sim"])
+    assert result.exit_code == 1
+    assert "Run ID: sample" in result.stderr
+    assert "demo view real-to-sim sample" in result.stderr
 
 
 def test_plan_only_retains_standard_preflights_and_does_not_offer_completed_report(

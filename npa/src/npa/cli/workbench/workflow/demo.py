@@ -127,22 +127,27 @@ def _submit(selection, infra, resume_run, plan_only, output_format):
     )
     if resume_run:
         options["run_id"] = ""
-    submit_cmd(**options)
     if not plan_only:
-        command = shlex.join(
-            [
-                "npa",
-                "workbench",
-                "workflow",
-                "demo",
-                "view",
-                selection["name"],
-                selection["run_id"],
-                "--project",
-                selection["project"],
-            ]
-        )
-        typer.echo(f"View the measured results: {command}", err=True)
+        _show_run_identity(selection)
+    submit_cmd(**options)
+
+
+def _show_run_identity(selection):
+    command = shlex.join(
+        [
+            "npa",
+            "workbench",
+            "workflow",
+            "demo",
+            "view",
+            selection["name"],
+            selection["run_id"],
+            "--project",
+            selection["project"],
+        ]
+    )
+    typer.echo(f"Run ID: {selection['run_id']}", err=True)
+    typer.echo(f"View the measured results when available: {command}", err=True)
 
 
 @app.command("view")
