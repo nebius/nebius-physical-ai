@@ -1156,6 +1156,8 @@ __all__ = [
     "ServerlessRecoverySpec",
     "ServerlessSupervisorAdapter",
     "SkyPilotSupervisorAdapter",
+    "SUPERVISOR_EVENT_PHASES",
+    "SupervisorEventPhase",
     "SupervisorLedger",
     "WorkflowRunSupervisor",
     "classify_observation",
