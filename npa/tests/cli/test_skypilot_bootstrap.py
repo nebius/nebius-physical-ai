@@ -1013,6 +1013,35 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
     assert json.loads(failed.output)["outcome"] == "verification_failed"
 
 
+def test_skypilot_controller_cleanup_json_removes_stdout_progress(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    def noisy_cleanup(**_kwargs):
+        print("unexpected cleanup progress")
+        return SimpleNamespace(
+            ok=True,
+            resources_removed=[],
+            errors=[],
+            commands=[],
+            remote_absence_verified=True,
+            verified=True,
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",
+        noisy_cleanup,
+    )
+
+    result = runner.invoke(app, ["skypilot", "cleanup-controller", "--yes", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["outcome"] == "cleaned"
+    assert "unexpected cleanup progress" not in result.stdout
+    assert "command diagnostics were removed" in result.stderr
+
+
 @pytest.mark.parametrize(
     ("owner_mismatch", "expected_outcome", "expected_local_verified"),
     [

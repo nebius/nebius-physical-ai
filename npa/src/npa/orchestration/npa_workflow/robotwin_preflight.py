@@ -128,7 +128,9 @@ BUILD_COMMAND_SHA256 = (
 SMOKE_COMMAND_SHA256 = (
     "6ef4b9cf7691a5b33aa2daf10b45909df024fa836ff7c7c5d2bbc2faa3e31f13"
 )
-OUTER_RUN_SHA256 = "cbbc8e79e955402f3130ce8769f113558b2ff5a60f6544ad173ba6d6b09c2463"
+# The shared renderer exports the prepared interpreter as NPA_CONTROL_PYTHON.
+# Bind the exact command including that export; do not normalize it away.
+OUTER_RUN_SHA256 = "cff4f6c7ba496d0889463de954d4fbe2383fba2b52027cc2b078d968a55bbc9b"
 INNER_SETUP_SHA256 = "601a7e430674e8172e49c00d0f8e428e18d6e3f605f5680146d0b671bb4ee81d"
 INNER_RUN_SHA256 = "de11d89c4016819f10d53bbdaaaba3bc3b9e957193d67b0d270263a33aac31d7"
 INVOCATION = {
