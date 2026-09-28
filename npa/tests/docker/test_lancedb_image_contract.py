@@ -15,6 +15,24 @@ def test_lancedb_nonroot_entrypoint_and_healthcheck_are_runnable() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
     assert "COPY --chmod=0755 docker/workbench/lancedb/entrypoint.sh" in text
+    # Local-container deploy intentionally maps the runtime to the host uid/gid.
+    # The flattened application must therefore be readable even when that uid is
+    # not the image's named ubuntu user (uid 1000).
+    runtime_sources = (
+        "bdd100k_import.py",
+        "bdd100k_udfs.py",
+        "backfill.py",
+        "views.py",
+        "server.py",
+        "test_lancedb_functional.py",
+    )
+    runtime_copy_lines = [
+        line
+        for line in text.splitlines()
+        if line.startswith("COPY --chmod=0644 src/npa/")
+    ]
+    for source in runtime_sources:
+        assert any(source in line for line in runtime_copy_lines)
     assert "LANCEDB_SMOKE_ENTRYPOINT=/entrypoint.sh" in text
     assert "/readyz" in text
     assert text.index("USER ubuntu") < text.index("HEALTHCHECK")

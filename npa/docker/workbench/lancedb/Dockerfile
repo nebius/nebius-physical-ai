@@ -29,8 +29,10 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs \
       "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"
 
 # Only the CLIP embedding dependency is unique to this image; the FastAPI +
-# lancedb + pyarrow + pillow + boto3 stack comes from the shared base.
-COPY docker/workbench/lancedb/requirements.txt /app/requirements.txt
+# lancedb + pyarrow + pillow + boto3 stack comes from the shared base. Local
+# deploy maps the process to the host uid/gid, so every runtime source remains
+# readable when that uid differs from the image's named ubuntu user.
+COPY --chmod=0644 docker/workbench/lancedb/requirements.txt /app/requirements.txt
 # The inherited scientific-build helper is not used at runtime and caps click
 # below the version required by the pinned Hugging Face closure.
 RUN pip install --no-cache-dir -r /app/requirements.txt \
@@ -38,13 +40,13 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
     && python -m pip check \
     && python -c "import transformers; print(transformers.__version__)"
 
-COPY src/npa/workbench/lancedb/bdd100k_import.py /app/npa_lancedb_bdd100k_import.py
-COPY src/npa/workbench/lancedb/bdd100k_udfs.py /app/npa_lancedb_bdd100k_udfs.py
-COPY src/npa/workbench/lancedb/backfill.py /app/npa_lancedb_backfill.py
-COPY src/npa/workbench/lancedb/views.py /app/npa_lancedb_views.py
-COPY src/npa/workbench/lancedb/server.py /app/npa_lancedb_server.py
+COPY --chmod=0644 src/npa/workbench/lancedb/bdd100k_import.py /app/npa_lancedb_bdd100k_import.py
+COPY --chmod=0644 src/npa/workbench/lancedb/bdd100k_udfs.py /app/npa_lancedb_bdd100k_udfs.py
+COPY --chmod=0644 src/npa/workbench/lancedb/backfill.py /app/npa_lancedb_backfill.py
+COPY --chmod=0644 src/npa/workbench/lancedb/views.py /app/npa_lancedb_views.py
+COPY --chmod=0644 src/npa/workbench/lancedb/server.py /app/npa_lancedb_server.py
 # Golden-eval smoke (standalone; the image does not install the npa package).
-COPY src/npa/smoke/test_lancedb_functional.py /app/smoke_functional.py
+COPY --chmod=0644 src/npa/smoke/test_lancedb_functional.py /app/smoke_functional.py
 COPY --chmod=0755 docker/workbench/lancedb/entrypoint.sh /entrypoint.sh
 # The smoke starts uvicorn against the flattened server module in /app.
 ENV LANCEDB_SMOKE_APP=npa_lancedb_server:app \
