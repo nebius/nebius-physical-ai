@@ -56,6 +56,39 @@ def test_native_failure_handoff_does_not_escalate_initial_diagnosis(modules, tmp
     assert opted_in == default
 
 
+def test_system_python_mounts_its_prefix_instead_of_the_filesystem(
+    modules, monkeypatch
+):
+    monkeypatch.setattr(Path, "resolve", lambda path: path)
+    mounts = modules.sandbox._runtime_mounts(Path("/usr/bin/python3"))
+    sources = mounts[1::3]
+    assert "/usr" in sources
+    assert "/" not in sources
+
+
+@pytest.mark.parametrize("interpreter", ["/bin/python3", "/operator/bin/python3"])
+def test_python_mounts_cannot_expose_root_or_account_home(
+    modules, monkeypatch, interpreter
+):
+    monkeypatch.setattr(Path, "resolve", lambda path: path)
+    monkeypatch.setattr(
+        modules.sandbox.pwd, "getpwuid", lambda _: SimpleNamespace(pw_dir="/operator")
+    )
+    with pytest.raises(ValueError, match="expose an account or filesystem root"):
+        modules.sandbox._runtime_mounts(Path(interpreter))
+
+
+def test_standard_runtime_mount_cannot_contain_an_account_home(modules, monkeypatch):
+    monkeypatch.setattr(Path, "resolve", lambda path: path)
+    monkeypatch.setattr(
+        modules.sandbox.pwd,
+        "getpwuid",
+        lambda _: SimpleNamespace(pw_dir="/usr/operator"),
+    )
+    with pytest.raises(ValueError, match="expose an account or filesystem root"):
+        modules.sandbox._runtime_mounts(Path("/runtime/bin/python3"))
+
+
 def _tokens(prompt=10000, output=100, cached=8000):
     return {
         "input_tokens": prompt,

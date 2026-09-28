@@ -45,6 +45,9 @@ Install `bubblewrap`, `ffmpeg` and `libosmesa6`. Prepare a simulation interprete
 with `npa[robot-sdg,adapter]`, and a separate CPU-only reader interpreter with
 `lerobot==0.5.1`. See the [native prerequisites](../robot_workflow/README.md).
 The sandbox must be permitted to create user and network namespaces.
+Python mounts include the selected environment and its actual runtime prefix;
+an interpreter layout that would expose the account home or filesystem root is
+rejected. Temporary files stay on a sandbox-private scratch filesystem.
 
 Authenticate Codex and configure Token Factory using Workbench's normal
 credential mechanism. Confirm the exact model IDs in `protocol.json` are

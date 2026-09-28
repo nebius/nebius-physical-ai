@@ -1,6 +1,8 @@
 """Build fixed, network-isolated commands for candidate checks and native simulation."""
 
+import os
 from pathlib import Path
+import pwd
 
 TARGETS = (
     "npa/workbench/token_factory/robot_sim.py",
@@ -17,6 +19,19 @@ TESTS = (
 )
 
 
+def _python_roots(interpreter):
+    return (interpreter.parent.parent.resolve(), interpreter.resolve().parent.parent)
+
+
+def _require_narrow_mounts(paths):
+    account_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+    roots = [Path(path).resolve() for path in paths]
+    if any(root == account_home or root in account_home.parents for root in roots):
+        raise ValueError(
+            "Python runtime mount would expose an account or filesystem root"
+        )
+
+
 def _runtime_mounts(interpreter):
     paths = [
         "/usr",
@@ -25,12 +40,12 @@ def _runtime_mounts(interpreter):
         "/bin",
         "/etc/alternatives",
         "/etc/ld.so.cache",
-        str(interpreter.parent.parent),
-        str(interpreter.resolve().parents[2]),
+        *(str(path) for path in _python_roots(interpreter)),
     ]
+    _require_narrow_mounts(paths)
     return [
         arg
-        for path in paths
+        for path in dict.fromkeys(paths)
         if Path(path).exists()
         for arg in ("--ro-bind", path, path)
     ]
