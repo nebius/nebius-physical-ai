@@ -1292,10 +1292,10 @@ class SkyPilotWaveExecutor:
             },
         )
 
-    def _resume_durable_output_reuse(self, attempt: WaveAttempt) -> bool:
+    def _resume_durable_output_reuse(
+        self, attempt: WaveAttempt, steps: Sequence[PlanStep]
+    ) -> bool:
         """Finish a verified reuse decision across the supervisor/runtime seam."""
-        from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
-
         if self.ledger.store is None or not attempt.logical_launch_id:
             if attempt.recovery_decision == "reuse_completed_wave":
                 return self._block_output_reuse(
@@ -1303,13 +1303,9 @@ class SkyPilotWaveExecutor:
                 )
             return False
         try:
-            events = SupervisorLedger(self.ledger.store).events(
-                attempt.logical_launch_id
-            )
-            event = self._output_reuse_event(attempt, events)
+            event = self._read_output_reuse_event(attempt, steps)
             if event is None:
                 return False
-            self._validate_output_reuse_identity(attempt, event)
             terminal_status = self._output_reuse_terminal_status(attempt, event)
         except Exception as exc:  # noqa: BLE001 - history uncertainty fails closed
             return self._block_output_reuse(
@@ -1332,6 +1328,17 @@ class SkyPilotWaveExecutor:
         self._complete_output_reuse(attempt)
         return True
 
+    def _read_output_reuse_event(
+        self, attempt: WaveAttempt, steps: Sequence[PlanStep]
+    ) -> Mapping[str, Any] | None:
+        from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+        events = SupervisorLedger(self.ledger.store).events(attempt.logical_launch_id)
+        event = self._output_reuse_event(attempt, events, steps)
+        if event is not None:
+            self._validate_output_reuse_identity(attempt, event, steps)
+        return event
+
     def _block_output_reuse(
         self, attempt: WaveAttempt, reason: str, *, error_type: str = ""
     ) -> bool:
@@ -1353,7 +1360,10 @@ class SkyPilotWaveExecutor:
         return True
 
     def _output_reuse_event(
-        self, attempt: WaveAttempt, events: Sequence[Mapping[str, Any]]
+        self,
+        attempt: WaveAttempt,
+        events: Sequence[Mapping[str, Any]],
+        steps: Sequence[PlanStep],
     ) -> Mapping[str, Any] | None:
         cancellations, decisions = self._output_reuse_cancellations(events)
         reuse_claimed = attempt.recovery_decision == "reuse_completed_wave" or any(
@@ -1362,7 +1372,7 @@ class SkyPilotWaveExecutor:
         )
         if not reuse_claimed:
             if not cancellations and decisions:
-                self._resume_incomplete_reuse_decision(attempt, decisions)
+                self._resume_incomplete_reuse_decision(attempt, decisions, steps)
             else:
                 self._clear_output_reuse_evidence_block(attempt)
             return None
@@ -1371,7 +1381,7 @@ class SkyPilotWaveExecutor:
                 "output-reuse decision has no immutable cancellation event"
             )
         for event in cancellations:
-            self._validate_output_reuse_identity(attempt, event)
+            self._validate_output_reuse_identity(attempt, event, steps)
             self._output_reuse_terminal_status(attempt, event)
             self._validate_output_reuse_declaration(attempt, event)
         proof_fields = ("cancellation", "outputs", "recovery")
@@ -1426,10 +1436,13 @@ class SkyPilotWaveExecutor:
         attempt.supervisor_blocks_cancellation = False
 
     def _resume_incomplete_reuse_decision(
-        self, attempt: WaveAttempt, decisions: Sequence[Mapping[str, Any]]
+        self,
+        attempt: WaveAttempt,
+        decisions: Sequence[Mapping[str, Any]],
+        steps: Sequence[PlanStep],
     ) -> None:
         for decision in decisions:
-            self._validate_output_reuse_identity(attempt, decision)
+            self._validate_output_reuse_identity(attempt, decision, steps)
             if decision["recovery"].get("reason_code") != "DECLARED_OUTPUTS_VALID":
                 raise ValueError(
                     "immutable output-reuse decision has an invalid reason"
@@ -1459,20 +1472,13 @@ class SkyPilotWaveExecutor:
         return attempt
 
     def _validate_output_reuse_identity(
-        self, attempt: WaveAttempt, event: Mapping[str, Any]
+        self,
+        attempt: WaveAttempt,
+        event: Mapping[str, Any],
+        steps: Sequence[PlanStep],
     ) -> None:
         identity = event.get("attempt_identity")
-        expected_identity = {
-            "runtime": "skypilot",
-            "run_id": self.run_id,
-            "attempt": attempt.attempt,
-            "logical_attempt_id": attempt.logical_launch_id,
-            "provider_job_id": attempt.job_id,
-            "provider_job_name": attempt.job_name,
-            "workflow_sha256": _workflow_identity(self.spec),
-            "source_sha256": _source_identity(),
-            "image_digest": _image_identity(self.render_options),
-        }
+        expected_identity = self._expected_output_reuse_identity(attempt, steps)
         if not isinstance(identity, Mapping) or any(
             not expected or identity.get(name) != expected
             for name, expected in expected_identity.items()
@@ -1487,6 +1493,27 @@ class SkyPilotWaveExecutor:
             raise ValueError(
                 "runtime output-reuse identity does not match current inputs"
             )
+
+    def _expected_output_reuse_identity(
+        self, attempt: WaveAttempt, steps: Sequence[PlanStep]
+    ) -> dict[str, Any]:
+        return {
+            "runtime": "skypilot",
+            "run_id": self.run_id,
+            "attempt": attempt.attempt,
+            "logical_attempt_id": attempt.logical_launch_id,
+            "provider_job_id": attempt.job_id,
+            "provider_job_name": attempt.job_name,
+            "workflow_sha256": _workflow_identity(self.spec),
+            "source_sha256": _source_identity(),
+            "image_digest": _expected_image_identity(
+                self.spec,
+                steps,
+                self.render_options,
+                attempt.image_identity_version,
+                self.run_id,
+            ),
+        }
 
     def _output_reuse_terminal_status(
         self, attempt: WaveAttempt, event: Mapping[str, Any]
@@ -1602,7 +1629,7 @@ class SkyPilotWaveExecutor:
         attempt.adopted = True
         self.attempts.append(attempt)
 
-        if self._resume_durable_output_reuse(attempt):
+        if self._resume_durable_output_reuse(attempt, steps):
             return attempt
 
         evidence = self._reconcile_exact(job_name, job_id)
