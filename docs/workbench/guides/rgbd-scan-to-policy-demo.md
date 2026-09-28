@@ -59,6 +59,15 @@ image. Source overlay staging supplies this checkout's adapters.
 values, overridable with `--var`. Smaller values are experiments, not equivalent
 to the full reference qualification. Changing `num_envs` still requires enough
 measured, unique reset pairs; the code will not duplicate cases to fill a cohort.
+The parked robot used by the native isolation controls is selected from the
+same measured support grid before learning. Its rotated 1.30 × 0.70 m stance
+must pass 405 downward rays at 5 cm spacing, upward-normal and floor-height
+checks, and a source-triangle check that excludes nearby mesh boundaries,
+nonmanifold edges, and non-upward faces. Its initial stance must be separated
+from the free-control robot. Selection chooses the farthest qualifying center,
+with coordinate ordering for ties, and records the pose, rules, candidate counts,
+and measured support in `support.json`. This is an initial placement check;
+the unchanged native controls still determine physical validity before training.
 The standalone sample SDK can reuse a cached archive with
 `navigation_sample.prepare_sample(output_path, archive_path=...)`; its SHA-256
 is checked again. Neither download nor conversion silently samples fewer frames.

@@ -51,6 +51,15 @@ promotion; valid losing baseline episodes must not be discarded by a standalone
 success threshold. Public reference results do not establish compatibility with
 an undisclosed proprietary policy or calibration.
 
+For the public scan-to-policy sample, derive the parked isolation-control pose
+from dense rotated stance support and exact source topology before learning.
+Preserve its measured selection evidence in `support.json`; five corner/center
+rays or a large center clearance alone cannot exclude a small hole or a source
+boundary beneath a foot. Keep the free/obstacle controls, action sequence,
+native contact classification, cohort sizes and success gates unchanged when
+repairing initial parking placement. Initial CPU support evidence does not
+replace native control and full training/evaluation qualification.
+
 For `field-failure-reference-demo.yaml`, freeze training, development and final
 cohorts before learning. Before admitting final evaluation, development selection
 must pair the exact case IDs and seeds and apply every per-case regression bound

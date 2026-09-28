@@ -9,6 +9,7 @@ import random
 import numpy as np
 
 from npa.workbench.nurec.navigation_assets import sha256
+from npa.workbench.nurec.navigation_sample_parking import select_parked_pose
 
 _FOOTPRINT = np.array(
     [[0, 0], [-0.35, -0.23], [-0.35, 0.23], [0.35, -0.23], [0.35, 0.23]]
@@ -116,18 +117,17 @@ def _case(name, seed, position, goal, yaw=None):
     }
 
 
-def _probes(scene):
+def _probes(scene, surface_path, grid):
     probes = {
         "free": _case("free", 42, [-3.05, -2.2, 0.56624765], [-3.05, 1.4], math.pi / 2),
         "obstacle": _case(
             "obstacle", 43, [-3.05, -0.85, 0.59664259], [-0.2, 1.5], 0.687223393
         ),
-        "parked": _case(
-            "parked", 44, [-3.2, -2.2, 0.56922913], [-3.2, 1.4], math.pi / 2
-        ),
         "actions": [[0.6, 0.0, 0.0]] * 30,
         "tolerance": 0.001,
     }
+    position, parking = select_parked_pose(surface_path, scene, grid, probes["free"])
+    probes["parked"] = _case("parked", 44, position, [position[0], 1.4], math.pi / 2)
     for name in ("free", "obstacle", "parked"):
         _probe_support(scene, probes[name])
     obstacle = probes["obstacle"]
@@ -136,7 +136,7 @@ def _probes(scene):
     distance = _rays(scene, [origin], [[math.cos(yaw), math.sin(yaw), 0]])[0]
     if not np.isfinite(distance) or not 0.7 < distance < 2.5:
         raise ValueError("public scan obstacle control lost its measured surface")
-    return probes
+    return probes, parking
 
 
 def _probe_support(scene, case):
@@ -180,12 +180,14 @@ def build_cases(surface_path: Path, count: int = 4000) -> tuple[dict, dict]:
     random.Random(260925).shuffle(supported)
     if len(supported) < 2 * count:
         raise ValueError("public scan has insufficient disjoint supported reset pairs")
-    cases = _split_cases(scene, supported, count)
+    probes, parking = _probes(scene, surface_path, grid)
+    cases = _split_cases(probes, supported, count)
     report = _support_report(surface_path, pairs, supported, grid, count)
+    report["parked_support"] = parking
     return cases, report
 
 
-def _split_cases(scene, supported, count):
+def _split_cases(probes, supported, count):
     rows = [
         _case(
             f"office-{index}",
@@ -198,7 +200,7 @@ def _split_cases(scene, supported, count):
     return {
         "train_cases": rows[:count],
         "eval_cases": rows[count:],
-        "probe": _probes(scene),
+        "probe": probes,
     }
 
 
