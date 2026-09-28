@@ -39,6 +39,13 @@ speedup or justify switching every model's default. CUDA profiling captured
 `FlashAttentionForwardSm120` for FA4 and `pytorch_flash::flash_fwd_kernel` for
 the SDPA replay. FA4 did not silently fall back to SDPA.
 
+These steady-state samples exclude JIT startup. The FA4 processor also records
+call shapes, while the SDPA processor is stock, so this experiment cannot
+isolate kernel speed or establish a backend crossover threshold. Use the
+[workload rollout criteria](flash-attention.md#merge-and-rollout-criteria) before
+changing a production model's backend. The SDXL evidence does not establish
+full-model training convergence or 3D reconstruction correctness.
+
 The [complete measurements](validation/fa4-sdxl-20260925/report.json) include
 individual timings and kernel names. [Provenance](validation/fa4-sdxl-20260925/provenance.json)
 binds them to the local base image, runtime packages, source hashes and output

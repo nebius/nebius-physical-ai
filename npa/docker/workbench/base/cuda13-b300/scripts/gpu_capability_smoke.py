@@ -149,8 +149,12 @@ def _cumulative_lengths(torch, lengths):
     )
 
 
-def _attention_functions():
+def _attention_functions(namespace="flash_attn.cute"):
     # Use the FA4 namespace explicitly: a root flash_attn import can resolve FA2.
+    if namespace == "flash_attn":
+        from flash_attn import flash_attn_func, flash_attn_varlen_func
+
+        return flash_attn_func, flash_attn_varlen_func
     from flash_attn.cute import flash_attn_func, flash_attn_varlen_func
 
     return flash_attn_func, flash_attn_varlen_func
@@ -212,7 +216,7 @@ def _run_checks(expected: str, report: dict) -> None:
     report["environment"] = _check_device(torch, expected)
     _check_controls(torch)
     report["controls"] = "passed"
-    functions = _attention_functions()
+    functions = _attention_functions(report["backend"])
     cases = itertools.product(
         ("dense", "gqa", "varlen"), ("float16", "bfloat16"), (64, 128), (False, True)
     )
@@ -239,10 +243,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expect-capability", default="", metavar="CC")
     parser.add_argument("--json-output", type=Path)
+    parser.add_argument(
+        "--attention-api",
+        choices=("flash_attn.cute", "flash_attn"),
+        default="flash_attn.cute",
+        help="Explicit namespace to qualify; the root adapter is image-specific",
+    )
     args = parser.parse_args(argv)
     report = {
         "schema_version": 1,
-        "backend": "flash_attn.cute",
+        "backend": args.attention_api,
         "status": "failed",
         "cases": [],
     }

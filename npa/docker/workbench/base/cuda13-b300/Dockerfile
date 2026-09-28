@@ -136,8 +136,9 @@ RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attent
       "flash_attn/cute[cu13]" \
     && rm -rf /tmp/flash-attention
 
-# flash-attn-4 exposes flash_attn.cute. Provide the legacy root import used by
-# existing smoke scripts while still routing calls to the FA4 CuTe implementation.
+# The root import is a restricted, keyword-only-options FA4 adapter. Never
+# forward ambiguous FA2 positional arguments into the incompatible FA4 API.
+COPY scripts/flash_attn_root.py /npa/flash_attn_root.py
 RUN python - <<'PY'
 from importlib import metadata
 from pathlib import Path
@@ -146,20 +147,7 @@ import site
 site_dir = Path(site.getsitepackages()[0])
 pkg = site_dir / "flash_attn"
 pkg.mkdir(exist_ok=True)
-(pkg / "__init__.py").write_text(
-    "from importlib import metadata as _metadata\n"
-    "__version__ = _metadata.version('flash-attn-4')\n"
-    "from flash_attn.cute import flash_attn_func as _cute_flash_attn_func\n"
-    "from flash_attn.cute import flash_attn_varlen_func as _cute_flash_attn_varlen_func\n"
-    "def _tensor_result(result):\n"
-    "    return result[0] if isinstance(result, tuple) else result\n"
-    "def flash_attn_func(*args, **kwargs):\n"
-    "    return _tensor_result(_cute_flash_attn_func(*args, **kwargs))\n"
-    "def flash_attn_varlen_func(*args, **kwargs):\n"
-    "    return _tensor_result(_cute_flash_attn_varlen_func(*args, **kwargs))\n"
-    "__all__ = ['flash_attn_func', 'flash_attn_varlen_func']\n",
-    encoding="utf-8",
-)
+(pkg / "__init__.py").write_bytes(Path("/npa/flash_attn_root.py").read_bytes())
 print("flash-attn-4", metadata.version("flash-attn-4"))
 PY
 

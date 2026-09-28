@@ -121,6 +121,26 @@ def test_explicit_fa4_import_does_not_select_fa2(smoke, monkeypatch):
     assert smoke._attention_functions() == (dense, varlen)
 
 
+def test_root_adapter_qualification_is_explicit(smoke, monkeypatch, tmp_path):
+    import sys
+
+    dense, varlen = object(), object()
+    root = ModuleType("flash_attn")
+    root.flash_attn_func, root.flash_attn_varlen_func = dense, varlen
+    monkeypatch.setitem(sys.modules, "flash_attn", root)
+
+    def check(expected, report):
+        assert report["backend"] == "flash_attn"
+        assert smoke._attention_functions(report["backend"]) == (dense, varlen)
+
+    monkeypatch.setattr(smoke, "_run_checks", check)
+    output = tmp_path / "root.json"
+    assert (
+        smoke.main(["--attention-api", "flash_attn", "--json-output", str(output)]) == 0
+    )
+    assert json.loads(output.read_text())["backend"] == "flash_attn"
+
+
 def test_cross_attention_reference_uses_bottom_right_mask(smoke):
     torch = pytest.importorskip("torch")
     query = torch.zeros(1, 2, 2, 8, dtype=torch.float64, requires_grad=True)

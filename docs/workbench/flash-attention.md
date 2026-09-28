@@ -19,7 +19,8 @@ it is not proof of a general FA4 speedup or customer training convergence.
 
 New builds of the `cuda13-b300` base use the updated FA4 pin by default. The
 recipe already selected FA4; this change fixes that dependency set and its RTX
-qualification. Its legacy `flash_attn` root shim also dispatches to FA4.
+qualification. Its legacy `flash_attn` root adapter also dispatches to FA4,
+with the restricted argument contract described below.
 
 This is not a Workbench-wide backend switch. Existing published image digests
 stay unchanged until their own rebuild, qualification and release. Models that
@@ -83,6 +84,22 @@ CUTLASS DSL 4.6.2. A successful package import is not GPU qualification.
 Use the explicit FA4 namespace in model integrations. The generic
 `flash_attn` import can resolve FA2 in another container. The base's legacy
 root-import shim does not translate arbitrary FA2 arguments into FA4 arguments.
+
+The root adapter accepts only Q/K/V positionally. Options must be named because,
+for example, FA2's fourth dense argument is `dropout_p`, whereas FA4's is `qv`;
+the variable-length signatures also assign different positions to sequence
+metadata. Blind forwarding can misinterpret a call before a kernel runs.
+
+Root calls accept `causal`, `softmax_scale`, and the fixed settings
+`dropout_p=0.0`, `pack_gqa=False`, `num_splits=1`. The latter two are also the
+adapter's defaults. Packed sequence metadata must be named. Other keywords,
+nonzero dropout, packed GQA and split-KV raise before native execution. This
+includes masks, windows, ALiBi, deterministic mode and auxiliary-return options;
+the adapter never discards them. It returns only the output tensor and preserves
+autograd. Existing callers using positional options or advanced features must
+migrate explicitly; they no longer pass through the root shim unchecked.
+Native `flash_attn.cute` calls retain the upstream API and need their own feature
+qualification. Neither path automatically retries with a different backend.
 
 ```python
 from flash_attn.cute import flash_attn_func
@@ -158,6 +175,11 @@ exits nonzero and records the active case and error in JSON. The committed
 [Kubernetes validation job](../../npa/scripts/blackwell-gpu-validation-job.yaml)
 also checks the intended GPU and rejects a different CUDA major.
 
+To qualify the image's root adapter separately, repeat the same command with
+`--attention-api flash_attn` and a different JSON output filename. The default
+remains `flash_attn.cute`. Each selected API must pass all 24 cases; importing
+the root adapter in a different container does not establish that it uses FA4.
+
 Keep source SHA, exact local image ID or registry digest, package versions,
 driver, device capability and numerical results with each qualification. An
 RTX result does not qualify the new dependency set on B200, B300 or Hopper.
@@ -173,3 +195,21 @@ Measure FA2 and FA4 on the same RTX GPU with identical shapes, precision and
 batching. Separate attention latency from end-to-end step time and from
 multi-node communication. Comparing B200/FA4 with RTX/FA2 changes both hardware
 and backend, so it cannot establish the speedup this update will deliver.
+
+## Merge and rollout criteria
+
+This change can be reviewed as an RTX compatibility correction with explicit
+feature guards. It is not evidence for a Workbench-wide performance default.
+Keep the existing model backend until that model passes output and gradient
+checks, representative complete training/evaluation runs, and repeated same-GPU
+measurements against its current backend. Include cold-start/JIT cost, steady
+state, peak memory, the longest sequences and every required attention feature.
+Decide acceptable quality and performance changes for that workload before
+promotion; retain its previous immutable image for rollback.
+
+The SDXL measurements use three repetitions and an instrumented FA4 processor
+against stock SDPA. They do not establish a sequence-length crossover rule.
+No automatic backend selection by shape or runtime timing is introduced. A
+kernel failure remains an error, and published images need their separate
+release gates. FA4 kernel support also does not change GPU memory bandwidth,
+PCIe, NVLink availability or inter-node networking.
