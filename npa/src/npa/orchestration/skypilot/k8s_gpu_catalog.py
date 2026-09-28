@@ -318,6 +318,14 @@ def kubernetes_sky_environment(
             user_id=validation_user_id,
         ):
             raise
+        # Recovery archives the client configuration along with the stale API.
+        # Recreate the same verified bytes before starting its replacement.
+        with open(
+            config_path, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)
+        ) as handle:
+            handle.write(config_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
         return start_validation_api()
 
 

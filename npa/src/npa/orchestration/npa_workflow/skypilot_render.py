@@ -31,6 +31,7 @@ from npa.workbench.model_cache import (
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+    "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
@@ -55,6 +56,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
     "workbench.alpamayo2_super": "alpamayo2-super",
+    "workbench.flex_pi": "flex-pi",
     "workbench.curobo": "curobo",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
@@ -81,6 +83,8 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
 # capability, not a tenant workaround: a changed image can retire an entry only
 # when it genuinely bakes a compatible NPA CLI.
 IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
+HABITAT_SIM_TOOL_REF = "workflow.habitat_sim.smoke"
+HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
@@ -95,6 +99,10 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
+    # The released flex-pi checkpoint is public, but its multi-shard runtime
+    # fetch can exceed the anonymous Hub rate limit. Forward an operator token
+    # only through the workflow secret channel when one is available.
+    "workbench.flex_pi": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
@@ -479,6 +487,21 @@ def normalize_resources(
     return out
 
 
+def _require_habitat_sim_accelerator(
+    *, tool_ref: str, resources: Mapping[str, Any]
+) -> None:
+    """Reject any final Habitat-Sim placement outside its one-RTX contract."""
+
+    if tool_ref != HABITAT_SIM_TOOL_REF:
+        return
+    effective = str(resources.get("accelerators") or "").strip()
+    if effective != HABITAT_SIM_ACCELERATOR:
+        raise NpaWorkflowRenderError(
+            "Habitat-Sim rendering requires exactly "
+            f"{HABITAT_SIM_ACCELERATOR}; effective accelerator was {effective!r}"
+        )
+
+
 def tool_pip_extra(tool_ref: str) -> str:
     """Return the npa extra a toolRef's stage needs, or ``""``.
 
@@ -683,6 +706,22 @@ def tool_image_key(tool_ref: str) -> str | None:
             if len(prefix) > len(best):
                 best = prefix
     return TOOL_REF_IMAGE_TOOL.get(best)
+
+
+def source_overlay_requested(config: Mapping[str, Any]) -> bool:
+    """Resolve the overlay opt-in consistently for staging and rendering."""
+    import os
+
+    if str(config.get("require_baked_npa") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    return str(
+        os.environ.get("NPA_SRC_OVERLAY") or config.get("source_overlay") or ""
+    ).strip().lower() in {"1", "true"}
 
 
 def tool_requires_staged_npa_source(tool_ref: str) -> bool:
@@ -1322,7 +1361,7 @@ def default_npa_setup() -> str:
         "bucket, prefix = parsed.netloc, parsed.path.lstrip('/')\n"
         "dest = pathlib.Path('/tmp/npa-src')\n"
         "dest.mkdir(parents=True, exist_ok=True)\n"
-        "print('syncing', uri, '->', dest, flush=True)\n"
+        "print('syncing confidential NPA source ->', dest, flush=True)\n"
         "kwargs = {'config': Config(signature_version='s3v4')}\n"
         "if os.environ.get('AWS_ENDPOINT_URL'):\n"
         "    kwargs['endpoint_url'] = os.environ['AWS_ENDPOINT_URL']\n"
@@ -1375,7 +1414,7 @@ def default_npa_setup() -> str:
         "bucket, prefix = parsed.netloc, parsed.path.lstrip('/')\n"
         "dest = pathlib.Path('/tmp/npa-src-overlay')\n"
         "dest.mkdir(parents=True, exist_ok=True)\n"
-        "print('overlay syncing', uri, '->', dest, flush=True)\n"
+        "print('overlay syncing confidential NPA source ->', dest, flush=True)\n"
         "kwargs = {'config': Config(signature_version='s3v4')}\n"
         "if os.environ.get('AWS_ENDPOINT_URL'):\n"
         "    kwargs['endpoint_url'] = os.environ['AWS_ENDPOINT_URL']\n"
@@ -1604,6 +1643,42 @@ def _vllm_install_setup(model: str) -> str:
     )
 
 
+HABITAT_SIM_IMMUTABLE_SETUP = (
+    "set -euo pipefail\n"
+    "test -x /usr/local/bin/python3\n"
+    "test -x /usr/local/libexec/npa-habitat-runtime\n"
+    "test ! -e /tmp/npa-src -a ! -e /tmp/npa-src-overlay\n"
+    'test -z "${NPA_SRC_S3_URI:-}" -a -z "${NPA_SRC_OVERLAY:-}"\n'
+    'case "${PYTHONPATH:-}" in ""|/opt/npa-runtime) ;; '
+    '*) echo "Habitat-Sim refuses a Python source overlay" >&2; exit 70 ;; esac\n'
+    'export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"\n'
+    "export PYTHONPATH=/opt/npa-runtime\n"
+    "/usr/bin/python3 /usr/share/doc/npa-habitat-sim/bootstrap_sources.py verify /usr/share/doc/npa-habitat-sim\n"
+    "/usr/bin/python3 - <<'PY'\n"
+    "from pathlib import Path\n"
+    "import npa, npa.workflows.habitat_sim_smoke as smoke\n"
+    "assert Path(npa.__file__).resolve() == Path('/opt/npa-runtime/npa/__init__.py')\n"
+    "assert Path(smoke.__file__).resolve() == Path('/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py')\n"
+    "smoke._source_provenance()\n"
+    "PY\n"
+    "printf '%s\\n' /usr/local/bin/python3 > /tmp/npa-python\n"
+    "printf '%s\\n' /opt/npa-runtime > /tmp/npa-baked-pythonpath\n"
+)
+
+
+def _habitat_sim_setup(config: Mapping[str, Any]) -> str:
+    forbidden = {
+        key: config.get(key)
+        for key in ("pip_extra", "source_overlay")
+        if str(config.get(key) or "").strip()
+    }
+    if forbidden:
+        raise NpaWorkflowRenderError(
+            "Habitat-Sim's immutable image forbids dependency and source overlays"
+        )
+    return HABITAT_SIM_IMMUTABLE_SETUP
+
+
 def render_setup_for_tool(
     tool_ref: str,
     *,
@@ -1615,6 +1690,8 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
+    if tool_ref == HABITAT_SIM_TOOL_REF:
+        return _habitat_sim_setup(config)
     if tool_ref == "workbench.nurec.convert_colmap":
         # Conversion uses the committed CPU image and its hash-locked runtime
         # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
@@ -1824,6 +1901,15 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
     seen: set[str] = set()
     for step in steps:
         tool_ref = step.tool_ref or ""
+        if (
+            tool_ref == "workbench.byof.repo"
+            and "--runtime-context-env" in step.argv
+            and "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in step.argv
+        ):
+            for name in ("NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",):
+                if name not in seen:
+                    seen.add(name)
+                    hints.append(name)
         if tool_ref == "workbench.byof.repo" and any(
             value == "openpi" or "pi05_droid_jointpos_polaris" in value
             for value in step.argv
@@ -1962,12 +2048,15 @@ def build_skypilot_task_doc(
     """Build one SkyPilot task document from a planned step."""
 
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
+    tool_ref = str(scheduler_task.get("tool_ref") or "")
+    immutable_narrow_image = tool_ref == HABITAT_SIM_TOOL_REF
     resources = normalize_resources(
         scheduler_task.get("resources") or {},
         accelerator_overrides=options.gpu_accelerator_overrides,
     )
+    _require_habitat_sim_accelerator(tool_ref=tool_ref, resources=resources)
     image = resolve_task_image(
-        str(scheduler_task.get("tool_ref") or ""),
+        tool_ref,
         scheduler_task.get("resources") or {},
         options=options,
     )
@@ -1982,26 +2071,34 @@ def build_skypilot_task_doc(
         "on",
     }
     expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
-    if require_baked:
+    if require_baked or immutable_narrow_image:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
             ImageBootstrapContractError,
             parse_oci_reference,
         )
 
+        reason = (
+            "Habitat-Sim requires an immutable runtime"
+            if immutable_narrow_image
+            else "config.require_baked_npa is enabled"
+        )
+        image_error = (
+            f"planned step {scheduler_task['name']!r} requires a "
+            f"registry-qualified immutable image because {reason}"
+        )
         try:
             parsed_image = parse_oci_reference(image)
         except ImageBootstrapContractError as exc:
-            raise NpaWorkflowRenderError(
-                f"planned step {scheduler_task['name']!r} requires a "
-                "registry-qualified immutable image because "
-                "config.require_baked_npa is enabled"
-            ) from exc
+            raise NpaWorkflowRenderError(image_error) from exc
         if not parsed_image.digest:
-            raise NpaWorkflowRenderError(
-                f"planned step {scheduler_task['name']!r} requires a "
-                "registry-qualified immutable image because "
-                "config.require_baked_npa is enabled"
-            )
+            raise NpaWorkflowRenderError(image_error)
+        if immutable_narrow_image and not (
+            parsed_image.registry == "localhost"
+            or "." in parsed_image.registry
+            or ":" in parsed_image.registry
+        ):
+            # An unqualified namespace is not an explicit registry authority.
+            raise NpaWorkflowRenderError(image_error)
     if require_baked and (
         len(expected_source_sha) != 40
         or any(char not in "0123456789abcdef" for char in expected_source_sha)
@@ -2035,6 +2132,27 @@ def build_skypilot_task_doc(
             separators=(",", ":"),
         ),
     }
+    from npa.orchestration.npa_workflow.robotwin_preflight import recognize_contract
+
+    if recognize_contract(spec):
+        # This exact contract binds its real output on the preverified target.
+        # An explicit empty declaration keeps source-input URIs from being
+        # mistaken for undeclared writes by the shared raw-submit preflight.
+        envs["NPA_EXECUTION_OUTPUTS"] = "[]"
+    else:
+        # Retain output roles for the shared raw/rendered SDK submission gate.
+        envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
+            [
+                {
+                    "uri": output["uri"],
+                    "kind": output.get("kind")
+                    or ("directory" if str(output["uri"]).endswith("/") else "file"),
+                }
+                for output in scheduler_task.get("outputs") or []
+                if str(output.get("uri") or "").startswith("s3://")
+            ],
+            separators=(",", ":"),
+        )
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
         material = "\0".join((spec.name, run_id, str(scheduler_task["name"]))).encode(
@@ -2137,6 +2255,8 @@ def build_skypilot_task_doc(
     # and exports SKYPILOT_NODE_RANK / SKYPILOT_NODE_IPS into each. Emitted only when the
     # profile asks for more than one node, so every existing rendered doc is unchanged.
     num_nodes = int(scheduler_task.get("num_nodes") or 1)
+    if str(scheduler_task.get("tool_ref") or "") == "workbench.flex_pi.train":
+        envs["NPA_FLEX_PI_NODE_COUNT"] = str(num_nodes)
     if (
         str(scheduler_task.get("tool_ref") or "")
         == "workbench.cosmos2.transfer_execute"
@@ -2200,10 +2320,8 @@ def build_skypilot_task_doc(
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
     # it once with `npa configure --src-s3-uri` so the next shell still finds it.
-    import os
-
     src_uri = resolve_src_s3_uri()
-    if require_baked:
+    if require_baked or immutable_narrow_image:
         # Exact images must contain the full runtime and pinned dependencies. Never
         # inject a source tree or install packages after a task acquires a GPU.
         pass
@@ -2231,17 +2349,7 @@ def build_skypilot_task_doc(
             doc["envs"] = envs
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
-        if (
-            str(
-                os.environ.get("NPA_SRC_OVERLAY")
-                or spec.config.get("source_overlay")
-                or ""
-            )
-            .strip()
-            .lower()
-            in {"1", "true"}
-            and src_uri
-        ):
+        if source_overlay_requested(spec.config) and src_uri:
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
     _inject_operator_registry_docker_secrets(

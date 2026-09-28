@@ -12,12 +12,56 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+[flex-pi inference](../docs/workbench/flex-pi.md#cli-and-sdk) emits one JSON
+document on stdout (`--output-format json`, the default); runtime diagnostics
+go to stderr.
+
+[Flex-Pi public training](../docs/workbench/flex-pi.md#public-yam-training)
+uses a pinned real YAM dataset on four GPUs with effective batch 96. Run
+`npa workbench flex-pi train --output-path s3://<artifact-bucket>/<run-prefix>`
+inside the documented GPU workflow; `--mode profile` measures the same workload
+before a complete training epoch. Outputs include full validation and a fresh
+checkpoint-resume check. `--dry-run` returns the fixed contract without GPUs.
+`--memory-fill` (`config.memory_fill` in workflows) defaults to `on`; `off` is
+an unqualified candidate that requires verified normalization and exact parity
+checks before execution.
+`--activation-checkpointing` (`config.activation_checkpointing`) defaults to
+`on`. Selecting `off` retains activations instead of recomputing them during
+backward, using more GPU memory. Qualify each memory policy with a profile,
+numerical parity and fresh resume before a full epoch; durable checkpoints
+remain enabled with either policy.
+`--microbatch-per-rank` (`config.microbatch_per_rank`) accepts `1` (default)
+or `3`, with 24 or 8 accumulation steps respectively. Both keep effective
+batch 96 and the complete 36-sample epoch tail. Larger microbatches use more
+memory and can change numerical results; qualify the selected configuration
+with a profile, fresh resume and held-out validation before accepting it.
+`--cuda-graphs` (`config.cuda_graphs`) defaults to `off`. The experimental
+`mot` option captures mixed-attention training with the pinned Torch 2.7.1
+native CUDA graph API and requires `--activation-checkpointing off`. Input
+preparation, noise sampling, validation and optimizer updates remain eager.
+Capture failures are errors; every rank must report native forward and
+backward graph replays. Qualify the GPU trace, numerical results, full held-out pass
+and fresh resume before accepting a performance claim.
+
+The four-host B300 workflow sets `config.training_nodes: "4"` and requests one
+GPU on each host. `NPA_FLEX_PI_NODE_COUNT` comes from the resolved workflow
+resources; the adapter checks SkyPilot's allocation and publishes only from
+node zero. Provide the same original normalization and run `profile-resume`
+before a full epoch. The [training guide](../docs/workbench/flex-pi.md#public-yam-training)
+documents the per-host checkpoint join, runtime variables and topology caveats.
+
 The package also provides project provisioning, storage, artifact conversion,
 viewers, and an agent interface. Python access includes typed clients, shared
 implementation functions, and wrappers around CLI callbacks; available imports
 and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
+
+Fleet recovery can remove a failed CPU pool without charging unchanged reserved
+GPUs against free capacity again. The requested CPU count must be zero, every
+other rendered capacity setting must match, and fresh provider evidence must
+verify the retained pools and the removed CPU group's Terraform ownership.
+Unknown identity or GPU growth still requires the normal capacity preflight.
 
 For [Isaac Arena footage](../docs/workbench/isaac-arena.md#supported-policies),
 `npa workbench isaac-arena evaluate --record-video --video-profile film`
